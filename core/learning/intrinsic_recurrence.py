@@ -62,6 +62,15 @@ class RecurrentDepthPlan:
     # Rescale to the anchor's RMS before re-entry. Controls norm blowup
     # without changing direction.
     renormalize: bool = False
+    # Deterministic isotropic perturbation at each RE-entry, relative to the
+    # state's RMS. The divergence lever for the cos(pass1,pass2)=0.9994
+    # obstacle: a damped iteration of one fixed map aligns successive
+    # increments with its dominant eigendirection (power iteration), so the
+    # loop re-computes the same step. Seeded noise kicks the state off that
+    # ray so later passes can explore directions the contraction never
+    # visits. Never applied at the first pass — T=1 stays bit-identical.
+    interpass_noise: float = 0.0
+    noise_seed: int = 0
 
     def __post_init__(self) -> None:
         for name in ("prelude_end", "coda_start", "iterations"):
@@ -82,6 +91,14 @@ class RecurrentDepthPlan:
             raise ValueError("anchor_injection must be inside [0, 1]")
         if type(self.renormalize) is not bool:
             raise ValueError("renormalize must be a bool")
+        if (
+            isinstance(self.interpass_noise, bool)
+            or not isinstance(self.interpass_noise, (int, float))
+            or not 0.0 <= float(self.interpass_noise) <= 1.0
+        ):
+            raise ValueError("interpass_noise must be inside [0, 1]")
+        if type(self.noise_seed) is not int or self.noise_seed < 0:
+            raise ValueError("noise_seed must be a non-negative integer")
 
     def window_size(self) -> int:
         return self.coda_start - self.prelude_end
@@ -109,6 +126,8 @@ class RecurrentDepthPlan:
             "iterations": self.iterations,
             "anchor_injection": float(self.anchor_injection),
             "renormalize": self.renormalize,
+            "interpass_noise": float(self.interpass_noise),
+            "noise_seed": self.noise_seed,
             "total_layers": total_layers,
             "effective_depth": self.effective_depth(total_layers),
             "base_equivalent": self.is_base_equivalent(),
@@ -310,6 +329,16 @@ def recurrent_hidden_states(
             # what keeps T=1 bit-identical to the base model.
             if plan.anchor_injection > 0.0:
                 hidden = hidden + plan.anchor_injection * anchor
+            if plan.interpass_noise > 0.0:
+                # Deterministic per (seed, iteration): the same plan always
+                # produces the same trajectory, so results replay. Scaled by
+                # the CURRENT state's RMS so the kick is proportional at
+                # every depth instead of vanishing as norms grow.
+                key = mx.random.key(plan.noise_seed * 1_000_003 + iteration)
+                kick = mx.random.normal(hidden.shape, key=key).astype(
+                    mx.float32
+                ) * (plan.interpass_noise * _rms(hidden))
+                hidden = hidden + kick.astype(hidden.dtype)
             if plan.renormalize:
                 scale = (anchor_rms / _rms(hidden)).astype(hidden.dtype)
                 hidden = hidden * scale

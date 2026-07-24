@@ -58,21 +58,49 @@ def _graded_correct(generated: str, expected: dict) -> bool:
         return False
 
 
-def _decode(model, tokenizer, prompt_ids, plan, *, max_tokens: int, eos: int | None):
+def _decode(
+    model,
+    tokenizer,
+    prompt_ids,
+    plan,
+    *,
+    max_tokens: int,
+    eos: int | None,
+    activation_totals: dict[str, int] | None = None,
+):
     """Greedy decode through the intrinsic recurrent forward (non-cached).
 
     Answers are short JSON objects, so a re-forward-per-token loop is bounded
     and avoids per-iteration recurrent-cache subtlety. Stops at EOS, at a
     parseable JSON object, or the token budget.
+
+    The forward runs inside ``recurrence_adapter_scope`` because
+    ``ScopedLoRALinear`` is dark outside it: the first gate run decoded both
+    arms with the adapter never applied, so on@d equaled off@d exactly and
+    the verdict measured base-vs-base. ``activation_totals`` accumulates the
+    scope's call/position counts so the caller can PROVE the treatment fired
+    instead of assuming it did.
     """
     import mlx.core as mx
 
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+    )
     from core.learning.intrinsic_recurrence import recurrent_logits
 
     tokens = list(prompt_ids)
     produced: list[int] = []
     for _ in range(int(max_tokens)):
-        logits = recurrent_logits(model, mx.array([tokens]), plan)
+        with recurrence_adapter_scope(start=None, stop=None) as activation:
+            logits = recurrent_logits(model, mx.array([tokens]), plan)
+        if activation_totals is not None:
+            activation_totals["calls"] = (
+                activation_totals.get("calls", 0) + activation.calls
+            )
+            activation_totals["adapted_positions"] = (
+                activation_totals.get("adapted_positions", 0)
+                + activation.adapted_positions
+            )
         nxt = int(mx.argmax(logits[0, -1, :]))
         if eos is not None and nxt == eos:
             break
@@ -220,6 +248,7 @@ def main() -> int:
             key = f"{arm}@{depth}"
             correct = 0
             n = 0
+            activation_totals: dict[str, int] = {}
             block_start = time.monotonic()
             for task in eval_tasks:
                 if time.monotonic() > deadline:
@@ -234,6 +263,7 @@ def main() -> int:
                 gen = _decode(
                     model, tokenizer, prompt_ids, plan,
                     max_tokens=args.max_answer_tokens, eos=eos,
+                    activation_totals=activation_totals,
                 )
                 try:
                     ok = _graded_correct(gen, _expected_payload(task))
@@ -248,6 +278,24 @@ def main() -> int:
                 "acc": round(correct / n, 4) if n else None,
             }
             report["block_seconds"][key] = round(time.monotonic() - block_start, 1)
+            # Treatment-fired proof. The first gate run decoded every arm
+            # with the adapter dark (no scope entered) and reported a
+            # base-vs-base comparison as a verdict; this makes that failure
+            # loud instead of silent. Zero adapter calls in ANY decoded
+            # block means the instrument is broken, not that the answer is
+            # "no effect" — the off arm carries zeroed factors precisely so
+            # it can run under the same scope.
+            report.setdefault("adapter_activation", {})[key] = dict(activation_totals)
+            if n and not activation_totals.get("calls"):
+                report["error"] = f"adapter scope never fired during {key}"
+                report["stop_reason"] = "instrument_dark_adapter"
+                write_report()
+                print(
+                    f"FATAL: adapter scope never fired during {key} — "
+                    "the arms would compare base against base",
+                    flush=True,
+                )
+                return 2
             write_report()
             print(
                 f"[{key}] acc={correct}/{n} "

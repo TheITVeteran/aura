@@ -1,0 +1,1943 @@
+{
+  "schema": "aura.pass_divergence_measurement.v1",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "iterations": 4,
+  "seed": 20260724,
+  "prompts": [
+    "Track the register: x=3. x doubles, then loses 1, then doubles again. What is x? Work step by step.",
+    "A is north of B. C is south of B. D is north of A. Order them from north to south, reasoning carefully.",
+    "Compute ((7 mod 5) * 9 + 4) mod 6, showing each intermediate value.",
+    "If every glarb is a fleem and no fleem is a snork, can a glarb be a snork? Explain the chain.",
+    "Reverse the list [2, 9, 4, 7], then swap the middle two elements. What list results?",
+    "k-hop: f(1)=4, f(4)=2, f(2)=8, f(8)=5. Starting at 1, apply f four times. Where do you land?"
+  ],
+  "results": [
+    {
+      "condition": "baseline",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": false,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.745941,
+          0.943771
+        ],
+        "mean_vs_first_cos": [
+          0.745941,
+          0.698214
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.436382,
+              0.272684,
+              0.203857
+            ],
+            "final_delta": 0.203857,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.741541,
+            0.941027
+          ],
+          "increment_vs_first_cos": [
+            0.741541,
+            0.692867
+          ],
+          "relative_step_magnitudes": [
+            0.038037,
+            0.030632,
+            0.027766
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.429445,
+              0.271992,
+              0.203922
+            ],
+            "final_delta": 0.203922,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.756691,
+            0.948058
+          ],
+          "increment_vs_first_cos": [
+            0.756691,
+            0.714644
+          ],
+          "relative_step_magnitudes": [
+            0.037747,
+            0.030915,
+            0.028164
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.439743,
+              0.27458,
+              0.205056
+            ],
+            "final_delta": 0.205056,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.74367,
+            0.944451
+          ],
+          "increment_vs_first_cos": [
+            0.74367,
+            0.69826
+          ],
+          "relative_step_magnitudes": [
+            0.03726,
+            0.030118,
+            0.02744
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.441079,
+              0.278196,
+              0.20793
+            ],
+            "final_delta": 0.20793,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.743545,
+            0.942822
+          ],
+          "increment_vs_first_cos": [
+            0.743545,
+            0.69583
+          ],
+          "relative_step_magnitudes": [
+            0.03735,
+            0.030374,
+            0.027671
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.428821,
+              0.269459,
+              0.200386
+            ],
+            "final_delta": 0.200386,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.742255,
+            0.941853
+          ],
+          "increment_vs_first_cos": [
+            0.742255,
+            0.695044
+          ],
+          "relative_step_magnitudes": [
+            0.037411,
+            0.030253,
+            0.027289
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.444833,
+              0.273472,
+              0.204674
+            ],
+            "final_delta": 0.204674,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.747941,
+            0.944416
+          ],
+          "increment_vs_first_cos": [
+            0.747941,
+            0.692641
+          ],
+          "relative_step_magnitudes": [
+            0.039933,
+            0.031724,
+            0.028595
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "renormalize",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.202269,
+          0.277945
+        ],
+        "mean_vs_first_cos": [
+          0.202269,
+          0.24306
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.519564,
+              0.461132,
+              0.401154
+            ],
+            "final_delta": 0.401154,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.16785,
+            0.215548
+          ],
+          "increment_vs_first_cos": [
+            0.16785,
+            0.22916
+          ],
+          "relative_step_magnitudes": [
+            0.040818,
+            0.033473,
+            0.029339
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.49211,
+              0.412211,
+              0.368985
+            ],
+            "final_delta": 0.368985,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.20314,
+            0.303585
+          ],
+          "increment_vs_first_cos": [
+            0.20314,
+            0.245554
+          ],
+          "relative_step_magnitudes": [
+            0.039206,
+            0.030936,
+            0.027604
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.485245,
+              0.415718,
+              0.374275
+            ],
+            "final_delta": 0.374275,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.226693,
+            0.300755
+          ],
+          "increment_vs_first_cos": [
+            0.226693,
+            0.252987
+          ],
+          "relative_step_magnitudes": [
+            0.037832,
+            0.030587,
+            0.027796
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.500101,
+              0.425696,
+              0.362311
+            ],
+            "final_delta": 0.362311,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.227199,
+            0.305423
+          ],
+          "increment_vs_first_cos": [
+            0.227199,
+            0.249615
+          ],
+          "relative_step_magnitudes": [
+            0.038948,
+            0.030872,
+            0.027007
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.506967,
+              0.440465,
+              0.362791
+            ],
+            "final_delta": 0.362791,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.192084,
+            0.26661
+          ],
+          "increment_vs_first_cos": [
+            0.192084,
+            0.247466
+          ],
+          "relative_step_magnitudes": [
+            0.040046,
+            0.031991,
+            0.027055
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.520342,
+              0.45109,
+              0.39421
+            ],
+            "final_delta": 0.39421,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.19665,
+            0.275748
+          ],
+          "increment_vs_first_cos": [
+            0.19665,
+            0.23358
+          ],
+          "relative_step_magnitudes": [
+            0.04242,
+            0.032862,
+            0.029173
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "anchor_0.1",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.1,
+        "renormalize": true,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.151349,
+          0.215117
+        ],
+        "mean_vs_first_cos": [
+          0.151349,
+          0.200007
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.489542,
+              0.422072,
+              0.371383
+            ],
+            "final_delta": 0.371383,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.129267,
+            0.149188
+          ],
+          "increment_vs_first_cos": [
+            0.129267,
+            0.177788
+          ],
+          "relative_step_magnitudes": [
+            0.038312,
+            0.030501,
+            0.026542
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.466953,
+              0.37066,
+              0.322803
+            ],
+            "final_delta": 0.322803,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.146915,
+            0.224566
+          ],
+          "increment_vs_first_cos": [
+            0.146915,
+            0.20442
+          ],
+          "relative_step_magnitudes": [
+            0.036993,
+            0.027763,
+            0.023706
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.463036,
+              0.379782,
+              0.333574
+            ],
+            "final_delta": 0.333574,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.165246,
+            0.245571
+          ],
+          "increment_vs_first_cos": [
+            0.165246,
+            0.219382
+          ],
+          "relative_step_magnitudes": [
+            0.035835,
+            0.027778,
+            0.024157
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.475843,
+              0.389306,
+              0.330097
+            ],
+            "final_delta": 0.330097,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.163081,
+            0.250123
+          ],
+          "increment_vs_first_cos": [
+            0.163081,
+            0.218649
+          ],
+          "relative_step_magnitudes": [
+            0.036861,
+            0.027965,
+            0.023699
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.477096,
+              0.395039,
+              0.32546
+            ],
+            "final_delta": 0.32546,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.151814,
+            0.213754
+          ],
+          "increment_vs_first_cos": [
+            0.151814,
+            0.19684
+          ],
+          "relative_step_magnitudes": [
+            0.037508,
+            0.028688,
+            0.023617
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.49384,
+              0.415891,
+              0.359002
+            ],
+            "final_delta": 0.359002,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.151772,
+            0.207501
+          ],
+          "increment_vs_first_cos": [
+            0.151772,
+            0.182964
+          ],
+          "relative_step_magnitudes": [
+            0.040031,
+            0.030078,
+            0.025696
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "anchor_0.3",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.3,
+        "renormalize": true,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.118459,
+          0.113215
+        ],
+        "mean_vs_first_cos": [
+          0.118459,
+          0.123672
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.438896,
+              0.351719,
+              0.302527
+            ],
+            "final_delta": 0.302527,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.112412,
+            0.092029
+          ],
+          "increment_vs_first_cos": [
+            0.112412,
+            0.095904
+          ],
+          "relative_step_magnitudes": [
+            0.034021,
+            0.025311,
+            0.02169
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.42148,
+              0.314151,
+              0.252334
+            ],
+            "final_delta": 0.252334,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.116317,
+            0.124264
+          ],
+          "increment_vs_first_cos": [
+            0.116317,
+            0.137
+          ],
+          "relative_step_magnitudes": [
+            0.033039,
+            0.023315,
+            0.018835
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.41893,
+              0.320113,
+              0.26668
+            ],
+            "final_delta": 0.26668,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.128714,
+            0.133047
+          ],
+          "increment_vs_first_cos": [
+            0.128714,
+            0.144257
+          ],
+          "relative_step_magnitudes": [
+            0.032072,
+            0.023403,
+            0.019607
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.431729,
+              0.338456,
+              0.268968
+            ],
+            "final_delta": 0.268968,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.111137,
+            0.129318
+          ],
+          "increment_vs_first_cos": [
+            0.111137,
+            0.138051
+          ],
+          "relative_step_magnitudes": [
+            0.03313,
+            0.023877,
+            0.019311
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.424377,
+              0.334598,
+              0.270299
+            ],
+            "final_delta": 0.270299,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.130595,
+            0.080162
+          ],
+          "increment_vs_first_cos": [
+            0.130595,
+            0.125127
+          ],
+          "relative_step_magnitudes": [
+            0.033161,
+            0.024386,
+            0.019644
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.447942,
+              0.355402,
+              0.29029
+            ],
+            "final_delta": 0.29029,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.111578,
+            0.120468
+          ],
+          "increment_vs_first_cos": [
+            0.111578,
+            0.101693
+          ],
+          "relative_step_magnitudes": [
+            0.035975,
+            0.02571,
+            0.020946
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "noise_0.05",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "interpass_noise": 0.05,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.062672,
+          0.077041
+        ],
+        "mean_vs_first_cos": [
+          0.062672,
+          0.072475
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.60847,
+              0.521818,
+              0.453441
+            ],
+            "final_delta": 0.453441,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.075805,
+            0.047627
+          ],
+          "increment_vs_first_cos": [
+            0.075805,
+            0.035404
+          ],
+          "relative_step_magnitudes": [
+            0.064936,
+            0.057959,
+            0.058022
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.572794,
+              0.456938,
+              0.397876
+            ],
+            "final_delta": 0.397876,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.030271,
+            0.099518
+          ],
+          "increment_vs_first_cos": [
+            0.030271,
+            0.100584
+          ],
+          "relative_step_magnitudes": [
+            0.062057,
+            0.057015,
+            0.054942
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.571488,
+              0.468898,
+              0.424611
+            ],
+            "final_delta": 0.424611,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.070771,
+            0.06972
+          ],
+          "increment_vs_first_cos": [
+            0.070771,
+            0.05813
+          ],
+          "relative_step_magnitudes": [
+            0.062423,
+            0.056327,
+            0.05513
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.587314,
+              0.483453,
+              0.404344
+            ],
+            "final_delta": 0.404344,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.03542,
+            0.094018
+          ],
+          "increment_vs_first_cos": [
+            0.03542,
+            0.099651
+          ],
+          "relative_step_magnitudes": [
+            0.062038,
+            0.05741,
+            0.054988
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.596561,
+              0.506999,
+              0.415275
+            ],
+            "final_delta": 0.415275,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.066361,
+            0.06199
+          ],
+          "increment_vs_first_cos": [
+            0.066361,
+            0.05648
+          ],
+          "relative_step_magnitudes": [
+            0.06385,
+            0.060076,
+            0.056659
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.590151,
+              0.500527,
+              0.445557
+            ],
+            "final_delta": 0.445557,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.097404,
+            0.089372
+          ],
+          "increment_vs_first_cos": [
+            0.097404,
+            0.0846
+          ],
+          "relative_step_magnitudes": [
+            0.066044,
+            0.058917,
+            0.057583
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "noise_0.1",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": true,
+        "interpass_noise": 0.1,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.0,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.012868,
+          0.017984
+        ],
+        "mean_vs_first_cos": [
+          0.012868,
+          0.021985
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.721561,
+              0.580794,
+              0.503415
+            ],
+            "final_delta": 0.503415,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.03142,
+            -0.005315
+          ],
+          "increment_vs_first_cos": [
+            0.03142,
+            -0.026358
+          ],
+          "relative_step_magnitudes": [
+            0.108329,
+            0.100935,
+            0.104186
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.677801,
+              0.531499,
+              0.453351
+            ],
+            "final_delta": 0.453351,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.020591,
+            0.035812
+          ],
+          "increment_vs_first_cos": [
+            -0.020591,
+            0.066557
+          ],
+          "relative_step_magnitudes": [
+            0.104976,
+            0.102607,
+            0.100695
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.683444,
+              0.536777,
+              0.476026
+            ],
+            "final_delta": 0.476026,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.019022,
+            0.010597
+          ],
+          "increment_vs_first_cos": [
+            0.019022,
+            0.008087
+          ],
+          "relative_step_magnitudes": [
+            0.106959,
+            0.100656,
+            0.100195
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.695682,
+              0.554818,
+              0.457619
+            ],
+            "final_delta": 0.457619,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.018932,
+            0.034865
+          ],
+          "increment_vs_first_cos": [
+            -0.018932,
+            0.066166
+          ],
+          "relative_step_magnitudes": [
+            0.104951,
+            0.102838,
+            0.10072
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.70807,
+              0.587281,
+              0.48904
+            ],
+            "final_delta": 0.48904,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.014105,
+            0.001282
+          ],
+          "increment_vs_first_cos": [
+            0.014105,
+            -0.006844
+          ],
+          "relative_step_magnitudes": [
+            0.106464,
+            0.106516,
+            0.103721
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.686745,
+              0.570714,
+              0.509543
+            ],
+            "final_delta": 0.509543,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.052185,
+            0.030665
+          ],
+          "increment_vs_first_cos": [
+            0.052185,
+            0.024299
+          ],
+          "relative_step_magnitudes": [
+            0.109644,
+            0.104378,
+            0.103983
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "step_ops_0.005",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": false,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.005,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          0.68905,
+          0.868682
+        ],
+        "mean_vs_first_cos": [
+          0.68905,
+          0.659448
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.451534,
+              0.29613,
+              0.225542
+            ],
+            "final_delta": 0.225542,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.685931,
+            0.866963
+          ],
+          "increment_vs_first_cos": [
+            0.685931,
+            0.655381
+          ],
+          "relative_step_magnitudes": [
+            0.038957,
+            0.03201,
+            0.028553
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.444395,
+              0.293227,
+              0.22555
+            ],
+            "final_delta": 0.22555,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.701726,
+            0.875717
+          ],
+          "increment_vs_first_cos": [
+            0.701726,
+            0.676463
+          ],
+          "relative_step_magnitudes": [
+            0.038721,
+            0.032157,
+            0.028873
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.452195,
+              0.296344,
+              0.22498
+            ],
+            "final_delta": 0.22498,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.691647,
+            0.87569
+          ],
+          "increment_vs_first_cos": [
+            0.691647,
+            0.66239
+          ],
+          "relative_step_magnitudes": [
+            0.038059,
+            0.03141,
+            0.028091
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.45775,
+              0.301109,
+              0.231972
+            ],
+            "final_delta": 0.231972,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.68628,
+            0.868243
+          ],
+          "increment_vs_first_cos": [
+            0.68628,
+            0.655376
+          ],
+          "relative_step_magnitudes": [
+            0.038332,
+            0.031715,
+            0.028471
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.445754,
+              0.293121,
+              0.223296
+            ],
+            "final_delta": 0.223296,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.683013,
+            0.863171
+          ],
+          "increment_vs_first_cos": [
+            0.683013,
+            0.653239
+          ],
+          "relative_step_magnitudes": [
+            0.038435,
+            0.031609,
+            0.028048
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              0.460949,
+              0.299692,
+              0.230111
+            ],
+            "final_delta": 0.230111,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            0.685704,
+            0.862306
+          ],
+          "increment_vs_first_cos": [
+            0.685704,
+            0.653839
+          ],
+          "relative_step_magnitudes": [
+            0.041037,
+            0.033188,
+            0.029595
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "step_ops_0.02",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.0,
+        "renormalize": false,
+        "interpass_noise": 0.0,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.02,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          -0.265857,
+          -0.194151
+        ],
+        "mean_vs_first_cos": [
+          -0.265857,
+          -0.100699
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.277712,
+              0.849476,
+              0.715942
+            ],
+            "final_delta": 0.715942,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.257367,
+            -0.196383
+          ],
+          "increment_vs_first_cos": [
+            -0.257367,
+            -0.10293
+          ],
+          "relative_step_magnitudes": [
+            0.088656,
+            0.09672,
+            0.091691
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.281535,
+              0.81545,
+              0.716549
+            ],
+            "final_delta": 0.716549,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.294725,
+            -0.159334
+          ],
+          "increment_vs_first_cos": [
+            -0.294725,
+            -0.097414
+          ],
+          "relative_step_magnitudes": [
+            0.088327,
+            0.093547,
+            0.08788
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.243703,
+              0.821977,
+              0.696433
+            ],
+            "final_delta": 0.696433,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.269865,
+            -0.168834
+          ],
+          "increment_vs_first_cos": [
+            -0.269865,
+            -0.093027
+          ],
+          "relative_step_magnitudes": [
+            0.084372,
+            0.089919,
+            0.083798
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.286833,
+              0.866249,
+              0.72344
+            ],
+            "final_delta": 0.72344,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.244159,
+            -0.218433
+          ],
+          "increment_vs_first_cos": [
+            -0.244159,
+            -0.095928
+          ],
+          "relative_step_magnitudes": [
+            0.086043,
+            0.096842,
+            0.092805
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.25624,
+              0.850672,
+              0.715283
+            ],
+            "final_delta": 0.715283,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.251231,
+            -0.194168
+          ],
+          "increment_vs_first_cos": [
+            -0.251231,
+            -0.096835
+          ],
+          "relative_step_magnitudes": [
+            0.086955,
+            0.095479,
+            0.090526
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.431032,
+              0.915211,
+              0.728952
+            ],
+            "final_delta": 0.728952,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.277794,
+            -0.227756
+          ],
+          "increment_vs_first_cos": [
+            -0.277794,
+            -0.118061
+          ],
+          "relative_step_magnitudes": [
+            0.101013,
+            0.113497,
+            0.104353
+          ]
+        }
+      ],
+      "seconds": 0.4
+    },
+    {
+      "condition": "all_levers",
+      "plan": {
+        "schema": "aura.intrinsic_recurrence.v1",
+        "prelude_end": 7,
+        "coda_start": 21,
+        "window_size": 14,
+        "iterations": 4,
+        "anchor_injection": 0.1,
+        "renormalize": true,
+        "interpass_noise": 0.05,
+        "noise_seed": 20260724,
+        "total_layers": 28,
+        "effective_depth": 70,
+        "base_equivalent": false
+      },
+      "step_operator_scale": 0.02,
+      "prompts": 6,
+      "aggregate": {
+        "mean_consecutive_cos": [
+          -0.467415,
+          -0.317537
+        ],
+        "mean_vs_first_cos": [
+          -0.467415,
+          -0.009203
+        ],
+        "diverged": 0,
+        "at_fixed_point": 0
+      },
+      "per_prompt": [
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.576925,
+              1.039165,
+              1.136968
+            ],
+            "final_delta": 1.136968,
+            "contracting": false,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.47909,
+            -0.321921
+          ],
+          "increment_vs_first_cos": [
+            -0.47909,
+            -0.013831
+          ],
+          "relative_step_magnitudes": [
+            0.116132,
+            0.128968,
+            0.13499
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.536163,
+              1.029735,
+              1.174766
+            ],
+            "final_delta": 1.174766,
+            "contracting": false,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.497302,
+            -0.276303
+          ],
+          "increment_vs_first_cos": [
+            -0.497302,
+            0.008725
+          ],
+          "relative_step_magnitudes": [
+            0.112696,
+            0.125408,
+            0.132324
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.544046,
+              1.041485,
+              1.084488
+            ],
+            "final_delta": 1.084488,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.477695,
+            -0.3263
+          ],
+          "increment_vs_first_cos": [
+            -0.477695,
+            -0.018503
+          ],
+          "relative_step_magnitudes": [
+            0.111985,
+            0.126048,
+            0.124633
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.507992,
+              1.041794,
+              1.181517
+            ],
+            "final_delta": 1.181517,
+            "contracting": false,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.463527,
+            -0.299312
+          ],
+          "increment_vs_first_cos": [
+            -0.463527,
+            -0.002772
+          ],
+          "relative_step_magnitudes": [
+            0.108573,
+            0.122564,
+            0.133446
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.420544,
+              1.074219,
+              1.079939
+            ],
+            "final_delta": 1.079939,
+            "contracting": true,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.414179,
+            -0.346016
+          ],
+          "increment_vs_first_cos": [
+            -0.414179,
+            -0.019013
+          ],
+          "relative_step_magnitudes": [
+            0.106578,
+            0.122496,
+            0.127179
+          ]
+        },
+        {
+          "dynamics": {
+            "schema": "aura.intrinsic_recurrence.v1",
+            "iterations": 4,
+            "measurable": true,
+            "diverged": false,
+            "relative_deltas": [
+              1.674568,
+              1.099714,
+              1.194828
+            ],
+            "final_delta": 1.194828,
+            "contracting": false,
+            "at_fixed_point": false,
+            "oscillating": false
+          },
+          "consecutive_increment_cos": [
+            -0.472699,
+            -0.33537
+          ],
+          "increment_vs_first_cos": [
+            -0.472699,
+            -0.009823
+          ],
+          "relative_step_magnitudes": [
+            0.125909,
+            0.143031,
+            0.152307
+          ]
+        }
+      ],
+      "seconds": 0.4
+    }
+  ],
+  "elapsed_seconds": 4.2
+}

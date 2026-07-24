@@ -56,16 +56,54 @@ def test_one_iteration_is_bit_identical_to_the_base_model():
 
 
 def test_stabilizers_do_not_perturb_the_first_pass():
-    """Anchor injection and renorm apply only at RE-entry, so T=1 stays
-    identical no matter how they are configured."""
+    """Anchor injection, renorm and inter-pass noise apply only at RE-entry,
+    so T=1 stays identical no matter how they are configured."""
     model = _model()
     base = model(TOKENS)
-    for injection, renorm in ((0.5, False), (0.0, True), (1.0, True)):
+    for injection, renorm, noise in (
+        (0.5, False, 0.0),
+        (0.0, True, 0.0),
+        (1.0, True, 0.0),
+        (0.0, False, 0.5),
+        (0.5, True, 0.25),
+    ):
         plan = RecurrentDepthPlan(
             prelude_end=2, coda_start=6, iterations=1,
             anchor_injection=injection, renormalize=renorm,
+            interpass_noise=noise, noise_seed=9,
         )
         assert bool(mx.allclose(base, recurrent_logits(model, TOKENS, plan), atol=1e-5))
+
+
+# ── Inter-pass noise: the divergence kick, deterministic and off-by-default
+
+
+def test_interpass_noise_perturbs_only_reentries_and_replays_exactly():
+    """The kick must exist (trajectories differ from the plain loop), must
+    replay bit-for-bit under the same seed (results stay auditable), and
+    must differ across seeds (it is noise, not a constant offset)."""
+    model = _model()
+    plain = RecurrentDepthPlan(prelude_end=2, coda_start=6, iterations=3)
+    noisy = RecurrentDepthPlan(
+        prelude_end=2, coda_start=6, iterations=3,
+        interpass_noise=0.1, noise_seed=13,
+    )
+    _, base_trajectory = recurrent_hidden_states(model, TOKENS, plain)
+    _, noisy_trajectory = recurrent_hidden_states(model, TOKENS, noisy)
+    _, replay_trajectory = recurrent_hidden_states(model, TOKENS, noisy)
+    # First pass untouched; later passes kicked.
+    assert bool(mx.allclose(base_trajectory[0], noisy_trajectory[0], atol=1e-6))
+    assert not bool(mx.allclose(base_trajectory[1], noisy_trajectory[1], atol=1e-4))
+    for ours, again in zip(noisy_trajectory, replay_trajectory, strict=True):
+        assert bool(mx.array_equal(ours, again)), "same seed must replay exactly"
+    other_seed = RecurrentDepthPlan(
+        prelude_end=2, coda_start=6, iterations=3,
+        interpass_noise=0.1, noise_seed=14,
+    )
+    _, other_trajectory = recurrent_hidden_states(model, TOKENS, other_seed)
+    assert not bool(
+        mx.allclose(noisy_trajectory[1], other_trajectory[1], atol=1e-5)
+    ), "different seeds must kick differently"
 
 
 # ── The real token stream gets deeper ───────────────────────────────────
@@ -185,6 +223,10 @@ def test_invalid_plans_are_refused():
         RecurrentDepthPlan(prelude_end=2, coda_start=6, anchor_injection=1.5)
     with pytest.raises(ValueError, match="renormalize"):
         RecurrentDepthPlan(prelude_end=2, coda_start=6, renormalize="yes")
+    with pytest.raises(ValueError, match="interpass_noise"):
+        RecurrentDepthPlan(prelude_end=2, coda_start=6, interpass_noise=1.5)
+    with pytest.raises(ValueError, match="noise_seed"):
+        RecurrentDepthPlan(prelude_end=2, coda_start=6, noise_seed=-1)
     with pytest.raises(ValueError, match="smaller than the plan"):
         RecurrentDepthPlan(prelude_end=2, coda_start=6).effective_depth(4)
     with pytest.raises(ValueError, match="exceeds the model"):
