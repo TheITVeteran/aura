@@ -841,7 +841,13 @@ def install_default_catalog(engine: HomeostateEngine) -> None:
 
 # ── Singleton + live assembly ─────────────────────────────────────────────
 
-_engine_lock = threading.Lock()
+# RLock, load-bearing: get_homeostate_reactor() and
+# get_convergence_scheduler() call get_homeostate_engine() WHILE holding
+# this lock. With a plain Lock that nested acquire self-deadlocked the
+# event loop at boot PHASE 5.2 forever — every desktop boot after the
+# triad wave wedged there (reproduced 2026-07-24: 280+s of continuous 5s
+# loop stalls, stall dumps bottoming out at `with _engine_lock:`).
+_engine_lock = threading.RLock()
 _engine: HomeostateEngine | None = None
 _reactor: HomeostateReactor | None = None
 _beacon: DegradationBeacon | None = None
