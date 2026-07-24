@@ -22,6 +22,7 @@ evidence, so a winning branch carries WHY it won ("passed 3/3 arithmetic
 claims; python compiles") — not "converged prettier". No network, no
 subprocess, no model calls: safe at any point inside the worker episode.
 """
+
 from __future__ import annotations
 
 import ast
@@ -29,6 +30,9 @@ import logging
 import re
 from typing import Any
 
+from core.brain.llm.latent_cortex.atomic_decomposition import (
+    decomposition_check,
+)
 from core.brain.llm.latent_cortex.output_quality import (
     evaluate_facet_coverage,
 )
@@ -40,7 +44,7 @@ from core.brain.llm.latent_cortex.response_contracts import (
 
 logger = logging.getLogger("Aura.LatentCortex.TaskVerifiers")
 
-TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v2"
+TASK_VERIFIER_SCHEMA = "aura.latent_task_verifier.v3"
 
 # The trailing guard rejects decimal continuations ("= 40.5") without
 # rejecting sentence-final claims ("= 40."). The leading guard keeps the
@@ -160,9 +164,7 @@ def check_degeneracy(text: str) -> dict[str, Any]:
     diversity = len(set(trigrams)) / max(1, len(trigrams))
     severity = max(0.0, (0.5 - diversity) * 2.0) if diversity < 0.5 else 0.0
     sentences = [s for s in _SENTENCE_SPLIT_RE.split(text or "") if s.strip()]
-    cue_hits = sum(
-        len(pattern.findall(text or "")) for pattern in _ANSWER_FACET_HINTS.values()
-    )
+    cue_hits = sum(len(pattern.findall(text or "")) for pattern in _ANSWER_FACET_HINTS.values())
     cue_density = cue_hits / max(1, len(sentences))
     if cue_density > 1.5:
         severity += min(1.0, (cue_density - 1.5) / 2.0)
@@ -232,6 +234,7 @@ class EpisodeTaskVerifier:
     """
 
     _WEIGHTS = {
+        "atomic_decomposition": 0.40,
         "response_contract": 0.55,
         "arithmetic": 0.35,
         "code": 0.25,
@@ -276,14 +279,14 @@ class EpisodeTaskVerifier:
         if total <= 0.0:
             return None
         earned = sum(
-            self.facet_reliability.get(name, 1.0)
-            for name in requested
-            if name in satisfied
+            self.facet_reliability.get(name, 1.0) for name in requested if name in satisfied
         )
         return earned / total
 
     def evaluate(self, text: str) -> dict[str, Any]:
+        atomic = decomposition_check(text, objective=self.objective)
         checks = {
+            "atomic_decomposition": atomic,
             "arithmetic": check_arithmetic_claims(text),
             "code": check_code_blocks(text),
             "facets": check_facet_coverage(text, self.objective),
@@ -295,9 +298,7 @@ class EpisodeTaskVerifier:
                 self.response_contract,
             )
         if self.facet_reliability:
-            checks["facets"]["score"] = self._facet_weighted_score(
-                checks["facets"]
-            )
+            checks["facets"]["score"] = self._facet_weighted_score(checks["facets"])
             checks["facets"]["reliability_weighted"] = True
         weighted = total_weight = 0.0
         for name, result in checks.items():
@@ -314,6 +315,10 @@ class EpisodeTaskVerifier:
         degeneracy = check_degeneracy(text)
         if degeneracy.get("applicable"):
             score *= float(degeneracy["factor"])
+        # Holistic checks cannot acquire branch-selection authority when the
+        # candidate omitted a structurally required dependency or source span.
+        if text.strip() and not atomic["valid"]:
+            score = min(score, 0.25)
         row = {
             "schema": TASK_VERIFIER_SCHEMA,
             "score": round(score, 6),
@@ -321,6 +326,7 @@ class EpisodeTaskVerifier:
                 name for name, result in checks.items() if result.get("score") is not None
             ],
             "unverified": total_weight <= 0,
+            "grade_admissible": bool(atomic["valid"]),
             "degeneracy": degeneracy,
             "checks": checks,
             "text_chars": len(text or ""),
@@ -339,13 +345,10 @@ class EpisodeTaskVerifier:
         """Bounded evidence: every evaluation's score + the best row's why."""
         excluded = set(exclude_evaluation_indices or ())
         if any(
-            type(index) is not int or not 0 <= index < len(self.evaluations)
-            for index in excluded
+            type(index) is not int or not 0 <= index < len(self.evaluations) for index in excluded
         ):
             raise ValueError("excluded verifier evaluation index is invalid")
-        evaluations = [
-            row for index, row in enumerate(self.evaluations) if index not in excluded
-        ]
+        evaluations = [row for index, row in enumerate(self.evaluations) if index not in excluded]
         if not evaluations:
             return {
                 "schema": TASK_VERIFIER_SCHEMA,
@@ -368,9 +371,7 @@ class EpisodeTaskVerifier:
             {
                 "facet": name,
                 "satisfied": name in (facets.get("satisfied") or []),
-                "excerpt": str((facets.get("excerpts") or {}).get(name, ""))[
-                    :200
-                ],
+                "excerpt": str((facets.get("excerpts") or {}).get(name, ""))[:200],
             }
             for name in (facets.get("requested") or [])
         ]
@@ -387,6 +388,10 @@ class EpisodeTaskVerifier:
                 for name, result in best["checks"].items()
                 if result.get("failures")
             },
+            "atomic_decomposition": dict(
+                best["checks"]["atomic_decomposition"].get("receipt") or {}
+            ),
+            "grade_admissible": bool(best.get("grade_admissible")),
             "facet_judgments": judgments,
             "facet_reliability": dict(self.facet_reliability),
             "response_contract_required": bool(self.response_contract),

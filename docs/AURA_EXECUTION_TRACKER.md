@@ -26661,3 +26661,54 @@ count completion is approximately 56.3%-88.6%, with a midpoint planning
 estimate of 68.9%. Next: publish CP352, then implement SPARK-039's atomic
 decomposition verifier boundary. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+## Checkpoint 2026-07-24-353: Verifier Inputs Become Atomic Before Grading
+
+SPARK-039 adds a strict structural boundary before task-verifier scoring.
+`atomic_decomposition.py` converts every bounded visible candidate into exact,
+content-addressed source spans and typed support, derivation, condition,
+qualification, and reference transitions. The receipt contains no candidate
+text or hidden reasoning. It binds the candidate and objective hashes, atom
+partition, transition graph, meaningful-character coverage, objective
+grounding summary, omitted dependencies, and grading-authority decision.
+
+The worker independently reconstructs the exact sentence, clause, code-fence,
+and maximum-length partition against private candidate text. Long fenced code
+is split into bounded code atoms rather than rejected. Explicit connective and
+reference cues must bind to another atom or, for a leading cue, the immutable
+objective. Missing source positions, overlaps, stale hashes, kind/cue
+mismatches, cycles, omitted dependencies, and forged authority fail closed.
+Empty candidates preserve the existing neutral/unverified contract and do not
+earn a fabricated score.
+
+`EpisodeTaskVerifier` v3 executes decomposition before arithmetic, code,
+facets, grounding, or response-contract checks and caps structurally invalid
+candidates below branch-selection authority. The text-free envelope crosses
+the worker boundary, where `LatentCortexService` independently validates atom
+and transition commitments, topology, omission accounting, and the authority
+bit. The decomposer joins the critic source closure, so changing it invalidates
+the pinned critic identity instead of silently changing the judge.
+
+Focused atomic, task-verifier, verified-best, worker, and service coverage
+passes 141/141. The complete latent-cortex ownership suite passes 815/815 in
+27.76 seconds. The clean closeout audit enumerates 7,899 tracked files,
+including 4,876 code files and 1,541,582 code lines, and passes every configured
+gate. The semantic ledger contains 1,541 current entries and 428 fully reviewed
+code files, so whole-repository semantic closeout remains open. The enterprise
+ratchet remains red at the inherited 180 findings and 50 high/critical
+findings; an exact parent `37ded9e82` comparison has identical counts and
+finding identities, so CP353 adds no scanner debt.
+
+This checkpoint proves structural coverage and declared dependency
+completeness, not semantic truth. SPARK-040 through SPARK-046 remain open for
+deterministic domain routing, calibrated process verification, independent
+derivation/falsification, counterfactual tests, prefix stability, and
+correlation-aware fusion. It does not prove resident-32B utility, reasoning
+gain, adapter/RLC positive interaction, or frontier capability.
+
+This is total checkpoint record 414. The revised forecast remains 466-733 total
+records, now approximately 52-319 records after this checkpoint. Checkpoint-
+count completion is approximately 56.5%-88.8%, with a midpoint planning
+estimate of 69.1%. Next: publish CP353, then implement SPARK-040's deterministic
+verifier router. Final multi-hour soaks remain deferred until every shorter
+gate is green.

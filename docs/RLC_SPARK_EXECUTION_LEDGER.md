@@ -1479,9 +1479,25 @@ before those dependencies close is not admissible.
 
 ## E. Verifier mesh and local repair
 
-- [ ] **SPARK-039 - Atomic decomposition.** Convert candidate reasoning into
-  typed claims/transitions before grading, verify decomposition coverage, and
-  detect omitted dependencies.
+- [x] **SPARK-039 - Atomic decomposition.** `atomic_decomposition.py` converts
+  every bounded visible verifier candidate into text-free, content-addressed
+  claim spans and typed support, derivation, condition, qualification, and
+  reference transitions before holistic grading. It proves complete meaningful
+  source coverage, bounded/nonoverlapping atoms, transition commitments,
+  acyclic topology, objective-bound leading connectives, and explicit omission
+  accounting. Missing dependencies or source spans deny grading authority;
+  empty candidates remain neutral/unverified rather than earning a fabricated
+  score. `EpisodeTaskVerifier` v3 runs this gate before arithmetic, code,
+  facets, grounding, and response-contract checks and caps structurally invalid
+  candidates below branch-selection authority.
+
+  The worker reconstructs the full receipt against private candidate text. The
+  service independently validates the text-free envelope and rejects forged
+  atom hashes or authority. The decomposer is part of the critic source closure,
+  so source changes invalidate critic identity instead of silently changing the
+  judge. Focused atomic/verifier/verified-best/wiring coverage passes 141/141.
+  This closes structural decomposition, not claim truth; SPARK-040 through
+  SPARK-046 remain open for domain routing and independent semantic grading.
 - [ ] **SPARK-040 - Deterministic verifier router.** Route eligible claims to
   sandboxed code, calculators, schemas, compilers, SAT/SMT, theorem proving,
   database constraints, planning, simulation, or retrieval with explicit

@@ -3512,6 +3512,10 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
     assert captured["verifier"] is not None
     guidance = body["receipt"]["verifier_guidance"]
     assert guidance["evaluations"] == 1
+    assert guidance["schema"] == "aura.latent_task_verifier.v3"
+    assert guidance["grade_admissible"] is True
+    assert guidance["atomic_decomposition"]["grade_admissible"] is True
+    assert guidance["atomic_decomposition"]["coverage"]["coverage_ratio"] == 1.0
     assert "arithmetic" in guidance["best_applicable_checks"]
     assert not guidance.get("best_failures"), "correct arithmetic must not be flagged"
     assert guidance["outcome_checked"] is False

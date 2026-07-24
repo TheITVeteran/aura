@@ -572,6 +572,28 @@ class LatentCortexService:
         from core.brain.llm.latent_cortex.runtime_identity import worker_identity_errors
 
         errors.extend(worker_identity_errors(receipt))
+        guidance = receipt.get("verifier_guidance")
+        if (
+            isinstance(guidance, dict)
+            and guidance.get("schema") == "aura.latent_task_verifier.v3"
+            and type(guidance.get("evaluations")) is int
+            and guidance["evaluations"] > 0
+        ):
+            try:
+                from core.brain.llm.latent_cortex.atomic_decomposition import (
+                    validate_atomic_decomposition_envelope,
+                )
+
+                atomic = validate_atomic_decomposition_envelope(
+                    guidance.get("atomic_decomposition")
+                )
+                if (
+                    atomic["grade_admissible"] is not True
+                    or guidance.get("grade_admissible") is not True
+                ):
+                    raise ValueError("atomic decomposition denied grading authority")
+            except (ImportError, TypeError, ValueError):
+                errors.append("atomic_decomposition_unproven")
         if config.get("critic_blind_spot_evidence") is not None:
             try:
                 from core.brain.llm.latent_cortex.critic_identity import (
@@ -592,7 +614,6 @@ class LatentCortexService:
                     raise ValueError("worker critic evidence differs from service snapshot")
                 if blind_spots["critic_reliability_admitted"] is not True:
                     raise ValueError("critic reliability gate did not admit authority")
-                guidance = receipt.get("verifier_guidance")
                 if (
                     not isinstance(guidance, dict)
                     or guidance.get("requested") is not True

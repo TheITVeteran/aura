@@ -12,6 +12,16 @@ Public surface:
     run_experiment_*                       — experiments.py (falsification harness)
 """
 
+from core.brain.llm.latent_cortex.atomic_decomposition import (
+    ATOMIC_DECOMPOSITION_SCHEMA,
+    AtomKind,
+    TransitionKind,
+    atom_ids,
+    build_atomic_decomposition,
+    decomposition_check,
+    validate_atomic_decomposition,
+    validate_atomic_decomposition_envelope,
+)
 from core.brain.llm.latent_cortex.latent_tree_search import (
     LatentTreeSearchConfig,
     build_empty_latent_tree_receipt,
@@ -41,6 +51,8 @@ from core.brain.llm.latent_cortex.virtual_quanta import (
 )
 
 __all__ = [
+    "ATOMIC_DECOMPOSITION_SCHEMA",
+    "AtomKind",
     "BranchConfig",
     "ComputeBudget",
     "CortexConfig",
@@ -50,14 +62,20 @@ __all__ = [
     "LatentReasoningResult",
     "LatentTreeSearchConfig",
     "RecurrenceConfig",
+    "TransitionKind",
     "VirtualQuantaConfig",
     "WorkspaceConfig",
+    "atom_ids",
+    "build_atomic_decomposition",
     "build_empty_virtual_quanta_receipt",
     "build_empty_latent_tree_receipt",
+    "decomposition_check",
     "append_latent_tree_transaction",
     "run_latent_tree_search",
     "validate_latent_tree_receipt",
     "validate_latent_tree_transaction",
+    "validate_atomic_decomposition",
+    "validate_atomic_decomposition_envelope",
     "run_virtual_quanta",
     "validate_virtual_quanta_receipt",
 ]

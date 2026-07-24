@@ -182,6 +182,28 @@ This proves bounded causal mechanics, not capability gain. Utility requires a
 fresh frozen resident campaign in which the quanta arm beats no-quanta and
 equal-compute controls without leakage, residue, or regression.
 
+### Atomic verifier decomposition
+Before a candidate can receive task-verifier authority, SPARK-039 converts its
+bounded visible probe into content-addressed claim spans and typed dependency
+transitions. Every non-whitespace source position must belong to exactly one
+bounded atom; sentence, clause, code-fence, and maximum-length boundaries are
+committed without putting answer text or hidden reasoning in the receipt.
+Explicit support, conclusion, condition, contrast, and reference cues create
+machine-checkable dependency obligations. A leading connective may bind to the
+immutable objective; every other cue must bind to another atom. Missing links,
+cycles, overlap, source gaps, stale hashes, or forged grading authority make the
+decomposition ineligible before arithmetic, code, facet, or grounding scores
+are combined.
+
+The worker reconstructs every span against the private candidate. The service
+independently validates the text-free envelope, atom and transition
+commitments, graph topology, omission accounting, and authority bit. The
+decomposer is included in the critic source closure, so any implementation
+change invalidates the pinned critic identity until the new closure is proven.
+This establishes structural coverage, not semantic truth: SPARK-040 through
+SPARK-046 remain responsible for routing each atom to independent domain,
+process, generative, counterfactual, stability, and fused verification.
+
 ### Latent optimization (gradient descent over thoughts)
 Differentiable proxy that cannot leak answers:
 `S(Z) = λ_r·R(Z) − λ_d·D(Z, Z₀)` where **R** = teacher-forced logprob of the

@@ -30,6 +30,7 @@ MAX_SHARED_BLIND_SPOT_UPPER_BOUND = 0.35
 _MAX_LEDGER_ROWS = 5_000
 
 _CRITIC_SOURCE_FILES = (
+    "core/brain/llm/latent_cortex/atomic_decomposition.py",
     "core/brain/llm/latent_cortex/task_verifiers.py",
     "core/brain/llm/latent_cortex/output_quality.py",
     "core/brain/llm/latent_cortex/response_contracts.py",
@@ -38,6 +39,7 @@ _CRITIC_SOURCE_FILES = (
 )
 _ALLOWED_INTERNAL_IMPORTS = {
     "core.brain.frontier_evidence_v5",
+    "core.brain.llm.latent_cortex.atomic_decomposition",
     "core.brain.llm.latent_cortex.frontier_tasks",
     "core.brain.llm.latent_cortex.output_quality",
     "core.brain.llm.latent_cortex.response_contracts",
@@ -98,9 +100,7 @@ def audit_python_dependencies(sources: Mapping[str, str]) -> dict[str, Any]:
                 imports.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imports.add(node.module)
-    forbidden = sorted(
-        name for name in imports if name.split(".", 1)[0] in _FORBIDDEN_IMPORT_ROOTS
-    )
+    forbidden = sorted(name for name in imports if name.split(".", 1)[0] in _FORBIDDEN_IMPORT_ROOTS)
     undeclared_internal = sorted(
         name
         for name in imports
@@ -151,9 +151,7 @@ def build_generator_function_identity(worker_identity: Mapping[str, Any]) -> dic
     if not _sha256(adapter_sha):
         adapter_sha = ""
     stack_gaps = worker_identity.get("worker_stack_identity_gaps")
-    if not isinstance(stack_gaps, list) or any(
-        not isinstance(item, str) for item in stack_gaps
-    ):
+    if not isinstance(stack_gaps, list) or any(not isinstance(item, str) for item in stack_gaps):
         stack_gaps = ["serving_stack_identity_unavailable"]
     tokenizer = worker_identity.get("worker_tokenizer")
     quantization = worker_identity.get("worker_quantization")
@@ -171,9 +169,7 @@ def build_generator_function_identity(worker_identity: Mapping[str, Any]) -> dic
         "worker_source_sha256": source_sha,
         "adapter_stack_sha256": adapter_sha,
         "tokenizer_sha256": _sha(tokenizer if isinstance(tokenizer, Mapping) else {}),
-        "quantization_sha256": _sha(
-            quantization if isinstance(quantization, Mapping) else {}
-        ),
+        "quantization_sha256": _sha(quantization if isinstance(quantization, Mapping) else {}),
         "stack_identity_gaps": sorted(set(stack_gaps)),
     }
     return {**payload, "function_sha256": _sha(payload)}
@@ -238,9 +234,7 @@ def build_critic_identity(
     payload = {
         "schema": CRITIC_IDENTITY_SCHEMA,
         "implementation_kind": "deterministic_symbolic_parameterless",
-        "class_path": (
-            f"{type(verifier).__module__}.{type(verifier).__qualname__}"
-        ),
+        "class_path": (f"{type(verifier).__module__}.{type(verifier).__qualname__}"),
         "critic_function_sha256": critic_function_sha256,
         "source_identity": source,
         "runtime_state_audit": state,
@@ -283,8 +277,7 @@ def validate_critic_identity(
         value.get("implementation_kind") != "deterministic_symbolic_parameterless"
         or value.get("class_path")
         != "core.brain.llm.latent_cortex.task_verifiers.EpisodeTaskVerifier"
-        or value.get("critic_function_sha256")
-        != expected_source["source_closure_sha256"]
+        or value.get("critic_function_sha256") != expected_source["source_closure_sha256"]
         or value.get("source_identity") != expected_source
         or value.get("generator_identity") != expected_generator
         or not isinstance(state, dict)
@@ -301,8 +294,7 @@ def validate_critic_identity(
         or state.get("non_data_state") != []
         or state.get("trainable_parameter_count") != 0
         or state.get("passed") is not True
-        or value.get("weight_identity_relation")
-        != "zero_parameters_vs_resident_neural_parameters"
+        or value.get("weight_identity_relation") != "zero_parameters_vs_resident_neural_parameters"
         or value.get("function_identity_distinct") is not True
         or expected_source["dependency_audit"]["passed"] is not True
         or value["critic_function_sha256"] == expected_generator["function_sha256"]
@@ -311,7 +303,9 @@ def validate_critic_identity(
     return dict(value)
 
 
-def _wilson_interval(successes: int, trials: int, *, z: float = 1.959963984540054) -> tuple[float, float]:
+def _wilson_interval(
+    successes: int, trials: int, *, z: float = 1.959963984540054
+) -> tuple[float, float]:
     if trials <= 0:
         return 0.0, 1.0
     proportion = successes / trials
@@ -320,10 +314,7 @@ def _wilson_interval(successes: int, trials: int, *, z: float = 1.95996398454005
     center = (proportion + z2 / (2.0 * trials)) / denominator
     radius = (
         z
-        * math.sqrt(
-            proportion * (1.0 - proportion) / trials
-            + z2 / (4.0 * trials * trials)
-        )
+        * math.sqrt(proportion * (1.0 - proportion) / trials + z2 / (4.0 * trials * trials))
         / denominator
     )
     return max(0.0, center - radius), min(1.0, center + radius)
@@ -441,20 +432,14 @@ def build_shared_blind_spot_evidence(
                 {
                     "task_sha256": row["task_sha256"],
                     "candidate_sha256": row["candidate_sha256"],
-                    "independent_grader_sha256": row[
-                        "independent_grader_sha256"
-                    ],
-                    "independent_receipt_sha256": row[
-                        "independent_receipt_sha256"
-                    ],
+                    "independent_grader_sha256": row["independent_grader_sha256"],
+                    "independent_receipt_sha256": row["independent_receipt_sha256"],
                     "generator_correct": row["generator_correct"],
                     "critic_accepted": row["critic_accepted"],
                 }
                 for row in sorted(
                     rows,
-                    key=lambda item: (
-                        item["task_sha256"], item["candidate_sha256"]
-                    ),
+                    key=lambda item: (item["task_sha256"], item["candidate_sha256"]),
                 )
             ]
         ),
@@ -540,12 +525,9 @@ def validate_shared_blind_spot_evidence(
         raise ValueError("shared blind-spot confusion matrix is invalid")
     checked = sum(matrix.values())
     generator_errors = (
-        matrix["generator_error_critic_reject"]
-        + matrix["generator_error_critic_accept"]
+        matrix["generator_error_critic_reject"] + matrix["generator_error_critic_accept"]
     )
-    lower, upper = _wilson_interval(
-        matrix["generator_error_critic_accept"], generator_errors
-    )
+    lower, upper = _wilson_interval(matrix["generator_error_critic_accept"], generator_errors)
     graders = value.get("independent_graders")
     grader_ids = value.get("independent_grader_sha256s")
     powered = bool(
@@ -576,10 +558,8 @@ def validate_shared_blind_spot_evidence(
         or value.get("shared_blind_spot_rate") != expected_rate
         or interval.get("lower") != round(lower, 8)
         or interval.get("upper") != round(upper, 8)
-        or value.get("maximum_admitted_upper_bound")
-        != MAX_SHARED_BLIND_SPOT_UPPER_BOUND
-        or value.get("evidence_state")
-        != ("measured" if powered else "bootstrap_unmeasured")
+        or value.get("maximum_admitted_upper_bound") != MAX_SHARED_BLIND_SPOT_UPPER_BOUND
+        or value.get("evidence_state") != ("measured" if powered else "bootstrap_unmeasured")
         or value.get("critic_reliability_admitted")
         is not (not powered or upper <= MAX_SHARED_BLIND_SPOT_UPPER_BOUND)
     ):
@@ -602,9 +582,7 @@ class CriticBlindSpotLedger:
                     / "checked_outcomes.jsonl"
                 )
             except (ImportError, AttributeError, RuntimeError, TypeError):
-                path = Path(
-                    "data/latent_cortex/critic_blind_spots/checked_outcomes.jsonl"
-                )
+                path = Path("data/latent_cortex/critic_blind_spots/checked_outcomes.jsonl")
         self.path = Path(path)
         self._rows: list[dict[str, Any]] = []
         self._keys: set[tuple[str, str, str, str, str]] = set()
@@ -638,9 +616,7 @@ class CriticBlindSpotLedger:
                             generator_function_sha256=str(
                                 row.get("generator_function_sha256") or ""
                             ),
-                            critic_function_sha256=str(
-                                row.get("critic_function_sha256") or ""
-                            ),
+                            critic_function_sha256=str(row.get("critic_function_sha256") or ""),
                         )
                         key = self._key(validated)
                         if key in self._keys:
@@ -712,8 +688,7 @@ class CriticBlindSpotLedger:
                         gateway.write_text(
                             self.path,
                             "".join(
-                                json.dumps(item, sort_keys=True, separators=(",", ":"))
-                                + "\n"
+                                json.dumps(item, sort_keys=True, separators=(",", ":")) + "\n"
                                 for item in rows
                             ),
                             source="latent_critic_blind_spots.compact",
