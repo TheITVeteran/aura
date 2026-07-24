@@ -202,6 +202,76 @@ def _branch_isolation_fields(config, *, exchanges=0):
     }
 
 
+def _kv_state_tree_fields(config, *, episode_id, n_layers=2):
+    from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
+
+    class AttrCache:
+        def __init__(self, marker):
+            self.keys = np.full((1, 1, 64, 4), marker, dtype=np.float32)
+            self.values = np.full((1, 1, 64, 4), marker + 0.5, dtype=np.float32)
+            self.offset = 64
+
+        def append(self, count, marker):
+            self.keys = np.concatenate(
+                [
+                    self.keys[:, :, : self.offset, :],
+                    np.full((1, 1, count, 4), marker, dtype=np.float32),
+                ],
+                axis=2,
+            )
+            self.values = np.concatenate(
+                [
+                    self.values[:, :, : self.offset, :],
+                    np.full((1, 1, count, 4), marker + 0.5, dtype=np.float32),
+                ],
+                axis=2,
+            )
+            self.offset += count
+
+    cache = [AttrCache(float(index)) for index in range(n_layers)]
+    tree = KVStateTree(
+        cache,
+        n_layers=n_layers,
+        episode_id=episode_id,
+        input_tokens_sha256="7" * 64,
+    )
+    rejected = tree.begin_speculation(
+        cache,
+        start=0,
+        end=n_layers,
+        purpose="recurrent_update",
+        branch_index=0,
+        parent_sha256=tree.root_sha256,
+    )
+    for index, item in enumerate(cache):
+        item.append(config["n_slots"], 10.0 + index)
+    rejected.observe_mutation(cache)
+    rejected.restore_parent(cache)
+    rejected.reject_after_restore(cache)
+
+    final = tree.begin_speculation(
+        cache,
+        start=0,
+        end=n_layers,
+        purpose="final_output_decode",
+        branch_index=0,
+        parent_sha256=tree.root_sha256,
+    )
+    for index, item in enumerate(cache):
+        item.append(config["n_slots"] + 1, 20.0 + index)
+    final.observe_mutation(cache)
+    final.commit(
+        label="final_output_lane",
+        authority="user_visible_decode",
+        latent_sha256=_digest("final-latent"),
+        final=True,
+    )
+    return {
+        "n_layers": n_layers,
+        "kv_state_tree": tree.receipt(),
+    }
+
+
 def _recurrent_grounding_fields(config, *, steps=1):
     from core.brain.llm.latent_cortex.bidirectional_reflector import (
         build_bidirectional_reflector_receipt,
@@ -2245,6 +2315,10 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
                     **_recurrent_grounding_fields(kwargs["config"], steps=7),
+                    **_kv_state_tree_fields(
+                        kwargs["config"],
+                        episode_id="abc",
+                    ),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,
@@ -2405,6 +2479,38 @@ def test_service_reconstructs_and_rejects_branch_isolation_tampering():
     }
     assert "branch_isolation_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, config)
+    )
+
+
+def test_service_reconstructs_and_rejects_kv_state_tree_tampering():
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        "episode_id": "ep-kv-tree",
+        **_identity_receipt(),
+        **_kv_state_tree_fields(
+            config,
+            episode_id="ep-kv-tree",
+        ),
+    }
+    assert "kv_state_tree_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    attacked = copy.deepcopy(receipt)
+    attacked["kv_state_tree"]["events"][0]["parent_cache_sha256"] = "0" * 64
+    attacked["kv_state_tree"]["events"][0]["event_sha256"] = _digest(
+        "attacker-rehashed-only-the-event"
+    )
+    assert "kv_state_tree_unproven" in (
+        LatentCortexService._receipt_contract_errors(attacked, config)
+    )
+
+    attacked = copy.deepcopy(receipt)
+    attacked["kv_state_tree"]["nodes"][-1]["cache_sha256"] = attacked["kv_state_tree"]["events"][0][
+        "child_cache_sha256"
+    ]
+    assert "kv_state_tree_unproven" in (
+        LatentCortexService._receipt_contract_errors(attacked, config)
     )
 
 
@@ -3283,6 +3389,10 @@ def _full_success_stub_client(captured):
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
                     **_recurrent_grounding_fields(kwargs["config"], steps=7),
+                    **_kv_state_tree_fields(
+                        kwargs["config"],
+                        episode_id="ep-gwt",
+                    ),
                     "params_unchanged": True,
                     "budget": {
                         "max_layer_apps": 1_000,

@@ -19,13 +19,14 @@ Experiment 4 can compare against equal-FLOP self-consistency sampling. If
 branches don't beat sampling at equal compute, they are expensive theater —
 the harness is allowed to say so.
 """
+
 from __future__ import annotations
 
 import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.brain.llm.latent_cortex.branch_exchange import (
     BRANCH_EXCHANGE_SCHEMA,
@@ -69,6 +70,9 @@ logger = logging.getLogger("Aura.LatentCortex.Branches")
 
 BRANCH_ISOLATION_SCHEMA = "aura.rlc.branch_isolation.v1"
 
+if TYPE_CHECKING:
+    from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
+
 # Cognitive roles for branch seeding, in priority order (from the spec's
 # "tied-weight latent society"). Branch k takes BRANCH_ROLES[k % len].
 BRANCH_ROLES: tuple[str, ...] = (
@@ -111,6 +115,8 @@ class BranchState:
     # savepoints overwrite). verify_probe(revert_on_drop) restores it.
     savepoint: Any = None
     savepoint_steps: int = 0
+    kv_boundary_sha256: str = ""
+    savepoint_kv_boundary_sha256: str = ""
     seed_sha256: str = ""
     candidate_sha256: str = ""
     candidate_step: int = 0
@@ -179,20 +185,27 @@ class BranchEnsemble:
         self._cross_exposure_started = False
         self._first_exchange_step: int | None = None
         self._context_sha256 = ""
-        self._configured_role_lesion = len({branch.role for branch in branches}) != len(
+        self._configured_role_lesion = len({branch.role for branch in branches}) != len(branches)
+        self._seed_alias_free = len({id(branch.workspace) for branch in branches}) == len(
+            branches
+        ) and len({id(branch.z) for branch in branches}) == len(branches)
+        self._seed_states_unique = len({branch.seed_sha256 for branch in branches}) == len(branches)
+        self._rng_streams_unique = len({branch.rng_stream_sha256 for branch in branches}) == len(
             branches
         )
-        self._seed_alias_free = (
-            len({id(branch.workspace) for branch in branches}) == len(branches)
-            and len({id(branch.z) for branch in branches}) == len(branches)
-        )
-        self._seed_states_unique = len(
-            {branch.seed_sha256 for branch in branches}
-        ) == len(branches)
-        self._rng_streams_unique = len(
-            {branch.rng_stream_sha256 for branch in branches}
-        ) == len(branches)
         self._support_weights = {branch.index: 1.0 for branch in branches}
+        self._kv_state_tree: KVStateTree | None = None
+        self._kv_cache: Any = None
+
+    def bind_kv_state_tree(self, tree: KVStateTree, cache: Any) -> None:
+        """Bind branch savepoints and rewinds to the episode KV lineage."""
+
+        if self._kv_state_tree is not None and self._kv_state_tree is not tree:
+            raise ValueError("branch ensemble KV state tree is already bound")
+        self._kv_state_tree = tree
+        self._kv_cache = cache
+        for branch in self.branches:
+            branch.kv_boundary_sha256 = tree.root_sha256
 
     def set_support_weights(self, weights: dict[int, float]) -> None:
         """Install bounded correlation discounts before peer exchange."""
@@ -236,11 +249,7 @@ class BranchEnsemble:
                 f"{len(role_override)} for {branch_cfg.n_branches} branches"
             )
         for k in range(branch_cfg.n_branches):
-            role = (
-                role_override[k]
-                if role_override
-                else BRANCH_ROLES[k % len(BRANCH_ROLES)]
-            )
+            role = role_override[k] if role_override else BRANCH_ROLES[k % len(BRANCH_ROLES)]
             operator = operator_for_role(role)
             ws = LatentWorkspace.from_prompt_embeddings(
                 prompt_embeddings,
@@ -289,9 +298,7 @@ class BranchEnsemble:
             return
         required = int(self.config.isolation_steps)
         short_halts = [
-            branch.index
-            for branch in self.branches
-            if branch.halted and branch.steps < required
+            branch.index for branch in self.branches if branch.halted and branch.steps < required
         ]
         if short_halts:
             self._isolation_failure = "branch_halted_before_candidate"
@@ -398,6 +405,7 @@ class BranchEnsemble:
         score_fn: Callable[[BranchState], float] | None = None,
         reserve_layer_apps: int = 0,
         stop_context: Any = None,
+        transaction_purpose: str = "recurrent_update",
     ) -> bool:
         """Advance every live branch, or none when the whole round cannot fit."""
         active = self.active()
@@ -412,9 +420,7 @@ class BranchEnsemble:
             )
             if not hypothesis_slots:
                 raise RuntimeError("recurrent workspace has no persistent hypothesis slot")
-            evidence_pre = _tensor_sha256(
-                branch.workspace.select_slots(branch.z, evidence_slots)
-            )
+            evidence_pre = _tensor_sha256(branch.workspace.select_slots(branch.z, evidence_slots))
             hypothesis_pre = _tensor_sha256(
                 branch.workspace.select_slots(branch.z, hypothesis_slots)
             )
@@ -435,33 +441,38 @@ class BranchEnsemble:
             anchor_sha256 = _tensor_sha256(reasoning_anchor_state)
             continuous = bool(
                 branch.loop_stability_trace
-                and branch.loop_stability_trace[-1]["reasoning_post_sha256"]
-                == reasoning_pre_sha256
+                and branch.loop_stability_trace[-1]["reasoning_post_sha256"] == reasoning_pre_sha256
             )
             effective_alpha = (
                 alpha_override
                 if alpha_override is not None
                 else alpha_at(self.recurrence, branch.steps)
             )
-            proposal = recurrence_step(
-                branch.z,
-                runner,
-                cache,
-                start,
-                end,
-                self.recurrence,
-                branch.steps,
-                anchor=branch.anchor,
-                alpha_override=alpha_override,
-            )
+            with runner.transaction_context(
+                purpose=transaction_purpose,
+                branch_index=branch.index,
+                parent_sha256=(
+                    branch.kv_boundary_sha256
+                    or (self._kv_state_tree.root_sha256 if self._kv_state_tree is not None else "")
+                ),
+            ):
+                proposal = recurrence_step(
+                    branch.z,
+                    runner,
+                    cache,
+                    start,
+                    end,
+                    self.recurrence,
+                    branch.steps,
+                    anchor=branch.anchor,
+                    alpha_override=alpha_override,
+                )
             proposal = branch.workspace.restore_context_evidence(proposal)
             proposal_evidence_post = _tensor_sha256(
                 branch.workspace.select_slots(proposal, evidence_slots)
             )
             if proposal_evidence_post != evidence_pre:
-                raise RuntimeError(
-                    "sealed recurrent evidence changed in an update proposal"
-                )
+                raise RuntimeError("sealed recurrent evidence changed in an update proposal")
             proposal_hypothesis_post = _tensor_sha256(
                 branch.workspace.select_slots(proposal, hypothesis_slots)
             )
@@ -469,9 +480,7 @@ class BranchEnsemble:
                 proposal,
                 reasoning_slots,
             )
-            proposal_reasoning_sha256 = _tensor_sha256(
-                proposal_reasoning_state
-            )
+            proposal_reasoning_sha256 = _tensor_sha256(proposal_reasoning_state)
             evidence_state = (
                 branch.workspace.select_slots(branch.anchor, evidence_slots)
                 if evidence_slots
@@ -484,25 +493,17 @@ class BranchEnsemble:
                 reasoning_anchor_state,
                 evidence_state=evidence_state,
                 previous_residual=(
-                    float(branch.loop_stability_trace[-1]["residual"])
-                    if continuous
-                    else None
+                    float(branch.loop_stability_trace[-1]["residual"]) if continuous else None
                 ),
                 previous_delta=branch.last_loop_delta if continuous else None,
             )
             z_next = proposal if gate_decision.accepted else branch.z
             z_next = branch.workspace.restore_context_evidence(z_next)
-            evidence_post = _tensor_sha256(
-                branch.workspace.select_slots(z_next, evidence_slots)
-            )
+            evidence_post = _tensor_sha256(branch.workspace.select_slots(z_next, evidence_slots))
             hypothesis_post = _tensor_sha256(
                 branch.workspace.select_slots(z_next, hypothesis_slots)
             )
-            evidence_unchanged = (
-                evidence_pre
-                == evidence_post
-                == branch.evidence_anchor_sha256
-            )
+            evidence_unchanged = evidence_pre == evidence_post == branch.evidence_anchor_sha256
             if not evidence_unchanged:
                 raise RuntimeError("sealed recurrent evidence changed during a window pass")
             reasoning_post_state = branch.workspace.select_slots(
@@ -517,9 +518,7 @@ class BranchEnsemble:
                 alpha=effective_alpha,
                 convergence_eps=self.recurrence.convergence_eps,
                 previous_residual=(
-                    float(branch.loop_stability_trace[-1]["residual"])
-                    if continuous
-                    else None
+                    float(branch.loop_stability_trace[-1]["residual"]) if continuous else None
                 ),
                 previous_delta=branch.last_loop_delta if continuous else None,
             )
@@ -535,15 +534,9 @@ class BranchEnsemble:
                     "reasoning_post_sha256": proposal_reasoning_sha256,
                     "anchor_sha256": anchor_sha256,
                     "continuous_from_previous": continuous,
-                    "disposition": (
-                        "accepted"
-                        if gate_decision.accepted
-                        else "quality_rejected"
-                    ),
+                    "disposition": ("accepted" if gate_decision.accepted else "quality_rejected"),
                     "divergence_reason": "",
-                    "containment_action": (
-                        "" if gate_decision.accepted else "retain_previous"
-                    ),
+                    "containment_action": ("" if gate_decision.accepted else "retain_previous"),
                     **stability,
                 }
             )
@@ -597,11 +590,7 @@ class BranchEnsemble:
                     int(reasoning_pre_state.size)
                     + int(proposal_reasoning_state.size)
                     + int(reasoning_post_state.size)
-                    + 6
-                    * (
-                        sketch_width
-                        + position_count * position_sketch_width
-                    )
+                    + 6 * (sketch_width + position_count * position_sketch_width)
                 ),
             )
             if (
@@ -617,11 +606,7 @@ class BranchEnsemble:
                     )
                 )
                 head = branch.uncertainty_runtime.head
-                hidden_width = (
-                    0
-                    if head is None
-                    else int(head.input_weights.shape[1])
-                )
+                hidden_width = 0 if head is None else int(head.input_weights.shape[1])
                 budget.charge_tensor_work(
                     "neural_uncertainty_head",
                     element_reads=int(reasoning_post_state.size),
@@ -649,16 +634,13 @@ class BranchEnsemble:
                 )
                 locator_head = branch.mistake_locator_runtime.head
                 locator_hidden = (
-                    0
-                    if locator_head is None
-                    else int(locator_head.input_weights.shape[1])
+                    0 if locator_head is None else int(locator_head.input_weights.shape[1])
                 )
                 locator_features = int(reasoning_post_state.shape[-1]) * 4
                 budget.charge_tensor_work(
                     "mistake_locator_head",
                     element_reads=(
-                        int(reasoning_pre_state.size)
-                        + int(proposal_reasoning_state.size)
+                        int(reasoning_pre_state.size) + int(proposal_reasoning_state.size)
                     ),
                     host_scalar_ops=(
                         int(reasoning_pre_state.size)
@@ -690,10 +672,7 @@ class BranchEnsemble:
             )
             budget.charge_tensor_work(
                 "recurrent_update_acceptance",
-                element_reads=(
-                    4 * len(reasoning_slots) + len(evidence_slots)
-                )
-                * hidden,
+                element_reads=(4 * len(reasoning_slots) + len(evidence_slots)) * hidden,
                 host_scalar_ops=64,
             )
             residual = relative_residual(
@@ -701,9 +680,7 @@ class BranchEnsemble:
                 reasoning_pre_state,
             )
             score = (
-                self._score_candidate(branch, z_next, score_fn)
-                if score_fn is not None
-                else None
+                self._score_candidate(branch, z_next, score_fn) if score_fn is not None else None
             )
             decision = branch.halting.observe(
                 branch.steps,
@@ -723,9 +700,7 @@ class BranchEnsemble:
             branch.workspace.update(z_next)
             branch.steps += 1
             if self.telemetry is not None:
-                self.telemetry.record_step(
-                    branch.index, branch.z, branch.anchor, residual
-                )
+                self.telemetry.record_step(branch.index, branch.z, branch.anchor, residual)
             if decision.should_halt:
                 if self.recurrence.fixed_depth and decision.reason == "max_steps":
                     deferred_fixed_depth_halts.append((branch, decision.reason))
@@ -764,8 +739,7 @@ class BranchEnsemble:
 
         if (
             len(self.active()) > 1
-            and self.exchanges * self.config.exchange_interval
-            < max(b.steps for b in self.branches)
+            and self.exchanges * self.config.exchange_interval < max(b.steps for b in self.branches)
             and max(b.steps for b in self.branches) % self.config.exchange_interval == 0
         ):
             if self.exchange(
@@ -820,10 +794,27 @@ class BranchEnsemble:
         self.maintain_diversity(budget=budget)
         return True
 
-    def savepoint_all(self) -> int:
+    def savepoint_all(
+        self,
+        *,
+        verified: bool = False,
+        authority: str = "schedule_program",
+    ) -> int:
         """Snapshot every live branch's complete mutable execution state."""
         saved = 0
         for branch in self.active():
+            kv_boundary_sha256 = branch.kv_boundary_sha256
+            if self._kv_state_tree is not None:
+                kv_boundary_sha256 = self._kv_state_tree.capture_boundary(
+                    self._kv_cache,
+                    parent_sha256=(branch.kv_boundary_sha256 or self._kv_state_tree.root_sha256),
+                    branch_index=branch.index,
+                    label=("verified_branch_savepoint" if verified else "branch_savepoint"),
+                    authority=authority,
+                    verified=verified,
+                    latent_sha256=tensor_sha256(branch.z),
+                )
+                branch.kv_boundary_sha256 = kv_boundary_sha256
             branch.savepoint = {
                 "z": branch.z,
                 "role": branch.role,
@@ -834,16 +825,36 @@ class BranchEnsemble:
                 "score": branch.score,
                 "halting": branch.halting.snapshot(),
                 "escape": branch.escape.snapshot() if branch.escape is not None else None,
+                "kv_boundary_sha256": kv_boundary_sha256,
             }
             branch.savepoint_steps = branch.steps
+            branch.savepoint_kv_boundary_sha256 = kv_boundary_sha256
             saved += 1
         return saved
 
-    def savepoint_branch(self, branch: BranchState) -> bool:
+    def savepoint_branch(
+        self,
+        branch: BranchState,
+        *,
+        verified: bool = True,
+        authority: str = "verifier",
+    ) -> bool:
         """Snapshot one branch; evidence from one probe grants no peer authority."""
 
         if not any(item is branch for item in self.branches) or branch.halted:
             return False
+        kv_boundary_sha256 = branch.kv_boundary_sha256
+        if self._kv_state_tree is not None:
+            kv_boundary_sha256 = self._kv_state_tree.capture_boundary(
+                self._kv_cache,
+                parent_sha256=(branch.kv_boundary_sha256 or self._kv_state_tree.root_sha256),
+                branch_index=branch.index,
+                label=("verified_branch_savepoint" if verified else "branch_savepoint"),
+                authority=authority,
+                verified=verified,
+                latent_sha256=tensor_sha256(branch.z),
+            )
+            branch.kv_boundary_sha256 = kv_boundary_sha256
         branch.savepoint = {
             "z": branch.z,
             "role": branch.role,
@@ -854,8 +865,10 @@ class BranchEnsemble:
             "score": branch.score,
             "halting": branch.halting.snapshot(),
             "escape": branch.escape.snapshot() if branch.escape is not None else None,
+            "kv_boundary_sha256": kv_boundary_sha256,
         }
         branch.savepoint_steps = branch.steps
+        branch.savepoint_kv_boundary_sha256 = kv_boundary_sha256
         return True
 
     def revert_branch_to_savepoint(self, branch: BranchState) -> bool:
@@ -874,6 +887,7 @@ class BranchEnsemble:
             "score",
             "halting",
             "escape",
+            "kv_boundary_sha256",
         }
         if set(snapshot) != required:
             raise ValueError("invalid branch savepoint")
@@ -890,6 +904,16 @@ class BranchEnsemble:
         branch.halting.restore(snapshot["halting"])
         if branch.escape is not None:
             branch.escape.restore(snapshot["escape"])
+        kv_boundary_sha256 = str(snapshot["kv_boundary_sha256"])
+        if self._kv_state_tree is not None:
+            if not kv_boundary_sha256:
+                raise ValueError("branch savepoint has no KV boundary")
+            self._kv_state_tree.restore_boundary(
+                self._kv_cache,
+                kv_boundary_sha256,
+            )
+        branch.kv_boundary_sha256 = kv_boundary_sha256
+        branch.savepoint_kv_boundary_sha256 = kv_boundary_sha256
         return True
 
     def revert_all_to_savepoint(self) -> int:
@@ -1115,10 +1139,7 @@ class BranchEnsemble:
             z = branch.z
             slot = min(int(self.config.comm_slot), int(z.shape[1]) - 1)
             prior = z[:, slot : slot + 1, :]
-            compressed = (
-                (1.0 - float(strength)) * prior
-                + float(strength) * global_summary
-            )
+            compressed = (1.0 - float(strength)) * prior + float(strength) * global_summary
             compressed = rms_match(
                 compressed,
                 prior,
@@ -1167,8 +1188,7 @@ class BranchEnsemble:
                 cosine = float(
                     mx.sum(left_summary * right_summary)
                     / mx.maximum(
-                        mx.linalg.norm(left_summary)
-                        * mx.linalg.norm(right_summary),
+                        mx.linalg.norm(left_summary) * mx.linalg.norm(right_summary),
                         1e-6,
                     )
                 )
@@ -1292,9 +1312,7 @@ class BranchEnsemble:
 
         agreements = mx.stack([_cos(s, mean) for s in summaries])  # (K,)
         weights = mx.softmax(agreements, axis=0)
-        support = mx.array(
-            [self._support_weights[branch.index] for branch in live]
-        )
+        support = mx.array([self._support_weights[branch.index] for branch in live])
         weights = weights * support
         weights = weights / mx.maximum(mx.sum(weights), 1e-6)
         consensus = sum(w * s for w, s in zip(weights, summaries, strict=True))
@@ -1315,9 +1333,7 @@ class BranchEnsemble:
         }
         excluded_slots = sorted(set(context_slots + [slot]))
         source_rows = []
-        for position, (branch, summary) in enumerate(
-            zip(live, summaries, strict=True)
-        ):
+        for position, (branch, summary) in enumerate(zip(live, summaries, strict=True)):
             private_state = mx.concatenate(
                 [branch.z[:, index : index + 1, :] for index in source_slots],
                 axis=1,
@@ -1336,9 +1352,7 @@ class BranchEnsemble:
                     "state_sha256": _tensor_sha256(branch.z),
                     "private_state_sha256": _tensor_sha256(private_state),
                     "message_sha256": _tensor_sha256(summary),
-                    "support_weight": round(
-                        float(self._support_weights[branch.index]), 12
-                    ),
+                    "support_weight": round(float(self._support_weights[branch.index]), 12),
                     "consensus_weight": round(float(weights[position]), 12),
                 }
             )
@@ -1354,9 +1368,7 @@ class BranchEnsemble:
         recipient_rows = []
         for branch in live:
             prior = prior_states[branch.index]
-            prior_non_comm = mx.concatenate(
-                [prior[:, :slot, :], prior[:, slot + 1 :, :]], axis=1
-            )
+            prior_non_comm = mx.concatenate([prior[:, :slot, :], prior[:, slot + 1 :, :]], axis=1)
             post_non_comm = mx.concatenate(
                 [branch.z[:, :slot, :], branch.z[:, slot + 1 :, :]], axis=1
             )
@@ -1398,9 +1410,7 @@ class BranchEnsemble:
             "n_slots": n_slots,
             "comm_slot": slot,
             "exchange_gamma": gamma,
-            "source_policy": (
-                "bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"
-            ),
+            "source_policy": ("bounded_private_reasoning_mean_excluding_mailbox_and_context_v1"),
             "message_representation": "latent_tensor_only",
             "message_slot_count": 1,
             "hidden_dimension": hidden_dimension,
@@ -1409,24 +1419,17 @@ class BranchEnsemble:
             "comm_slot_excluded": True,
             "first_answer_text_exposed": False,
             "prior_peer_context_possible": ordinal > 0,
-            "counts_as_independent_support": (
-                ordinal == 0 and not self._configured_role_lesion
-            ),
+            "counts_as_independent_support": (ordinal == 0 and not self._configured_role_lesion),
             "candidate_set_sha256": candidate_set_sha256(isolation_binding),
             "source_rows": source_rows,
             "consensus_sha256": _tensor_sha256(consensus),
             "recipient_rows": recipient_rows,
             "tensor_accounting": {
-                "source_elements_read": len(live)
-                * len(source_slots)
-                * hidden_dimension,
+                "source_elements_read": len(live) * len(source_slots) * hidden_dimension,
                 "message_elements_emitted": len(live) * hidden_dimension,
                 "consensus_elements_written": len(live) * hidden_dimension,
                 "tensor_scalar_ops": (
-                    len(live)
-                    * hidden_dimension
-                    * (len(source_slots) + 12)
-                    + 9 * len(live)
+                    len(live) * hidden_dimension * (len(source_slots) + 12) + 9 * len(live)
                 ),
                 "hidden_layer_apps": 0,
             },
@@ -1488,8 +1491,7 @@ class BranchEnsemble:
                 a, b = live[i], live[j]
                 sa, sb = a.workspace.summary(), b.workspace.summary()
                 cos = float(
-                    mx.sum(sa * sb)
-                    / mx.maximum(mx.linalg.norm(sa) * mx.linalg.norm(sb), 1e-6)
+                    mx.sum(sa * sb) / mx.maximum(mx.linalg.norm(sa) * mx.linalg.norm(sb), 1e-6)
                 )
                 if cos <= self.config.collapse_cos_threshold:
                     continue
@@ -1512,9 +1514,7 @@ class BranchEnsemble:
                         element_writes=elements,
                         scalar_ops=12 * elements,
                     )
-                logger.debug(
-                    "Branch diversity jitter: %s↔%s cos=%.4f", a.index, b.index, cos
-                )
+                logger.debug("Branch diversity jitter: %s↔%s cos=%.4f", a.index, b.index, cos)
         return True
 
     # ── Selection ───────────────────────────────────────────────────────

@@ -1111,6 +1111,11 @@ class EpisodeReceipt:
     # private; commitments and cache-discipline counters prove that every
     # candidate existed before cross-branch exposure.
     branch_isolation: dict[str, Any] = field(default_factory=dict)
+    # Complete cache lineage across speculative windows, verifier probes,
+    # branch savepoints/backtracks, regeneration, and accepted final lanes.
+    # Tensors remain worker-private; the receipt carries salted immutable
+    # storage commitments, offsets, and independently reconstructable hashes.
+    kv_state_tree: dict[str, Any] = field(default_factory=dict)
     # Every cross-branch mailbox write: declared synchronization point,
     # candidate/role/operator provenance, bounded source slots, and causal
     # pre/post commitments. Later cooperative generations never create a new
@@ -1390,6 +1395,7 @@ class EpisodeReceipt:
             "critic_identity": dict(self.critic_identity),
             "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),
+            "kv_state_tree": dict(self.kv_state_tree),
             "branch_exchange": dict(self.branch_exchange),
             "selected_branch": self.selected_branch,
             "exchanges": self.exchanges,

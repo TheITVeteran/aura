@@ -1105,9 +1105,58 @@ before those dependencies close is not admissible.
   final-decode execution mechanics. It does not prove resident-32B utility,
   adapter/RLC positive interaction, reasoning gain, or frontier capability;
   those remain fresh powered campaign claims.
-- [ ] **SPARK-035 - KV state tree and rewind.** Snapshot at verified boundaries,
+- [x] **SPARK-035 - KV state tree and rewind.** Snapshot at verified boundaries,
   remove rejected KV slices, restore exact prior state, and prove rejected
   reasoning cannot leak into regenerated branches.
+
+  Accepted at CP349 at the live recurrent-window, verifier-probe, bytecode
+  savepoint/backtrack, regeneration, final-persistence, dual-lane decode, and
+  independent-service-reconstruction boundary. The bounded
+  `KVStateTree` establishes one prompt-prefill root and links every logical
+  branch boundary to a prior node. Branch savepoints carry the KV boundary
+  identifier; verifier-promoted savepoints are distinguished from schedule
+  savepoints; and backtrack restores the complete retained boundary before
+  branch state resumes.
+
+  Every non-persistent recurrent window and every persistent verifier probe
+  opens a child transaction before transformer execution. The worker observes
+  the mutated child offsets and immutable-storage commitment before removal,
+  then restores the exact parent array objects and scalar metadata. A rejected
+  child commitment is forbidden from becoming a later parent or accepted
+  node. `regenerate_from_prefix` events are labeled in the same lineage, so a
+  regenerated pass proves it started from the saved parent rather than an
+  abandoned child. Standard final persistence and decode become accepted
+  descendant nodes. CP348 probability fusion records both final isolated
+  transformer lanes as terminal descendants; policy-evaluation lanes are
+  explicitly discarded and cannot enter the canonical cache.
+
+  The receipt contains no K/V tensors, decoded reasoning, or answer text. It
+  carries salted process-local immutable-storage commitments, topology,
+  offsets, authority, branch, parent/child/event hashes, disposition, and
+  aggregate verdicts. This avoids copying a resident-32B prompt cache to CPU at
+  every boundary. Exact identity restoration is enforced inside the
+  source-verified worker; the parent service independently reconstructs the
+  public hash graph and rejects missing, rehashed, orphaned, unpruned,
+  final-less, or rejected-child-reuse claims. The service does not pretend its
+  public receipt alone can inspect worker-private tensor storage.
+
+  Validation passes 11/11 direct state-tree contracts, including capacity-backed
+  cache compatibility, fail-closed lineage tampering, terminal-node
+  requirements, and a real tiny-Qwen zero-tolerance experiment in which
+  rejected work is pruned before regeneration and the regenerated hidden state
+  exactly matches a clean control. The affected cache, recurrent, branch,
+  engine, verifier, heterogeneous-integration, worker-origin, and service gate
+  passes 326/326 in 120.14 seconds. The fixed 99-file RLC,
+  recurrence/training, resident-campaign, global-workspace, GWT, and
+  execution-controller ownership snapshot passes 1605/1605 in 622.29 seconds.
+  Strict Ruff, formatting, bytecode compilation, and diff hygiene pass.
+  Governance remains at the pre-existing 49 regressions and 13 stale buckets,
+  with no CP349 effect-ownership addition.
+
+  SPARK-035 proves bounded KV lineage, exact worker-side rewind, rejected-slice
+  unreachability, and clean regeneration mechanics. It does not prove
+  resident-32B utility, adapter/RLC positive interaction, reasoning gain, or
+  frontier capability; those remain fresh powered campaign claims.
 - [ ] **SPARK-036 - Transient negative constraints.** Distill verified failures
   into scoped, expiring constraints, prevent unsupported critic prose from
   becoming a constraint, and prove repeated-error reduction.

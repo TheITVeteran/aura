@@ -766,6 +766,23 @@ class LatentCortexService:
         except (ImportError, TypeError, ValueError):
             errors.append("loop_stability_unproven")
         try:
+            from core.brain.llm.latent_cortex.kv_state_tree import (
+                validate_kv_state_tree_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            validate_kv_state_tree_receipt(
+                receipt.get("kv_state_tree"),
+                episode_id=str(receipt.get("episode_id") or ""),
+                input_tokens_sha256=str(receipt.get("input_tokens_sha256") or ""),
+                n_layers=int(receipt.get("n_layers") or 0),
+                expected_n_branches=executed_config.branches.n_branches,
+                require_final=True,
+            )
+        except (ImportError, OSError, TypeError, ValueError):
+            errors.append("kv_state_tree_unproven")
+        try:
             from core.brain.llm.latent_cortex.update_gate import (
                 UpdateGateRuntime,
                 validate_update_gate_receipt,

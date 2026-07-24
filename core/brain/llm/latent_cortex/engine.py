@@ -59,6 +59,7 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     transition_reward,
     validate_evidence_snapshot,
 )
+from core.brain.llm.latent_cortex.verified_best import tensor_sha256
 from core.brain.llm.latent_cortex.workspace import per_position_rms, role_anchor
 from core.runtime.errors import record_degradation
 
@@ -1011,6 +1012,18 @@ class LatentCortexEngine:
                 return memoized
         spent_before = budget.spent_layer_apps
         snaps = _snapshot_recurrent_caches(cache, 0, self.n_layers)
+        kv_tree = getattr(self, "_episode_kv_state_tree", None)
+        kv_transaction = None
+        if kv_tree is not None:
+            kv_transaction = kv_tree.begin_speculation(
+                cache,
+                start=0,
+                end=self.n_layers,
+                purpose="verifier_probe",
+                branch_index=branch.index,
+                parent_sha256=(branch.kv_boundary_sha256 or kv_tree.root_sha256),
+            )
+        execution_failed = True
         try:
             slot_logits = self._persist_branch(branch, cache, runner, budget)
             if bridge_tokens:
@@ -1029,8 +1042,18 @@ class LatentCortexEngine:
                 contract_grace_tokens=0,
                 force_exact_tokens=force_exact_tokens,
             )[0]
+            execution_failed = False
         finally:
-            _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
+            if kv_transaction is not None:
+                kv_transaction.observe_mutation(
+                    cache,
+                    execution_failed=execution_failed,
+                )
+                kv_transaction.restore_parent(cache)
+            else:
+                _restore_recurrent_caches(cache, 0, self.n_layers, snaps)
+            if kv_transaction is not None:
+                kv_transaction.reject_after_restore(cache)
         if use_cache and probe_cache is not None and cache_key is not None:
             probe_cache.put(
                 cache_key,
@@ -1189,6 +1212,7 @@ class LatentCortexEngine:
         wall_reserve_s: float = 0.0,
         token_logprobs_out: list[float] | None = None,
         phase_checkpoint: Callable[[str], None] | None = None,
+        retain_lanes: bool = False,
     ) -> tuple[list[int], str, dict[str, Any]]:
         """Decode two cache-isolated lanes under one selected distribution."""
 
@@ -1222,6 +1246,29 @@ class LatentCortexEngine:
             self.n_layers,
             snapshots,
         )
+        kv_tree = getattr(self, "_episode_kv_state_tree", None)
+        old_transaction = None
+        new_transaction = None
+        if kv_tree is not None:
+            parent_sha256 = branch.kv_boundary_sha256 or kv_tree.root_sha256
+            old_transaction = kv_tree.begin_speculation(
+                old_cache,
+                start=0,
+                end=self.n_layers,
+                purpose="heterogeneous_incumbent_lane",
+                branch_index=branch.index,
+                parent_sha256=parent_sha256,
+                isolated=True,
+            )
+            new_transaction = kv_tree.begin_speculation(
+                new_cache,
+                start=0,
+                end=self.n_layers,
+                purpose="heterogeneous_corrected_lane",
+                branch_index=branch.index,
+                parent_sha256=parent_sha256,
+                isolated=True,
+            )
         saved_state = branch.z
         old_trace: list[str] = []
         new_trace: list[str] = []
@@ -1229,6 +1276,7 @@ class LatentCortexEngine:
         divergences: list[float] = []
         old_lane_apps = 0
         new_lane_apps = 0
+        lane_execution_failed = True
 
         def persist(state, lane_cache):
             projected = branch.workspace.restore_context_evidence(mx.array(state))
@@ -1335,9 +1383,39 @@ class LatentCortexEngine:
                 external_step_logits=advance,
                 external_step_lanes=2,
             )
+            lane_execution_failed = False
         finally:
             branch.z = saved_state
             branch.workspace.update(saved_state)
+            for transaction, lane_cache in (
+                (old_transaction, old_cache),
+                (new_transaction, new_cache),
+            ):
+                if transaction is not None and not transaction.closed:
+                    transaction.observe_mutation(
+                        lane_cache,
+                        execution_failed=lane_execution_failed,
+                    )
+            if old_transaction is not None and not old_transaction.closed:
+                if retain_lanes and not lane_execution_failed:
+                    old_transaction.commit(
+                        label="final_incumbent_lane",
+                        authority="heterogeneous_probability_fusion",
+                        latent_sha256=tensor_sha256(incumbent_state),
+                        final=True,
+                    )
+                else:
+                    old_transaction.discard_isolated(parent_cache=cache)
+            if new_transaction is not None and not new_transaction.closed:
+                if retain_lanes and not lane_execution_failed:
+                    new_transaction.commit(
+                        label="final_corrected_lane",
+                        authority="heterogeneous_probability_fusion",
+                        latent_sha256=tensor_sha256(corrected_state),
+                        final=True,
+                    )
+                else:
+                    new_transaction.discard_isolated(parent_cache=cache)
         if not divergences or old_lane_apps <= 0 or old_lane_apps != new_lane_apps:
             raise RuntimeError("heterogeneous decode lane accounting differs")
 
@@ -1859,6 +1937,16 @@ class LatentCortexEngine:
             )
 
         embeddings, _tail_logits = self._prefill(tokens, cache, budget)
+        from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
+
+        kv_state_tree = KVStateTree(
+            cache,
+            n_layers=self.n_layers,
+            episode_id=receipt.episode_id,
+            input_tokens_sha256=receipt.input_tokens_sha256,
+        )
+        self._episode_kv_state_tree = kv_state_tree
+        runner.attach_kv_state_tree(kv_state_tree)
         stage_started = self._stage_checkpoint(
             receipt=receipt,
             budget=budget,
@@ -1931,6 +2019,7 @@ class LatentCortexEngine:
             context_seeds=context_seeds,
             escape_cfg=escape_cfg,
         )
+        ensemble.bind_kv_state_tree(kv_state_tree, cache)
         from core.brain.llm.latent_cortex.correlated_support import (
             initial_exchange_weights,
             validate_correlation_evidence,
@@ -2043,7 +2132,9 @@ class LatentCortexEngine:
         previous_residual = 1.0
         branch_verifier_scores: dict[int, float] = {}
         branch_verifier_deltas: dict[int, float] = {}
-        ensemble.savepoint_all()
+        ensemble.savepoint_all(
+            authority="episode_initialization",
+        )
         for op_index, op in enumerate(schedule.ops):
             op_kind = getattr(op, "kind", "window")
             if op_kind == "exchange":
@@ -2064,7 +2155,9 @@ class LatentCortexEngine:
                     {
                         "op": op_index,
                         "kind": op_kind,
-                        "branches": ensemble.savepoint_all(),
+                        "branches": ensemble.savepoint_all(
+                            authority="schedule_program",
+                        ),
                     }
                 )
                 continue
@@ -2265,6 +2358,7 @@ class LatentCortexEngine:
                         alpha_override=op.alpha,
                         reserve_layer_apps=safety_reserve,
                         stop_context=stop_context,
+                        transaction_purpose=action.value,
                     )
                     if not admitted:
                         recurrence_budget_limited = True
@@ -2370,7 +2464,11 @@ class LatentCortexEngine:
                                 previous_verifier_score is None
                                 or probe_score > previous_verifier_score
                             ):
-                                ensemble.savepoint_branch(target)
+                                ensemble.savepoint_branch(
+                                    target,
+                                    verified=True,
+                                    authority="bounded_verifier_progress",
+                                )
                                 outcome = "verified_progress_saved"
                     else:
                         outcome = "verifier_probe_budget_refused"
@@ -3208,6 +3306,7 @@ class LatentCortexEngine:
 
             # ── Commit the winner + decode the answer ────────────────────
             final_fusion_audit = None
+            final_decode_transaction = None
             if heterogeneous_fusion_context is not None:
 
                 def checkpoint_fusion_phase(stage: str) -> None:
@@ -3260,15 +3359,39 @@ class LatentCortexEngine:
                     wall_reserve_s=0.0,
                     token_logprobs_out=token_logprobs_out,
                     phase_checkpoint=checkpoint_fusion_phase,
+                    retain_lanes=True,
                 )
                 receipt.first_logits_digest = final_fusion_audit["policy_initial_logits_sha256"]
                 receipt.flag("heterogeneous_fusion_decode_applied")
             else:
+                persist_transaction = kv_state_tree.begin_speculation(
+                    cache,
+                    start=0,
+                    end=self.n_layers,
+                    purpose="final_winner_persist",
+                    branch_index=winner.index,
+                    parent_sha256=(winner.kv_boundary_sha256 or kv_state_tree.root_sha256),
+                )
                 slot_logits = self._persist_branch(
                     winner,
                     cache,
                     runner,
                     budget,
+                )
+                persist_transaction.observe_mutation(cache)
+                winner.kv_boundary_sha256 = persist_transaction.commit(
+                    label="winner_workspace_persisted",
+                    authority="selected_branch_commit",
+                    latent_sha256=tensor_sha256(winner.z),
+                    final=False,
+                )
+                final_decode_transaction = kv_state_tree.begin_speculation(
+                    cache,
+                    start=0,
+                    end=self.n_layers,
+                    purpose="final_output_decode",
+                    branch_index=winner.index,
+                    parent_sha256=winner.kv_boundary_sha256,
                 )
                 receipt.first_logits_digest = _logits_digest(slot_logits)
                 stage_started = self._stage_checkpoint(
@@ -3328,6 +3451,13 @@ class LatentCortexEngine:
                     token_logprobs_out=token_logprobs_out,
                     sentence_grace_tokens=decode_sentence_grace_tokens,
                 )
+                final_decode_transaction.observe_mutation(cache)
+                winner.kv_boundary_sha256 = final_decode_transaction.commit(
+                    label="final_output_lane",
+                    authority="user_visible_decode",
+                    latent_sha256=tensor_sha256(winner.z),
+                    final=True,
+                )
             receipt.decode_requested_tokens = decode_limit
             receipt.decode_generated_tokens = len(out_tokens)
             receipt.decode_termination = decode_termination
@@ -3370,6 +3500,18 @@ class LatentCortexEngine:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
 
         receipt.recurrence_adapter = runner.adapter_receipt()
+        from core.brain.llm.latent_cortex.kv_state_tree import (
+            validate_kv_state_tree_receipt,
+        )
+
+        receipt.kv_state_tree = validate_kv_state_tree_receipt(
+            kv_state_tree.receipt(),
+            episode_id=receipt.episode_id,
+            input_tokens_sha256=receipt.input_tokens_sha256,
+            n_layers=self.n_layers,
+            expected_n_branches=self.config.branches.n_branches,
+            require_final=True,
+        )
         receipt.branch_isolation = ensemble.isolation_receipt(runner.cache_discipline_receipt())
         if (
             self.config.branches.n_branches > 1

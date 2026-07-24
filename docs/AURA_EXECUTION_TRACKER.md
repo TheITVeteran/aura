@@ -26393,3 +26393,60 @@ count completion is approximately 55.8%-87.8%, with a midpoint planning
 estimate of 68.2%. Next: publish CP348, then implement SPARK-035's verified KV
 state tree and exact rewind. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-23-349: Rejected Reasoning Leaves No Reachable Cache
+
+SPARK-035 replaces isolated cache-rewind counters with one bounded lineage
+across the live recurrent runtime. Prompt prefill creates the canonical root.
+Every branch savepoint now carries a KV boundary identifier; verifier-promoted
+and schedule-program savepoints retain distinct authority; and backtrack
+restores the complete retained boundary before latent branch state resumes.
+
+Every speculative recurrent window and verifier probe opens a child
+transaction before transformer execution. The worker observes the mutated
+child, its declared layer window, and offset/storage commitments before
+removal. Rejection restores the exact immutable parent array objects and
+metadata. A rejected child commitment is forbidden from becoming any later
+parent or accepted node. `regenerate_from_prefix` work is labeled in the same
+graph, proving which saved boundary supplied the regenerated pass.
+
+Accepted standard winner persistence and output decode become terminal
+descendants. CP348's heterogeneous probability fusion is covered rather than
+bypassed: both final isolated transformer lanes become terminal descendants,
+while every policy-evaluation lane is explicitly discarded against the
+unchanged canonical parent.
+
+The receipt serializes no K/V tensors, hidden reasoning, or answer text. It
+uses salted process-local immutable-storage commitments, offsets, branch and
+authority metadata, ancestry, transaction dispositions, and canonical node,
+event, and receipt hashes. Exact storage identity is enforced inside the
+source-verified worker without copying a potentially multi-gigabyte
+resident-32B prompt cache to CPU at every boundary. The parent service
+independently reconstructs the public graph and rejects missing, orphaned,
+rehashed, unpruned, final-less, or rejected-child-reuse claims. It does not
+misrepresent public hash reconstruction as direct inspection of worker-private
+tensors.
+
+Validation passes 11/11 direct state-tree contracts. A real tiny-Qwen
+counterfactual executes rejected work, restores the parent, and regenerates the
+same target window; the regenerated hidden state matches a clean control at
+zero tolerance. The affected cache, recurrent, branch, engine, verifier,
+heterogeneous-integration, worker-origin, and service boundary passes 326/326
+in 120.14 seconds. The fixed 99-file RLC, recurrence/training,
+resident-campaign, global-workspace, GWT, and execution-controller ownership
+snapshot passes 1605/1605 in 622.29 seconds. Strict Ruff, formatting, bytecode
+compilation, and `git diff --check` pass. Repository-wide governance reproduces
+the pre-existing 49 unrelated/concurrent regressions and 13 stale buckets;
+CP349 adds no effect-ownership entry and does not absorb that debt.
+
+SPARK-035 proves bounded KV lineage, exact worker-side rewind, rejected-slice
+unreachability, and clean regeneration mechanics. It does not prove
+resident-32B utility, adapter/RLC positive interaction, reasoning gain, or
+frontier capability. Those remain fresh powered broad-task campaign claims.
+
+This is total checkpoint record 410. The revised forecast remains 466-733 total
+records, now approximately 56-323 records after this checkpoint. Checkpoint-
+count completion is approximately 55.9%-88.0%, with a midpoint planning
+estimate of 68.4%. Next: publish CP349, then implement SPARK-036's governed
+transient negative constraints. Final multi-hour soaks remain deferred until
+every shorter gate is green.

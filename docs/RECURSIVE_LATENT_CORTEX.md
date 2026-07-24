@@ -430,6 +430,42 @@ checkpoints. This closes the integration and rollback mechanism only. It does
 not prove resident-32B utility, adapter/RLC positive interaction, reasoning
 gain, or frontier capability; those remain campaign-level claims.
 
+## Verified KV state tree and rewind (SPARK-035)
+
+The recurrent runtime no longer treats independent snapshot/restore calls as a
+complete lineage proof. After prompt prefill, one bounded `KVStateTree`
+establishes the canonical root. Branch savepoints retain a parent node ID,
+verifier-promoted savepoints carry explicit verifier authority, and backtrack
+restores the complete corresponding cache boundary before latent branch state
+resumes. Schedule savepoints remain visibly schedule-authorized rather than
+being mislabeled as verifier evidence.
+
+Every speculative recurrent window and verifier probe executes as a child
+transaction. The worker observes the child after K/V mutation, records its
+layer window and offset commitments, restores the exact immutable parent array
+objects and metadata, then marks the child pruned. Rejected child commitments
+cannot become later parents or live nodes. Regeneration events are labeled
+`regenerate_from_prefix`, binding the new work to the restored savepoint.
+Standard final persistence/decode commits one terminal path; heterogeneous
+probability fusion commits its two final isolated transformer lanes while
+discarding all evaluation lanes.
+
+The public receipt serializes no tensors, hidden reasoning, or answer text.
+Salted storage commitments let the source-verified worker enforce exact
+process-local identity without repeatedly copying the resident model's prompt
+cache to host memory. The service independently reconstructs node and event
+hashes, ancestry, topology, offset commitments, prune/restore verdicts, and
+terminal coverage. This division is intentional: exact tensor identity is a
+worker runtime invariant, while the service verifies that the trusted worker's
+public claim is structurally complete and untampered.
+
+A real tiny-Qwen control executes rejected recurrent work, restores the root,
+and regenerates the target window. The regenerated hidden state equals a clean
+control at zero tolerance. Tamper tests reject altered parent commitments,
+prune flags, node hashes, final-node omissions, and attempted rejected-child
+reuse. This proves the cache-lineage mechanism, not resident-32B reasoning
+gain or frontier capability.
+
 ## First resident-32B consolidation execution
 
 `artifacts/current/latent_consolidation_train_32b_first.json` records the first

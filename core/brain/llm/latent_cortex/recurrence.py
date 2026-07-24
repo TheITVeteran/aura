@@ -20,13 +20,15 @@ only the engine's final clean pass persists. We reuse the battle-tested
 snapshot/restore machinery from ``core.brain.llm.recurrent_depth`` — the same
 code that guards the live resident model's recurrent depth today.
 """
+
 from __future__ import annotations
 
 import logging
 import math
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from core.brain.llm.latent_cortex.loop_core import (
     ABSOLUTE_POSITION_LIMIT,
@@ -53,6 +55,9 @@ logger = logging.getLogger("Aura.LatentCortex.Recurrence")
 
 CACHE_DISCIPLINE_SCHEMA = "aura.rlc.cache_discipline.v1"
 
+if TYPE_CHECKING:
+    from core.brain.llm.latent_cortex.kv_state_tree import KVStateTree
+
 
 def _snapshot_value_matches(current: Any, expected: Any) -> bool:
     """Compare a restored cache snapshot without scanning tensor contents.
@@ -65,23 +70,28 @@ def _snapshot_value_matches(current: Any, expected: Any) -> bool:
     if current is expected:
         return True
     if isinstance(expected, tuple):
-        return isinstance(current, tuple) and len(current) == len(expected) and all(
-            _snapshot_value_matches(left, right)
-            for left, right in zip(current, expected, strict=True)
+        return (
+            isinstance(current, tuple)
+            and len(current) == len(expected)
+            and all(
+                _snapshot_value_matches(left, right)
+                for left, right in zip(current, expected, strict=True)
+            )
         )
     if isinstance(expected, list):
-        return isinstance(current, list) and len(current) == len(expected) and all(
-            _snapshot_value_matches(left, right)
-            for left, right in zip(current, expected, strict=True)
+        return (
+            isinstance(current, list)
+            and len(current) == len(expected)
+            and all(
+                _snapshot_value_matches(left, right)
+                for left, right in zip(current, expected, strict=True)
+            )
         )
     if isinstance(expected, dict):
         return (
             isinstance(current, dict)
             and set(current) == set(expected)
-            and all(
-                _snapshot_value_matches(current[key], expected[key])
-                for key in expected
-            )
+            and all(_snapshot_value_matches(current[key], expected[key]) for key in expected)
         )
     return isinstance(expected, (str, int, float, bool, type(None))) and (
         type(current) is type(expected) and current == expected
@@ -256,16 +266,12 @@ class HaltingController:
             and step + 1 >= self.config.min_steps
         ):
             if stop_context is None or update_decision is None:
-                raise ValueError(
-                    "learned stop gate requires update and value evidence"
-                )
+                raise ValueError("learned stop gate requires update and value evidence")
             stop_decision = self.stop_gate.evaluate(
                 step=step + 1,
                 residual=residual,
                 previous_residual=(
-                    self.residual_trail[-2]
-                    if len(self.residual_trail) >= 2
-                    else None
+                    self.residual_trail[-2] if len(self.residual_trail) >= 2 else None
                 ),
                 update_decision=update_decision,
                 context=stop_context,
@@ -352,6 +358,45 @@ class WindowRunner:
             self._position_limit = ABSOLUTE_POSITION_LIMIT
             self._position_limit_source = "absolute_safety_ceiling"
         self._kv_calls: list[dict[str, Any]] = []
+        self._kv_state_tree: KVStateTree | None = None
+        self._transaction_purpose = "speculative_latent_window"
+        self._transaction_branch_index: int | None = None
+        self._transaction_parent_sha256 = ""
+
+    def attach_kv_state_tree(self, tree: KVStateTree) -> None:
+        """Bind the episode KV lineage after prompt prefill establishes root."""
+
+        if self._kv_state_tree is not None and self._kv_state_tree is not tree:
+            raise LoopCoreError("WindowRunner KV state tree is already bound")
+        self._kv_state_tree = tree
+        self._transaction_parent_sha256 = tree.root_sha256
+
+    @contextmanager
+    def transaction_context(
+        self,
+        *,
+        purpose: str,
+        branch_index: int,
+        parent_sha256: str,
+    ):
+        """Bind one branch/purpose to the next nested speculative window."""
+
+        previous = (
+            self._transaction_purpose,
+            self._transaction_branch_index,
+            self._transaction_parent_sha256,
+        )
+        self._transaction_purpose = purpose
+        self._transaction_branch_index = branch_index
+        self._transaction_parent_sha256 = parent_sha256
+        try:
+            yield
+        finally:
+            (
+                self._transaction_purpose,
+                self._transaction_branch_index,
+                self._transaction_parent_sha256,
+            ) = previous
 
     def adapter_receipt(self) -> dict[str, int | str | bool]:
         """Aggregate proof that scoped weights ran only inside slot windows."""
@@ -374,8 +419,7 @@ class WindowRunner:
             "restored_calls": self._restored_calls,
             "restore_failures": self._restore_failures,
             "all_restored": (
-                self._restore_failures == 0
-                and self._restored_calls == self._nonpersistent_calls
+                self._restore_failures == 0 and self._restored_calls == self._nonpersistent_calls
             ),
         }
 
@@ -467,18 +511,26 @@ class WindowRunner:
         self._budget.charge(
             tokens=tokens,
             layers=layers,
-            operation=(
-                "persisted_latent_window"
-                if persist
-                else "speculative_latent_window"
-            ),
+            operation=("persisted_latent_window" if persist else "speculative_latent_window"),
             attention_pairs=attention_pairs,
         )
         snaps = None
+        kv_transaction = None
         if not persist:
             snaps = _snapshot_recurrent_caches(cache, start, end)
             self._nonpersistent_calls += 1
+            if self._kv_state_tree is not None:
+                parent_sha256 = self._transaction_parent_sha256 or self._kv_state_tree.root_sha256
+                kv_transaction = self._kv_state_tree.begin_speculation(
+                    cache,
+                    start=start,
+                    end=end,
+                    purpose=self._transaction_purpose,
+                    branch_index=self._transaction_branch_index,
+                    parent_sha256=parent_sha256,
+                )
         adapter_activation = None
+        execution_failed = True
         try:
             mask = self._mask(h, cache[start:end])
             # A WindowRunner call is the live proof boundary that these inputs
@@ -488,22 +540,33 @@ class WindowRunner:
                 for i in range(start, end):
                     h = self._inner.layers[i](h, mask, cache[i])
             mx.eval(h)
+            execution_failed = False
         finally:
             if adapter_activation is not None:
                 self._adapter_calls += adapter_activation.calls
-                self._adapter_adapted_positions += (
-                    adapter_activation.adapted_positions
-                )
-                self._adapter_observed_positions += (
-                    adapter_activation.observed_positions
-                )
+                self._adapter_adapted_positions += adapter_activation.adapted_positions
+                self._adapter_observed_positions += adapter_activation.observed_positions
             if snaps is not None:
                 try:
-                    _restore_recurrent_caches(cache, start, end, snaps)
-                    if not _cache_matches_snapshot(cache, start, end, snaps):
+                    if kv_transaction is not None:
+                        kv_transaction.observe_mutation(
+                            cache,
+                            execution_failed=execution_failed,
+                        )
+                        kv_transaction.restore_parent(cache)
+                    else:
+                        _restore_recurrent_caches(cache, start, end, snaps)
+                    if kv_transaction is None and not _cache_matches_snapshot(
+                        cache,
+                        start,
+                        end,
+                        snaps,
+                    ):
                         raise CacheSnapshotError(
                             "KV cache restore postcondition failed after recurrent pass"
                         )
+                    if kv_transaction is not None:
+                        kv_transaction.reject_after_restore(cache)
                 except Exception:
                     self._restore_failures += 1
                     raise
@@ -517,9 +580,7 @@ class WindowRunner:
                 "KV cache position restore postcondition failed after recurrent pass"
             )
         if persist and post_context != total_tokens:
-            raise CacheSnapshotError(
-                "KV cache position did not advance after persistent pass"
-            )
+            raise CacheSnapshotError("KV cache position did not advance after persistent pass")
         self._kv_calls.append(
             {
                 "ordinal": len(self._kv_calls),
