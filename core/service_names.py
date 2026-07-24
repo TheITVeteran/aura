@@ -71,6 +71,10 @@ class ServiceNames:
     REIMPLEMENTATION_LAB = "reimplementation_lab"
     PROGRAM_DNA_RECONSTRUCTION = "program_dna_reconstruction_engine"
     
+    # Runtime convergence (Salt fusion)
+    HOMEOSTATE = "homeostate"            # core/runtime/homeostate.py — declarative desired-state engine
+    HOMEOSTATE_REACTOR = "homeostate_reactor"  # event-driven re-convergence
+
     # Interfaces
     SERVER = "server"
     WATCHDOG = "watchdog"

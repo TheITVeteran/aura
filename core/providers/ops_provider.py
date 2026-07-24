@@ -19,6 +19,19 @@ def register_ops_services(container, is_proxy: bool = False):
         return MetabolicMonitor()
     container.register('metabolic_monitor', create_metabolic_monitor, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
+    # 9.2 Homeostate (Salt fusion): declarative desired-state convergence for
+    # the runtime itself, plus the event-driven reactor. Started by the boot
+    # sequence (start_homeostate_runtime); registered here for live visibility.
+    def create_homeostate():
+        from core.runtime.homeostate import get_homeostate_engine
+        return get_homeostate_engine()
+    container.register('homeostate', create_homeostate, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+
+    def create_homeostate_reactor():
+        from core.runtime.homeostate import get_homeostate_reactor
+        return get_homeostate_reactor()
+    container.register('homeostate_reactor', create_homeostate_reactor, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+
     # 42. Self-Modification Engine
     def create_sme():
         if is_proxy:

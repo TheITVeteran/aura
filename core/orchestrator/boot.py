@@ -588,6 +588,27 @@ class OrchestratorBootMixin(
                 self._initialize_self_preservation()
                 boot_profiler.mark("guardians_and_resilience")
 
+                # --- PHASE 5.2: Homeostate convergence (declared runtime baseline) ---
+                # Salt-style desired-state engine: converge the runtime baseline
+                # once at boot, then keep the degradation beacon + reactor live
+                # for event-driven re-convergence. Never blocks or fails boot.
+                if not lightweight_test_boot:
+                    from core.runtime.homeostate import start_homeostate_runtime
+
+                    homeostate_summary = await start_homeostate_runtime()
+                    if homeostate_summary.get("ok"):
+                        logger.info(
+                            "✅ [BOOT] Homeostate baseline converged (changed=%s failed=%s); beacon+reactor live.",
+                            homeostate_summary.get("baseline_changed"),
+                            homeostate_summary.get("baseline_failed"),
+                        )
+                    else:
+                        logger.warning(
+                            "⚠️ [BOOT] Homeostate runtime unavailable: %s",
+                            homeostate_summary.get("error"),
+                        )
+                boot_profiler.mark("homeostate")
+
                 # --- PHASE 5.5: Unitary Kernel Interface ---
                 from core.kernel.kernel_interface import KernelInterface
 
