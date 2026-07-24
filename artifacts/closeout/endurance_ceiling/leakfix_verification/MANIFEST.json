@@ -1,0 +1,7 @@
+{
+  "schema": "longevity_soak_manifest",
+  "sha256": {
+    "RECEIPTS.jsonl": "cc99dd3a91fc83fa35435c17a1944773a49ac3caacfef70a0acf2ee1703ddb00",
+    "SOAK_METRICS.json": "9fccc65725d5bd47894531bdf381dc491a87aa517686e249892851b805d47bc2"
+  }
+}

@@ -1,0 +1,682 @@
+{
+  "boot_event_loop_stable": true,
+  "boot_event_loop_warmup": {
+    "consecutive_ok": 3,
+    "max_lag_ms": 313.389,
+    "required_consecutive": 3,
+    "samples": [
+      {
+        "index": 0,
+        "lag_ms": 313.389
+      },
+      {
+        "index": 1,
+        "lag_ms": 0.358
+      },
+      {
+        "index": 2,
+        "lag_ms": 2.839
+      },
+      {
+        "index": 3,
+        "lag_ms": 2.22
+      }
+    ],
+    "stable": true,
+    "threshold_ms": 250.0
+  },
+  "claim_scope": "real-time endurance soak (917s / requested 900s): boot + memory/lag/queue stability over the window",
+  "elapsed_s": 916.7,
+  "event_loop_lag_normal": false,
+  "event_loop_lag_threshold_ms": 250.0,
+  "generated_at": 1784882541.447656,
+  "iterations_completed": 40,
+  "leak_top_growth": [
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/mycelium.py\", line 1670",
+        "h = Hypha(",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/pydantic/main.py\", line 263",
+        "validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)"
+      ],
+      "count_diff": 59339,
+      "size_diff_mb": 10.477,
+      "where": "validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/decoder.py\", line 338",
+        "obj, end = self.raw_decode(s, idx=_w(s, 0).end())",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/json/decoder.py\", line 354",
+        "obj, end = self.scan_once(s, idx)"
+      ],
+      "count_diff": 130019,
+      "size_diff_mb": 8.904,
+      "where": "obj, end = self.scan_once(s, idx)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/memory/gateway_record_index.py\", line 148",
+        "entry = _parse_record(path, mtime)",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/memory/gateway_record_index.py\", line 63",
+        "haystack = f\"{content}\\n{json.dumps(metadata, sort_keys=True, default=str)}\".lower()"
+      ],
+      "count_diff": 1400,
+      "size_diff_mb": 4.107,
+      "where": "haystack = f\"{content}\\n{json.dumps(metadata, sort_keys=True, default=str)}\".lower()"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 46",
+        "return updatecache(filename, module_globals)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 142",
+        "lines = fp.readlines()"
+      ],
+      "count_diff": 27889,
+      "size_diff_mb": 2.502,
+      "where": "lines = fp.readlines()"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 1094",
+        "for p in selector.select_from(self):",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 205",
+        "entries = list(scandir_it)"
+      ],
+      "count_diff": 24673,
+      "size_diff_mb": 2.252,
+      "where": "entries = list(scandir_it)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py\", line 54",
+        "return bound(*args, **kwds)",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py\", line 113",
+        "return um.clip(a, min, max, out=out, **kwargs)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 2.0,
+      "where": "return um.clip(a, min, max, out=out, **kwargs)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py\", line 54",
+        "return bound(*args, **kwds)",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py\", line 113",
+        "return um.clip(a, min, max, out=out, **kwargs)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 2.0,
+      "where": "return um.clip(a, min, max, out=out, **kwargs)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 426",
+        "_instance = STDPLearningEngine(n_neurons=requested_neurons)",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 85",
+        "self._mesu_mean = np.zeros((n_neurons, n_neurons), dtype=np.float64)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 2.0,
+      "where": "self._mesu_mean = np.zeros((n_neurons, n_neurons), dtype=np.float64)"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 46",
+        "return updatecache(filename, module_globals)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 142",
+        "lines = fp.readlines()"
+      ],
+      "count_diff": 15794,
+      "size_diff_mb": 1.564,
+      "where": "lines = fp.readlines()"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 218",
+        "path = parent_path._make_child_relpath(name)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 1069",
+        "path_str = f'{path_str}{self._flavour.sep}{name}'"
+      ],
+      "count_diff": 11139,
+      "size_diff_mb": 1.286,
+      "where": "path_str = f'{path_str}{self._flavour.sep}{name}'"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/neural_mesh.py\", line 1175",
+        "col.W = np.nan_to_num(",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_type_check_impl.py\", line 469",
+        "x = _nx.array(x, subok=True, copy=copy)"
+      ],
+      "count_diff": 128,
+      "size_diff_mb": 1.006,
+      "where": "x = _nx.array(x, subok=True, copy=copy)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 426",
+        "_instance = STDPLearningEngine(n_neurons=requested_neurons)",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 95",
+        "self._mesu_stable_count = np.zeros((n_neurons, n_neurons), dtype=np.int32)"
+      ],
+      "count_diff": 3,
+      "size_diff_mb": 1.0,
+      "where": "self._mesu_stable_count = np.zeros((n_neurons, n_neurons), dtype=np.int32)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/neural_mesh.py\", line 705",
+        "self._tick_inner()",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/neural_mesh.py\", line 851",
+        "self._W_batch = np.array([c.W for c in self.columns], dtype=np.float32)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": "self._W_batch = np.array([c.W for c in self.columns], dtype=np.float32)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/liquid_substrate.py\", line 1305",
+        "dw = stdp.deliver_reward(surprise, pred_error)",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 212",
+        ").astype(np.float32)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": ").astype(np.float32)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 161",
+        "self._eligibility = np.nan_to_num(self._eligibility, nan=0.0)",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/lib/_type_check_impl.py\", line 469",
+        "x = _nx.array(x, subok=True, copy=copy)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": "x = _nx.array(x, subok=True, copy=copy)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 426",
+        "_instance = STDPLearningEngine(n_neurons=requested_neurons)",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/stdp_learning.py\", line 87",
+        "self._mesu_count = np.zeros((n_neurons, n_neurons), dtype=np.int32)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": "self._mesu_count = np.zeros((n_neurons, n_neurons), dtype=np.int32)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/liquid_substrate.py\", line 782",
+        "self._sync_weight_cache_locked()",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/consciousness/liquid_substrate.py\", line 467",
+        "w_torch_source = np.ascontiguousarray(raw, dtype=np.float32)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": "w_torch_source = np.ascontiguousarray(raw, dtype=np.float32)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/fromnumeric.py\", line 54",
+        "return bound(*args, **kwds)",
+        "File \"/Users/bryan/.aura/live-source/.venv/lib/python3.12/site-packages/numpy/_core/_methods.py\", line 113",
+        "return um.clip(a, min, max, out=out, **kwargs)"
+      ],
+      "count_diff": 2,
+      "size_diff_mb": 1.0,
+      "where": "return um.clip(a, min, max, out=out, **kwargs)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/mycelium.py\", line 1576",
+        "return self._map_infrastructure_generation(",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/mycelium.py\", line 1669",
+        "hypha_name = f\"import:{module_key}->{dep}\""
+      ],
+      "count_diff": 9290,
+      "size_diff_mb": 0.929,
+      "where": "hypha_name = f\"import:{module_key}->{dep}\""
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 46",
+        "return updatecache(filename, module_globals)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/linecache.py\", line 142",
+        "lines = fp.readlines()"
+      ],
+      "count_diff": 8744,
+      "size_diff_mb": 0.844,
+      "where": "lines = fp.readlines()"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 218",
+        "path = parent_path._make_child_relpath(name)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 1078",
+        "path._tail_cached = tail + [name]"
+      ],
+      "count_diff": 15478,
+      "size_diff_mb": 0.768,
+      "where": "path._tail_cached = tail + [name]"
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 385",
+        "return type(self)(*pathsegments)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 1167",
+        "return object.__new__(cls)"
+      ],
+      "count_diff": 7739,
+      "size_diff_mb": 0.768,
+      "where": "return object.__new__(cls)"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/mycelium.py\", line 1576",
+        "return self._map_infrastructure_generation(",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/mycelium.py\", line 1670",
+        "h = Hypha("
+      ],
+      "count_diff": 8477,
+      "size_diff_mb": 0.582,
+      "where": "h = Hypha("
+    },
+    {
+      "call_chain": [
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 1162",
+        "super().__init__(*args)",
+        "File \"/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/lib/python3.12/pathlib.py\", line 359",
+        "paths = []"
+      ],
+      "count_diff": 7739,
+      "size_diff_mb": 0.413,
+      "where": "paths = []"
+    },
+    {
+      "call_chain": [
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/memory/gateway_record_index.py\", line 136",
+        "files = self._list_record_files()[: self.MAX_ENTRIES]",
+        "File \"/Users/bryan/.aura/live-source/.claude/worktrees/fable-divergence/core/memory/gateway_record_index.py\", line 118",
+        "files.append((mtime, record))"
+      ],
+      "count_diff": 5734,
+      "size_diff_mb": 0.37,
+      "where": "files.append((mtime, record))"
+    }
+  ],
+  "max_lag_ms": 5696.453,
+  "max_queue_len": 0,
+  "memory_leakage_detected": true,
+  "metrics": [
+    {
+      "elapsed_s": 0.57,
+      "iteration": 0,
+      "lag_ms": 274.27,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_7733554b5427",
+      "rss_mb": 801.156
+    },
+    {
+      "elapsed_s": 52.44,
+      "iteration": 1,
+      "lag_ms": 5030.712,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_dd1a69530526",
+      "rss_mb": 858.141
+    },
+    {
+      "elapsed_s": 101.48,
+      "iteration": 2,
+      "lag_ms": 4386.931,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_7895832844b9",
+      "rss_mb": 869.891
+    },
+    {
+      "elapsed_s": 144.89,
+      "iteration": 3,
+      "lag_ms": 5696.453,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_82195ce4551b",
+      "rss_mb": 873.859
+    },
+    {
+      "elapsed_s": 164.63,
+      "iteration": 4,
+      "lag_ms": 2240.696,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_f1b762244628",
+      "rss_mb": 904.016
+    },
+    {
+      "elapsed_s": 182.34,
+      "iteration": 5,
+      "lag_ms": 1169.712,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_ea2b0e2c0a60",
+      "rss_mb": 905.938
+    },
+    {
+      "elapsed_s": 201.84,
+      "iteration": 6,
+      "lag_ms": 515.185,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_681d1e4698fd",
+      "rss_mb": 907.625
+    },
+    {
+      "elapsed_s": 221.46,
+      "iteration": 7,
+      "lag_ms": 827.733,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_57b486e81e0b",
+      "rss_mb": 909.641
+    },
+    {
+      "elapsed_s": 246.37,
+      "iteration": 8,
+      "lag_ms": 1974.521,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_274aaafd6477",
+      "rss_mb": 926.906
+    },
+    {
+      "elapsed_s": 263.09,
+      "iteration": 9,
+      "lag_ms": 395.767,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_43aea715e49c",
+      "rss_mb": 927.312
+    },
+    {
+      "elapsed_s": 284.38,
+      "iteration": 10,
+      "lag_ms": 995.674,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_3d4da493bb6e",
+      "rss_mb": 476.766
+    },
+    {
+      "elapsed_s": 311.05,
+      "iteration": 11,
+      "lag_ms": 1664.896,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_d9c477e4a02a",
+      "rss_mb": 636.734
+    },
+    {
+      "elapsed_s": 328.34,
+      "iteration": 12,
+      "lag_ms": 581.804,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_bb690a38695c",
+      "rss_mb": 660.406
+    },
+    {
+      "elapsed_s": 347.48,
+      "iteration": 13,
+      "lag_ms": 626.711,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_aa6f8a2bbfda",
+      "rss_mb": 664.188
+    },
+    {
+      "elapsed_s": 368.51,
+      "iteration": 14,
+      "lag_ms": 1486.463,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_f9402fee3e8f",
+      "rss_mb": 666.766
+    },
+    {
+      "elapsed_s": 387.96,
+      "iteration": 15,
+      "lag_ms": 1637.884,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_a08fcde5ada7",
+      "rss_mb": 676.422
+    },
+    {
+      "elapsed_s": 410.68,
+      "iteration": 16,
+      "lag_ms": 2928.631,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_bfc25dc2f604",
+      "rss_mb": 687.547
+    },
+    {
+      "elapsed_s": 432.61,
+      "iteration": 17,
+      "lag_ms": 1827.673,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_33633a773de1",
+      "rss_mb": 691.781
+    },
+    {
+      "elapsed_s": 457.03,
+      "iteration": 18,
+      "lag_ms": 2914.301,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_a8150ad938a7",
+      "rss_mb": 692.078
+    },
+    {
+      "elapsed_s": 475.1,
+      "iteration": 19,
+      "lag_ms": 1837.612,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_b8d85ddf5b4a",
+      "rss_mb": 695.781
+    },
+    {
+      "elapsed_s": 502.04,
+      "iteration": 20,
+      "lag_ms": 2059.655,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_c1afd3780bbe",
+      "rss_mb": 736.328
+    },
+    {
+      "elapsed_s": 522.28,
+      "iteration": 21,
+      "lag_ms": 1518.196,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_e9ec79cdab62",
+      "rss_mb": 738.312
+    },
+    {
+      "elapsed_s": 541.56,
+      "iteration": 22,
+      "lag_ms": 1069.26,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_4fa05a3ada6f",
+      "rss_mb": 749.172
+    },
+    {
+      "elapsed_s": 561.6,
+      "iteration": 23,
+      "lag_ms": 1177.071,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_80d0a5f7bc57",
+      "rss_mb": 749.391
+    },
+    {
+      "elapsed_s": 580.41,
+      "iteration": 24,
+      "lag_ms": 1155.398,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_cc20dd1aab61",
+      "rss_mb": 749.469
+    },
+    {
+      "elapsed_s": 600.33,
+      "iteration": 25,
+      "lag_ms": 1322.812,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_eb0819578f4f",
+      "rss_mb": 750.5
+    },
+    {
+      "elapsed_s": 624.14,
+      "iteration": 26,
+      "lag_ms": 1417.666,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_60b91ed329c6",
+      "rss_mb": 754.25
+    },
+    {
+      "elapsed_s": 645.8,
+      "iteration": 27,
+      "lag_ms": 2121.026,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_3d94b46e822e",
+      "rss_mb": 754.766
+    },
+    {
+      "elapsed_s": 664.5,
+      "iteration": 28,
+      "lag_ms": 1388.203,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_b7a2f0376979",
+      "rss_mb": 754.812
+    },
+    {
+      "elapsed_s": 682.57,
+      "iteration": 29,
+      "lag_ms": 1032.869,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_48143fb0f6ac",
+      "rss_mb": 755.344
+    },
+    {
+      "elapsed_s": 707.03,
+      "iteration": 30,
+      "lag_ms": 802.005,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_293e9867fc99",
+      "rss_mb": 778.109
+    },
+    {
+      "elapsed_s": 726.08,
+      "iteration": 31,
+      "lag_ms": 1421.929,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_5650e6c2bae4",
+      "rss_mb": 779.188
+    },
+    {
+      "elapsed_s": 746.29,
+      "iteration": 32,
+      "lag_ms": 1099.358,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_cb9066ceaa58",
+      "rss_mb": 786.859
+    },
+    {
+      "elapsed_s": 775.48,
+      "iteration": 33,
+      "lag_ms": 4498.473,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_b014a2c17d76",
+      "rss_mb": 789.453
+    },
+    {
+      "elapsed_s": 795.38,
+      "iteration": 34,
+      "lag_ms": 2191.272,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_22453bd9287d",
+      "rss_mb": 790.516
+    },
+    {
+      "elapsed_s": 813.19,
+      "iteration": 35,
+      "lag_ms": 1245.497,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_2f7235052bbd",
+      "rss_mb": 790.547
+    },
+    {
+      "elapsed_s": 837.87,
+      "iteration": 36,
+      "lag_ms": 3939.903,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_70732b5deea7",
+      "rss_mb": 791.656
+    },
+    {
+      "elapsed_s": 860.61,
+      "iteration": 37,
+      "lag_ms": 2246.342,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_71ebaf5ef65c",
+      "rss_mb": 791.719
+    },
+    {
+      "elapsed_s": 876.93,
+      "iteration": 38,
+      "lag_ms": 55.164,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_0efcc4d38485",
+      "rss_mb": 791.672
+    },
+    {
+      "elapsed_s": 894.78,
+      "iteration": 39,
+      "lag_ms": 1590.287,
+      "queue_depths": {},
+      "queue_len": 0,
+      "receipt_id": "will_c595265856da",
+      "rss_mb": 791.75
+    }
+  ],
+  "profile": "proof",
+  "queue_growth_stable": true,
+  "requested_duration_s": 900.0,
+  "rss_growth_mb": 450.546,
+  "soak_mode": "endurance",
+  "tick_s": 15.0
+}

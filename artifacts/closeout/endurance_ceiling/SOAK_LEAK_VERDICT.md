@@ -60,10 +60,25 @@ The discriminating evidence was already on disk:
 
 ## Verification
 
-A bounded app-down re-run of the same leak-repro soak (20 min,
-tracemalloc, proof profile) with the fixes applied lives at
+A bounded app-down re-run of the same leak-repro soak (916s, 40
+iterations, tracemalloc, proof profile) with the fixes applied lives at
 `artifacts/closeout/endurance_ceiling/leakfix_verification/`. Success
 criterion: the subprocess wrapper cluster (io.open/TextIOWrapper
-count_diff in the tens of thousands) is gone from leak_top_growth;
-remaining sites (json scan_once, pathlib interning) are the named open
-items above.
+count_diff in the tens of thousands) gone from leak_top_growth.
+
+**Result (2026-07-24): PASS — zero subprocess-wrapper rows remain** in
+the top-25 growth sites. Better-attributed residue, in order:
+pydantic `validate_python` retention (10.5MB / 59k objects — model
+construction in a hot loop), `json.scan_once` (8.9MB / 130k — the known
+open item), memory-search haystack strings (4.1MB), readlines/scandir
+file scanning. RSS grew 450MB across this short window, but the window
+includes post-boot warmup (lazy imports, cache fills); the settled-slope
+comparison against Jul 7's 242MB/h needs a longer run once the runtime
+is otherwise quiet. Side find: the run exits 1 despite success because
+`MLXLocalClient.__del__` drains its queue during interpreter teardown
+(ImportError: sys.meta_path is None) — registered for the charter.
+
+This verification run also caught two live boot defects in the act,
+both fixed the same day: the homeostate `_engine_lock` self-deadlock
+(every boot wedged at PHASE 5.2; d2296f86) and seconds-long psutil
+process-table scans on the event loop (cb624fa3).
