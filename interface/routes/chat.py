@@ -5344,6 +5344,7 @@ def _build_live_turn_contract_payload(
             "decode_bridge_token_count", "decode_bridge_tokens_sha256",
             "decode_bridge_logits_digest", "output_quality",
             "verifier_guidance",
+            "generative_verifier",
             "verifier_probe_max_tokens",
             "latent_opt_applied",
             "latent_opt_mode", "latent_opt_loss_trail",

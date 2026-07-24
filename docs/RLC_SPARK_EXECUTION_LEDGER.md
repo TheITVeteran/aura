@@ -1539,9 +1539,44 @@ before those dependencies close is not admissible.
   receipt. The complete latent-cortex suite passes 827/827 in 44.14 seconds.
   This proves calibrated local process mechanics and causal wiring, not
   resident-32B reasoning gain, adapter interaction, or frontier capability.
-- [ ] **SPARK-042 - Generative verifier.** Independently derive or falsify
-  disputed steps in a fresh context and bind its evidence rather than accepting
-  a holistic judge score.
+- [x] **SPARK-042 - Generative verifier.** CP356 adds a real fresh-context
+  challenge lane after blind, decoy-calibrated branch selection. It gives the
+  resident checkpoint only the original objective and one anonymized disputed
+  atom; no sibling answer, branch identity, solver KV state, hidden workspace,
+  prior rationale, or ownership cue crosses the callable boundary. Every model
+  layer starts from a zero-offset cache. The receipt explicitly says that the
+  verifier shares the resident checkpoint (`parameter_independence=false`) while
+  proving context isolation through per-layer initial/final cache offsets,
+  prompt/generated-token accounting, termination, and source commitments.
+
+  The model must return one strict `FINAL_ANSWER` JSON object bound to the
+  atom's full SHA-256. Generated text is retained only as a digest. It never
+  becomes authority by assertion: the current admitted witness class is an
+  exact integer-arithmetic relation whose operands/operator must match the
+  disputed atom and whose independently derived result is recomputed by the
+  deterministic router and again by the service envelope. Unsupported prose,
+  malformed/truncated contracts, wrong claim bindings, non-integral division,
+  mismatched witnesses, unknown domains, budget exhaustion, and any imported
+  solver context all abstain. The service rejects recomputed forgeries as well
+  as stale hashes.
+
+  Authority is deliberately a refutation veto, not a second holistic score. A
+  proven refutation removes the provisional winner and binds the replacement
+  branch in the receipt; if there is no alternative, the episode refuses
+  rather than emitting a known-refuted path. Positive model prose cannot boost
+  a branch. The lane is active in both general and resident-32B service
+  profiles; the resident contract receives 128 generated tokens so its
+  64-character binding and witness are not truncated by a shallow probe budget.
+
+  Focused protocol, engine, worker, service, and UI coverage passes 149/149. A
+  real initialized tiny-Qwen run executes the fresh prefill/decode path and
+  proves all model-layer caches start at zero; a causal engine test proves an
+  independently re-derived `2 + 2 = 4` witness replaces a provisionally selected
+  `2 + 2 = 5` branch. The complete latent-cortex ownership suite passes
+  1,042/1,042 in 48.98 seconds. This proves fresh-context generative
+  falsification mechanics and bounded causal wiring, not independent weights,
+  general factual verification, resident-32B utility, adapter interaction,
+  reasoning gain, or frontier capability.
 - [ ] **SPARK-043 - Adversarial verifier curriculum.** Co-train subtle error
   insertion and error localization under sandboxed, held-out evaluation; retain
   verified failures as negatives.

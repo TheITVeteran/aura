@@ -8,6 +8,9 @@ bit-for-bit unchanged.
 
 from __future__ import annotations
 
+import json
+import re
+
 import numpy as np
 import pytest
 
@@ -179,6 +182,118 @@ def test_verifier_preview_is_hard_capped_and_compute_charge_is_exact(
     )
     assert len(final_tokens) == 72
     assert final_termination == "token_limit"
+
+
+def test_fresh_verifier_generation_uses_zero_offset_real_qwen_cache(tiny_model):
+    class NumericTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(text, **_kwargs):
+            return [1 + (ord(char) % 120) for char in str(text)][:96] or [5]
+
+        @staticmethod
+        def decode(tokens):
+            return " ".join(str(token) for token in tokens)
+
+    engine = LatentCortexEngine(tiny_model, NumericTokenizer(), config=_config())
+    budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+    budget.bind_model(tiny_model)
+    generated = engine._fresh_verifier_generation(
+        "Independently check the disputed atom.",
+        budget,
+        max_tokens=32,
+        reserve_layer_apps=0,
+    )
+
+    context = generated["context"]
+    assert context["all_initial_offsets_zero"] is True
+    assert context["solver_context_imported"] is False
+    assert context["parameter_relation"] == "shared_resident_checkpoint"
+    assert context["initial_cache_offsets"] == [0] * N_LAYERS
+    assert len(set(context["final_cache_offsets"])) == 1
+    assert context["final_cache_offsets"][0] >= context["prompt_token_count"]
+    assert context["generated_token_count"] == 32
+    assert generated["text"]
+
+
+def test_admitted_fresh_refutation_causally_replaces_provisional_winner(
+    tiny_model,
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex.task_verifiers import check_arithmetic_claims
+
+    class ProbeTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(tokens):
+            values = list(tokens)
+            if values == [100]:
+                return "The answer is 2 + 2 = 5."
+            if values == [101]:
+                return "The answer is 2 + 2 = 4."
+            return "A complete final answer."
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        ProbeTokenizer(),
+        config=_config(
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            generative_verifier_max_tokens=64,
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    def verifier(text: str) -> float:
+        if text.startswith("Independent consistency check:"):
+            checked = check_arithmetic_claims(text)
+            return float(checked["score"] if checked["score"] is not None else 0.0)
+        return 0.9 if "= 5" in text else 0.1
+
+    def fresh(prompt: str, *_args, **_kwargs):
+        claim = re.search(r"ANONYMIZED_CLAIM_SHA256: ([0-9a-f]{64})", prompt)
+        assert claim is not None
+        payload = {
+            "claim_sha256": claim.group(1),
+            "verdict": "refutes",
+            "witness": "2 + 2 = 4",
+        }
+        return {
+            "text": "FINAL_ANSWER: " + json.dumps(payload, separators=(",", ":")),
+            "context": {
+                "schema": "aura.rlc.fresh_verifier_context.v1",
+                "prompt_token_count": 1,
+                "generated_token_count": 16,
+                "termination": "contract_complete",
+                "initial_cache_offsets": [0] * N_LAYERS,
+                "final_cache_offsets": [16] * N_LAYERS,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
+    monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
+    result = engine.reason(
+        prompt="Compute 2 + 2 exactly.",
+        verifier=verifier,
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert result.ok
+    assert result.receipt.generative_verifier["causal_refutation"] is True
+    assert result.receipt.generative_verifier["selection_effect"] == "winner_replaced"
+    assert result.receipt.generative_verifier["vetoed_branch"] == 0
+    assert result.receipt.selected_branch == 1
 
 
 def test_heterogeneous_dual_lane_decode_is_real_equal_compute_and_restoring(

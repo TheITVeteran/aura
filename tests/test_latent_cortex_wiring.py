@@ -2470,6 +2470,12 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "verifier_probe_max_tokens": kwargs["config"].get(
                         "verifier_probe_max_tokens", 48
                     ),
+                    "generative_verifier": {
+                        "requested": True,
+                        "available": False,
+                        "reason": "stubbed_worker_has_no_generator",
+                        "selection_effect": "none",
+                    },
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,
@@ -3612,6 +3618,12 @@ def _full_success_stub_client(captured):
                     "verifier_probe_max_tokens": kwargs["config"].get(
                         "verifier_probe_max_tokens", 48
                     ),
+                    "generative_verifier": {
+                        "requested": True,
+                        "available": False,
+                        "reason": "stubbed_worker_has_no_generator",
+                        "selection_effect": "none",
+                    },
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,

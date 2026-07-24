@@ -661,6 +661,81 @@ class LatentCortexEngine:
 
         return [KVCache() for _ in range(self.n_layers)]
 
+    def _fresh_verifier_generation(
+        self,
+        prompt: str,
+        budget: ComputeBudget,
+        *,
+        max_tokens: int,
+        reserve_layer_apps: int,
+    ) -> dict[str, Any]:
+        """Generate one verifier witness without importing solver KV state."""
+
+        from core.brain.llm.latent_cortex.generative_verifier import (
+            FRESH_CONTEXT_SCHEMA,
+        )
+
+        tokens = self._encode(prompt, None, None)
+        contract_extension = (
+            min(64, max_tokens) if self.config.decode_contract == "final_answer_v1" else 0
+        )
+        required = (len(tokens) + max_tokens + contract_extension) * self.n_layers
+        if required + reserve_layer_apps > budget.remaining_layer_apps:
+            raise RuntimeError("fresh_verifier_budget_unavailable")
+        cache = self._fresh_cache()
+        initial_offsets = [self._cache_context_tokens(cache, index) for index in range(len(cache))]
+        if not initial_offsets or any(initial_offsets):
+            raise RuntimeError("fresh_verifier_cache_not_empty")
+
+        sentinel = object()
+        saved_prefill = getattr(self, "_last_prefill_hidden", sentinel)
+        state_names = (
+            "_last_decode_newline_suppressions",
+            "_last_decode_contract_required",
+            "_last_decode_contract_satisfied",
+            "_last_decode_contract_grace_tokens",
+            "_last_decode_contract_grace_used_tokens",
+        )
+        saved_state = {name: getattr(self, name) for name in state_names}
+        try:
+            _embeddings, logits = self._prefill(tokens, cache, budget)
+            generated, termination = self._decode(
+                cache,
+                budget,
+                logits,
+                max_tokens=max_tokens,
+                temperature=0.0,
+                top_p=1.0,
+                sentence_grace_tokens=0,
+                contract_grace_tokens=min(64, max_tokens),
+            )
+            text = self.tokenizer.decode(generated)
+            final_offsets = [
+                self._cache_context_tokens(cache, index) for index in range(len(cache))
+            ]
+        finally:
+            if saved_prefill is sentinel:
+                if hasattr(self, "_last_prefill_hidden"):
+                    delattr(self, "_last_prefill_hidden")
+            else:
+                self._last_prefill_hidden = saved_prefill
+            for name, value in saved_state.items():
+                setattr(self, name, value)
+        return {
+            "text": text,
+            "context": {
+                "schema": FRESH_CONTEXT_SCHEMA,
+                "prompt_token_count": len(tokens),
+                "generated_token_count": len(generated),
+                "termination": termination,
+                "initial_cache_offsets": initial_offsets,
+                "final_cache_offsets": final_offsets,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
     def _logits(
         self,
         h,
@@ -1693,6 +1768,14 @@ class LatentCortexEngine:
             "active": True,
         }
         tokens = self._encode(prompt, messages, token_ids)
+        verification_objective = str(prompt or "")
+        if not verification_objective and messages:
+            for message in reversed(messages):
+                if isinstance(message, dict) and message.get("role") == "user":
+                    content = message.get("content")
+                    if isinstance(content, str) and content.strip():
+                        verification_objective = content
+                        break
         encoded_tokens = json.dumps(tokens, separators=(",", ":"), allow_nan=False).encode("ascii")
         receipt.input_tokens_sha256 = hashlib.sha256(encoded_tokens).hexdigest()
         receipt.input_token_count = len(tokens)
@@ -1739,6 +1822,7 @@ class LatentCortexEngine:
                     action_policy_evidence=policy_evidence,
                     information_encoded_tokens=encoded_tokens,
                     information_verifier=verifier,
+                    verification_objective=verification_objective,
                     cancel_check=cancel_check,
                     progress=progress,
                     episode_started=episode_started,
@@ -1929,6 +2013,7 @@ class LatentCortexEngine:
         action_policy_evidence: dict[str, Any],
         information_encoded_tokens: bytes,
         information_verifier: Callable[[str], float] | None,
+        verification_objective: str = "",
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         episode_started: float | None = None,
@@ -3439,12 +3524,12 @@ class LatentCortexEngine:
             count=len(ensemble.branches),
         )
         branch_verifier_score: float | None = None
+        branch_probe_texts: dict[int, str] = {}
         if (
             pending_verifier is not None
             and self.tokenizer is not None
             and branch_probe_cost + safety_reserve <= budget.remaining_layer_apps
         ):
-            branch_probe_texts: dict[int, str] = {}
             for branch in ensemble.branches:
                 probe = self._decode_probe(
                     branch,
@@ -3513,6 +3598,79 @@ class LatentCortexEngine:
                 receipt.flag("branch_verifier_skipped_budget")
             verifier = None
             winner = select_without_task_verifier()
+
+        # SPARK-042: challenge the provisional winner in an entirely fresh KV
+        # context. This is intentionally a refutation veto, not another
+        # holistic model score: same-checkpoint prose never certifies itself.
+        # Only a deterministic witness relation reconstructed by the verifier
+        # envelope can remove the selected branch.
+        generative_only_branch_refuted = False
+        if (
+            self.config.generative_verifier_enabled
+            and verifier is not None
+            and verification_objective.strip()
+            and winner.index in branch_probe_texts
+        ):
+            try:
+                from core.brain.llm.latent_cortex.generative_verifier import (
+                    bind_selection_effect,
+                    run_generative_verifier,
+                )
+
+                receipt.generative_verifier = run_generative_verifier(
+                    branch_probe_texts[winner.index],
+                    objective=verification_objective,
+                    max_atoms=self.config.generative_verifier_max_atoms,
+                    generate=lambda prompt: self._fresh_verifier_generation(
+                        prompt,
+                        budget,
+                        max_tokens=self.config.generative_verifier_max_tokens,
+                        reserve_layer_apps=safety_reserve,
+                    ),
+                )
+                if receipt.generative_verifier["causal_refutation"]:
+                    alternatives = [
+                        branch for branch in ensemble.branches if branch.index != winner.index
+                    ]
+                    if alternatives:
+                        vetoed = winner.index
+                        winner = max(alternatives, key=lambda branch: branch.score)
+                        selection_basis = f"{selection_basis}_generative_refutation_veto"
+                        receipt.generative_verifier = bind_selection_effect(
+                            receipt.generative_verifier,
+                            vetoed_branch=vetoed,
+                            replacement_branch=winner.index,
+                        )
+                    else:
+                        receipt.generative_verifier = bind_selection_effect(
+                            receipt.generative_verifier,
+                            vetoed_branch=winner.index,
+                            replacement_branch=None,
+                        )
+                        generative_only_branch_refuted = True
+            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+                receipt.flag(f"generative_verifier_abstained:{type(exc).__name__}")
+                receipt.generative_verifier = {
+                    "requested": True,
+                    "available": False,
+                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "selection_effect": "none",
+                }
+        elif self.config.generative_verifier_enabled:
+            receipt.generative_verifier = {
+                "requested": True,
+                "available": False,
+                "reason": (
+                    "admitted_task_verifier_unavailable"
+                    if verifier is None
+                    else "verification_objective_unavailable"
+                    if not verification_objective.strip()
+                    else "branch_probe_unavailable"
+                ),
+                "selection_effect": "none",
+            }
+        if generative_only_branch_refuted:
+            raise RuntimeError("generative_verifier_refuted_only_branch")
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
         receipt.steps_taken = winner.steps

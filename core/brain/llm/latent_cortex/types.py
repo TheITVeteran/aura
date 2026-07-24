@@ -450,6 +450,12 @@ class CortexConfig:
     # lab/frontier default remains broad; the resident interactive profile may
     # use a shorter, explicitly receipted probe to preserve the answer budget.
     verifier_probe_max_tokens: int = 48
+    # Fresh-context generative challenge lane. It shares the resident
+    # checkpoint but imports no solver KV state; generated prose has no
+    # authority unless a deterministic witness relation reconstructs.
+    generative_verifier_enabled: bool = True
+    generative_verifier_max_atoms: int = 1
+    generative_verifier_max_tokens: int = 160
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
     # when the candidate also proves descent on the answer-leak-proof proxy.
@@ -673,6 +679,12 @@ class CortexConfig:
             )
         if not integer_in(self.verifier_probe_max_tokens, 16, 512):
             problems.append("verifier_probe_max_tokens outside [16, 512]")
+        if type(self.generative_verifier_enabled) is not bool:
+            problems.append("generative_verifier_enabled must be boolean")
+        if not integer_in(self.generative_verifier_max_atoms, 1, 8):
+            problems.append("generative_verifier_max_atoms outside [1, 8]")
+        if not integer_in(self.generative_verifier_max_tokens, 32, 256):
+            problems.append("generative_verifier_max_tokens outside [32, 256]")
         if self.decode_contract not in ("none", "final_answer_v1"):
             problems.append("decode_contract must be 'none' or 'final_answer_v1'")
         if not integer_in(self.decode_contract_grace_tokens, 0, 4096):
@@ -1153,6 +1165,10 @@ class EpisodeReceipt:
     verifier_preflight: dict[str, Any] = field(default_factory=dict)
     blind_review: dict[str, Any] = field(default_factory=dict)
     decoy_verification: dict[str, Any] = field(default_factory=dict)
+    # A resident-model derivation/falsification pass in a fresh KV context.
+    # The public receipt discloses shared weights and only grants a bounded
+    # refutation veto when deterministic witness evidence reconstructs.
+    generative_verifier: dict[str, Any] = field(default_factory=dict)
     critic_identity: dict[str, Any] = field(default_factory=dict)
     shared_blind_spots: dict[str, Any] = field(default_factory=dict)
     # Fresh-context virtual-width proof. Exact hidden-state contents stay
@@ -1452,6 +1468,7 @@ class EpisodeReceipt:
             "verifier_preflight": dict(self.verifier_preflight),
             "blind_review": dict(self.blind_review),
             "decoy_verification": dict(self.decoy_verification),
+            "generative_verifier": dict(self.generative_verifier),
             "critic_identity": dict(self.critic_identity),
             "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),

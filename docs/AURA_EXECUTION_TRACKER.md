@@ -26799,3 +26799,59 @@ count completion is approximately 56.8%-89.3%, with a midpoint planning
 estimate of 69.4%. Next: publish CP355, then implement SPARK-042's independently
 derived generative verifier. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-24-356: Fresh Derivation Can Veto a Refuted Winner
+
+SPARK-042 adds a generative verifier that is materially separate in context,
+not falsely described as a separate mind or model. After blind and decoy-
+calibrated branch scoring, the provisional winner's first disputed atom is sent
+through the resident checkpoint in a newly allocated KV cache. The fresh lane
+sees only the original objective and one anonymized atom. It receives no solver
+cache, hidden workspace, branch role, sibling candidate, ownership marker, or
+previous rationale. Per-layer zero offsets, prompt and generated-token counts,
+termination, source hashes, and shared-checkpoint status are bound into a text-
+free receipt.
+
+The generation must satisfy a strict `FINAL_ANSWER` JSON contract containing
+the atom's full SHA-256, a supports/refutes/unknown verdict, and a bounded
+witness. The generated claim has no authority by itself. Current causal
+admission is intentionally limited to exact integer-arithmetic relations: the
+witness must independently reproduce the same operands and operator, the
+deterministic router must verify the derived equality, and the service must
+recompute the arithmetic and selection effect. Unsupported prose, wrong hashes,
+malformed or truncated JSON, mismatched witnesses, imported context, exhausted
+budget, and forged/recommitted receipts abstain or fail validation.
+
+Authority is a one-way refutation veto rather than another holistic judge
+score. A proven false winner is replaced by the highest existing alternate and
+the veto/replacement pair is committed; a sole refuted branch refuses the
+episode. Positive model prose cannot inflate branch rank. The lane is enabled
+in general and resident-32B profiles. The resident contract uses 128 generated
+tokens because its 64-character atom binding plus witness cannot reliably fit
+inside the shorter branch-preview budget.
+
+Focused protocol, real-engine, worker, service, and UI coverage passes 149/149.
+A real initialized tiny-Qwen decode proves fresh zero-offset caches across every
+model layer. A causal integration test proves a provisionally preferred
+`2 + 2 = 5` branch is independently falsified and replaced by the alternate.
+The complete latent-cortex ownership suite passes 1,042/1,042 in 48.98 seconds.
+Strict Ruff, bytecode compilation, and diff hygiene pass. The enterprise
+ratchet passes at the inherited 168 findings and 38 high/critical findings;
+the exact parent comparison remains count/category identical, so CP356 adds no
+scanner debt. The clean closeout audit enumerates 7,903 tracked files, 4,880
+code files, and 1,543,988 code lines and passes every configured gate. The
+semantic ledger contains 1,571 current entries and 443 fully reviewed code
+files; whole-repository semantic closeout remains explicitly open.
+
+This proves fresh-context generative falsification and bounded causal branch
+replacement. It does not prove parameter independence, open-domain factual
+truth, resident-32B utility, durable learning, adapter/RLC positive interaction,
+reasoning gain, or frontier capability; those remain fresh powered campaign
+claims.
+
+This is total checkpoint record 417. The revised forecast remains 466-733 total
+records, now approximately 49-316 records after this checkpoint. Checkpoint-
+count completion is approximately 56.9%-89.5%, with a midpoint planning
+estimate of 69.5%. Next: publish CP356, then implement SPARK-043's adversarial
+verifier curriculum. Final multi-hour soaks remain deferred until every shorter
+gate is green.

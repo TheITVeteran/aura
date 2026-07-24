@@ -90,6 +90,9 @@ _CONFIG_KEYS = {
     "fast_weights_rank",
     "fast_weights_scale",
     "fast_weights_target",
+    "generative_verifier_enabled",
+    "generative_verifier_max_atoms",
+    "generative_verifier_max_tokens",
     "jitter_scale",
     "input_context_max_chars",
     "isolation_steps",
@@ -237,6 +240,15 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_contract_grace_tokens=_typed_value(raw, "decode_contract_grace_tokens", 0, int),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
         verifier_probe_max_tokens=_typed_value(raw, "verifier_probe_max_tokens", 48, int),
+        generative_verifier_enabled=_typed_value(
+            raw, "generative_verifier_enabled", True, bool
+        ),
+        generative_verifier_max_atoms=_typed_value(
+            raw, "generative_verifier_max_atoms", 1, int
+        ),
+        generative_verifier_max_tokens=_typed_value(
+            raw, "generative_verifier_max_tokens", 160, int
+        ),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool
         ),

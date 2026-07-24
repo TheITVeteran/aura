@@ -238,6 +238,9 @@ class LatentCortexService:
             "decode_max_tokens": 512,
             "verifier_probe_max_tokens": 48,
             "verifier_accept_non_regression": False,
+            "generative_verifier_enabled": True,
+            "generative_verifier_max_atoms": 1,
+            "generative_verifier_max_tokens": 160,
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
@@ -277,6 +280,11 @@ class LatentCortexService:
                     # keeping every arbitration mechanism causal and receipted.
                     "verifier_probe_max_tokens": 24,
                     "verifier_accept_non_regression": True,
+                    "generative_verifier_enabled": True,
+                    "generative_verifier_max_atoms": 1,
+                    # The strict JSON contract includes a 64-character claim
+                    # commitment; shorter budgets truncate before the witness.
+                    "generative_verifier_max_tokens": 128,
                     "input_context_max_chars": 9000,
                     "allow_vanilla_fallback": False,
                 }
@@ -607,6 +615,38 @@ class LatentCortexService:
                         raise ValueError("deterministic verifier refuted candidate")
             except (ImportError, TypeError, ValueError):
                 errors.append("atomic_decomposition_unproven")
+        generative = receipt.get("generative_verifier")
+        if config.get("generative_verifier_enabled") is True:
+            if (
+                isinstance(generative, dict)
+                and generative.get("schema") == "aura.rlc.generative_verifier.v1"
+            ):
+                try:
+                    from core.brain.llm.latent_cortex.generative_verifier import (
+                        validate_generative_verifier_envelope,
+                    )
+
+                    verified_generation = validate_generative_verifier_envelope(generative)
+                    effect = verified_generation["selection_effect"]
+                    if effect == "winner_replaced" and receipt.get("selected_branch") != (
+                        verified_generation["replacement_branch"]
+                    ):
+                        raise ValueError("generative verifier replacement was not selected")
+                    if verified_generation["causal_refutation"] and effect == "none":
+                        raise ValueError("generative refutation was not applied to selection")
+                    if effect == "no_alternative":
+                        raise ValueError("generative verifier refuted the only branch")
+                except (ImportError, TypeError, ValueError):
+                    errors.append("generative_verifier_unproven")
+            elif not (
+                isinstance(generative, dict)
+                and generative.get("requested") is True
+                and generative.get("available") is False
+                and generative.get("selection_effect") == "none"
+                and isinstance(generative.get("reason"), str)
+                and generative.get("reason")
+            ):
+                errors.append("generative_verifier_unreceipted")
         if config.get("critic_blind_spot_evidence") is not None:
             try:
                 from core.brain.llm.latent_cortex.critic_identity import (
