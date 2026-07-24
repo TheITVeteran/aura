@@ -427,6 +427,14 @@ class HostResourceObserver:
             raise ValueError("HostResourceObserver requires a host-backed source")
         self._source = source
         self._scenario_id = str(scenario_id or "runtime")
+        # Short-TTL cache for the full process table. A psutil process_iter
+        # over the whole host costs seconds of syscalls on macOS, and the
+        # Jul 24 boot-stall dumps caught it running ON the event loop
+        # (resource_observation.processes -> process_table). Observation
+        # freshness of a couple of seconds is well inside every consumer's
+        # tolerance — the scan itself takes that long.
+        self._process_table_cache: tuple[float, ProcessTableObservation] | None = None
+        self._process_table_cache_ttl_s = 2.0
 
     @property
     def provenance(self) -> ObservationProvenance:
@@ -626,6 +634,10 @@ class HostResourceObserver:
         )
 
     def process_table(self) -> ProcessTableObservation:
+        cached = self._process_table_cache
+        now = time.monotonic()
+        if cached is not None and now - cached[0] < self._process_table_cache_ttl_s:
+            return cached[1]
         observed: list[ProcessObservation] = []
         try:
             iterator = psutil.process_iter()
@@ -641,16 +653,19 @@ class HostResourceObserver:
             TypeError,
             ValueError,
         ) as exc:
+            # Failures are never cached: the next caller retries the scan.
             return ProcessTableObservation(
                 provenance=self.provenance,
                 processes=tuple(observed),
                 available=False,
                 error=f"{type(exc).__name__}:{exc}",
             )
-        return ProcessTableObservation(
+        result = ProcessTableObservation(
             provenance=self.provenance,
             processes=tuple(observed),
         )
+        self._process_table_cache = (now, result)
+        return result
 
     def processes(self) -> tuple[ProcessObservation, ...]:
         return self.process_table().processes
