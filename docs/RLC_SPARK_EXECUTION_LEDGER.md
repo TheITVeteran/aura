@@ -185,6 +185,21 @@ as half a checkbox.
   still cannot claim a lesion run). The post-training run on fresh
   held-out tasks (the acceptance event, checkbox stays `[ ]`) binds to the
   SPARK-069 treatment. The march owns everything else.
+- **The pass-divergence design problem is CLAIMED and in progress by the
+  Fable session (Bryan-directed) as of 2026-07-24**: diagnosis of the
+  cos(pass1, pass2) = 0.9994 obstacle as an architecture defect rather
+  than a training-budget one — why a fixed recurrent map lacks any
+  mechanism to make pass t+1 compute something different from pass t —
+  plus a menu of flag-gated, T=1-identity-safe divergence interventions
+  (step-conditioned operators on the intrinsic path, anchor re-injection
+  schedules, inter-pass bottleneck/noise, alternative recurrence
+  formulations), each with structural tests proving the mechanism is
+  actually consulted. Scope boundary: this lane produces diagnosis, code,
+  tests, and small-model measurements only. It launches NO training; the
+  SPARK-069 admission preflight, campaign protocol, and any 32B run stay
+  bound to the march. The Fable session also takes the live-runtime
+  endurance forensics (the ~15-turn resident ceiling and the 4h soak
+  memory slope) — outside the Spark checkpoints, no march collision.
 
 | Checkpoints | Primary implementation owners | Live integration owners |
 |---|---|---|
