@@ -595,7 +595,10 @@ def test_hidden_eval_result_logging_uses_local_governance(monkeypatch, tmp_path)
     monkeypatch.setattr(hidden_eval, "_RESULTS_PATH", result_path)
     monkeypatch.setenv("AURA_REQUIRE_GOVERNANCE", "1")
 
-    runner = HiddenEvalRunner()
+    # The runner derives its results path from its data_dir (self._data_dir /
+    # _RESULTS_PATH.name), so redirect the dir too — patching the module path
+    # alone lands the write in the real data dir.
+    runner = HiddenEvalRunner(data_dir=tmp_path)
     runner.register_scenario(
         EvalScenario(
             scenario_id="governed_log",

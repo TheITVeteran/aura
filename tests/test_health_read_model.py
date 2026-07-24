@@ -1548,6 +1548,12 @@ def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
             removeItem: (key) => values.delete(key),
         }};
         const composer = {{ value: '', style: {{}}, scrollHeight: 42 }};
+        const resizeChatComposer = (input) => {{
+            if (!input || !input.style) return;
+            input.style.height = 'auto';
+            input.style.height = `${{input.scrollHeight}}px`;
+            input.style.overflowY = 'hidden';
+        }};
         const $ = (id) => id === 'chat-input' ? composer : null;
         const replacements = [];
         const reloads = [];
