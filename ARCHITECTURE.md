@@ -2136,3 +2136,29 @@ health registry. The baseline includes a cross-fusion trust leg: replaying
 the proof-kernel ledger, so stored-proof integrity is re-demonstrated at boot
 and on every reactor re-convergence. Services: `homeostate`,
 `homeostate_reactor`.
+
+### 16.4 Wave 2: certified arithmetic, semantic dedupe, scheduled convergence, provenance
+
+The second harvest pass deepened each fusion with its source project's next
+organ. **Certified linear arithmetic**
+(`core/reasoning/linear_arithmetic.py`, mathlib's `linarith`/`omega`
+discipline): Fourier–Motzkin search over exact rationals emits **Farkas
+certificates**, an independent checker re-verifies the multiplier
+combination with `Fraction` arithmetic, and the method registers as the
+kernel's second citizen (`farkas_linear`) with a ledger replay codec —
+arithmetic theorems replay under the same homeostate trust leg as tableau
+proofs. Live through `SymbolicBridge.prove_linear`, and
+`solve_constraints` prefers the certified path over unverified z3.
+
+**Kernel-certified semantic dedupe**: `prove_equivalent` (both entailments
+independently checked) backs the belief engine's merge test — a claim and
+its contrapositive revise one belief instead of duplicating; a negation
+never merges. **Salt wave 2**: per-state `retries`/`retry_interval_s`
+(dry-run never retries), `orchestrate()` for ordered multi-highstate plans,
+and `ScheduledConvergence` re-applying the runtime baseline every 30
+minutes from boot — acute drift is the beacon/reactor's job, slow drift is
+the schedule's. **Hyperon wave 2**: `AtomSpace.explain()` — depth-bounded
+backward chaining composing deduction truth values along implication
+chains; every `atomspace.derived` event now carries each derivation's best
+supporting chain, so downstream organs receive provenance, not bare
+conclusions.
