@@ -3221,7 +3221,11 @@ def _explicit_brevity_requested(user_message: Any) -> bool:
         r"\b(?:briefly|be brief|be concise|keep (?:it|this) (?:brief|concise|short)|"
         r"concise (?:answer|reply|response|sentence)|short (?:answer|reply|response|sentence)|"
         r"in (?:a|one) (?:brief|concise|short) sentence|answer directly|reply directly|"
-        r"respond directly|include nothing else|nothing else)\b"
+        r"respond directly|include nothing else|nothing else|"
+        # "Just the name." / "Just the digits." — a recall probe that asks for
+        # the bare value IS an explicit length constraint, and a correct
+        # one-word answer must not be failed as too_short_for_user_turn.
+        r"just the (?:name|digits?|numbers?|words?|colou?r|title|code|answer|value))\b"
     )
     return any(
         _constraint_match_is_actionable(text, match)
@@ -3423,6 +3427,27 @@ _MEMORY_PIN_STOPWORDS = {
     "session",
     "this",
 }
+# Natural receipt IDIOMS that the single-word set above misses. A live
+# memory-plant turn ("...my friend's dog is named Biscuit. Brief
+# acknowledgment is fine.") drew the genuine receipt "Got it — Biscuit. I'll
+# keep that in mind", which contains no word from that set, so the gate called
+# it a generic acknowledgement. generic_memory_pin_acknowledgement is a HARD
+# failure with no deliverable salvage path, so the turn died as an empty reply
+# and the fact was never stored — 2 of 3 retention plants (Biscuit, Deep
+# Harbor) were lost that way in the Jul 24 endurance soak.
+#
+# The payload-echo requirement in _matches_memory_pin_confirmation is what
+# actually separates a receipt from filler, so recognizing these idioms does
+# not weaken the contract: a content-less "Got it, noted!" is still rejected.
+_MEMORY_PIN_CONFIRMATION_PHRASE_RE = re.compile(
+    r"\bgot it\b"
+    r"|\b(?:keep|keeping|kept|hold|holding|held)\b.{0,24}?\bin mind\b"
+    r"|\b(?:won't|will not|not going to)\s+forget\b"
+    r"|\bcommitted to memory\b"
+    r"|\bfiled\b"
+    r"|\blocked (?:it |that |this )?in\b",
+    re.IGNORECASE,
+)
 
 
 def _is_explicit_memory_pin_request(user_message: Any) -> bool:
@@ -3440,6 +3465,18 @@ def _is_explicit_memory_pin_request(user_message: Any) -> bool:
     ):
         return False
     if re.search(r"\bwhat\b.{0,80}\byou\s+can\s+(?:genuinely\s+)?remember\b", text):
+        return False
+    # Questions ABOUT retention behaviour are not write commands either.
+    # "Explain how you would keep a live desktop conversation coherent under
+    # load" matched keep...conversation, so a correct substantive answer was
+    # hard-failed as a missing memory-pin receipt (and the salvage has no
+    # deliverable path for that reason, killing the turn).
+    if re.search(
+        r"\b(?:explain|describe|walk me through|tell me|how|why|what|when)\b"
+        r"[^.?!]{0,60}?\byou\s+(?:would\s+|will\s+|can\s+|could\s+|do\s+|"
+        r"actually\s+)*(?:remember|keep|save|store|record|pin|retain)\b",
+        text,
+    ):
         return False
     return bool(
         re.search(
@@ -3472,7 +3509,10 @@ def _matches_memory_pin_confirmation(user_message: Any, reply_text: Any) -> bool
     if not reply:
         return False
     reply_terms = set(_WORD_RE.findall(reply))
-    if not (reply_terms & _MEMORY_PIN_CONFIRMATION_WORDS):
+    if not (
+        reply_terms & _MEMORY_PIN_CONFIRMATION_WORDS
+        or _MEMORY_PIN_CONFIRMATION_PHRASE_RE.search(reply)
+    ):
         return False
     payload_terms = _memory_pin_payload_terms(user_message)
     if not payload_terms:
