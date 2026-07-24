@@ -157,8 +157,9 @@ as half a checkbox.
 
 ### Active ownership claims (agent coordination)
 
-- **SPARK-002, SPARK-003, SPARK-004, SPARK-013 are CLAIMED and in progress by
-  the Fable session (Bryan-directed), starting 2026-07-23 19:15 PT.** These are
+- **SPARK-002, SPARK-003, SPARK-013 are CLAIMED and in progress by
+  the Fable session (Bryan-directed), starting 2026-07-23 19:15 PT.**
+  SPARK-004 resolved in this lane at F1 (2026-07-23). These are
   the four items the sequential march has skipped since CP318; Bryan assigned
   them out-of-band to close the SPARK-069 admission prerequisites (004, 013)
   and the contract legs (002, 003) in parallel with the march. Other agents:
@@ -227,10 +228,31 @@ before those dependencies close is not admissible.
   wrong correction, context contamination, state corruption, budget abuse,
   stale tools, adaptation leakage, and unsafe self-modification with executable
   mitigations.
-- [ ] **SPARK-004 - Frozen baseline bundle.** Freeze resident checkpoint,
+- [x] **SPARK-004 - Frozen baseline bundle.** Freeze resident checkpoint,
   tokenizer, adapters, decoding, task generators, control manifests, resource
   envelope, randomization, and current vanilla/RLC measurements before changing
   the treatment.
+  Accepted at F1 (Fable lane, 2026-07-23): `frozen_baseline.py` builds and
+  independently verifies one immutable, hash-bound, Ed25519-signed bundle;
+  `tools/freeze_spark_baseline.py freeze` produced the real sealed bundle at
+  `artifacts/closeout/latent_cortex/spark004_frozen_baseline/` (certificate
+  `9bf377e5adc7cf9d…`, commit-bound at `e82e031ca`). It binds the fused
+  resident checkpoint by full-content fingerprint (`8eae71e73a14d122…`, 4
+  weight files, re-hashed twice), the tokenizer/config behavior bundle, the
+  personality-adapter claim (fused, none attached), the RLC execution spec
+  plus worker decode defaults, task-generator registry `2026.07.18.2` with
+  commit+hash-bound generator/randomization sources, every
+  `config/latent_cortex` control manifest as bundle-internal copies, the
+  cp305 declared resource envelope, the preregistered training/eval seeds,
+  and the current measurements (cp227 intrinsic accuracy gate on/off receipts
+  as the paired vanilla/RLC evidence, cp305 controller verdict and GRPO
+  receipt as the latest treatment-side outcome). Verification re-checks the
+  exact artifact set, per-file digests, certificate self-digest, and detached
+  signature against a caller-supplied trust anchor only; drift checks re-hash
+  the checkpoint and sources on demand. 28 focused tests pass; smoke 104/104.
+  Honest limits: the signature roots in the local contamination-audit key
+  (local custody, not external), and SPARK-069 admission must pin this
+  certificate hash for the freeze to gate anything.
 
 ## B. Persistent epistemic state
 
