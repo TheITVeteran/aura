@@ -214,8 +214,10 @@ class TestCircuitBreakerHalfOpenRecovery:
         assert ep.state == CircuitState.OPEN
         assert not ep.is_available()
 
-        # Advance time past recovery window
-        ep.last_failure = time.time() - (ep.recovery_timeout + 5.0)
+        # Advance past the recovery window. Recovery is governed by a MONOTONIC
+        # deadline now (wall-clock last_failure is display-only so clock jumps
+        # cannot reopen/wedge circuits), so expire that deadline.
+        ep.cooldown_until_monotonic = time.monotonic() - 1.0
 
         # Now is_available() should transition to HALF_OPEN
         assert ep.is_available(), "Endpoint should be available after recovery timeout"
@@ -321,8 +323,9 @@ class TestSuccessResetsCircuit:
             ep.record_failure("test_failure")
         assert ep.state == CircuitState.OPEN
 
-        # 2. Simulate time passing beyond recovery timeout
-        ep.last_failure = time.time() - 15.0
+        # 2. Simulate time passing beyond recovery timeout. Recovery is keyed
+        #    to a monotonic deadline (wall-clock last_failure is display-only).
+        ep.cooldown_until_monotonic = time.monotonic() - 1.0
 
         # 3. Check availability triggers HALF_OPEN
         assert ep.is_available()
@@ -395,9 +398,10 @@ class TestCircuitBreakerEdgeCases:
         assert not ep.is_available()
         assert ep.state == CircuitState.OPEN
 
-    def test_success_in_closed_state_does_not_reset_failures(self):
-        """In CLOSED state, record_success should NOT zero out failure_count
-        (that only happens on HALF_OPEN -> CLOSED transition)."""
+    def test_success_resets_streak_but_keeps_lifetime_in_closed_state(self):
+        """A success clears the consecutive-failure STREAK in every state so
+        intermittent failures cannot silently accumulate toward the threshold
+        across healthy successes; the lifetime tally is sticky and persists."""
         ep = EndpointHealth(
             name="test_ep",
             url="internal",
@@ -409,10 +413,12 @@ class TestCircuitBreakerEdgeCases:
         ep.record_failure("f2")
         assert ep.state == CircuitState.CLOSED  # Below threshold
         assert ep.failure_count == 2
+        assert ep.lifetime_failure_count == 2
 
         ep.record_success(tokens=50, latency_ms=100.0)
-        # Failure count is NOT reset because we never left CLOSED
-        assert ep.failure_count == 2
+        # Streak resets in every state; the lifetime count remains.
+        assert ep.failure_count == 0
+        assert ep.lifetime_failure_count == 2
         assert ep.success_count == 1
 
     def test_multiple_failures_beyond_threshold_keep_circuit_open(self):
