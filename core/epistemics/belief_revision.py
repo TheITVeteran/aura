@@ -82,6 +82,10 @@ class Belief:
     last_updated: float = field(default_factory=time.time)
     tags: list[str] = field(default_factory=list)
     supporting_evidence: list[str] = field(default_factory=list)
+    # PLN evidence mass: how much weighted evidence stands behind confidence.
+    # Revision is evidence-weighted, so confirmations accumulate instead of
+    # being blended away and contradictions stay visible as high-count middles.
+    evidence_count: float = 1.0
 
 
 class BeliefRevisionEngine:
@@ -132,6 +136,10 @@ class BeliefRevisionEngine:
 
             self._resolve_dependencies()
             self.running = True
+            # Rebuild the AtomSpace mirror from the persisted belief store so
+            # the PLN metagraph is live from boot, not only after new claims.
+            for b in self.beliefs:
+                self._mirror_claim_to_atomspace(b)
             self._revision_task = task_tracker.create_task(
                 self._revision_loop(),
                 name="BeliefRevisionEngine.loop",
@@ -381,6 +389,30 @@ class BeliefRevisionEngine:
                 weaker.content, old, weaker.confidence,
             )
 
+    def _mirror_claim_to_atomspace(self, belief: Belief) -> None:
+        """Assert the belief into the AtomSpace (PLN metagraph mirror).
+
+        The atomspace carries the same claim as typed atoms with a PLN truth
+        value: implication-shaped beliefs become Implication links (fuel for
+        the deduction chainer), and every assertion stimulates its atom so the
+        attention economy tracks what Aura is actually thinking about.
+        """
+        try:
+            from core.knowledge.atomspace import TruthValue, assert_claim, get_atomspace
+
+            assert_claim(
+                get_atomspace(),
+                belief.content,
+                TruthValue(belief.confidence, max(belief.evidence_count, 1e-6)),
+                domain=belief.domain,
+            )
+        except (ImportError, ValueError, TypeError, RuntimeError, AttributeError) as e:
+            _record_belief_revision_degradation(
+                e,
+                action="kept belief update without atomspace mirror",
+                severity="warning",
+            )
+
     async def process_new_claim(
         self, claim: str, domain: str, source: str, confidence: float = 0.5
     ):
@@ -404,12 +436,21 @@ class BeliefRevisionEngine:
 
         for b in self.beliefs:
             if b.content.strip().lower() == norm_claim:
-                # Bayesian-lite update: Blend prior with new evidence
-                # Formula: new_conf = (prior * 0.6) + (evidence * 0.4)
-                b.confidence = min(1.0, (b.confidence * 0.6) + (weighted_conf * 0.4))
+                # PLN revision: evidence-weighted merge. The prior carries its
+                # accumulated evidence mass; the new observation carries the
+                # source's reliability as its mass. Confirmations accumulate,
+                # contradictory evidence pulls toward the middle honestly.
+                from core.knowledge.atomspace import TruthValue
+
+                revised = TruthValue(b.confidence, max(b.evidence_count, 1e-6)).revise(
+                    TruthValue(weighted_conf, max(reliability, 1e-6))
+                )
+                b.confidence = revised.strength
+                b.evidence_count = revised.count
                 b.last_updated = time.time()
                 if source not in b.supporting_evidence:
                     b.supporting_evidence.append(source)
+                self._mirror_claim_to_atomspace(b)
                 await self._async_save()
                 return {"ok": True, "updated": True, "belief_id": b.id}
 
@@ -421,8 +462,10 @@ class BeliefRevisionEngine:
             domain=domain,
             source=source,
             supporting_evidence=[source],
+            evidence_count=max(reliability, 1e-6),
         )
         self.beliefs.append(new_b)
+        self._mirror_claim_to_atomspace(new_b)
         await self._async_save()
         logger.info("New belief [%s]: %s (Conf: %.2f)", source, claim, weighted_conf)
         # A new belief that contradicts an existing high-confidence one is a
@@ -493,9 +536,47 @@ class BeliefRevisionEngine:
                         )
                         logger.debug("Beliefs: Theory elevation (CEL) failed: %s", e)
 
+        # ── AtomSpace economy cycle (ECAN) + PLN forward chaining ────────
+        # One attention-economy tick per revision cycle (rent, spreading,
+        # forgetting), then budget-bounded deduction over whatever implication
+        # structure is attentionally hot. Derived implications are published on
+        # the event bus so downstream organs (curiosity, synthesis) can react.
+        derived_count = 0
+        try:
+            from core.knowledge.atomspace import get_atomspace
+
+            space = get_atomspace()
+            space.tick()
+            derived = space.forward_chain(max_derivations=8, focus_only=True)
+            derived_count = len(derived)
+            if derived:
+                try:
+                    from core.event_bus import get_event_bus
+
+                    bus = get_event_bus()
+                    await bus.publish(
+                        "atomspace.derived",
+                        {
+                            "implications": [str(link) for link in derived],
+                            "origin": "belief_revision.pln_forward_chain",
+                        },
+                    )
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    _record_belief_revision_degradation(
+                        e,
+                        action="kept derived implications without event publication",
+                        severity="warning",
+                    )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+            _record_belief_revision_degradation(
+                e,
+                action="continued belief revision without atomspace cycle",
+                severity="warning",
+            )
+
         # Use async save to prevent event loop blocking
         await self._async_save()
-        return {"ok": True, "episodes": len(recent_episodes)}
+        return {"ok": True, "episodes": len(recent_episodes), "derived_implications": derived_count}
 
     def get_summary(self) -> str:
         """Returns consolidated belief summary for context building."""

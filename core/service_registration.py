@@ -77,6 +77,14 @@ def _register_all_services_body(container, is_proxy: bool):
     container.register('mycelial_network', create_mycelial, lifetime=ServiceLifetime.SINGLETON, required=True)
     container.register('mycelium', lambda: container.get("mycelial_network"), lifetime=ServiceLifetime.SINGLETON, required=False)
 
+    # AtomSpace: PLN metagraph + ECAN attention economy (Hyperon fusion).
+    # The belief engine mirrors claims here; the revision loop ticks the
+    # economy and runs attention-guided forward chaining.
+    def create_atomspace():
+        from core.knowledge.atomspace import get_atomspace
+        return get_atomspace()
+    container.register('atomspace', create_atomspace, lifetime=ServiceLifetime.SINGLETON, required=False)
+
     # 0.5 Metabolism / resource stakes.  The ledger is separate from the older
     # consciousness.resource_stakes engine so it can persist hard action
     # envelopes and degradation events for audit.

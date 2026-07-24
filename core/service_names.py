@@ -57,6 +57,7 @@ class ServiceNames:
     VECTOR = "vector_memory"
     KNOWLEDGE_LEDGER = "knowledge_ledger"
     KNOWLEDGE_GRAPH = "knowledge_graph"
+    ATOMSPACE = "atomspace"              # core/knowledge/atomspace.py — PLN metagraph + ECAN attention
     
     # Learning & Evolution
     LEARNER = "live_learner"
