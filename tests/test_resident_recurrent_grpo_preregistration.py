@@ -16,6 +16,33 @@ BASE_IDENTITY = {"method": "sha256", "fingerprint": "1" * 64, "files": 4}
 BEHAVIOR_IDENTITY = {"bundle_sha256": "2" * 64, "file_count": 1, "files": []}
 
 
+@pytest.fixture(autouse=True)
+def _stub_fused_model_dir():
+    """Hermetic model directory: these tests exercise contract logic only.
+
+    ``build_contract`` requires the campaign's fused-model directory to
+    *exist* (identities are injected, so nothing inside it is read). The real
+    artifact is untracked (.git/info/exclude) and lives only in the main
+    checkout, so in a fresh worktree we create an empty stub at the exact
+    repo-relative path and remove precisely what we created afterwards.
+    Where the real model is present this fixture does nothing.
+    """
+    target = prereg.REPO_ROOT / prereg.DEFAULT_MODEL
+    created: list[Path] = []
+    probe = target
+    while not probe.exists():
+        created.append(probe)
+        probe = probe.parent
+    if created:
+        target.mkdir(parents=True)
+    yield
+    for path in created:  # leaf → root, only ever removing empty stub dirs
+        try:
+            path.rmdir()
+        except OSError:
+            break
+
+
 def _contract():
     return prereg.build_contract(
         committed_at="2026-07-21T15:00:00-07:00",
