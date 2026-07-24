@@ -667,7 +667,15 @@ class HomeostateReactor:
         try:
             while self._active:
                 # Bus queue items are (priority, sequence, {"topic", "data"}).
-                item = await queue.get()
+                # Timed wait (not a bare .get()) so the reactor wakes to
+                # re-check self._active and a silently-wedged bus stays
+                # visible — the deliberately-infinite-consumer discipline the
+                # bounded-await ratchet requires. PriorityQueue.get() is
+                # cancel-safe, so an idle timeout drops no event.
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    continue
                 event = item[2].get("data") if isinstance(item, tuple) and len(item) == 3 else item
                 for reaction in self._reactions:
                     if fnmatch.fnmatch(topic, reaction.topic_pattern):

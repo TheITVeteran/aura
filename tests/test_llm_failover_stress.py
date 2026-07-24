@@ -461,8 +461,9 @@ class TestEndpointHealthTracking:
         status = ep.status_dict()
 
         expected_keys = {
-            "name", "tier", "state", "failures", "successes",
-            "empty_responses", "avg_latency_ms", "total_tokens",
+            "name", "tier", "state", "failures", "failure_streak",
+            "transient_trips", "successes", "empty_responses",
+            "last_failure_reason", "avg_latency_ms", "total_tokens",
         }
         assert set(status.keys()) == expected_keys
         assert status["state"] == "closed"

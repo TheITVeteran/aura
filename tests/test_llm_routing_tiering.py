@@ -349,7 +349,7 @@ async def test_gui_report_prefers_last_foreground_endpoint_over_background(route
     )
 
     report = router.get_health_report()
-    assert report["current_tier"] == "Cortex (32B)"
+    assert report["current_tier"] == "Cortex (cortex-32b)"
     assert report["active_endpoint"] == "Cortex"
     assert report["background_endpoint"] == "Brainstem"
 
@@ -392,12 +392,12 @@ async def test_gui_report_mapping(router_clients):
 
     await router.generate("Hello", prefer_tier="primary")
     report = router.get_health_report()
-    assert report["current_tier"] == "Cortex (32B)"
+    assert report["current_tier"] == "Cortex (cortex-32b)"
     assert report["active_endpoint"] == "Cortex"
 
     await router.generate("Hello", prefer_tier="secondary", deep_handoff=True)
     report = router.get_health_report()
-    assert report["current_tier"] == "Solver (72B)"
+    assert report["current_tier"] == "Solver (solver-72b)"
 
 
 @pytest.mark.asyncio

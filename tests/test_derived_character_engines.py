@@ -572,6 +572,7 @@ def test_derived_engines_register_without_background_tasks(monkeypatch):
     assert set(engines) == {
         "brainiac",
         "caine",
+        "compiled_understanding",
         "culture_mind",
         "daneel",
         "data",

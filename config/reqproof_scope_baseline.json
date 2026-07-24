@@ -1,5 +1,5 @@
 {
-  "content_sha256": "2c4460973629919fe21a49798b77a07db6491ce20aac5d28804638c7121a22d4",
+  "content_sha256": "f492fa86035eba2c3982a5ba18c13a2e22e7f0e2faca07d6c25fa2349cd23f86",
   "fingerprints": [
     "ACCESSIBILITY-I18N-001::A1::gui",
     "ACCESSIBILITY-I18N-001::A1::implementation",
@@ -1464,6 +1464,9 @@
     "RLC-SCOPE-001::A1::implementation",
     "RLC-SCOPE-001::A1::live",
     "RLC-SCOPE-001::A1::test",
+    "RLC-VIRTUAL-QUANTA-001::A1::implementation",
+    "RLC-VIRTUAL-QUANTA-001::A1::live",
+    "RLC-VIRTUAL-QUANTA-001::A1::test",
     "RLC-WORKSPACE-001::A1::implementation",
     "RLC-WORKSPACE-001::A1::test",
     "RUNTIME-001::A1::implementation",
