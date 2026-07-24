@@ -70,6 +70,11 @@ def _green_trace() -> dict:
             "applied": True,
         },
         "live_mind_controls_worker_applied": True,
+        # Single-owner generation proof: a live-mind reply consumes exactly one
+        # foreground model generation (no double-generation, no zero-owner
+        # theatre) — required for authentic_cognitive_reply.
+        "foreground_model_generation_count": 1,
+        "foreground_model_generation_consumed": True,
     }
 
 
