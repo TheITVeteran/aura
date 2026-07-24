@@ -141,10 +141,40 @@ at the framework altitude so all 93 skills inherit safer behavior. The
 remaining per-skill review and external live-effect certification stay open;
 an internal integrity self-audit is evidence, not independent closure proof.
 
+## Endurance soak (2026-07-24): endurance PASSES, retention finds real bugs
+
+The 200-turn endurance run finally executed cleanly on the current tip —
+the July `candidate_worker_not_ready` model-lane cluster that blocked it
+was resolved by the parallel session's rework (verified: fresh boot to
+conversation-ready in ~2 min, real turn served correctly).
+
+**Endurance dimension: PASS.** 200 turns, **deaths=0, hijacks=0,
+p50≈2–3.6s** (July's partial was p50 12.4s), thermal 0, and the
+orchestrator RSS was flat-to-lower across the run (turn-100 < turn-10) —
+the idle-leak fix holds under sustained load too. A re-run confirmed the
+same shape (deaths=0, p50≈2s through 100 turns).
+
+**Retention dimension: the soak did its job and surfaced real defects.**
+The verdict was FAIL on `retention=0/3` — a fact planted early could not
+be recalled later. Root-caused into two distinct defects:
+
+| Defect | Root | Status |
+| --- | --- | --- |
+| Recall window | `_find_session_content_exchanges` searched only the latest **40** turns; a fact planted at turn 3 and probed at turn 111 was still in the 500-cap log but outside the window — so a long conversation silently "forgot" it. | **FIXED** (1b91eeabf): searches the full retained session; 2 tests, negative-proven. |
+| Plant storage | The plant turns themselves didn't store: the first heavy turn hit a cold-32B-load timeout, and two others hit `canonical_chat_no_reply` — the quality gate rejected the drafts on a coupled reason set with no salvage. Because the facts never stored, the (now-fixed) recall can't find them. | **Diagnosed + chipped** — it lives in the parallel session's actively-developed response-reliability verifier, and the obvious "add to the deliverable set" fix would regress a legitimate hard-rejection of shallow technical non-answers. Fixing it right needs detector-precision work, coordinated with that session. |
+
+The honest boundary: the **endurance claim** ("hundreds-of-turn
+conversations, no degradation") is proven. The **retention feature** has
+one real fix landed and one deeper defect precisely diagnosed and handed
+to the session that owns that code — not blind-patched into a regression.
+
 ## The meta-lesson
 
 Every blocking failure this pass found reduced to one of two shapes:
 **process-global state without a reset seam** (singleton latches,
 lease counters, shared live files) or **work on the event loop that
 belongs off it** (PCA, page scans, fsync). The ratchets and reset seams
-landed here make both shapes harder to reintroduce than to avoid.
+landed here make both shapes harder to reintroduce than to avoid. The
+endurance soak added a third: **a bound sized for the common case that
+silently drops the tail** (a 40-turn recall window in a 500-turn log) —
+correctness that only a long run exposes.
