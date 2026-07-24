@@ -193,22 +193,6 @@
       "scope": "<module>.ComputerUseSkill._run_applescript"
     },
     {
-      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/learning/mistake_locator.py",
-      "scope": "<module>.MistakeLocatorHead.save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/learning/contradiction_tensor.py",
-      "scope": "<module>.ContradictionTensorHead.save"
-    },
-    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1273,6 +1257,14 @@
       "scope": "<module>.ContinualLoRAMerger.plan"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/contradiction_tensor.py",
+      "scope": "<module>.ContradictionTensorHead.save"
+    },
+    {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -1383,6 +1375,14 @@
       "count": 1,
       "path": "core/learning/live_learner.py",
       "scope": "<module>.LiveLearner._write_lora_config"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/mistake_locator.py",
+      "scope": "<module>.MistakeLocatorHead.save"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -4129,6 +4129,14 @@
       "scope": "<module>.FlightRecorder.start_sync"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/homeostate.py",
+      "scope": "<module>._state_file_directory"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -5911,22 +5919,6 @@
       "count": 1,
       "path": "core/adaptation/immune_system.py",
       "scope": "<module>.ImmuneSystem.__init__"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/mistake_locator.py",
-      "scope": "<module>.MistakeLocatorHead.load"
-    },
-    {
-      "callee": "os.open",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/learning/contradiction_tensor.py",
-      "scope": "<module>.ContradictionTensorHead.load"
     },
     {
       "callee": "shutil.copy2",
@@ -8769,6 +8761,14 @@
       "scope": "<module>.ExperienceStore.__init__"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/contradiction_tensor.py",
+      "scope": "<module>.ContradictionTensorHead.load"
+    },
+    {
       "callee": "self.config.work_root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8983,6 +8983,14 @@
       "count": 1,
       "path": "core/learning/live_learner.py",
       "scope": "<module>.LiveLearner._write_training_dataset"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/mistake_locator.py",
+      "scope": "<module>.MistakeLocatorHead.load"
     },
     {
       "callee": "shutil.copy2",
@@ -14314,6 +14322,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "83958dab2fd3e4716d913398a81e8f8fdd33fba992d4ef70d5bc79a3b8cf8c89",
+  "inventory_sha256": "5be95708167bac3251f0bd3482fe0c7d2dd1b15287c68871c298739d70415cff",
   "schema_version": 1
 }

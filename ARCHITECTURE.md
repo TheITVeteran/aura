@@ -52,6 +52,7 @@ architecture alone.
 13. [Open research program](#13-open-research-program) (6 problems)
 14. [Null hypothesis defeat: empirical evidence](#14-null-hypothesis-defeat)
 15. [The reasoning, self-model, and resilience layer (June–July 2026)](#15-the-reasoning-self-model-and-resilience-layer)
+16. [The triad fusions: kernel-checked proof, economic knowledge, declared runtime](#16-the-triad-fusions-kernel-checked-proof-economic-knowledge-declared-runtime)
 
 ---
 
@@ -2050,3 +2051,88 @@ permutation p-value and no clamps. See
 [docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md), which
 records honestly that the DNU AGI battery isolates System 2 and that its
 original baseline comparison was token-handicapped.
+
+## 16. The triad fusions: kernel-checked proof, economic knowledge, declared runtime
+
+Three mature external architectures — Lean 4's trusted kernel, OpenCog
+Hyperon's atomspace/ECAN, and Salt's state system — fused into the organism
+as live organs (July 2026). None is a port; each is the *discipline* of the
+source project rebuilt on Aura's own substrate and wired into her live paths.
+
+### 16.1 Trusted proof kernel (Lean fusion)
+
+`core/reasoning/proof_kernel.py` applies the de Bruijn criterion to the
+Pantheon tableau prover: the search (`natural_deduction.py`) is the untrusted
+elaborator and now emits closed-tableau **certificates** (`CertStep` trees);
+a deliberately small, independent kernel re-checks every claimed proof
+against its own copy of the rule schemas — shared vocabulary (the formula
+AST), never shared search code. Forged, truncated, or schema-violating
+certificates are rejected, and `SymbolicBridge.prove_logic` fails closed on
+kernel rejection (a rejected proof is reported *unverified*, and the event is
+a CRITICAL degradation — a prover soundness bug, not a shrug).
+
+The kernel carries Lean's epistemic bookkeeping. Every verified theorem
+records its **axiom audit** — which premises the refutation actually used
+(`#print axioms`). The `TheoremLedger` tracks **admitted claims** (Lean's
+`sorry`): assertions accepted without proof taint every theorem transitively
+resting on them until discharged by a clean checked proof. Live wiring: the
+active-thought inference audit records each detected non-sequitur conclusion
+as an admitted claim; belief-consistency contradictions are kernel-certified
+(`Γcore ⊢ ⊥`); deduction governance surfaces ledger stats and `kernel_sound`.
+Certificates and formulas serialize losslessly, the ledger can **replay**
+(re-verify) its entire store from the serialized forms, and checkers register
+per proof method — any future engine (resolution, SMT traces) inherits the
+same fail-closed discipline. Service: `proof_kernel`.
+
+### 16.2 AtomSpace: PLN + ECAN (Hyperon fusion)
+
+`core/knowledge/atomspace.py` is a typed metagraph (links over links,
+value-deduplicated) where every atom carries a PLN simple truth value
+(strength, evidence count). Repeated assertion merges by the **revision**
+rule — evidence-weighted and convergent — and this is now the live
+confidence-update rule of `BeliefRevisionEngine` (replacing the ad-hoc
+0.6/0.4 blend; `Belief.evidence_count` carries the mass). Claims are mirrored
+into the space through the same propositional encoder the prover uses, so the
+belief store, the deduction prover, and the metagraph share one atom
+namespace; implication-shaped beliefs become `Implication` links.
+
+Queries are MeTTa-shaped: unification with `Variable` atoms, conjunctive
+multi-clause joins, and grounded Python predicates evaluated as filters.
+Inference is the MeTTa/PLN architecture: `InferenceRule` = premise patterns +
+conclusion template + truth formula, fired by unification. The live rule set
+is deduction, abduction, and induction with the canonical PLN formulas
+(independence-based deduction, Bayes inversion).
+
+Attention is ECAN: STI is paid from a fixed fund (attention cannot be
+printed), rent decays it back, importance spreads along structure, and
+**Hebbian links** — formed and strengthened between atoms co-resident in the
+attentional focus — bias spreading toward learned co-activation. Forgetting
+evicts only unreferenced, non-VLTI, low-LTI atoms. The belief revision loop
+ticks the economy and runs the focus-gated forward chainer each cycle,
+publishing derivations on the event bus (`atomspace.derived`). Service:
+`atomspace`.
+
+### 16.3 Homeostate: declared runtime convergence (Salt fusion)
+
+`core/runtime/homeostate.py` declares the desired shape of the runtime and
+converges reality toward it. `StateSpec` lowstates carry Salt's four
+requisites (`require`, `watch`, `onchanges`, `onfail`); the compiler turns
+them into a deterministic DAG (unknown references and cycles are compile
+errors); every state function is idempotent — inspect first, change only
+what differs, report only real changes — and `test=True` is an honest
+dry-run. Directory states write through the governed file-write gateway;
+async callers converge via thread offload. Built-in modules: `file.directory`,
+`service.available`, and the universal extension points `check.predicate` /
+`remedy.callable` (pre-registered callables only — a spec can never smuggle
+code through args). `grains()` provides host facts.
+
+Self-repair is Salt's beacon→reactor architecture: the `DegradationBeacon`
+watches the degradation tracker and publishes threshold crossings
+(with grains) on the event bus; the `HomeostateReactor` maps topics to
+highstates and re-converges, cooldown-limited against storms. Boot PHASE 5.2
+converges the `runtime_baseline` highstate (forensics directories, spine
+services) and starts both loops. Every highstate outcome marks the subsystem
+health registry. The baseline includes a cross-fusion trust leg: replaying
+the proof-kernel ledger, so stored-proof integrity is re-demonstrated at boot
+and on every reactor re-convergence. Services: `homeostate`,
+`homeostate_reactor`.
