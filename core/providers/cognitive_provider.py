@@ -390,6 +390,18 @@ def register_cognitive_services(container, is_proxy: bool = False):
             return None
     container.register('personality_bridge', create_personality_bridge, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
+    # Proof kernel: trusted checker + theorem ledger (Lean-style de Bruijn
+    # criterion over the tableau prover). The ledger is the live surface for
+    # the axiom audit and admitted-claim (sorry) accounting.
+    def create_proof_kernel():
+        try:
+            from core.reasoning.proof_kernel import get_theorem_ledger
+            return get_theorem_ledger()
+        except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
+            logger.exception("Failed to create proof_kernel")
+            return None
+    container.register('proof_kernel', create_proof_kernel, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+
     # Phase 25: Critic Engine
     def create_critic_engine():
         try:

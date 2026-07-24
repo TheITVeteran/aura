@@ -39,6 +39,7 @@ class ServiceNames:
     SAMANTHA = "samantha_affective_resonance"  # core/affect/affective_resonance.py
 
     # Functional Subsystems
+    PROOF_KERNEL = "proof_kernel"        # core/reasoning/proof_kernel.py — trusted checker + theorem ledger
     CAPABILITY = "capability_engine"
     COGNITIVE = "cognitive_engine"
     LATENT_CORTEX = "latent_cortex"      # core/brain/latent_cortex_service.py

@@ -171,4 +171,21 @@ def audit_self_reasoning(text: str) -> list[InferenceVerdict]:
             )
         except (ImportError, AttributeError, RuntimeError, TypeError):
             pass
+        # Lean's sorry discipline, live: a conclusion Aura asserted that does
+        # not follow is an unproven claim — record it as *admitted* in the
+        # theorem ledger so it stays visible (and taints anything later proved
+        # from it) until discharged by a real proof or retracted.
+        try:
+            from core.reasoning.proof_kernel import get_theorem_ledger
+
+            ledger = get_theorem_ledger()
+            for v in non_sequiturs:
+                ledger.admit(
+                    v.inference.conclusion,
+                    reason=f"asserted via '{v.inference.marker}' but does not follow from premises",
+                    source="inference_audit",
+                    formula=encode_belief(v.inference.conclusion).formula,
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
     return non_sequiturs

@@ -55,6 +55,9 @@ class ConsistencyReport:
     contradictions: list[tuple[str, str]] = field(default_factory=list)  # (belief, opposing belief)
     minimal_core: list[str] = field(default_factory=list)
     checked: int = 0
+    # True when the trusted proof kernel independently certified the
+    # inconsistency (a checked proof of Γcore ⊢ ⊥), not just the search.
+    kernel_certified: bool = False
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -62,6 +65,7 @@ class ConsistencyReport:
             "contradictions": self.contradictions,
             "minimal_core": self.minimal_core,
             "checked": self.checked,
+            "kernel_certified": self.kernel_certified,
         }
 
 
@@ -155,6 +159,18 @@ def check_beliefs(
 
     core = find_contradiction(formulas) or []
     core_set = set(core)
+    # Kernel-certify the inconsistency: a checked proof that the minimal core
+    # entails ⊥. The claim "Aura's beliefs are contradictory" is consequential
+    # enough to demand a certificate, not just a search verdict.
+    kernel_certified = False
+    if core:
+        try:
+            from core.reasoning.natural_deduction import Bot
+            from core.reasoning.proof_kernel import prove_certified
+
+            kernel_certified = prove_certified(core, Bot()).verified
+        except (ValueError, RuntimeError, TypeError, AttributeError, ImportError):
+            kernel_certified = False
     # Source beliefs whose formula is in the minimal unsatisfiable core — covers
     # both direct X∧¬X pairs and chained {X, X→Y, ¬Y} modus-ponens conflicts.
     core_sources = [e.source for e in encoded if e.formula in core_set]
@@ -177,4 +193,5 @@ def check_beliefs(
         contradictions=contradictions,
         minimal_core=core_sources or [str(f) for f in core],
         checked=len(encoded),
+        kernel_certified=kernel_certified,
     )

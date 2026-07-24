@@ -88,6 +88,13 @@ class _DeductionGovernance:
 
     def governance_signal(self) -> dict[str, Any]:
         report = self._last_report
+        try:
+            from core.reasoning.proof_kernel import get_theorem_ledger
+
+            kernel = get_theorem_ledger().stats()
+        except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+            record_degradation("deduction_governance", exc, action="kernel stats unavailable")
+            kernel = {}
         return {
             "beliefs_consistent": bool(report.consistent) if report else True,
             "contradictions": list(self._last_contradictions),
@@ -98,6 +105,11 @@ class _DeductionGovernance:
             "last_non_sequiturs": list(self._last_non_sequiturs),
             "arithmetic_error_events": self._arithmetic_error_events,
             "last_arithmetic_errors": list(self._last_arithmetic_errors),
+            # Lean-style kernel bookkeeping: proofs only count when the trusted
+            # checker accepts them; admitted (sorry) claims stay visible until
+            # discharged, and kernel rejections are prover soundness bugs.
+            "proof_kernel": kernel,
+            "kernel_sound": kernel.get("kernel_rejections", 0) == 0,
         }
 
 

@@ -166,22 +166,35 @@ class SymbolicBridge:
         }
 
     def prove_logic(self, premises: list[str], goal: str) -> SymbolicResult:
-        """Exact propositional deduction via the natural-deduction prover.
+        """Exact propositional deduction, kernel-checked (de Bruijn criterion).
 
-        Routes a ``premises ⊢ goal`` query to the sound, terminating proof search
-        (the Pantheon Hp/SIMPL engine). On success the proof trace is returned; on
-        failure the concrete countermodel is the proof_trace.
+        Routes a ``premises ⊢ goal`` query through :func:`prove_certified`: the
+        tableau search produces a certificate and the independent proof kernel
+        re-verifies it. A search-claimed proof the kernel rejects is **not**
+        reported as proved — the bridge fails closed on unsoundness. The trace
+        carries the kernel verdict and the axiom audit (premises actually used).
         """
         try:
-            from core.reasoning.natural_deduction import prove_text
+            from core.reasoning.proof_kernel import prove_certified_text
 
-            proof = prove_text(premises, goal)
+            cp = prove_certified_text(premises, goal)
+            proof = cp.proof
+            if not proof.provable:
+                return SymbolicResult(
+                    True, "natural_deduction", False, f"countermodel: {proof.countermodel}"
+                )
+            if not cp.verified:
+                reason = cp.verdict.reason if cp.verdict else "no certificate"
+                return SymbolicResult(
+                    False, "natural_deduction", "kernel_rejected", f"kernel refused proof: {reason}"
+                )
+            assert cp.verdict is not None
             trace = (
                 " ; ".join(proof.trace)
-                if proof.provable
-                else f"countermodel: {proof.countermodel}"
+                + f" ; kernel: verified ({cp.verdict.nodes} nodes)"
+                + f" ; axioms: {list(cp.verdict.used_premises)}"
             )
-            return SymbolicResult(True, "natural_deduction", proof.provable, trace)
+            return SymbolicResult(True, "natural_deduction", True, trace)
         except (ValueError, RuntimeError, AttributeError, TypeError) as exc:
             return SymbolicResult(False, "natural_deduction", repr(exc), "solver_error")
 

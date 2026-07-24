@@ -204,6 +204,26 @@ def _tokenize(text: str) -> list[str]:
 
 # ── Tableau decision procedure ────────────────────────────────────────────
 
+@dataclass(frozen=True)
+class CertStep:
+    """One node of a closed-tableau certificate.
+
+    The certificate is the *checkable object* the proof kernel
+    (``core/reasoning/proof_kernel.py``) re-verifies independently of this
+    search — the de Bruijn criterion. ``kind`` is ``"close"`` (leaf: ``target``
+    is the positive literal of the ``{A, ¬A}`` conflict, or ``⊥``) or
+    ``"expand"`` (``target`` was decomposed by its α/β schema into one subtree
+    per resulting branch).
+    """
+
+    kind: str
+    target: Formula
+    children: tuple["CertStep", ...] = ()
+
+    def node_count(self) -> int:
+        return 1 + sum(c.node_count() for c in self.children)
+
+
 @dataclass
 class Proof:
     """Result of a proof search."""
@@ -214,6 +234,7 @@ class Proof:
     method: str = "analytic_tableau"
     trace: list[str] = field(default_factory=list)
     countermodel: dict[str, bool] | None = None
+    certificate: CertStep | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -223,6 +244,8 @@ class Proof:
             "method": self.method,
             "trace": self.trace,
             "countermodel": self.countermodel,
+            "certified": self.certificate is not None,
+            "certificate_nodes": self.certificate.node_count() if self.certificate else 0,
         }
 
 
@@ -238,6 +261,8 @@ def _expand(f: Formula) -> tuple[str, list[list[Formula]]]:
     """
     if isinstance(f, Not) and isinstance(f.f, Not):                  # ¬¬A → A
         return "¬¬-elimination", [[f.f.f]]
+    if isinstance(f, Not) and isinstance(f.f, Bot):                  # ¬⊥ ≡ ⊤ → drop
+        return "¬⊥-elimination", [[]]
     if isinstance(f, And):                                            # A∧B → A, B
         return "∧-elimination", [[f.a, f.b]]
     if isinstance(f, Not) and isinstance(f.f, Or):                    # ¬(A∨B) → ¬A, ¬B
@@ -262,6 +287,17 @@ def _literal_conflict(branch: set[Formula]) -> tuple[Formula, Formula] | None:
     return None
 
 
+def _is_literal(f: Formula) -> bool:
+    return isinstance(f, (Atom, Bot)) or (isinstance(f, Not) and isinstance(f.f, Atom))
+
+
+def _pick_target(branch: set[Formula]) -> Formula | None:
+    for f in branch:
+        if not _is_literal(f):
+            return f
+    return None
+
+
 def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> dict[str, bool] | None:
     """Analytic tableau: return a satisfying model (open branch) or None (closed).
 
@@ -278,12 +314,7 @@ def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> di
                 trace.append(f"closed: {conflict[0]} ∧ ¬{conflict[0]}" if conflict[0] != Bot() else "closed: ⊥")
             continue
         # find a non-literal to expand
-        target = None
-        for f in branch:
-            if not (isinstance(f, Atom) or isinstance(f, Bot)
-                    or (isinstance(f, Not) and isinstance(f.f, Atom))):
-                target = f
-                break
+        target = _pick_target(branch)
         if target is None:
             # saturated open branch → countermodel
             model: dict[str, bool] = {}
@@ -294,12 +325,73 @@ def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> di
                     model.setdefault(f.f.name, False)
             return model
         rule, branches = _expand(target)
-        if trace is not None and rule:
+        if not rule:
+            # Every non-literal must match a schema; a silent drop here would
+            # vacuously close the branch — an unsound "proof" of anything.
+            raise RuntimeError(f"tableau: no expansion schema for non-literal {target}")
+        if trace is not None:
             trace.append(f"apply {rule} to {target}")
         rest = branch - {target}
         for add in branches:
             stack.append(rest | set(add))
     return None
+
+
+# ── Certificate-producing refutation (checked by the proof kernel) ────────
+
+_REFUTATION_NODE_BUDGET = 50_000
+_REFUTATION_MAX_DEPTH = 800
+
+
+class _RefutationBudgetExceeded(RuntimeError):
+    """Raised when certificate construction exceeds its node/depth budget."""
+
+
+def _refute(
+    branch: set[Formula],
+    budget: list[int],
+    trace: list[str] | None = None,
+    depth: int = 0,
+) -> tuple[CertStep | None, dict[str, bool] | None]:
+    """Search for a *closed tableau certificate* of the branch's unsatisfiability.
+
+    Returns ``(certificate, None)`` when the branch refutes, or
+    ``(None, countermodel)`` when a saturated open branch is found. Semantics
+    are identical to :func:`_saturate`; this variant records the expansion tree
+    so the proof kernel can re-check every step independently.
+    """
+    budget[0] -= 1
+    if budget[0] < 0 or depth > _REFUTATION_MAX_DEPTH:
+        raise _RefutationBudgetExceeded(f"budget exhausted at depth {depth}")
+    conflict = _literal_conflict(branch)
+    if conflict is not None:
+        if trace is not None:
+            trace.append(
+                "closed: ⊥" if conflict[0] == Bot() else f"closed: {conflict[0]} ∧ ¬{conflict[0]}"
+            )
+        return CertStep("close", conflict[0]), None
+    target = _pick_target(branch)
+    if target is None:
+        model: dict[str, bool] = {}
+        for f in branch:
+            if isinstance(f, Atom):
+                model[f.name] = True
+            elif isinstance(f, Not) and isinstance(f.f, Atom):
+                model.setdefault(f.f.name, False)
+        return None, model
+    rule, branches = _expand(target)
+    if not rule:
+        raise RuntimeError(f"tableau: no expansion schema for non-literal {target}")
+    if trace is not None:
+        trace.append(f"apply {rule} to {target}")
+    rest = branch - {target}
+    children: list[CertStep] = []
+    for add in branches:
+        cert, model = _refute(rest | set(add), budget, trace, depth + 1)
+        if cert is None:
+            return None, model
+        children.append(cert)
+    return CertStep("expand", target, tuple(children)), None
 
 
 # ── Public API ────────────────────────────────────────────────────────────
@@ -335,13 +427,30 @@ def prove(premises: Iterable[Formula], goal: Formula) -> Proof:
     """
     prem = list(premises)
     trace: list[str] = []
-    closed = _saturate(prem + [_negate(goal)], trace)
-    if closed is None:
+    root = set(prem) | {_negate(goal)}
+    try:
+        cert, model = _refute(root, [_REFUTATION_NODE_BUDGET], trace)
+    except (_RefutationBudgetExceeded, RecursionError):
+        # Fall back to the certificateless decision procedure: the verdict is
+        # still sound, but consumers that require kernel verification will see
+        # (and must treat) the proof as unchecked.
+        trace = []
+        closed = _saturate(list(root), trace)
+        cert, model = None, closed
+        if closed is None:
+            return Proof(
+                goal=str(goal),
+                premises=[str(p) for p in prem],
+                provable=True,
+                trace=trace or [f"{goal} follows from the premises (all tableau branches close)"],
+            )
+    if cert is not None:
         return Proof(
             goal=str(goal),
             premises=[str(p) for p in prem],
             provable=True,
             trace=trace or [f"{goal} follows from the premises (all tableau branches close)"],
+            certificate=cert,
         )
     # not provable → the open branch is a countermodel of Γ ⊨ G
     return Proof(
@@ -349,7 +458,7 @@ def prove(premises: Iterable[Formula], goal: Formula) -> Proof:
         premises=[str(p) for p in prem],
         provable=False,
         trace=[f"countermodel found: {goal} does not follow"],
-        countermodel=closed,
+        countermodel=model,
     )
 
 
