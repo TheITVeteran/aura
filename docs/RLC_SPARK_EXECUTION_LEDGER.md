@@ -162,8 +162,16 @@ as half a checkbox.
   now resolved: SPARK-004 at F1 (frozen baseline bundle), SPARK-013's
   pre-training half at F2 (state-causality instrument; remaining semantic
   acceptance binds to the SPARK-069 trained treatment), SPARK-003 at F3
-  (executable threat model), SPARK-002 at F4 (literature dossier). No
-  active claims remain in this lane; the march owns everything else.
+  (executable threat model), SPARK-002 at F4 (literature dossier).
+- **SPARK-070's pre-training half is CLAIMED and in progress by the Fable
+  session (Bryan-directed) as of 2026-07-23 21:45 PT**: the falsification-
+  matrix harness itself — typed row registry, runnable-row executors against
+  the current engine, fail-closed blocked rows naming their SPARK blockers,
+  independent replay, and a dry-run receipt on the untrained baseline. The
+  post-training run on fresh held-out tasks (the acceptance event) stays
+  bound to the SPARK-069 treatment. The march owns everything else; rows
+  blocked on 039-050/055-056 machinery will bind to that machinery when it
+  lands, not fork it.
 
 | Checkpoints | Primary implementation owners | Live integration owners |
 |---|---|---|
