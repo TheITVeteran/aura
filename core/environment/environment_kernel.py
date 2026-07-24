@@ -615,23 +615,23 @@ class EnvironmentKernel:
         self.causal_model = ServiceContainer.get("causal_world_model", default=self.causal_model)
         self.episodic_memory = ServiceContainer.get("episodic_memory", default=self.episodic_memory)
         self.macro_inducer = ServiceContainer.get("macro_inducer", default=self.macro_inducer)
-        self.advanced_cognition = ServiceContainer.get("advanced_cognition", default=None)
-        if self.advanced_cognition is None:
-            try:
-                from core.advanced_cognition import AdvancedCognitionRuntime
-                from .runtime_workspace import environment_runtime_dir
+        try:
+            # One organism-wide runtime with an organism-wide state home. The
+            # accessor resolves the container instance or constructs it in the
+            # shared learning workspace — never in this environment's own
+            # directory, which used to capture every domain's learning for
+            # whichever environment booted first.
+            from core.advanced_cognition import get_advanced_cognition_runtime
 
-                self.advanced_cognition = AdvancedCognitionRuntime(
-                    state_dir=environment_runtime_dir(self.environment_id, purpose="learning") / "advanced_cognition"
-                )
-                ServiceContainer.register_instance("advanced_cognition", self.advanced_cognition, required=False)
-            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
-                record_degradation(
-                    "environment_kernel",
-                    exc,
-                    severity="warning",
-                    action="continued without advanced cognition runtime",
-                )
+            self.advanced_cognition = get_advanced_cognition_runtime()
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            self.advanced_cognition = None
+            record_degradation(
+                "environment_kernel",
+                exc,
+                severity="warning",
+                action="continued without advanced cognition runtime",
+            )
         try:
             ServiceContainer.register_instance(f"environment_kernel:{self.environment_id}", self, required=False)
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:

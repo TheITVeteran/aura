@@ -46,3 +46,33 @@ def test_guard_detects_pytest_via_sys_modules():
     # The guard must be active in exactly this situation: running under
     # pytest with no explicit override.
     assert runtime_workspace._test_isolation_root() is not None
+
+
+def test_shared_runtime_state_home_is_environment_agnostic(monkeypatch, tmp_path):
+    """The organism-wide AdvancedCognitionRuntime must never home its state
+    in a specific environment's directory (the first-boot-wins bug that mixed
+    every domain's learning into one environment's store)."""
+    monkeypatch.setenv("AURA_ENV_RUNTIME_DIR", str(tmp_path / "runtime"))
+    from core.container import ServiceContainer
+
+    getattr(ServiceContainer, "_services", {}).pop("advanced_cognition", None)
+    from core.advanced_cognition import get_advanced_cognition_runtime
+
+    runtime = get_advanced_cognition_runtime()
+    state = runtime.state_dir.resolve()
+    assert "shared" in state.parts
+    assert str(state).startswith(str((tmp_path / "runtime").resolve()))
+    assert "terminal_grid" not in str(state)
+
+
+def test_environment_kernels_share_the_organism_runtime(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_ENV_RUNTIME_DIR", str(tmp_path / "runtime"))
+    from core.container import ServiceContainer
+
+    getattr(ServiceContainer, "_services", {}).pop("advanced_cognition", None)
+    from core.advanced_cognition import get_advanced_cognition_runtime
+
+    first = get_advanced_cognition_runtime()
+    second = get_advanced_cognition_runtime()
+    assert first is second
+    assert ServiceContainer.get("advanced_cognition", default=None) is first

@@ -273,16 +273,38 @@ class AdvancedCognitionRuntime:
         return ActionCandidate(stable_hash(str(value), prefix="act_"), str(value), tags=("unknown",))
 
 
-def get_advanced_cognition_runtime(*, state_dir: str | Path = ".aura/advanced_cognition") -> AdvancedCognitionRuntime:
-    """Resolve or register the shared runtime without requiring callers to know container details."""
+def _shared_state_dir() -> Path:
+    """The organism-wide learning home for the shared runtime.
+
+    The runtime is one organ managing many domains internally (the world
+    model, ontology, and transfer engines all key by domain), so its state
+    must live in a shared workspace — never in whichever environment happened
+    to construct it first, which silently mixed cross-domain learning into
+    one environment's directory.
+    """
+    try:
+        from core.environment.runtime_workspace import environment_runtime_dir
+
+        return environment_runtime_dir("shared", purpose="learning") / "advanced_cognition"
+    except (ImportError, RuntimeError, AttributeError, OSError):
+        return Path(".aura/advanced_cognition")
+
+
+def get_advanced_cognition_runtime(*, state_dir: str | Path | None = None) -> AdvancedCognitionRuntime:
+    """Resolve or register the shared runtime without requiring callers to know container details.
+
+    ``state_dir`` defaults to the organism-wide shared workspace; pass an
+    explicit path only for harnesses that need isolated state.
+    """
+    resolved_dir = Path(state_dir) if state_dir is not None else _shared_state_dir()
     try:
         from core.container import ServiceContainer
 
         existing = ServiceContainer.get("advanced_cognition", default=None)
         if existing is not None:
             return existing
-        runtime = AdvancedCognitionRuntime(state_dir=state_dir)
+        runtime = AdvancedCognitionRuntime(state_dir=resolved_dir)
         ServiceContainer.register_instance("advanced_cognition", runtime)
         return runtime
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
-        return AdvancedCognitionRuntime(state_dir=state_dir)
+        return AdvancedCognitionRuntime(state_dir=resolved_dir)
