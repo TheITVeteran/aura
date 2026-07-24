@@ -70,7 +70,9 @@ def test_strict_contract_steering_is_near_off():
     assert alpha_v <= 0.1
 
 
-def test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplate():
+def test_strict_value_contract_accepts_the_literal_before_separated_boilerplate():
+    """A REAL separator after the value means the model emitted it and kept
+    talking, so the value still counts as the answer."""
     messages = [
         {
             "role": "user",
@@ -80,7 +82,7 @@ def test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplat
 
     expected = _extract_expected_strict_value(messages, None)
     normalized = _normalize_strict_value_response(
-        "okI output the letters you requested. Let me know if you need anything else.",
+        "ok. I output the letters you requested. Let me know if you need anything else.",
         expected_value=expected,
     )
 
@@ -88,7 +90,12 @@ def test_strict_value_contract_keeps_explicit_literal_when_model_adds_boilerplat
     assert normalized == "ok"
 
 
-def test_strict_value_contract_keeps_repeated_literal_before_boilerplate():
+def test_strict_value_contract_does_not_launder_abutting_boilerplate():
+    """CP126 7f86d404 (commit 6da8072c5): an immediately-abutting character is
+    NOT a separator, so "okI output..." is a different token from "ok" and must
+    not be normalized into a reported exact pass — that grades answer seeding
+    rather than model merit. The model's real output is returned instead.
+    """
     messages = [
         {
             "role": "user",
@@ -97,13 +104,30 @@ def test_strict_value_contract_keeps_repeated_literal_before_boilerplate():
     ]
 
     expected = _extract_expected_strict_value(messages, None)
-    normalized = _normalize_strict_value_response(
-        "okokYou said to output exactly that value and nothing else.",
-        expected_value=expected,
-    )
+    draft = "okI output the letters you requested. Let me know if you need anything else."
+    normalized = _normalize_strict_value_response(draft, expected_value=expected)
 
     assert expected == "ok"
-    assert normalized == "ok"
+    assert normalized != "ok"
+    assert normalized == draft
+
+
+def test_strict_value_contract_does_not_launder_repeated_literal_abutting_boilerplate():
+    """Same contract for a doubled literal with no separator ("okokYou said...")."""
+    messages = [
+        {
+            "role": "user",
+            "content": "Output exactly these two lowercase letters and nothing else: ok",
+        }
+    ]
+
+    expected = _extract_expected_strict_value(messages, None)
+    draft = "okokYou said to output exactly that value and nothing else."
+    normalized = _normalize_strict_value_response(draft, expected_value=expected)
+
+    assert expected == "ok"
+    assert normalized != "ok"
+    assert normalized == draft
 
 
 def test_strict_value_contract_does_not_repair_wrong_literal():
