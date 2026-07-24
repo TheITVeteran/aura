@@ -159,6 +159,29 @@ cosine exceeds threshold. Selection at halt: verifier score, else convergence
 quality. Equal-FLOP accounting (token-layer applications) is first-class so
 Experiment 4 can honestly compare against self-consistency sampling.
 
+### Causal virtual compute quanta
+One branch may receive one episode-local latent intervention before the first
+recurrent savepoint. The proposal is derived only from admitted prompt/context
+activations: immutable context is projected into mutable slots when present;
+otherwise the prompt anchor or a deterministic prompt-latent self-projection
+supplies the direction. Protected evidence slots remain byte-identical and the
+mutable RMS change is hard bounded.
+
+The proposal has no authority by construction. It must beat a no-op and a
+norm-matched orthogonal random control under repeated Latin-rotated trials,
+fixed decode work, complete resource accounting, and an independently admitted
+confidence-bound verifier. Scalar scores, unequal resources, unstable bounds,
+tied controls, insufficient budget, and any callback failure restore the exact
+baseline. A winning direction is consumed once inside its TTL, recurrence sees
+the resulting state, and the private direction is zeroized and released. The
+public receipt commits the episode, objective, branch, KV boundary, verifier
+policy/preflight, arm resources, contribution bound, application, rollback,
+and erasure without serializing the latent tensor or answer text.
+
+This proves bounded causal mechanics, not capability gain. Utility requires a
+fresh frozen resident campaign in which the quanta arm beats no-quanta and
+equal-compute controls without leakage, residue, or regression.
+
 ### Latent optimization (gradient descent over thoughts)
 Differentiable proxy that cannot leak answers:
 `S(Z) = λ_r·R(Z) − λ_d·D(Z, Z₀)` where **R** = teacher-forced logprob of the

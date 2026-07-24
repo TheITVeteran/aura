@@ -1341,10 +1341,57 @@ before those dependencies close is not admissible.
   resident-32B utility, durable learning, broad error-rate reduction,
   adapter/RLC positive interaction, reasoning gain, or frontier capability;
   those remain fresh powered campaign claims.
-- [ ] **SPARK-037 - Causal virtual compute quanta.** Wire the existing bounded
+- [x] **SPARK-037 - Causal virtual compute quanta.** Wire the existing bounded
   quanta contract into slot seeds, retrieval directions, verifier probes, or
   fast-weight subspaces; require measured contribution, TTL, budget charge,
   erasure proof, and ablation against no-quanta/matched-compute controls.
+
+  Accepted at CP351 at the live recurrent-engine, worker receipt, and
+  independent service-reconstruction boundary. The former free-form payload
+  ledger and phantom compute reservation are gone. A quantum is now a private
+  latent direction derived only from the episode's admitted prompt/context
+  activations. It carries no text, caller vector, belief, durable parameter,
+  or self-reported contribution authority.
+
+  Admission runs no-op, norm-matched orthogonal-random, and guided arms with
+  repeated seeded Latin rotations. Every trial executes the same forced-token
+  transformer probe and independently admitted bounded verifier. All resource
+  counters must be present and equal, including transformer layer apps,
+  attention pairs, output-head tokens, verifier calls, and verifier bytes. The
+  guided lower bound must clear both control upper bounds by the configured
+  margin. Scalar/stateful verifiers are not consumed because they cannot mint
+  confidence-bound authority.
+
+  The accepted state is applied to one deterministic branch before the first
+  recurrent savepoint. Immutable evidence slots are restored, mutable RMS is
+  bounded, TTL is action-step bound, and use count is exactly one. Refusal,
+  partial probe failure, application failure, and candidate degeneration
+  restore the exact baseline without credit. Every path zeroizes and releases
+  the private direction; pre-authority failures emit an explicit no-authority
+  receipt rather than a malformed success-shaped record.
+
+  The service reconstructs quantum identity, lifetime, Latin arm order,
+  observation stability, matched resources, contribution, application,
+  erasure, verifier policy/preflight, information accounting, episode totals,
+  cognitive-slot provenance, and KV lineage. Rehashed scope, policy, order,
+  identity, contribution, erasure, source, or resource substitutions fail.
+
+  Direct contracts pass 14/14. The initialized tiny-Qwen proof captures the
+  state at the real episode-initialization savepoint, proves it equals the
+  verified quantum post-state, executes recurrence, validates the complete
+  external receipt, and rejects rehashed authority. The affected engine,
+  service, recurrence, resource, cache, verifier, fast-weight, exploration,
+  and proof-integrity boundary passes 395/395. The fixed 100-file ownership
+  snapshot passes 1653/1653 on the rebased integrated tree, and the separately landed frozen-baseline,
+  typed-state, threat-model, and primary-literature suites pass 53/53.
+  The focused CP351 plus eight concurrently landed suites pass 153/153 after
+  integration; the final CP351 plus shared-state/runtime-hermeticity gate passes
+  32/32 after the last two-commit rebase.
+
+  SPARK-037 proves causal episode mechanics, truthful accounting, and bounded
+  cleanup. It does not prove resident-32B utility, durable learning,
+  adapter/RLC interaction, reasoning gain, or frontier capability. Those
+  remain fresh powered campaign claims under RLC-VIRTUAL-QUANTA-001.
 - [ ] **SPARK-038 - Latent tree/forest search.** Implement bounded MCTS/beam/BFS
   over verified neural states with UCT/value estimates, backtracking, duplicate
   detection, cancellation, and exact compute accounting.

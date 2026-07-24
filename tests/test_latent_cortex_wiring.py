@@ -329,6 +329,10 @@ def _recurrent_grounding_fields(config, *, steps=1, episode_id=""):
     from core.brain.llm.latent_cortex.verified_best import (
         build_verified_best_receipt,
     )
+    from core.brain.llm.latent_cortex.virtual_quanta import (
+        VirtualQuantaConfig,
+        build_empty_virtual_quanta_receipt,
+    )
     from core.brain.llm.latent_cortex.worker_handler import config_from_job
     from core.learning.update_acceptance import (
         FEATURE_NAMES,
@@ -627,6 +631,20 @@ def _recurrent_grounding_fields(config, *, steps=1, episode_id=""):
         if episode_id
         else None
     )
+    virtual_quanta_receipt = (
+        build_empty_virtual_quanta_receipt(
+            episode_id=episode_id,
+            objective_sha256="7" * 64,
+            subject_sha256="b" * 64,
+            branch_index=0,
+            source_kv_boundary_sha256="d" * 64,
+            protected_positions=(),
+            source_positions=(),
+            config=VirtualQuantaConfig.from_value(executed.virtual_quanta),
+        )
+        if episode_id
+        else None
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -641,6 +659,9 @@ def _recurrent_grounding_fields(config, *, steps=1, episode_id=""):
             {"transient_negative_constraints": transient_constraint_receipt}
             if transient_constraint_receipt is not None
             else {}
+        ),
+        **(
+            {"virtual_quanta": virtual_quanta_receipt} if virtual_quanta_receipt is not None else {}
         ),
         "neural_uncertainty": neural_uncertainty_receipt,
         "mistake_locator": mistake_locator_receipt,
@@ -778,6 +799,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.local_exploration is None
     assert cfg.heterogeneous_integration is None
     assert cfg.transient_negative_constraints is None
+    assert cfg.virtual_quanta is None
     assert cfg.validate() == []
 
 
@@ -867,6 +889,14 @@ def test_config_from_job_rejects_out_of_band_requests():
                 }
             }
         )
+    with pytest.raises(ValueError, match="unknown keys"):
+        config_from_job({"virtual_quanta": {"payload": "free-form"}})
+    with pytest.raises(ValueError, match="delta bound"):
+        config_from_job({"virtual_quanta": {"max_relative_delta_rms": 0.5}})
+    with pytest.raises(ValueError, match="replicates"):
+        config_from_job({"virtual_quanta": {"replicates": 1}})
+    with pytest.raises(ValueError, match="TTL"):
+        config_from_job({"virtual_quanta": {"ttl_steps": 5}})
     with pytest.raises(ValueError, match="requires head_path"):
         config_from_job({"contradiction_head": {"mode": "learned"}})
     with pytest.raises(ValueError, match="cannot carry a head"):
@@ -916,6 +946,13 @@ def test_config_from_job_maps_every_advanced_mechanism():
                 "ttl_action_steps": 4,
                 "max_constraints": 5,
             },
+            "virtual_quanta": {
+                "max_relative_delta_rms": 0.04,
+                "min_verifier_margin": 0.03,
+                "replicates": 3,
+                "ttl_steps": 2,
+                "seed": 19,
+            },
         }
     )
     assert cfg.latent_opt.enabled is True and cfg.latent_opt.steps == 6
@@ -936,6 +973,13 @@ def test_config_from_job_maps_every_advanced_mechanism():
         "replicates": 3,
         "ttl_action_steps": 4,
         "max_constraints": 5,
+    }
+    assert cfg.virtual_quanta == {
+        "max_relative_delta_rms": 0.04,
+        "min_verifier_margin": 0.03,
+        "replicates": 3,
+        "ttl_steps": 2,
+        "seed": 19,
     }
 
 
@@ -2793,6 +2837,36 @@ def test_service_reconstructs_transient_constraints_and_rejects_rehashed_scope_l
         {key: value for key, value in transient.items() if key != "receipt_sha256"}
     )
     assert "transient_negative_constraints_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_virtual_quanta_and_rejects_rehashed_scope_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "episode_id": "ep-virtual-quanta",
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(
+            config,
+            steps=3,
+            episode_id="ep-virtual-quanta",
+        ),
+    }
+    assert "virtual_quanta_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    virtual = forged["virtual_quanta"]
+    virtual["authority_scope"] = "cross_episode_durable"
+    virtual["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in virtual.items() if key != "receipt_sha256"}
+    )
+    assert "virtual_quanta_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 

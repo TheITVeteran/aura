@@ -11,6 +11,7 @@ Public surface:
     LatentCortexEngine                     — engine.py (the integrated machine)
     run_experiment_*                       — experiments.py (falsification harness)
 """
+
 from core.brain.llm.latent_cortex.types import (
     BranchConfig,
     ComputeBudget,
@@ -23,8 +24,10 @@ from core.brain.llm.latent_cortex.types import (
     WorkspaceConfig,
 )
 from core.brain.llm.latent_cortex.virtual_quanta import (
-    VirtualComputeQuantum,
-    VirtualComputeQuantaLedger,
+    VirtualQuantaConfig,
+    build_empty_virtual_quanta_receipt,
+    run_virtual_quanta,
+    validate_virtual_quanta_receipt,
 )
 
 __all__ = [
@@ -36,7 +39,9 @@ __all__ = [
     "LatentOptConfig",
     "LatentReasoningResult",
     "RecurrenceConfig",
-    "VirtualComputeQuantum",
-    "VirtualComputeQuantaLedger",
+    "VirtualQuantaConfig",
     "WorkspaceConfig",
+    "build_empty_virtual_quanta_receipt",
+    "run_virtual_quanta",
+    "validate_virtual_quanta_receipt",
 ]

@@ -364,7 +364,7 @@ Status rules:
 | `RLC-BRANCHES-001` | `IN PROGRESS 2026-07-15` | Prove role seeds create useful non-collapsed hypotheses, exchange carries causal information rather than homogenizing noise, all branches receive fair equal-budget rounds, verifier selection cannot leak answers or starve final decode, and virtual width beats best-of-N/self-consistency under per-trial matched compute. | `RLC-MECHANICS-001`, `RLC-EXPERIMENTS-001` |
 | `RLC-LATENT-OPT-001` | `IN PROGRESS (MATCHED FIXED-COST ACCEPTANCE SOURCE GREEN; UTILITY OPEN) 2026-07-16` | Validate the answer-leak-resistant objective, monotonic bounded line search, finite gradients, manifold constraints, verifier-gated rollback, matched-magnitude random controls, compute accounting, and broad held-out utility. CP95 gives gradient and random directions the same precharged 12-point acceptance search, so neither arm receives unconditional acceptance or early-exit compute advantage. Reject or redesign the proxy if it strengthens lexical reconstruction without improving reasoning. | `RLC-MECHANICS-001`, `RLC-COMPUTE-001`, `RLC-EXPERIMENTS-001`; CP95 |
 | `RLC-FAST-WEIGHTS-001` | `IN PROGRESS (TRANSACTIONAL ATTACH/ERASE SOURCE GREEN; LIVE 32B OPEN) 2026-07-15` | Guarantee identity-at-attach, partial-attach rollback, exclusive ownership, monotonic optimization, exact detach, independent function restoration, cache invalidation, resident recycle on unproven integrity, export provenance, and no permanent mutation. Fault-inject every attach/optimize/persist/decode/detach/probe boundary on tiny and resident models. | `RLC-LIFECYCLE-001`, `RLC-CONSOLIDATION-001`; CP95 |
-| `RLC-VIRTUAL-QUANTA-001` | `IN PROGRESS (EPISODE CONTRACT SOURCE GREEN; ENGINE WIRING/UTILITY OPEN) 2026-07-22` | Develop the "virtual particles" redesign into real transient virtual compute quanta: short-lived, subject-steered reasoning probes or scratch subspaces that borrow only from the audited compute budget, carry source/subject/provenance, expire by TTL, publish contribution evidence, and erase with machine-checkable certificates. Wire them into workspace seeding, branch diversity, verifier probes, retrieval-to-fast-weight subspaces, and recurrence-native training only after ablation tests show causal usefulness under matched compute. Never credit them for RLC or frontier gain unless virtual-quanta arms beat no-quanta and equal-compute controls on frozen held-out tasks with no residue, leakage, or regression. | `RLC-WORKSPACE-001`, `RLC-FAST-WEIGHTS-001`, `RLC-COMPUTE-001`, `RLC-EXPERIMENTS-001`, `RLC-FRONTIER-001`; CP309 |
+| `RLC-VIRTUAL-QUANTA-001` | `IN PROGRESS (CP351 CAUSAL EPISODE RUNTIME + MATCHED PROBES + ERASURE SOURCE GREEN; RESIDENT UTILITY/TRAINING OPEN) 2026-07-24` | Develop the "virtual particles" redesign into real transient virtual compute quanta: short-lived, subject-steered reasoning probes or scratch subspaces that borrow only from the audited compute budget, carry source/subject/provenance, expire by TTL, publish contribution evidence, and erase with machine-checkable certificates. CP351 replaces free-form payloads and phantom reservations with private prompt/context-derived latent directions, repeated no-op/norm-matched-random/guided fixed-compute trials, confidence-bound admission, one-use pre-recurrence application, exact rollback, zeroization, worker receipts, and independent service reconstruction. Continue into retrieval-to-fast-weight and recurrence-native training only after frozen ablations show causal usefulness. Never credit them for RLC or frontier gain unless virtual-quanta arms beat no-quanta and equal-compute controls on frozen held-out resident tasks with no residue, leakage, or regression. | `RLC-WORKSPACE-001`, `RLC-FAST-WEIGHTS-001`, `RLC-COMPUTE-001`, `RLC-EXPERIMENTS-001`, `RLC-FRONTIER-001`; CP309, CP351 |
 | `RLC-LIFECYCLE-001` | `IN PROGRESS (ONE-OWNER RECOVERY CONTRACT SOURCE GREEN; CANCELLATION/CRASH MATRIX OPEN) 2026-07-17` | Put every episode under the canonical model request lock, foreground owner, durable lane fence, generation accounting, timeout/cancel drain, process-death detection, cache cleanup, integrity-triggered recycle, shutdown, and restart contracts. CP120 marks a foreground owner consumed from generation, latent-attempt, or retry-suppression evidence and refuses inner or outer regeneration after any such work; the public contract proves an exact generation count of one. Prove this contract in the rebuilt signed app, then complete cancellation, timeout, crash, pressure, unload, adapter/training overlap, shutdown, and restart matrices. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `RLC-MECHANICS-001`; CP95, CP120 |
 | `RLC-COMPUTE-001` | `IN PROGRESS (HARD LAYER-APP CAP SOURCE GREEN; COMPLETE FLOP/ENERGY LEDGER OPEN) 2026-07-15` | Build exact or conservatively bounded per-operation accounting for prefill, recurrence, probes, branch exchange, LM-head proxy work, forward/backward optimizer passes, fast weights, persistence, decode, verifier/tool calls, wall time, memory, and energy. Reserve completion capacity, prevent atomic overshoot, publish estimator identity/error bounds, and use the same ledger in admission and experiments. | `RLC-LIFECYCLE-001`, `PERF-001`, `RLC-FRONTIER-001`; CP95 |
 | `RLC-CAUSAL-INGRESS-001` | `OPEN 2026-07-15` | Wire governed memory retrieval, live perception/multimodal embeddings, world-model beliefs, body/allostasis, goals/Will preferences, tool observations, uncertainty, autobiographical continuity, and canonical self-model state directly into typed slots. Prove each ingress is fresh, attributable, causally used, ablatable/restorable, privacy-scoped, and cannot bypass authority or inject executable text. | `RLC-WORKSPACE-001`, `MEMORY-001`, `SUBSTRATE-001`, `ACTION-SPINE-001`, mirror/self-model program |
@@ -26514,4 +26514,80 @@ records, now approximately 55-322 records after this checkpoint. Checkpoint-
 count completion is approximately 56.1%-88.2%, with a midpoint planning
 estimate of 68.6%. Next: publish CP350, then implement SPARK-037's causal
 virtual compute quanta. Final multi-hour soaks remain deferred until every
+shorter gate is green.
+
+## Checkpoint 2026-07-24-351: Virtual Compute Must Earn Causal Authority
+
+SPARK-037 replaces the old free-form virtual-quanta ledger with one bounded
+latent transaction inside the real recurrent engine. A quantum is not text, a
+caller vector, a belief, a durable weight update, or a reserved-but-unexecuted
+compute claim. Its private direction is derived only from the admitted
+prompt/context activation state. Immutable context can project into mutable
+slots; prompt-anchor and deterministic prompt-latent self-projections cover
+context-free episodes. Protected evidence remains bit-identical and mutable
+RMS is capped.
+
+Admission runs no-op, norm-matched orthogonal-random, and guided states through
+repeated seeded Latin-rotated trials. Each arm executes fixed forced-token
+transformer work and an independently admitted confidence-bound verifier. The
+complete resource vector must be nonzero where required and exactly equal
+across arms. Scalar/stateful verifier interfaces are not consumed because they
+cannot create bounded authority. A guided lower bound must clear both control
+upper bounds by the configured margin before any effect is credited.
+
+One deterministic branch receives the winning state before the initial
+recurrent savepoint, so that branch's downstream recurrence operates on the
+causally changed activation and selection/decode can inherit it only if the
+branch survives arbitration. Authority is bound to episode, objective, branch,
+KV parent, verifier policy/preflight, creation step, TTL, and one use. Refusal,
+partial probe failure, candidate degeneration, and application failure restore
+the exact baseline without contribution credit. The private direction is
+zeroized and released on every completed path.
+
+The worker receipt commits arm order, tensor identities, bounded geometry,
+observations, full resource windows, measured contribution, application,
+rollback, and erasure without serializing latent state or answer text. The
+service independently reconstructs identity, Latin rotation, lifetime,
+observation stability, resource parity, contribution, one-use application,
+zeroization, cognitive-slot provenance, verifier policy/preflight, episode
+accounting, and KV lineage. Rehashed scope, policy, order, identity,
+contribution, erasure, source, or resource substitutions fail.
+
+Direct virtual-quanta contracts pass 14/14. The initialized
+Qwen2 proof captures the actual episode-initialization savepoint, proves the
+accepted quantum state is the state recurrence receives, validates the full
+external receipt, and rejects rehashed authority. The affected engine,
+service, recurrence, resource, cache, verifier, fast-weight, exploration,
+heterogeneous-integration, and proof-integrity boundary passes 395/395 in
+189.12 seconds. The fixed 100-file RLC, recurrence/training,
+resident-campaign, global-workspace, GWT, and execution-controller ownership
+snapshot passes 1653/1653 in 752.06 seconds on the rebased integrated tree. The frozen-baseline, typed-state,
+threat-model, and primary-literature proof suites pass 53/53 in 22.04 seconds.
+After rebasing over 12 concurrently published SPARK-070, proof-kernel,
+AtomSpace, Homeostate, triad-fusion, governance, and hermetic-test commits, the
+focused CP351 plus eight incoming suites pass 153/153 in 64.65 seconds.
+After a final rebase over the organism-wide shared-state and repo-wide runtime
+workspace-hermeticity commits, the CP351 focus plus both incoming environment
+suites pass 32/32 in 14.86 seconds.
+Strict Ruff, canonical formatting, bytecode compilation, and diff hygiene pass.
+
+The enterprise ratchet remains red at the exact integrated `origin/main`
+boundary: 50 high/critical findings, 11 baseline-regression categories, and 40
+broad-exception reviews. A clean scan of integrated base `969f30864` and the
+rebased CP351 tree produces identical finding identities and counts. The
+virtual-quanta transaction boundary is explicitly reviewed with the gate's
+standard BLE001 annotation because arbitrary device/evaluator callback
+failures must trigger rollback; it creates no scanner finding or added debt.
+
+SPARK-037 proves causal episode mechanics, truthful matched-compute admission,
+and exact bounded cleanup. It does not prove resident-32B utility, durable
+learning, adapter/RLC positive interaction, reasoning gain, or frontier
+capability. Those remain fresh powered campaign claims under
+RLC-VIRTUAL-QUANTA-001 and RLC-EXPERIMENTS-001.
+
+This is total checkpoint record 412. The revised forecast remains 466-733 total
+records, now approximately 54-321 records after this checkpoint. Checkpoint-
+count completion is approximately 56.2%-88.4%, with a midpoint planning
+estimate of 68.7%. Next: publish CP351, then implement SPARK-038's bounded
+latent tree/forest search. Final multi-hour soaks remain deferred until every
 shorter gate is green.

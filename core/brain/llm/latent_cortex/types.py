@@ -505,6 +505,10 @@ class CortexConfig:
     # defaults; callers may tighten bounded efficacy/lifetime settings but
     # cannot exceed the hard safety ceilings in TransientConstraintConfig.
     transient_negative_constraints: dict[str, Any] | None = None
+    # SPARK-037 episode-local latent compute. None enables conservative live
+    # defaults. Authority requires a real matched-compute verifier win; text,
+    # caller vectors, and self-reported contribution cannot create a quantum.
+    virtual_quanta: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -908,6 +912,18 @@ class CortexConfig:
                     TransientConstraintConfig.from_value(self.transient_negative_constraints)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if self.virtual_quanta is not None:
+            if not isinstance(self.virtual_quanta, dict):
+                problems.append("virtual_quanta must be a mapping or null")
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.virtual_quanta import (
+                        VirtualQuantaConfig,
+                    )
+
+                    VirtualQuantaConfig.from_value(self.virtual_quanta)
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1233,6 +1249,10 @@ class EpisodeReceipt:
     # orthogonal-sham controls, and every admitted constraint expires or is
     # consumed exactly once.
     transient_negative_constraints: dict[str, Any] = field(default_factory=dict)
+    # One episode-local latent quantum may be admitted only after real
+    # no-op/matched-random/guided probes prove a bounded contribution. The
+    # private direction is zeroized after its one use.
+    virtual_quanta: dict[str, Any] = field(default_factory=dict)
     # Objective hidden-state correctness probability and predictive entropy.
     # Unavailable mode is explicit and emits no observations.
     neural_uncertainty: dict[str, Any] = field(default_factory=dict)
@@ -1462,6 +1482,7 @@ class EpisodeReceipt:
             "halting": dict(self.halting),
             "verified_best_state": dict(self.verified_best_state),
             "transient_negative_constraints": dict(self.transient_negative_constraints),
+            "virtual_quanta": dict(self.virtual_quanta),
             "neural_uncertainty": dict(self.neural_uncertainty),
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),

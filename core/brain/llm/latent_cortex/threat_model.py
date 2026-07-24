@@ -93,8 +93,7 @@ class ThreatEntry:
             or len(self.failure_mode) < 40
             or not self.mitigations
             or any(
-                not isinstance(path, str) or not path.endswith(".py")
-                for path in self.mitigations
+                not isinstance(path, str) or not path.endswith(".py") for path in self.mitigations
             )
             or not self.checks
             or any(not isinstance(check, MitigationCheck) for check in self.checks)
@@ -395,7 +394,11 @@ THREATS: tuple[ThreatEntry, ...] = (
             ),
             MitigationCheck(
                 "tests/test_latent_cortex_virtual_quanta.py",
-                "test_virtual_quantum_charges_budget_and_receipts_subject_steering",
+                "test_guided_quantum_requires_measured_win_applies_once_and_erases",
+            ),
+            MitigationCheck(
+                "tests/test_latent_cortex_virtual_quanta.py",
+                "test_resource_mismatch_refuses_even_when_guided_score_wins",
             ),
         ),
         residual_risk=(
@@ -518,9 +521,7 @@ def validate_threat_model(repo_root: Path | None = None) -> dict[str, Any]:
             test_path = root / check.test_file
             if not test_path.is_file():
                 _fail("threat_model_check_file_missing")
-            if f"def {check.test_name}(" not in test_path.read_text(
-                encoding="utf-8"
-            ):
+            if f"def {check.test_name}(" not in test_path.read_text(encoding="utf-8"):
                 _fail("threat_model_check_test_missing")
             check_count += 1
     if seen != set(REQUIRED_THREAT_IDS):

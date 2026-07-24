@@ -2160,6 +2160,77 @@ class LatentCortexEngine:
                 receipt.flag(f"verifier_preflight_failed:{type(exc).__name__}")
                 pending_verifier = None
                 verifier = None
+        from core.brain.llm.latent_cortex.virtual_quanta import (
+            ARM_NAMES,
+            VirtualQuantaConfig,
+            run_virtual_quanta,
+        )
+
+        virtual_quanta_config = VirtualQuantaConfig.from_value(self.config.virtual_quanta)
+        virtual_target = ensemble.branches[
+            int(receipt.input_tokens_sha256[:8], 16) % len(ensemble.branches)
+        ]
+        virtual_preflight_sha256 = str(receipt.verifier_preflight.get("receipt_sha256", ""))
+        virtual_probe_apps = self._verifier_probe_layer_apps(
+            bridge_tokens,
+            count=len(ARM_NAMES) * virtual_quanta_config.replicates,
+        )
+        virtual_evaluator = None
+        virtual_unavailable_reason = ""
+        if virtual_quanta_config.mode == "disabled":
+            virtual_unavailable_reason = "configured_disabled"
+        elif verifier is None:
+            virtual_unavailable_reason = "admitted_verifier_unavailable"
+        elif not callable(getattr(verifier, "observe_with_bounds", None)):
+            virtual_unavailable_reason = "bounded_verifier_observation_unavailable"
+        elif len(transient_verifier_policy_sha256) != 64 or len(virtual_preflight_sha256) != 64:
+            virtual_unavailable_reason = "verifier_authority_commitment_unavailable"
+        elif virtual_probe_apps + safety_reserve > budget.remaining_layer_apps:
+            virtual_unavailable_reason = "matched_counterfactual_probe_budget_unavailable"
+        else:
+            virtual_evaluator = self._counterfactual_probe_evaluator(
+                branch=virtual_target,
+                cache=cache,
+                runner=runner,
+                budget=budget,
+                bridge_tokens=bridge_tokens,
+                verifier=verifier,
+            )
+
+        virtual_baseline = virtual_target.z
+
+        def apply_virtual_state(state):
+            import mlx.core as mx
+            import numpy as np
+
+            projected = virtual_target.workspace.restore_context_evidence(mx.array(state))
+            mx.eval(projected)
+            virtual_target.z = projected
+            virtual_target.workspace.update(projected)
+            return np.asarray(projected)
+
+        receipt.virtual_quanta = run_virtual_quanta(
+            baseline_state=virtual_baseline,
+            anchor_state=virtual_target.anchor,
+            branch_index=virtual_target.index,
+            protected_positions=virtual_target.workspace.context_slot_indices,
+            source_positions=virtual_target.workspace.context_slot_indices,
+            episode_id=receipt.episode_id,
+            objective_sha256=receipt.input_tokens_sha256,
+            subject_sha256=hashlib.sha256(str(domain or "general").encode("utf-8")).hexdigest(),
+            source_kv_boundary_sha256=virtual_target.kv_boundary_sha256,
+            verifier_policy_sha256=transient_verifier_policy_sha256,
+            verifier_preflight_sha256=virtual_preflight_sha256,
+            created_step=0,
+            config=virtual_quanta_config,
+            evaluate=virtual_evaluator,
+            apply_state=apply_virtual_state,
+            restore_state=apply_virtual_state,
+            budget=budget,
+            unavailable_reason=virtual_unavailable_reason,
+        )
+        if str(receipt.virtual_quanta["reason"]).startswith("counterfactual_failed:"):
+            receipt.flag("virtual_quanta_" + receipt.virtual_quanta["reason"])
         value_policy = ValueOfComputationPolicy(action_policy_evidence)
         action_controls = self._embed_action_controls()
         has_memory = any(

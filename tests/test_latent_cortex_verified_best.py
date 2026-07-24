@@ -19,6 +19,7 @@ from core.brain.llm.latent_cortex.counterfactual_probe import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind  # noqa: E402
+from core.brain.llm.latent_cortex.loop_core import canonical_sha256  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence import (  # noqa: E402
     HaltingController,
     WindowRunner,
@@ -50,6 +51,10 @@ from core.brain.llm.latent_cortex.verified_best import (  # noqa: E402
     build_verified_best_receipt,
     tensor_sha256,
     validate_verified_best_receipt,
+)
+from core.brain.llm.latent_cortex.virtual_quanta import (  # noqa: E402
+    VirtualQuantaConfig,
+    validate_virtual_quanta_receipt,
 )
 
 
@@ -461,6 +466,144 @@ def _matched_constraint_evaluator(**kwargs):
         )
 
     return evaluate
+
+
+def _matched_virtual_and_constraint_evaluator(**kwargs):
+    budget = kwargs["budget"]
+
+    def evaluate(label, _state, replicate):
+        budget.charge(
+            8,
+            8,
+            operation="test_matched_virtual_probe",
+            attention_pairs=64,
+            output_head_tokens=8,
+        )
+        budget.charge_verifier(
+            "test_matched_virtual_verifier",
+            input_bytes=64,
+            output_bytes=64,
+            host_scalar_ops=64,
+        )
+        score = 1.0 if label in {"guided_quantum", "negative_direction"} else 0.0
+        return CounterfactualProbeResult(
+            probe_tokens_sha256=hashlib.sha256(f"{label}:{replicate}".encode()).hexdigest(),
+            probe_token_count=8,
+            observation=_observation(
+                score=score,
+                lower=score,
+                upper=score,
+                name=f"virtual:{label}:{replicate}",
+                basis="deterministic_exact",
+                samples=1,
+            ),
+            layer_apps=64,
+        )
+
+    return evaluate
+
+
+def test_real_tiny_qwen_applies_virtual_quantum_before_recurrence_and_proves_receipt(
+    monkeypatch,
+):
+    engine, evidence = _tiny_engine(seed=17, allow_vanilla_fallback=False)
+    verifier = _BoundedVerifier()
+    monkeypatch.setattr(
+        engine,
+        "_counterfactual_probe_evaluator",
+        _matched_virtual_and_constraint_evaluator,
+    )
+    original_savepoint = BranchEnsemble.savepoint_all
+    initialization_states: dict[int, str] = {}
+
+    def capture_initialization(self, *, authority):
+        if authority == "episode_initialization":
+            initialization_states.update(
+                {branch.index: tensor_sha256(branch.z) for branch in self.branches}
+            )
+        return original_savepoint(self, authority=authority)
+
+    monkeypatch.setattr(BranchEnsemble, "savepoint_all", capture_initialization)
+    result = engine.reason(
+        token_ids=[5, 9, 17, 3, 42, 7],
+        budget=ComputeBudget(),
+        verifier=verifier,
+        action_policy_evidence=evidence,
+    )
+
+    assert result.ok is True
+    receipt = result.receipt.to_dict()
+    virtual = receipt["virtual_quanta"]
+    target = virtual["branch_index"]
+    assert virtual["status"] == "applied"
+    assert virtual["reason"] == "guided_quantum_verified"
+    assert virtual["guided_beats_controls"] is True
+    assert virtual["all_arms_equal_resources"] is True
+    assert virtual["all_arms_fully_metered"] is True
+    assert virtual["application"]["uses"] == 1
+    assert virtual["application"]["post_state_sha256"] == initialization_states[target]
+    assert virtual["application"]["post_state_sha256"] != virtual["baseline_state_sha256"]
+    assert virtual["erasure"]["all_zero_before_release"] is True
+    assert virtual["erasure"]["private_reference_released"] is True
+    validated = validate_virtual_quanta_receipt(
+        virtual,
+        episode_id=receipt["episode_id"],
+        objective_sha256=receipt["input_tokens_sha256"],
+        n_branches=1,
+        expected_config=VirtualQuantaConfig(),
+        cognitive_slots=receipt["cognitive_slots"],
+        verifier_preflight=receipt["verifier_preflight"],
+        information_accounting=receipt["budget"]["information_accounting"],
+        resource_accounting=receipt["budget"]["resource_accounting"],
+        kv_state_tree=receipt["kv_state_tree"],
+        require_external_bindings=True,
+    )
+    assert validated["receipt_sha256"] == virtual["receipt_sha256"]
+    contract_errors = LatentCortexService._receipt_contract_errors(
+        receipt,
+        {
+            "n_slots": 4,
+            "n_branches": 1,
+            "min_steps": 1,
+            "max_steps": 4,
+            "verifier_probe_max_tokens": 16,
+        },
+    )
+    assert "virtual_quanta_unproven" not in contract_errors
+
+    forged = copy.deepcopy(virtual)
+    forged["authority_scope"] = "cross_episode_durable"
+    payload = dict(forged)
+    payload.pop("receipt_sha256")
+    forged["receipt_sha256"] = canonical_sha256(payload)
+    with pytest.raises(ValueError, match="identity"):
+        validate_virtual_quanta_receipt(
+            forged,
+            episode_id=receipt["episode_id"],
+            objective_sha256=receipt["input_tokens_sha256"],
+            n_branches=1,
+            expected_config=VirtualQuantaConfig(),
+        )
+
+    policy_forged = copy.deepcopy(virtual)
+    policy_forged["verifier_policy_sha256"] = "f" * 64
+    policy_payload = dict(policy_forged)
+    policy_payload.pop("receipt_sha256")
+    policy_forged["receipt_sha256"] = canonical_sha256(policy_payload)
+    with pytest.raises(ValueError, match="external source binding"):
+        validate_virtual_quanta_receipt(
+            policy_forged,
+            episode_id=receipt["episode_id"],
+            objective_sha256=receipt["input_tokens_sha256"],
+            n_branches=1,
+            expected_config=VirtualQuantaConfig(),
+            cognitive_slots=receipt["cognitive_slots"],
+            verifier_preflight=receipt["verifier_preflight"],
+            information_accounting=receipt["budget"]["information_accounting"],
+            resource_accounting=receipt["budget"]["resource_accounting"],
+            kv_state_tree=receipt["kv_state_tree"],
+            require_external_bindings=True,
+        )
 
 
 def test_real_tiny_qwen_engine_meters_and_receipts_bounded_verifier_authority():

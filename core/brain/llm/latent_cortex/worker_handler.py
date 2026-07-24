@@ -116,6 +116,7 @@ _CONFIG_KEYS = {
     "local_exploration",
     "heterogeneous_integration",
     "transient_negative_constraints",
+    "virtual_quanta",
     "mistake_locator",
     "uncertainty_head",
     "update_gate",
@@ -257,6 +258,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         local_exploration=raw.get("local_exploration"),
         heterogeneous_integration=raw.get("heterogeneous_integration"),
         transient_negative_constraints=raw.get("transient_negative_constraints"),
+        virtual_quanta=raw.get("virtual_quanta"),
         branch_correlation_evidence=raw.get("branch_correlation_evidence"),
         critic_blind_spot_evidence=raw.get("critic_blind_spot_evidence"),
     )

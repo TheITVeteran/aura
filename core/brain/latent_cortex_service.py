@@ -1078,6 +1078,32 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("transient_negative_constraints_unproven")
+        try:
+            from core.brain.llm.latent_cortex.virtual_quanta import (
+                VirtualQuantaConfig,
+                validate_virtual_quanta_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            executed_config = config_from_job(config)
+            virtual_receipt = receipt.get("virtual_quanta")
+            validate_virtual_quanta_receipt(
+                virtual_receipt,
+                episode_id=str(receipt.get("episode_id") or ""),
+                objective_sha256=str(receipt.get("input_tokens_sha256") or ""),
+                n_branches=executed_config.branches.n_branches,
+                expected_config=VirtualQuantaConfig.from_value(executed_config.virtual_quanta),
+                cognitive_slots=receipt.get("cognitive_slots"),
+                verifier_preflight=receipt.get("verifier_preflight"),
+                information_accounting=information_accounting,
+                resource_accounting=resource_accounting,
+                kv_state_tree=receipt.get("kv_state_tree"),
+                require_external_bindings=bool(
+                    isinstance(virtual_receipt, dict) and virtual_receipt.get("arms")
+                ),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("virtual_quanta_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])
