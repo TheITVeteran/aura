@@ -1510,9 +1510,35 @@ before those dependencies close is not admissible.
   latent-cortex suite passes 823/823 in 78.42 seconds. This closes deterministic
   routing truthfully; governed external executors remain future eligible
   authorities rather than simulated successes.
-- [ ] **SPARK-041 - Process verifier.** Score local state transitions with a
-  calibrated PRM/process model, expose reliability by domain and depth, and
-  refuse dense credit where the verifier is not validated.
+- [x] **SPARK-041 - Process verifier.** The admitted recurrent mistake-locator
+  head now carries held-out process-calibration cells for exact task domain and
+  normalized early/middle/late recurrence depth. Each cell exposes sample and
+  class support, transition accuracy, Wilson lower accuracy, Wilson upper false
+  localization, AUC, Brier score, ECE, and a split-conformal maximum feature-
+  distance envelope with its finite-sample alpha. Sparse, class-degenerate,
+  unreliable, unknown-domain, legacy-artifact, missing-depth, and latent-
+  distribution-shift cells abstain and emit no local credit.
+
+  Every live proposal still receives a receipt-bound error probability. Dense
+  process credit is `1 - p(error)` only inside an admitted cell; rejected
+  proposals remain visible but cannot penalize the admitted path. A branch's
+  process score is its weakest accepted transition rather than an average that
+  could dilute one severe defect. The score becomes causal only when every
+  branch has a fully calibrated accepted path. It then selects the maximum
+  weakest-step branch ahead of convergence/uncertainty; deterministic visible-
+  answer verification may still supersede it. The worker receipt binds domain,
+  depth, feature distance, calibration evidence, abstentions, score, selected
+  branch, and authority. The service reconstructs the artifact, transitions,
+  domain, scores, winner, and causal basis; rehashed score or domain lies fail.
+
+  Legacy v1 heads remain loadable for diagnostic localization but cannot earn
+  process authority. Focused head/runtime/neural-uncertainty/service coverage
+  passes 22/22. A real initialized tiny-Qwen episode loads a v2 learned head,
+  runs recurrent transformer transitions, selects by the calibrated weakest-
+  step score, and reports `process_verifier` through the independent uncertainty
+  receipt. The complete latent-cortex suite passes 827/827 in 44.14 seconds.
+  This proves calibrated local process mechanics and causal wiring, not
+  resident-32B reasoning gain, adapter interaction, or frontier capability.
 - [ ] **SPARK-042 - Generative verifier.** Independently derive or falsify
   disputed steps in a fresh context and bind its evidence rather than accepting
   a holistic judge score.

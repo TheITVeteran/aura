@@ -311,6 +311,7 @@ class LatentCortexService:
         runtime_controls: dict[str, Any] | None = None,
         expected_worker_identity: dict[str, Any] | None = None,
         output_tokens: Any = ...,
+        expected_domain: str = "general",
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -1032,6 +1033,7 @@ class LatentCortexService:
                 expected_runtime=expected_locator,
                 update_acceptance=receipt.get("update_acceptance"),
                 expected_n_branches=executed_config.branches.n_branches,
+                expected_domain=expected_domain,
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("mistake_locator_unproven")
@@ -2824,6 +2826,7 @@ class LatentCortexService:
                 runtime_controls,
                 worker_identity,
                 result.get("tokens"),
+                domain,
             )
             if not contract_errors:
                 quality_receipt = evaluate_latent_output(

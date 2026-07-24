@@ -37,14 +37,8 @@ def _split(
             )
             is_error = transition_index == error_index
             strong = is_error is not invert
-            delta = (
-                (4.0, -3.5, 3.0)
-                if strong
-                else (0.03, -0.02, 0.01)
-            )
-            admitted = tuple(
-                value + change for value, change in zip(prior, delta, strict=True)
-            )
+            delta = (4.0, -3.5, 3.0) if strong else (0.03, -0.02, 0.01)
+            admitted = tuple(value + change for value, change in zip(prior, delta, strict=True))
             rows.append(
                 MistakeTransitionExample(
                     example_id=f"{trace_id}-step-{transition_index}",
@@ -52,11 +46,7 @@ def _split(
                     task_id=f"{prefix}-task-{trace_index}",
                     domain_id=domains[trace_index % len(domains)],
                     relation=relation,
-                    mutation_family=(
-                        "premise_flip"
-                        if trace_index % 2 == 0
-                        else "operator_swap"
-                    ),
+                    mutation_family=("premise_flip" if trace_index % 2 == 0 else "operator_swap"),
                     transition_index=transition_index,
                     transition_count=4,
                     error_index=error_index,
@@ -101,10 +91,7 @@ def test_fit_requires_task_disjoint_and_genuinely_ood_domains():
     in_domain = _split("in_domain", "cal", ("logic", "math"))
     out_of_domain = _split("out_of_domain", "ood", ("code", "planning"))
     out_of_domain = [
-        replace(row, domain_id="logic")
-        if row.domain_id == "code"
-        else row
-        for row in out_of_domain
+        replace(row, domain_id="logic") if row.domain_id == "code" else row for row in out_of_domain
     ]
     with pytest.raises(ValueError, match="OOD domain identities"):
         MistakeLocatorHead.fit(train, in_domain, out_of_domain)
@@ -137,11 +124,18 @@ def test_admitted_head_reports_id_and_ood_location_evidence(
     assert manifest["out_of_domain_metrics"]["error_exact_accuracy"] >= 0.60
     assert manifest["out_of_domain_metrics"]["within_one_accuracy"] >= 0.80
     assert manifest["out_of_domain_metrics"]["no_error_specificity"] >= 0.75
-    assert (
-        admitted_head.probability((0.0, 0.0, 0.0), (4.0, -3.5, 3.0))
-        > admitted_head.probability(
-            (0.0, 0.0, 0.0), (0.03, -0.02, 0.01)
-        )
+    assert manifest["process_calibration_schema"] == "aura.rlc.process_calibration.v1"
+    assert set(manifest["process_calibration"]) == {"in_domain", "out_of_domain"}
+    # Global trace admission does not manufacture process authority in sparse
+    # domain/depth cells. This fixture is intentionally below cell support.
+    assert not any(
+        cell["admitted"]
+        for relation in manifest["process_calibration"].values()
+        for domain in relation.values()
+        for cell in domain.values()
+    )
+    assert admitted_head.probability((0.0, 0.0, 0.0), (4.0, -3.5, 3.0)) > admitted_head.probability(
+        (0.0, 0.0, 0.0), (0.03, -0.02, 0.01)
     )
 
 

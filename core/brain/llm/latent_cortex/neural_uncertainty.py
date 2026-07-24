@@ -26,9 +26,7 @@ def _is_sha256(value: Any) -> bool:
 
 
 def _vector_sha256(value: list[float]) -> str:
-    return hashlib.sha256(
-        ",".join(f"{item:.8f}" for item in value).encode("ascii")
-    ).hexdigest()
+    return hashlib.sha256(",".join(f"{item:.8f}" for item in value).encode("ascii")).hexdigest()
 
 
 def _pooled_hidden(state: Any, *, width: int) -> list[float]:
@@ -61,11 +59,7 @@ class NeuralUncertaintyRuntime:
             raise ValueError("neural-uncertainty mode is invalid")
         if mode == UNAVAILABLE and (head is not None or head_sha256):
             raise ValueError("unavailable uncertainty cannot carry a head")
-        if mode == LEARNED and (
-            head is None
-            or not head.calibrated
-            or not _is_sha256(head_sha256)
-        ):
+        if mode == LEARNED and (head is None or not head.calibrated or not _is_sha256(head_sha256)):
             raise ValueError("learned uncertainty requires a calibrated pinned head")
         if head is not None:
             head.validate()
@@ -169,8 +163,7 @@ def _validate_observation(
         or row["schema"] != NEURAL_UNCERTAINTY_OBSERVATION_SCHEMA
         or row["branch_index"] != branch_index
         or row["branch_step"] != source_transition.get("branch_step")
-        or row["admitted_reasoning_sha256"]
-        != source_transition.get("admitted_reasoning_sha256")
+        or row["admitted_reasoning_sha256"] != source_transition.get("admitted_reasoning_sha256")
         or row["head_sha256"] != runtime.head_sha256
         or row["observation_sha256"] != canonical_sha256(payload)
         or not isinstance(row["pooled_hidden"], list)
@@ -211,23 +204,23 @@ def build_neural_uncertainty_receipt(
         type(selected_branch) is not int
         or not 0 <= selected_branch < len(branches)
         or selection_basis
-        not in {"convergence", "neural_uncertainty", "task_verifier"}
+        not in {
+            "convergence",
+            "neural_uncertainty",
+            "process_verifier",
+            "task_verifier",
+        }
     ):
         raise ValueError("neural-uncertainty selection identity is invalid")
     latest_scores = {
         str(row["branch_index"]): (
             row["observations"][-1]["estimate"]["correctness_probability"]
-            if (
-                row["observations"]
-                and row["observations"][-1]["estimate"]["supported"]
-            )
+            if (row["observations"] and row["observations"][-1]["estimate"]["supported"])
             else None
         )
         for row in rows
     }
-    selection_eligible = all(
-        score is not None for score in latest_scores.values()
-    )
+    selection_eligible = all(score is not None for score in latest_scores.values())
     payload = {
         "schema": NEURAL_UNCERTAINTY_RECEIPT_SCHEMA,
         "mode": runtime.mode,
@@ -293,8 +286,7 @@ def validate_neural_uncertainty_receipt(
         or receipt["mode"] != expected_runtime.mode
         or receipt["head_sha256"] != expected_runtime.head_sha256
         or receipt["head_manifest"] != expected_runtime.manifest
-        or receipt["update_acceptance_sha256"]
-        != update_acceptance["receipt_sha256"]
+        or receipt["update_acceptance_sha256"] != update_acceptance["receipt_sha256"]
         or receipt["receipt_sha256"] != canonical_sha256(payload)
         or type(expected_n_branches) is not int
         or expected_n_branches < 1
@@ -317,17 +309,13 @@ def validate_neural_uncertainty_receipt(
             raise ValueError("neural-uncertainty branch evidence is invalid")
         source_branch = update_rows[branch_index]
         transitions = (
-            source_branch.get("transitions")
-            if isinstance(source_branch, Mapping)
-            else None
+            source_branch.get("transitions") if isinstance(source_branch, Mapping) else None
         )
         if not isinstance(transitions, list):
             raise ValueError("neural-uncertainty transitions are unavailable")
         if expected_runtime.mode == UNAVAILABLE and branch["observations"]:
             raise ValueError("unavailable uncertainty emitted observations")
-        if expected_runtime.mode == LEARNED and len(branch["observations"]) != len(
-            transitions
-        ):
+        if expected_runtime.mode == LEARNED and len(branch["observations"]) != len(transitions):
             raise ValueError("neural-uncertainty observation coverage differs")
         for ordinal, observation in enumerate(branch["observations"]):
             validated = _validate_observation(
@@ -340,15 +328,10 @@ def validate_neural_uncertainty_receipt(
             supported_count += int(validated["estimate"]["supported"])
         latest_scores[str(branch_index)] = (
             branch["observations"][-1]["estimate"]["correctness_probability"]
-            if (
-                branch["observations"]
-                and branch["observations"][-1]["estimate"]["supported"]
-            )
+            if (branch["observations"] and branch["observations"][-1]["estimate"]["supported"])
             else None
         )
-    selection_eligible = all(
-        score is not None for score in latest_scores.values()
-    )
+    selection_eligible = all(score is not None for score in latest_scores.values())
     selected_branch = receipt["selected_branch"]
     selection_basis = receipt["selection_basis"]
     if (
@@ -359,9 +342,13 @@ def validate_neural_uncertainty_receipt(
         or type(selected_branch) is not int
         or not 0 <= selected_branch < expected_n_branches
         or selection_basis
-        not in {"convergence", "neural_uncertainty", "task_verifier"}
-        or receipt["selection_causal"]
-        is not (selection_basis == "neural_uncertainty")
+        not in {
+            "convergence",
+            "neural_uncertainty",
+            "process_verifier",
+            "task_verifier",
+        }
+        or receipt["selection_causal"] is not (selection_basis == "neural_uncertainty")
         or (
             selection_basis == "neural_uncertainty"
             and (
@@ -373,10 +360,7 @@ def validate_neural_uncertainty_receipt(
                 )
             )
         )
-        or (
-            selection_basis == "convergence"
-            and selection_eligible
-        )
+        or (selection_basis == "convergence" and selection_eligible)
     ):
         raise ValueError("neural-uncertainty aggregate evidence differs")
     return receipt

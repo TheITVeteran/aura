@@ -26743,3 +26743,59 @@ count completion is approximately 56.5%-88.8%, with a midpoint planning
 estimate of 69.1%. Next: publish CP353, then implement SPARK-040's deterministic
 verifier router. Final multi-hour soaks remain deferred until every shorter
 gate is green.
+
+## Checkpoint 2026-07-24-355: Calibrated Process Credit Cannot Outrun Its Evidence
+
+SPARK-041 upgrades the recurrent mistake locator from diagnostic localization
+to a bounded process verifier. New v2 head artifacts retain the task-disjoint
+in-domain and OOD trace admission from SPARK-029 and add held-out calibration
+cells for exact domain and normalized early/middle/late recurrence depth. Each
+cell commits class/sample support, threshold accuracy, Wilson lower accuracy,
+Wilson upper false-localization, AUC, Brier score, ECE, and a split-conformal
+maximum standardized feature-distance envelope with its finite-sample alpha.
+Legacy v1 heads remain loadable for diagnostics but cannot acquire process
+authority.
+
+Every live recurrent proposal receives its learned error probability. A local
+`1 - p(error)` process credit exists only when the applicable domain/depth cell
+is admitted and the transition remains inside the held-out latent-feature
+envelope. Sparse, class-degenerate, unreliable, unknown-domain, missing-depth,
+legacy, and feature-shift cases emit explicit abstentions and no score.
+Rejected proposals remain visible but do not penalize the accepted trajectory.
+A branch is scored by its weakest accepted transition, preventing one severe
+error from being diluted by many easy steps or by trace length.
+
+The process verifier becomes causal only when every candidate branch has a
+fully calibrated accepted path. In that case the engine selects the maximum
+weakest-step branch ahead of convergence and neural uncertainty; an admitted
+deterministic visible-answer verifier may still supersede it. The worker
+receipt binds domain, depth, feature distance, calibration evidence,
+abstentions, branch score, winner, and authority. The independent service
+reconstructs the pinned artifact, source transitions, requested domain,
+per-step credits, aggregate scores, winning branch, and causal basis. Rehashed
+score and domain substitutions fail.
+
+Focused artifact/runtime/uncertainty/service coverage passes 22/22. A real
+initialized tiny-Qwen episode loads a v2 learned head, executes recurrent
+transformer transitions, selects by calibrated weakest-step score, and reports
+`process_verifier` through the independent selection-basis receipt. The full
+latent-cortex suite passes 827/827 in 44.14 seconds. Strict Ruff, bytecode
+compilation, diff hygiene, and the enterprise ratchet pass. Exact parent/current
+enterprise scans both report 168 findings and 38 high/critical findings with
+identical category counts, so this checkpoint adds no scanner debt. The clean
+closeout audit enumerates 7,901 tracked files, 4,878 code files, and 1,542,768
+code lines and passes every configured gate. The semantic ledger contains more
+than 1,550 current entries, records all touched files, and remains open at 436
+fully reviewed code files.
+
+This proves calibrated local process-verification mechanics and causal branch
+arbitration. It does not prove resident-32B utility, durable learning,
+adapter/RLC positive interaction, reasoning gain, or frontier capability;
+those remain fresh powered campaign claims.
+
+This is total checkpoint record 416. The revised forecast remains 466-733 total
+records, now approximately 50-317 records after this checkpoint. Checkpoint-
+count completion is approximately 56.8%-89.3%, with a midpoint planning
+estimate of 69.4%. Next: publish CP355, then implement SPARK-042's independently
+derived generative verifier. Final multi-hour soaks remain deferred until every
+shorter gate is green.

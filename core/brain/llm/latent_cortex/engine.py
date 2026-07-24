@@ -3400,14 +3400,40 @@ class LatentCortexEngine:
             if (branch.uncertainty_trace and branch.uncertainty_trace[-1]["estimate"]["supported"])
         }
         uncertainty_selection_eligible = len(uncertainty_scores) == len(ensemble.branches)
+        from core.brain.llm.latent_cortex.mistake_locator import (
+            process_branch_assessment,
+        )
+
+        process_assessments = {
+            branch.index: process_branch_assessment(
+                [dict(row) for row in branch.mistake_locator_trace],
+                runtime=mistake_locator_runtime,
+                domain=domain,
+            )
+            for branch in ensemble.branches
+        }
+        process_scores = {
+            index: float(assessment["process_score"])
+            for index, assessment in process_assessments.items()
+            if assessment["selection_authority_admitted"] is True
+        }
+        process_selection_eligible = len(process_scores) == len(ensemble.branches)
 
         def select_without_task_verifier():
+            if process_selection_eligible:
+                return ensemble.select(score_fn=lambda branch: process_scores[branch.index])
             if uncertainty_selection_eligible:
                 return ensemble.select(score_fn=lambda branch: uncertainty_scores[branch.index])
             return ensemble.select()
 
         winner = select_without_task_verifier()
-        selection_basis = "neural_uncertainty" if uncertainty_selection_eligible else "convergence"
+        selection_basis = (
+            "process_verifier"
+            if process_selection_eligible
+            else "neural_uncertainty"
+            if uncertainty_selection_eligible
+            else "convergence"
+        )
         branch_probe_cost = self._verifier_probe_layer_apps(
             bridge_tokens,
             count=len(ensemble.branches),
@@ -3787,6 +3813,8 @@ class LatentCortexEngine:
             runtime=mistake_locator_runtime,
             update_acceptance=receipt.update_acceptance,
             selected_branch=winner.index,
+            domain=domain,
+            process_selection_used=selection_basis == "process_verifier",
         )
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:

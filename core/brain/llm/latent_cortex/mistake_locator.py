@@ -9,9 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from core.brain.llm.latent_cortex.loop_core import canonical_sha256
-from core.learning.mistake_locator import MistakeLocatorHead
+from core.learning.mistake_locator import (
+    PROCESS_CALIBRATION_SCHEMA,
+    MistakeLocatorHead,
+    process_depth_band,
+    transition_features,
+)
 
-MISTAKE_LOCATOR_RECEIPT_SCHEMA = "aura.rlc.mistake_locator_receipt.v1"
+MISTAKE_LOCATOR_RECEIPT_SCHEMA = "aura.rlc.mistake_locator_receipt.v2"
 MISTAKE_OBSERVATION_SCHEMA = "aura.rlc.mistake_transition_observation.v1"
 UNAVAILABLE = "unavailable"
 LEARNED = "learned"
@@ -26,9 +31,7 @@ def _is_sha256(value: Any) -> bool:
 
 
 def _vector_sha256(value: list[float]) -> str:
-    return hashlib.sha256(
-        ",".join(f"{item:.8f}" for item in value).encode("ascii")
-    ).hexdigest()
+    return hashlib.sha256(",".join(f"{item:.8f}" for item in value).encode("ascii")).hexdigest()
 
 
 def _pooled_hidden(state: Any, *, width: int) -> list[float]:
@@ -61,9 +64,7 @@ class MistakeLocatorRuntime:
             raise ValueError("mistake-locator mode is invalid")
         if mode == UNAVAILABLE and (head is not None or head_sha256):
             raise ValueError("unavailable mistake locator cannot carry a head")
-        if mode == LEARNED and (
-            head is None or not head.admitted or not _is_sha256(head_sha256)
-        ):
+        if mode == LEARNED and (head is None or not head.admitted or not _is_sha256(head_sha256)):
             raise ValueError("learned mistake locator requires an admitted pinned head")
         if head is not None:
             head.validate()
@@ -187,12 +188,9 @@ def _validate_observation(
         or row["schema"] != MISTAKE_OBSERVATION_SCHEMA
         or row["branch_index"] != branch_index
         or row["branch_step"] != source_transition.get("branch_step")
-        or row["prior_reasoning_sha256"]
-        != source_transition.get("prior_reasoning_sha256")
-        or row["proposal_reasoning_sha256"]
-        != source_transition.get("proposal_reasoning_sha256")
-        or row["admitted_reasoning_sha256"]
-        != source_transition.get("admitted_reasoning_sha256")
+        or row["prior_reasoning_sha256"] != source_transition.get("prior_reasoning_sha256")
+        or row["proposal_reasoning_sha256"] != source_transition.get("proposal_reasoning_sha256")
+        or row["admitted_reasoning_sha256"] != source_transition.get("admitted_reasoning_sha256")
         or row["accepted"] is not source_transition.get("accepted")
         or row["head_sha256"] != runtime.head_sha256
         or row["observation_sha256"] != canonical_sha256(payload)
@@ -214,15 +212,11 @@ def _validate_observation(
         10,
     )
     if (
-        any(
-            not math.isfinite(item)
-            for item in prior_values + proposal_values
-        )
+        any(not math.isfinite(item) for item in prior_values + proposal_values)
         or prior_values != prior
         or proposal_values != proposal
         or row["prior_pooled_hidden_sha256"] != _vector_sha256(prior_values)
-        or row["proposal_pooled_hidden_sha256"]
-        != _vector_sha256(proposal_values)
+        or row["proposal_pooled_hidden_sha256"] != _vector_sha256(proposal_values)
         or row["error_probability"] != expected_probability
     ):
         raise ValueError("mistake observation reconstruction failed")
@@ -236,9 +230,7 @@ def _prediction(
 ) -> tuple[int | None, float | None]:
     if not observations or runtime.head is None:
         return None, None
-    probabilities = [
-        float(observation["error_probability"]) for observation in observations
-    ]
+    probabilities = [float(observation["error_probability"]) for observation in observations]
     index = max(range(len(probabilities)), key=probabilities.__getitem__)
     probability = probabilities[index]
     return (
@@ -247,30 +239,161 @@ def _prediction(
     )
 
 
+def process_branch_assessment(
+    observations: list[Mapping[str, Any]],
+    *,
+    runtime: MistakeLocatorRuntime,
+    domain: str,
+) -> dict[str, Any]:
+    """Return calibrated local process credit, or a receipt-bearing abstention."""
+
+    normalized_domain = str(domain or "general")[:128]
+    manifest = runtime.manifest
+    calibration = manifest.get("process_calibration")
+    if runtime.head is None:
+        reason = "process_model_unavailable"
+        relation = None
+        domain_cells = None
+    elif manifest.get("process_calibration_schema") != PROCESS_CALIBRATION_SCHEMA or not isinstance(
+        calibration, Mapping
+    ):
+        reason = "legacy_artifact_lacks_process_calibration"
+        relation = None
+        domain_cells = None
+    else:
+        relation = next(
+            (
+                name
+                for name in ("in_domain", "out_of_domain")
+                if isinstance(calibration.get(name), Mapping)
+                and normalized_domain in calibration[name]
+            ),
+            None,
+        )
+        domain_cells = calibration[relation][normalized_domain] if relation is not None else None
+        reason = "domain_not_calibrated" if relation is None else ""
+    transitions: list[dict[str, Any]] = []
+    transition_count = len(observations)
+    for ordinal, observation in enumerate(observations):
+        depth = process_depth_band(ordinal, max(1, transition_count))
+        cell = domain_cells.get(depth) if isinstance(domain_cells, Mapping) else None
+        feature_distance = None
+        if runtime.head is not None:
+            features = transition_features(
+                observation["prior_pooled_hidden"],
+                observation["proposal_pooled_hidden"],
+            )
+            feature_distance = round(
+                math.sqrt(
+                    sum(
+                        ((value - mean) / scale) ** 2
+                        for value, mean, scale in zip(
+                            features,
+                            runtime.head.means.tolist(),
+                            runtime.head.scales.tolist(),
+                            strict=True,
+                        )
+                    )
+                    / len(features)
+                ),
+                10,
+            )
+        cell_admitted = (
+            isinstance(cell, Mapping)
+            and cell.get("admitted") is True
+            and feature_distance is not None
+            and feature_distance <= float(cell.get("feature_distance_max", -1.0))
+        )
+        credit = round(1.0 - float(observation["error_probability"]), 10) if cell_admitted else None
+        transitions.append(
+            {
+                "ordinal": ordinal,
+                "branch_step": observation.get("branch_step"),
+                "accepted": observation.get("accepted"),
+                "depth_band": depth,
+                "relation": relation,
+                "error_probability": observation.get("error_probability"),
+                "feature_distance": feature_distance,
+                "process_credit": credit,
+                "calibration": dict(cell) if isinstance(cell, Mapping) else None,
+                "credit_admitted": cell_admitted,
+                "abstention_reason": (
+                    ""
+                    if cell_admitted
+                    else reason
+                    or (
+                        "feature_distribution_shift"
+                        if isinstance(cell, Mapping) and cell.get("admitted") is True
+                        else "depth_cell_not_calibrated"
+                    )
+                ),
+                "observation_sha256": observation.get("observation_sha256"),
+            }
+        )
+    accepted = [row for row in transitions if row["accepted"] is True]
+    authority = bool(accepted) and all(row["credit_admitted"] is True for row in accepted)
+    accepted_abstentions = sorted(
+        {
+            str(row["abstention_reason"])
+            for row in accepted
+            if row["credit_admitted"] is not True and row["abstention_reason"]
+        }
+    )
+    score = round(min(float(row["process_credit"]) for row in accepted), 10) if authority else None
+    if authority:
+        aggregate_abstention = ""
+    elif reason:
+        aggregate_abstention = reason
+    elif len(accepted_abstentions) == 1:
+        aggregate_abstention = accepted_abstentions[0]
+    else:
+        aggregate_abstention = "accepted_path_has_mixed_uncalibrated_cells"
+    return {
+        "domain": normalized_domain,
+        "relation": relation,
+        "transitions": transitions,
+        "accepted_transition_count": len(accepted),
+        "credited_transition_count": sum(row["process_credit"] is not None for row in transitions),
+        "aggregation": "weakest_accepted_transition",
+        "process_score": score,
+        "selection_authority_admitted": authority,
+        "abstention_reason": aggregate_abstention,
+    }
+
+
 def build_mistake_locator_receipt(
     *,
     branches: list[Any],
     runtime: MistakeLocatorRuntime,
     update_acceptance: Mapping[str, Any],
     selected_branch: int,
+    domain: str = "general",
+    process_selection_used: bool = False,
 ) -> dict[str, Any]:
     if (
         not isinstance(update_acceptance, Mapping)
         or not _is_sha256(update_acceptance.get("receipt_sha256"))
         or type(selected_branch) is not int
         or not 0 <= selected_branch < len(branches)
+        or type(process_selection_used) is not bool
     ):
         raise ValueError("mistake-locator receipt source is invalid")
     rows = []
     for branch in branches:
         observations = [dict(row) for row in branch.mistake_locator_trace]
         predicted, probability = _prediction(observations, runtime=runtime)
+        process = process_branch_assessment(
+            observations,
+            runtime=runtime,
+            domain=domain,
+        )
         rows.append(
             {
                 "branch_index": int(branch.index),
                 "observations": observations,
                 "predicted_error_transition": predicted,
                 "predicted_error_probability": probability,
+                "process": process,
             }
         )
     payload = {
@@ -281,14 +404,16 @@ def build_mistake_locator_receipt(
         "update_acceptance_sha256": update_acceptance["receipt_sha256"],
         "branches": rows,
         "observation_count": sum(len(row["observations"]) for row in rows),
-        "candidate_count": sum(
-            row["predicted_error_transition"] is not None for row in rows
-        ),
+        "candidate_count": sum(row["predicted_error_transition"] is not None for row in rows),
         "selected_branch": selected_branch,
-        "selected_branch_candidate": rows[selected_branch][
-            "predicted_error_transition"
-        ],
+        "selected_branch_candidate": rows[selected_branch]["predicted_error_transition"],
         "localization_admitted": runtime.mode == LEARNED,
+        "domain": str(domain or "general")[:128],
+        "process_selection_used": process_selection_used,
+        "process_selection_authorized": (
+            process_selection_used
+            and all(row["process"]["selection_authority_admitted"] is True for row in rows)
+        ),
         # SPARK-029 measures. A later independently gated repair mechanism
         # must opt in; this artifact can never authorize mutation by itself.
         "repair_steering_authorized": False,
@@ -299,6 +424,7 @@ def build_mistake_locator_receipt(
         expected_runtime=runtime,
         update_acceptance=update_acceptance,
         expected_n_branches=len(branches),
+        expected_domain=domain,
     )
 
 
@@ -308,6 +434,7 @@ def validate_mistake_locator_receipt(
     expected_runtime: MistakeLocatorRuntime,
     update_acceptance: Mapping[str, Any],
     expected_n_branches: int,
+    expected_domain: str = "general",
 ) -> dict[str, Any]:
     fields = {
         "schema",
@@ -321,6 +448,9 @@ def validate_mistake_locator_receipt(
         "selected_branch",
         "selected_branch_candidate",
         "localization_admitted",
+        "domain",
+        "process_selection_used",
+        "process_selection_authorized",
         "repair_steering_authorized",
         "receipt_sha256",
     }
@@ -340,8 +470,8 @@ def validate_mistake_locator_receipt(
         or receipt["mode"] != expected_runtime.mode
         or receipt["head_sha256"] != expected_runtime.head_sha256
         or receipt["head_manifest"] != expected_runtime.manifest
-        or receipt["update_acceptance_sha256"]
-        != update_acceptance["receipt_sha256"]
+        or receipt["domain"] != str(expected_domain or "general")[:128]
+        or receipt["update_acceptance_sha256"] != update_acceptance["receipt_sha256"]
         or receipt["receipt_sha256"] != canonical_sha256(payload)
         or type(expected_n_branches) is not int
         or expected_n_branches < 1
@@ -353,6 +483,7 @@ def validate_mistake_locator_receipt(
         raise ValueError("mistake-locator receipt identity is invalid")
     observation_count = candidate_count = 0
     predictions: list[int | None] = []
+    process_assessments: list[dict[str, Any]] = []
     for branch_index, branch in enumerate(branches):
         if (
             not isinstance(branch, Mapping)
@@ -362,23 +493,20 @@ def validate_mistake_locator_receipt(
                 "observations",
                 "predicted_error_transition",
                 "predicted_error_probability",
+                "process",
             }
             or branch["branch_index"] != branch_index
             or not isinstance(branch["observations"], list)
         ):
             raise ValueError("mistake-locator branch evidence is invalid")
         source = source_branches[branch_index]
-        transitions = (
-            source.get("transitions") if isinstance(source, Mapping) else None
-        )
+        transitions = source.get("transitions") if isinstance(source, Mapping) else None
         if not isinstance(transitions, list):
             raise ValueError("mistake-locator transitions are unavailable")
         observations = branch["observations"]
         if expected_runtime.mode == UNAVAILABLE and observations:
             raise ValueError("unavailable mistake locator emitted observations")
-        if expected_runtime.mode == LEARNED and len(observations) != len(
-            transitions
-        ):
+        if expected_runtime.mode == LEARNED and len(observations) != len(transitions):
             raise ValueError("mistake-locator observation coverage differs")
         for ordinal, observation in enumerate(observations):
             _validate_observation(
@@ -397,8 +525,16 @@ def validate_mistake_locator_receipt(
             or branch["predicted_error_probability"] != probability
         ):
             raise ValueError("mistake-locator branch prediction differs")
+        process = process_branch_assessment(
+            observations,
+            runtime=expected_runtime,
+            domain=expected_domain,
+        )
+        if branch["process"] != process:
+            raise ValueError("mistake-locator process assessment differs")
         candidate_count += int(prediction is not None)
         predictions.append(prediction)
+        process_assessments.append(process)
     selected = receipt["selected_branch"]
     if (
         receipt["observation_count"] != observation_count
@@ -406,8 +542,24 @@ def validate_mistake_locator_receipt(
         or type(selected) is not int
         or not 0 <= selected < expected_n_branches
         or receipt["selected_branch_candidate"] != predictions[selected]
-        or receipt["localization_admitted"]
-        is not (expected_runtime.mode == LEARNED)
+        or receipt["localization_admitted"] is not (expected_runtime.mode == LEARNED)
+        or type(receipt["process_selection_used"]) is not bool
+        or receipt["process_selection_authorized"]
+        is not (
+            receipt["process_selection_used"]
+            and all(row["selection_authority_admitted"] is True for row in process_assessments)
+        )
+        or (
+            receipt["process_selection_used"]
+            and (
+                not all(row["selection_authority_admitted"] is True for row in process_assessments)
+                or selected
+                != max(
+                    range(expected_n_branches),
+                    key=lambda index: float(process_assessments[index]["process_score"]),
+                )
+            )
+        )
         or receipt["repair_steering_authorized"] is not False
     ):
         raise ValueError("mistake-locator aggregate evidence differs")
@@ -421,5 +573,6 @@ __all__ = [
     "UNAVAILABLE",
     "MistakeLocatorRuntime",
     "build_mistake_locator_receipt",
+    "process_branch_assessment",
     "validate_mistake_locator_receipt",
 ]
