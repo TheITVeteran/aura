@@ -501,6 +501,10 @@ class CortexConfig:
     # comes only from conservative verifier bounds, and every policy executes
     # both lanes under equal measured compute before it can affect decode.
     heterogeneous_integration: dict[str, Any] | None = None
+    # SPARK-036 verified failure avoidance. None enables conservative live
+    # defaults; callers may tighten bounded efficacy/lifetime settings but
+    # cannot exceed the hard safety ceilings in TransientConstraintConfig.
+    transient_negative_constraints: dict[str, Any] | None = None
     # Checked historical branch-error correlations. None is an explicit
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
@@ -892,6 +896,18 @@ class CortexConfig:
                     HeterogeneousIntegrationConfig.from_value(self.heterogeneous_integration)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if self.transient_negative_constraints is not None:
+            if not isinstance(self.transient_negative_constraints, dict):
+                problems.append("transient_negative_constraints must be a mapping or null")
+            else:
+                try:
+                    from core.brain.llm.latent_cortex.transient_constraints import (
+                        TransientConstraintConfig,
+                    )
+
+                    TransientConstraintConfig.from_value(self.transient_negative_constraints)
+                except (TypeError, ValueError) as exc:
+                    problems.append(str(exc))
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1211,6 +1227,12 @@ class EpisodeReceipt:
     # Confidence-bound, branch-local best-state promotions and preservations.
     # Empty/default traces mean no verifier earned state-selection authority.
     verified_best_state: dict[str, Any] = field(default_factory=dict)
+    # Verified failed transitions may create one branch/action-scoped,
+    # episode-local negative latent direction. Critic prose has no authority;
+    # admission requires repeated equal-compute verifier wins over no-op and
+    # orthogonal-sham controls, and every admitted constraint expires or is
+    # consumed exactly once.
+    transient_negative_constraints: dict[str, Any] = field(default_factory=dict)
     # Objective hidden-state correctness probability and predictive entropy.
     # Unavailable mode is explicit and emits no observations.
     neural_uncertainty: dict[str, Any] = field(default_factory=dict)
@@ -1439,6 +1461,7 @@ class EpisodeReceipt:
             "escape": dict(self.escape),
             "halting": dict(self.halting),
             "verified_best_state": dict(self.verified_best_state),
+            "transient_negative_constraints": dict(self.transient_negative_constraints),
             "neural_uncertainty": dict(self.neural_uncertainty),
             "mistake_locator": dict(self.mistake_locator),
             "bidirectional_reflector": dict(self.bidirectional_reflector),

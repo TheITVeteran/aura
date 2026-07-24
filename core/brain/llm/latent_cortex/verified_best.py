@@ -87,10 +87,7 @@ class VerifierObservation:
                 self.sample_count < 1 or lower != score or upper != score
             ):
                 raise ValueError("deterministic verifier evidence is not exact")
-            if (
-                self.basis == "calibrated_interval"
-                and self.sample_count < MIN_CALIBRATED_SAMPLES
-            ):
+            if self.basis == "calibrated_interval" and self.sample_count < MIN_CALIBRATED_SAMPLES:
                 raise ValueError("calibrated verifier evidence is underpowered")
         object.__setattr__(self, "score", score)
         object.__setattr__(self, "lower_bound", lower)
@@ -174,9 +171,8 @@ def build_verified_best_receipt(
     cognitive_action_trace: list[dict[str, Any]],
     loop_stability: dict[str, Any],
 ) -> dict[str, Any]:
-    if (
-        not isinstance(loop_stability, Mapping)
-        or not _is_sha256(loop_stability.get("receipt_sha256"))
+    if not isinstance(loop_stability, Mapping) or not _is_sha256(
+        loop_stability.get("receipt_sha256")
     ):
         raise ValueError("verified-best loop-stability source is invalid")
     rows = []
@@ -188,9 +184,7 @@ def build_verified_best_receipt(
                 "decisions": trace,
                 "decision_count": len(trace),
                 "promotion_count": sum(row["decision"] == "promote" for row in trace),
-                "preservation_count": sum(
-                    row["decision"] == "preserve_verified" for row in trace
-                ),
+                "preservation_count": sum(row["decision"] == "preserve_verified" for row in trace),
                 "final_best_step": int(branch.verified_best_step),
                 "final_best_state_sha256": str(branch.verified_best_state_sha256),
                 "final_best_observation": dict(branch.verified_best_observation),
@@ -223,9 +217,8 @@ def validate_verified_best_receipt(
 ) -> dict[str, Any]:
     if not isinstance(cognitive_action_trace, list):
         raise ValueError("verified-best action source must be a list")
-    if (
-        not isinstance(loop_stability, Mapping)
-        or not _is_sha256(loop_stability.get("receipt_sha256"))
+    if not isinstance(loop_stability, Mapping) or not _is_sha256(
+        loop_stability.get("receipt_sha256")
     ):
         raise ValueError("verified-best loop-stability source is invalid")
     fields = {
@@ -244,10 +237,8 @@ def validate_verified_best_receipt(
     if (
         receipt["schema"] != VERIFIED_BEST_SCHEMA
         or receipt["receipt_sha256"] != canonical_sha256(payload)
-        or receipt["cognitive_action_trace_sha256"]
-        != canonical_sha256(cognitive_action_trace)
-        or receipt["loop_stability_sha256"]
-        != loop_stability.get("receipt_sha256")
+        or receipt["cognitive_action_trace_sha256"] != canonical_sha256(cognitive_action_trace)
+        or receipt["loop_stability_sha256"] != loop_stability.get("receipt_sha256")
         or type(expected_n_branches) is not int
         or expected_n_branches < 1
         or not isinstance(receipt["branches"], list)
@@ -283,6 +274,7 @@ def validate_verified_best_receipt(
         "branch_step",
         "candidate_state_sha256",
         "prior_best_state_sha256",
+        "restore_target_state_sha256",
         "observation",
         "decision",
         "restored",
@@ -311,9 +303,14 @@ def validate_verified_best_receipt(
                 or type(row["branch_step"]) is not int
                 or row["branch_step"] < 0
                 or not _is_sha256(row["candidate_state_sha256"])
+                or not _is_sha256(row["resulting_state_sha256"])
                 or (
                     row["prior_best_state_sha256"]
                     and not _is_sha256(row["prior_best_state_sha256"])
+                )
+                or (
+                    row["restore_target_state_sha256"]
+                    and not _is_sha256(row["restore_target_state_sha256"])
                 )
                 or row["prior_best_state_sha256"] != best_sha256
                 or type(row["restored"]) is not bool
@@ -327,16 +324,24 @@ def validate_verified_best_receipt(
                 or source.get("observation") != observation
                 or source.get("decision") != row["decision"]
                 or source.get("restored") is not row["restored"]
+                or (
+                    source.get("candidate_state_sha256") is not None
+                    and source.get("candidate_state_sha256") != row["candidate_state_sha256"]
+                )
+                or (
+                    source.get("restore_target_state_sha256") is not None
+                    and source.get("restore_target_state_sha256")
+                    != row["restore_target_state_sha256"]
+                )
             ):
                 raise ValueError("verified-best decision source differs")
-            if not observation["authoritative"]:
+            if observation["authoritative"] and float(observation["upper_bound"]) <= 1e-9:
+                expected_decision = "reject_verified_failure"
+            elif not observation["authoritative"]:
                 expected_decision = "ranking_only"
             elif not best_sha256:
                 expected_decision = "promote"
-            elif (
-                float(observation["lower_bound"])
-                > float(best_observation["upper_bound"]) + 1e-9
-            ):
+            elif float(observation["lower_bound"]) > float(best_observation["upper_bound"]) + 1e-9:
                 expected_decision = "promote"
             else:
                 expected_decision = "preserve_verified"
@@ -353,12 +358,23 @@ def validate_verified_best_receipt(
                 branch_preservations += 1
                 expected_result = best_sha256
                 expected_restored = row["candidate_state_sha256"] != best_sha256
+            elif expected_decision == "reject_verified_failure":
+                expected_result = row["restore_target_state_sha256"]
+                expected_restored = True
             else:
                 expected_result = row["candidate_state_sha256"]
                 expected_restored = False
             if (
                 row["resulting_state_sha256"] != expected_result
                 or row["restored"] is not expected_restored
+                or (
+                    expected_decision == "reject_verified_failure"
+                    and not _is_sha256(row["restore_target_state_sha256"])
+                )
+                or (
+                    expected_decision != "reject_verified_failure"
+                    and row["restore_target_state_sha256"]
+                )
             ):
                 raise ValueError("verified-best state disposition is invalid")
         finalization = branch["finalization"]
@@ -381,14 +397,10 @@ def validate_verified_best_receipt(
                 finalization["source"] == "current"
                 and (
                     finalization["reverted"]
-                    or finalization["pre_state_sha256"]
-                    != finalization["post_state_sha256"]
+                    or finalization["pre_state_sha256"] != finalization["post_state_sha256"]
                 )
             )
-            or (
-                finalization["source"] == "proxy"
-                and not finalization["reverted"]
-            )
+            or (finalization["source"] == "proxy" and not finalization["reverted"])
             or (
                 finalization["source"] == "verified"
                 and (
@@ -396,15 +408,10 @@ def validate_verified_best_receipt(
                     or not best_sha256
                     or finalization["post_state_sha256"] != best_sha256
                     or finalization["reverted"]
-                    is not (
-                        finalization["pre_state_sha256"] != best_sha256
-                    )
+                    is not (finalization["pre_state_sha256"] != best_sha256)
                 )
             )
-            or (
-                finalization["fixed_depth"]
-                and finalization["source"] == "verified"
-            )
+            or (finalization["fixed_depth"] and finalization["source"] == "verified")
         ):
             raise ValueError("verified-best finalization evidence is invalid")
         if (

@@ -1242,9 +1242,84 @@ before those dependencies close is not admissible.
   unreachability, and clean regeneration mechanics. It does not prove
   resident-32B utility, adapter/RLC positive interaction, reasoning gain, or
   frontier capability; those remain fresh powered campaign claims.
-- [ ] **SPARK-036 - Transient negative constraints.** Distill verified failures
+- [x] **SPARK-036 - Transient negative constraints.** Distill verified failures
   into scoped, expiring constraints, prevent unsupported critic prose from
   becoming a constraint, and prove repeated-error reduction.
+
+  Accepted at CP350 at the live recurrent-action, worker receipt, and
+  independent service-reconstruction boundary. A constraint is not text,
+  critic advice, a caller-provided vector, or a durable weight change. It is
+  the worker-private negative of one exact failed latent transition. Protected
+  cognitive-context positions are zeroed, its RMS is capped against the
+  current mutable state, and its public identity is a tensor commitment rather
+  than hidden-state content.
+
+  Authority starts only from a deterministic exact rejection or a calibrated
+  confidence-interval regression produced by the independently admitted task
+  verifier. The candidate must then beat repeated failed no-op and
+  magnitude-matched orthogonal-sham controls under counterbalanced order,
+  fixed token and transformer work, and equality across every measured
+  resource counter, including verifier input and output bytes. Zero or
+  incomplete metering cannot mint authority even when all arms report the same
+  unsupported claim. Scalar, unsupported, unstable, unequal-work,
+  non-repeating, non-winning, failed-evaluator, stale-KV, or under-budget paths
+  cannot mint authority.
+
+  Every admitted direction is bound to the exact episode objective, branch,
+  source action, source KV boundary, and a short action-step TTL. Application
+  is a reservation, not consumption: the runtime commits the one allowed use
+  only after the recurrent transition succeeds. Budget refusal, cancellation,
+  or a later-branch failure restores every branch, workspace, halting state,
+  exchange/isolation state, telemetry object, trace append point, and KV
+  boundary before authority becomes reusable.
+  Success zeroizes the private direction before releasing its reference;
+  expiry, stale lineage, and episode abort do the same and publish
+  machine-checkable erasure evidence. The public engine boundary keeps an
+  episode-local ledger registry and runs idempotent cleanup on successful,
+  handled-failure, cancellation, and unexpected-exception exits.
+
+  Deterministic and calibrated authoritative zero can no longer become a
+  verified-best state. The engine binds the constraint to the state actually
+  restored by verified-best arbitration, including prior-best restoration
+  after confidence-bound regression, while retaining metered execution
+  evidence. The action, verified-best, constraint, resource, information,
+  preflight, and KV-tree receipts cross-bind the same step, branch, policy,
+  observation, application, and lineage. The service reconstructs these
+  relationships and rejects fully rehashed source, action, verifier, resource,
+  scope, one-use, or KV substitutions.
+
+  The direct contracts prove prose rejection, scalar refusal, exact and
+  calibrated failure authority, repeated controls, allocated-resource parity,
+  one-use scope, TTL, reservation rollback, abort/stale erasure, and
+  cross-receipt tamper resistance. A real tiny-Qwen episode executes recurrent
+  failure, exact parent restoration, a constrained retry, committed one-use
+  recurrence, protected-slot invariance, and a verifier-confirmed reduction.
+  A separate tiny-Qwen contract executes the actual MLX counterfactual
+  evaluator over perturbed states and proves fixed decode work, fixed padded
+  verifier input, nonzero complete metering, and exact branch/KV restoration.
+  The synthetic label-aware reduction evaluator proves mechanism wiring, not
+  broad reasoning utility.
+
+  CP350 validation passes the focused constraint, verified-best, branch,
+  value-of-computation, and service boundary 180/180 in 101.18 seconds and the
+  affected engine, recurrence, resource, update, contradiction, exploration,
+  heterogeneous-integration, telemetry, cache, output-quality, and
+  proof-integrity boundary 229/229 in 128.31 seconds. The fixed 99-file RLC,
+  recurrence/training, resident-campaign, global-workspace, GWT, and
+  execution-controller ownership snapshot passes 1471/1471 in 823.69 seconds.
+  After rebasing onto the concurrently published frozen-baseline, threat-model,
+  typed-state, and literature checkpoints, their four new proof suites pass
+  53/53 in 32.78 seconds on the integrated tree.
+  Strict Ruff, formatting, bytecode compilation, and diff hygiene pass.
+  Repository-wide governance reproduces the inherited 49 unrelated/concurrent
+  regressions and 13 stale buckets; SPARK-036 adds no effect-ownership entry
+  and does not absorb that debt.
+
+  SPARK-036 proves bounded failure-avoidance mechanics and causal
+  repeated-error reduction under controlled verification. It does not prove
+  resident-32B utility, durable learning, broad error-rate reduction,
+  adapter/RLC positive interaction, reasoning gain, or frontier capability;
+  those remain fresh powered campaign claims.
 - [ ] **SPARK-037 - Causal virtual compute quanta.** Wire the existing bounded
   quanta contract into slot seeds, retrieval directions, verifier probes, or
   fast-weight subspaces; require measured contribution, TTL, budget charge,

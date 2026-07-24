@@ -26450,3 +26450,68 @@ count completion is approximately 55.9%-88.0%, with a midpoint planning
 estimate of 68.4%. Next: publish CP349, then implement SPARK-036's governed
 transient negative constraints. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+CP350 closes SPARK-036's governed transient negative constraints. The runtime
+can now convert a verifier-proven failed latent transition into one bounded,
+worker-private negative direction without injecting generated critic prose,
+accepting caller vectors, or changing durable weights. Protected cognitive
+evidence slots are immutable; the mutable-only intervention RMS is capped; and
+authority is episode-, objective-, branch-, action-, KV-, TTL-, and one-use
+scoped.
+
+Admission requires deterministic-exact or calibrated-interval failure
+authority plus repeated, counterbalanced negative-direction, failed no-op, and
+norm-matched orthogonal-sham probes. Every arm must prove the same fixed token
+and transformer work and equality across every resource counter, including
+verifier input/output bytes. Zero or incomplete metering, scalar judgments,
+unstable bounds, non-repeating controls, tied or losing interventions,
+evaluator failure, stale KV lineage, and insufficient budget cannot create
+authority.
+
+Application is transactional. The runtime reserves a direction, executes the
+recurrent transition, and consumes it only after success. Refusal or failure
+restores every branch, workspace, halting controller, exchange/isolation
+surface, telemetry object, append boundary, and KV state. Success, TTL expiry,
+stale lineage, and episode failure zeroize the private direction before
+releasing it. An episode-local registry runs idempotent cleanup for normal,
+handled-failure, cancellation, and unexpected-exception exits; cleanup failure
+marks the episode critical.
+
+Verified-best arbitration now rejects deterministic and calibrated
+authoritative zero. Constraint lineage is anchored to the state actually
+restored by arbitration, including a prior verified-best state after a
+confidence-bound regression, rather than assuming the immediate pre-action
+state. The action, verified-best, constraint, preflight, information, resource,
+and KV-tree receipts cross-bind the same state transition. The service
+independently reconstructs those links and rejects rehashed scope, source,
+state, one-use, resource, or lineage substitutions.
+
+CP350 validation passes the focused constraint, verified-best, branch,
+value-of-computation, and service boundary 180/180 in 101.18 seconds and the
+affected engine, recurrence, resource, update, contradiction, exploration,
+heterogeneous-integration, telemetry, cache, output-quality, and
+proof-integrity boundary 229/229 in 128.31 seconds. The fixed 99-file RLC,
+recurrence/training, resident-campaign, global-workspace, GWT, and
+execution-controller ownership snapshot passes 1471/1471 in 823.69 seconds.
+The fixed CP349 ownership manifest is unchanged; this record reports the test
+count collected by the CP350 patch base instead of carrying forward CP349's
+stale count. Strict Ruff, formatting, bytecode compilation, and `git diff
+--check` pass. After CP350 rebased onto the concurrently published
+frozen-baseline, threat-model, typed-state, and literature checkpoints, their
+four new proof suites pass 53/53 in 32.78 seconds on the integrated tree.
+Repository-wide governance reproduces the inherited 49
+unrelated/concurrent regressions and 13 stale buckets; CP350 adds no
+effect-ownership entry and does not absorb that debt.
+
+SPARK-036 proves bounded failure-avoidance mechanics, exact lifecycle cleanup,
+and causal repeated-error reduction under controlled verification. It does not
+prove resident-32B utility, durable learning, broad error-rate reduction,
+adapter/RLC positive interaction, reasoning gain, or frontier capability.
+Those remain fresh powered broad-task campaign claims.
+
+This is total checkpoint record 411. The revised forecast remains 466-733 total
+records, now approximately 55-322 records after this checkpoint. Checkpoint-
+count completion is approximately 56.1%-88.2%, with a midpoint planning
+estimate of 68.6%. Next: publish CP350, then implement SPARK-037's causal
+virtual compute quanta. Final multi-hour soaks remain deferred until every
+shorter gate is green.

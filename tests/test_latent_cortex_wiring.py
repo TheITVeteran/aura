@@ -272,7 +272,7 @@ def _kv_state_tree_fields(config, *, episode_id, n_layers=2):
     }
 
 
-def _recurrent_grounding_fields(config, *, steps=1):
+def _recurrent_grounding_fields(config, *, steps=1, episode_id=""):
     from core.brain.llm.latent_cortex.bidirectional_reflector import (
         build_bidirectional_reflector_receipt,
         observe_reflector_vectors,
@@ -317,6 +317,9 @@ def _recurrent_grounding_fields(config, *, steps=1):
         RESIDUAL,
         StopGateRuntime,
         build_stop_gate_receipt,
+    )
+    from core.brain.llm.latent_cortex.transient_constraints import (
+        build_empty_transient_constraint_receipt,
     )
     from core.brain.llm.latent_cortex.update_gate import (
         PASSTHROUGH,
@@ -614,6 +617,16 @@ def _recurrent_grounding_fields(config, *, steps=1):
         decoy_review_sha256="",
         evaluate=None,
     )
+    transient_constraint_receipt = (
+        build_empty_transient_constraint_receipt(
+            episode_id=episode_id,
+            objective_sha256="7" * 64,
+            n_branches=config["n_branches"],
+            protected_positions={index: () for index in range(config["n_branches"])},
+        )
+        if episode_id
+        else None
+    )
     return {
         "cognitive_slots": [],
         "selected_branch": 0,
@@ -624,6 +637,11 @@ def _recurrent_grounding_fields(config, *, steps=1):
         "update_acceptance": update_acceptance_receipt,
         "halting": halting_receipt,
         "verified_best_state": verified_best_receipt,
+        **(
+            {"transient_negative_constraints": transient_constraint_receipt}
+            if transient_constraint_receipt is not None
+            else {}
+        ),
         "neural_uncertainty": neural_uncertainty_receipt,
         "mistake_locator": mistake_locator_receipt,
         "bidirectional_reflector": bidirectional_reflector_receipt,
@@ -759,6 +777,7 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.contradiction_perturber is None
     assert cfg.local_exploration is None
     assert cfg.heterogeneous_integration is None
+    assert cfg.transient_negative_constraints is None
     assert cfg.validate() == []
 
 
@@ -816,6 +835,38 @@ def test_config_from_job_rejects_out_of_band_requests():
                 }
             }
         )
+    with pytest.raises(ValueError, match="unknown keys"):
+        config_from_job(
+            {
+                "transient_negative_constraints": {
+                    "unbounded_lifetime": True,
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="delta bound"):
+        config_from_job(
+            {
+                "transient_negative_constraints": {
+                    "max_relative_delta_rms": 0.21,
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="replicates"):
+        config_from_job(
+            {
+                "transient_negative_constraints": {
+                    "replicates": 1,
+                }
+            }
+        )
+    with pytest.raises(ValueError, match="TTL"):
+        config_from_job(
+            {
+                "transient_negative_constraints": {
+                    "ttl_action_steps": 17,
+                }
+            }
+        )
     with pytest.raises(ValueError, match="requires head_path"):
         config_from_job({"contradiction_head": {"mode": "learned"}})
     with pytest.raises(ValueError, match="cannot carry a head"):
@@ -858,6 +909,13 @@ def test_config_from_job_maps_every_advanced_mechanism():
             "verifier_accept_non_regression": True,
             "input_context_max_chars": 4096,
             "allow_vanilla_fallback": False,
+            "transient_negative_constraints": {
+                "max_relative_delta_rms": 0.05,
+                "min_verifier_margin": 0.02,
+                "replicates": 3,
+                "ttl_action_steps": 4,
+                "max_constraints": 5,
+            },
         }
     )
     assert cfg.latent_opt.enabled is True and cfg.latent_opt.steps == 6
@@ -872,6 +930,13 @@ def test_config_from_job_maps_every_advanced_mechanism():
     assert cfg.verifier_accept_non_regression is True
     assert cfg.input_context_max_chars == 4096
     assert cfg.allow_vanilla_fallback is False
+    assert cfg.transient_negative_constraints == {
+        "max_relative_delta_rms": 0.05,
+        "min_verifier_margin": 0.02,
+        "replicates": 3,
+        "ttl_action_steps": 4,
+        "max_constraints": 5,
+    }
 
 
 def test_budget_from_job_caps_apply():
@@ -2314,7 +2379,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_file_count": 8,
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
-                    **_recurrent_grounding_fields(kwargs["config"], steps=7),
+                    **_recurrent_grounding_fields(
+                        kwargs["config"],
+                        steps=7,
+                        episode_id="abc",
+                    ),
                     **_kv_state_tree_fields(
                         kwargs["config"],
                         episode_id="abc",
@@ -2694,6 +2763,36 @@ def test_service_reconstructs_verified_best_and_rejects_rehashed_state_lie():
         {key: value for key, value in verified.items() if key != "receipt_sha256"}
     )
     assert "verified_best_state_unproven" in (
+        LatentCortexService._receipt_contract_errors(forged, config)
+    )
+
+
+def test_service_reconstructs_transient_constraints_and_rejects_rehashed_scope_lie():
+    from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+
+    config = {"n_slots": 8, "n_branches": 2}
+    receipt = {
+        **_identity_receipt(),
+        "episode_id": "ep-transient",
+        "n_slots": 8,
+        "n_branches": 2,
+        **_recurrent_grounding_fields(
+            config,
+            steps=3,
+            episode_id="ep-transient",
+        ),
+    }
+    assert "transient_negative_constraints_unproven" not in (
+        LatentCortexService._receipt_contract_errors(receipt, config)
+    )
+
+    forged = copy.deepcopy(receipt)
+    transient = forged["transient_negative_constraints"]
+    transient["authority_scope"] = "all_branches_forever"
+    transient["receipt_sha256"] = canonical_sha256(
+        {key: value for key, value in transient.items() if key != "receipt_sha256"}
+    )
+    assert "transient_negative_constraints_unproven" in (
         LatentCortexService._receipt_contract_errors(forged, config)
     )
 
@@ -3388,7 +3487,11 @@ def _full_success_stub_client(captured):
                     "checkpoint_file_count": 8,
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
-                    **_recurrent_grounding_fields(kwargs["config"], steps=7),
+                    **_recurrent_grounding_fields(
+                        kwargs["config"],
+                        steps=7,
+                        episode_id="ep-gwt",
+                    ),
                     **_kv_state_tree_fields(
                         kwargs["config"],
                         episode_id="ep-gwt",

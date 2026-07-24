@@ -22,9 +22,10 @@ the harness is allowed to say so.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -96,6 +97,16 @@ def _tensor_sha256(array: Any) -> str:
     hasher.update(str(data.shape).encode("ascii"))
     hasher.update(data.tobytes())
     return hasher.hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass
@@ -393,7 +404,222 @@ class BranchEnsemble:
     def active(self) -> list[BranchState]:
         return [b for b in self.branches if not b.halted]
 
+    def snapshot_branch_runtime(self, branch: BranchState) -> dict[str, Any]:
+        """Capture mutable branch state for an exact action-local rollback."""
+
+        if not any(item is branch for item in self.branches):
+            raise ValueError("runtime snapshot branch is not in this ensemble")
+        return {
+            "z": branch.z,
+            "role": branch.role,
+            "operator": branch.operator.value,
+            "halted": branch.halted,
+            "halt_reason": branch.halt_reason,
+            "steps": branch.steps,
+            "score": branch.score,
+            "halting": branch.halting.snapshot(),
+            "escape": branch.escape.snapshot() if branch.escape is not None else None,
+            "kv_boundary_sha256": branch.kv_boundary_sha256,
+            "evidence_anchor_sha256": branch.evidence_anchor_sha256,
+            "initial_hypothesis_sha256": branch.initial_hypothesis_sha256,
+            "candidate_sha256": branch.candidate_sha256,
+            "candidate_step": branch.candidate_step,
+            "last_loop_delta": branch.last_loop_delta,
+            "recurrent_grounding_trace_length": len(branch.recurrent_grounding_trace),
+            "loop_stability_trace_length": len(branch.loop_stability_trace),
+            "update_acceptance_trace_length": len(branch.update_acceptance_trace),
+            "uncertainty_trace_length": len(branch.uncertainty_trace),
+            "mistake_locator_trace_length": len(branch.mistake_locator_trace),
+            "reflector_trace_length": len(branch.reflector_trace),
+        }
+
+    def restore_branch_runtime(
+        self,
+        branch: BranchState,
+        snapshot: Mapping[str, Any],
+        *,
+        preserve_execution_traces: bool = False,
+    ) -> None:
+        """Restore one action-local snapshot, including trace append points."""
+
+        if not any(item is branch for item in self.branches):
+            raise ValueError("runtime restore branch is not in this ensemble")
+        required = {
+            "z",
+            "role",
+            "operator",
+            "halted",
+            "halt_reason",
+            "steps",
+            "score",
+            "halting",
+            "escape",
+            "kv_boundary_sha256",
+            "evidence_anchor_sha256",
+            "initial_hypothesis_sha256",
+            "candidate_sha256",
+            "candidate_step",
+            "last_loop_delta",
+            "recurrent_grounding_trace_length",
+            "loop_stability_trace_length",
+            "update_acceptance_trace_length",
+            "uncertainty_trace_length",
+            "mistake_locator_trace_length",
+            "reflector_trace_length",
+        }
+        if not isinstance(snapshot, Mapping) or set(snapshot) != required:
+            raise ValueError("branch runtime snapshot is invalid")
+        if (snapshot["escape"] is None) != (branch.escape is None):
+            raise ValueError("branch escape configuration changed during action")
+        trace_fields = (
+            ("recurrent_grounding_trace", "recurrent_grounding_trace_length"),
+            ("loop_stability_trace", "loop_stability_trace_length"),
+            ("update_acceptance_trace", "update_acceptance_trace_length"),
+            ("uncertainty_trace", "uncertainty_trace_length"),
+            ("mistake_locator_trace", "mistake_locator_trace_length"),
+            ("reflector_trace", "reflector_trace_length"),
+        )
+        if type(preserve_execution_traces) is not bool:
+            raise TypeError("branch trace preservation flag must be boolean")
+        for trace_name, length_name in trace_fields:
+            length = snapshot[length_name]
+            trace = getattr(branch, trace_name)
+            if type(length) is not int or not 0 <= length <= len(trace):
+                raise ValueError("branch runtime trace boundary is invalid")
+            if not preserve_execution_traces:
+                del trace[length:]
+        branch.z = snapshot["z"]
+        branch.workspace.update(branch.z)
+        branch.role = str(snapshot["role"])
+        branch.operator = CognitiveOperator(snapshot["operator"])
+        branch.halted = bool(snapshot["halted"])
+        branch.halt_reason = str(snapshot["halt_reason"])
+        branch.steps = int(snapshot["steps"])
+        branch.score = float(snapshot["score"])
+        branch.halting.restore(snapshot["halting"])
+        if branch.escape is not None:
+            branch.escape.restore(snapshot["escape"])
+        if not preserve_execution_traces:
+            branch.evidence_anchor_sha256 = str(snapshot["evidence_anchor_sha256"])
+            branch.initial_hypothesis_sha256 = str(snapshot["initial_hypothesis_sha256"])
+            branch.candidate_sha256 = str(snapshot["candidate_sha256"])
+            branch.candidate_step = int(snapshot["candidate_step"])
+        branch.last_loop_delta = snapshot["last_loop_delta"]
+        kv_boundary_sha256 = str(snapshot["kv_boundary_sha256"])
+        if self._kv_state_tree is not None:
+            if not kv_boundary_sha256:
+                raise ValueError("branch runtime snapshot has no KV boundary")
+            self._kv_state_tree.restore_boundary(
+                self._kv_cache,
+                kv_boundary_sha256,
+            )
+        branch.kv_boundary_sha256 = kv_boundary_sha256
+
+    def snapshot_ensemble_runtime(self) -> dict[str, Any]:
+        """Capture every non-budget mutation a complete branch round can make."""
+
+        telemetry_state = (
+            copy.deepcopy(vars(self.telemetry))
+            if self.telemetry is not None and hasattr(self.telemetry, "__dict__")
+            else None
+        )
+        return {
+            "branches": {
+                branch.index: self.snapshot_branch_runtime(branch) for branch in self.branches
+            },
+            "exchanges": self.exchanges,
+            "exchange_receipt_length": len(self.exchange_receipts),
+            "exchange_sync_points": set(self._exchange_sync_points),
+            "isolation_sealed": self._isolation_sealed,
+            "isolation_failure": self._isolation_failure,
+            "blocked_cross_exposures": self._blocked_cross_exposures,
+            "cross_exposure_started": self._cross_exposure_started,
+            "first_exchange_step": self._first_exchange_step,
+            "telemetry_state": telemetry_state,
+        }
+
+    def restore_ensemble_runtime(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore an entire failed round while retaining its metered compute."""
+
+        required = {
+            "branches",
+            "exchanges",
+            "exchange_receipt_length",
+            "exchange_sync_points",
+            "isolation_sealed",
+            "isolation_failure",
+            "blocked_cross_exposures",
+            "cross_exposure_started",
+            "first_exchange_step",
+            "telemetry_state",
+        }
+        if not isinstance(snapshot, Mapping) or set(snapshot) != required:
+            raise ValueError("ensemble runtime snapshot is invalid")
+        branch_snapshots = snapshot["branches"]
+        if not isinstance(branch_snapshots, Mapping) or set(branch_snapshots) != {
+            branch.index for branch in self.branches
+        }:
+            raise ValueError("ensemble branch snapshot inventory differs")
+        receipt_length = snapshot["exchange_receipt_length"]
+        if type(receipt_length) is not int or not 0 <= receipt_length <= len(
+            self.exchange_receipts
+        ):
+            raise ValueError("ensemble exchange receipt boundary is invalid")
+        for branch in self.branches:
+            self.restore_branch_runtime(
+                branch,
+                branch_snapshots[branch.index],
+            )
+        self.exchanges = int(snapshot["exchanges"])
+        del self.exchange_receipts[receipt_length:]
+        self._exchange_sync_points = set(snapshot["exchange_sync_points"])
+        self._isolation_sealed = bool(snapshot["isolation_sealed"])
+        self._isolation_failure = str(snapshot["isolation_failure"])
+        self._blocked_cross_exposures = int(snapshot["blocked_cross_exposures"])
+        self._cross_exposure_started = bool(snapshot["cross_exposure_started"])
+        self._first_exchange_step = snapshot["first_exchange_step"]
+        telemetry_state = snapshot["telemetry_state"]
+        if telemetry_state is not None:
+            if self.telemetry is None or not hasattr(self.telemetry, "__dict__"):
+                raise ValueError("ensemble telemetry disappeared during transaction")
+            vars(self.telemetry).clear()
+            vars(self.telemetry).update(copy.deepcopy(telemetry_state))
+
     def step_all(
+        self,
+        runner: WindowRunner,
+        cache,
+        start: int,
+        end: int,
+        *,
+        budget: ComputeBudget,
+        alpha_override: float | None = None,
+        score_fn: Callable[[BranchState], float] | None = None,
+        reserve_layer_apps: int = 0,
+        stop_context: Any = None,
+        transaction_purpose: str = "recurrent_update",
+    ) -> bool:
+        """Advance a complete branch round transactionally."""
+
+        runtime_snapshot = self.snapshot_ensemble_runtime()
+        try:
+            return self._step_all_untransactional(
+                runner,
+                cache,
+                start,
+                end,
+                budget=budget,
+                alpha_override=alpha_override,
+                score_fn=score_fn,
+                reserve_layer_apps=reserve_layer_apps,
+                stop_context=stop_context,
+                transaction_purpose=transaction_purpose,
+            )
+        except Exception:
+            self.restore_ensemble_runtime(runtime_snapshot)
+            raise
+
+    def _step_all_untransactional(
         self,
         runner: WindowRunner,
         cache,
@@ -930,6 +1156,7 @@ class BranchEnsemble:
         raw_observation: Any,
         *,
         action_step: int,
+        restore_target_state_sha256: str = "",
         budget: ComputeBudget | None = None,
     ) -> tuple[VerifierObservation, str, bool]:
         """Promote or preserve a branch-local state under interval dominance."""
@@ -950,7 +1177,11 @@ class BranchEnsemble:
         candidate_sha256 = tensor_sha256(branch.z)
         prior_sha256 = branch.verified_best_state_sha256
         restored = False
-        if not observation.authoritative:
+        if observation.authoritative and observation.upper_bound <= 1e-9:
+            if not _is_sha256(restore_target_state_sha256):
+                raise ValueError("verified failure has no committed restore target")
+            decision = "reject_verified_failure"
+        elif not observation.authoritative:
             decision = "ranking_only"
         elif branch.verified_best_state is None:
             decision = "promote"
@@ -995,6 +1226,9 @@ class BranchEnsemble:
                 "branch_step": branch.steps,
                 "candidate_state_sha256": candidate_sha256,
                 "prior_best_state_sha256": prior_sha256,
+                "restore_target_state_sha256": (
+                    restore_target_state_sha256 if decision == "reject_verified_failure" else ""
+                ),
                 "observation": observation_receipt,
                 "decision": decision,
                 "restored": restored,
@@ -1002,6 +1236,31 @@ class BranchEnsemble:
             }
         )
         return observation, decision, restored
+
+    def commit_verified_failure_restore(
+        self,
+        branch: BranchState,
+        *,
+        action_step: int,
+    ) -> None:
+        """Bind an engine-level exact-parent restore to its verifier decision."""
+
+        if not any(item is branch for item in self.branches):
+            raise ValueError("verified failure branch is not in this ensemble")
+        if not branch.verified_best_trace:
+            raise ValueError("verified failure restore has no source decision")
+        row = branch.verified_best_trace[-1]
+        if (
+            row.get("action_step") != action_step
+            or row.get("decision") != "reject_verified_failure"
+            or row.get("restored") is not False
+        ):
+            raise ValueError("verified failure restore source differs")
+        restored_sha256 = tensor_sha256(branch.z)
+        if restored_sha256 != row.get("restore_target_state_sha256"):
+            raise RuntimeError("verified failure did not restore its committed parent")
+        row["restored"] = True
+        row["resulting_state_sha256"] = restored_sha256
 
     def final_state(
         self,

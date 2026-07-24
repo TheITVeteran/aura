@@ -1034,6 +1034,50 @@ class LatentCortexService:
             )
         except (ImportError, TypeError, ValueError):
             errors.append("verified_best_state_unproven")
+        try:
+            from core.brain.llm.latent_cortex.transient_constraints import (
+                TransientConstraintConfig,
+                validate_transient_constraint_receipt,
+            )
+            from core.brain.llm.latent_cortex.worker_handler import config_from_job
+
+            cognitive_slots = receipt.get("cognitive_slots")
+            protected = (
+                tuple(
+                    sorted(
+                        {
+                            int(row["slot"])
+                            for row in cognitive_slots
+                            if (isinstance(row, dict) and type(row.get("slot")) is int)
+                        }
+                    )
+                )
+                if isinstance(cognitive_slots, list)
+                else ()
+            )
+            executed_config = config_from_job(config)
+            expected_branches = executed_config.branches.n_branches
+            validate_transient_constraint_receipt(
+                receipt.get("transient_negative_constraints"),
+                episode_id=str(receipt.get("episode_id") or ""),
+                objective_sha256=str(receipt.get("input_tokens_sha256") or ""),
+                n_branches=expected_branches,
+                protected_positions={index: protected for index in range(expected_branches)},
+                expected_config=TransientConstraintConfig.from_value(
+                    executed_config.transient_negative_constraints
+                ),
+                cognitive_action_trace=receipt.get("cognitive_action_trace"),
+                verifier_preflight=receipt.get("verifier_preflight"),
+                information_accounting=information_accounting,
+                resource_accounting=resource_accounting,
+                kv_state_tree=receipt.get("kv_state_tree"),
+                verified_best_state=receipt.get("verified_best_state"),
+                loop_stability=receipt.get("loop_stability"),
+                require_verified_best_binding=True,
+                require_external_bindings=True,
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("transient_negative_constraints_unproven")
         one_shot_slots = [
             row
             for row in (receipt.get("cognitive_slots") or [])

@@ -466,6 +466,60 @@ prune flags, node hashes, final-node omissions, and attempted rejected-child
 reuse. This proves the cache-lineage mechanism, not resident-32B reasoning
 gain or frontier capability.
 
+## Governed transient negative constraints (SPARK-036)
+
+Verified failure avoidance now acts at the latent transition boundary without
+injecting critic prose into the prompt. The only private control object is the
+bounded negative of one observed failed transition. Protected cognitive-context
+slots are zeroed, the intervention norm is capped, and public evidence retains
+only tensor commitments and geometry. Generated advice, unsupported text,
+caller-supplied vectors, and uncalibrated scalar judgments have no path to
+constraint authority.
+
+Admission requires two independent stages. First, the live task verifier must
+produce either a deterministic exact rejection or a calibrated regression
+against an authoritative incumbent. Second, repeated counterbalanced probes
+must show that the negative direction beats both the failed no-op and a
+magnitude-matched orthogonal sham. All arms use the same token budget,
+transformer work, and every measured resource counter. Differing verifier
+output size is therefore a parity failure rather than an omitted outcome.
+Zero or incomplete metering cannot mint authority even when all arms make the
+same unsupported compute claim.
+
+An admitted constraint is episode-, objective-, branch-, action-, and
+KV-bound. It expires after a bounded number of action steps and can be consumed
+once. Applying it opens a reservation. A successful recurrent transition
+commits that use; budget refusal, cancellation, or any branch failure restores
+the complete pre-application ensemble, including every branch, workspace,
+halting controller, exchange/isolation state, append-only traces, telemetry,
+and KV boundary, without consuming authority.
+Consumption, TTL expiry, stale KV lineage, and episode abort zeroize the private
+direction before releasing its reference. An episode-local cleanup registry
+also zeroizes admitted directions on every handled or unhandled engine exit;
+cleanup failure marks the episode critical instead of silently retaining
+authority.
+
+Worker receipts bind the source failure, verifier policy and admission
+preflight, control trials, measured resources, scope, reservation, recurrence,
+follow-up observation, and erasure. The action trace, verified-best receipt,
+information/resource accounting, and KV state tree must independently name the
+same evidence. The parent service reconstructs those bindings rather than
+trusting a worker-level boolean. The transient parent is the state actually
+restored by verified-best arbitration, including prior-best restoration after
+a confidence-bound regression, rather than an assumed immediate parent.
+Deterministic or calibrated authoritative zero is restored immediately and
+cannot become a verified-best incumbent.
+
+Controlled tests prove one genuine reduction on a real tiny-Qwen recurrent
+episode after a source failure, while preserving protected slots and exact KV
+lineage. A separate test executes the real MLX counterfactual evaluator across
+perturbed states and proves fixed decode work, fixed padded verifier input,
+nonzero complete metering, and exact branch/KV restoration. The label-aware
+evaluator in the reduction test exists only to make the intervention outcome
+deterministic; neither test is evidence of broad model capability.
+Resident-32B utility, persistent learning, and frontier-level reasoning remain
+separate powered-campaign questions.
+
 ## First resident-32B consolidation execution
 
 `artifacts/current/latent_consolidation_train_32b_first.json` records the first

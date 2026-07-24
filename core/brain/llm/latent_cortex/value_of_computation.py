@@ -49,6 +49,16 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _is_sha256(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
 def _finite(value: Any, *, name: str, minimum: float, maximum: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be numeric")
@@ -82,10 +92,7 @@ class ActionEvidence:
     cost_sq_sum: float = 0.0
 
     def __post_init__(self) -> None:
-        if (
-            type(self.n) is not int
-            or not 0 <= self.n <= MAX_ACTION_TRIALS
-        ):
+        if type(self.n) is not int or not 0 <= self.n <= MAX_ACTION_TRIALS:
             raise ValueError("action evidence count is out of bounds")
         for name, value, maximum in (
             ("gain_sum", self.gain_sum, 4.0 * max(1, self.n)),
@@ -222,16 +229,12 @@ def build_evidence_snapshot(
     for raw_action, raw_cell in cells.items():
         try:
             action = (
-                raw_action
-                if isinstance(raw_action, OperationKind)
-                else OperationKind(raw_action)
+                raw_action if isinstance(raw_action, OperationKind) else OperationKind(raw_action)
             )
         except (TypeError, ValueError) as exc:
             raise ValueError(f"unknown cognitive action: {raw_action!r}") from exc
         cell = (
-            raw_cell
-            if isinstance(raw_cell, ActionEvidence)
-            else ActionEvidence.from_dict(raw_cell)
+            raw_cell if isinstance(raw_cell, ActionEvidence) else ActionEvidence.from_dict(raw_cell)
         )
         normalized[action.value] = cell.to_dict()
     payload = {
@@ -377,9 +380,7 @@ class CognitiveStateSignal:
             "can_execute": self.can_execute,
             "answer_verified": self.answer_verified,
             "irreducible_uncertainty": self.irreducible_uncertainty,
-            "previously_selected": [
-                action.value for action in self.previously_selected
-            ],
+            "previously_selected": [action.value for action in self.previously_selected],
         }
 
     @classmethod
@@ -417,10 +418,7 @@ class CognitiveStateSignal:
         except (TypeError, ValueError) as exc:
             raise ValueError("cognitive state previous actions are invalid") from exc
         return cls(
-            **{
-                name: value[name]
-                for name in fields - {"previously_selected"}
-            },
+            **{name: value[name] for name in fields - {"previously_selected"}},
             previously_selected=previous_actions,
         )
 
@@ -468,9 +466,7 @@ def _bootstrap_gain(action: OperationKind, state: CognitiveStateSignal) -> float
         OperationKind.COMPRESS_STATE: 0.04 + 0.22 * progress,
         OperationKind.ANSWER: 0.75 if state.answer_verified else 0.04 * progress,
         OperationKind.ABSTAIN: (
-            0.70
-            if state.irreducible_uncertainty
-            else 0.25 * state.uncertainty * progress
+            0.70 if state.irreducible_uncertainty else 0.25 * state.uncertainty * progress
         ),
     }
     return values[action]
@@ -503,9 +499,7 @@ def feasible_actions(
             continue
         allowed = True
         if action is OperationKind.DECOMPOSE:
-            allowed = (
-                state.step_index <= 1 and action not in state.previously_selected
-            )
+            allowed = state.step_index <= 1 and action not in state.previously_selected
         elif action is OperationKind.BRANCH:
             allowed = state.active_branches >= 2
         elif action is OperationKind.SEARCH_MEMORY:
@@ -521,8 +515,7 @@ def feasible_actions(
             OperationKind.BACKTRACK,
         }:
             allowed = state.has_savepoint and (
-                float(state.verifier_delta or 0.0) < -1e-9
-                or state.residual_delta < -1e-9
+                float(state.verifier_delta or 0.0) < -1e-9 or state.residual_delta < -1e-9
             )
         elif action is OperationKind.COMPARE:
             allowed = state.active_branches >= 2
@@ -589,16 +582,8 @@ class ValueOfComputationPolicy:
                 cell = self.cells.get(action, ActionEvidence())
                 estimate = cell.estimate()
                 measured = bool(estimate["measured"])
-                gain = (
-                    float(estimate["gain_lcb"])
-                    if measured
-                    else _bootstrap_gain(action, state)
-                )
-                cost = (
-                    float(estimate["cost_ucb"])
-                    if measured
-                    else _BASE_COST[action]
-                )
+                gain = float(estimate["gain_lcb"]) if measured else _bootstrap_gain(action, state)
+                cost = float(estimate["cost_ucb"]) if measured else _BASE_COST[action]
                 value = gain / max(_EPSILON_COST, cost)
                 scored.append(
                     (
@@ -737,9 +722,7 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
     normalized = dict(value)
     if normalized.get("schema") != VALUE_OF_COMPUTATION_SCHEMA:
         raise ValueError("action decision schema is invalid")
-    normalized["bucket"] = _bounded_text(
-        normalized.get("bucket"), name="bucket", limit=160
-    )
+    normalized["bucket"] = _bounded_text(normalized.get("bucket"), name="bucket", limit=160)
     for name in ("snapshot_sha256", "decision_sha256"):
         digest = normalized.get(name)
         if (
@@ -769,9 +752,7 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
         raise ValueError("action decision selected an infeasible or duplicate action")
     normalized["action"] = selected.value
     normalized["feasible_actions"] = [action.value for action in feasible]
-    normalized["mode"] = _bounded_text(
-        normalized.get("mode"), name="mode", limit=32
-    )
+    normalized["mode"] = _bounded_text(normalized.get("mode"), name="mode", limit=32)
     if normalized["mode"] not in {
         "verified_stop",
         "budget_stop",
@@ -805,9 +786,7 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
         raise ValueError("action decision measured flag is invalid")
     if evidence["measured"] is not (evidence["n"] >= MIN_ACTION_TRIALS):
         raise ValueError("action decision measured flag contradicts trial count")
-    expected_basis = (
-        "measured_lcb_per_cost_ucb" if evidence["measured"] else "bootstrap_prior"
-    )
+    expected_basis = "measured_lcb_per_cost_ucb" if evidence["measured"] else "bootstrap_prior"
     if evidence.get("basis") != expected_basis:
         raise ValueError("action decision evidence basis is contradictory")
     bounds = {
@@ -913,7 +892,7 @@ def validate_action_trace_row(
 ) -> dict[str, Any]:
     """Recompute one worker action from public state and transition signals."""
 
-    fields = {
+    base_fields = {
         "decision",
         "transition",
         "state_signal",
@@ -922,8 +901,44 @@ def validate_action_trace_row(
         "affected_branches",
         "verification",
     }
-    if not isinstance(value, Mapping) or set(value) != fields:
+    constraint_fields = {
+        "transient_constraint",
+        "transient_constraint_attempt",
+    }
+    actual_fields = frozenset(value) if isinstance(value, Mapping) else frozenset()
+    if not isinstance(value, Mapping) or actual_fields not in {
+        frozenset(base_fields),
+        frozenset(base_fields | constraint_fields),
+    }:
         raise ValueError("cognitive action trace fields differ")
+    transient_constraint = value.get("transient_constraint", {})
+    transient_attempt = value.get("transient_constraint_attempt", {})
+    if not isinstance(transient_constraint, Mapping) or not isinstance(
+        transient_attempt,
+        Mapping,
+    ):
+        raise ValueError("cognitive action transient evidence is invalid")
+    for evidence, schema, digest_field in (
+        (
+            transient_constraint,
+            "aura.rlc.transient_constraint_application.v1",
+            "application_sha256",
+        ),
+        (
+            transient_attempt,
+            "aura.rlc.transient_constraint_attempt.v1",
+            "attempt_sha256",
+        ),
+    ):
+        if evidence:
+            payload = dict(evidence)
+            digest = payload.pop(digest_field, None)
+            if (
+                payload.get("schema") != schema
+                or not isinstance(digest, str)
+                or digest != _canonical_sha256(payload)
+            ):
+                raise ValueError("cognitive action transient evidence digest differs")
     if not isinstance(executors, tuple) or not executors:
         raise ValueError("cognitive action executor inventory is invalid")
     if len(set(executors)) != len(executors) or any(
@@ -1019,19 +1034,17 @@ def validate_action_trace_row(
     observed_score = after["observed_verifier_score"]
     raw_verification = value.get("verification")
     verification_decision = (
-        raw_verification.get("decision")
-        if isinstance(raw_verification, Mapping)
-        else None
+        raw_verification.get("decision") if isinstance(raw_verification, Mapping) else None
     )
     checked = before_score is not None and observed_score is not None
     if transition["checked"] is not checked:
         raise ValueError("cognitive action checked status differs from public state")
-    verified_delta = (
-        float(observed_score) - float(before_score) if checked else 0.0
-    )
+    verified_delta = float(observed_score) - float(before_score) if checked else 0.0
     if verification_decision == "preserve_verified":
         if before_score is None or observed_score is None:
             raise ValueError("verified-best preservation lacks comparable scores")
+        expected_accepted_score = before_score
+    elif verification_decision == "reject_verified_failure":
         expected_accepted_score = before_score
     elif observed_score is None:
         expected_accepted_score = before_score
@@ -1051,9 +1064,7 @@ def validate_action_trace_row(
     after_uncertainty = max(
         float(after["residual"]),
         float(after["disagreement"]),
-        1.0 - float(observed_score)
-        if observed_score is not None
-        else before_uncertainty,
+        1.0 - float(observed_score) if observed_score is not None else before_uncertainty,
     )
     expected_metrics = transition_reward(
         verified_delta=max(-1.0, min(1.0, verified_delta)),
@@ -1068,35 +1079,57 @@ def validate_action_trace_row(
                 float(after["disagreement"]) - float(before["disagreement"]),
             ),
         ),
-        unsupported_confidence=(
-            max(0.0, min(1.0, -verified_delta)) if checked else 0.0
-        ),
+        unsupported_confidence=(max(0.0, min(1.0, -verified_delta)) if checked else 0.0),
         cost=transition["metrics"]["cost"],
     )
     if transition["metrics"] != expected_metrics:
         raise ValueError("cognitive action metrics differ from public transition")
     affected_branches = value.get("affected_branches")
-    if (
-        type(affected_branches) is not int
-        or not 0 <= affected_branches <= signal.total_branches
-    ):
+    if type(affected_branches) is not int or not 0 <= affected_branches <= signal.total_branches:
         raise ValueError("cognitive action affected branch count is invalid")
     verification = value.get("verification")
-    verification_fields = {
+    verification_base_fields = {
         "target_branch",
         "observation",
         "decision",
         "restored",
     }
-    if not isinstance(verification, Mapping) or set(verification) != verification_fields:
+    verification_lineage_fields = {
+        "attempt_parent_state_sha256",
+        "constraint_input_state_sha256",
+        "candidate_state_sha256",
+        "restore_target_state_sha256",
+        "kv_boundary_before_sha256",
+        "kv_boundary_after_sha256",
+        "branch_step_before",
+        "branch_step_after",
+    }
+    if not isinstance(verification, Mapping) or frozenset(verification) not in {
+        frozenset(verification_base_fields),
+        frozenset(verification_base_fields | verification_lineage_fields),
+    }:
         raise ValueError("cognitive action verification fields differ")
     verification = dict(verification)
+    has_lineage = set(verification) == (verification_base_fields | verification_lineage_fields)
     if verification["target_branch"] is None:
         if (
             verification["observation"] != {}
             or verification["decision"] != "not_run"
             or verification["restored"] is not False
             or observed_score is not None
+            or (
+                has_lineage
+                and (
+                    verification["attempt_parent_state_sha256"]
+                    or verification["constraint_input_state_sha256"]
+                    or verification["candidate_state_sha256"]
+                    or verification["restore_target_state_sha256"]
+                    or verification["kv_boundary_before_sha256"]
+                    or verification["kv_boundary_after_sha256"]
+                    or verification["branch_step_before"] is not None
+                    or verification["branch_step_after"] is not None
+                )
+            )
         ):
             raise ValueError("absent cognitive verification is contradictory")
     else:
@@ -1108,20 +1141,32 @@ def validate_action_trace_row(
             type(verification["target_branch"]) is not int
             or not 0 <= verification["target_branch"] < signal.total_branches
             or verification["decision"]
-            not in {"ranking_only", "promote", "preserve_verified"}
+            not in {
+                "ranking_only",
+                "promote",
+                "preserve_verified",
+                "reject_verified_failure",
+            }
             or type(verification["restored"]) is not bool
+            or (
+                has_lineage
+                and (
+                    not _is_sha256(verification["attempt_parent_state_sha256"])
+                    or not _is_sha256(verification["constraint_input_state_sha256"])
+                    or not _is_sha256(verification["candidate_state_sha256"])
+                    or not _is_sha256(verification["kv_boundary_before_sha256"])
+                    or not _is_sha256(verification["kv_boundary_after_sha256"])
+                    or type(verification["branch_step_before"]) is not int
+                    or verification["branch_step_before"] < 0
+                    or verification["branch_step_after"] != verification["branch_step_before"] + 1
+                )
+            )
         ):
             raise ValueError("cognitive verification decision is invalid")
-        verification["observation"] = validate_observation(
-            verification["observation"]
-        )
+        verification["observation"] = validate_observation(verification["observation"])
         if (
             observed_score is None
-            or abs(
-                float(verification["observation"]["score"])
-                - float(observed_score)
-            )
-            > 1e-9
+            or abs(float(verification["observation"]["score"]) - float(observed_score)) > 1e-9
             or (
                 verification["decision"] == "ranking_only"
                 and verification["observation"]["authoritative"]
@@ -1131,12 +1176,34 @@ def validate_action_trace_row(
                 and not verification["observation"]["authoritative"]
             )
             or (
-                verification["decision"] != "preserve_verified"
+                verification["decision"] not in {"preserve_verified", "reject_verified_failure"}
                 and verification["restored"]
+            )
+            or (
+                verification["decision"] == "reject_verified_failure"
+                and (
+                    verification["restored"] is not True
+                    or verification["observation"]["basis"]
+                    not in {"deterministic_exact", "calibrated_interval"}
+                    or float(verification["observation"]["upper_bound"]) > 1e-9
+                    or (
+                        has_lineage
+                        and (
+                            not _is_sha256(verification["restore_target_state_sha256"])
+                            or verification["restore_target_state_sha256"]
+                            != verification["attempt_parent_state_sha256"]
+                        )
+                    )
+                )
+            )
+            or (
+                has_lineage
+                and verification["decision"] != "reject_verified_failure"
+                and verification["restore_target_state_sha256"]
             )
         ):
             raise ValueError("cognitive verification evidence is contradictory")
-    return {
+    normalized = {
         "decision": decision,
         "transition": transition,
         "state_signal": signal.to_dict(),
@@ -1145,6 +1212,10 @@ def validate_action_trace_row(
         "affected_branches": affected_branches,
         "verification": verification,
     }
+    if actual_fields == frozenset(base_fields | constraint_fields):
+        normalized["transient_constraint"] = dict(transient_constraint)
+        normalized["transient_constraint_attempt"] = dict(transient_attempt)
+    return normalized
 
 
 __all__ = [

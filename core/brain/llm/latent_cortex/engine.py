@@ -1109,6 +1109,14 @@ class LatentCortexEngine:
                     force_exact_tokens=True,
                 )
                 rendered = self.tokenizer.decode(probe)
+                rendered_bytes = rendered.encode("utf-8")
+                verifier_input_bytes = max(
+                    1024,
+                    int(self.config.verifier_probe_max_tokens) * 64,
+                )
+                if len(rendered_bytes) > verifier_input_bytes:
+                    raise ValueError("counterfactual verifier input exceeds its fixed byte budget")
+                rendered += " " * (verifier_input_bytes - len(rendered_bytes))
                 bounded = getattr(verifier, "observe_with_bounds", None)
                 raw_observation = bounded(rendered) if callable(bounded) else verifier(rendered)
                 if isinstance(raw_observation, dict) and "observation_sha256" in raw_observation:
@@ -1677,6 +1685,7 @@ class LatentCortexEngine:
         failure_reason = ""
         out_tokens: list[int] = []
         decode_token_logprobs: list[float] = []
+        transient_cleanup_registry: list[Any] = []
         try:
             try:
                 out_tokens, receipt = self._latent_episode(
@@ -1697,6 +1706,7 @@ class LatentCortexEngine:
                     episode_started=episode_started,
                     token_logprobs_out=(decode_token_logprobs if capture_decode_logprobs else None),
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
+                    transient_cleanup_registry=transient_cleanup_registry,
                 )
             except _FastWeightCleanupError as exc:
                 record_degradation(
@@ -1773,6 +1783,18 @@ class LatentCortexEngine:
                         )
                         failure_reason = f"latent_and_fallback_failed:{inner_exc}"
         finally:
+            for transient_ledger in transient_cleanup_registry:
+                try:
+                    transient_ledger.abort_all()
+                except _LATENT_PHASE_ERRORS as exc:
+                    receipt.flag("transient_constraint_cleanup_unproven")
+                    failure_reason = failure_reason or "transient_constraint_cleanup_unproven"
+                    record_degradation(
+                        "latent_cortex",
+                        exc,
+                        action="refused the episode because transient authority cleanup failed",
+                        severity="critical",
+                    )
             try:
                 receipt.params_unchanged = self.invariant.post_episode()
             except _LATENT_PHASE_ERRORS as exc:
@@ -1874,6 +1896,7 @@ class LatentCortexEngine:
         episode_started: float | None = None,
         token_logprobs_out: list[float] | None = None,
         decode_sentence_grace_tokens: int | None = None,
+        transient_cleanup_registry: list[Any] | None = None,
     ) -> tuple[list[int], EpisodeReceipt]:
         import mlx.core as mx
 
@@ -2049,6 +2072,32 @@ class LatentCortexEngine:
             branch.update_gate = update_gate
             branch.uncertainty_runtime = uncertainty_runtime
             branch.mistake_locator_runtime = mistake_locator_runtime
+        from core.brain.llm.latent_cortex.transient_constraints import (
+            TransientConstraintConfig,
+            TransientConstraintLedger,
+        )
+
+        transient_constraint_config = TransientConstraintConfig.from_value(
+            self.config.transient_negative_constraints
+        )
+        transient_constraints = TransientConstraintLedger(
+            episode_id=receipt.episode_id,
+            objective_sha256=receipt.input_tokens_sha256,
+            n_branches=len(ensemble.branches),
+            protected_positions={
+                branch.index: branch.workspace.context_slot_indices for branch in ensemble.branches
+            },
+            config=transient_constraint_config,
+        )
+        if transient_cleanup_registry is not None:
+            transient_cleanup_registry.append(transient_constraints)
+        information = budget.information_receipt or {}
+        information_policies = information.get("policies")
+        transient_verifier_policy_sha256 = (
+            str(information_policies.get("verifier", ""))
+            if isinstance(information_policies, dict)
+            else ""
+        )
         if ensemble.branches and ensemble.branches[0].workspace.context_slots:
             seeded = ensemble.branches[0].workspace.context_slots
             from core.brain.llm.latent_cortex.cognitive_context import (
@@ -2316,11 +2365,24 @@ class LatentCortexEngine:
                 affected_branches = 0
                 probe_score: float | None = None
                 accepted_verifier_score = previous_verifier_score
+                target_runtime_snapshot = ensemble.snapshot_branch_runtime(prospective_target)
+                attempt_parent_kv_boundary_sha256 = prospective_target.kv_boundary_sha256
+                constraint_application: dict[str, Any] | None = None
+                constraint_attempt: dict[str, Any] | None = None
+                constraint_pre_state = None
                 verification = {
                     "target_branch": None,
                     "observation": {},
                     "decision": "not_run",
                     "restored": False,
+                    "attempt_parent_state_sha256": "",
+                    "constraint_input_state_sha256": "",
+                    "candidate_state_sha256": "",
+                    "restore_target_state_sha256": "",
+                    "kv_boundary_before_sha256": "",
+                    "kv_boundary_after_sha256": "",
+                    "branch_step_before": None,
+                    "branch_step_after": None,
                 }
 
                 if action is OperationKind.REGENERATE_FROM_PREFIX:
@@ -2338,6 +2400,29 @@ class LatentCortexEngine:
                         len(operator_receipts),
                     )
                 if action in {
+                    OperationKind.FALSIFY,
+                    OperationKind.CHECK_ASSUMPTION,
+                }:
+                    constraint_pre_state = prospective_target.z
+                    constrained_state, constraint_application = transient_constraints.apply_next(
+                        prospective_target.z,
+                        branch_index=prospective_target.index,
+                        action=action.value,
+                        action_step=action_index,
+                        branch_step=prospective_target.steps,
+                        kv_boundary_sha256=(prospective_target.kv_boundary_sha256),
+                        budget=budget,
+                    )
+                    if constraint_application is not None:
+                        prospective_target.z = mx.array(constrained_state)
+                        prospective_target.z = (
+                            prospective_target.workspace.restore_context_evidence(
+                                prospective_target.z
+                            )
+                        )
+                        prospective_target.workspace.update(prospective_target.z)
+                        receipt.flag("transient_negative_constraint_applied")
+                if action in {
                     OperationKind.DECOMPOSE,
                     OperationKind.BLIND_RESOLVE,
                     OperationKind.BRANCH,
@@ -2349,20 +2434,60 @@ class LatentCortexEngine:
                     OperationKind.REGENERATE_FROM_PREFIX,
                     OperationKind.FORMALIZE,
                 }:
-                    admitted = ensemble.step_all(
-                        runner,
-                        cache,
-                        op.start,
-                        op.end,
-                        budget=budget,
-                        alpha_override=op.alpha,
-                        reserve_layer_apps=safety_reserve,
-                        stop_context=stop_context,
-                        transaction_purpose=action.value,
-                    )
+                    try:
+                        admitted = ensemble.step_all(
+                            runner,
+                            cache,
+                            op.start,
+                            op.end,
+                            budget=budget,
+                            alpha_override=op.alpha,
+                            reserve_layer_apps=safety_reserve,
+                            stop_context=stop_context,
+                            transaction_purpose=action.value,
+                        )
+                    except Exception:
+                        if constraint_application is not None:
+                            if (
+                                prospective_target.steps
+                                == constraint_application["branch_step_before"]
+                            ):
+                                prospective_target.z = constraint_pre_state
+                                prospective_target.workspace.update(constraint_pre_state)
+                                transient_constraints.rollback_application(
+                                    reservation_id=constraint_application["reservation_id"],
+                                    restored_state=constraint_pre_state,
+                                    branch_step_after=(prospective_target.steps),
+                                    kv_boundary_after_sha256=(
+                                        prospective_target.kv_boundary_sha256
+                                    ),
+                                    reason="recurrence_failed",
+                                )
+                            else:
+                                transient_constraints.abort_all()
+                            constraint_application = None
+                        raise
                     if not admitted:
+                        if constraint_application is not None:
+                            prospective_target.z = constraint_pre_state
+                            prospective_target.workspace.update(constraint_pre_state)
+                            transient_constraints.rollback_application(
+                                reservation_id=constraint_application["reservation_id"],
+                                restored_state=constraint_pre_state,
+                                branch_step_after=prospective_target.steps,
+                                kv_boundary_after_sha256=(prospective_target.kv_boundary_sha256),
+                                reason="budget_refused",
+                            )
+                            constraint_application = None
                         recurrence_budget_limited = True
                         outcome = "budget_refused"
+                    elif constraint_application is not None:
+                        constraint_application = transient_constraints.commit_application(
+                            reservation_id=constraint_application["reservation_id"],
+                            branch_step_after=prospective_target.steps,
+                            kv_boundary_after_sha256=(prospective_target.kv_boundary_sha256),
+                            recurrence_state=prospective_target.z,
+                        )
                 elif action is OperationKind.COMPARE:
                     affected_branches = int(
                         ensemble.exchange_now(
@@ -2423,6 +2548,12 @@ class LatentCortexEngine:
                             if callable(bounded_observer)
                             else verifier(rendered_probe)
                         )
+                        candidate_state_before_verification = target.z
+                        incumbent_observation_before_verification = (
+                            dict(target.verified_best_observation)
+                            if target.verified_best_observation
+                            else None
+                        )
                         try:
                             (
                                 observation,
@@ -2432,6 +2563,9 @@ class LatentCortexEngine:
                                 target,
                                 raw_observation,
                                 action_step=action_index,
+                                restore_target_state_sha256=tensor_sha256(
+                                    target_runtime_snapshot["z"]
+                                ),
                                 budget=budget,
                             )
                         except (TypeError, ValueError):
@@ -2444,9 +2578,42 @@ class LatentCortexEngine:
                                 "observation": observation.to_dict(),
                                 "decision": best_decision,
                                 "restored": best_restored,
+                                "attempt_parent_state_sha256": tensor_sha256(
+                                    target_runtime_snapshot["z"]
+                                ),
+                                "constraint_input_state_sha256": tensor_sha256(
+                                    constraint_pre_state
+                                ),
+                                "candidate_state_sha256": tensor_sha256(
+                                    candidate_state_before_verification
+                                ),
+                                "restore_target_state_sha256": (
+                                    tensor_sha256(target_runtime_snapshot["z"])
+                                    if best_decision == "reject_verified_failure"
+                                    else ""
+                                ),
+                                "kv_boundary_before_sha256": (
+                                    target_runtime_snapshot["kv_boundary_sha256"]
+                                ),
+                                "kv_boundary_after_sha256": target.kv_boundary_sha256,
+                                "branch_step_before": target_runtime_snapshot["steps"],
+                                "branch_step_after": target.steps,
                             }
                         if probe_score is None:
                             pass
+                        elif best_decision == "reject_verified_failure":
+                            ensemble.restore_branch_runtime(
+                                target,
+                                target_runtime_snapshot,
+                                preserve_execution_traces=True,
+                            )
+                            ensemble.commit_verified_failure_restore(
+                                target,
+                                action_step=action_index,
+                            )
+                            verification["restored"] = True
+                            accepted_verifier_score = previous_verifier_score
+                            outcome = "verified_failure_reverted_exact_parent"
                         elif best_decision == "preserve_verified":
                             accepted_verifier_score = float(
                                 target.verified_best_observation["score"]
@@ -2470,6 +2637,130 @@ class LatentCortexEngine:
                                     authority="bounded_verifier_progress",
                                 )
                                 outcome = "verified_progress_saved"
+                        if probe_score is not None:
+                            followup = transient_constraints.observe_followup(
+                                branch_index=target.index,
+                                action_step=action_index,
+                                observation=observation.to_dict(),
+                            )
+                            if followup is not None:
+                                if constraint_application is not None and followup.get(
+                                    "reservation_id"
+                                ) == constraint_application.get("reservation_id"):
+                                    constraint_application = followup
+                                receipt.flag(
+                                    "transient_negative_constraint_"
+                                    + (
+                                        "reduced_failure"
+                                        if followup["failure_reduced"]
+                                        else "repeated_failure"
+                                        if followup["failure_repeated"]
+                                        else "followup_inconclusive"
+                                    )
+                                )
+                            incumbent_lower = (
+                                float(incumbent_observation_before_verification["lower_bound"])
+                                if incumbent_observation_before_verification
+                                and incumbent_observation_before_verification.get("authoritative")
+                                is True
+                                else None
+                            )
+                            verified_failure = (
+                                action
+                                in {
+                                    OperationKind.FALSIFY,
+                                    OperationKind.CHECK_ASSUMPTION,
+                                }
+                                and observation.authoritative
+                                and (
+                                    (
+                                        observation.basis
+                                        in {
+                                            "deterministic_exact",
+                                            "calibrated_interval",
+                                        }
+                                        and observation.upper_bound <= 1e-9
+                                    )
+                                    or (
+                                        incumbent_lower is not None
+                                        and observation.upper_bound + 1e-9 < incumbent_lower
+                                    )
+                                )
+                            )
+                            if verified_failure:
+                                preflight_sha256 = str(
+                                    receipt.verifier_preflight.get(
+                                        "receipt_sha256",
+                                        "",
+                                    )
+                                )
+                                constraint_probe_apps = self._verifier_probe_layer_apps(
+                                    bridge_tokens,
+                                    count=(3 * transient_constraint_config.replicates),
+                                )
+                                constraint_evaluator = None
+                                constraint_unavailable_reason = ""
+                                if (
+                                    len(transient_verifier_policy_sha256) != 64
+                                    or len(preflight_sha256) != 64
+                                ):
+                                    constraint_unavailable_reason = (
+                                        "verifier_authority_commitment_unavailable"
+                                    )
+                                elif (
+                                    constraint_probe_apps + safety_reserve
+                                    > budget.remaining_layer_apps
+                                ):
+                                    constraint_unavailable_reason = (
+                                        "matched_counterfactual_probe_budget_unavailable"
+                                    )
+                                else:
+                                    constraint_evaluator = self._counterfactual_probe_evaluator(
+                                        branch=target,
+                                        cache=cache,
+                                        runner=runner,
+                                        budget=budget,
+                                        bridge_tokens=bridge_tokens,
+                                        verifier=verifier,
+                                    )
+                                if (
+                                    len(transient_verifier_policy_sha256) == 64
+                                    and len(preflight_sha256) == 64
+                                ):
+                                    constraint_attempt = (
+                                        transient_constraints.consider_verified_failure(
+                                            parent_state=target.z,
+                                            failed_state=(candidate_state_before_verification),
+                                            branch_index=target.index,
+                                            source_action=action.value,
+                                            action_step=action_index,
+                                            source_kv_boundary_sha256=(
+                                                attempt_parent_kv_boundary_sha256
+                                            ),
+                                            observation=observation.to_dict(),
+                                            incumbent_observation=(
+                                                incumbent_observation_before_verification
+                                            ),
+                                            verifier_policy_sha256=(
+                                                transient_verifier_policy_sha256
+                                            ),
+                                            verifier_preflight_sha256=(preflight_sha256),
+                                            evaluate=constraint_evaluator,
+                                            evaluation_unavailable_reason=(
+                                                constraint_unavailable_reason
+                                            ),
+                                            budget=budget,
+                                        )
+                                    )
+                                    receipt.flag(
+                                        "transient_negative_constraint_"
+                                        + constraint_attempt["status"]
+                                    )
+                                else:
+                                    receipt.flag(
+                                        "transient_negative_constraint_"
+                                        "verifier_authority_unavailable"
+                                    )
                     else:
                         outcome = "verifier_probe_budget_refused"
 
@@ -2544,6 +2835,14 @@ class LatentCortexEngine:
                         },
                         "affected_branches": affected_branches,
                         "verification": verification,
+                        "transient_constraint": (
+                            dict(constraint_application)
+                            if constraint_application is not None
+                            else {}
+                        ),
+                        "transient_constraint_attempt": (
+                            dict(constraint_attempt) if constraint_attempt is not None else {}
+                        ),
                     }
                 )
                 selected_actions.append(action)
@@ -3034,6 +3333,9 @@ class LatentCortexEngine:
             branches=list(ensemble.branches),
             cognitive_action_trace=receipt.cognitive_action_trace,
             loop_stability=receipt.loop_stability,
+        )
+        receipt.transient_negative_constraints = transient_constraints.finalize(
+            final_action_step=action_index,
         )
         stage_started = self._stage_checkpoint(
             receipt=receipt,

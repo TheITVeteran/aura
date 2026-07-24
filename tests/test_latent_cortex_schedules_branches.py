@@ -1,4 +1,5 @@
 """Contract tests: layer-schedule programs + virtual-width branches."""
+
 from __future__ import annotations
 
 import copy
@@ -14,6 +15,7 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+import core.brain.llm.latent_cortex.branches as branches_mod  # noqa: E402
 import core.brain.llm.latent_cortex.recurrence as recurrence_mod  # noqa: E402
 from core.brain.llm.latent_cortex.branches import BRANCH_ROLES, BranchEnsemble  # noqa: E402
 from core.brain.llm.latent_cortex.escape import (  # noqa: E402
@@ -29,6 +31,7 @@ from core.brain.llm.latent_cortex.schedules import (  # noqa: E402
     ScheduleSearch,
     StageOp,
 )
+from core.brain.llm.latent_cortex.telemetry import LatentTelemetry  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
     ComputeBudget,
@@ -149,9 +152,7 @@ def test_schedule_validation_rejects_escapes_and_degenerates():
     with pytest.raises(ValueError):
         LayerSchedule.from_dict({"ops": [{"start": 2, "end": 6, "alpha": float("nan")}]})
     with pytest.raises(ValueError, match="finite number"):
-        LayerSchedule.from_dict(
-            {"ops": [{"start": 2, "end": 6, "alpha": 10**10_000}]}
-        )
+        LayerSchedule.from_dict({"ops": [{"start": 2, "end": 6, "alpha": 10**10_000}]})
     assert LayerSchedule(ops=(StageOp(2, 6, 1, 10**10_000),)).validate(
         prelude_end=2,
         coda_start=6,
@@ -236,7 +237,9 @@ def test_library_rejects_profile_drift_and_commitment_replay(tmp_path):
     replay_payload["evidence_binding_sha256"] = PairedScheduleOutcome.binding_sha256(
         schedule_hash=candidate.schedule_hash,
         domain="math",
-        values={key: value for key, value in replay_payload.items() if key != "evidence_binding_sha256"},
+        values={
+            key: value for key, value in replay_payload.items() if key != "evidence_binding_sha256"
+        },
     )
     replay = PairedScheduleOutcome.from_dict(
         replay_payload,
@@ -380,9 +383,9 @@ def test_branch_seeding_gives_distinct_roles_and_clean_cache(tiny_model):
     assert all(c.offset == prompt_len for c in cache)
     z0, z1 = ensemble.branches[0].z, ensemble.branches[1].z
     assert not bool(mx.allclose(z0, z1)), "role basins must differ"
-    assert (
-        ensemble.exchange_now(sync_kind="test", sync_id="before-candidates") is False
-    ), "peer exposure must wait for candidates"
+    assert ensemble.exchange_now(sync_kind="test", sync_id="before-candidates") is False, (
+        "peer exposure must wait for candidates"
+    )
 
 
 def test_fresh_context_candidates_seal_before_first_exchange(tiny_model):
@@ -414,9 +417,7 @@ def test_fresh_context_candidates_seal_before_first_exchange(tiny_model):
     assert isolation["cache_discipline"]["all_restored"] is True
 
 
-def test_window_runner_fails_when_cache_restore_postcondition_is_false(
-    tiny_model, monkeypatch
-):
+def test_window_runner_fails_when_cache_restore_postcondition_is_false(tiny_model, monkeypatch):
     cache = _prefill(tiny_model)
     budget = ComputeBudget()
     runner = WindowRunner(tiny_model.model, budget)
@@ -542,6 +543,109 @@ def test_branches_step_exchange_and_halt(tiny_model):
     assert all(b["halt_reason"] for b in receipt["branches"])
 
 
+def test_branch_round_restores_every_branch_when_later_branch_fails(
+    tiny_model,
+    monkeypatch,
+):
+    cache = _prefill(tiny_model)
+    prompt_len = len(PROMPT[0])
+    ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
+    before = [
+        {
+            "z": branch.z,
+            "steps": branch.steps,
+            "halting": branch.halting.snapshot(),
+            "grounding": list(branch.recurrent_grounding_trace),
+            "stability": list(branch.loop_stability_trace),
+            "acceptance": list(branch.update_acceptance_trace),
+            "reflector": list(branch.reflector_trace),
+        }
+        for branch in ensemble.branches
+    ]
+    original = branches_mod.recurrence_step
+    calls = 0
+
+    def fail_second(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("forced second branch failure")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(branches_mod, "recurrence_step", fail_second)
+    with pytest.raises(RuntimeError, match="forced second branch failure"):
+        ensemble.step_all(
+            runner,
+            cache,
+            P_END,
+            C_START,
+            budget=budget,
+        )
+
+    assert budget.spent_layer_apps > 0
+    assert all(item.offset == prompt_len for item in cache)
+    for branch, prior in zip(ensemble.branches, before, strict=True):
+        assert bool(mx.array_equal(branch.z, prior["z"]))
+        assert branch.steps == prior["steps"]
+        assert branch.halting.snapshot() == prior["halting"]
+        assert branch.recurrent_grounding_trace == prior["grounding"]
+        assert branch.loop_stability_trace == prior["stability"]
+        assert branch.update_acceptance_trace == prior["acceptance"]
+        assert branch.reflector_trace == prior["reflector"]
+
+
+def test_branch_round_restores_exchange_isolation_diversity_and_telemetry(
+    tiny_model,
+    monkeypatch,
+):
+    cache = _prefill(tiny_model)
+    prompt_len = len(PROMPT[0])
+    ensemble, runner, budget = _ensemble(
+        tiny_model,
+        cache,
+        n_branches=2,
+        exchange_interval=1,
+        isolation_steps=1,
+    )
+    ensemble.config.collapse_cos_threshold = -1.0
+    ensemble.telemetry = LatentTelemetry()
+    before = ensemble.snapshot_ensemble_runtime()
+    original_charge = budget.charge_tensor_work
+
+    def fail_after_diversity_mutation(operation, **counters):
+        if operation == "branch_diversity_jitter":
+            raise RuntimeError("forced post-exchange diversity failure")
+        return original_charge(operation, **counters)
+
+    monkeypatch.setattr(budget, "charge_tensor_work", fail_after_diversity_mutation)
+    with pytest.raises(RuntimeError, match="post-exchange diversity failure"):
+        ensemble.step_all(
+            runner,
+            cache,
+            P_END,
+            C_START,
+            budget=budget,
+        )
+
+    assert budget.spent_layer_apps > 0
+    assert all(item.offset == prompt_len for item in cache)
+    assert ensemble.exchanges == before["exchanges"]
+    assert len(ensemble.exchange_receipts) == before["exchange_receipt_length"]
+    assert ensemble._exchange_sync_points == before["exchange_sync_points"]
+    assert ensemble._isolation_sealed is before["isolation_sealed"]
+    assert ensemble._isolation_failure == before["isolation_failure"]
+    assert ensemble._blocked_cross_exposures == before["blocked_cross_exposures"]
+    assert ensemble._cross_exposure_started is before["cross_exposure_started"]
+    assert ensemble._first_exchange_step == before["first_exchange_step"]
+    assert vars(ensemble.telemetry) == before["telemetry_state"]
+    for branch in ensemble.branches:
+        prior = before["branches"][branch.index]
+        assert bool(mx.array_equal(branch.z, prior["z"]))
+        assert branch.steps == prior["steps"]
+        assert branch.candidate_sha256 == prior["candidate_sha256"]
+        assert branch.candidate_step == prior["candidate_step"]
+
+
 def test_cognitive_operator_primitives_mutate_only_live_bounded_state(tiny_model):
     cache = _prefill(tiny_model)
     ensemble, runner, budget = _ensemble(tiny_model, cache, n_branches=2)
@@ -568,8 +672,7 @@ def test_cognitive_operator_primitives_mutate_only_live_bounded_state(tiny_model
     assert ensemble.halt_all("value_controller_answer") == 2
     assert ensemble.all_halted()
     assert all(
-        branch.halt_reason.startswith("value_controller_answer")
-        for branch in ensemble.branches
+        branch.halt_reason.startswith("value_controller_answer") for branch in ensemble.branches
     )
 
 
@@ -675,15 +778,10 @@ def test_loop_diagnostics_reset_derivatives_after_exchange(tiny_model):
         max_steps=2,
         fixed_depth=True,
     )
-    assert continuous.step_all(
-        runner, continuous_cache, P_END, C_START, budget=budget
-    )
-    assert continuous.step_all(
-        runner, continuous_cache, P_END, C_START, budget=budget
-    )
+    assert continuous.step_all(runner, continuous_cache, P_END, C_START, budget=budget)
+    assert continuous.step_all(runner, continuous_cache, P_END, C_START, budget=budget)
     assert [
-        row["continuous_from_previous"]
-        for row in continuous.branches[0].loop_stability_trace
+        row["continuous_from_previous"] for row in continuous.branches[0].loop_stability_trace
     ] == [False, True]
 
     exchanged_cache = _prefill(tiny_model)
@@ -695,12 +793,8 @@ def test_loop_diagnostics_reset_derivatives_after_exchange(tiny_model):
         max_steps=2,
         fixed_depth=True,
     )
-    assert exchanged.step_all(
-        runner, exchanged_cache, P_END, C_START, budget=budget
-    )
-    assert exchanged.step_all(
-        runner, exchanged_cache, P_END, C_START, budget=budget
-    )
+    assert exchanged.step_all(runner, exchanged_cache, P_END, C_START, budget=budget)
+    assert exchanged.step_all(runner, exchanged_cache, P_END, C_START, budget=budget)
     for branch in exchanged.branches:
         trail = branch.loop_stability_trace
         assert [row["continuous_from_previous"] for row in trail] == [False, False]
@@ -745,9 +839,9 @@ def test_exchange_consensus_is_causally_discounted_by_support_weights(tiny_model
     assert equal.exchange(sync_kind="test", sync_id="equal-support") is True
     assert discounted.exchange(sync_kind="test", sync_id="discounted-support") is True
 
-    assert not bool(
-        mx.allclose(equal.branches[0].z, discounted.branches[0].z)
-    ), "correlation weights must change the exchanged neural state"
+    assert not bool(mx.allclose(equal.branches[0].z, discounted.branches[0].z)), (
+        "correlation weights must change the exchanged neural state"
+    )
 
 
 def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
@@ -805,8 +899,7 @@ def test_exchange_trace_excludes_mailbox_and_context_and_marks_generations(
     assert first["first_answer_text_exposed"] is False
     assert first["message_representation"] == "latent_tensor_only"
     assert all(
-        row["non_comm_pre_sha256"] == row["non_comm_post_sha256"]
-        for row in first["recipient_rows"]
+        row["non_comm_pre_sha256"] == row["non_comm_post_sha256"] for row in first["recipient_rows"]
     )
     validate_branch_exchange_trace(
         trace,
@@ -953,13 +1046,9 @@ def test_bytecode_validation_rejects_malformed_programs():
     with pytest.raises(ValueError, match="kind must be one of"):
         LayerSchedule.from_dict({"ops": [{"kind": "teleport"}]})
     with pytest.raises(ValueError, match="revert_on_drop only applies"):
-        LayerSchedule.from_dict(
-            {"ops": [{"kind": "exchange", "revert_on_drop": True}]}
-        )
+        LayerSchedule.from_dict({"ops": [{"kind": "exchange", "revert_on_drop": True}]})
     with pytest.raises(ValueError, match="unknown keys"):
-        LayerSchedule.from_dict(
-            {"ops": [{"kind": "savepoint", "start": 2}]}
-        )
+        LayerSchedule.from_dict({"ops": [{"kind": "savepoint", "start": 2}]})
     # revert_on_drop without a preceding savepoint is invalid.
     naked = LayerSchedule.from_dict(
         {
@@ -972,19 +1061,11 @@ def test_bytecode_validation_rejects_malformed_programs():
     problems = naked.validate(prelude_end=2, coda_start=6)
     assert any("preceding savepoint" in p for p in problems)
     # A program of only bytecode ops computes nothing.
-    inert = LayerSchedule.from_dict(
-        {"ops": [{"kind": "savepoint"}, {"kind": "exchange"}]}
-    )
-    assert any(
-        "at least one window op" in p
-        for p in inert.validate(prelude_end=2, coda_start=6)
-    )
+    inert = LayerSchedule.from_dict({"ops": [{"kind": "savepoint"}, {"kind": "exchange"}]})
+    assert any("at least one window op" in p for p in inert.validate(prelude_end=2, coda_start=6))
     # Probe budget is bounded.
     flood = LayerSchedule.from_dict(
-        {
-            "ops": [{"start": 2, "end": 6}]
-            + [{"kind": "verify_probe"} for _ in range(5)]
-        }
+        {"ops": [{"start": 2, "end": 6}] + [{"kind": "verify_probe"} for _ in range(5)]}
     )
     assert any("probe budget" in p for p in flood.validate(prelude_end=2, coda_start=6))
 
@@ -1012,9 +1093,7 @@ def test_bytecode_program_executes_and_traces(tiny_model):
         _ProbeTokenizer(),
         config=CortexConfig(
             workspace=WorkspaceConfig(n_slots=4, seed=7),
-            recurrence=RecurrenceConfig(
-                max_steps=8, min_steps=1, convergence_eps=1e-9
-            ),
+            recurrence=RecurrenceConfig(max_steps=8, min_steps=1, convergence_eps=1e-9),
             branches=BranchConfig(n_branches=2),
             decode_max_tokens=4,
             schedule={
@@ -1030,9 +1109,7 @@ def test_bytecode_program_executes_and_traces(tiny_model):
             },
         ),
     )
-    result = engine.reason(
-        token_ids=[5, 9, 17, 3, 42], budget=ComputeBudget(), verifier=verifier
-    )
+    result = engine.reason(token_ids=[5, 9, 17, 3, 42], budget=ComputeBudget(), verifier=verifier)
     assert result.ok
     events = result.receipt.bytecode_events
     kinds = [event["kind"] for event in events]
