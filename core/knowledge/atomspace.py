@@ -94,6 +94,34 @@ def deduction_tv(ab: TruthValue, bc: TruthValue, b: TruthValue, c: TruthValue) -
     return TruthValue(_clamp01(s_ac), min(ab.count, bc.count) * _DEDUCTION_DISCOUNT)
 
 
+def inversion_tv(ab: TruthValue, a: TruthValue, b: TruthValue) -> TruthValue:
+    """PLN inversion (Bayes): from A→B derive B→A.
+
+    ``sBA = sAB·sA/sB`` with node prevalences (0.5 when unknown). Inverted
+    knowledge is weaker than observed knowledge, so the count is discounted
+    harder than deduction's.
+    """
+    s_b = b.strength if b.strength > 1e-9 else 0.5
+    s_ba = ab.strength * (a.strength if a.strength > 0 else 0.5) / s_b
+    return TruthValue(_clamp01(s_ba), ab.count * _DEDUCTION_DISCOUNT * 0.8)
+
+
+def abduction_tv(
+    ac: TruthValue, bc: TruthValue, a: TruthValue, b: TruthValue, c: TruthValue
+) -> TruthValue:
+    """PLN abduction: from A→C and B→C derive A→B (invert B→C, then deduce)."""
+    cb = inversion_tv(bc, b, c)
+    return deduction_tv(ac, cb, c, b)
+
+
+def induction_tv(
+    ab: TruthValue, ac: TruthValue, a: TruthValue, b: TruthValue, c: TruthValue
+) -> TruthValue:
+    """PLN induction: from A→B and A→C derive B→C (invert A→B, then deduce)."""
+    ba = inversion_tv(ab, a, b)
+    return deduction_tv(ba, ac, a, c)
+
+
 # ── Atoms: the typed metagraph vocabulary ─────────────────────────────────
 
 class Atom:
@@ -139,6 +167,7 @@ IMPLICATION = "Implication"
 INHERITANCE = "Inheritance"
 EVALUATION = "Evaluation"
 LIST = "List"
+HEBBIAN = "Hebbian"
 
 
 def concept(name: str) -> Node:
@@ -435,8 +464,9 @@ class AtomSpace:
         """Diffuse a fraction of focus atoms' STI to their graph neighbors.
 
         This is ECAN's importance spreading: salience flows along structure,
-        so what is *related to* the current focus becomes findable next.
-        Returns the total STI moved.
+        preferring strong Hebbian associations (learned co-activation) over
+        plain syntactic adjacency, so what usually mattered *together with*
+        the current focus becomes findable next. Returns the total STI moved.
         """
         moved = 0.0
         with self._lock:
@@ -446,14 +476,23 @@ class AtomSpace:
                 if sti > 0 and atom in self._records
             ]
             for rec in focus:
-                neighbors = [self._records[n] for n in self._neighbors_locked(rec.atom) if n in self._records]
+                neighbors = [
+                    self._records[n]
+                    for n in self._neighbors_locked(rec.atom)
+                    if n in self._records
+                    and not (isinstance(n, Link) and n.atype == HEBBIAN)
+                ]
                 if not neighbors:
                     continue
+                weights = [
+                    1.0 + 4.0 * self._hebbian_weight_locked(rec.atom, n.atom)
+                    for n in neighbors
+                ]
+                total_weight = sum(weights)
                 share = rec.av.sti * self._spread_fraction
                 rec.av.sti -= share
-                per = share / len(neighbors)
-                for n in neighbors:
-                    n.av.sti += per
+                for n, w in zip(neighbors, weights):
+                    n.av.sti += share * (w / total_weight)
                 moved += share
         return moved
 
@@ -512,65 +551,124 @@ class AtomSpace:
                 if inc:
                     inc.discard(atom)
 
+    def form_hebbian_links(self, *, max_pairs: int = 10) -> list[Link]:
+        """ECAN Hebbian learning: link atoms that hold the focus *together*.
+
+        Co-occurrence in the attentional focus is evidence of association;
+        each co-focus tick revises the pair's Hebbian link upward. Spreading
+        then prefers strong Hebbian paths, so attention learns the organism's
+        actual co-activation structure instead of only static syntax.
+        """
+        formed: list[Link] = []
+        focus = [
+            atom
+            for atom, _ in self.attentional_focus()
+            if not (isinstance(atom, Link) and atom.atype == HEBBIAN)
+        ]
+        pairs = 0
+        for i, a in enumerate(focus):
+            for b in focus[i + 1:]:
+                if pairs >= max_pairs:
+                    return formed
+                key = (a, b) if str(a) <= str(b) else (b, a)
+                link = Link(HEBBIAN, key)
+                self.add(link, TruthValue(1.0, 0.25))
+                formed.append(link)
+                pairs += 1
+        return formed
+
+    def _hebbian_weight_locked(self, a: Atom, b: Atom) -> float:
+        key = (a, b) if str(a) <= str(b) else (b, a)
+        rec = self._records.get(Link(HEBBIAN, key))
+        if rec is None:
+            return 0.0
+        return rec.tv.strength * rec.tv.confidence
+
     def tick(self) -> dict[str, float]:
-        """One attention-economy cycle: rent, spreading, forgetting."""
+        """One attention-economy cycle: rent, spreading, Hebbian, forgetting."""
         rent = self.collect_rent()
         moved = self.spread_importance()
+        hebbian = self.form_hebbian_links()
         evicted = self.forget()
-        return {"rent_collected": rent, "sti_spread": moved, "forgotten": float(len(evicted))}
+        return {
+            "rent_collected": rent,
+            "sti_spread": moved,
+            "hebbian_formed": float(len(hebbian)),
+            "forgotten": float(len(evicted)),
+        }
 
-    # ── PLN forward chaining (economic inference control) ─────────────
+    # ── PLN inference: universal rewrite rules, economically controlled ─
 
-    def forward_chain(self, *, max_derivations: int = 16, focus_only: bool = True) -> list[Link]:
-        """Derive new implications by PLN deduction: A→B, B→C ⇒ A→C.
+    def apply_rules(
+        self,
+        rules: Sequence["InferenceRule"],
+        *,
+        max_derivations: int = 16,
+        focus_only: bool = True,
+    ) -> list[Atom]:
+        """Fire pattern-based inference rules over the metagraph.
 
-        With ``focus_only`` (the ECAN synergy), only implications whose
-        midpoint is in the attentional focus are expanded — inference effort
-        follows salience instead of scanning the whole graph. Derived links
-        enter the space via revision and receive a small stimulus so useful
-        derivations can compound across cycles.
+        Each rule is (premise patterns, conclusion template, truth formula) —
+        the MeTTa/PLN architecture where inference *is* unification plus a
+        rewrite. With ``focus_only``, a rule instance only fires when one of
+        its bound premises (or a premise endpoint) is attentionally hot:
+        ECAN's economic inference control. Derivations enter via revision and
+        get a small stimulus so useful chains compound across cycles.
         """
-        derived: list[Link] = []
-        with self._lock:
-            implications = [
-                a for a in self._by_type.get(IMPLICATION, ())
-                if isinstance(a, Link) and len(a.outgoing) == 2
-            ]
-            if focus_only:
-                hot = {atom for atom, _ in self.attentional_focus()}
-                candidates = [lk for lk in implications if lk.outgoing[1] in hot or lk in hot]
-            else:
-                candidates = implications
-            by_source: dict[Atom, list[Link]] = {}
-            for link in implications:
-                by_source.setdefault(link.outgoing[0], []).append(link)
-            for ab in candidates:
+        derived: list[Atom] = []
+        hot: set[Atom] = set()
+        if focus_only:
+            for atom, _ in self.attentional_focus():
+                hot.add(atom)
+                if isinstance(atom, Link):
+                    hot.update(atom.outgoing)
+        for rule in rules:
+            if len(derived) >= max_derivations:
+                break
+            for binding in self.query(list(rule.premises)):
                 if len(derived) >= max_derivations:
                     break
-                b_atom = ab.outgoing[1]
-                for bc in by_source.get(b_atom, ()):
-                    if len(derived) >= max_derivations:
-                        break
-                    a_atom, c_atom = ab.outgoing[0], bc.outgoing[1]
-                    if a_atom == c_atom:
-                        continue
-                    ac = Link(IMPLICATION, (a_atom, c_atom))
-                    tv_ab = self._records[ab].tv
-                    tv_bc = self._records[bc].tv
-                    tv_b = self._records.get(b_atom, _Record(b_atom, TruthValue())).tv
-                    tv_c = self._records.get(c_atom, _Record(c_atom, TruthValue())).tv
-                    new_tv = deduction_tv(tv_ab, tv_bc, tv_b, tv_c)
-                    if new_tv.count <= 0.0:
-                        continue
-                    already = self._records.get(ac)
+                premise_atoms = [substitute(p, binding) for p in rule.premises]
+                if focus_only and not any(
+                    p in hot or (isinstance(p, Link) and any(o in hot for o in p.outgoing))
+                    for p in premise_atoms
+                ):
+                    continue
+                conclusion = substitute(rule.conclusion, binding)
+                if not _pattern_is_ground(conclusion) or conclusion in premise_atoms:
+                    continue
+                if isinstance(conclusion, Link) and len(set(conclusion.outgoing)) < len(conclusion.outgoing):
+                    continue  # degenerate (self-implication etc.)
+                premise_tvs = tuple(
+                    self.get_tv(p) or TruthValue() for p in premise_atoms
+                )
+                new_tv = rule.tv_fn(self, binding, premise_tvs)
+                if new_tv is None or new_tv.count <= 0.0:
+                    continue
+                with self._lock:
+                    already = self._records.get(conclusion)
                     if already is not None and already.tv.count >= new_tv.count:
                         continue
-                    self._add_locked(ac, new_tv)
-                    derived.append(ac)
-            self._derived_total += len(derived)
-        for link in derived:
-            self.stimulate(link, self._stimulus_size * 0.25)
+                    self._add_locked(conclusion, new_tv)
+                    self._derived_total += 1
+                derived.append(conclusion)
+        for atom in derived:
+            self.stimulate(atom, self._stimulus_size * 0.25)
         return derived
+
+    def forward_chain(
+        self,
+        *,
+        max_derivations: int = 16,
+        focus_only: bool = True,
+        rules: Sequence["InferenceRule"] | None = None,
+    ) -> list[Atom]:
+        """One bounded forward-chaining pass with the standard PLN rule set."""
+        return self.apply_rules(
+            rules if rules is not None else standard_pln_rules(),
+            max_derivations=max_derivations,
+            focus_only=focus_only,
+        )
 
     # ── introspection ─────────────────────────────────────────────────
 
@@ -584,6 +682,80 @@ class AtomSpace:
                 "forgotten_total": self._forgotten_total,
                 "derived_total": self._derived_total,
             }
+
+
+# ── Inference rules: unification + rewrite + truth formula ────────────────
+
+@dataclass(frozen=True)
+class InferenceRule:
+    """A pattern-based inference rule (the MeTTa/PLN shape).
+
+    ``premises`` are patterns (may share Variables), ``conclusion`` is a
+    template over the same variables, and ``tv_fn`` computes the derived
+    truth value from the space, the binding, and the premise TVs (returning
+    None to veto the instance).
+    """
+
+    name: str
+    premises: tuple[Atom, ...]
+    conclusion: Atom
+    tv_fn: Callable[["AtomSpace", Bindings, tuple[TruthValue, ...]], TruthValue | None]
+
+
+def _node_tv(space: "AtomSpace", binding: Bindings, var: str) -> TruthValue:
+    atom = binding.get(var)
+    if atom is None:
+        return TruthValue()
+    return space.get_tv(atom) or TruthValue()
+
+
+def _rule_deduction() -> InferenceRule:
+    a, b, c = Variable("a"), Variable("b"), Variable("c")
+    return InferenceRule(
+        name="pln.deduction",
+        premises=(Link(IMPLICATION, (a, b)), Link(IMPLICATION, (b, c))),
+        conclusion=Link(IMPLICATION, (a, c)),
+        tv_fn=lambda space, bind, tvs: deduction_tv(
+            tvs[0], tvs[1], _node_tv(space, bind, "b"), _node_tv(space, bind, "c")
+        ),
+    )
+
+
+def _rule_abduction() -> InferenceRule:
+    a, b, c = Variable("a"), Variable("b"), Variable("c")
+    return InferenceRule(
+        name="pln.abduction",
+        premises=(Link(IMPLICATION, (a, c)), Link(IMPLICATION, (b, c))),
+        conclusion=Link(IMPLICATION, (a, b)),
+        tv_fn=lambda space, bind, tvs: abduction_tv(
+            tvs[0],
+            tvs[1],
+            _node_tv(space, bind, "a"),
+            _node_tv(space, bind, "b"),
+            _node_tv(space, bind, "c"),
+        ),
+    )
+
+
+def _rule_induction() -> InferenceRule:
+    a, b, c = Variable("a"), Variable("b"), Variable("c")
+    return InferenceRule(
+        name="pln.induction",
+        premises=(Link(IMPLICATION, (a, b)), Link(IMPLICATION, (a, c))),
+        conclusion=Link(IMPLICATION, (b, c)),
+        tv_fn=lambda space, bind, tvs: induction_tv(
+            tvs[0],
+            tvs[1],
+            _node_tv(space, bind, "a"),
+            _node_tv(space, bind, "b"),
+            _node_tv(space, bind, "c"),
+        ),
+    )
+
+
+def standard_pln_rules() -> tuple[InferenceRule, ...]:
+    """The default live rule set: deduction, abduction, induction."""
+    return (_rule_deduction(), _rule_abduction(), _rule_induction())
 
 
 # ── Claim bridge: NL beliefs → atoms (shared encoding with the prover) ────
@@ -664,22 +836,28 @@ __all__ = [
     "CONCEPT",
     "EVALUATION",
     "GROUNDED_PREDICATE",
+    "HEBBIAN",
     "IMPLICATION",
     "INHERITANCE",
+    "InferenceRule",
     "LIST",
     "Link",
     "Node",
     "PREDICATE",
     "TruthValue",
     "Variable",
+    "abduction_tv",
     "assert_claim",
     "concept",
     "deduction_tv",
     "evaluation",
     "get_atomspace",
     "implication",
+    "induction_tv",
+    "inversion_tv",
     "predicate",
     "reset_atomspace_for_test",
+    "standard_pln_rules",
     "substitute",
     "unify",
 ]

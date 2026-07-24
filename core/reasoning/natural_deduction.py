@@ -104,6 +104,42 @@ def implies(a: Formula, b: Formula) -> Implies:
     return Implies(a, b)
 
 
+# ── Structured (de)serialization — proof/certificate portability ──────────
+
+def formula_to_dict(f: Formula) -> dict[str, object]:
+    """Lossless structural encoding (for stored/replayable certificates)."""
+    if isinstance(f, Atom):
+        return {"t": "atom", "name": f.name}
+    if isinstance(f, Bot):
+        return {"t": "bot"}
+    if isinstance(f, Not):
+        return {"t": "not", "f": formula_to_dict(f.f)}
+    if isinstance(f, And):
+        return {"t": "and", "a": formula_to_dict(f.a), "b": formula_to_dict(f.b)}
+    if isinstance(f, Or):
+        return {"t": "or", "a": formula_to_dict(f.a), "b": formula_to_dict(f.b)}
+    if isinstance(f, Implies):
+        return {"t": "implies", "a": formula_to_dict(f.a), "b": formula_to_dict(f.b)}
+    raise ValueError(f"unknown formula node: {type(f).__name__}")
+
+
+def formula_from_dict(data: dict[str, object]) -> Formula:
+    kind = data.get("t")
+    if kind == "atom":
+        return Atom(str(data["name"]))
+    if kind == "bot":
+        return Bot()
+    if kind == "not":
+        return Not(formula_from_dict(data["f"]))  # type: ignore[arg-type]
+    if kind == "and":
+        return And(formula_from_dict(data["a"]), formula_from_dict(data["b"]))  # type: ignore[arg-type]
+    if kind == "or":
+        return Or(formula_from_dict(data["a"]), formula_from_dict(data["b"]))  # type: ignore[arg-type]
+    if kind == "implies":
+        return Implies(formula_from_dict(data["a"]), formula_from_dict(data["b"]))  # type: ignore[arg-type]
+    raise ValueError(f"unknown formula encoding: {kind!r}")
+
+
 # ── Parser (ergonomics for beliefs/tests) ─────────────────────────────────
 # Grammar (low→high precedence): <-> , -> , | , & , ~ , atoms / parens.
 # Accepts ~ ! ¬ for not; & ∧ for and; | ∨ for or; -> → for implies; <-> ↔ iff.
@@ -222,6 +258,22 @@ class CertStep:
 
     def node_count(self) -> int:
         return 1 + sum(c.node_count() for c in self.children)
+
+    def to_dict(self) -> dict[str, object]:
+        """Lossless encoding so certificates can be stored and re-checked later."""
+        return {
+            "kind": self.kind,
+            "target": formula_to_dict(self.target),
+            "children": [c.to_dict() for c in self.children],
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, object]) -> "CertStep":
+        return CertStep(
+            kind=str(data["kind"]),
+            target=formula_from_dict(data["target"]),  # type: ignore[arg-type]
+            children=tuple(CertStep.from_dict(c) for c in data.get("children", ())),  # type: ignore[union-attr]
+        )
 
 
 @dataclass

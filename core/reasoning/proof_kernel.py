@@ -30,7 +30,7 @@ import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from core.reasoning.natural_deduction import (
     And,
@@ -42,6 +42,8 @@ from core.reasoning.natural_deduction import (
     Not,
     Or,
     Proof,
+    formula_from_dict,
+    formula_to_dict,
     parse,
     prove,
 )
@@ -206,6 +208,46 @@ def check_proof(
     )
 
 
+# ── Universal checker registry ────────────────────────────────────────────
+# The kernel discipline is engine-agnostic: any proof engine that emits a
+# checkable certificate registers an independent checker here and gains the
+# same fail-closed verification, axiom audit, and ledger bookkeeping. The
+# tableau checker is the first citizen; resolution/SMT-trace checkers can
+# join without touching the ledger or its consumers.
+
+CheckerFn = Callable[[Sequence[Formula], Formula, Any], KernelVerdict]
+
+_checker_lock = threading.Lock()
+_checkers: dict[str, CheckerFn] = {}
+
+
+def register_checker(method: str, checker: CheckerFn) -> None:
+    with _checker_lock:
+        _checkers[method] = checker
+
+
+def registered_checkers() -> list[str]:
+    with _checker_lock:
+        return sorted(_checkers)
+
+
+def check_certificate(
+    method: str,
+    premises: Sequence[Formula],
+    goal: Formula,
+    certificate: Any,
+) -> KernelVerdict:
+    """Dispatch a certificate to the registered checker for its proof method."""
+    with _checker_lock:
+        checker = _checkers.get(method)
+    if checker is None:
+        return KernelVerdict(False, f"no kernel checker registered for method {method!r}")
+    return checker(premises, goal, certificate)
+
+
+register_checker("analytic_tableau", check_proof)
+
+
 # ── Theorem ledger: axiom audit + admitted (sorry) discipline ─────────────
 
 @dataclass(frozen=True)
@@ -283,6 +325,10 @@ class TheoremLedger:
         self._lock = threading.Lock()
         self._admitted: dict[str, AdmittedClaim] = {}
         self._theorems: dict[str, Theorem] = {}
+        # Replay store: full structural encodings so every recorded theorem
+        # can be re-checked from scratch later (Lean's "re-elaborate the
+        # olean" discipline — trust nothing that cannot be re-verified).
+        self._replayable: dict[str, dict[str, Any]] = {}
         self._kernel_checks = 0
         self._kernel_rejections = 0
         self._discharged = 0
@@ -371,10 +417,63 @@ class TheoremLedger:
                 checked_at=time.time(),
             )
             self._theorems[goal_key] = theorem
+            self._replayable[theorem.theorem_id] = {
+                "method": "analytic_tableau",
+                "goal": formula_to_dict(goal),
+                "premises": [formula_to_dict(p) for p in premises],
+                "certificate": certificate.to_dict(),
+                "certificate_sha256": theorem.certificate_sha256,
+            }
             if not deps and goal_key in self._admitted:
                 del self._admitted[goal_key]
                 self._discharged += 1
             return theorem
+
+    # ── replay: nothing recorded is beyond re-verification ────────────
+
+    def export_replayable(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        """Structural encodings of recorded theorems, most recent first."""
+        with self._lock:
+            items = sorted(
+                self._replayable.items(),
+                key=lambda kv: self._theorem_checked_at(kv[0]),
+                reverse=True,
+            )
+        out = [dict(v, theorem_id=k) for k, v in items]
+        return out[:limit] if limit is not None else out
+
+    def _theorem_checked_at(self, theorem_id: str) -> float:
+        for t in self._theorems.values():
+            if t.theorem_id == theorem_id:
+                return t.checked_at
+        return 0.0
+
+    def replay(self, *, limit: int | None = None) -> dict[str, Any]:
+        """Re-check recorded certificates from their stored encodings.
+
+        Deserializes every certificate and runs it back through the kernel —
+        a stored theorem that no longer re-verifies (corruption, drift, or a
+        historical checker bug) is surfaced, never silently kept.
+        """
+        from core.reasoning.natural_deduction import CertStep
+
+        checked = 0
+        failed: list[str] = []
+        for entry in self.export_replayable(limit=limit):
+            try:
+                goal = formula_from_dict(entry["goal"])
+                premises = [formula_from_dict(p) for p in entry["premises"]]
+                cert = CertStep.from_dict(entry["certificate"])
+                if _cert_fingerprint(cert) != entry["certificate_sha256"]:
+                    failed.append(str(entry["theorem_id"]))
+                    continue
+                verdict = check_certificate(str(entry["method"]), premises, goal, cert)
+                if not verdict.verified:
+                    failed.append(str(entry["theorem_id"]))
+            except (ValueError, TypeError, KeyError):
+                failed.append(str(entry.get("theorem_id", "?")))
+            checked += 1
+        return {"checked": checked, "failed": failed, "ok": not failed}
 
     # ── queries (the #print axioms surface) ───────────────────────────
 
@@ -501,7 +600,7 @@ def prove_certified(
             verdict=KernelVerdict(False, "no certificate produced (search budget fallback)"),
         )
 
-    verdict = check_proof(prem, goal_f, proof.certificate)
+    verdict = check_certificate(proof.method, prem, goal_f, proof.certificate)
     reg.note_check(verdict.verified)
     if not verdict.verified:
         try:
@@ -540,9 +639,12 @@ __all__ = [
     "KernelVerdict",
     "Theorem",
     "TheoremLedger",
+    "check_certificate",
     "check_proof",
     "get_theorem_ledger",
     "prove_certified",
     "prove_certified_text",
+    "register_checker",
+    "registered_checkers",
     "reset_theorem_ledger_for_test",
 ]

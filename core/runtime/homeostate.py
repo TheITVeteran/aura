@@ -169,6 +169,47 @@ def compile_lowstate(specs: Sequence[StateSpec]) -> list[StateSpec]:
     return ordered
 
 
+# ── Grains: system facts (Salt's grains interface) ────────────────────────
+
+_grains_cache: dict[str, Any] | None = None
+
+
+def grains(*, refresh: bool = False) -> dict[str, Any]:
+    """Static facts about the host this runtime lives on (cached).
+
+    Salt's grains: cheap, stable facts states and beacons can consult and
+    events can carry, so every convergence report is grounded in *which body*
+    it ran on.
+    """
+    global _grains_cache
+    if _grains_cache is not None and not refresh:
+        return dict(_grains_cache)
+    import os
+    import platform
+    import sys
+
+    facts: dict[str, Any] = {
+        "os": platform.system().lower(),
+        "os_release": platform.release(),
+        "machine": platform.machine(),
+        "hostname": platform.node(),
+        "python_version": platform.python_version(),
+        "python_executable": sys.executable,
+        "pid": os.getpid(),
+        "cpu_count": os.cpu_count() or 0,
+    }
+    try:
+        import psutil
+
+        vm = psutil.virtual_memory()
+        facts["memory_total_gb"] = round(vm.total / (1024 ** 3), 2)
+        facts["memory_available_gb"] = round(vm.available / (1024 ** 3), 2)
+    except (ImportError, OSError, RuntimeError):
+        pass
+    _grains_cache = facts
+    return dict(facts)
+
+
 # ── State function registry + built-in modules ────────────────────────────
 
 # A state function receives (test: bool, watch_triggered: bool, **args) and
@@ -197,6 +238,50 @@ class StateModuleRegistry:
     def _register_builtins(self) -> None:
         self.register("file.directory", _state_file_directory)
         self.register("service.available", _state_service_available)
+        self.register("check.predicate", _state_check_predicate)
+        self.register("remedy.callable", _state_remedy_callable)
+
+
+# Universal extension points: named predicates (pure checks) and remedies
+# (governed repair actions). Only pre-registered callables can run — a spec
+# can never smuggle arbitrary code in through args.
+_check_predicates: dict[str, Callable[[], bool]] = {}
+_remedies: dict[str, Callable[[bool], Mapping[str, Any]]] = {}
+
+
+def register_check_predicate(name: str, fn: Callable[[], bool]) -> None:
+    _check_predicates[name] = fn
+
+
+def register_remedy(name: str, fn: Callable[[bool], Mapping[str, Any]]) -> None:
+    """Register a remedy: ``fn(test) -> {result, changes, comment}``."""
+    _remedies[name] = fn
+
+
+def _state_check_predicate(
+    test: bool = False, watch_triggered: bool = False, *, name: str, **_: Any
+) -> dict[str, Any]:
+    """Evaluate a registered pure predicate; never mutates (test-mode equal)."""
+    fn = _check_predicates.get(name)
+    if fn is None:
+        return {"result": False, "changes": {}, "comment": f"unknown check predicate {name!r}"}
+    ok = bool(fn())
+    return {"result": ok, "changes": {}, "comment": f"check {name!r} {'passed' if ok else 'FAILED'}"}
+
+
+def _state_remedy_callable(
+    test: bool = False, watch_triggered: bool = False, *, name: str, **_: Any
+) -> dict[str, Any]:
+    """Run a registered remedy (idempotent repair action), honoring dry-run."""
+    fn = _remedies.get(name)
+    if fn is None:
+        return {"result": False, "changes": {}, "comment": f"unknown remedy {name!r}"}
+    raw = fn(test)
+    return {
+        "result": bool(raw.get("result")),
+        "changes": dict(raw.get("changes") or {}),
+        "comment": str(raw.get("comment") or ""),
+    }
 
 
 def _state_file_directory(
@@ -286,6 +371,21 @@ class HomeostateEngine:
             finished_at=time.time(),
         )
         self._last_reports[name] = report
+        # Surface convergence truthfully in the subsystem health registry:
+        # a failed highstate is a degraded runtime shape, not a hidden retry.
+        try:
+            from core.runtime.errors import get_subsystem_registry
+
+            health = get_subsystem_registry().register(f"homeostate.{name}")
+            if report.ok:
+                health.mark_ok()
+            else:
+                health.mark_degraded(
+                    f"failed states: {report.failed}",
+                    impact="declared runtime baseline not fully converged",
+                )
+        except (ImportError, RuntimeError, AttributeError, TypeError):
+            pass
         if report.failed:
             record_degradation(
                 "homeostate",
@@ -410,6 +510,7 @@ class DegradationBeacon:
                     "serious_count": serious,
                     "window_s": self.window_s,
                     "counts": dict(by_severity),
+                    "grains": grains(),
                 }
             )
         return events
@@ -570,6 +671,18 @@ def install_default_catalog(engine: HomeostateEngine) -> None:
 
     data_dir = Path(getattr(config.paths, "data_dir", Path("data")))
     error_root = data_dir / "error_logs"
+
+    # Cross-fusion trust leg: the baseline includes replaying the proof
+    # kernel's theorem ledger — every stored proof must still re-verify from
+    # its serialized certificate. Runs at boot and on every reactor
+    # re-convergence, so ledger integrity is continuously demonstrated.
+    def _proof_kernel_replay_ok() -> bool:
+        from core.reasoning.proof_kernel import get_theorem_ledger
+
+        return bool(get_theorem_ledger().replay(limit=64)["ok"])
+
+    register_check_predicate("proof_kernel_replay", _proof_kernel_replay_ok)
+
     engine.define(
         "runtime_baseline",
         [
@@ -596,6 +709,12 @@ def install_default_catalog(engine: HomeostateEngine) -> None:
             StateSpec(id="atomspace_available", fn="service.available", args={"name": "atomspace"}),
             StateSpec(
                 id="proof_kernel_available", fn="service.available", args={"name": "proof_kernel"}
+            ),
+            StateSpec(
+                id="proof_kernel_replay",
+                fn="check.predicate",
+                args={"name": "proof_kernel_replay"},
+                require=("proof_kernel_available",),
             ),
         ],
     )
@@ -690,7 +809,10 @@ __all__ = [
     "get_degradation_beacon",
     "get_homeostate_engine",
     "get_homeostate_reactor",
+    "grains",
     "install_default_catalog",
+    "register_check_predicate",
+    "register_remedy",
     "reset_homeostate_for_test",
     "start_homeostate_runtime",
 ]
