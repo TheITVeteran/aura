@@ -155,6 +155,16 @@ Every identifier appears exactly once in that map. `PARTIAL` means substantive
 code exists but the named acceptance contract is not closed. It does not count
 as half a checkbox.
 
+### Active ownership claims (agent coordination)
+
+- **SPARK-002, SPARK-003, SPARK-004, SPARK-013 are CLAIMED and in progress by
+  the Fable session (Bryan-directed), starting 2026-07-23 19:15 PT.** These are
+  the four items the sequential march has skipped since CP318; Bryan assigned
+  them out-of-band to close the SPARK-069 admission prerequisites (004, 013)
+  and the contract legs (002, 003) in parallel with the march. Other agents:
+  please do not take these four items; take the next unchecked item outside
+  this set. This block will be removed when the claims resolve.
+
 | Checkpoints | Primary implementation owners | Live integration owners |
 |---|---|---|
 | SPARK-001-004, SPARK-069-072 | `docs/RLC_SPARK_EXECUTION_LEDGER.md`, `tools/prepare_resident_recurrent_grpo_campaign.py`, `core/brain/llm/latent_cortex/frontier_certification.py`, proof/lab tools | installed-app resident worker, sealed artifact and external-verifier paths |
