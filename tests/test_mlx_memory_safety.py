@@ -454,20 +454,106 @@ def test_worker_memory_sentinel_clamps_override_in_desktop_safe_boot(monkeypatch
     assert sentinel_32b._worker_rss_limit_gb(64.0) <= 36.0
 
 
-def test_desktop_safe_boot_disables_primary_prompt_cache_retention(monkeypatch):
-    from core.brain.llm.mlx_worker import _prompt_cache_entry_budget_for_model
+def test_desktop_safe_boot_keeps_bounded_primary_prompt_cache(monkeypatch):
+    """The guard bounds the cache instead of zeroing it.
+
+    Budget 0 under the desktop guard forced every conversation turn to
+    re-prefill the whole history; per-turn latency grew with context and
+    the endurance runs saturated to the turn timeout by turn ~9-15 (the
+    "15-turn resident ceiling", endurance-0715-clean). RAM stays bounded
+    by the per-entry token cap (~256KB/token of KV at 32B geometry).
+    """
+    from core.brain.llm.mlx_worker import (
+        _prompt_cache_entry_budget_for_model,
+        _prompt_cache_entry_token_cap_for_model,
+    )
 
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
 
-    assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 0
+    assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 2
+    assert _prompt_cache_entry_token_cap_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 6144
+    # The 72B lane stays cacheless: its KV would dwarf the envelope.
+    assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-72B-Instruct-4bit") == 0
 
 
-def test_clean_user_surface_bypasses_worker_prompt_cache():
-    from core.brain.llm.mlx_worker import _job_requires_prompt_cache_bypass
+def test_probe_and_proof_lanes_bypass_but_user_surface_reuses():
+    """Probes/proof contracts never touch the cache; user turns may.
 
-    assert _job_requires_prompt_cache_bypass({"clean_user_surface_contract": True}) is True
+    clean_user_surface_contract used to force a bypass — but every live
+    user turn carries it, so the conversation path could never reuse KV
+    and each turn re-prefilled the entire history. User turns now get a
+    partitioned scope instead of no cache.
+    """
+    from core.brain.llm.mlx_worker import (
+        _job_requires_prompt_cache_bypass,
+        _prompt_cache_scope_for_job,
+    )
+
+    assert _job_requires_prompt_cache_bypass({"health_probe": True}) is True
     assert _job_requires_prompt_cache_bypass({"proof_evaluation_contract": True}) is True
+    assert _job_requires_prompt_cache_bypass({"strict_answer_contract": True}) is True
+    assert _job_requires_prompt_cache_bypass({"clean_user_surface_contract": True}) is False
     assert _job_requires_prompt_cache_bypass({"action": "generate"}) is False
+
+    assert _prompt_cache_scope_for_job({"clean_user_surface_contract": True}) == "user_surface"
+    assert _prompt_cache_scope_for_job({"action": "generate"}) == "default"
+
+
+def test_prompt_cache_scopes_are_partitioned_and_entries_capped():
+    """A default-scope entry must be invisible to the user-surface scope,
+    and an over-cap prompt must not be retained."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=2, max_entry_tokens=4)
+    fake_cache = ["kv"]
+    default_key = (1, "default")
+    surface_key = (1, "user_surface")
+
+    lru.insert_cache(default_key, [1, 2, 3], fake_cache)
+    hit, remaining = lru.fetch_nearest_cache(
+        surface_key, [1, 2, 3],
+        can_trim_prompt_cache=lambda _pc: False,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit is None and remaining == [1, 2, 3], (
+        "user-surface fetch must not see default-scope KV"
+    )
+    hit, remaining = lru.fetch_nearest_cache(
+        default_key, [1, 2, 3],
+        can_trim_prompt_cache=lambda _pc: False,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == fake_cache and remaining == []
+
+    lru.insert_cache(surface_key, [1, 2, 3, 4, 5], fake_cache)
+    hit, _ = lru.fetch_nearest_cache(
+        surface_key, [1, 2, 3, 4, 5],
+        can_trim_prompt_cache=lambda _pc: False,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit is None, "an over-cap prompt must not be retained"
+
+
+def test_prompt_cache_prefix_reuse_shrinks_the_next_turns_prefill():
+    """The endurance mechanism itself: turn N+1's prompt extends turn N's
+    prompt+reply, so only the NEW suffix should need prefill."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=2)
+    key = (7, "user_surface")
+    turn1_tokens = list(range(100))
+    lru.insert_cache(key, turn1_tokens, ["kv-turn1"])
+
+    turn2_tokens = turn1_tokens + list(range(1000, 1040))
+    hit, remaining = lru.fetch_nearest_cache(
+        key, turn2_tokens,
+        can_trim_prompt_cache=lambda _pc: False,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == ["kv-turn1"]
+    assert remaining == list(range(1000, 1040)), (
+        "prefill must shrink to the new turn's suffix, not the whole history"
+    )
 
 
 def test_optional_deep_solver_memory_refusal_stays_noncritical(monkeypatch):

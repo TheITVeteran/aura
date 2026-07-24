@@ -334,6 +334,16 @@ def _env_projected_footprint_gb(name: str) -> float | None:
     return value
 
 
+# Model artifacts are immutable while the runtime holds them (fusion
+# publishes a NEW directory), so their size is computed once per
+# (path, mtime) and reused. Uncached, this rglob+stat walk ran on the
+# EVENT LOOP inside model-load admission while 20GB of safetensors reads
+# saturated the disk — the 5.5-8.6s loop stalls captured in
+# data/error_logs/stalls/stall_1784673149 / stall_1784675621 bottom out
+# exactly here (pathlib stat under _projected_footprint_from_artifact_gb).
+_PATH_SIZE_CACHE: dict[tuple[str, int], float] = {}
+
+
 def _path_size_gb(model_path: str) -> float:
     path = Path(str(model_path or "")).expanduser()
     try:
@@ -341,6 +351,10 @@ def _path_size_gb(model_path: str) -> float:
             return float(path.stat().st_size) / float(1024**3)
         if not path.is_dir():
             return 0.0
+        cache_key = (str(path), path.stat().st_mtime_ns)
+        cached = _PATH_SIZE_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
         total = 0
         for child in path.rglob("*"):
             try:
@@ -348,7 +362,11 @@ def _path_size_gb(model_path: str) -> float:
                     total += child.stat().st_size
             except OSError:
                 continue
-        return float(total) / float(1024**3)
+        size_gb = float(total) / float(1024**3)
+        if len(_PATH_SIZE_CACHE) > 64:
+            _PATH_SIZE_CACHE.clear()
+        _PATH_SIZE_CACHE[cache_key] = size_gb
+        return size_gb
     except OSError:
         return 0.0
 
@@ -884,7 +902,13 @@ async def _model_load_admission_context(
         raise _ModelLoadAdmissionDeniedError("resource_admission_unavailable") from exc
 
     lane, qos = classify_lane(client.model_path)
-    request_gb = _declared_mlx_worker_footprint_gb(client.model_path)
+    # Off-loop: the footprint projection stats the whole model directory,
+    # and doing that on the event loop during a concurrent 20GB model read
+    # produced the recorded 5.5-8.6s admission stalls. The walk is also
+    # memoized, so this thread hop is cold-path only.
+    request_gb = await asyncio.to_thread(
+        _declared_mlx_worker_footprint_gb, client.model_path
+    )
     timeout_s = _model_load_admission_timeout_s(
         foreground_request=foreground_request
     )

@@ -179,15 +179,47 @@ def _surface_generation_contract_enabled(job: dict[str, Any]) -> bool:
 
 
 def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
-    """Return True for jobs where KV-cache retention would hurt reliability."""
+    """Return True for jobs that must neither read nor write the prompt cache.
+
+    Probes and proof/strict contracts stay bypassed: they are short,
+    non-conversational, and correctness-critical, and a probe must never
+    warm or poison the conversational cache (the Jul 20 probe-turn
+    contamination class).
+
+    ``clean_user_surface_contract`` is deliberately NOT in this list any
+    more. Every live user turn carries that contract, so bypassing it meant
+    the conversation path could never reuse KV: each turn re-prefilled the
+    entire history from token 0, per-turn latency grew linearly with
+    context, and the endurance runs saturated to the turn timeout by turn
+    ~9-15 (artifacts/reliability/runs/endurance-0715-clean: 11s → 25s →
+    105s → 216s ceiling). User-surface jobs now use their own cache scope
+    (see ``_prompt_cache_scope_for_job``) instead of no cache at all.
+    """
 
     return bool(
-        job.get("clean_user_surface_contract", False)
-        or job.get("health_probe", False)
+        job.get("health_probe", False)
         or job.get("strict_answer_contract", False)
         or job.get("strict_value_contract", False)
         or job.get("proof_evaluation_contract", False)
         or job.get("operator_evidence_contract", False)
+    )
+
+
+def _prompt_cache_scope_for_job(job: dict[str, Any]) -> str:
+    """Partition the prompt cache so lanes cannot cross-contaminate.
+
+    User-surface turns reuse only user-surface entries; everything else
+    (latent episodes, internal generation) shares the default scope. A
+    cached prefix is only ever KV for a byte-identical token prefix, so
+    within a scope "contamination" reduces to steering drift across turns
+    of the same conversation — the history as it was actually computed,
+    which is what a stateful conversation already is.
+    """
+
+    return (
+        "user_surface"
+        if job.get("clean_user_surface_contract", False)
+        else "default"
     )
 
 
@@ -2214,19 +2246,46 @@ def _should_emit_generation_progress(
 def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
     # Measured weight class (artifact evidence first): a renamed heavy model
     # previously inherited the 12-entry cache budget of an unknown small lane.
+    #
+    # The 32B budget is NOT zeroed under the desktop guard any more. Zeroing
+    # it (June 10 memory-ceiling era) forced every conversation turn to
+    # re-prefill the whole history from token 0; per-turn latency then grows
+    # with context and the endurance runs saturate to the turn timeout by
+    # turn ~9-15 — the "15-turn resident ceiling". RAM stays bounded by the
+    # per-entry token cap below (~256KB/token of KV on this geometry) plus
+    # the existing recovery-path clears; that is a far cheaper ceiling than
+    # a 90s+ full re-prefill that also trips the no-token JobWatchdog.
     from core.brain.llm.model_artifact_profile import model_size_class
-    from core.runtime.desktop_boot_safety import desktop_resource_guard_enabled
 
     weight_class = model_size_class(str(model_path or ""))
     if weight_class == "72b":
         return 0
     if weight_class == "32b":
-        if desktop_resource_guard_enabled():
-            return 0
         return 2
     if weight_class in ("14b", "7b"):
         return 6
     return 12
+
+
+def _prompt_cache_entry_token_cap_for_model(model_path: str) -> int:
+    """Longest prompt (in tokens) a single cache entry may retain.
+
+    The bound that makes a nonzero 32B budget safe under the desktop guard:
+    at 64 layers x 8 KV heads x 128 head-dim, fp16 K+V is ~256KB per token,
+    so 6144 tokens caps one entry near 1.5GB and the 2-entry budget near
+    3GB — visible, fixed, and small next to the ~20GB weights. Longer
+    conversations degrade gracefully to today's re-prefill behavior instead
+    of growing the cache without bound. 0 means uncapped (small models).
+    """
+
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    weight_class = model_size_class(str(model_path or ""))
+    if weight_class == "32b":
+        return 6144
+    if weight_class == "72b":
+        return 0
+    return 0
 
 class IPCWriterThread(threading.Thread):
     """
@@ -3041,9 +3100,13 @@ class _PromptCacheSearchResult:
 
 
 class _PromptCacheLRU:
-    def __init__(self, max_size: int = 12):
+    def __init__(self, max_size: int = 12, max_entry_tokens: int = 0):
         self.max_size = max_size
-        self._cache: dict[int, dict[Any, Any]] = {}
+        # 0 = uncapped. A positive cap refuses to RETAIN prompts longer than
+        # this many tokens, bounding per-entry KV RAM on heavy models while
+        # leaving generation itself untouched.
+        self.max_entry_tokens = max_entry_tokens
+        self._cache: dict[Any, dict[Any, Any]] = {}
         self._lru = deque()
 
     def clear(self) -> None:
@@ -3147,7 +3210,9 @@ class _PromptCacheLRU:
 
         return None, tokens
 
-    def insert_cache(self, model_key: int, tokens: list[int], prompt_cache: list[Any]) -> None:
+    def insert_cache(self, model_key: Any, tokens: list[int], prompt_cache: list[Any]) -> None:
+        if self.max_entry_tokens > 0 and len(tokens) > self.max_entry_tokens:
+            return
         if model_key not in self._cache:
             self._cache[model_key] = {}
         current = self._cache[model_key]
@@ -3913,8 +3978,12 @@ def _mlx_worker_loop(
     logger.info("Effective context window: %d tokens.", effective_context_window)
 
     prompt_cache_budget = _prompt_cache_entry_budget_for_model(model_path)
+    prompt_cache_token_cap = _prompt_cache_entry_token_cap_for_model(model_path)
     prompt_cache_lru = (
-        _PromptCacheLRU(max_size=prompt_cache_budget)
+        _PromptCacheLRU(
+            max_size=prompt_cache_budget,
+            max_entry_tokens=prompt_cache_token_cap,
+        )
         if prompt_cache_budget > 0
         else None
     )
@@ -3922,9 +3991,10 @@ def _mlx_worker_loop(
         logger.info("Prompt cache disabled for %s to protect RAM headroom.", os.path.basename(model_path))
     else:
         logger.info(
-            "Prompt cache budget for %s: %d entries.",
+            "Prompt cache budget for %s: %d entries, per-entry token cap %d.",
             os.path.basename(model_path),
             prompt_cache_budget,
+            prompt_cache_token_cap,
         )
 
     # Expert-adapter residency: at most one domain adapter attached on top of
@@ -4071,7 +4141,13 @@ def _mlx_worker_loop(
                 # disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or strict_answer_contract
                 prompt_cache_bypass = _job_requires_prompt_cache_bypass(job)
                 disable_prompt_cache = bool(job.get("disable_prompt_cache", False)) or prompt_cache_bypass
-                clear_prompt_cache = bool(job.get("clear_prompt_cache", False)) or prompt_cache_bypass
+                # Bypass no longer implies CLEAR: health probes fire between
+                # user turns, and clearing on every probe would evict the
+                # conversation's cached prefix before the next turn could
+                # reuse it — silently reinstating the full-history re-prefill
+                # this cache exists to prevent. Bypass jobs simply never read
+                # or write; only an explicit request clears.
+                clear_prompt_cache = bool(job.get("clear_prompt_cache", False))
                 if clear_prompt_cache and prompt_cache_lru is not None:
                     prompt_cache_lru.clear()
 
@@ -4521,7 +4597,14 @@ def _mlx_worker_loop(
                                         if hasattr(u, "trim_prompt_cache"):
                                             u.trim_prompt_cache(pc, num)
 
-                                    model_key = id(model)
+                                    # Scope-partitioned key: user-surface
+                                    # turns only ever see user-surface
+                                    # entries, so internal lanes cannot leak
+                                    # KV into the conversation or vice versa.
+                                    model_key = (
+                                        id(model),
+                                        _prompt_cache_scope_for_job(job),
+                                    )
                                     cache = None
                                     remaining_tokens = tokens
                                     if prompt_cache_lru is not None and not disable_prompt_cache:

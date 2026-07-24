@@ -1,0 +1,49 @@
+{
+  "schema": "aura.prefill_ab_demo.v1",
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "turns": 12,
+  "context_tokens_per_turn": [
+    58,
+    108,
+    158,
+    208,
+    258,
+    308,
+    358,
+    408,
+    458,
+    510,
+    562,
+    614
+  ],
+  "naive_prefill_s": [
+    0.043,
+    0.037,
+    0.051,
+    0.047,
+    0.073,
+    0.115,
+    0.154,
+    0.153,
+    0.154,
+    0.18,
+    0.253,
+    0.212
+  ],
+  "cached_prefill_s": [
+    0.022,
+    0.022,
+    0.024,
+    0.028,
+    0.041,
+    0.061,
+    0.053,
+    0.047,
+    0.047,
+    0.063,
+    0.055,
+    0.05
+  ],
+  "naive_total_s": 1.472,
+  "cached_total_s": 0.513
+}
