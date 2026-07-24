@@ -114,10 +114,24 @@ def build_correlation_evidence(
     return {**payload, "snapshot_sha256": _sha(payload)}
 
 
+ROLE_LESION_BUCKET = "runtime|role_lesion_unmeasured"
+
+
 def validate_correlation_evidence(value: Any, *, roles: list[str]) -> dict[str, Any]:
+    # A configured role lesion (SPARK-016/expR: duplicate role programs on
+    # purpose) is a sanctioned experiment arm, not corrupt input. Its
+    # evidence is built over the DISTINCT roles under a dedicated bucket:
+    # empirical penalties never apply (no preregistered history may claim a
+    # lesion run) while initial_exchange_weights' duplicate-program collapse
+    # and the structural fingerprints still discount the duplicates.
+    role_list = list(roles)
+    lesioned = len(set(role_list)) != len(role_list)
+    evidence_roles = sorted(set(role_list)) if lesioned else role_list
     if value is None:
         return build_correlation_evidence(
-            bucket="runtime|unmeasured", roles=roles, checked_outcomes=[]
+            bucket=ROLE_LESION_BUCKET if lesioned else "runtime|unmeasured",
+            roles=evidence_roles,
+            checked_outcomes=[],
         )
     if not isinstance(value, dict):
         raise ValueError("correlation evidence must be a mapping")
@@ -127,12 +141,18 @@ def validate_correlation_evidence(value: Any, *, roles: list[str]) -> dict[str, 
     }
     if set(value) != required or value.get("schema") != CORRELATION_EVIDENCE_SCHEMA:
         raise ValueError("correlation evidence schema is invalid")
-    if value.get("roles") != roles:
+    if value.get("roles") != evidence_roles:
         raise ValueError("correlation evidence roles differ from runtime roles")
+    if lesioned and value.get("bucket") != ROLE_LESION_BUCKET:
+        raise ValueError(
+            "a configured role lesion cannot carry preregistered correlation evidence"
+        )
     payload = {key: value[key] for key in required - {"snapshot_sha256"}}
     if value.get("snapshot_sha256") != _sha(payload):
         raise ValueError("correlation evidence digest differs")
-    expected_pairs = {_pair_key(left, right) for left, right in combinations(roles, 2)}
+    expected_pairs = {
+        _pair_key(left, right) for left, right in combinations(evidence_roles, 2)
+    }
     rows = value.get("pairs")
     if not isinstance(rows, list) or {row.get("pair") for row in rows if isinstance(row, dict)} != expected_pairs:
         raise ValueError("correlation evidence pair coverage is invalid")
