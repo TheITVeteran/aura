@@ -198,7 +198,50 @@ class SymbolicBridge:
         except (ValueError, RuntimeError, AttributeError, TypeError) as exc:
             return SymbolicResult(False, "natural_deduction", repr(exc), "solver_error")
 
+    def prove_linear(self, premises: list[str], goal: str) -> SymbolicResult:
+        """Certified linear-arithmetic entailment (Farkas witness, kernel-checked).
+
+        ``Γ ⊢ g`` over exact rationals: the Fourier–Motzkin search finds a
+        Farkas certificate and the independent checker verifies it — a
+        provable=True verdict is always kernel-verified (fail closed).
+        provable=False means *not entailed by this decision procedure*.
+        """
+        try:
+            from core.reasoning.linear_arithmetic import prove_linear
+
+            lp = prove_linear(premises, goal)
+            if not lp.provable:
+                return SymbolicResult(True, "farkas_linear", False, "no Farkas refutation found")
+            if not lp.verified:
+                reason = lp.verdict.reason if lp.verdict else "no verdict"
+                return SymbolicResult(False, "farkas_linear", "kernel_rejected", reason)
+            assert lp.verdict is not None
+            return SymbolicResult(
+                True,
+                "farkas_linear",
+                True,
+                f"kernel-verified Farkas witness ; axioms: {list(lp.verdict.used_premises)}",
+            )
+        except (ValueError, RuntimeError, AttributeError, TypeError) as exc:
+            return SymbolicResult(False, "farkas_linear", repr(exc), "solver_error")
+
     def solve_constraints(self, constraints: list[str]) -> SymbolicResult:
+        """Constraint (in)feasibility — certified Farkas first, z3 fallback.
+
+        Linear systems get the exact, kernel-checked decision procedure: a
+        proved-infeasible verdict carries a verified certificate. Nonlinear
+        or unresolved systems fall back to (unverified) z3 when available.
+        """
+        try:
+            from core.reasoning.linear_arithmetic import check_feasible
+
+            lp = check_feasible(constraints)
+            if lp.provable and lp.verified:
+                return SymbolicResult(
+                    True, "farkas_linear", "unsat", "kernel-verified Farkas infeasibility witness"
+                )
+        except (ValueError, RuntimeError, AttributeError, TypeError):
+            pass  # not linear / not parseable here — fall through to z3
         try:
             import z3  # type: ignore
 

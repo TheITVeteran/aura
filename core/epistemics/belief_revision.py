@@ -389,6 +389,32 @@ class BeliefRevisionEngine:
                 weaker.content, old, weaker.confidence,
             )
 
+    def _kernel_equivalent(self, claim: str, belief: Belief) -> bool:
+        """Kernel-certified semantic dedupe (Lean's simp discipline, live).
+
+        Two differently-worded claims are the *same belief* when their
+        propositional encodings share an atom vocabulary and the proof kernel
+        certifies both entailments — e.g. a claim and its contrapositive, or
+        wording variants that normalize to one encoding. String similarity is
+        never trusted; only checked proofs merge beliefs.
+        """
+        try:
+            from core.reasoning.belief_consistency import encode_belief
+            from core.reasoning.natural_deduction import atoms
+            from core.reasoning.proof_kernel import prove_equivalent
+
+            new_f = encode_belief(claim).formula
+            old_f = encode_belief(belief.content).formula
+            if new_f == old_f:
+                return True
+            new_atoms = atoms(new_f)
+            if not new_atoms or new_atoms != atoms(old_f):
+                return False
+            equivalent, _, _ = prove_equivalent(new_f, old_f)
+            return equivalent
+        except (ImportError, ValueError, RuntimeError, TypeError, AttributeError):
+            return False
+
     def _mirror_claim_to_atomspace(self, belief: Belief) -> None:
         """Assert the belief into the AtomSpace (PLN metagraph mirror).
 
@@ -435,7 +461,7 @@ class BeliefRevisionEngine:
         norm_claim = claim.strip().lower()
 
         for b in self.beliefs:
-            if b.content.strip().lower() == norm_claim:
+            if b.content.strip().lower() == norm_claim or self._kernel_equivalent(claim, b):
                 # PLN revision: evidence-weighted merge. The prior carries its
                 # accumulated evidence mass; the new observation carries the
                 # source's reliability as its mass. Confirmations accumulate,
@@ -552,12 +578,24 @@ class BeliefRevisionEngine:
             if derived:
                 try:
                     from core.event_bus import get_event_bus
+                    from core.knowledge.atomspace import IMPLICATION, Link
 
+                    # Backward-chained provenance: every derivation ships with
+                    # its best supporting chain, so consumers see *why*.
+                    explained = []
+                    for atom in derived:
+                        entry: dict = {"implication": str(atom)}
+                        if isinstance(atom, Link) and atom.atype == IMPLICATION:
+                            chains = space.explain(atom, max_depth=3, max_paths=2)
+                            if chains:
+                                entry["support"] = chains[0]
+                        explained.append(entry)
                     bus = get_event_bus()
                     await bus.publish(
                         "atomspace.derived",
                         {
                             "implications": [str(link) for link in derived],
+                            "explanations": explained,
                             "origin": "belief_revision.pln_forward_chain",
                         },
                     )

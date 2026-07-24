@@ -49,7 +49,12 @@ class CompileError(ValueError):
 
 @dataclass(frozen=True)
 class StateSpec:
-    """One declared desired state (Salt's lowstate chunk)."""
+    """One declared desired state (Salt's lowstate chunk).
+
+    ``retries``/``retry_interval_s`` are Salt's per-state retry option: a
+    failing state function is re-attempted (bounded: at most 5 retries, 30s
+    interval) before the failure is final. Dry runs never retry.
+    """
 
     id: str
     fn: str
@@ -58,6 +63,8 @@ class StateSpec:
     watch: tuple[str, ...] = ()
     onchanges: tuple[str, ...] = ()
     onfail: tuple[str, ...] = ()
+    retries: int = 0
+    retry_interval_s: float = 0.0
 
     def requisite_ids(self) -> tuple[str, ...]:
         return tuple(self.require) + tuple(self.watch) + tuple(self.onchanges) + tuple(self.onfail)
@@ -400,6 +407,37 @@ class HomeostateEngine:
         """Thread-offloaded :meth:`apply` for async callers (no on-loop fsync)."""
         return await asyncio.to_thread(self.apply, name, test=test)
 
+    def orchestrate(
+        self,
+        plan: Sequence[str],
+        *,
+        stop_on_failure: bool = True,
+        test: bool = False,
+    ) -> dict[str, HighstateReport]:
+        """Salt's orchestrate runner: converge named highstates in order.
+
+        With ``stop_on_failure`` (default), a highstate that does not fully
+        converge halts the plan — later stages assume earlier ones hold.
+        """
+        reports: dict[str, HighstateReport] = {}
+        for name in plan:
+            report = self.apply(name, test=test)
+            reports[name] = report
+            if stop_on_failure and not report.ok:
+                break
+        return reports
+
+    async def orchestrate_async(
+        self,
+        plan: Sequence[str],
+        *,
+        stop_on_failure: bool = True,
+        test: bool = False,
+    ) -> dict[str, HighstateReport]:
+        return await asyncio.to_thread(
+            self.orchestrate, plan, stop_on_failure=stop_on_failure, test=test
+        )
+
     def _run_one(
         self,
         spec: StateSpec,
@@ -439,22 +477,33 @@ class HomeostateEngine:
         watch_triggered = any(
             outcome[r].changes for r in spec.watch if r in outcome
         )
-        try:
-            raw = fn(test=test, watch_triggered=watch_triggered, **dict(spec.args))
-        except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
-            record_degradation(
-                "homeostate",
-                exc,
-                severity="warning",
-                action=f"state {spec.id!r} raised; marked failed and continued",
-                extra={"state": spec.id, "fn": spec.fn},
-            )
-            return done(False, {}, f"state function raised: {exc!r}")
-        return done(
-            bool(raw.get("result")),
-            dict(raw.get("changes") or {}),
-            str(raw.get("comment") or ""),
-        )
+        attempts = 1 + (0 if test else max(0, min(int(spec.retries), 5)))
+        interval = max(0.0, min(float(spec.retry_interval_s), 30.0))
+        last_comment = ""
+        for attempt in range(attempts):
+            if attempt > 0 and interval > 0:
+                time.sleep(interval)
+            try:
+                raw = fn(test=test, watch_triggered=watch_triggered, **dict(spec.args))
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                record_degradation(
+                    "homeostate",
+                    exc,
+                    severity="warning",
+                    action=f"state {spec.id!r} raised; marked failed and continued",
+                    extra={"state": spec.id, "fn": spec.fn, "attempt": attempt + 1},
+                )
+                last_comment = f"state function raised: {exc!r}"
+                continue
+            if bool(raw.get("result")):
+                comment = str(raw.get("comment") or "")
+                if attempt > 0:
+                    comment = f"{comment} (succeeded on retry {attempt})".strip()
+                return done(True, dict(raw.get("changes") or {}), comment)
+            last_comment = str(raw.get("comment") or "")
+        if attempts > 1:
+            last_comment = f"{last_comment} (after {attempts} attempts)".strip()
+        return done(False, {}, last_comment)
 
 
 # ── Beacon: degradations → bus events (Salt's beacon system) ──────────────
@@ -485,6 +534,7 @@ class DegradationBeacon:
         self.interval_s = float(interval_s)
         self._last_fired: dict[str, float] = {}
         self._task: asyncio.Task | None = None
+        self._running = False
         self.events_fired = 0
 
     def poll_once(self) -> list[dict[str, Any]]:
@@ -520,7 +570,8 @@ class DegradationBeacon:
         from core.event_bus import get_event_bus
 
         bus = get_event_bus()
-        while True:
+        self._running = True
+        while self._running:
             try:
                 for event in self.poll_once():
                     await bus.publish(self.TOPIC, event)
@@ -544,6 +595,7 @@ class DegradationBeacon:
         return self._task
 
     async def stop(self) -> None:
+        self._running = False
         if self._task is not None:
             self._task.cancel()
             try:
@@ -572,6 +624,7 @@ class HomeostateReactor:
         self._reactions: list[_Reaction] = []
         self._tasks: list[asyncio.Task] = []
         self._topics: dict[str, Any] = {}
+        self._active = False
         self.reactions_fired = 0
 
     def bind(self, topic_pattern: str, highstate: str, *, cooldown_s: float = 120.0) -> None:
@@ -612,7 +665,7 @@ class HomeostateReactor:
         bus = get_event_bus()
         queue = await bus.subscribe(topic)
         try:
-            while True:
+            while self._active:
                 # Bus queue items are (priority, sequence, {"topic", "data"}).
                 item = await queue.get()
                 event = item[2].get("data") if isinstance(item, tuple) and len(item) == 3 else item
@@ -635,6 +688,7 @@ class HomeostateReactor:
         """Subscribe one listener per distinct concrete topic bound so far."""
         from core.utils.task_tracker import get_task_tracker
 
+        self._active = True
         topics = {r.topic_pattern for r in self._reactions}
         for topic in topics:
             if topic in self._topics:
@@ -646,6 +700,7 @@ class HomeostateReactor:
             self._tasks.append(task)
 
     async def stop(self) -> None:
+        self._active = False
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -655,6 +710,70 @@ class HomeostateReactor:
                 pass
         self._tasks.clear()
         self._topics.clear()
+
+
+# ── Scheduled convergence (Salt's highstate schedule) ─────────────────────
+
+class ScheduledConvergence:
+    """Periodic re-convergence of a named highstate — drift never accumulates.
+
+    Salt runs ``state.highstate`` on a schedule so reality is pulled back to
+    the declaration even when no event fires. Same here: a bounded loop that
+    re-applies the highstate every ``interval_s`` (beacon/reactor handle the
+    acute cases; this handles slow drift).
+    """
+
+    def __init__(self, engine: HomeostateEngine, highstate: str, interval_s: float = 1800.0) -> None:
+        self.engine = engine
+        self.highstate = highstate
+        self.interval_s = float(interval_s)
+        self._task: asyncio.Task | None = None
+        self._running = False
+        self.runs = 0
+
+    async def run(self) -> None:
+        self._running = True
+        while self._running:
+            await asyncio.sleep(self.interval_s)
+            if not self._running:
+                break
+            try:
+                report = await self.engine.apply_async(self.highstate)
+                self.runs += 1
+                if not report.ok:
+                    logger.warning(
+                        "[Homeostate] scheduled convergence of %r left failures: %s",
+                        self.highstate,
+                        report.failed,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except (RuntimeError, AttributeError, TypeError, ValueError, KeyError) as exc:
+                record_degradation(
+                    "homeostate_schedule",
+                    exc,
+                    severity="warning",
+                    action="kept scheduled convergence loop alive after failure",
+                )
+
+    def start(self) -> asyncio.Task:
+        if self._task is None or self._task.done():
+            from core.utils.task_tracker import get_task_tracker
+
+            self._task = get_task_tracker().create_task(
+                self.run(), name=f"homeostate.schedule.{self.highstate}"
+            )
+        return self._task
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+            self._task = None
 
 
 # ── Default catalog: Aura's declared runtime baseline ─────────────────────
@@ -726,6 +845,7 @@ _engine_lock = threading.Lock()
 _engine: HomeostateEngine | None = None
 _reactor: HomeostateReactor | None = None
 _beacon: DegradationBeacon | None = None
+_scheduler: ScheduledConvergence | None = None
 
 
 def get_homeostate_engine() -> HomeostateEngine:
@@ -754,13 +874,22 @@ def get_degradation_beacon() -> DegradationBeacon:
         return _beacon
 
 
+def get_convergence_scheduler() -> ScheduledConvergence:
+    global _scheduler
+    with _engine_lock:
+        if _scheduler is None:
+            _scheduler = ScheduledConvergence(get_homeostate_engine(), "runtime_baseline")
+        return _scheduler
+
+
 def reset_homeostate_for_test() -> HomeostateEngine:
-    global _engine, _reactor, _beacon
+    global _engine, _reactor, _beacon, _scheduler
     with _engine_lock:
         _engine = HomeostateEngine()
         install_default_catalog(_engine)
         _reactor = None
         _beacon = None
+        _scheduler = None
         return _engine
 
 
@@ -778,12 +907,15 @@ async def start_homeostate_runtime() -> dict[str, Any]:
         reactor.start()
         beacon = get_degradation_beacon()
         beacon.start()
+        scheduler = get_convergence_scheduler()
+        scheduler.start()
         summary = {
             "ok": True,
             "baseline_ok": report.ok,
             "baseline_changed": report.changed,
             "baseline_failed": report.failed,
             "reactions": reactor.reactions(),
+            "scheduled_interval_s": scheduler.interval_s,
         }
     except (RuntimeError, AttributeError, TypeError, ValueError, OSError, KeyError) as exc:
         record_degradation(
@@ -802,10 +934,12 @@ __all__ = [
     "HighstateReport",
     "HomeostateEngine",
     "HomeostateReactor",
+    "ScheduledConvergence",
     "StateModuleRegistry",
     "StateResult",
     "StateSpec",
     "compile_lowstate",
+    "get_convergence_scheduler",
     "get_degradation_beacon",
     "get_homeostate_engine",
     "get_homeostate_reactor",

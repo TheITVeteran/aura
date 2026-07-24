@@ -30,7 +30,7 @@ import hashlib
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from core.reasoning.natural_deduction import (
     And,
@@ -247,6 +247,17 @@ def check_certificate(
 
 register_checker("analytic_tableau", check_proof)
 
+# Replay codecs: per-method deserializers so the ledger can re-verify stored
+# theorems of ANY registered proof method from their serialized encodings.
+_replay_codec_lock = threading.Lock()
+_replay_codecs: dict[str, Callable[[Any], bool]] = {}
+
+
+def register_replay_codec(method: str, replayer: Callable[[Any], bool]) -> None:
+    """Register ``replayer(encoded) -> bool`` for a proof method's stored form."""
+    with _replay_codec_lock:
+        _replay_codecs[method] = replayer
+
 
 # ── Theorem ledger: axiom audit + admitted (sorry) discipline ─────────────
 
@@ -306,6 +317,12 @@ def _cert_fingerprint(cert: CertStep) -> str:
         return f"({n.kind}|{n.target}|{','.join(ser(c) for c in n.children)})"
 
     return hashlib.sha256(ser(cert).encode("utf-8")).hexdigest()
+
+
+def json_dumps_canonical(data: Mapping[str, Any]) -> bytes:
+    import json
+
+    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _norm_text(statement: str) -> str:
@@ -429,6 +446,54 @@ class TheoremLedger:
                 self._discharged += 1
             return theorem
 
+    def record_external(
+        self,
+        *,
+        method: str,
+        goal: str,
+        premises: Sequence[str],
+        used_premises: Sequence[str],
+        encoded: Mapping[str, Any],
+    ) -> Theorem:
+        """Record a kernel-verified theorem from a non-tableau proof method.
+
+        The caller must have already run the method's registered checker
+        (fail closed at the call site); the ledger stores the serialized
+        encoding so :meth:`replay` can re-verify it via the replay codec.
+        Admitted-claim taint propagates exactly as for tableau theorems.
+        """
+        goal_key = goal
+        with self._lock:
+            deps: set[str] = set()
+            for p in used_premises:
+                admitted = self._admitted.get(p)
+                if admitted is not None:
+                    deps.add(admitted.claim_id)
+                prior = self._theorems.get(p)
+                if prior is not None:
+                    deps.update(prior.admitted_deps)
+            canonical = json_dumps_canonical(dict(encoded))
+            theorem = Theorem(
+                theorem_id=f"thm-{hashlib.sha256((method + '|' + goal_key).encode('utf-8')).hexdigest()[:12]}",
+                goal=goal_key,
+                premises=tuple(premises),
+                used_premises=tuple(used_premises),
+                admitted_deps=tuple(sorted(deps)),
+                certificate_sha256=hashlib.sha256(canonical).hexdigest(),
+                certificate_nodes=0,
+                checked_at=time.time(),
+            )
+            self._theorems[goal_key] = theorem
+            self._replayable[theorem.theorem_id] = {
+                "method": method,
+                "encoded": dict(encoded),
+                "certificate_sha256": theorem.certificate_sha256,
+            }
+            if not deps and goal_key in self._admitted:
+                del self._admitted[goal_key]
+                self._discharged += 1
+            return theorem
+
     # ── replay: nothing recorded is beyond re-verification ────────────
 
     def export_replayable(self, *, limit: int | None = None) -> list[dict[str, Any]]:
@@ -460,19 +525,33 @@ class TheoremLedger:
         checked = 0
         failed: list[str] = []
         for entry in self.export_replayable(limit=limit):
+            checked += 1
+            method = str(entry.get("method", "analytic_tableau"))
             try:
-                goal = formula_from_dict(entry["goal"])
-                premises = [formula_from_dict(p) for p in entry["premises"]]
-                cert = CertStep.from_dict(entry["certificate"])
-                if _cert_fingerprint(cert) != entry["certificate_sha256"]:
+                if method == "analytic_tableau":
+                    goal = formula_from_dict(entry["goal"])
+                    premises = [formula_from_dict(p) for p in entry["premises"]]
+                    cert = CertStep.from_dict(entry["certificate"])
+                    if _cert_fingerprint(cert) != entry["certificate_sha256"]:
+                        failed.append(str(entry["theorem_id"]))
+                        continue
+                    verdict = check_certificate(method, premises, goal, cert)
+                    if not verdict.verified:
+                        failed.append(str(entry["theorem_id"]))
+                    continue
+                with _replay_codec_lock:
+                    codec = _replay_codecs.get(method)
+                if codec is None:
                     failed.append(str(entry["theorem_id"]))
                     continue
-                verdict = check_certificate(str(entry["method"]), premises, goal, cert)
-                if not verdict.verified:
+                encoded = entry["encoded"]
+                if hashlib.sha256(json_dumps_canonical(encoded)).hexdigest() != entry["certificate_sha256"]:
+                    failed.append(str(entry["theorem_id"]))
+                    continue
+                if not codec(encoded):
                     failed.append(str(entry["theorem_id"]))
             except (ValueError, TypeError, KeyError):
                 failed.append(str(entry.get("theorem_id", "?")))
-            checked += 1
         return {"checked": checked, "failed": failed, "ok": not failed}
 
     # ── queries (the #print axioms surface) ───────────────────────────
@@ -633,6 +712,26 @@ def prove_certified_text(
     return prove_certified(list(premises), goal, ledger=ledger)
 
 
+def prove_equivalent(
+    f: Formula | str,
+    g: Formula | str,
+    *,
+    ledger: TheoremLedger | None = None,
+) -> tuple[bool, CertifiedProof, CertifiedProof | None]:
+    """Kernel-certified logical equivalence: ``f ⊢ g`` and ``g ⊢ f``.
+
+    Both directions must be independently verified. Returns
+    ``(equivalent, forward, backward)`` — the discipline behind semantic
+    deduplication: two claims are the *same* belief only when the kernel
+    certifies both entailments, never on string similarity.
+    """
+    forward = prove_certified([f], g, ledger=ledger)
+    if not forward.verified:
+        return False, forward, None
+    backward = prove_certified([g], f, ledger=ledger)
+    return backward.verified, forward, backward
+
+
 __all__ = [
     "AdmittedClaim",
     "CertifiedProof",
@@ -644,7 +743,9 @@ __all__ = [
     "get_theorem_ledger",
     "prove_certified",
     "prove_certified_text",
+    "prove_equivalent",
     "register_checker",
+    "register_replay_codec",
     "registered_checkers",
     "reset_theorem_ledger_for_test",
 ]

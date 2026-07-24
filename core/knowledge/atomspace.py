@@ -670,6 +670,58 @@ class AtomSpace:
             focus_only=focus_only,
         )
 
+    def explain(
+        self,
+        target: Link,
+        *,
+        max_depth: int = 4,
+        max_paths: int = 8,
+    ) -> list[dict[str, Any]]:
+        """Backward chaining: find implication chains that support ``target``.
+
+        Goal-directed PLN — given ``Implication(a, c)``, search stored
+        implications for chains ``a → … → c`` (depth-bounded), composing each
+        chain's truth value with the deduction formula. Returns up to
+        ``max_paths`` explanations sorted by evidential strength: the *why*
+        behind a derived or queried link.
+        """
+        if not (isinstance(target, Link) and target.atype == IMPLICATION and len(target.outgoing) == 2):
+            return []
+        start, goal_atom = target.outgoing
+        with self._lock:
+            by_source: dict[Atom, list[Link]] = {}
+            for link in self._by_type.get(IMPLICATION, ()):
+                if isinstance(link, Link) and len(link.outgoing) == 2:
+                    by_source.setdefault(link.outgoing[0], []).append(link)
+        found: list[dict[str, Any]] = []
+
+        def dfs(node: Atom, chain: list[Link], visited: frozenset[Atom]) -> None:
+            if len(found) >= max_paths or len(chain) > max_depth:
+                return
+            if node == goal_atom and chain:
+                tv = self.get_tv(chain[0]) or TruthValue()
+                for link in chain[1:]:
+                    mid = self.get_tv(link.outgoing[0]) or TruthValue()
+                    end = self.get_tv(link.outgoing[1]) or TruthValue()
+                    tv = deduction_tv(tv, self.get_tv(link) or TruthValue(), mid, end)
+                found.append(
+                    {
+                        "chain": [str(link) for link in chain],
+                        "strength": tv.strength,
+                        "confidence": tv.confidence,
+                        "hops": len(chain),
+                    }
+                )
+                return
+            for link in by_source.get(node, ()):
+                nxt = link.outgoing[1]
+                if nxt in visited or link == target:
+                    continue
+                dfs(nxt, chain + [link], visited | {nxt})
+
+        dfs(start, [], frozenset({start}))
+        return sorted(found, key=lambda e: (e["strength"] * e["confidence"]), reverse=True)
+
     # ── introspection ─────────────────────────────────────────────────
 
     def stats(self) -> dict[str, Any]:
