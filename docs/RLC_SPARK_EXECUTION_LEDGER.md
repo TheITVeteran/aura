@@ -157,11 +157,11 @@ as half a checkbox.
 
 ### Active ownership claims (agent coordination)
 
-- **SPARK-002 and SPARK-003 are CLAIMED and in progress by
+- **SPARK-002 is CLAIMED and in progress by
   the Fable session (Bryan-directed), starting 2026-07-23 19:15 PT.**
-  SPARK-004 resolved in this lane at F1; SPARK-013's pre-training half
-  resolved at F2 (2026-07-23) — its remaining semantic acceptance binds to
-  the SPARK-069 trained treatment, not to further parallel work. These are
+  SPARK-004 resolved at F1; SPARK-013's pre-training half resolved at F2
+  (remaining semantic acceptance binds to the SPARK-069 trained treatment);
+  SPARK-003 resolved at F3 (all 2026-07-23). These are
   the four items the sequential march has skipped since CP318; Bryan assigned
   them out-of-band to close the SPARK-069 admission prerequisites (004, 013)
   and the contract legs (002, 003) in parallel with the march. Other agents:
@@ -225,11 +225,23 @@ before those dependencies close is not admissible.
   with a versioned bibliography of primary papers/specifications, distinguish
   replicated findings from proposals, record licenses, and bind source hashes
   in the final methods package.
-- [ ] **SPARK-003 - Failure and threat model.** Enumerate anchoring, verifier
+- [x] **SPARK-003 - Failure and threat model.** Enumerate anchoring, verifier
   collusion, fake branch diversity, reward hacking, answer leakage, right-to-
   wrong correction, context contamination, state corruption, budget abuse,
   stale tools, adaptation leakage, and unsafe self-modification with executable
   mitigations.
+  Accepted at F3 (Fable lane, 2026-07-23): `threat_model.py` is a typed,
+  fail-closed registry binding all twelve named threat classes to their
+  concrete mitigating modules and to 34 exact suite tests that prove each
+  mitigation fires; `validate_threat_model` rejects a missing threat class,
+  a moved mitigation module, or a check that no longer exists, so the model
+  cannot rot silently. Every entry carries an explicit residual-risk line
+  (reward-side RLVR/EIR remains SPARK-060's property; learned-verifier
+  base-model correlation remains SPARK-041..046's; organism-wide
+  self-modification authority stays with the Will/governance stack). All 34
+  bound checks pass in this checkout (262/262 across the fifteen mitigation
+  suites, 146.99s), the registry meta-suite passes 6/6, and smoke stays
+  104/104.
 - [x] **SPARK-004 - Frozen baseline bundle.** Freeze resident checkpoint,
   tokenizer, adapters, decoding, task generators, control manifests, resource
   envelope, randomization, and current vanilla/RLC measurements before changing
