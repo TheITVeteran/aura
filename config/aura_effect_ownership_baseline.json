@@ -249,6 +249,14 @@
       "scope": "<module>.STaRReasoner._save_stats"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/advanced_cognition/architecture_evolution.py",
+      "scope": "<module>.ArchitectureEvolutionGovernor._restore"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -484,7 +492,7 @@
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 1,
+      "count": 2,
       "path": "core/architect/promotion_governor.py",
       "scope": "<module>.PromotionGovernor.promote"
     },
@@ -556,7 +564,7 @@
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 1,
+      "count": 2,
       "path": "core/architect/rollback_manager.py",
       "scope": "<module>.RollbackManager.restore"
     },
@@ -724,9 +732,9 @@
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
-      "count": 1,
+      "count": 2,
       "path": "core/brain/personality_kernel.py",
-      "scope": "<module>.PersonalityKernel._verify_cryptographic_seal"
+      "scope": "<module>.PersonalityKernel._write_seal"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_append_text",
@@ -2681,6 +2689,14 @@
       "scope": "<module>._write"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/actuators/process_supervisor.py",
+      "scope": "<module>.ProcessSupervisorActuator._write_receipt"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -2977,6 +2993,14 @@
       "scope": "<module>.HiddenEvalRunner._log_result"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/architect/lesion_matrix.py",
+      "scope": "<module>.LesionStudy._append_history"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3054,7 +3078,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/autonomy/self_modification.py",
-      "scope": "<module>.AutonomousSelfModification._record_receipt"
+      "scope": "<module>.AutonomousSelfModification._durable_append"
     },
     {
       "callee": "<file_write_gateway>.delete_file",
@@ -3105,12 +3129,60 @@
       "scope": "<module>.IdentityService.save"
     },
     {
+      "callee": "<file_write_gateway>.append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/correlated_support.py",
+      "scope": "<module>.BranchCorrelationLedger.record_checked"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/correlated_support.py",
+      "scope": "<module>.BranchCorrelationLedger.record_checked"
+    },
+    {
+      "callee": "<file_write_gateway>.append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/critic_identity.py",
+      "scope": "<module>.CriticBlindSpotLedger.record_checked"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/critic_identity.py",
+      "scope": "<module>.CriticBlindSpotLedger.record_checked"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/execution_controller.py",
       "scope": "<module>.ExecutionController._append"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/execution_controller.py",
+      "scope": "<module>.ExecutionController._append_action_transitions"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/execution_controller.py",
+      "scope": "<module>.ExecutionController._maybe_compact"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_batch",
@@ -4965,14 +5037,6 @@
       "canonical_owner": false,
       "category": "memory_write_gateway",
       "count": 1,
-      "path": "core/actuators/doc_ingest.py",
-      "scope": "<module>.DocumentIngestActuator.execute"
-    },
-    {
-      "callee": "<memory_write_gateway>.write",
-      "canonical_owner": false,
-      "category": "memory_write_gateway",
-      "count": 1,
       "path": "core/capabilities/conversation_revision.py",
       "scope": "<module>.persist_revisions"
     },
@@ -5801,6 +5865,14 @@
       "scope": "<module>.ActuatorSynthesizer.__init__"
     },
     {
+      "callee": "p.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/actuators/artifact_builder.py",
+      "scope": "<module>._cleanup"
+    },
+    {
       "callee": "out.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -5817,12 +5889,28 @@
       "scope": "<module>.ProcessSupervisorActuator.__init__"
     },
     {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/actuators/sandbox_operator.py",
+      "scope": "<module>.SandboxOperator._resolve_trust_root"
+    },
+    {
       "callee": "os.makedirs",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/actuators/sandbox_operator.py",
-      "scope": "<module>.SandboxOperator.__init__"
+      "scope": "<module>.SandboxOperator._resolve_trust_root"
+    },
+    {
+      "callee": "os.remove",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/actuators/sandbox_operator.py",
+      "scope": "<module>.SandboxOperator._safe_unlink"
     },
     {
       "callee": "os.remove",
@@ -6089,6 +6177,14 @@
       "scope": "<module>.VerifiedModificationPlasticityBridge.__init__"
     },
     {
+      "callee": "target.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/advanced_cognition/architecture_evolution.py",
+      "scope": "<module>.ArchitectureEvolutionGovernor._restore"
+    },
+    {
       "callee": "self.state_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -6353,7 +6449,7 @@
       "scope": "<module>.AutonomousArchitectureGovernor.proposal"
     },
     {
-      "callee": "_DATA_DIR.mkdir",
+      "callee": "self._data_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -6361,7 +6457,7 @@
       "scope": "<module>.HiddenEvalRunner.__init__"
     },
     {
-      "callee": "_DATA_DIR.mkdir",
+      "callee": "self._data_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -6399,6 +6495,14 @@
       "count": 1,
       "path": "core/architect/promotion_governor.py",
       "scope": "<module>.PromotionGovernor._persist_decision"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/architect/promotion_governor.py",
+      "scope": "<module>.PromotionGovernor.promote"
     },
     {
       "callee": "target.parent.mkdir",
@@ -6485,6 +6589,14 @@
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
+      "path": "core/architect/rollback_manager.py",
+      "scope": "<module>.RollbackManager.restore"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
       "path": "core/architect/rollback_manager.py",
       "scope": "<module>.RollbackManager.restore"
     },
@@ -6854,7 +6966,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/autonomy/self_modification.py",
-      "scope": "<module>.AutonomousSelfModification._record_receipt"
+      "scope": "<module>.AutonomousSelfModification._durable_append"
     },
     {
       "callee": "rel_path.replace",
@@ -7009,6 +7121,46 @@
       "scope": "<module>._read_owned_bytes"
     },
     {
+      "callee": "directory.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/frozen_baseline.py",
+      "scope": "<module>.publish_frozen_baseline_bundle"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/brain/llm/latent_cortex/frozen_baseline.py",
+      "scope": "<module>.publish_frozen_baseline_bundle"
+    },
+    {
+      "callee": "self.path.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/trial_journal.py",
+      "scope": "<module>.TrialJournal._write_header"
+    },
+    {
+      "callee": "self.path.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/trial_journal.py",
+      "scope": "<module>.TrialJournal.open"
+    },
+    {
+      "callee": "self.path.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/trial_journal.py",
+      "scope": "<module>.TrialJournal.record"
+    },
+    {
       "callee": "os.link",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -7153,12 +7305,20 @@
       "scope": "<module>.PersonalityKernel._load_or_generate_key"
     },
     {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/personality_kernel.py",
+      "scope": "<module>.PersonalityKernel._read_validated_key"
+    },
+    {
       "callee": "self.seal_file.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/personality_kernel.py",
-      "scope": "<module>.PersonalityKernel._verify_cryptographic_seal"
+      "scope": "<module>.PersonalityKernel._write_seal"
     },
     {
       "callee": "base.mkdir",
@@ -7353,6 +7513,54 @@
       "scope": "<module>.CapabilityDiscovery._probe_writable_dir"
     },
     {
+      "callee": "os.remove",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._apply_rollback"
+    },
+    {
+      "callee": "pathlib.Path().rmdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._apply_rollback"
+    },
+    {
+      "callee": "pathlib.Path().unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._apply_rollback"
+    },
+    {
+      "callee": "shutil.copy2",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._apply_rollback"
+    },
+    {
+      "callee": "shutil.move",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._apply_rollback"
+    },
+    {
+      "callee": "shutil.copy2",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/capabilities/file_broker.py",
+      "scope": "<module>.SandboxedFileBroker._backup_for_overwrite"
+    },
+    {
       "callee": "dst.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -7391,30 +7599,6 @@
       "count": 1,
       "path": "core/capabilities/file_broker.py",
       "scope": "<module>.SandboxedFileBroker.move_file"
-    },
-    {
-      "callee": "os.remove",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/capabilities/file_broker.py",
-      "scope": "<module>.SandboxedFileBroker.rollback_last"
-    },
-    {
-      "callee": "pathlib.Path().rmdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/file_broker.py",
-      "scope": "<module>.SandboxedFileBroker.rollback_last"
-    },
-    {
-      "callee": "shutil.move",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/file_broker.py",
-      "scope": "<module>.SandboxedFileBroker.rollback_last"
     },
     {
       "callee": "pathlib.Path().unlink",
@@ -9089,6 +9273,54 @@
       "scope": "<module>.SelfPlayFlywheel._state_path"
     },
     {
+      "callee": "<pathlib.Path>.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>.StopPolicyHead.save"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>.StopPolicyHead.save"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>.StopPolicyHead.save"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>.StopPolicyHead.save"
+    },
+    {
+      "callee": "target.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>.StopPolicyHead.save"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/stop_policy.py",
+      "scope": "<module>._read_stable_json"
+    },
+    {
       "callee": "self.artifact_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -9103,6 +9335,54 @@
       "count": 1,
       "path": "core/learning/synthetic_data_flywheel.py",
       "scope": "<module>.SyntheticDataFlywheel.__init__"
+    },
+    {
+      "callee": "<pathlib.Path>.unlink",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>.UpdateAcceptanceHead.save"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>.UpdateAcceptanceHead.save"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>.UpdateAcceptanceHead.save"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>.UpdateAcceptanceHead.save"
+    },
+    {
+      "callee": "target.parent.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>.UpdateAcceptanceHead.save"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/update_acceptance.py",
+      "scope": "<module>._read_stable_artifact"
     },
     {
       "callee": "self._store_path.parent.mkdir",
@@ -12062,7 +12342,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/service_registration.py",
-      "scope": "<module>.register_all_services.create_state_repo"
+      "scope": "<module>._register_all_services_body.create_state_repo"
     },
     {
       "callee": "os.makedirs",
@@ -13054,7 +13334,15 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/actuators/artifact_builder.py",
-      "scope": "<module>.open_artifact"
+      "scope": "<module>.open_artifact._run_open"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/actuators/git_pkg_actuators.py",
+      "scope": "<module>.GitActuator._current_head"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -14322,6 +14610,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5be95708167bac3251f0bd3482fe0c7d2dd1b15287c68871c298739d70415cff",
+  "inventory_sha256": "8c54bb32d5b5755f51361b06a4508666eee78a87680e96fd666233a6fc9f98dd",
   "schema_version": 1
 }
