@@ -157,9 +157,11 @@ as half a checkbox.
 
 ### Active ownership claims (agent coordination)
 
-- **SPARK-002, SPARK-003, SPARK-013 are CLAIMED and in progress by
+- **SPARK-002 and SPARK-003 are CLAIMED and in progress by
   the Fable session (Bryan-directed), starting 2026-07-23 19:15 PT.**
-  SPARK-004 resolved in this lane at F1 (2026-07-23). These are
+  SPARK-004 resolved in this lane at F1; SPARK-013's pre-training half
+  resolved at F2 (2026-07-23) — its remaining semantic acceptance binds to
+  the SPARK-069 trained treatment, not to further parallel work. These are
   the four items the sequential march has skipped since CP318; Bryan assigned
   them out-of-band to close the SPARK-069 admission prerequisites (004, 013)
   and the contract legs (002, 003) in parallel with the march. Other agents:
@@ -386,6 +388,30 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-013 - State causality.** Prove the structured state changes later
   computation and that removing required state causes task-appropriate loss;
   prohibit a prose-only shadow ledger.
+  Progress at F2 (Fable lane, 2026-07-23): the structural half is closed and
+  the semantic half is a preregistered instrument. `state_causality.py` adds
+  the only sanctioned projection from typed `EpistemicState` evidence into
+  the slot-embedded cognitive context: every injected text must hash to the
+  record's `content_sha256`, the prose `summary` is never consulted, and
+  content without a typed ancestor is refused — the prose-shadow prohibition
+  is executable, not narrative. A seven-arm, fixed-depth, width-matched
+  experiment on the real pretrained 1.5B (24 tasks, 168 episodes, receipt
+  `d052817c…` under `artifacts/closeout/latent_cortex/
+  spark013_state_causality/`, independent row-level replay) grades five
+  structural claims SUPPORTED at verdict n: information-lesion of the
+  required evidence changes the final latent state under exact recurrence
+  parity; a non-projected state component is inert byte-exactly; restoration
+  recovers byte-exactly; prose-summary mutation changes the state hash but
+  leaves computation byte-identical; content substitution moves the final
+  state. The same identities hold on the random tiny-qwen seam test
+  (13/13 focused tests). The task-appropriate-loss claim is honestly
+  CONJECTURE: the untrained pooled-slot channel cannot yet carry the fact
+  (intact accuracy 0.00 at the 0.5 readability floor), so no loss is
+  measurable before slot-channel training. What remains for acceptance:
+  re-run `tools/run_state_causality_semantic.py` against the SPARK-069
+  trained treatment (and the live resident seam under SPARK-066-068) and
+  obtain the PROVEN task-appropriate-loss verdict the preregistered grading
+  already encodes.
 
 ## C. Independent hypotheses and virtual width
 
