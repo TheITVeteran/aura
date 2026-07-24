@@ -55,6 +55,48 @@ _PROHIBITED_RECOVERY_MARKERS = frozenset(
     }
 )
 
+# Sleep-class restoration: internal work that welfare recovery DEPENDS on.
+# The live 7/17-7/21 sessions measured the deadlock this exists to break:
+# recovery_drive > 0.6 deferred every consequential action (11,738 defers)
+# INCLUDING dream consolidation (2,428 blocks) — but consolidation is the
+# mechanism that lowers recovery drive, so the interior life stayed locked
+# for entire sessions: no memory writes, no belief updates, no initiative.
+# This lane is deliberately narrow: allowlisted sources, internal-only,
+# and it exempts ONLY the recovery-drive defer — integrity guards, action
+# inhibition, and every external-effect rule still apply in full.
+RESTORATIVE_CONSOLIDATION_SOURCES = frozenset(
+    {
+        "mind_tick.dream_consolidation",
+        "memory.consolidate_working_memory",
+    }
+)
+
+# Consolidation reorganizes internal memory, so the memory_write marker is
+# permitted here; everything identity- or world-touching stays prohibited.
+_PROHIBITED_RESTORATION_MARKERS = _PROHIBITED_RECOVERY_MARKERS - {"memory_write"}
+
+
+def is_restorative_consolidation(
+    source: Any,
+    context: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether a context is allow-listed sleep-class restoration.
+
+    A generic mutation must not be able to self-label as restoration: the
+    source must be on the allowlist, the context must declare itself
+    internal-only, and no external-effect marker may be present.
+    """
+
+    payload = dict(context or {})
+    if str(payload.get("effect_scope")) != "internal_restoration":
+        return False
+    if not bool(payload.get("no_external_effects")):
+        return False
+    if any(bool(payload.get(marker)) for marker in _PROHIBITED_RESTORATION_MARKERS):
+        return False
+    source_name = str(payload.get("source") or source or "").strip().lower()
+    return source_name in RESTORATIVE_CONSOLIDATION_SOURCES
+
 
 def normalize_recovery_source(value: Any) -> str:
     return str(value or "").strip().lower().replace("-", "_")

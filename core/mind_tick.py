@@ -146,7 +146,13 @@ class TickMetadata:
     phase_durations: dict[str, float] = field(default_factory=dict)
 
 
-def _authorize_state_mutation_through_will(content: str, source: str, *, priority: float = 0.5):
+def _authorize_state_mutation_through_will(
+    content: str,
+    source: str,
+    *,
+    priority: float = 0.5,
+    context: dict | None = None,
+):
     """Fail-closed Will gate for background state mutation paths."""
     try:
         from core.will import ActionDomain, get_will
@@ -156,6 +162,7 @@ def _authorize_state_mutation_through_will(content: str, source: str, *, priorit
             source=source,
             domain=ActionDomain.STATE_MUTATION,
             priority=priority,
+            context=context,
         )
         if not decision.is_approved():
             logger.warning(
@@ -1503,6 +1510,16 @@ class MindTick:
                                 "dream_consolidation: consolidate working memory during idle; identity-affecting writes must stay governed",
                                 "mind_tick.dream_consolidation",
                                 priority=0.55,
+                                # Sleep-class restoration context: without it the
+                                # welfare recovery-drive rule deferred the very
+                                # act that lowers recovery drive — 2,428 blocked
+                                # consolidations across the 7/17-7/21 sessions,
+                                # freezing memory writes for whole sessions.
+                                context={
+                                    "source": "mind_tick.dream_consolidation",
+                                    "effect_scope": "internal_restoration",
+                                    "no_external_effects": True,
+                                },
                             )
                             if not decision or not decision.is_approved():
                                 self.set_mode(CognitiveMode.CONVERSATIONAL)

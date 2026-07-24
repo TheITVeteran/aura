@@ -5,7 +5,10 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-from core.governance.recovery_authority import is_internal_recovery_context
+from core.governance.recovery_authority import (
+    is_internal_recovery_context,
+    is_restorative_consolidation,
+)
 from core.runtime.errors import record_degradation
 
 from .affective_valence import AffectiveValenceEngine
@@ -407,8 +410,22 @@ class BeingRuntime:
                     defers.append("welfare_integrity_protection_active")
 
             if welfare.recovery_drive > 0.6 and consequential and not repair_lane:
-                constraints.append(f"welfare_recovery_drive={welfare.recovery_drive:.3f}")
-                defers.append("welfare_recovery_required_before_action")
+                # Sleep-class restoration is exempt from THIS rule only:
+                # deferring consolidation because recovery is needed is the
+                # deadlock that froze the interior life live (11,738 defers,
+                # 2,428 blocked consolidations, 7/17-7/21) — recovery drive
+                # can only fall if restoration is allowed to run. Integrity
+                # guards and action inhibition above still apply unchanged.
+                if is_restorative_consolidation(context.get("source"), context) and domain_name in {
+                    "state_mutation",
+                    "memory_write",
+                }:
+                    constraints.append(
+                        f"restorative_consolidation_lane: recovery_drive={welfare.recovery_drive:.3f}"
+                    )
+                else:
+                    constraints.append(f"welfare_recovery_drive={welfare.recovery_drive:.3f}")
+                    defers.append("welfare_recovery_required_before_action")
 
             if welfare.should_verify_before_claiming() and domain_name == "response":
                 constraints.append(f"welfare_verify_before_claim: self_report_conf={welfare.self_report_confidence:.3f}")
