@@ -87,6 +87,7 @@ from interface.auth import (
     paired_device_session_id,
     relational_principal_id_for_request,
     request_access_profile,
+    validate_runtime_security_request,
 )
 from interface.helpers import _notify_user_spoke
 
@@ -138,6 +139,10 @@ _CHAT_DELIVERY_IDEMPOTENCY_KEY: ContextVar[str] = ContextVar(
     "aura_chat_delivery_idempotency_key",
     default="",
 )
+_INTERNAL_SURFACE_CONTEXT: ContextVar[str] = ContextVar(
+    "aura_internal_surface_context",
+    default="",
+)
 
 
 # ── Request Models ────────────────────────────────────────────
@@ -150,6 +155,82 @@ class ChatRequest(BaseModel):
 class CheatCodeRequest(BaseModel):
     code: str
     silent: bool = False
+
+
+async def run_governed_voice_chat_turn(
+    message: str,
+    *,
+    surface_context: str,
+    session_id: str,
+    timeout_s: float,
+    source_headers: Sequence[tuple[bytes, bytes]] = (),
+    client_host: str = "127.0.0.1",
+) -> str | None:
+    """Run voice through the complete authenticated HTTP chat contract.
+
+    Voice is a presentation surface, not a second cognition lane. Reusing the
+    public chat handler preserves ingress inspection, memory-pressure and
+    foreground admission, durable delivery fencing, response stabilization,
+    and the same governed action path as the desktop.
+    """
+    allowed_headers = {
+        b"authorization",
+        b"cookie",
+        b"host",
+        b"origin",
+        b"sec-fetch-site",
+        b"user-agent",
+        b"x-aura-device-token",
+        b"x-api-token",
+    }
+    headers = [
+        (bytes(name).lower(), bytes(value))
+        for name, value in source_headers
+        if bytes(name).lower() in allowed_headers
+    ]
+    if not any(name == b"host" for name, _value in headers):
+        headers.append((b"host", b"127.0.0.1:8000"))
+    headers.extend(
+        (
+            (b"x-aura-response-surface", b"voice"),
+            (b"x-aura-require-cognitiveengine", b"true"),
+            (b"x-aura-surface", b"voice"),
+            (b"x-idempotency-key", f"voice-{uuid.uuid4().hex}".encode("ascii")),
+        )
+    )
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/chat",
+        "raw_path": b"/api/chat",
+        "query_string": b"",
+        "headers": headers,
+        "client": (str(client_host or "127.0.0.1"), 0),
+        "server": ("127.0.0.1", 8000),
+    }
+    request = Request(scope)
+    body = ChatRequest(message=str(message or ""), session_id=session_id)
+    validate_runtime_security_request(request)
+    _require_internal(request)
+    _check_rate_limit(request)
+    context_token = _INTERNAL_SURFACE_CONTEXT.set(str(surface_context or "")[:4000])
+    try:
+        response = await asyncio.wait_for(
+            api_chat(body=body, request=request, _=None, __=None),
+            timeout=max(1.0, float(timeout_s)),
+        )
+        payload = json.loads(bytes(response.body).decode("utf-8", errors="replace"))
+        background = getattr(response, "background", None)
+        if background is not None:
+            await background()
+        if response.status_code >= 500 or not isinstance(payload, dict):
+            return None
+        return str(payload.get("response") or "").strip() or None
+    finally:
+        _INTERNAL_SURFACE_CONTEXT.reset(context_token)
 
 
 _PAIRED_CHAT_RESPONSE_KEYS = frozenset(
@@ -17626,6 +17707,10 @@ async def api_chat(
                 if _directive_prefix:
                     body.message = f"{_directive_prefix}{body.message}"
                     logger.info("Chat preflight: injected response directives.")
+                _surface_context = _INTERNAL_SURFACE_CONTEXT.get().strip()
+                if _surface_context:
+                    body.message = f"{_surface_context}\n\n{body.message}"
+                    logger.info("Chat preflight: injected internal surface context.")
             except _CHAT_RECOVERABLE_ERRORS as _dir_exc:
                 record_degradation('chat', _dir_exc)
                 logger.debug("Chat directive preflight skipped: %s", _dir_exc)

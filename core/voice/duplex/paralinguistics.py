@@ -160,7 +160,7 @@ def analyze(signal: np.ndarray, sample_rate: int, *, word_count: int = 0) -> Voi
     hop = max(1, int(sample_rate * 0.02))
     env = np.array(
         [float(np.sqrt(np.mean(np.square(signal[i:i + hop], dtype=np.float64))))
-         for i in range(0, max(1, signal.size - hop), hop)],
+         for i in range(0, signal.size, hop)],
         dtype=np.float32,
     )
     if env.size:
@@ -249,12 +249,18 @@ class SpeakerBaseline:
         arr = np.asarray(store, dtype=np.float64)
         mean = float(arr.mean())
         spread = float(arr.std())
-        if spread < 1e-9 or mean <= 0:
+        if mean <= 0:
             return 0.0
-        relative = abs(value - mean) / mean
+        delta = value - mean
+        relative = abs(delta) / mean
         if relative < min_relative:
             return 0.0
-        return float((value - mean) / spread)
+        # A perfectly steady baseline has zero variance, but that must make a
+        # large departure more visible, not mathematically invisible. The
+        # perceptibility floor supplies a conservative scale until natural
+        # variance appears.
+        scale = max(spread, mean * min_relative / 2.0, 1e-9)
+        return float(delta / scale)
 
     # Perceptibility floors, one per dimension, because just-noticeable
     # difference is not the same across them: roughly 1 dB of loudness

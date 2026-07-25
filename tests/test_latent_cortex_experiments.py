@@ -644,10 +644,11 @@ def test_run_role_lesion_conjectures_without_telemetry():
     battery = task_battery(["boolean"], [2], 6, seed=9)
 
     def solve_arm(task, arm):
-        return True, 100, float("nan")  # no exchange telemetry recorded
+        return True, 100, None  # no exchange telemetry recorded
 
     report = run_role_lesion(solve_arm, {"boolean": battery})
     assert report["divergence_claim"]["tier"] == "CONJECTURE"
+    assert report["divergence_claim"]["evidence"]["distinct_mean_divergence"] is None
 
 
 def test_run_role_lesion_cannot_claim_causality_with_compute_mismatch():

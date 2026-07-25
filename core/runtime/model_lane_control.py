@@ -421,6 +421,20 @@ class _ModelCommandDescriptor:
 _PROBE_BUILTIN_CALLS = {"print", "float", "abs"}
 _PROBE_ATTRIBUTE_CALLS = {"ones", "zeros", "eval", "sum", "item"}
 _PROBE_FORBIDDEN_NAMES = {"exec", "eval", "open", "__import__", "compile", "getattr", "setattr"}
+_REGISTERED_NON_MODEL_PROBE_MODULES = frozenset(
+    {"core.runtime.integration_liveness_probe"},
+)
+
+
+def _is_registered_non_model_python_probe(argv: tuple[str, ...]) -> bool:
+    """Recognize audited child modules that cannot load model weights."""
+
+    try:
+        module_index = argv.index("-m") + 1
+        module = argv[module_index]
+    except (ValueError, IndexError):
+        return False
+    return module in _REGISTERED_NON_MODEL_PROBE_MODULES
 
 
 def _is_import_only_python_probe(argv: tuple[str, ...]) -> bool:
@@ -483,7 +497,7 @@ def _is_import_only_python_probe(argv: tuple[str, ...]) -> bool:
 
 def _model_command_descriptor(command: Iterable[str]) -> _ModelCommandDescriptor:
     argv = tuple(str(part) for part in command)
-    if _is_import_only_python_probe(argv):
+    if _is_import_only_python_probe(argv) or _is_registered_non_model_python_probe(argv):
         return _ModelCommandDescriptor(False, (), "serve")
     lowered = tuple(part.lower() for part in argv)
     joined = " ".join(lowered)

@@ -225,7 +225,7 @@ def main() -> int:
         else:
             raise ValueError(f"unknown role arm: {arm}")
         ok, cost = solve(task, steps[-1], roles=roles)
-        return (ok, cost, float("nan"))
+        return (ok, cost, None)
 
     row_results["structural_diversity_arms"] = run_role_lesion(
         solve_role_arm, by_family

@@ -5,7 +5,11 @@ import json
 
 import pytest
 
-from tools.closeout.run_codebase_closeout_audit import audit_file, build_closeout_audit
+from tools.closeout.run_codebase_closeout_audit import (
+    _make_gate_command,
+    audit_file,
+    build_closeout_audit,
+)
 from tools.closeout.semantic_review_ledger import (
     SEMANTIC_CAMPAIGN_SCHEMA,
     append_entries,
@@ -16,13 +20,15 @@ from tools.closeout.semantic_review_ledger import (
     build_semantic_review_campaign,
     build_semantic_review_queue,
     carry_semantic_inventory,
-    main as semantic_review_main,
-    record_semantic_inventory_batch,
     record_reviews_from_args,
+    record_semantic_inventory_batch,
     semantic_campaign_receipt,
     summarize_semantic_inventory,
     summarize_semantic_reviews,
     validate_semantic_review_campaign,
+)
+from tools.closeout.semantic_review_ledger import (
+    main as semantic_review_main,
 )
 
 
@@ -76,6 +82,16 @@ def test_closeout_audit_writes_checkpoint_bundle(tmp_path):
     checkpoint = json.loads((out / "CLOSEOUT_CHECKPOINT.json").read_text(encoding="utf-8"))
     assert checkpoint["semantic_review"]["schema"] == "aura.closeout.semantic_review_status.v1"
     assert checkpoint["semantic_review"]["full_semantic_review_current"] is False
+
+
+def test_closeout_make_gate_uses_current_admitted_interpreter():
+    import sys
+
+    assert _make_gate_command("lint") == [
+        "make",
+        "lint",
+        f"PYTHON={sys.executable}",
+    ]
 
 
 def test_semantic_review_ledger_marks_current_and_stale_reviews(tmp_path):

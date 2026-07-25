@@ -27297,9 +27297,130 @@ recommendation resolved a dispute, repaired a branch, improved the resident
 32B, established adapter interaction, produced broad reasoning gain, or
 reached frontier capability.
 
-This is total checkpoint record 425. The forecast remains 466-733 total
-records, leaving approximately 41-308 records after this checkpoint.
-Checkpoint-count completion is approximately 58.0%-91.2%, with a midpoint
-planning estimate of 70.9%. Next: publish CP364, then implement SPARK-049's
+Twelve cooperative checkpoints landed between CP363 and the final rebased
+CP364: the four original duplex-voice records (`67c46297a`, `928777abd`,
+`fdb3aecec`, and `4ecb37dc1`) plus overlap/paralinguistic voice, the subsequently
+retired streaming carve-out, curriculum, optional-integration, experiment,
+closeout, and learning-scope records (`3c417a861`, `abc152506`, `bca86fead5`,
+`11e6ebd5e`, `1964b84b0`, `ebdd57d79`, `06e05186d`, and `544122bbb`). They
+count in the project-wide checkpoint total even though they are not renamed as
+Spark milestones. The final combined 65-file ownership snapshot passes
+1,180/1,180. This is total checkpoint record 437. The forecast remains 466-733
+total records, leaving approximately 29-296 records after this checkpoint.
+Checkpoint-count completion is approximately 59.6%-93.8%, with a midpoint
+planning estimate of 72.9%. Next: publish CP364, then implement SPARK-049's
 bounded local invalidation and repair. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-24-365: Governed Duplex Voice Integration
+
+CP365 reviews the four cooperative full-duplex voice checkpoints against the
+combined runtime rather than accepting a feature-shaped merge. The review
+found and repaired integration defects that would have made the lane unsafe or
+misleading in production: four open-ended task/split loops, a second cognition
+path that bypassed the complete chat contract, lost owner and paired-device
+credentials at the WebSocket-to-chat handoff, no silent-revocation monitor, no
+session or payload admission bounds, replacement turns that could race a
+cancellation-resistant predecessor, untracked prefetched synthesis, and
+delivery accounting that called intended text spoken even when no audio was
+delivered. The final rebase exposed a second default-on `think_stream` carve-out
+that spoke clauses before the complete governed turn or reliability gates had
+accepted them. The carve-out, its heuristic validator, and its configuration
+surface are removed; a structural regression forbids direct streaming
+cognition from returning to the voice bridge.
+
+Every spoken turn now re-enters the authenticated `/api/chat` contract with its
+visible user message unchanged and its bounded voice directive carried in
+internal surface context. The synthetic request explicitly reruns runtime
+security validation, internal-only validation, and rate limiting. The handoff
+strips ambient credentials and binds exactly the principal authenticated by the
+voice socket: trusted local owner, current master-token owner, or the verified
+paired-device token. Master-token rotation, paired-session revocation, and
+voice-scope revocation terminate an open lane within the bounded authorization
+poll. Two global sessions and one session per principal are admitted by
+default, with bounded configuration maxima; audio, command, and typed-message
+sizes are rejected before amplification.
+
+Turn replacement, stop, and barge-in now cancel and quiesce cognition,
+speculation, partial decoding, fillers, and playback before admitting new work.
+A task that does not quiesce by the deadline fails the lane closed instead of
+overlapping the next turn. Session close waits boundedly for owned work and
+prevents late transport sends. Native TTS cancellation transfers model-lane
+ownership to a completion callback, so repeated task cancellation cannot
+release weights while an ONNX or XTTS worker still uses them. Prefetched
+synthesis is cancelled and awaited. Activity-watch subscription and retry
+lifetime are finite, and every spawned task retrieves its exception.
+
+ASR and TTS model loads now use fenced in-process model-lane ownership with
+declared footprints, activation fencing, idle-only eviction, compensation,
+shutdown release, and stable missing-asset behavior. The model-load inventory
+recognizes the faster-whisper, Piper, and optional licensed XTTS paths. There is
+no fabricated system-speech fallback: readiness reports only a neural engine
+that actually loaded. Spoken-history records distinguish intended, delivered,
+partial, interrupted, and zero-audio replies, and the next governed turn sees
+the unheard tail only as explicitly unsaid context.
+
+The cooperative overlap and paralinguistic additions were also reviewed as
+runtime mechanisms rather than accepted from their unit-shaped surfaces.
+Overlap probes no longer mutate LocalAgreement ASR state. Sustained and short
+verified objections preserve their complete bounded audio and become ordinary
+governed turns; single-word objections take the floor; acknowledgements resume
+the same spoken track; stale overlapping verifier tasks are generation-fenced;
+and the probe wait is bounded. Baseline-relative delivery telemetry now handles
+a genuinely constant speaker baseline and consumes the complete signal
+envelope.
+
+The adversarial voice, server, DNS-rebinding, paired-device, delivery-journal,
+and model-ownership battery passes 202/202. The broader fixed-snapshot
+latent-cortex, RLC, global-workspace, GWT, and execution-controller battery
+passes 1,180/1,180 across 65 files. Focused Ruff, bytecode compilation, and
+diff hygiene pass. Governance remains exactly 1,968 recognized calls in 1,842
+buckets with 1,783 inherited migration-debt calls. Resource observation scans
+2,945 Python files with zero findings, and model ownership reports 47 paths,
+60 references, and zero findings. The enterprise static ratchet remains green
+at 168 findings, 38 high, zero critical, and no baseline regression.
+The all-line closeout runner now binds Make gates to its admitted Python
+interpreter, preventing a neighboring worktree's incomplete virtual environment
+from producing a false lint failure; its 21-test closeout-audit battery passes.
+That full ownership run first found a concurrent experiment-contract split:
+NaN had been correctly refused as divergence but legacy runners still emitted
+it for absent exchange telemetry. Absence is now structurally `None`, measured
+divergence must be finite and nonnegative, reports emit JSON-safe nulls, and
+the repaired complete snapshot passes without suppressing the failure.
+
+The final enterprise ratchet exposed one more combined-tree ownership defect:
+the optional-integration liveness gate launched import probes through raw
+`subprocess.run`. It now uses the canonical read-only subprocess gateway with a
+bounded, named source. Its child is a dedicated import-only module, and
+model-lane inference exempts only that exact audited module rather than
+mistaking an inert `mlx_lm` target argument for a weight-loading process.
+Arbitrary MLX commands and inline model loads remain fail-closed. The
+integration/model-lane battery passes 55/55, including the real declared
+integration stack.
+
+Governance now matches its reviewed baseline at 1,969 recognized calls in
+1,843 buckets with 1,784 inherited migration-debt calls. Resource observation
+scans 2,951 Python files with zero findings; model-load ownership remains 47
+paths, 60 references, and zero findings. The enterprise static ratchet passes
+at 168 findings, 38 high, zero critical, and no baseline regression. The final
+dirty-candidate mechanical closeout audit passes all configured gates in
+163.3141 seconds and enumerates 7,984 tracked files, including 4,958 code files
+and 1,580,916 code lines. It correctly keeps full closeout false: semantic
+review is current for 494 code files after CP365's final receipts, while 4,434
+code files remain unreviewed and no long-duration live survival claim was
+tested.
+
+This checkpoint proves bounded/authenticated voice integration and offline
+contract behavior. It does not claim microphone/speaker hardware validation,
+resident-32B conversational quality, long-duration duplex stability, broad
+reasoning gain, adapter interaction, or frontier capability; those require the
+deferred live and campaign evidence gates.
+
+Fourteen cooperative hardening and evidence checkpoints landed on `main` while
+CP364/CP365 were under combined-tree validation. Counting those records makes
+this total checkpoint record 452. The forecast remains 480-747 total records,
+leaving approximately 28-295 records after this checkpoint. Checkpoint-count
+completion is approximately 60.5%-94.2%, with a midpoint planning estimate of
+73.8%. Next: publish CP364 and CP365, then implement
+SPARK-049's bounded local invalidation and repair. Final multi-hour soaks remain
+deferred until every shorter gate is green.

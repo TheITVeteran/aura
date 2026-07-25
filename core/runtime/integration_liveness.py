@@ -44,6 +44,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.integration_liveness_probe import NO_PREFLIGHT
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
 # Per-import ceiling. A dependency that cannot import within this is broken
 # for practical purposes even if it would eventually succeed: the runtime
 # imports these on a user-facing path.
@@ -166,62 +169,6 @@ class ProbeResult:
         }
 
 
-# Runs in the child. Distinguishes "not installed" from "installed and
-# raising", which is the whole point of the probe.
-_PROBE_SOURCE = """
-import importlib, importlib.util, json, sys
-
-module = sys.argv[1]
-preflight = sys.argv[2]
-required = [a for a in sys.argv[3:] if a]
-
-if preflight:
-    # A preflight that fails is itself a broken integration: the runtime
-    # cannot import the dependency without it either.
-    try:
-        pf_module, _, pf_attr = preflight.partition(":")
-        getattr(importlib.import_module(pf_module), pf_attr)()
-    except BaseException as exc:
-        print(json.dumps({
-            "state": "broken",
-            "detail": f"preflight {preflight} failed: {type(exc).__name__}: {exc}"[:400],
-        }))
-        sys.exit(0)
-# Import FIRST, and use the failure to classify. Probing find_spec ahead of
-# the import is fragile in exactly the case that matters: a preflight shim
-# may legitimately install the module, and find_spec raises on a module in
-# sys.modules with no __spec__. The import is the ground truth; find_spec is
-# only needed afterwards to tell "never installed" from "installed and
-# raising".
-top_level = module.split(".")[0]
-try:
-    imported = importlib.import_module(module)
-except BaseException as exc:
-    detail = f"{type(exc).__name__}: {exc}"[:400]
-    # A ModuleNotFoundError naming the TOP-LEVEL module means the optional
-    # dependency simply is not installed, which is legitimate. Anything else
-    # — including a missing transitive dependency — means the integration is
-    # present and broken, because the code path cannot run either way.
-    absent = (
-        isinstance(exc, ModuleNotFoundError)
-        and getattr(exc, "name", None) == top_level
-    )
-    print(json.dumps({
-        "state": "absent" if absent else "broken",
-        "detail": "not installed" if absent else detail,
-    }))
-    sys.exit(0)
-missing = [a for a in required if not hasattr(imported, a)]
-if missing:
-    print(json.dumps({
-        "state": "broken",
-        "detail": "imported but missing attributes: " + ", ".join(missing),
-    }))
-    sys.exit(0)
-print(json.dumps({"state": "live", "detail": ""}))
-"""
-
-
 def probe(
     integration: Integration,
     *,
@@ -232,10 +179,10 @@ def probe(
     started = time.monotonic()
     argv = [
         python or sys.executable,
-        "-c",
-        _PROBE_SOURCE,
+        "-m",
+        "core.runtime.integration_liveness_probe",
         integration.module,
-        integration.preflight,
+        integration.preflight or NO_PREFLIGHT,
         *integration.requires_attrs,
     ]
     # The child needs the repo root importable: preflights live in `core.*`,
@@ -245,13 +192,14 @@ def probe(
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{existing}" if existing else repo_root
     try:
-        completed = subprocess.run(
+        completed = get_subprocess_gateway().run(
             argv,
             capture_output=True,
-            text=True,
             timeout=timeout_s,
             check=False,
             env=env,
+            read_only=True,
+            source="integration_liveness.import_probe",
         )
     except subprocess.TimeoutExpired:
         return ProbeResult(

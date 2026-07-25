@@ -81,9 +81,6 @@ class OverlapConfig:
     # Overlap longer than this is a barge-in whatever it sounded like — no
     # acknowledgement runs this long.
     certain_barge_in_ms: float = 900.0
-    # Sustained loudness relative to the speaker's own norm that means they
-    # are talking *over* rather than *under* her.
-    loud_z: float = 1.6
 
 
 @dataclass(slots=True)
@@ -180,9 +177,10 @@ class OverlapArbiter:
             if looks_like_backchannel(transcript):
                 # Short acknowledgement even if the timing looked marginal.
                 verdict = OverlapVerdict.BACKCHANNEL
-            elif len(transcript.split()) >= 3:
-                # Real words means they said something, not just noise —
-                # they were taking the floor.
+            else:
+                # Any intelligible non-acknowledgement is content. Single
+                # words such as "no", "wait", and "stop" must take the floor
+                # just as reliably as a longer objection.
                 verdict = OverlapVerdict.BARGE_IN
 
         logger.info(

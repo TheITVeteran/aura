@@ -12,9 +12,7 @@ available, the readiness surface reports healthy, and the feature is dead.
 """
 from __future__ import annotations
 
-import sys
-
-import pytest
+from types import SimpleNamespace
 
 from core.runtime import integration_liveness as il
 
@@ -127,6 +125,37 @@ class TestPreflightIsPartOfTheIntegration:
 
 
 class TestProbeCannotWedgeTheGate:
+    def test_probe_uses_bounded_read_only_subprocess_gateway(self, monkeypatch):
+        observed = {}
+
+        class Gateway:
+            def run(self, argv, **kwargs):
+                observed["argv"] = list(argv)
+                observed.update(kwargs)
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout='{"state":"live","detail":""}\n',
+                    stderr="",
+                )
+
+        monkeypatch.setattr(il, "get_subprocess_gateway", lambda: Gateway())
+        result = il.probe(
+            il.Integration("json", "json", "stdlib"),
+            timeout_s=3.5,
+            python="/test/python",
+        )
+
+        assert result.state == il.LIVE
+        assert observed["argv"][:3] == [
+            "/test/python",
+            "-m",
+            "core.runtime.integration_liveness_probe",
+        ]
+        assert observed["timeout"] == 3.5
+        assert observed["read_only"] is True
+        assert observed["source"] == "integration_liveness.import_probe"
+        assert "PYTHONPATH" in observed["env"]
+
     def test_a_hanging_import_times_out_as_broken(self, tmp_path, monkeypatch):
         package = tmp_path / "sleepy_pkg"
         package.mkdir()
@@ -225,9 +254,6 @@ class TestVoiceAvailabilityHonoursItsOwnFailures:
         assert ve._tts_dependency_available() is True
 
 
-@pytest.mark.skipif(
-    sys.platform != "darwin", reason="the declared stack is the macOS voice stack",
-)
 class TestTheRealStackIsAlive:
     def test_no_declared_integration_is_broken(self):
         """The gate itself: every declared integration must import for real.

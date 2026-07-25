@@ -246,6 +246,7 @@ class TestSolverOutcomesAreStrict:
         from core.brain.llm.latent_cortex.experiments import _coerce_role_outcome
 
         assert _coerce_role_outcome((True, 3, 0.5)) == (True, 3, 0.5)
+        assert _coerce_role_outcome((True, 3, None)) == (True, 3, None)
 
     @pytest.mark.parametrize(
         "bad",

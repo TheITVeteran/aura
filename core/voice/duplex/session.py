@@ -64,12 +64,16 @@ from core.voice.duplex.paralinguistics import (
 )
 from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
 from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
-from core.voice.duplex.streaming_reply import ClauseValidator, is_streamable
 from core.voice.duplex.style import StyleController
 from core.voice.duplex.tts_stream import CancellationToken, StreamingTts
 from core.voice.duplex.vad_gate import SpeechEvent, VadGate
 
 logger = logging.getLogger("Aura.Voice.Session")
+
+MAX_AUDIO_MESSAGE_BYTES = 128 * 1024
+MAX_TYPED_MESSAGE_BYTES = 64 * 1024
+TASK_QUIESCENCE_TIMEOUT_S = 3.0
+OVERLAP_PROBE_TIMEOUT_S = 1.0
 
 # Callbacks the transport supplies. Returning awaitables lets the session
 # apply backpressure if the socket is slow.
@@ -167,8 +171,17 @@ class DuplexVoiceSession:
         mind: MindBridge | None = None,
     ) -> None:
         self._id = session_id
-        self._send_json = send_json
-        self._send_binary = send_binary
+
+        async def guarded_json(payload: dict[str, Any]) -> None:
+            if not self._closed:
+                await send_json(payload)
+
+        async def guarded_binary(payload: bytes) -> None:
+            if not self._closed:
+                await send_binary(payload)
+
+        self._send_json = guarded_json
+        self._send_binary = guarded_binary
         self._config = config or DuplexConfig()
 
         self._vad = VadGate(self._config.vad)
@@ -180,6 +193,7 @@ class DuplexVoiceSession:
         self._style = StyleController()
         self._overlap = OverlapArbiter()
         self._overlap_audio: list[np.ndarray] = []
+        self._overlap_epoch = 0
         self._voice_override = ""
         self._tts = StreamingTts(self._config.tts)
         self._prosody = ProsodyCompiler(
@@ -204,6 +218,7 @@ class DuplexVoiceSession:
         self._turn_task: asyncio.Task[None] | None = None
         self._partial_task: asyncio.Task[None] | None = None
         self._filler_task: asyncio.Task[None] | None = None
+        self._filler_stop: asyncio.Event | None = None
         self._side_tasks: set[asyncio.Task[Any]] = set()
 
         self._speaking: _SpeakingTrack | None = None
@@ -269,14 +284,28 @@ class DuplexVoiceSession:
             return
         self._closed = True
         self._cancel_playback()
-        for task in (self._turn_task, self._partial_task, self._filler_task):
-            if task is not None and not task.done():
-                task.cancel()
-        for task in list(self._side_tasks):
-            if not task.done():
-                task.cancel()
+        self._stop_fillers()
+        owned_tasks = {
+            task
+            for task in (
+                self._turn_task,
+                self._partial_task,
+                self._speculative_task,
+                *tuple(self._side_tasks),
+            )
+            if task is not None
+        }
+        await self._cancel_and_quiesce_tasks(
+            owned_tasks,
+            reason="session_close",
+        )
         with contextlib.suppress(asyncio.CancelledError, RuntimeError):
             await self._mind.stop_activity_watch()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(
+                asyncio.to_thread(self._asr.shutdown),
+                timeout=TASK_QUIESCENCE_TIMEOUT_S,
+            )
         self._tts.shutdown()
         self._state = SessionState.CLOSED
         await self._mind.publish("session_ended", {})
@@ -291,6 +320,10 @@ class DuplexVoiceSession:
         """
         if self._closed or self._muted:
             return
+        if len(data) > MAX_AUDIO_MESSAGE_BYTES:
+            raise ValueError(
+                f"voice audio message exceeds {MAX_AUDIO_MESSAGE_BYTES} bytes"
+            )
         try:
             samples = pcm16_to_float32(data)
         except (ValueError, TypeError) as exc:
@@ -345,15 +378,29 @@ class DuplexVoiceSession:
                 self._discard_speculation()
             self._maybe_schedule_partial()
 
-    async def _begin_user_turn(self) -> None:
+    async def _begin_user_turn(
+        self,
+        *,
+        captured_audio: np.ndarray | None = None,
+        reason: str = "superseded_by_new_speech",
+    ) -> None:
         """The user started talking."""
         # Cancel a pending turn: if they started again before she answered,
         # the newer utterance supersedes the older one.
-        if self._turn_task is not None and not self._turn_task.done():
-            self._turn_task.cancel()
-        self._stop_fillers()
+        await self._cancel_active_turn(
+            reason=reason,
+            return_to_listening=False,
+        )
 
-        self._utterance.begin()
+        if captured_audio is None:
+            self._utterance.begin()
+        else:
+            # Overlap arbitration waits for evidence before taking the floor.
+            # Seed the new turn with the entire bounded capture, not merely
+            # the rolling 320 ms preroll, or the first word is often lost.
+            self._utterance.clear()
+            self._utterance.begin()
+            self._utterance.append(captured_audio)
         self._asr.reset()
         self._discard_speculation()
         self._stable_text = ""
@@ -528,6 +575,7 @@ class DuplexVoiceSession:
                 return
             self._overlap.begin()
             self._overlap_audio = []
+            self._overlap_epoch += 1
 
         self._overlap_audio.append(frame)
         verdict = self._overlap.observe(
@@ -549,37 +597,51 @@ class DuplexVoiceSession:
             return
 
         if verdict is OverlapVerdict.BARGE_IN:
+            overlap_audio = (
+                np.concatenate(self._overlap_audio)
+                if self._overlap_audio
+                else np.zeros(0, dtype=np.float32)
+            )
             self._overlap.reset()
             self._overlap_audio = []
-            await self._interrupt(reason="user_barge_in")
-            await self._begin_user_turn()
+            await self._begin_user_turn(
+                captured_audio=overlap_audio,
+                reason="user_barge_in",
+            )
             return
 
-        # Backchannel: they were listening, not interrupting. Come back up
-        # and keep the sentence going.
+        # Timing says backchannel, but a short "no" has the same acoustic
+        # shape. Keep playback ducked until a side-effect-free decode resolves
+        # the ambiguity.
         overlap_audio = (
             np.concatenate(self._overlap_audio) if self._overlap_audio else None
         )
+        overlap_epoch = self._overlap_epoch
         self._overlap.reset()
         self._overlap_audio = []
-        await self._send_json(
-            {"type": protocol.EVT_DUCK, "gain": 1.0, "ramp_ms": 140}
-        )
-        await self._mind.publish("user_backchannel", {})
-        logger.info("User backchannel over her speech — continuing")
-
-        # Optimistic resume, verified a beat later. Timing alone can mistake
-        # a short sharp objection ("no—") for acknowledgement, so transcribe
-        # the overlap and undo the decision if it turns out to be words.
         if overlap_audio is not None and overlap_audio.size:
-            self._spawn(self._verify_backchannel(overlap_audio, track))
+            self._spawn(
+                self._verify_backchannel(
+                    overlap_audio,
+                    track,
+                    overlap_epoch,
+                )
+            )
+        else:
+            await self._resume_after_backchannel(track, "", overlap_epoch)
 
     async def _verify_backchannel(
-        self, audio: np.ndarray, track: _SpeakingTrack
+        self,
+        audio: np.ndarray,
+        track: _SpeakingTrack,
+        overlap_epoch: int,
     ) -> None:
         """Confirm a backchannel verdict against what was actually said."""
         try:
-            result = await self._asr.partial(audio)
+            text = await asyncio.wait_for(
+                self._asr.probe(audio),
+                timeout=OVERLAP_PROBE_TIMEOUT_S,
+            )
         except (RuntimeError, ValueError, OSError, AttributeError) as exc:
             record_degradation(
                 "voice_duplex.overlap",
@@ -587,45 +649,49 @@ class DuplexVoiceSession:
                 action="kept the timing-based backchannel verdict",
                 severity="debug",
             )
-            return
-        if result is None or self._speaking is not track:
+            text = ""
+        if (
+            self._speaking is not track
+            or self._closed
+            or overlap_epoch != self._overlap_epoch
+        ):
             return
 
         from core.voice.duplex.overlap import looks_like_backchannel
 
-        text = result.full.strip()
         if not text or looks_like_backchannel(text):
+            await self._resume_after_backchannel(track, text, overlap_epoch)
             return
-        if len(text.split()) < 2:
+
+        logger.info("Verified barge-in: overlap was %r", text[:50])
+        await self._begin_user_turn(
+            captured_audio=audio,
+            reason="verified_barge_in",
+        )
+        # The short utterance already ended while arbitration was pending, so
+        # no later VAD pause will close it for us.
+        await self._end_user_turn("verified_barge_in")
+
+    async def _resume_after_backchannel(
+        self,
+        track: _SpeakingTrack,
+        transcript: str,
+        overlap_epoch: int,
+    ) -> None:
+        if (
+            self._speaking is not track
+            or self._closed
+            or overlap_epoch != self._overlap_epoch
+        ):
             return
-
-        logger.info("Late barge-in: overlap was %r, not acknowledgement", text[:50])
-        await self._interrupt(reason="late_barge_in")
-        await self._begin_user_turn()
-
-    async def _check_barge_in(self, probability: float) -> bool:
-        """Cut her off when the user starts talking over her."""
-        cfg = self._config.barge_in
-        track = self._speaking
-        if not cfg.enabled or track is None:
-            return False
-
-        # Grace window: without it, the tail of the user's own question or a
-        # scrap of acoustic echo kills the reply the instant it begins.
-        if (time.monotonic() - track.started_at) * 1000.0 < cfg.grace_ms:
-            self._barge_run_ms = 0.0
-            return False
-
-        if probability < cfg.threshold:
-            self._barge_run_ms = 0.0
-            return False
-
-        self._barge_run_ms += VAD_FRAME_SAMPLES / CAPTURE_RATE * 1000.0
-        if self._barge_run_ms < cfg.trigger_ms:
-            return False
-
-        await self._interrupt(reason="user_barge_in")
-        return True
+        await self._send_json(
+            {"type": protocol.EVT_DUCK, "gain": 1.0, "ramp_ms": 140}
+        )
+        await self._mind.publish(
+            "user_backchannel",
+            {"transcript": transcript[:80]},
+        )
+        logger.info("User backchannel over her speech — continuing")
 
     async def _interrupt(self, *, reason: str, played_s: float | None = None) -> None:
         """Stop speaking now and record what was actually heard."""
@@ -634,6 +700,7 @@ class DuplexVoiceSession:
             return
 
         self._barge_run_ms = 0.0
+        self._overlap_epoch += 1
         self._overlap.reset()
         self._overlap_audio = []
         track.token.cancel()
@@ -682,6 +749,65 @@ class DuplexVoiceSession:
         # _begin_user_turn, which opens the utterance; an explicit "stop"
         # command has no follow-on speech and correctly ends here.
         await self._set_state(SessionState.LISTENING)
+
+    async def _cancel_and_quiesce_tasks(
+        self,
+        tasks: set[asyncio.Task[Any]],
+        *,
+        reason: str,
+    ) -> bool:
+        current = asyncio.current_task()
+        pending = {
+            task
+            for task in tasks
+            if task is not current and not task.done()
+        }
+        for task in pending:
+            task.cancel()
+        if not pending:
+            return True
+        _done, still_pending = await asyncio.wait(
+            pending,
+            timeout=TASK_QUIESCENCE_TIMEOUT_S,
+        )
+        if still_pending:
+            record_degradation(
+                "voice_duplex.session",
+                TimeoutError(
+                    f"{len(still_pending)} voice tasks did not quiesce after {reason}"
+                ),
+                action="left model ownership active until the worker operations exit",
+                severity="warning",
+            )
+        return not still_pending
+
+    async def _cancel_active_turn(
+        self,
+        *,
+        reason: str,
+        return_to_listening: bool,
+    ) -> None:
+        if self._speaking is not None:
+            await self._interrupt(reason=reason)
+        self._stop_fillers()
+        tasks = {
+            task
+            for task in (
+                self._turn_task,
+                self._partial_task,
+                self._speculative_task,
+            )
+            if task is not None
+        }
+        self._discard_speculation()
+        quiesced = await self._cancel_and_quiesce_tasks(tasks, reason=reason)
+        if not quiesced and not self._closed:
+            raise RuntimeError(f"prior_voice_turn_failed_to_quiesce:{reason}")
+        self._turn_task = None
+        self._partial_task = None
+        self._speculative_task = None
+        if return_to_listening and not self._closed:
+            await self._set_state(SessionState.LISTENING)
 
     # ── turn handling (the cognition clock) ──────────────────────────────
 
@@ -775,24 +901,9 @@ class DuplexVoiceSession:
             )
 
             # Fillers start now and run until the first real audio goes out.
-            self._filler.begin_turn()
-            self._filler_task = self._spawn(self._run_fillers(time.monotonic()))
+            self._start_fillers()
 
             cognition_started = time.perf_counter()
-
-            # Narrow streaming carve-out. Only conversational turns, every
-            # clause validated before it is spoken, and any doubt at all
-            # falls through to the fully governed buffered path below.
-            if self._config.stream_reply:
-                eligibility = is_streamable(transcript)
-                if eligibility.ok:
-                    if await self._speak_streaming(transcript):
-                        self._metrics.cognition_ms = (
-                            time.perf_counter() - cognition_started
-                        ) * 1000.0
-                        return
-                else:
-                    logger.debug("Streaming declined: %s", eligibility.reason)
 
             reply = await self._mind.respond(
                 transcript, delivery_context=self._delivery.as_context()
@@ -827,14 +938,28 @@ class DuplexVoiceSession:
         finally:
             self._stop_fillers()
 
-    async def _run_fillers(self, started_at: float) -> None:
+    def _start_fillers(self) -> None:
+        """Start exactly one filler loop for the current cognition turn."""
+        self._stop_fillers()
+        self._filler.begin_turn()
+        stop = asyncio.Event()
+        self._filler_stop = stop
+        self._filler_task = self._spawn(self._run_fillers(time.monotonic(), stop))
+
+    async def _run_fillers(
+        self,
+        started_at: float,
+        stop: asyncio.Event,
+    ) -> None:
         """Emit thinking sounds while cognition runs."""
         cfg = self._config.filler
         if not cfg.enabled:
             return
         try:
-            while True:
+            while not stop.is_set():
                 await asyncio.sleep(0.1)
+                if stop.is_set():
+                    break
                 elapsed = (time.monotonic() - started_at) * 1000.0
                 utterance = self._filler.due(
                     elapsed,
@@ -862,173 +987,16 @@ class DuplexVoiceSession:
             raise
 
     def _stop_fillers(self) -> None:
+        stop = self._filler_stop
+        self._filler_stop = None
+        if stop is not None:
+            stop.set()
         task = self._filler_task
         self._filler_task = None
         if task is not None and not task.done():
             task.cancel()
 
     # ── speech output ────────────────────────────────────────────────────
-
-    async def _speak_streaming(self, transcript: str) -> bool:
-        """Speak clauses as they are generated. Returns True if it handled the turn.
-
-        Returning False means nothing irreversible happened and the caller
-        should run the fully governed buffered path instead. That is the
-        default outcome for every kind of doubt: an empty stream, an
-        unavailable engine, or a clause that fails validation before any
-        audio has gone out.
-        """
-        validator = ClauseValidator()
-        chunker = StreamingChunker(
-            first_max_chars=self._config.tts.first_chunk_max_chars,
-            max_chars=self._config.tts.chunk_max_chars,
-        )
-        spec = self._prosody_spec()
-        self._utterance_counter += 1
-        track = _SpeakingTrack(
-            utterance_id=self._utterance_counter,
-            intended="",
-            started_at=time.monotonic(),
-        )
-
-        spoken_any = False
-        seq = 0
-
-        async def _emit(clause: str) -> bool:
-            """Validate, synthesise and send one clause. False = abort."""
-            nonlocal spoken_any, seq
-            verdict = validator.check(clause)
-            if not verdict.ok:
-                logger.warning("Streaming clause rejected (%s): %r", verdict.reason, clause[:60])
-                await self._mind.publish(
-                    "stream_clause_rejected", {"reason": verdict.reason}
-                )
-                return False
-
-            result = await self._tts.synthesize(clause, spec, track.token)
-            if result is None or track.token.cancelled:
-                return False
-
-            if not spoken_any:
-                # First audio: only now is the turn committed to streaming.
-                self._stop_fillers()
-                self._speaking = track
-                self._client_played_s = 0.0
-                self._overlap.reset()
-                self._overlap_audio = []
-                self._metrics.first_audio_at = time.monotonic()
-                self._metrics.tts_first_chunk_ms = result.synth_ms
-                await self._set_state(SessionState.SPEAKING)
-                spoken_any = True
-
-            track.chunks.append((result.text, result.duration_s))
-            track.sent_duration_s += result.duration_s
-            track.intended = f"{track.intended} {result.text}".strip()
-            self._echo.note_spoken(result.text)
-
-            await self._send_json(
-                {"type": protocol.EVT_SPEAKING_CHUNK, "text": result.text, "seq": seq}
-            )
-            await self._send_binary(
-                protocol.encode_audio(
-                    float32_to_pcm16(result.samples),
-                    opcode=protocol.AudioOpcode.SPEECH,
-                    seq=seq,
-                    utterance_id=track.utterance_id,
-                )
-            )
-            seq += 1
-            return True
-
-        try:
-            async for piece in self._mind.stream_response(
-                transcript, delivery_context=self._delivery.as_context()
-            ):
-                if track.token.cancelled:
-                    break
-                for clause in chunker.push(piece):
-                    if not await _emit(clause):
-                        return await self._abandon_stream(track, spoken_any)
-            if not track.token.cancelled:
-                for clause in chunker.flush():
-                    if not await _emit(clause):
-                        return await self._abandon_stream(track, spoken_any)
-        except asyncio.CancelledError:
-            raise
-        except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:
-            record_degradation(
-                "voice_duplex.streaming",
-                exc,
-                action="abandoned the streamed reply; falling back to the governed turn",
-                severity="warning",
-            )
-            return await self._abandon_stream(track, spoken_any)
-
-        if not spoken_any:
-            # The stream produced nothing usable. Nothing was said, so the
-            # buffered path can answer cleanly.
-            return False
-
-        await self._send_binary(
-            protocol.encode_audio(
-                b"",
-                opcode=protocol.AudioOpcode.SPEECH,
-                seq=seq,
-                utterance_id=track.utterance_id,
-                last=True,
-            )
-        )
-        await self._send_json({"type": protocol.EVT_REPLY, "text": track.intended})
-        await self._await_playback_drain(track)
-        if track.token.cancelled or self._speaking is not track:
-            return True
-
-        self._mind.record_spoken(
-            SpokenRecord(
-                intended=track.intended,
-                spoken=track.intended,
-                interrupted=False,
-                started_at=track.started_at,
-                ended_at=time.monotonic(),
-            )
-        )
-        self._speaking = None
-        await self._send_json({"type": protocol.EVT_METRICS, **self._metrics.as_dict()})
-        await self._mind.publish(
-            "spoke", {"chars": len(track.intended), "streamed": True, **self._metrics.as_dict()}
-        )
-        await self._set_state(SessionState.LISTENING)
-        return True
-
-    async def _abandon_stream(self, track: _SpeakingTrack, spoken_any: bool) -> bool:
-        """Give up on a streamed reply. Returns True if the turn is finished.
-
-        If nothing was spoken this is invisible — the caller re-runs the
-        governed path and the user never knows. If audio already went out we
-        cannot unsay it, so she stops and says so, and the governed path then
-        answers properly. Honest and slightly awkward beats fluent and wrong.
-        """
-        track.token.cancel()
-        if not spoken_any:
-            self._speaking = None
-            return False
-
-        await self._send_json({"type": protocol.EVT_FLUSH, "utterance_id": track.utterance_id})
-        self._mind.record_spoken(
-            SpokenRecord(
-                intended=track.intended,
-                spoken=track.intended,
-                interrupted=True,
-                started_at=track.started_at,
-                ended_at=time.monotonic(),
-            )
-        )
-        self._speaking = None
-        await self._speak_text(
-            "Sorry — that came out wrong. Let me say it properly.",
-            cause=ThinkingCause.UNCERTAINTY,
-        )
-        return False
 
     async def _speak_reply(self, reply: str) -> None:
         await self._send_json({"type": protocol.EVT_REPLY, "text": reply})
@@ -1063,6 +1031,7 @@ class DuplexVoiceSession:
 
         seq = 0
         first_audio = True
+        synthesis_failed = False
         try:
             async for result in self._tts.stream(_iter_chunks(), spec, track.token):
                 if track.token.cancelled or self._speaking is not track:
@@ -1094,6 +1063,7 @@ class DuplexVoiceSession:
         except asyncio.CancelledError:
             raise
         except (RuntimeError, ValueError, OSError, AttributeError) as exc:
+            synthesis_failed = True
             record_degradation(
                 "voice_duplex.session",
                 exc,
@@ -1101,6 +1071,34 @@ class DuplexVoiceSession:
             )
 
         if self._speaking is track and not track.token.cancelled:
+            delivered_text = " ".join(chunk_text for chunk_text, _ in track.chunks)
+            delivery_complete = bool(track.chunks) and (
+                not synthesis_failed and len(track.chunks) == len(pieces)
+            )
+            if not track.chunks:
+                self._mind.record_spoken(
+                    SpokenRecord(
+                        intended=text,
+                        spoken="",
+                        interrupted=False,
+                        delivery_complete=False,
+                        started_at=track.started_at,
+                        ended_at=time.monotonic(),
+                    )
+                )
+                self._speaking = None
+                await self._send_json(
+                    {
+                        "type": protocol.EVT_ERROR,
+                        "message": "Speech synthesis failed before audio was delivered.",
+                    }
+                )
+                await self._mind.publish(
+                    "speech_delivery_failed",
+                    {"intended_chars": len(text), "delivered_chars": 0},
+                )
+                await self._set_state(SessionState.LISTENING)
+                return
             await self._send_binary(
                 protocol.encode_audio(
                     b"",
@@ -1124,15 +1122,23 @@ class DuplexVoiceSession:
             self._mind.record_spoken(
                 SpokenRecord(
                     intended=text,
-                    spoken=text,
+                    spoken=delivered_text,
                     interrupted=False,
+                    delivery_complete=delivery_complete,
                     started_at=track.started_at,
                     ended_at=time.monotonic(),
                 )
             )
             self._speaking = None
             await self._send_json({"type": protocol.EVT_METRICS, **self._metrics.as_dict()})
-            await self._mind.publish("spoke", {"chars": len(text), **self._metrics.as_dict()})
+            await self._mind.publish(
+                "spoke",
+                {
+                    "chars": len(delivered_text),
+                    "delivery_complete": delivery_complete,
+                    **self._metrics.as_dict(),
+                },
+            )
             await self._set_state(SessionState.LISTENING)
 
     async def _await_playback_drain(self, track: _SpeakingTrack) -> None:
@@ -1203,7 +1209,10 @@ class DuplexVoiceSession:
         command = str(message.get("command") or message.get("type") or "")
 
         if command == protocol.CMD_STOP:
-            await self._interrupt(reason="user_stop")
+            await self._cancel_active_turn(
+                reason="user_stop",
+                return_to_listening=True,
+            )
         elif command == protocol.CMD_MUTE:
             self._muted = True
             await self._send_json({"type": protocol.EVT_STATE, "state": self._state.value, "muted": True})
@@ -1213,10 +1222,20 @@ class DuplexVoiceSession:
             self._vad.reset()
             await self._send_json({"type": protocol.EVT_STATE, "state": self._state.value, "muted": False})
         elif command == protocol.CMD_BARGE_IN:
-            played_ms = float(message.get("played_ms") or 0.0)
+            played_ms = self._bounded_nonnegative_float(
+                message.get("played_ms"),
+                maximum=3_600_000.0,
+            )
             await self._interrupt(reason="client_barge_in", played_s=played_ms / 1000.0)
+            await self._cancel_active_turn(
+                reason="client_barge_in",
+                return_to_listening=True,
+            )
         elif command == protocol.CMD_PLAYBACK:
-            self._client_played_s = float(message.get("played_ms") or 0.0) / 1000.0
+            self._client_played_s = self._bounded_nonnegative_float(
+                message.get("played_ms"),
+                maximum=3_600_000.0,
+            ) / 1000.0
         elif command == protocol.CMD_LIST_VOICES:
             await self._send_json(
                 {"type": protocol.EVT_VOICES, "voices": self._tts.available_voices(),
@@ -1234,6 +1253,14 @@ class DuplexVoiceSession:
         elif command == protocol.CMD_TEXT:
             text = str(message.get("text") or "").strip()
             if text:
+                if len(text.encode("utf-8", errors="replace")) > MAX_TYPED_MESSAGE_BYTES:
+                    raise ValueError(
+                        f"voice typed message exceeds {MAX_TYPED_MESSAGE_BYTES} bytes"
+                    )
+                await self._cancel_active_turn(
+                    reason="superseded_by_typed_turn",
+                    return_to_listening=False,
+                )
                 self._metrics = TurnMetrics(speech_end_at=time.monotonic())
                 await self._set_state(SessionState.THINKING)
                 self._turn_task = self._spawn(self._run_typed_turn(text))
@@ -1242,8 +1269,7 @@ class DuplexVoiceSession:
         """A typed message while in voice mode still gets a spoken answer."""
         try:
             await self._send_json({"type": protocol.EVT_FINAL, "text": text, "typed": True})
-            self._filler.begin_turn()
-            self._filler_task = self._spawn(self._run_fillers(time.monotonic()))
+            self._start_fillers()
             reply = await self._mind.respond(text)
             if reply:
                 await self._speak_reply(reply)
@@ -1315,11 +1341,35 @@ class DuplexVoiceSession:
             )
             return {}
 
+    @staticmethod
+    def _bounded_nonnegative_float(value: Any, *, maximum: float) -> float:
+        try:
+            parsed = float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if not np.isfinite(parsed):
+            return 0.0
+        return max(0.0, min(parsed, maximum))
+
+    def _task_done(self, task: asyncio.Task[Any]) -> None:
+        self._side_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:
+            record_degradation(
+                "voice_duplex.session.background_task",
+                exc,
+                action="recorded an unexpected voice background-task failure",
+                severity="warning",
+            )
+
     def _spawn(self, coro: Any) -> asyncio.Task[Any]:
         """Track background tasks so close() can cancel every one."""
         task = asyncio.ensure_future(coro)
         self._side_tasks.add(task)
-        task.add_done_callback(self._side_tasks.discard)
+        task.add_done_callback(self._task_done)
         return task
 
     def status(self) -> dict[str, Any]:

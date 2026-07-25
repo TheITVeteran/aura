@@ -1878,9 +1878,12 @@ before those dependencies close is not admissible.
   all `none`. SPARK-049 must execute the selected diagnostic under a bounded
   repair transaction. Eleven direct selector contracts plus updated graph,
   value-controller, engine, and service tests pass 168/168; the complete
-  62-file latent/RLC ownership battery passes 1,110/1,110. This checkpoint does
-  not claim that an unexecuted recommendation resolved a dispute, repaired a
-  branch, improved the resident 32B, or established frontier capability.
+  62-file latent/RLC ownership battery passes 1,110/1,110. The final rebased
+  65-file combined ownership snapshot passes 1,180/1,180 after repairing the
+  concurrent role-lesion runner's structural missing-telemetry contract. This
+  checkpoint does not claim that an unexecuted recommendation resolved a
+  dispute, repaired a branch, improved the resident 32B, or established
+  frontier capability.
 - [ ] **SPARK-049 - Local invalidation and repair.** Preserve verified ancestors,
   invalidate the failed node and descendants, regenerate from the last valid
   state, and prove unrelated correct work is unchanged.

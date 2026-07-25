@@ -32,7 +32,7 @@ import contextlib
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,13 +58,14 @@ class SpokenRecord:
     intended: str = ""
     spoken: str = ""
     interrupted: bool = False
+    delivery_complete: bool = True
     started_at: float = 0.0
     ended_at: float = 0.0
 
     @property
     def unheard(self) -> str:
         """The tail she never delivered."""
-        if not self.interrupted:
+        if not self.interrupted and self.delivery_complete:
             return ""
         intended = self.intended.strip()
         spoken = self.spoken.strip()
@@ -80,35 +81,15 @@ async def _default_responder(
     session_id: str,
     timeout_s: float,
 ) -> str | None:
-    """Run one governed turn through the same path the desktop chat uses.
-
-    Imported lazily and inside the function: ``core`` must not take a hard
-    import dependency on ``interface`` at module load, and a runtime without
-    the HTTP surface should still be able to import this package.
-    """
-    from interface.routes import chat as chat_routes
-
-    lane = None
-    try:
-        lane = chat_routes._collect_conversation_lane_status()
-    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        record_degradation(
-            "voice_duplex.mind",
-            exc,
-            action="ran the voice turn without a conversation-lane snapshot",
-            severity="warning",
-        )
-
-    return await chat_routes._run_cognitive_engine_chat_turn(
-        effective_message,
-        visible_user_message=transcript,
-        session_id=session_id,
-        origin="user",
-        timeout_s=timeout_s,
-        lane=lane,
-        source="duplex_voice",
-        require_engine=True,
+    """Refuse an unbound caller instead of bypassing governed chat admission."""
+    record_degradation(
+        "voice_duplex.mind",
+        RuntimeError(
+            "duplex voice responder is not bound to an authenticated chat surface"
+        ),
+        action="returned no reply without entering an ungoverned cognition lane",
     )
+    return None
 
 
 class MindBridge:
@@ -128,6 +109,7 @@ class MindBridge:
         self._spoken_reply_words = int(spoken_reply_words)
         self._activity_task: asyncio.Task[None] | None = None
         self._activity_callback: Callable[[str], None] | None = None
+        self._activity_stop = asyncio.Event()
         self._turn_active = False
         self._pending_interruption: SpokenRecord | None = None
         self._history: list[SpokenRecord] = []
@@ -258,57 +240,21 @@ class MindBridge:
             parts.append(delivery_context)
 
         pending = self._pending_interruption
-        if pending is not None and pending.interrupted:
+        if pending is not None and (
+            pending.interrupted or not pending.delivery_complete
+        ):
             unheard = pending.unheard
             if unheard:
                 heard = pending.spoken.strip()
                 parts.append(
-                    "[voice context: the user interrupted your previous spoken "
-                    f'reply. They heard only: "{heard[:400]}". '
+                    "[voice context: your previous spoken reply did not finish. "
+                    f'The user heard only: "{heard[:400]}". '
                     f'They did not hear: "{unheard[:400]}". '
                     "Treat the unheard part as unsaid — do not assume they know it.]"
                 )
 
         parts.append(transcript)
         return "\n\n".join(parts)
-
-    async def stream_response(
-        self, transcript: str, *, delivery_context: str = ""
-    ) -> AsyncIterator[str]:
-        """Token stream for the narrow streaming carve-out.
-
-        Uses ``CognitiveEngine.think_stream``, which routes to the LLM router
-        directly and therefore does *not* run the governance phases the
-        buffered path does. That is precisely why the caller gates this to
-        conversational turns and validates every clause before speaking it —
-        the safety here lives in the caller, not in this method, and the
-        caller must abandon to :meth:`respond` on any doubt.
-        """
-        transcript = (transcript or "").strip()
-        if not transcript:
-            return
-
-        effective = self._compose_effective_message(transcript, delivery_context)
-        self._turn_active = True
-        try:
-            from core.container import ServiceContainer
-
-            engine = ServiceContainer.get("cognitive_engine", default=None)
-            if engine is None or not hasattr(engine, "think_stream"):
-                return
-            async for chunk in engine.think_stream(effective, origin="user"):
-                text = str(chunk or "")
-                if text:
-                    yield text
-        except (RuntimeError, ValueError, AttributeError, ImportError, TypeError, OSError) as exc:
-            record_degradation(
-                "voice_duplex.mind",
-                exc,
-                action="streaming reply aborted; caller falls back to the governed turn",
-                severity="warning",
-            )
-        finally:
-            self._turn_active = False
 
     # ── spoken-truth accounting ──────────────────────────────────────────
 
@@ -317,7 +263,7 @@ class MindBridge:
         self._history.append(record)
         if len(self._history) > 32:
             self._history.pop(0)
-        if record.interrupted:
+        if record.interrupted or not record.delivery_complete:
             self._pending_interruption = record
             logger.info(
                 "Interrupted after %d of %d chars; %d chars never heard",
@@ -343,45 +289,74 @@ class MindBridge:
         content of an answer.
         """
         if self._activity_task is not None:
-            return
+            if not self._activity_task.done():
+                return
+            self._activity_task = None
         self._activity_callback = callback
+        self._activity_stop.clear()
         self._activity_task = asyncio.ensure_future(self._watch_activity())
+        self._activity_task.add_done_callback(self._activity_watch_done)
 
-    async def _watch_activity(self) -> None:
-        queue: Any = None
-        bus: Any = None
+    def _activity_watch_done(self, task: asyncio.Task[None]) -> None:
+        if self._activity_task is task:
+            self._activity_task = None
+        if task.cancelled():
+            return
         try:
-            from core.event_bus import get_event_bus
-
-            bus = get_event_bus()
-            queue = await bus.subscribe("telemetry")
-            while True:
-                item = await queue.get()
-                # The bus delivers (priority, seq, payload) tuples.
-                payload = item[2] if isinstance(item, tuple) and len(item) >= 3 else item
-                if not isinstance(payload, dict):
-                    continue
-                if not self._turn_active:
-                    continue
-                if payload.get("type") != "activity":
-                    continue
-                label = str(payload.get("label") or "")
-                key = self._activity_key_from_label(label)
-                if key and self._activity_callback:
-                    self._activity_callback(key)
-        except asyncio.CancelledError:
-            raise
+            task.result()
         except (RuntimeError, AttributeError, TypeError, ValueError, ImportError) as exc:
             record_degradation(
                 "voice_duplex.mind",
                 exc,
-                action="stopped watching activity telemetry; fillers fall back to generic phrasing",
+                action="activity telemetry watcher exited; a later start can recover it",
                 severity="warning",
             )
-        finally:
-            if bus is not None and queue is not None:
-                with contextlib.suppress(Exception):
-                    await bus.unsubscribe("telemetry", queue)
+
+    async def _watch_activity(self) -> None:
+        from core.event_bus import get_event_bus
+
+        for attempt in range(4):
+            queue: Any = None
+            bus: Any = None
+            try:
+                bus = get_event_bus()
+                queue = await bus.subscribe("telemetry")
+                while not self._activity_stop.is_set():
+                    item = await queue.get()
+                    # The bus delivers (priority, seq, payload) tuples.
+                    payload = (
+                        item[2]
+                        if isinstance(item, tuple) and len(item) >= 3
+                        else item
+                    )
+                    if not isinstance(payload, dict) or not self._turn_active:
+                        continue
+                    if payload.get("type") != "activity":
+                        continue
+                    label = str(payload.get("label") or "")
+                    key = self._activity_key_from_label(label)
+                    if key and self._activity_callback:
+                        self._activity_callback(key)
+                return
+            except asyncio.CancelledError:
+                raise
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "voice_duplex.mind",
+                    exc,
+                    action=(
+                        "activity telemetry watcher will retry"
+                        if attempt < 3
+                        else "activity telemetry watcher exhausted bounded retries"
+                    ),
+                    severity="warning",
+                )
+                if attempt < 3:
+                    await asyncio.sleep(0.1 * (2**attempt))
+            finally:
+                if bus is not None and queue is not None:
+                    with contextlib.suppress(Exception):
+                        await bus.unsubscribe("telemetry", queue)
 
     @staticmethod
     def _activity_key_from_label(label: str) -> str:
@@ -407,6 +382,7 @@ class MindBridge:
         task = self._activity_task
         self._activity_task = None
         self._activity_callback = None
+        self._activity_stop.set()
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

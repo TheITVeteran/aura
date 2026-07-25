@@ -139,6 +139,27 @@
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "acquire_synchronous_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "faster_whisper"
+      ],
+      "ownership_mode": "in_process_sync_heartbeat",
+      "path": "core/voice/duplex/streaming_asr.py"
+    },
+    {
+      "expected_load_references": 2,
+      "guard_symbol": "acquire_synchronous_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "coqui_tts",
+        "piper"
+      ],
+      "ownership_mode": "in_process_sync_heartbeat",
+      "path": "core/voice/duplex/tts_stream.py"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "acquire_in_process_model_lane",
       "min_guard_sites": 1,
       "modules": [

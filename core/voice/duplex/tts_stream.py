@@ -20,8 +20,8 @@ jitter in her actual thinking. This one does not touch the GPU at all.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-import shutil
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -304,7 +304,6 @@ class _EngineState:
     clone: _ClonedVoiceEngine | None = None
     kokoro: _KokoroEngine | None = None
     piper: _PiperEngine | None = None
-    say_available: bool = False
     loaded: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -312,20 +311,119 @@ class _EngineState:
 class StreamingTts:
     """Chunked synthesis with pipelining and cancellation."""
 
-    def __init__(self, config: TtsConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: TtsConfig | None = None,
+        *,
+        model_lane_controller: Any = None,
+    ) -> None:
         self._config = config or TtsConfig()
         self._state = _EngineState()
+        self._model_lane_controller = model_lane_controller
+        self._lane_lease: Any = None
+        self._lifecycle_lock = threading.Lock()
+        self._active_syntheses = 0
+        self._accepting_synthesis = False
+        self._closing = False
+        self._load_retry_after = 0.0
         self._pool = ThreadPoolExecutor(
             max_workers=max(1, self._config.workers),
             thread_name_prefix="aura-tts",
         )
+
+    def _acquire_model_lane(self) -> Any:
+        with self._lifecycle_lock:
+            if self._lane_lease is not None:
+                return self._lane_lease
+            from core.runtime.model_lane_control import (
+                acquire_synchronous_in_process_model_lane,
+            )
+
+            clone_enabled = bool(
+                self._config.prefer_clone and self._config.clone_reference
+            )
+            lease = acquire_synchronous_in_process_model_lane(
+                owner_id=f"voice-duplex-tts:{id(self)}",
+                model_path=(
+                    "voice-duplex/tts/xtts-kokoro-piper"
+                    if clone_enabled
+                    else "voice-duplex/tts/kokoro-piper"
+                ),
+                purpose="serve",
+                request_gb=3.0 if clone_enabled else 0.75,
+                priority=30,
+                preemptible=False,
+                evict=self._evict_model_lane,
+                compensate=self._compensate_model_lane,
+                metadata={
+                    "engine": "voice_duplex",
+                    "model_role": "tts",
+                    "clone_enabled": clone_enabled,
+                    "lifecycle_state": "loading",
+                },
+                controller=self._model_lane_controller,
+            )
+            self._lane_lease = lease
+            return lease
+
+    def _release_model_lane_locked(self, *, reason: str) -> bool:
+        self._accepting_synthesis = False
+        self._state.clone = None
+        self._state.kokoro = None
+        self._state.piper = None
+        self._state.loaded = False
+        lease, self._lane_lease = self._lane_lease, None
+        if lease is not None:
+            lease.release(reason=reason)
+        return self._active_syntheses == 0 and self._lane_lease is None
+
+    def _release_model_lane_if_idle(self, *, reason: str) -> bool:
+        with self._lifecycle_lock:
+            if self._active_syntheses:
+                return False
+            return self._release_model_lane_locked(reason=reason)
+
+    async def _evict_model_lane(self, _owner: Any, reason: str) -> bool:
+        released = await asyncio.to_thread(
+            self._release_model_lane_if_idle,
+            reason=f"voice_tts_lane_eviction:{reason}",
+        )
+        if not released:
+            logger.warning("TTS model preemption refused during active synthesis: %s", reason)
+        return released
+
+    async def _compensate_model_lane(self, _owner: Any, reason: str) -> bool:
+        logger.info("Restoring duplex TTS after failed model candidate: %s", reason)
+        return await self.ensure_loaded()
 
     async def ensure_loaded(self) -> bool:
         """Load engines once, off the event loop."""
         async with self._state.lock:
             if self._state.loaded:
                 return self.available
+            if self._closing:
+                return False
+            if time.monotonic() < self._load_retry_after:
+                return False
             loop = asyncio.get_running_loop()
+            try:
+                lease = await loop.run_in_executor(self._pool, self._acquire_model_lane)
+            except (
+                AttributeError,
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                record_degradation(
+                    "voice_duplex.tts",
+                    exc,
+                    action="neural TTS model admission failed; no unowned model was loaded",
+                )
+                self._state.loaded = False
+                self._load_retry_after = time.monotonic() + 2.0
+                return False
 
             # Cloning first only when explicitly preferred: it is the slowest
             # engine by a wide margin, so it must never be picked by accident.
@@ -343,8 +441,32 @@ class StreamingTts:
                 if await loop.run_in_executor(self._pool, piper.load):
                     self._state.piper = piper
 
-            self._state.say_available = bool(shutil.which("say"))
             self._state.loaded = True
+
+            neural_available = bool(
+                self._state.clone or self._state.kokoro or self._state.piper
+            )
+            if neural_available:
+                if not lease.set_preemptible(True):
+                    with self._lifecycle_lock:
+                        self._release_model_lane_locked(
+                            reason="voice_tts_model_activation_fence_lost"
+                        )
+                    self._load_retry_after = time.monotonic() + 2.0
+                    logger.error("TTS model lane lost its activation fence")
+                    return False
+                with self._lifecycle_lock:
+                    self._accepting_synthesis = True
+                self._load_retry_after = 0.0
+            else:
+                with self._lifecycle_lock:
+                    self._release_model_lane_locked(
+                        reason="voice_tts_no_neural_engine_loaded"
+                    )
+                # The configured assets are absent or unusable. This is a
+                # stable state until settings/files change, not a reason to
+                # retry model admission on every spoken clause.
+                self._state.loaded = True
 
             if not self.available:
                 logger.error("No TTS engine available — the voice lane cannot speak")
@@ -356,7 +478,6 @@ class StreamingTts:
             self._state.clone
             or self._state.kokoro
             or self._state.piper
-            or self._state.say_available
         )
 
     def available_voices(self) -> list[str]:
@@ -374,8 +495,6 @@ class StreamingTts:
             return "kokoro"
         if self._state.piper:
             return "piper"
-        if self._state.say_available:
-            return "macos_say"
         return "none"
 
     async def warm_up(self, spec: ProsodySpec) -> None:
@@ -411,45 +530,94 @@ class StreamingTts:
 
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
-
-        for engine in (self._state.clone, self._state.kokoro, self._state.piper):
-            if engine is None:
-                continue
-            try:
-                samples, rate = await loop.run_in_executor(
-                    self._pool, engine.synthesize, text, spec
-                )
-            except (RuntimeError, ValueError, OSError, AttributeError, MemoryError) as exc:
-                record_degradation(
-                    "voice_duplex.tts",
-                    exc,
-                    action=f"{engine.name} synthesis failed; trying next engine",
-                    severity="warning",
-                )
-                continue
-
-            if token.cancelled:
-                # Interrupted while the graph was running. Discard rather
-                # than play stale audio over the user.
+        release_deferred_to_native_completion = False
+        with self._lifecycle_lock:
+            if not self._accepting_synthesis:
                 return None
-
-            samples = _resample(samples, rate, OUTPUT_RATE)
-            if spec.gain != 1.0:
-                samples = samples * float(spec.gain)
-            if spec.trailing_pause_ms > 0:
-                pad = int(OUTPUT_RATE * spec.trailing_pause_ms / 1000.0)
-                if pad > 0:
-                    samples = np.concatenate((samples, np.zeros(pad, dtype=np.float32)))
-
-            return SynthesisResult(
-                samples=samples.astype(np.float32, copy=False),
-                sample_rate=OUTPUT_RATE,
-                text=text,
-                synth_ms=(time.perf_counter() - started) * 1000.0,
-                engine=engine.name,
+            self._active_syntheses += 1
+            engines = (
+                self._state.clone,
+                self._state.kokoro,
+                self._state.piper,
             )
 
-        return None
+        try:
+            for engine in engines:
+                if engine is None:
+                    continue
+                try:
+                    synthesis = loop.run_in_executor(
+                        self._pool, engine.synthesize, text, spec
+                    )
+                    try:
+                        samples, rate = await asyncio.shield(synthesis)
+                    except asyncio.CancelledError:
+                        # A Python cancellation cannot stop a running native
+                        # synthesis thread. Transfer the active-count release to
+                        # its completion callback so repeated cancellation
+                        # cannot release model ownership while native code is
+                        # still using the weights.
+                        release_deferred_to_native_completion = True
+                        synthesis.add_done_callback(self._cancelled_synthesis_done)
+                        raise
+                except (RuntimeError, ValueError, OSError, AttributeError, MemoryError) as exc:
+                    record_degradation(
+                        "voice_duplex.tts",
+                        exc,
+                        action=f"{engine.name} synthesis failed; trying next engine",
+                        severity="warning",
+                    )
+                    continue
+
+                if token.cancelled:
+                    # Interrupted while the graph was running. Discard rather
+                    # than play stale audio over the user.
+                    return None
+
+                samples = _resample(samples, rate, OUTPUT_RATE)
+                if spec.gain != 1.0:
+                    samples = samples * float(spec.gain)
+                if spec.trailing_pause_ms > 0:
+                    pad = int(OUTPUT_RATE * spec.trailing_pause_ms / 1000.0)
+                    if pad > 0:
+                        samples = np.concatenate(
+                            (samples, np.zeros(pad, dtype=np.float32))
+                        )
+
+                return SynthesisResult(
+                    samples=samples.astype(np.float32, copy=False),
+                    sample_rate=OUTPUT_RATE,
+                    text=text,
+                    synth_ms=(time.perf_counter() - started) * 1000.0,
+                    engine=engine.name,
+                )
+
+            return None
+        finally:
+            if not release_deferred_to_native_completion:
+                self._finish_synthesis()
+
+    def _finish_synthesis(self) -> None:
+        with self._lifecycle_lock:
+            self._active_syntheses = max(0, self._active_syntheses - 1)
+            if self._closing and self._active_syntheses == 0:
+                self._release_model_lane_locked(reason="voice_tts_shutdown")
+
+    def _cancelled_synthesis_done(self, synthesis: asyncio.Future[Any]) -> None:
+        try:
+            synthesis.result()
+        except (
+            asyncio.CancelledError,
+            AttributeError,
+            MemoryError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug("Cancelled native TTS synthesis finished with: %s", exc)
+        finally:
+            self._finish_synthesis()
 
     async def stream(
         self,
@@ -494,6 +662,13 @@ class StreamingTts:
         finally:
             if pending is not None and not pending.done():
                 pending.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pending
 
     def shutdown(self) -> None:
+        with self._lifecycle_lock:
+            self._closing = True
+            self._accepting_synthesis = False
+            if self._active_syntheses == 0:
+                self._release_model_lane_locked(reason="voice_tts_shutdown")
         self._pool.shutdown(wait=False, cancel_futures=True)

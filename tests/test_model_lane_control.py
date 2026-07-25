@@ -790,6 +790,22 @@ def test_import_only_mlx_probe_does_not_claim_accelerator_lane() -> None:
     assert claim is None
 
 
+def test_registered_integration_import_probe_does_not_claim_accelerator_lane() -> None:
+    claim = infer_model_process_claim(
+        [
+            sys.executable,
+            "-m",
+            "core.runtime.integration_liveness_probe",
+            "mlx_lm",
+            "__aura_no_preflight__",
+        ],
+        source="integration_liveness.import_probe",
+        timeout_s=25.0,
+    )
+
+    assert claim is None
+
+
 def test_inline_mlx_model_call_still_fails_closed_without_identity() -> None:
     with pytest.raises(RuntimeError, match="missing_model_path"):
         infer_model_process_claim(

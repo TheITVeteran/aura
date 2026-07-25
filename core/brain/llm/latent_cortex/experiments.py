@@ -340,15 +340,14 @@ def _coerce_accounted_solver_outcome(
     return success, layer_apps, resource, information
 
 
-def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
+def _coerce_role_outcome(value: Any) -> tuple[bool, int, float | None]:
     """Strict contract for role runners: (success, layer_apps, divergence).
 
     The two-field contract above does not cover divergence, so this extends
-    it rather than letting a third field arrive unchecked. Divergence must
-    be a non-negative real or NaN: NaN is the DOCUMENTED "no exchange
-    telemetry recorded" sentinel (downstream means filter to finite values,
-    and an all-NaN arm grades CONJECTURE for missing telemetry), while
-    infinity and negative values are not distances and are refused.
+    it rather than letting a third field arrive unchecked. Divergence is a
+    finite non-negative real when measured and ``None`` when exchange
+    telemetry is structurally absent. Non-finite numbers are never absence
+    sentinels because they poison downstream arithmetic and JSON evidence.
     """
     if not isinstance(value, tuple) or len(value) != 3:
         raise ValueError(
@@ -359,31 +358,20 @@ def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
         raise ValueError("role solver success must be boolean")
     if type(layer_apps) is not int or layer_apps < 0:
         raise ValueError("role solver layer-app receipt must be a non-negative integer")
+    if divergence is None:
+        return success, layer_apps, None
     if isinstance(divergence, bool) or not isinstance(divergence, (int, float)):
-        raise ValueError("role solver divergence must be a real number")
+        raise ValueError("role solver divergence must be a real number or None")
     divergence_value = float(divergence)
-    # NaN is DELIBERATELY admitted here: it is this contract's documented
-    # sentinel for "the episode had no exchange telemetry", and every
-    # downstream consumer filters it explicitly with math.isfinite before
-    # aggregating (see the divergence claims in run_role_lesion). So NaN
-    # never reaches a mean and never poisons one.
-    #
-    # A previous pass in this campaign tightened this to reject NaN, on the
-    # general principle that NaN propagates silently through statistics.
-    # That principle is right in the abstract and wrong here, and
-    # test_run_role_lesion_conjectures_without_telemetry caught it: the
-    # sentinel is handled, so refusing it removed the only way a runner
-    # could say "I could not measure this" and broke conjecture-without-
-    # telemetry entirely.
-    #
-    # Infinities and negatives stay refused — neither is a distance, and
-    # neither has a downstream filter.
-    if math.isinf(divergence_value) or (
-        math.isfinite(divergence_value) and divergence_value < 0.0
-    ):
-        raise ValueError(
-            "role solver divergence must be non-negative (or NaN for no telemetry)"
-        )
+    # NaN must be refused, not merely infinities. `isinf(nan)` is False and
+    # `isfinite(nan)` is False, so the earlier form let NaN straight through
+    # — and NaN is the most damaging value here: it propagates silently
+    # through every downstream mean, and every comparison against it is
+    # False, so a poisoned divergence looks like a small one forever. If a
+    # runner cannot measure divergence it must say so structurally, not by
+    # emitting a float that quietly disables the statistics.
+    if not math.isfinite(divergence_value) or divergence_value < 0.0:
+        raise ValueError("role solver divergence must be finite and non-negative")
     return success, layer_apps, divergence_value
 
 
@@ -1429,7 +1417,7 @@ ROLE_ARMS: tuple[str, ...] = (
 
 
 def run_role_lesion(
-    solve_arm: Callable[[Task, str], tuple[bool, int, float]],
+    solve_arm: Callable[[Task, str], tuple[bool, int, float | None]],
     tasks_by_family: dict[str, list[Task]],
     *,
     divergence_margin: float = 0.02,
@@ -1438,7 +1426,7 @@ def run_role_lesion(
 
     ``solve_arm(task, arm)`` runs one arm and returns
     (success, layer_apps, branch_divergence) where branch_divergence is
-    1 − mean pairwise branch-summary cosine at exchanges (NaN when the
+    1 − mean pairwise branch-summary cosine at exchanges (``None`` when the
     episode had no exchange telemetry). Arms:
 
     - distinct_roles: the default role rotation (treatment);
@@ -1465,7 +1453,7 @@ def run_role_lesion(
         or not 0.0 <= float(divergence_margin) < 1.0
     ):
         raise ValueError("divergence_margin must be a finite number in [0, 1)")
-    outcomes: dict[str, dict[str, list[tuple[bool, int, float]]]] = {
+    outcomes: dict[str, dict[str, list[tuple[bool, int, float | None]]]] = {
         arm: {} for arm in ROLE_ARMS
     }
     for arm in ROLE_ARMS:
@@ -1523,15 +1511,15 @@ def run_role_lesion(
         require_compute=True,
     )
 
-    def _mean_divergence(arm: str) -> tuple[float, int]:
+    def _mean_divergence(arm: str) -> tuple[float | None, int]:
         values = [
             divergence
             for rows in outcomes[arm].values()
             for _, _, divergence in rows
-            if math.isfinite(divergence)
+            if divergence is not None
         ]
         if not values:
-            return float("nan"), 0
+            return None, 0
         return sum(values) / len(values), len(values)
 
     distinct_div, distinct_n = _mean_divergence("distinct_roles")
@@ -1556,9 +1544,7 @@ def run_role_lesion(
         ),
     }
     enough = min(distinct_n, lesioned_n) >= _MIN_N_FOR_VERDICT
-    if not enough or not (
-        math.isfinite(distinct_div) and math.isfinite(lesioned_div)
-    ):
+    if not enough or distinct_div is None or lesioned_div is None:
         divergence_tier = CONJECTURE
     elif distinct_div - lesioned_div >= float(divergence_margin):
         divergence_tier = SUPPORTED

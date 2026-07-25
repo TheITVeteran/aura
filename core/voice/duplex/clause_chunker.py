@@ -187,16 +187,26 @@ class StreamingChunker:
             self._buffer += " "
         self._buffer += text
         out: list[str] = []
-        while True:
+        # Every successful split shortens the buffer by at least one
+        # character, so its initial length is a strict upper bound. Keeping
+        # the bound explicit prevents a malformed splitter from pinning the
+        # voice event loop.
+        max_splits = max(1, len(self._buffer))
+        for _ in range(max_splits):
             budget = self._max if self._emitted_first else self._first_max
             if len(self._buffer) <= budget:
                 break
+            prior_length = len(self._buffer)
             head, rest = first_chunk(self._buffer, max_chars=budget)
             if not head:
                 break
+            if len(rest) >= prior_length:
+                raise RuntimeError("speech chunker failed to make forward progress")
             out.append(head)
             self._buffer = rest
             self._emitted_first = True
+        else:
+            raise RuntimeError("speech chunker exceeded its bounded split count")
         return out
 
     def flush(self) -> list[str]:

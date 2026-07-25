@@ -225,7 +225,7 @@ class FillerConfig:
 
 @dataclass(slots=True)
 class TtsConfig:
-    """Kokoro-82M primary, Piper fallback, macOS ``say`` last.
+    """Kokoro-82M primary, Piper fallback, optional licensed XTTS clone.
 
     Measured on this host: Kokoro loads in 0.66 s and runs 6–8.6x realtime,
     ~190 ms for a short clause. That is the time-to-first-audio floor.
@@ -343,15 +343,6 @@ class DuplexConfig:
     # voice assistants exhausting.
     spoken_reply_words: int = field(
         default_factory=lambda: _env_int("AURA_VOICE_REPLY_WORDS", 45)
-    )
-
-    # Speak clauses as they are generated instead of waiting for the whole
-    # reply. Takes time-to-first-audio from ~4.4s to ~1.1s, at the cost of
-    # the first clause leaving her mouth before the complete reply has
-    # cleared validation. Narrowly gated and fails closed — see
-    # streaming_reply.py for what bounds the risk.
-    stream_reply: bool = field(
-        default_factory=lambda: _env_flag("AURA_VOICE_STREAM_REPLY", True)
     )
 
     @classmethod

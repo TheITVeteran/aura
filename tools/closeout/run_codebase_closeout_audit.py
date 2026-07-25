@@ -280,6 +280,11 @@ def run_command_gate(name: str, command: list[str], *, timeout_s: int = 240) -> 
         )
 
 
+def _make_gate_command(target: str) -> list[str]:
+    """Bind Make gates to the interpreter that admitted the audit process."""
+    return ["make", target, f"PYTHON={sys.executable}"]
+
+
 def production_readiness_gate() -> GateResult:
     started = time.time()
     try:
@@ -502,7 +507,11 @@ def build_closeout_audit(
         gates.extend(
             [
                 run_command_gate("git_diff_check", ["git", "diff", "--check"]),
-                run_command_gate("make_lint", ["make", "lint"], timeout_s=300),
+                run_command_gate(
+                    "make_lint",
+                    _make_gate_command("lint"),
+                    timeout_s=300,
+                ),
                 run_command_gate("governance_lint", [sys.executable, "tools/lint_governance.py"]),
             ]
         )

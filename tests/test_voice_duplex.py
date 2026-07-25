@@ -17,6 +17,9 @@ pure logic or driven through injected fakes, so it runs in the offline suite.
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -29,15 +32,28 @@ from core.voice.duplex.audio import (
 )
 from core.voice.duplex.backchannel import BackchannelReflex
 from core.voice.duplex.clause_chunker import StreamingChunker, first_chunk, split_for_speech
-from core.voice.duplex.config import VAD_FRAME_SAMPLES, BackchannelConfig
+from core.voice.duplex.config import (
+    VAD_FRAME_SAMPLES,
+    AsrConfig,
+    BackchannelConfig,
+)
 from core.voice.duplex.echo_guard import EchoGuard
 from core.voice.duplex.endpointing import Completeness, Endpointer, classify
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
 from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
+from core.voice.duplex.prosody import ProsodySpec
 from core.voice.duplex.protocol import AudioOpcode, decode_audio, encode_audio
-from core.voice.duplex.session import _SpeakingTrack
-from core.voice.duplex.streaming_asr import looks_hallucinated
+from core.voice.duplex.session import (
+    MAX_AUDIO_MESSAGE_BYTES,
+    DuplexVoiceSession,
+    _SpeakingTrack,
+)
+from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
 from core.voice.duplex.style import StyleController
+from core.voice.duplex.tts_stream import (
+    CancellationToken,
+    StreamingTts,
+)
 
 # ── endpointing ──────────────────────────────────────────────────────────
 
@@ -318,6 +334,21 @@ def test_streaming_chunker_preserves_word_boundaries():
     assert all(chunk.strip() for chunk in out)
 
 
+def test_streaming_chunker_rejects_a_nonprogressing_splitter(monkeypatch):
+    """A splitter defect must fail the turn instead of pinning the event loop."""
+    from core.voice.duplex import clause_chunker
+
+    monkeypatch.setattr(
+        clause_chunker,
+        "first_chunk",
+        lambda text, *, max_chars: ("synthetic head", text),
+    )
+    chunker = StreamingChunker(first_max_chars=8, max_chars=8)
+
+    with pytest.raises(RuntimeError, match="forward progress"):
+        chunker.push("a buffer longer than the configured speech budget")
+
+
 # ── audio plumbing ───────────────────────────────────────────────────────
 
 
@@ -386,6 +417,738 @@ def test_real_speech_is_not_discarded(text):
 
 
 # ── mind bridge ──────────────────────────────────────────────────────────
+
+
+def test_activity_watch_unsubscribes_on_stop(monkeypatch):
+    class FakeBus:
+        def __init__(self) -> None:
+            self.queue: asyncio.Queue[object] = asyncio.Queue()
+            self.subscribed = asyncio.Event()
+            self.unsubscribed = asyncio.Event()
+
+        async def subscribe(self, topic: str):
+            assert topic == "telemetry"
+            self.subscribed.set()
+            return self.queue
+
+        async def unsubscribe(self, topic: str, queue):
+            assert topic == "telemetry"
+            assert queue is self.queue
+            self.unsubscribed.set()
+
+    async def exercise() -> None:
+        from core import event_bus
+
+        bus = FakeBus()
+        monkeypatch.setattr(event_bus, "get_event_bus", lambda: bus)
+        bridge = MindBridge(session_id="activity-lifecycle")
+
+        await bridge.start_activity_watch(lambda _: None)
+        await asyncio.wait_for(bus.subscribed.wait(), timeout=1.0)
+        await bridge.stop_activity_watch()
+
+        assert bridge._activity_stop.is_set()
+        assert bridge._activity_task is None
+        assert bus.unsubscribed.is_set()
+
+    asyncio.run(exercise())
+
+
+def test_restarting_fillers_stops_the_previous_turn_loop():
+    async def send_json(_payload):
+        return None
+
+    async def send_binary(_payload):
+        return None
+
+    async def exercise() -> None:
+        session = DuplexVoiceSession(
+            session_id="filler-lifecycle",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+
+        session._start_fillers()
+        first_task = session._filler_task
+        first_stop = session._filler_stop
+        assert first_task is not None
+        assert first_stop is not None
+
+        session._start_fillers()
+        await asyncio.sleep(0)
+        assert first_stop.is_set()
+        assert first_task.done()
+
+        second_task = session._filler_task
+        second_stop = session._filler_stop
+        session._stop_fillers()
+        await asyncio.sleep(0)
+        assert second_stop is not None and second_stop.is_set()
+        assert second_task is not None and second_task.done()
+        assert session._filler_task is None
+
+    asyncio.run(exercise())
+
+
+def test_governed_voice_turn_reuses_complete_chat_handler(monkeypatch):
+    async def exercise() -> None:
+        from fastapi.responses import JSONResponse
+
+        from interface.routes import chat
+
+        observed: dict[str, object] = {}
+
+        monkeypatch.setattr(
+            chat,
+            "validate_runtime_security_request",
+            lambda request: observed.update(security_path=request.url.path),
+        )
+        monkeypatch.setattr(
+            chat,
+            "_require_internal",
+            lambda request: observed.update(internal_path=request.url.path),
+        )
+        monkeypatch.setattr(
+            chat,
+            "_check_rate_limit",
+            lambda request: observed.update(rate_path=request.url.path),
+        )
+
+        async def fake_api_chat(*, body, request, _, __):
+            observed["message"] = body.message
+            observed["session_id"] = body.session_id
+            observed["surface"] = request.headers["x-aura-response-surface"]
+            observed["context"] = chat._INTERNAL_SURFACE_CONTEXT.get()
+            observed["device_token"] = request.headers["x-aura-device-token"]
+            return JSONResponse({"response": "governed voice reply", "status": "ok"})
+
+        monkeypatch.setattr(chat, "api_chat", fake_api_chat)
+        reply = await chat.run_governed_voice_chat_turn(
+            "hello",
+            surface_context="[spoken turn]",
+            session_id="voice-governed",
+            timeout_s=2.0,
+            source_headers=((b"x-aura-device-token", b"adt1.bound"),),
+            client_host="10.0.0.8",
+        )
+
+        assert reply == "governed voice reply"
+        assert observed == {
+            "message": "hello",
+            "session_id": "voice-governed",
+            "surface": "voice",
+            "context": "[spoken turn]",
+            "device_token": "adt1.bound",
+            "security_path": "/api/chat",
+            "internal_path": "/api/chat",
+            "rate_path": "/api/chat",
+        }
+
+    asyncio.run(exercise())
+
+
+def test_governed_voice_turn_preserves_remote_owner_token(monkeypatch):
+    async def exercise() -> None:
+        from fastapi.responses import JSONResponse
+
+        from interface import auth
+        from interface.routes import chat
+
+        observed: dict[str, str] = {}
+
+        monkeypatch.setattr(auth.config, "api_token", "owner-secret")
+        monkeypatch.setattr(auth.config.security, "internal_only_mode", False)
+
+        async def fake_api_chat(*, body, request, _, __):
+            observed["api_token"] = request.headers["x-api-token"]
+            observed["surface"] = request.headers["x-aura-response-surface"]
+            return JSONResponse({"response": "owner reply", "status": "ok"})
+
+        monkeypatch.setattr(chat, "api_chat", fake_api_chat)
+        reply = await chat.run_governed_voice_chat_turn(
+            "hello",
+            surface_context="[spoken turn]",
+            session_id="voice-owner",
+            timeout_s=2.0,
+            source_headers=((b"x-api-token", b"owner-secret"),),
+            client_host="203.0.113.8",
+        )
+
+        assert reply == "owner reply"
+        assert observed == {
+            "api_token": "owner-secret",
+            "surface": "voice",
+        }
+
+    asyncio.run(exercise())
+
+
+def test_governed_voice_handoff_preserves_only_authenticated_principal():
+    from interface.routes.voice_duplex import _governed_chat_source_headers
+
+    hostile_headers = (
+        (b"authorization", b"Bearer attacker"),
+        (b"cookie", b"aura_device_session=adt1.attacker"),
+        (b"x-api-token", b"attacker"),
+        (b"x-aura-device-token", b"adt1.attacker"),
+        (b"user-agent", b"AuraVoiceTest"),
+    )
+
+    owner_headers = _governed_chat_source_headers(
+        hostile_headers,
+        owner_token="owner-secret",
+        device_token=None,
+    )
+    assert owner_headers == (
+        (b"user-agent", b"AuraVoiceTest"),
+        (b"x-api-token", b"owner-secret"),
+    )
+
+    device_headers = _governed_chat_source_headers(
+        hostile_headers,
+        owner_token=None,
+        device_token="adt1.verified",
+    )
+    assert device_headers == (
+        (b"user-agent", b"AuraVoiceTest"),
+        (b"x-aura-device-token", b"adt1.verified"),
+    )
+
+    local_headers = _governed_chat_source_headers(
+        hostile_headers,
+        owner_token=None,
+        device_token=None,
+        local_owner=True,
+    )
+    assert local_headers == ((b"user-agent", b"AuraVoiceTest"),)
+
+    with pytest.raises(ValueError, match="exactly one authenticated identity"):
+        _governed_chat_source_headers(
+            (),
+            owner_token="owner-secret",
+            device_token="adt1.verified",
+        )
+
+
+def test_repeated_typed_turn_cancels_and_quiesces_previous_turn():
+    async def send_json(_payload):
+        return None
+
+    async def send_binary(_payload):
+        return None
+
+    async def exercise() -> None:
+        first_started = asyncio.Event()
+        first_cancelled = asyncio.Event()
+        calls = 0
+
+        async def responder(
+            transcript,
+            *,
+            effective_message,
+            session_id,
+            timeout_s,
+        ):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    first_cancelled.set()
+                    raise
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="typed-supersession",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=MindBridge(session_id="typed-supersession", responder=responder),
+        )
+        await session.handle_command({"command": "text", "text": "first"})
+        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        first_task = session._turn_task
+
+        await session.handle_command({"command": "text", "text": "second"})
+        await asyncio.wait_for(first_cancelled.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+
+        assert first_task is not None and first_task.done()
+        assert session._turn_task is not first_task
+        assert calls == 2
+        await session.close()
+        assert all(task.done() for task in tuple(session._side_tasks))
+
+    asyncio.run(exercise())
+
+
+def test_replacement_turn_fails_closed_when_prior_task_will_not_quiesce(
+    monkeypatch,
+):
+    from core.voice.duplex import session as session_module
+
+    async def send_json(_payload):
+        return None
+
+    async def send_binary(_payload):
+        return None
+
+    async def exercise() -> None:
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+
+        async def responder(
+            transcript,
+            *,
+            effective_message,
+            session_id,
+            timeout_s,
+        ):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                first_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await release_first.wait()
+            return None
+
+        monkeypatch.setattr(session_module, "TASK_QUIESCENCE_TIMEOUT_S", 0.01)
+        session = DuplexVoiceSession(
+            session_id="typed-nonquiescent",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=MindBridge(session_id="typed-nonquiescent", responder=responder),
+        )
+        await session.handle_command({"command": "text", "text": "first"})
+        await asyncio.wait_for(first_started.wait(), timeout=1.0)
+        first_task = session._turn_task
+
+        with pytest.raises(
+            RuntimeError,
+            match="prior_voice_turn_failed_to_quiesce",
+        ):
+            await session.handle_command({"command": "text", "text": "second"})
+
+        assert session._turn_task is first_task
+        assert calls == 1
+        release_first.set()
+        assert first_task is not None
+        await asyncio.wait_for(first_task, timeout=1.0)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_stop_cancels_cognition_and_close_prevents_late_transport_sends():
+    async def exercise() -> None:
+        sends: list[dict[str, object]] = []
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def send_json(payload):
+            sends.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        async def responder(
+            transcript,
+            *,
+            effective_message,
+            session_id,
+            timeout_s,
+        ):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        session = DuplexVoiceSession(
+            session_id="stop-cognition",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=MindBridge(session_id="stop-cognition", responder=responder),
+        )
+        await session.handle_command({"command": "text", "text": "long turn"})
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await session.handle_command({"command": "stop"})
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        count_at_close = len(sends)
+        await session.close()
+        await asyncio.sleep(0.05)
+
+        assert session.state.value == "closed"
+        assert len(sends) == count_at_close
+
+    asyncio.run(exercise())
+
+
+def test_zero_audio_is_never_recorded_as_fully_spoken():
+    class SilentTts:
+        async def stream(self, _chunks, _spec, _token):
+            if False:
+                yield None
+
+        def shutdown(self):
+            return None
+
+    async def exercise() -> None:
+        events: list[dict[str, object]] = []
+
+        async def send_json(payload):
+            events.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        mind = MindBridge(session_id="delivery-truth")
+        session = DuplexVoiceSession(
+            session_id="delivery-truth",
+            send_json=send_json,
+            send_binary=send_binary,
+            mind=mind,
+        )
+        session._tts = SilentTts()
+
+        await session._speak_text(
+            "This sentence was never synthesized.",
+            cause=None,
+        )
+        record = mind.last_spoken
+
+        assert record is not None
+        assert record.spoken == ""
+        assert record.delivery_complete is False
+        assert record.unheard == "This sentence was never synthesized."
+        assert any(event.get("type") == "voice.error" for event in events)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_oversized_audio_is_rejected_before_frame_iteration():
+    async def send_json(_payload):
+        return None
+
+    async def send_binary(_payload):
+        return None
+
+    async def exercise() -> None:
+        session = DuplexVoiceSession(
+            session_id="oversized-audio",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+        with pytest.raises(ValueError, match="audio message exceeds"):
+            await session.feed_audio(b"\0" * (MAX_AUDIO_MESSAGE_BYTES + 1))
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_voice_session_admission_is_globally_and_per_principal_bounded(monkeypatch):
+    from interface.routes import voice_duplex
+
+    with voice_duplex._SESSION_RESERVATION_LOCK:
+        voice_duplex._SESSION_RESERVATIONS.clear()
+    monkeypatch.setattr(voice_duplex, "MAX_VOICE_SESSIONS", 2)
+    monkeypatch.setattr(voice_duplex, "MAX_VOICE_SESSIONS_PER_PRINCIPAL", 1)
+
+    assert voice_duplex._reserve_voice_session("a", "owner:a") is True
+    assert voice_duplex._reserve_voice_session("b", "owner:a") is False
+    assert voice_duplex._reserve_voice_session("c", "owner:b") is True
+    assert voice_duplex._reserve_voice_session("d", "owner:c") is False
+
+    voice_duplex._release_voice_session("a")
+    voice_duplex._release_voice_session("c")
+
+
+def test_authentication_rejects_non_object_json(monkeypatch):
+    async def exercise() -> None:
+        from interface import auth, server
+        from interface.routes import voice_duplex
+
+        class FakeSocket:
+            client = SimpleNamespace(host="203.0.113.5")
+            scope = {"headers": ()}
+
+            def __init__(self):
+                self.closed: list[tuple[int, str]] = []
+
+            async def accept(self):
+                return None
+
+            async def receive_text(self):
+                return "[]"
+
+            async def close(self, *, code, reason):
+                self.closed.append((code, reason))
+
+        socket = FakeSocket()
+        monkeypatch.setattr(auth, "device_for_request", lambda _request: None)
+        monkeypatch.setattr(
+            auth,
+            "request_has_allowed_local_browser_origin",
+            lambda _request: False,
+        )
+        monkeypatch.setattr(server.config, "api_token", "expected")
+
+        await voice_duplex.voice_duplex_endpoint(socket)
+        assert socket.closed == [(4001, "Invalid Auth Payload")]
+
+    asyncio.run(exercise())
+
+
+def test_silent_paired_revocation_closes_outgoing_lane(monkeypatch):
+    async def exercise() -> None:
+        from interface import auth, server
+        from interface.routes import voice_duplex
+
+        device = SimpleNamespace(device_id="paired-1")
+        verify_calls = 0
+
+        def verify(_token):
+            nonlocal verify_calls
+            verify_calls += 1
+            return device if verify_calls == 1 else None
+
+        class FakeSession:
+            def __init__(self, **_kwargs):
+                return None
+
+            async def start(self):
+                return None
+
+            async def close(self):
+                return None
+
+            def status(self):
+                return {"state": "listening"}
+
+        class FakeSocket:
+            client = SimpleNamespace(host="203.0.113.5")
+            scope = {"headers": ()}
+
+            def __init__(self):
+                self.closed = asyncio.Event()
+                self.text: list[str] = []
+
+            async def accept(self):
+                return None
+
+            async def receive_text(self):
+                return json.dumps({"type": "auth", "token": "adt1.paired"})
+
+            async def receive(self):
+                await self.closed.wait()
+                return {"type": "websocket.disconnect"}
+
+            async def send_text(self, value):
+                self.text.append(value)
+
+            async def send_bytes(self, _value):
+                return None
+
+            async def close(self, *, code, reason):
+                self.close_code = code
+                self.close_reason = reason
+                self.closed.set()
+
+        socket = FakeSocket()
+        monkeypatch.setattr(auth, "device_for_request", lambda _request: None)
+        monkeypatch.setattr(
+            auth,
+            "request_has_allowed_local_browser_origin",
+            lambda _request: False,
+        )
+        monkeypatch.setattr(server, "_verify_ws_device_token", verify)
+        monkeypatch.setattr(server, "_live_device_scopes", lambda _device_id: {"voice"})
+        monkeypatch.setattr(voice_duplex, "DuplexVoiceSession", FakeSession)
+        monkeypatch.setattr(server.config, "api_token", "expected")
+
+        await asyncio.wait_for(
+            voice_duplex.voice_duplex_endpoint(socket),
+            timeout=2.0,
+        )
+        assert socket.close_code == 4003
+        assert socket.close_reason == "Voice authorization revoked"
+        assert any("paired_device_session_revoked" in text for text in socket.text)
+        assert voice_duplex._SESSION_RESERVATIONS == {}
+
+    asyncio.run(exercise())
+
+
+def test_remote_owner_token_rotation_revokes_open_voice_session(monkeypatch):
+    async def exercise() -> None:
+        from interface import auth, server
+        from interface.routes import voice_duplex
+
+        class FakeSession:
+            def __init__(self, **_kwargs):
+                return None
+
+            async def start(self):
+                server.config.api_token = "rotated"
+
+            async def close(self):
+                return None
+
+            def status(self):
+                return {"state": "listening"}
+
+        class FakeSocket:
+            client = SimpleNamespace(host="203.0.113.6")
+            scope = {"headers": ()}
+
+            def __init__(self):
+                self.closed = asyncio.Event()
+                self.text: list[str] = []
+
+            async def accept(self):
+                return None
+
+            async def receive_text(self):
+                return json.dumps({"type": "auth", "token": "expected"})
+
+            async def receive(self):
+                await self.closed.wait()
+                return {"type": "websocket.disconnect"}
+
+            async def send_text(self, value):
+                self.text.append(value)
+
+            async def send_bytes(self, _value):
+                return None
+
+            async def close(self, *, code, reason):
+                self.close_code = code
+                self.close_reason = reason
+                self.closed.set()
+
+        socket = FakeSocket()
+        monkeypatch.setattr(auth, "device_for_request", lambda _request: None)
+        monkeypatch.setattr(
+            auth,
+            "request_has_allowed_local_browser_origin",
+            lambda _request: False,
+        )
+        monkeypatch.setattr(server, "_verify_ws_device_token", lambda _token: None)
+        monkeypatch.setattr(server, "_live_device_scopes", lambda _device_id: set())
+        monkeypatch.setattr(voice_duplex, "DuplexVoiceSession", FakeSession)
+        monkeypatch.setattr(server.config, "api_token", "expected")
+
+        await asyncio.wait_for(
+            voice_duplex.voice_duplex_endpoint(socket),
+            timeout=2.0,
+        )
+        assert socket.close_code == 4003
+        assert socket.close_reason == "Voice authorization revoked"
+        assert any("owner_session_revoked" in text for text in socket.text)
+        assert voice_duplex._SESSION_RESERVATIONS == {}
+
+    asyncio.run(exercise())
+
+
+def test_duplex_asr_model_load_holds_fenced_owner(monkeypatch):
+    from core.runtime import model_lane_control
+    from core.voice.duplex.streaming_asr import _WhisperBackend
+
+    events: list[object] = []
+
+    class Lease:
+        def set_preemptible(self, value):
+            events.append(("preemptible", value))
+            return True
+
+        def release(self, *, reason):
+            events.append(("release", reason))
+            return True
+
+    def acquire(**kwargs):
+        events.append(("acquire", kwargs))
+        return Lease()
+
+    class FakeMlx:
+        @staticmethod
+        def transcribe(_audio, **_kwargs):
+            return {"text": "hello"}
+
+    monkeypatch.setattr(
+        model_lane_control,
+        "acquire_synchronous_in_process_model_lane",
+        acquire,
+    )
+    backend = _WhisperBackend(
+        AsrConfig(partial_model="small", final_model="large"),
+    )
+    backend._impl = "mlx"
+    backend._mlx = FakeMlx()
+
+    assert backend.transcribe(np.zeros(16, dtype=np.float32), "small") == "hello"
+    backend.shutdown()
+
+    assert events[0][0] == "acquire"
+    assert events[1] == ("preemptible", True)
+    assert events[-1] == ("release", "voice_asr_shutdown")
+
+
+def test_cancelled_native_tts_retains_model_owner_until_worker_returns():
+    async def exercise() -> None:
+        native_started = threading.Event()
+        release_native = threading.Event()
+        released: list[str] = []
+
+        class Lease:
+            def release(self, *, reason):
+                released.append(reason)
+                return True
+
+        class BlockingEngine:
+            name = "blocking-test"
+
+            @staticmethod
+            def synthesize(_text, _spec):
+                native_started.set()
+                assert release_native.wait(timeout=2.0)
+                return np.zeros(24, dtype=np.float32), 24_000
+
+        tts = StreamingTts()
+        tts._state.loaded = True
+        tts._state.piper = BlockingEngine()
+        tts._lane_lease = Lease()
+        tts._accepting_synthesis = True
+
+        task = asyncio.create_task(
+            tts.synthesize(
+                "hello",
+                ProsodySpec(voice="test"),
+                CancellationToken(),
+            )
+        )
+        assert await asyncio.to_thread(native_started.wait, 1.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        tts.shutdown()
+        assert released == []
+        assert tts._active_syntheses == 1
+
+        release_native.set()
+        for _ in range(100):
+            if released:
+                break
+            await asyncio.sleep(0.01)
+        assert released == ["voice_tts_shutdown"]
+        assert tts._active_syntheses == 0
+
+    asyncio.run(exercise())
 
 
 # ── coqui compatibility shim ─────────────────────────────────────────────
@@ -563,6 +1326,124 @@ def test_transcript_overrides_a_timing_misread():
     assert arbiter2.resolve("mhm") is OverlapVerdict.BACKCHANNEL
 
 
+@pytest.mark.parametrize("text", ["no", "wait", "stop", "why"])
+def test_single_word_objections_take_the_floor(text):
+    from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+
+    arbiter = OverlapArbiter()
+    _drive_overlap(arbiter, speech_ms=220, then_silence_ms=400)
+    assert arbiter.resolve(text) is OverlapVerdict.BARGE_IN
+
+
+def test_overlap_probe_does_not_mutate_local_agreement(monkeypatch):
+    async def exercise() -> None:
+        asr = StreamingAsr(AsrConfig())
+        asr._prev_words = ["existing"]
+        asr._stable_words = ["existing"]
+        asr._tentative_words = ["tail"]
+        asr._last_partial_at = 123.0
+        monkeypatch.setattr(
+            type(asr._backend),
+            "available",
+            property(lambda _self: True),
+        )
+        monkeypatch.setattr(
+            asr._backend,
+            "transcribe",
+            lambda _audio, _repo: "no",
+        )
+
+        assert await asr.probe(np.ones(1600, dtype=np.float32)) == "no"
+        assert asr._prev_words == ["existing"]
+        assert asr._stable_words == ["existing"]
+        assert asr._tentative_words == ["tail"]
+        assert asr._last_partial_at == 123.0
+
+    asyncio.run(exercise())
+
+
+def test_verified_short_objection_preserves_audio_and_closes_the_turn():
+    class FakeAsr:
+        def __init__(self) -> None:
+            self.reset_calls = 0
+
+        async def probe(self, _audio):
+            return "no"
+
+        def reset(self):
+            self.reset_calls += 1
+
+        def shutdown(self):
+            return None
+
+    async def send_json(_payload):
+        return None
+
+    async def send_binary(_payload):
+        return None
+
+    async def exercise() -> None:
+        observed: dict[str, object] = {}
+        session = DuplexVoiceSession(
+            session_id="verified-overlap",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+        session._asr = FakeAsr()
+
+        async def capture_turn(audio, reason):
+            observed["audio"] = audio.copy()
+            observed["reason"] = reason
+            await session._set_state(type(session._state).LISTENING)
+
+        session._run_turn = capture_turn
+        session._speaking = _SpeakingTrack(
+            utterance_id=1,
+            intended="original answer",
+            started_at=0.0,
+        )
+        session._state = type(session._state).SPEAKING
+        captured = np.ones(3200, dtype=np.float32)
+        track = session._speaking
+
+        await session._verify_backchannel(captured, track, session._overlap_epoch)
+        assert session._turn_task is not None
+        await session._turn_task
+        assert np.array_equal(observed["audio"], captured)
+        assert observed["reason"] == "verified_barge_in"
+        assert session._asr.reset_calls == 1
+        assert session.state.value == "listening"
+        await session.close()
+
+    asyncio.run(exercise())
+
+
+def test_stale_overlap_verifier_cannot_restore_playback():
+    async def exercise() -> None:
+        events: list[dict[str, object]] = []
+
+        async def send_json(payload):
+            events.append(dict(payload))
+
+        async def send_binary(_payload):
+            return None
+
+        session = DuplexVoiceSession(
+            session_id="stale-overlap",
+            send_json=send_json,
+            send_binary=send_binary,
+        )
+        track = _SpeakingTrack(utterance_id=1, intended="answer")
+        session._speaking = track
+        session._overlap_epoch = 2
+
+        await session._resume_after_backchannel(track, "mhm", 1)
+        assert not any(event.get("type") == "voice.duck" for event in events)
+        await session.close()
+
+    asyncio.run(exercise())
+
+
 # ── paralinguistics ──────────────────────────────────────────────────────
 
 
@@ -599,6 +1480,18 @@ def test_imperceptible_change_is_not_reported():
         baseline.observe(sig)
     nearly_identical = VoiceSignature(energy_rms=0.102, duration_s=2.0, voiced_ratio=0.6)
     assert baseline.energy_z(nearly_identical) == 0.0
+
+
+def test_large_change_from_constant_baseline_is_visible():
+    from core.voice.duplex.paralinguistics import SpeakerBaseline, VoiceSignature
+
+    baseline = SpeakerBaseline()
+    for _ in range(4):
+        baseline.observe(
+            VoiceSignature(energy_rms=0.1, duration_s=2.0, voiced_ratio=0.6)
+        )
+    louder = VoiceSignature(energy_rms=0.15, duration_s=2.0, voiced_ratio=0.6)
+    assert baseline.energy_z(louder) > 1.15
 
 
 def test_convergence_is_partial_not_mimicry():
@@ -676,102 +1569,11 @@ def test_unknown_cause_still_waits_its_turn():
     assert reflex.due(400.0, first=380.0, second=1900.0, third=6500.0) is not None
 
 
-# ── streaming carve-out: the safety boundary ─────────────────────────────
+def test_voice_cognition_has_no_ungoverned_streaming_bypass():
+    import inspect
 
+    from core.voice.duplex.config import DuplexConfig
 
-@pytest.mark.parametrize(
-    "question",
-    [
-        "what do you think about that",
-        "how are you feeling today",
-        "that's interesting, tell me more",
-        "do you agree with me",
-    ],
-)
-def test_conversational_turns_may_stream(question):
-    from core.voice.duplex.streaming_reply import is_streamable
-
-    assert is_streamable(question).ok is True
-
-
-@pytest.mark.parametrize(
-    "question",
-    [
-        "look up the release date",
-        "how many tests are failing",
-        "what did the log say",
-        "run the build",
-        "delete that file",
-        "cite your source for that",
-        "what's your memory usage",
-        "show me the code for the parser",
-        "what happened in 1996",
-    ],
-)
-def test_evidence_critical_turns_never_stream(question):
-    """Streaming speaks before validation. These are exactly the turns where
-    that matters, so they take the fully governed buffered path."""
-    from core.voice.duplex.streaming_reply import is_streamable
-
-    verdict = is_streamable(question)
-    assert verdict.ok is False, f"{question!r} must not stream ({verdict.reason})"
-
-
-def test_eligibility_fails_closed_on_empty():
-    from core.voice.duplex.streaming_reply import is_streamable
-
-    assert is_streamable("").ok is False
-    assert is_streamable("   ").ok is False
-
-
-@pytest.mark.parametrize(
-    "clause",
-    [
-        "[spoken turn: answer in 45 words]",
-        "[voice context: the user interrupted]",
-        "System: you are Aura",
-        "As an AI language model, I cannot",
-        "### Heading",
-    ],
-)
-def test_prompt_scaffolding_is_never_spoken(clause):
-    from core.voice.duplex.streaming_reply import ClauseValidator
-
-    assert ClauseValidator().check(clause).ok is False
-
-
-@pytest.mark.parametrize(
-    "clause",
-    ["```python", "- first bullet", "1. first item", "# Title"],
-)
-def test_written_structure_is_rejected(clause):
-    """Markdown read aloud is a monotone run of fragments; headings vanish
-    entirely. If the model switches to writing, stop streaming."""
-    from core.voice.duplex.streaming_reply import ClauseValidator
-
-    assert ClauseValidator().check(clause).ok is False
-
-
-def test_repetition_loop_is_caught():
-    """The classic local-model failure. Speaking it aloud is worse than any
-    latency it would have saved."""
-    from core.voice.duplex.streaming_reply import ClauseValidator
-
-    validator = ClauseValidator()
-    assert validator.check("I think so.").ok is True
-    assert validator.check("I think so.").ok is True
-    assert validator.check("I think so.").ok is False
-
-
-def test_ordinary_spoken_clauses_pass():
-    from core.voice.duplex.streaming_reply import ClauseValidator
-
-    validator = ClauseValidator()
-    for clause in ("Yeah, I think so.", "The tricky part is the overlap.", "Right."):
-        assert validator.check(clause).ok is True
-
-
-def test_overlong_clause_is_rejected():
-    from core.voice.duplex.streaming_reply import ClauseValidator
-
-    assert ClauseValidator().check("word " * 200).ok is False
+    assert "stream_reply" not in DuplexConfig.__dataclass_fields__
+    assert not hasattr(MindBridge, "stream_response")
+    assert "think_stream" not in inspect.getsource(MindBridge)

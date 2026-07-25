@@ -103,13 +103,21 @@ class _WhisperBackend:
     cold), which must never happen inside a live turn.
     """
 
-    _cache: dict[str, Any] = {}
-    _cache_lock = threading.Lock()
-
-    def __init__(self, config: AsrConfig) -> None:
+    def __init__(
+        self,
+        config: AsrConfig,
+        *,
+        model_lane_controller: Any = None,
+    ) -> None:
         self._config = config
         self._impl = ""
         self._mlx: Any = None
+        self._cache: dict[str, Any] = {}
+        self._cache_lock = threading.Lock()
+        self._usage_lock = threading.Lock()
+        self._lane_lock = threading.Lock()
+        self._lane_lease: Any = None
+        self._model_lane_controller = model_lane_controller
         try:
             import mlx_whisper
 
@@ -152,22 +160,116 @@ class _WhisperBackend:
                 self._cache[key] = model
             return model
 
+    @staticmethod
+    def _footprint_gb(repo: str) -> float:
+        lowered = str(repo or "").lower()
+        if "large" in lowered:
+            return 4.0
+        if "medium" in lowered:
+            return 2.0
+        if "small" in lowered:
+            return 1.0
+        if "tiny" in lowered:
+            return 0.25
+        return 0.5
+
+    def _acquire_model_lane(self) -> tuple[Any, bool]:
+        with self._lane_lock:
+            if self._lane_lease is not None:
+                return self._lane_lease, False
+            from core.runtime.model_lane_control import (
+                acquire_synchronous_in_process_model_lane,
+            )
+
+            models = (self._config.partial_model, self._config.final_model)
+            request_gb = sum(self._footprint_gb(repo) for repo in dict.fromkeys(models))
+            lease = acquire_synchronous_in_process_model_lane(
+                owner_id=f"voice-duplex-asr:{id(self)}",
+                model_path="voice-duplex/asr/" + "+".join(dict.fromkeys(models)),
+                purpose="serve",
+                request_gb=request_gb,
+                priority=30,
+                preemptible=False,
+                evict=self._evict_model_lane,
+                compensate=self._compensate_model_lane,
+                metadata={
+                    "engine": "voice_duplex",
+                    "model_role": "asr",
+                    "backend": self._impl or "unavailable",
+                    "lifecycle_state": "loading",
+                },
+                controller=self._model_lane_controller,
+            )
+            self._lane_lease = lease
+            return lease, True
+
+    def _release_model_lane_locked(self, *, reason: str) -> bool:
+        with self._cache_lock:
+            self._cache.clear()
+        with self._lane_lock:
+            lease, self._lane_lease = self._lane_lease, None
+        if lease is not None:
+            lease.release(reason=reason)
+        return not self._cache and self._lane_lease is None
+
+    def _release_model_lane_if_idle(self, *, reason: str) -> bool:
+        if not self._usage_lock.acquire(blocking=False):
+            return False
+        try:
+            return self._release_model_lane_locked(reason=reason)
+        finally:
+            self._usage_lock.release()
+
+    async def _evict_model_lane(self, _owner: Any, reason: str) -> bool:
+        released = await asyncio.to_thread(
+            self._release_model_lane_if_idle,
+            reason=f"voice_asr_lane_eviction:{reason}",
+        )
+        if not released:
+            logger.warning("ASR model preemption refused during active decode: %s", reason)
+        return released
+
+    async def _compensate_model_lane(self, _owner: Any, reason: str) -> bool:
+        logger.info("Restoring duplex ASR after failed model candidate: %s", reason)
+        await asyncio.to_thread(self.warm, self._config.partial_model)
+        await asyncio.to_thread(self.warm, self._config.final_model)
+        return self._lane_lease is not None
+
     def transcribe(self, audio: np.ndarray, repo: str) -> str:
         """Blocking decode. Always called on a worker thread."""
-        if self._impl == "mlx":
-            result = self._mlx.transcribe(
-                audio,
-                path_or_hf_repo=repo,
-                language=self._config.language,
-                fp16=True,
-                condition_on_previous_text=False,
-            )
-            return str(result.get("text", "") or "")
-        model = self._faster_model(repo)
-        segments, _info = model.transcribe(
-            audio, beam_size=1, language=self._config.language
-        )
-        return "".join(seg.text for seg in segments)
+        with self._usage_lock:
+            lease, acquired = self._acquire_model_lane()
+            try:
+                if self._impl == "mlx":
+                    result = self._mlx.transcribe(
+                        audio,
+                        path_or_hf_repo=repo,
+                        language=self._config.language,
+                        fp16=True,
+                        condition_on_previous_text=False,
+                    )
+                    text = str(result.get("text", "") or "")
+                else:
+                    model = self._faster_model(repo)
+                    segments, _info = model.transcribe(
+                        audio, beam_size=1, language=self._config.language
+                    )
+                    text = "".join(seg.text for seg in segments)
+                if not lease.set_preemptible(True):
+                    raise RuntimeError("voice ASR model-lane activation fence was lost")
+                return text
+            except (
+                AttributeError,
+                ImportError,
+                MemoryError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ):
+                if acquired:
+                    self._release_model_lane_locked(reason="voice_asr_model_load_failed")
+                raise
 
     def warm(self, repo: str) -> None:
         """Force weight load + kernel compile outside the latency path."""
@@ -182,6 +284,10 @@ class _WhisperBackend:
                 severity="warning",
             )
 
+    def shutdown(self) -> None:
+        with self._usage_lock:
+            self._release_model_lane_locked(reason="voice_asr_shutdown")
+
 
 class StreamingAsr:
     """Growing-buffer incremental decoder with a stable prefix.
@@ -192,9 +298,17 @@ class StreamingAsr:
     session.
     """
 
-    def __init__(self, config: AsrConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: AsrConfig | None = None,
+        *,
+        model_lane_controller: Any = None,
+    ) -> None:
         self._config = config or AsrConfig()
-        self._backend = _WhisperBackend(self._config)
+        self._backend = _WhisperBackend(
+            self._config,
+            model_lane_controller=model_lane_controller,
+        )
         self._prev_words: list[str] = []
         self._stable_words: list[str] = []
         self._tentative_words: list[str] = []
@@ -221,6 +335,9 @@ class StreamingAsr:
         self._stable_words = []
         self._tentative_words = []
         self._last_partial_at = 0.0
+
+    def shutdown(self) -> None:
+        self._backend.shutdown()
 
     def due_for_partial(self, now: float, audio_s: float) -> bool:
         """Rate-limit partials; decoding faster than this buys nothing."""
@@ -270,6 +387,39 @@ class StreamingAsr:
             decode_ms=decode_ms,
             audio_s=audio.size / float(CAPTURE_RATE),
         )
+
+    async def probe(self, audio: np.ndarray) -> str:
+        """Transcribe a side-channel sample without changing turn state.
+
+        Overlap arbitration needs to distinguish a short acknowledgement from
+        a short objection. Reusing :meth:`partial` for that corrupts
+        LocalAgreement-2 because the overlap becomes the previous hypothesis
+        for the next real utterance. This method shares the model lane and
+        decode lock but deliberately leaves every agreement buffer and
+        scheduling timestamp untouched.
+        """
+        if not self.available or audio.size == 0:
+            return ""
+        try:
+            async with self._decode_lock:
+                loop = asyncio.get_running_loop()
+                text = await loop.run_in_executor(
+                    None,
+                    self._backend.transcribe,
+                    audio,
+                    self._config.partial_model,
+                )
+        except (RuntimeError, ValueError, OSError, AttributeError, MemoryError) as exc:
+            record_degradation(
+                "voice_duplex.asr",
+                exc,
+                action="kept the timing-based overlap verdict after probe failure",
+                severity="debug",
+            )
+            return ""
+
+        cleaned = text.strip()
+        return "" if looks_hallucinated(cleaned) else cleaned
 
     async def finalize(self, audio: np.ndarray) -> Transcript:
         """One accurate decode of the complete utterance.

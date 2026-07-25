@@ -478,12 +478,12 @@ def _run_admitted_lab(
         ).hexdigest()
         return bool(voted) and voted == task.answer, cost, ledger.to_receipt(), information
 
-    def solve_role_arm(task, arm: str) -> tuple[bool, int, float]:
+    def solve_role_arm(task, arm: str) -> tuple[bool, int, float | None]:
         """One Experiment-R role, lesion, swap, or restoration arm.
 
         Returns (success, layer_apps, branch_divergence) where divergence is
         1 − mean pairwise branch-summary cosine across exchange snapshots
-        (NaN when no exchange telemetry was recorded)."""
+        (None when no exchange telemetry was recorded)."""
         from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
 
         k = max(2, args.branches)
@@ -510,7 +510,7 @@ def _run_admitted_lab(
         )
         if time.monotonic() > deadline:
             raise LabDeadlineError("lab wall-clock bound reached during episode")
-        divergence = float("nan")
+        divergence = None
         snapshots = (result.receipt.latent_telemetry or {}).get(
             "exchange_snapshots"
         ) or []

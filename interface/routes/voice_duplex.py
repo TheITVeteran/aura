@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 import logging
+import os
+import threading
 import uuid
 from typing import Any
 
@@ -24,6 +27,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from core.runtime.errors import record_degradation
 from core.voice.duplex.config import DuplexConfig
+from core.voice.duplex.mind_bridge import MindBridge
 from core.voice.duplex.session import DuplexVoiceSession
 
 logger = logging.getLogger("Aura.Routes.VoiceDuplex")
@@ -45,6 +49,80 @@ _VOICE_ERRORS = (
 # One live session per socket. Tracked so the runtime can report and close
 # them, and so a reload cannot strand model handles.
 _SESSIONS: dict[str, DuplexVoiceSession] = {}
+_SESSION_RESERVATIONS: dict[str, str] = {}
+_SESSION_RESERVATION_LOCK = threading.Lock()
+_CHAT_AUTH_HEADERS = frozenset(
+    {b"authorization", b"cookie", b"x-api-token", b"x-aura-device-token"}
+)
+
+
+def _bounded_env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError) as exc:
+        record_degradation("voice_duplex.config", exc, severity="warning")
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+MAX_VOICE_SESSIONS = _bounded_env_int(
+    "AURA_VOICE_MAX_SESSIONS",
+    2,
+    minimum=1,
+    maximum=8,
+)
+MAX_VOICE_SESSIONS_PER_PRINCIPAL = _bounded_env_int(
+    "AURA_VOICE_MAX_SESSIONS_PER_PRINCIPAL",
+    1,
+    minimum=1,
+    maximum=4,
+)
+MAX_VOICE_AUDIO_MESSAGE_BYTES = 128 * 1024
+MAX_VOICE_COMMAND_MESSAGE_BYTES = 64 * 1024
+
+
+def _reserve_voice_session(session_id: str, principal: str) -> bool:
+    with _SESSION_RESERVATION_LOCK:
+        if len(_SESSION_RESERVATIONS) >= MAX_VOICE_SESSIONS:
+            return False
+        principal_count = sum(
+            existing == principal for existing in _SESSION_RESERVATIONS.values()
+        )
+        if principal_count >= MAX_VOICE_SESSIONS_PER_PRINCIPAL:
+            return False
+        _SESSION_RESERVATIONS[session_id] = principal
+        return True
+
+
+def _release_voice_session(session_id: str) -> None:
+    with _SESSION_RESERVATION_LOCK:
+        _SESSION_RESERVATIONS.pop(session_id, None)
+
+
+def _governed_chat_source_headers(
+    source_headers: tuple[tuple[bytes, bytes], ...],
+    *,
+    owner_token: str | None,
+    device_token: str | None,
+    local_owner: bool = False,
+) -> tuple[tuple[bytes, bytes], ...]:
+    """Carry the authenticated voice principal into the governed chat route."""
+    principal_count = sum(bool(item) for item in (owner_token, device_token, local_owner))
+    if principal_count > 1:
+        raise ValueError("voice principal must be exactly one authenticated identity")
+    if principal_count == 0:
+        return source_headers
+
+    filtered = tuple(
+        (name, value)
+        for name, value in source_headers
+        if name.lower() not in _CHAT_AUTH_HEADERS
+    )
+    if owner_token:
+        return (*filtered, (b"x-api-token", owner_token.encode("utf-8")))
+    if device_token:
+        return (*filtered, (b"x-aura-device-token", device_token.encode("utf-8")))
+    return filtered
 
 
 def active_sessions() -> dict[str, dict[str, Any]]:
@@ -92,7 +170,11 @@ def _voice_input_permitted() -> bool:
 async def voice_duplex_endpoint(ws: WebSocket) -> None:
     # Import here rather than at module scope: interface.server imports this
     # module, so a top-level import would be circular.
-    from interface.auth import device_for_request, request_has_allowed_local_browser_origin
+    from interface.auth import (
+        _extract_device_token,
+        device_for_request,
+        request_has_allowed_local_browser_origin,
+    )
     from interface.server import _live_device_scopes, _verify_ws_device_token, config
 
     await ws.accept()
@@ -102,14 +184,20 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
     local_origin_ok = request_has_allowed_local_browser_origin(ws)
     expected = str(getattr(config, "api_token", "") or "")
 
-    authenticated = is_local and local_origin_ok
+    local_owner_authenticated = is_local and local_origin_ok
+    authenticated = local_owner_authenticated
     device_session = None
-    explicit_token: str | None = None
+    explicit_device_token: str | None = None
+    explicit_owner_token: str | None = None
 
     if not authenticated:
         device_session = device_for_request(ws)
         authenticated = device_session is not None
+        if device_session is not None:
+            explicit_device_token = _extract_device_token(ws)
+            authenticated = bool(explicit_device_token)
 
+    reserved_session_id = ""
     try:
         if not authenticated:
             # Same 5-second credential exchange the chat socket uses.
@@ -122,17 +210,20 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             except json.JSONDecodeError:
                 await ws.close(code=4001, reason="Invalid Auth Payload")
                 return
+            if not isinstance(data, dict):
+                await ws.close(code=4001, reason="Invalid Auth Payload")
+                return
 
             token = str(data.get("token", "") or "")
             if data.get("type") == "auth" and token.startswith("adt1."):
                 device_session = _verify_ws_device_token(token)
                 if device_session is not None:
-                    explicit_token = token
+                    explicit_device_token = token
                     authenticated = True
             elif data.get("type") == "auth" and expected:
-                import hmac
-
                 authenticated = hmac.compare_digest(token, expected)
+                if authenticated:
+                    explicit_owner_token = token
 
             if not authenticated:
                 await ws.send_text(json.dumps({"type": "voice.error", "message": "Unauthorized"}))
@@ -172,64 +263,173 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
             return
 
         session_id = uuid.uuid4().hex[:12]
+        principal = (
+            f"paired:{device_session.device_id}"
+            if device_session is not None
+            else f"owner:{host}"
+        )
+        if not _reserve_voice_session(session_id, principal):
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "voice.error",
+                        "status": "voice_session_capacity_reached",
+                        "message": "The bounded voice-session capacity is already in use.",
+                    }
+                )
+            )
+            await ws.close(code=4429, reason="Voice session capacity reached")
+            return
+        reserved_session_id = session_id
+
         send_lock = asyncio.Lock()
+        transport_stop = asyncio.Event()
+        authorization_revoked = asyncio.Event()
+        source_headers = _governed_chat_source_headers(
+            tuple(ws.scope.get("headers") or ()),
+            owner_token=explicit_owner_token,
+            device_token=explicit_device_token,
+            local_owner=local_owner_authenticated,
+        )
+
+        def principal_authorized() -> bool:
+            nonlocal device_session
+            if explicit_owner_token is not None:
+                current_expected = str(getattr(config, "api_token", "") or "")
+                if not current_expected or not hmac.compare_digest(
+                    explicit_owner_token,
+                    current_expected,
+                ):
+                    authorization_revoked.set()
+                    return False
+                return True
+            if device_session is None:
+                return True
+            refreshed = (
+                _verify_ws_device_token(explicit_device_token)
+                if explicit_device_token
+                else device_for_request(ws)
+            )
+            if (
+                refreshed is None
+                or refreshed.device_id != device_session.device_id
+                or "voice" not in _live_device_scopes(refreshed.device_id)
+            ):
+                authorization_revoked.set()
+                return False
+            device_session = refreshed
+            return True
 
         async def send_json(payload: dict[str, Any]) -> None:
             # Serialise sends: the session emits from several tasks at once
             # (reflex loop, turn loop, filler loop) and Starlette's socket
             # is not safe against interleaved concurrent writes.
             async with send_lock:
+                if not principal_authorized():
+                    raise RuntimeError("voice_principal_authorization_revoked")
                 await ws.send_text(json.dumps(payload, default=str))
 
         async def send_binary(payload: bytes) -> None:
             async with send_lock:
+                if not principal_authorized():
+                    raise RuntimeError("voice_principal_authorization_revoked")
                 await ws.send_bytes(payload)
+
+        async def governed_responder(
+            transcript: str,
+            *,
+            effective_message: str,
+            session_id: str,
+            timeout_s: float,
+        ) -> str | None:
+            from interface.routes import chat as chat_routes
+
+            surface_context = effective_message
+            if transcript and surface_context.endswith(transcript):
+                surface_context = surface_context[: -len(transcript)].strip()
+            return await chat_routes.run_governed_voice_chat_turn(
+                transcript,
+                surface_context=surface_context,
+                session_id=session_id,
+                timeout_s=timeout_s,
+                source_headers=source_headers,
+                client_host=host,
+            )
 
         session = DuplexVoiceSession(
             session_id=session_id,
             send_json=send_json,
             send_binary=send_binary,
             config=DuplexConfig.load(),
+            mind=MindBridge(session_id=session_id, responder=governed_responder),
         )
         _SESSIONS[session_id] = session
+
+        async def authorization_monitor() -> None:
+            while not transport_stop.is_set():
+                if not principal_authorized():
+                    paired_revocation = device_session is not None
+                    async with send_lock:
+                        with contextlib.suppress(*_VOICE_ERRORS):
+                            await ws.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "voice.error",
+                                        "status": (
+                                            "paired_device_session_revoked"
+                                            if paired_revocation
+                                            else "owner_session_revoked"
+                                        ),
+                                        "message": (
+                                            "This voice session's authorization was revoked."
+                                        ),
+                                    }
+                                )
+                            )
+                            await ws.close(
+                                code=4003,
+                                reason="Voice authorization revoked",
+                            )
+                    return
+                try:
+                    await asyncio.wait_for(transport_stop.wait(), timeout=0.25)
+                except TimeoutError:
+                    continue
+
+        authorization_task = asyncio.create_task(
+            authorization_monitor(),
+            name=f"VoiceAuthorization:{session_id}",
+        )
 
         try:
             await session.start()
             logger.info("Voice session %s opened from %s", session_id, host)
 
-            while True:
+            connected = True
+            while connected and not authorization_revoked.is_set():
                 message = await ws.receive()
                 if message.get("type") == "websocket.disconnect":
-                    break
+                    connected = False
+                    continue
 
-                # Re-check a paired device's authorisation every frame, so a
-                # revoked grant closes the microphone immediately rather than
-                # at the end of an open-ended streaming session.
-                if device_session is not None:
-                    refreshed = (
-                        _verify_ws_device_token(explicit_token)
-                        if explicit_token
-                        else device_for_request(ws)
-                    )
-                    if (
-                        refreshed is None
-                        or refreshed.device_id != device_session.device_id
-                        or "voice" not in _live_device_scopes(refreshed.device_id)
-                    ):
-                        await send_json(
-                            {
-                                "type": "voice.error",
-                                "status": "paired_device_session_revoked",
-                                "message": "This device's voice authorization was revoked.",
-                            }
-                        )
-                        await ws.close(code=4003, reason="Voice authorization revoked")
-                        break
-                    device_session = refreshed
+                if not principal_authorized():
+                    connected = False
+                    continue
 
                 if "bytes" in message and message["bytes"]:
+                    if len(message["bytes"]) > MAX_VOICE_AUDIO_MESSAGE_BYTES:
+                        await ws.close(code=1009, reason="Voice audio message too large")
+                        connected = False
+                        continue
                     await session.feed_audio(message["bytes"])
                 elif "text" in message and message["text"]:
+                    if (
+                        len(message["text"].encode("utf-8", errors="replace"))
+                        > MAX_VOICE_COMMAND_MESSAGE_BYTES
+                    ):
+                        await ws.close(code=1009, reason="Voice command message too large")
+                        connected = False
+                        continue
                     try:
                         payload = json.loads(message["text"])
                     except json.JSONDecodeError:
@@ -238,9 +438,15 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
                         await session.handle_command(payload)
 
         finally:
+            transport_stop.set()
+            authorization_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await authorization_task
             _SESSIONS.pop(session_id, None)
             with contextlib.suppress(*_VOICE_ERRORS, asyncio.CancelledError):
                 await session.close()
+            _release_voice_session(session_id)
+            reserved_session_id = ""
             logger.info("Voice session %s closed", session_id)
 
     except WebSocketDisconnect as exc:
@@ -253,3 +459,6 @@ async def voice_duplex_endpoint(ws: WebSocket) -> None:
         )
         with contextlib.suppress(RuntimeError):
             await ws.close(code=1011, reason="Voice lane error")
+    finally:
+        if reserved_session_id:
+            _release_voice_session(reserved_session_id)
