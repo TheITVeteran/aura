@@ -3809,6 +3809,38 @@
       "scope": "<module>.BlackHoleVault._save_vault"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/deferred_retention.py",
+      "scope": "<module>.DeferredRetentionQueue._store"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/deferred_retention.py",
+      "scope": "<module>.DeferredRetentionQueue._store"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/deferred_retention.py",
+      "scope": "<module>.DeferredRetentionQueue._store_async"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/memory/deferred_retention.py",
+      "scope": "<module>.DeferredRetentionQueue._store_async"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -14762,6 +14794,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3867a18ee4179ce6b152d9a975f06ca5bc2b82c7587bf51e14693337a81ed750",
+  "inventory_sha256": "e391bef9bc127cc56d178f726a9f1bac47363a07481e427f900966f8b57dbf02",
   "schema_version": 1
 }

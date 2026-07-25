@@ -382,7 +382,18 @@ class MemoryPersister:
         function just never let it run.
         """
         if self._executive is None:
-            return False, "executive_unavailable"
+            # An un-injected persister used to be a total-loss path: every
+            # commit failed with executive_unavailable and the whole queue was
+            # write-only. Resolve the live executive before giving up, so the
+            # default construction actually persists.
+            try:
+                from core.container import ServiceContainer
+
+                self._executive = ServiceContainer.get("executive_core", default=None)
+            except (ImportError, RuntimeError, AttributeError) as e:
+                record_degradation('memory_persister', e, severity="debug")
+            if self._executive is None:
+                return False, "executive_unavailable"
         try:
             evaluator = getattr(self._executive, "evaluate_sync", None) or getattr(self._executive, "submit_sync", None)
             if evaluator is None:

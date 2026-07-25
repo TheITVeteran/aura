@@ -1360,6 +1360,7 @@ class ResearchSearchPipeline:
         }
         memory_text = self._build_memory_note(artifact)
         retained = False
+        deferral_reason = ""
 
         # 1. Primary: memory facade (episodic/dual memory)
         memory_facade = context.get("memory_facade")
@@ -1373,6 +1374,10 @@ class ResearchSearchPipeline:
                     result = await result
                 if result:
                     retained = True
+                else:
+                    status = getattr(memory_facade, "_last_add_memory_status", None)
+                    if isinstance(status, dict):
+                        deferral_reason = str(status.get("reason") or "")
         except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
             record_degradation('research_pipeline', exc)
             logger.debug("Memory facade retention failed: %s", exc)
@@ -1482,7 +1487,37 @@ class ResearchSearchPipeline:
             pass  # no-op: intentional
 
         if not retained:
-            logger.warning("Knowledge persistence failed: all memory backends rejected the artifact.")
+            # A deferral is a "not now", and research that already cost real
+            # time and network calls must not evaporate because the runtime
+            # happened to be unwilling at that instant. Hold it and retry;
+            # a refusal on the merits is still dropped by the queue itself.
+            held = False
+            try:
+                from core.memory.deferred_retention import (
+                    get_deferred_retention_queue,
+                )
+
+                held = await get_deferred_retention_queue().enqueue_async(
+                    memory_text,
+                    metadata,
+                    reason=deferral_reason or "memory_write_deferred",
+                    origin="research_pipeline",
+                )
+            except (ImportError, RuntimeError, OSError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "research_pipeline", exc, severity="warning",
+                    action="deferred research artifact could not be held for retry",
+                )
+            if held:
+                logger.info(
+                    "Knowledge write deferred (%s); artifact held for retry.",
+                    deferral_reason or "no reason given",
+                )
+            else:
+                logger.warning(
+                    "Knowledge persistence failed: no memory backend accepted "
+                    "the artifact (%s).", deferral_reason or "no reason given",
+                )
 
     def _build_memory_note(self, artifact: SearchArtifact) -> str:
         fact_lines = "\n".join(f"- {fact}" for fact in artifact.facts[:4])

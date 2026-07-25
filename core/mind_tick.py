@@ -1733,6 +1733,33 @@ class MindTick:
         except (TypeError, ValueError) as exc:
             logger.debug("Dream: EWC consolidation skipped: %s", exc)
 
+        # 7. Replay memory writes that were deferred rather than refused.
+        # Dream is exactly the right moment: the runtime is quiet, welfare
+        # recovery has had its rest, and a write the Will said "later" to has
+        # its later. Without this the holding queue is write-only and the work
+        # is lost anyway, just more slowly.
+        try:
+            from core.memory.deferred_retention import get_deferred_retention_queue
+
+            queue = get_deferred_retention_queue()
+
+            async def _replay_deferred_writes() -> None:
+                report = await queue.replay()
+                if report.committed or report.refused or report.expired:
+                    logger.info(
+                        "🧠 Dream: deferred memory writes — %s.", report.narrative()
+                    )
+
+            get_task_tracker().create_task(
+                _replay_deferred_writes(),
+                name="mind_tick.replay_deferred_memory_writes",
+            )
+        except (ImportError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            _record_mind_degradation(
+                exc, severity="warning",
+                action="deferred memory writes were not replayed this dream cycle",
+            )
+
     def set_mode(self, mode: CognitiveMode):
         """Update the cognitive mode and tick interval."""
         if mode != self.mode:
