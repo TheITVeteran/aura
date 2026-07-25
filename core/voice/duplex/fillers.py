@@ -97,6 +97,17 @@ _TIER2: dict[ThinkingCause, tuple[str, ...]] = {
     ),
 }
 
+# Causes that are known to take seconds. Naming one of these immediately is
+# more informative than a generic hesitation sound, and it is honest: the
+# work really is in flight when she says so.
+_ANNOUNCE_IMMEDIATELY = frozenset({
+    ThinkingCause.WEB_SEARCH,
+    ThinkingCause.TOOL_USE,
+    ThinkingCause.IMAGE,
+    ThinkingCause.RETRIEVAL,
+    ThinkingCause.SELF_WORK,
+})
+
 # Tier 3 — proves the line is alive on genuinely long turns.
 _TIER3: tuple[str, ...] = (
     "still with you — this one's taking a bit.",
@@ -127,10 +138,12 @@ class FillerReflex:
         self._fired: set[int] = set()
         self._cause = ThinkingCause.UNKNOWN
         self._recent: list[str] = []
+        self._announce_now = False
 
     def begin_turn(self) -> None:
         self._fired.clear()
         self._cause = ThinkingCause.UNKNOWN
+        self._announce_now = False
 
     def observe_activity(self, activity_key: str) -> None:
         """Update the cause from live engine telemetry.
@@ -141,6 +154,13 @@ class FillerReflex:
         cause = ACTIVITY_TO_CAUSE.get((activity_key or "").strip().lower())
         if cause is not None:
             self._cause = cause
+            # Knowing *why* she is slow is better information than knowing
+            # *that* she is slow, so a long-running cause should announce
+            # itself as soon as it is known rather than waiting out a fixed
+            # timer. "Let me look that up" at 300 ms beats "uh…" at 380 ms
+            # followed by the same sentence 1.5 s later.
+            if cause in _ANNOUNCE_IMMEDIATELY:
+                self._announce_now = True
 
     def set_cause(self, cause: ThinkingCause) -> None:
         self._cause = cause
@@ -152,6 +172,20 @@ class FillerReflex:
     def due(self, elapsed_ms: float, *, first: float, second: float, third: float) -> FillerUtterance | None:
         """Return a filler if this wait has crossed an unfired tier."""
         tier: int
+        # A known long-running cause skips straight to naming itself, and
+        # marks tier 1 spent so she does not say "uh…" after already having
+        # explained what she is doing.
+        if self._announce_now and 2 not in self._fired:
+            self._announce_now = False
+            self._fired.add(1)
+            self._fired.add(2)
+            return FillerUtterance(
+                text=self._pick(_TIER2.get(self._cause) or _TIER2[ThinkingCause.UNKNOWN]),
+                tier=2,
+                cause=self._cause,
+                gain=0.78,
+            )
+
         if elapsed_ms >= third and 3 not in self._fired:
             tier = 3
         elif elapsed_ms >= second and 2 not in self._fired:

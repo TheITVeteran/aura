@@ -428,3 +428,11 @@ body.vm-active .app-shell {
     .vm-orb-inner, .vm-orb-ring, .vm-listening-dots span, .vm-aside { animation: none; }
     .vm-aside { opacity: 1; }
 }
+
+/* Overlap ducking: she visibly recedes the moment you start talking over
+   her, before anything has decided whether that was an interruption or just
+   acknowledgement. Reversible, like the audio gain it mirrors. */
+.vm-root.vm-ducked .vm-orb { opacity: 0.55; }
+.vm-root.vm-ducked .vm-orb-glow { opacity: 0.2 !important; }
+.vm-root.vm-ducked .vm-caption-aura { opacity: 0.5; }
+.vm-orb, .vm-caption-aura { transition: opacity 140ms ease; }

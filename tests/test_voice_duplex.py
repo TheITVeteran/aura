@@ -463,3 +463,214 @@ def test_empty_transcript_never_reaches_cognition():
     bridge = MindBridge(session_id="t", responder=responder)
     assert asyncio.run(bridge.respond("   ")) is None
     assert calls == []
+
+
+# ── overlap: "mhm" is not an interruption ────────────────────────────────
+
+
+def _drive_overlap(arbiter, *, speech_ms, then_silence_ms, energy=0.1):
+    """Feed frames until a verdict settles."""
+    from core.voice.duplex.overlap import OverlapVerdict as V
+
+    frame = 32.0
+    arbiter.begin()
+    verdict = V.PENDING
+    for _ in range(int(speech_ms / frame)):
+        verdict = arbiter.observe(frame_ms=frame, is_speech=True, energy=energy)
+        if verdict is not V.PENDING:
+            return verdict
+    for _ in range(int(then_silence_ms / frame)):
+        verdict = arbiter.observe(frame_ms=frame, is_speech=False, energy=0.0)
+        if verdict is not V.PENDING:
+            return verdict
+    return verdict
+
+
+def test_short_acknowledgement_does_not_stop_her():
+    """The defect this module exists to fix.
+
+    Saying "mhm" while she talks previously killed her mid-sentence, which
+    punishes the user for being a good listener.
+    """
+    from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+
+    verdict = _drive_overlap(OverlapArbiter(), speech_ms=220, then_silence_ms=400)
+    assert verdict is OverlapVerdict.BACKCHANNEL
+
+
+def test_sustained_speech_takes_the_floor():
+    from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+
+    verdict = _drive_overlap(OverlapArbiter(), speech_ms=1200, then_silence_ms=0)
+    assert verdict is OverlapVerdict.BARGE_IN
+
+
+def test_ducking_happens_before_any_verdict():
+    """Volume must drop while the decision is still pending — that is what
+    makes the response instant without making it irreversible."""
+    from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+
+    arbiter = OverlapArbiter()
+    arbiter.begin()
+    ducked_at = None
+    for i in range(20):
+        verdict = arbiter.observe(frame_ms=32.0, is_speech=True, energy=0.1)
+        if arbiter.should_duck() and ducked_at is None:
+            ducked_at = (i + 1) * 32.0
+            assert verdict is OverlapVerdict.PENDING
+    assert ducked_at is not None and ducked_at <= 200.0
+
+
+def test_duck_fires_only_once():
+    from core.voice.duplex.overlap import OverlapArbiter
+
+    arbiter = OverlapArbiter()
+    arbiter.begin()
+    ducks = 0
+    for _ in range(30):
+        arbiter.observe(frame_ms=32.0, is_speech=True, energy=0.1)
+        if arbiter.should_duck():
+            ducks += 1
+    assert ducks == 1
+
+
+@pytest.mark.parametrize("text", ["mhm", "yeah", "right", "okay", "haha", "yeah yeah"])
+def test_acknowledgement_tokens_recognised(text):
+    from core.voice.duplex.overlap import looks_like_backchannel
+
+    assert looks_like_backchannel(text) is True
+
+
+@pytest.mark.parametrize(
+    "text", ["yeah but no", "wait that's wrong", "no I meant the other one", "stop talking"]
+)
+def test_real_objections_are_not_acknowledgement(text):
+    from core.voice.duplex.overlap import looks_like_backchannel
+
+    assert looks_like_backchannel(text) is False
+
+
+def test_transcript_overrides_a_timing_misread():
+    """A short sharp objection ("no—") has backchannel *timing*. The words
+    are the tiebreaker."""
+    from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+
+    arbiter = OverlapArbiter()
+    _drive_overlap(arbiter, speech_ms=220, then_silence_ms=400)
+    assert arbiter.resolve("no wait that's wrong") is OverlapVerdict.BARGE_IN
+    arbiter2 = OverlapArbiter()
+    _drive_overlap(arbiter2, speech_ms=220, then_silence_ms=400)
+    assert arbiter2.resolve("mhm") is OverlapVerdict.BACKCHANNEL
+
+
+# ── paralinguistics ──────────────────────────────────────────────────────
+
+
+def test_pitch_tracking_recovers_a_known_tone():
+    from core.voice.duplex.paralinguistics import estimate_f0
+
+    t = np.arange(16000 * 0.5) / 16000
+    tone = (0.3 * np.sin(2 * np.pi * 150.0 * t)).astype(np.float32)
+    voiced = estimate_f0(tone, 16000)
+    voiced = voiced[~np.isnan(voiced)]
+    assert voiced.size > 5
+    assert abs(float(np.median(voiced)) - 150.0) < 8.0
+
+
+def test_delivery_stays_quiet_without_a_baseline():
+    """Reporting a mood from an absolute number is invention. With fewer
+    than three samples there is no baseline, so there is nothing to say."""
+    from core.voice.duplex.paralinguistics import SpeakerBaseline, analyze, interpret
+
+    audio = (0.1 * np.sin(2 * np.pi * 140 * np.arange(16000) / 16000)).astype(np.float32)
+    reading = interpret(analyze(audio, 16000, word_count=4), SpeakerBaseline())
+    assert reading.as_context() == ""
+
+
+def test_imperceptible_change_is_not_reported():
+    """A tiny baseline variance makes an inaudible difference score many
+    sigma; without a perceptibility floor she announces "quieter than usual"
+    on a turn that sounded identical."""
+    from core.voice.duplex.paralinguistics import SpeakerBaseline, VoiceSignature
+
+    baseline = SpeakerBaseline()
+    for value in (0.100, 0.101, 0.099, 0.100):
+        sig = VoiceSignature(energy_rms=value, duration_s=2.0, voiced_ratio=0.6)
+        baseline.observe(sig)
+    nearly_identical = VoiceSignature(energy_rms=0.102, duration_s=2.0, voiced_ratio=0.6)
+    assert baseline.energy_z(nearly_identical) == 0.0
+
+
+def test_convergence_is_partial_not_mimicry():
+    """Full mirroring reads as mockery; none at all is the flat-affect
+    problem. Bounded partial movement is the point."""
+    from core.voice.duplex.paralinguistics import DeliveryReading, convergence_factors
+
+    speed, gain = convergence_factors(DeliveryReading(rate_z=5.0, energy_z=5.0))
+    assert 1.0 < speed <= 1.15
+    assert 1.0 < gain <= 1.2
+    slow_speed, _ = convergence_factors(DeliveryReading(rate_z=-5.0, energy_z=-5.0))
+    assert 0.85 <= slow_speed < 1.0
+
+
+def test_neutral_delivery_leaves_her_voice_alone():
+    from core.voice.duplex.paralinguistics import DeliveryReading, convergence_factors
+
+    assert convergence_factors(DeliveryReading()) == (1.0, 1.0)
+
+
+# ── adaptive reply length ────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "question,ceiling",
+    [
+        ("is the build green?", 25),
+        ("what time is it", 25),
+        ("how many are left", 25),
+    ],
+)
+def test_closed_questions_get_short_answers(question, ceiling):
+    bridge = MindBridge(session_id="t", spoken_reply_words=45)
+    words, offer = bridge._reply_budget_for(question)
+    assert words <= ceiling
+    assert offer is False
+
+
+def test_explanatory_questions_get_room_and_an_offer():
+    bridge = MindBridge(session_id="t", spoken_reply_words=45)
+    words, offer = bridge._reply_budget_for("explain the tradeoff between the two")
+    assert words >= 80
+    assert offer is True
+
+
+def test_conversational_default_is_unchanged():
+    bridge = MindBridge(session_id="t", spoken_reply_words=45)
+    words, offer = bridge._reply_budget_for("so I was thinking about the queue again")
+    assert words == 45
+    assert offer is False
+
+
+# ── predictive fillers ───────────────────────────────────────────────────
+
+
+def test_known_slow_cause_announces_itself_immediately():
+    """"Let me look that up" at 300ms beats "uh…" then the same sentence at
+    1.9s — knowing *why* she is slow is better than knowing *that* she is."""
+    reflex = FillerReflex()
+    reflex.begin_turn()
+    reflex.observe_activity("sovereign_browser")
+
+    filler = reflex.due(50.0, first=380.0, second=1900.0, third=6500.0)
+    assert filler is not None
+    assert filler.tier == 2
+    assert filler.cause is ThinkingCause.WEB_SEARCH
+    # And she must not then say "uh…" after already explaining herself.
+    assert reflex.due(500.0, first=380.0, second=1900.0, third=6500.0) is None
+
+
+def test_unknown_cause_still_waits_its_turn():
+    reflex = FillerReflex()
+    reflex.begin_turn()
+    assert reflex.due(50.0, first=380.0, second=1900.0, third=6500.0) is None
+    assert reflex.due(400.0, first=380.0, second=1900.0, third=6500.0) is not None

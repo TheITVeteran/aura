@@ -36,6 +36,15 @@ class VoicePlaybackProcessor extends AudioWorkletProcessor {
         this._level = 0;
         this._draining = false;
 
+        // Overlap ducking. Her volume drops the moment the user starts
+        // talking over her — before anything decides whether that was an
+        // interruption or just "mhm" — so the reaction is instant and the
+        // irreversible call can wait for evidence. Ramped, because a step
+        // change in gain is an audible click.
+        this._gain = 1;
+        this._gainTarget = 1;
+        this._gainStep = 0;
+
         this.port.onmessage = (e) => this._onMessage(e.data);
     }
 
@@ -50,10 +59,21 @@ class VoicePlaybackProcessor extends AudioWorkletProcessor {
                 this._fadeRemaining = this._fadeLength;
                 this._dropAll();
                 break;
+            case 'duck': {
+                const target = typeof msg.gain === 'number' ? msg.gain : 1;
+                const rampMs = Math.max(1, msg.ramp_ms || 60);
+                this._gainTarget = Math.max(0, Math.min(1, target));
+                const frames = Math.max(1, Math.round(sampleRate * rampMs / 1000));
+                this._gainStep = (this._gainTarget - this._gain) / frames;
+                break;
+            }
             case 'reset':
                 this._dropAll();
                 this._playedFrames = 0;
                 this._fadeRemaining = 0;
+                this._gain = 1;
+                this._gainTarget = 1;
+                this._gainStep = 0;
                 break;
             default:
                 break;
@@ -107,6 +127,16 @@ class VoicePlaybackProcessor extends AudioWorkletProcessor {
                 sample *= this._fadeRemaining / this._fadeLength;
                 this._fadeRemaining--;
             }
+
+            if (this._gain !== this._gainTarget) {
+                this._gain += this._gainStep;
+                if ((this._gainStep > 0 && this._gain >= this._gainTarget)
+                    || (this._gainStep < 0 && this._gain <= this._gainTarget)) {
+                    this._gain = this._gainTarget;
+                    this._gainStep = 0;
+                }
+            }
+            sample *= this._gain;
 
             channel[i] = sample;
             const abs = sample < 0 ? -sample : sample;

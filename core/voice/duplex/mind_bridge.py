@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -133,13 +134,13 @@ class MindBridge:
 
     # ── cognition ────────────────────────────────────────────────────────
 
-    async def respond(self, transcript: str) -> str | None:
+    async def respond(self, transcript: str, *, delivery_context: str = "") -> str | None:
         """One governed turn. Returns her reply text, or None if it failed."""
         transcript = (transcript or "").strip()
         if not transcript:
             return None
 
-        effective = self._compose_effective_message(transcript)
+        effective = self._compose_effective_message(transcript, delivery_context)
         self._turn_active = True
         started = time.perf_counter()
         try:
@@ -172,7 +173,46 @@ class MindBridge:
 
         return (reply or "").strip() or None
 
-    def _spoken_turn_directive(self) -> str:
+    def _reply_budget_for(self, transcript: str) -> tuple[int, bool]:
+        """How long this answer should be. Returns (words, offer_to_continue).
+
+        A single global word cap is a blunt instrument: it makes "what time
+        is it?" verbose and "explain the tradeoff" truncated. Since reply
+        length *is* time-to-first-audio on this path, matching length to the
+        question is both a latency win and simply how people talk — you
+        answer a yes/no question in a word and a hard question in a
+        paragraph, then stop and see if they want more.
+        """
+        text = (transcript or "").strip().lower()
+        if not text:
+            return self._spoken_reply_words, False
+
+        words = text.split()
+        first = re.sub(r"[^\w']", "", words[0]) if words else ""
+
+        # Explanatory: they asked for reasoning, so give room — but offer the
+        # rest rather than delivering a lecture unprompted.
+        if any(
+            p in text
+            for p in (
+                "explain", "why do", "why does", "why is", "how does", "how do",
+                "walk me through", "tell me about", "what's the difference",
+                "compare", "trade-off", "tradeoff", "in detail", "elaborate",
+            )
+        ):
+            return max(self._spoken_reply_words, 80), True
+
+        # Factual/closed: a sentence is the honest length.
+        if first in ("is", "are", "was", "were", "do", "does", "did", "can",
+                     "could", "will", "would", "should", "have", "has", "did"):
+            return 20, False
+        if any(p in text for p in ("what time", "how many", "how much", "when is",
+                                   "when's", "where is", "where's", "who is", "who's")):
+            return 18, False
+
+        return self._spoken_reply_words, False
+
+    def _spoken_turn_directive(self, words: int, offer_more: bool) -> str:
         """Tell the engine this reply will be heard, not read.
 
         Serves two ends at once, which is why it is worth a prompt slot.
@@ -186,22 +226,36 @@ class MindBridge:
         assistants tiring. Markdown is worse — a spoken bullet list is just
         a monotone run of fragments, and headings vanish entirely.
         """
+        tail = (
+            " If there is more worth saying, finish your point and offer it "
+            "in a short clause rather than continuing."
+            if offer_more
+            else " Lead with the useful part; leave detail for if they ask."
+        )
         return (
             "[spoken turn: this reply is going to be read aloud in a live "
-            f"conversation. Answer in about {self._spoken_reply_words} words or "
-            "fewer, as natural speech. No markdown, no lists, no headings, no "
-            "code blocks. Lead with the useful part; leave detail for if they "
-            "ask. It is fine to be brief.]"
+            f"conversation. Answer in about {words} words or fewer, as natural "
+            "speech. No markdown, no lists, no headings, no code blocks."
+            f"{tail} It is fine to be brief.]"
         )
 
-    def _compose_effective_message(self, transcript: str) -> str:
+    def _compose_effective_message(
+        self, transcript: str, delivery_context: str = ""
+    ) -> str:
         """Build what the engine reasons over for this turn.
 
         The visible message stays the user's raw words; only this carries the
         machine annotations, so the transcript shown in the UI is never
         polluted with them.
         """
-        parts: list[str] = [self._spoken_turn_directive()]
+        words, offer_more = self._reply_budget_for(transcript)
+        parts: list[str] = [self._spoken_turn_directive(words, offer_more)]
+
+        # How they said it, when it stood out from how they usually sound.
+        # Only notable deviations arrive here; a readout on every turn would
+        # train her to ignore the channel entirely.
+        if delivery_context:
+            parts.append(delivery_context)
 
         pending = self._pending_interruption
         if pending is not None and pending.interrupted:

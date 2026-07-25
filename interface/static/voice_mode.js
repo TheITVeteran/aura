@@ -380,6 +380,17 @@
                 if (state.speechNode) state.speechNode.port.postMessage({ type: 'flush' });
                 break;
 
+            case 'voice.duck':
+                // She lowers her voice the instant you start talking, and
+                // comes back up if it turns out you were just saying "mhm".
+                if (state.speechNode) {
+                    state.speechNode.port.postMessage({
+                        type: 'duck', gain: msg.gain, ramp_ms: msg.ramp_ms,
+                    });
+                }
+                if (root) root.classList.toggle('vm-ducked', (msg.gain || 1) < 0.9);
+                break;
+
             case 'voice.style':
                 showMeta(`voice: ${msg.change}`);
                 break;

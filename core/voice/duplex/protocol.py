@@ -86,6 +86,7 @@ EVT_BACKCHANNEL = "voice.backchannel"
 EVT_FILLER = "voice.filler"
 EVT_INTERRUPTED = "voice.interrupted"
 EVT_FLUSH = "voice.flush"              # drop buffered audio immediately
+EVT_DUCK = "voice.duck"                # ramp playback gain (overlap handling)
 EVT_METRICS = "voice.metrics"
 EVT_STYLE = "voice.style"              # delivery changed at the user's request
 EVT_VOICES = "voice.voices"            # available voice list

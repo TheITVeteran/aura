@@ -50,6 +50,18 @@ from core.voice.duplex.echo_guard import EchoGuard
 from core.voice.duplex.endpointing import Completeness, Endpointer
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
 from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
+from core.voice.duplex.overlap import OverlapArbiter, OverlapVerdict
+from core.voice.duplex.paralinguistics import (
+    DeliveryReading,
+    SpeakerBaseline,
+    convergence_factors,
+)
+from core.voice.duplex.paralinguistics import (
+    analyze as analyze_delivery,
+)
+from core.voice.duplex.paralinguistics import (
+    interpret as interpret_delivery,
+)
 from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
 from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
 from core.voice.duplex.style import StyleController
@@ -165,6 +177,8 @@ class DuplexVoiceSession:
         self._filler = FillerReflex()
         self._echo = EchoGuard()
         self._style = StyleController()
+        self._overlap = OverlapArbiter()
+        self._overlap_audio: list[np.ndarray] = []
         self._voice_override = ""
         self._tts = StreamingTts(self._config.tts)
         self._prosody = ProsodyCompiler(
@@ -202,6 +216,9 @@ class DuplexVoiceSession:
         # only until the user speaks again.
         self._speculative: Any = None
         self._speculative_task: asyncio.Task[None] | None = None
+        # How the user has been sounding, and how this turn deviates from it.
+        self._speaker_baseline = SpeakerBaseline()
+        self._delivery = DeliveryReading()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -304,10 +321,9 @@ class DuplexVoiceSession:
         # new turn" — her audio keeps playing and nothing is ever cut off.
         if self._state is SessionState.SPEAKING:
             # Retain the frames anyway, so the words that did the
-            # interrupting survive the ~130 ms it takes to confirm one.
+            # interrupting survive the time it takes to classify them.
             self._utterance.observe_silence(frame)
-            if await self._check_barge_in(vf.probability):
-                await self._begin_user_turn()
+            await self._handle_overlap(frame, vf)
             return
 
         if vf.event is SpeechEvent.ONSET:
@@ -422,6 +438,31 @@ class DuplexVoiceSession:
             return
         self._speculative = result
 
+    def _read_delivery(self, audio: np.ndarray, transcript: str) -> None:
+        """Measure how this turn was said, relative to how they usually sound.
+
+        Runs after the transcript exists because speaking rate needs a word
+        count. Costs 3–5 ms of numpy on audio already in memory.
+        """
+        try:
+            signature = analyze_delivery(
+                audio, CAPTURE_RATE, word_count=len(transcript.split())
+            )
+            # Interpret against the baseline *before* folding this turn into
+            # it — otherwise every utterance partly normalises itself away.
+            self._delivery = interpret_delivery(signature, self._speaker_baseline)
+            self._speaker_baseline.observe(signature)
+            if self._delivery.notable:
+                logger.info("Delivery: %s", ", ".join(self._delivery.descriptors))
+        except (ValueError, TypeError, FloatingPointError, ZeroDivisionError) as exc:
+            record_degradation(
+                "voice_duplex.paralinguistics",
+                exc,
+                action="spoke without paralinguistic context for this turn",
+                severity="debug",
+            )
+            self._delivery = DeliveryReading()
+
     def _discard_speculation(self) -> None:
         self._speculative = None
         task = self._speculative_task
@@ -462,6 +503,105 @@ class DuplexVoiceSession:
 
     # ── barge-in ─────────────────────────────────────────────────────────
 
+    async def _handle_overlap(self, frame: np.ndarray, vf: Any) -> None:
+        """User speech while she is speaking. Duck first, decide second.
+
+        The two cases — "mhm" and "no, stop" — are acoustically identical at
+        onset, so any classifier forced to decide immediately is reliably
+        wrong. Ducking is the correct response to *both*, is instant, and is
+        reversible, which lets the irreversible call wait for real evidence.
+        """
+        cfg = self._config.barge_in
+        track = self._speaking
+        if not cfg.enabled or track is None:
+            return
+
+        # Grace window: without it, the tail of the user's own question or a
+        # scrap of residual echo kills the reply the instant it begins.
+        if (time.monotonic() - track.started_at) * 1000.0 < cfg.grace_ms:
+            return
+
+        is_speech = vf.probability >= cfg.threshold
+        if not self._overlap.active:
+            if not is_speech:
+                return
+            self._overlap.begin()
+            self._overlap_audio = []
+
+        self._overlap_audio.append(frame)
+        verdict = self._overlap.observe(
+            frame_ms=VAD_FRAME_SAMPLES / CAPTURE_RATE * 1000.0,
+            is_speech=is_speech,
+            energy=float(np.sqrt(np.mean(np.square(frame, dtype=np.float64)))),
+        )
+
+        if self._overlap.should_duck():
+            await self._send_json(
+                {
+                    "type": protocol.EVT_DUCK,
+                    "gain": self._overlap.duck_gain,
+                    "ramp_ms": 60,
+                }
+            )
+
+        if verdict is OverlapVerdict.PENDING:
+            return
+
+        if verdict is OverlapVerdict.BARGE_IN:
+            self._overlap.reset()
+            self._overlap_audio = []
+            await self._interrupt(reason="user_barge_in")
+            await self._begin_user_turn()
+            return
+
+        # Backchannel: they were listening, not interrupting. Come back up
+        # and keep the sentence going.
+        overlap_audio = (
+            np.concatenate(self._overlap_audio) if self._overlap_audio else None
+        )
+        self._overlap.reset()
+        self._overlap_audio = []
+        await self._send_json(
+            {"type": protocol.EVT_DUCK, "gain": 1.0, "ramp_ms": 140}
+        )
+        await self._mind.publish("user_backchannel", {})
+        logger.info("User backchannel over her speech — continuing")
+
+        # Optimistic resume, verified a beat later. Timing alone can mistake
+        # a short sharp objection ("no—") for acknowledgement, so transcribe
+        # the overlap and undo the decision if it turns out to be words.
+        if overlap_audio is not None and overlap_audio.size:
+            self._spawn(self._verify_backchannel(overlap_audio, track))
+
+    async def _verify_backchannel(
+        self, audio: np.ndarray, track: _SpeakingTrack
+    ) -> None:
+        """Confirm a backchannel verdict against what was actually said."""
+        try:
+            result = await self._asr.partial(audio)
+        except (RuntimeError, ValueError, OSError, AttributeError) as exc:
+            record_degradation(
+                "voice_duplex.overlap",
+                exc,
+                action="kept the timing-based backchannel verdict",
+                severity="debug",
+            )
+            return
+        if result is None or self._speaking is not track:
+            return
+
+        from core.voice.duplex.overlap import looks_like_backchannel
+
+        text = result.full.strip()
+        if not text or looks_like_backchannel(text):
+            return
+        if len(text.split()) < 2:
+            return
+
+        logger.info("Late barge-in: overlap was %r, not acknowledgement", text[:50])
+        await self._interrupt(reason="late_barge_in")
+        await self._begin_user_turn()
+
     async def _check_barge_in(self, probability: float) -> bool:
         """Cut her off when the user starts talking over her."""
         cfg = self._config.barge_in
@@ -493,6 +633,8 @@ class DuplexVoiceSession:
             return
 
         self._barge_run_ms = 0.0
+        self._overlap.reset()
+        self._overlap_audio = []
         track.token.cancel()
 
         # The client owns the playback buffer, so its reported position is
@@ -619,15 +761,26 @@ class DuplexVoiceSession:
                 )
                 await self._mind.publish("style_changed", {"change": style_change})
 
+            self._read_delivery(audio, transcript)
+
             self._mind.notify_user_spoke()
-            await self._mind.publish("user_turn", {"transcript": transcript, "reason": reason})
+            await self._mind.publish(
+                "user_turn",
+                {
+                    "transcript": transcript,
+                    "reason": reason,
+                    "delivery": list(self._delivery.descriptors),
+                },
+            )
 
             # Fillers start now and run until the first real audio goes out.
             self._filler.begin_turn()
             self._filler_task = self._spawn(self._run_fillers(time.monotonic()))
 
             cognition_started = time.perf_counter()
-            reply = await self._mind.respond(transcript)
+            reply = await self._mind.respond(
+                transcript, delivery_context=self._delivery.as_context()
+            )
             self._metrics.cognition_ms = (time.perf_counter() - cognition_started) * 1000.0
             self._metrics.reply_ready_at = time.monotonic()
 
@@ -715,6 +868,8 @@ class DuplexVoiceSession:
         )
         self._speaking = track
         self._client_played_s = 0.0
+        self._overlap.reset()
+        self._overlap_audio = []
         await self._set_state(SessionState.SPEAKING)
 
         chunker = StreamingChunker(
@@ -937,6 +1092,16 @@ class DuplexVoiceSession:
         currently is rather than snapping to a fixed rate.
         """
         spec = self._prosody.compile(live_speech_profile())
+
+        # Move partway toward how the user is speaking. Full mirroring is
+        # mimicry; none at all is the flat-affect problem this exists to fix.
+        conv_speed, conv_gain = convergence_factors(self._delivery)
+        if conv_speed != 1.0 or conv_gain != 1.0:
+            spec = spec.scaled(
+                speed=max(0.7, min(1.4, spec.speed * conv_speed)),
+                gain=max(0.25, min(1.3, spec.gain * conv_gain)),
+            )
+
         adjustment = self._style.adjustment
         if adjustment.active:
             spec = spec.scaled(
