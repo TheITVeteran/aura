@@ -1118,6 +1118,43 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover
         block["pressure_error"] = repr(exc)
     try:
+        from core.bus.qos import qos_report
+        from core.health.diagnostics_aggregator import diagnostics_report
+        from core.observability.bus_recorder import bus_recorder_report
+        from core.runtime.lifecycle import lifecycle_report
+        from core.runtime.parameters import parameters_report
+
+        diagnostics = diagnostics_report()
+        lifecycles = lifecycle_report()
+        block["middleware"] = {
+            "diagnostics": {
+                "level": diagnostics["level"],
+                "stale": diagnostics["stale"],
+                "errors": diagnostics["errors"],
+                "summary": diagnostics["summary"],
+            },
+            "lifecycles": {
+                "by_state": lifecycles["by_state"],
+                "critical_inactive": lifecycles["critical_inactive"],
+                "errored": lifecycles["errored"],
+            },
+            "qos": {
+                "topics": qos_report()["topic_count"],
+                "mismatches": len(qos_report()["qos_mismatches"]),
+                "not_alive": qos_report()["not_alive"],
+            },
+            "parameters": {
+                "count": parameters_report()["count"],
+                "changed_from_default": parameters_report()["changed_from_default"],
+            },
+            "bus_ring": {
+                k: bus_recorder_report()[k]
+                for k in ("ring_size", "ring_span_s", "dumps", "recording")
+            },
+        }
+    except Exception as exc:  # pragma: no cover
+        block["middleware_error"] = repr(exc)
+    try:
         from core.runtime.admission import admission_report
         from core.runtime.eviction import eviction_report
         from core.runtime.lease import lease_report

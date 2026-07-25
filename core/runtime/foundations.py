@@ -523,12 +523,224 @@ async def _activate_orchestration(*, foreground_only: bool) -> ActivationResult:
     )
 
 
+#: Topics whose volume would evict everything else from the bus ring.
+#: Excluding them is what keeps the ring's minute of history useful.
+BAG_EXCLUDED_TOPICS: tuple[str, ...] = (
+    "metrics.sample",
+    "telemetry.tick",
+    "substrate.activation",
+    "heartbeat",
+)
+
+#: Organs adopted into managed lifecycles at boot. Adoption gives an
+#: existing start/stop object a visible state and makes its deactivation
+#: distinguishable from its failure, without rewriting it.
+LIFECYCLE_ADOPTIONS: tuple[tuple[str, bool], ...] = (
+    ("orchestrator", True),
+    ("event_bus", True),
+    ("memory_facade", True),
+    ("autonomy_conductor", False),
+    ("research_cycle", False),
+    ("curiosity_engine", False),
+    ("performance_guard", False),
+    ("self_healing", False),
+    ("viability", False),
+    ("flagship_doctor_daemon", False),
+)
+
+
+def _declare_core_parameters() -> list[str]:
+    """Give the thresholds this module already hard-codes a real home.
+
+    Each was a literal that could not be found, justified, or changed
+    without a restart. Declared, they are inventoried, range-checked,
+    observable, and retunable on a live runtime.
+    """
+    from core.runtime.parameters import ParameterType, declare
+
+    specs: tuple[tuple[str, Any, dict[str, Any]], ...] = (
+        (
+            "memory.soft_pressure_available_fraction",
+            SOFT_PRESSURE_AVAILABLE_FRACTION,
+            {
+                "type": ParameterType.FLOAT,
+                "description": "available-memory fraction below which reclaim and shedding begin",
+                "owner": "core/runtime/foundations.py",
+                "minimum": 0.01,
+                "maximum": 0.9,
+            },
+        ),
+        (
+            "memory.hard_pressure_available_fraction",
+            HARD_PRESSURE_AVAILABLE_FRACTION,
+            {
+                "type": ParameterType.FLOAT,
+                "description": (
+                    "available-memory fraction at which a controlled restart beats "
+                    "waiting to be killed"
+                ),
+                "owner": "core/runtime/foundations.py",
+                "minimum": 0.005,
+                "maximum": 0.5,
+            },
+        ),
+        (
+            "memory.sentinel_interval_s",
+            SENTINEL_INTERVAL_S,
+            {
+                "type": ParameterType.FLOAT,
+                "description": "duty cycle of the independent reclaim sentinel",
+                "owner": "core/runtime/foundations.py",
+                "minimum": 1.0,
+                "maximum": 60.0,
+            },
+        ),
+        (
+            "lockdep.loop_blocking_hold_ms",
+            50.0,
+            {
+                "type": ParameterType.FLOAT,
+                "description": "sync-lock hold on the loop thread beyond which lockdep reports",
+                "owner": "core/runtime/lockdep.py",
+                "minimum": 1.0,
+                "maximum": 5000.0,
+            },
+        ),
+        (
+            "pressure.saturation_threshold",
+            0.20,
+            {
+                "type": ParameterType.FLOAT,
+                "description": "PSI full-pressure fraction at which a resource counts as saturated",
+                "owner": "core/runtime/pressure_stall.py",
+                "minimum": 0.01,
+                "maximum": 1.0,
+            },
+        ),
+        (
+            "bus.ring_capacity",
+            8192,
+            {
+                "type": ParameterType.INT,
+                "description": "messages retained in the always-on bus ring",
+                "owner": "core/observability/bus_recorder.py",
+                "minimum": 256,
+                "maximum": 131072,
+            },
+        ),
+        (
+            "diagnostics.stale_after_s",
+            30.0,
+            {
+                "type": ParameterType.FLOAT,
+                "description": "silence after which a diagnostic task is reported STALE",
+                "owner": "core/health/diagnostics_aggregator.py",
+                "minimum": 5.0,
+                "maximum": 600.0,
+            },
+        ),
+    )
+    declared: list[str] = []
+    for name, default, kwargs in specs:
+        try:
+            declare(name, default, **kwargs)
+            declared.append(name)
+        except (ValueError, TypeError) as exc:
+            logger.warning("parameter %s could not be declared: %s", name, exc)
+    return declared
+
+
+def _adopt_lifecycles() -> dict[str, str]:
+    """Adopt already-instantiated organs into managed lifecycles."""
+    from core.container import ServiceContainer
+    from core.runtime.lifecycle import adopt
+
+    adopted: dict[str, str] = {}
+    instances = _instantiated_services(ServiceContainer)
+    for name, critical in LIFECYCLE_ADOPTIONS:
+        instance = instances.get(name)
+        if instance is None:
+            continue
+        organ = adopt(name, instance, critical=critical)
+        if organ is not None:
+            adopted[name] = str(organ.state)
+    return adopted
+
+
+async def _activate_middleware(*, foreground_only: bool) -> ActivationResult:
+    """Wave 4 — lifecycles, bus QoS, parameters, bus ring, diagnostics."""
+    from core.health.diagnostics_aggregator import (
+        install_default_analyzers,
+        install_runtime_diagnostics,
+    )
+    from core.observability.bus_recorder import get_bus_recorder
+    from core.runtime.lifecycle import lifecycle_report
+
+    parameters = _declare_core_parameters()
+    adopted = _adopt_lifecycles()
+
+    recorder = get_bus_recorder()
+    recorder.exclude(*BAG_EXCLUDED_TOPICS)
+
+    analyzers = install_default_analyzers()
+    tasks = install_runtime_diagnostics()
+
+    qos_topics = _declare_standard_topics()
+
+    return ActivationResult(
+        name="middleware",
+        ok=True,
+        detail=(
+            f"{len(parameters)} parameters declared, {len(adopted)} organ(s) adopted "
+            f"into managed lifecycles, {len(qos_topics)} QoS topics, "
+            f"bus ring armed, {len(analyzers)} diagnostic analyzers over "
+            f"{len(tasks)} tasks"
+        ),
+        data={
+            "parameters": parameters,
+            "lifecycles": adopted,
+            "lifecycle_report": lifecycle_report()["by_state"],
+            "qos_topics": qos_topics,
+            "diagnostic_analyzers": analyzers,
+            "diagnostic_tasks": tasks,
+        },
+    )
+
+
+def _declare_standard_topics() -> list[str]:
+    """Give the topics whose meaning depends on QoS an explicit contract.
+
+    State topics get transient-local durability, which is what makes an
+    organ that boots *after* a state announcement still learn the state
+    instead of behaving as though it never changed.
+    """
+    from core.bus.qos import COMMAND, HEARTBEAT, SENSOR_DATA, STATE, declare_topic
+
+    topics = {
+        "runtime.state": STATE,
+        "runtime.boot_phase": STATE,
+        "cortex.lane_state": STATE,
+        "autonomy.state": STATE,
+        "health.verdict": STATE,
+        "memory.pressure": STATE,
+        "sensory.frame": SENSOR_DATA,
+        "sensory.audio": SENSOR_DATA,
+        "will.decision": COMMAND,
+        "action.request": COMMAND,
+        "mind.tick": HEARTBEAT,
+    }
+    for topic, profile in topics.items():
+        declare_topic(topic, profile)
+    return sorted(topics)
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("kernel_discipline", _activate_kernel_discipline),
     ("verification", _activate_verification),
     ("orchestration", _activate_orchestration),
+    ("middleware", _activate_middleware),
 ]
 
 

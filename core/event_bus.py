@@ -109,6 +109,23 @@ class BoundedPriorityQueue(asyncio.PriorityQueue):
         return super().put_nowait(item)
 
 
+def _record_to_bag(topic: str, data: Any) -> None:
+    """Feed the always-on bus ring (core/observability/bus_recorder.py).
+
+    Both local delivery paths funnel through here, which makes this the
+    one place that sees every message. The ring is bounded and in memory,
+    so the cost is a deque append; the payoff is that when something goes
+    wrong the last minute of what the runtime actually SAW is already
+    captured, rather than having to be predicted in advance.
+    """
+    try:
+        from core.observability.bus_recorder import record
+
+        record(topic, data)
+    except Exception:  # noqa: BLE001 — the recorder is never load-bearing
+        pass  # no-op: recording must never affect delivery
+
+
 class AuraEventBus:
     """Topic-based Asynchronous Event Bus for unified messaging across sub-systems."""
 
@@ -650,7 +667,9 @@ class AuraEventBus:
 
     async def _publish_local(self, topic: str, data: Any, priority: int = EventPriority.COGNITIVE):
         """Asynchronously publish an event to all local subscribers with priority."""
-        
+
+        _record_to_bag(topic, data)
+
         # --- 🛑 PREVENT EVENT ECHOES (H-21 FIX: Proper cloning) ---
         if isinstance(data, dict):
             # Create a shallow copy to prevent sub-scribers from mutating the shared data
@@ -765,6 +784,8 @@ class AuraEventBus:
         short-lived loops can close before the coroutine gets a turn. This helper
         keeps local delivery deterministic without blocking on Redis.
         """
+        _record_to_bag(topic, data)
+
         if isinstance(data, dict):
             data = data.copy()
             data.setdefault("_bus_id", self._bus_id)

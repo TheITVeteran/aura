@@ -541,6 +541,187 @@ def _no_duplicate_holder() -> Iterator[Violation]:
             )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Middleware — lifecycles, QoS, parameters, diagnostics
+# ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "lifecycle.critical_organs_are_active",
+    scope="middleware",
+    owner=_OWNER,
+    description="every organ declared critical has reached the active state",
+)
+def _critical_organs_active() -> Iterator[Violation]:
+    from core.runtime.lifecycle import State, get_lifecycle_manager
+
+    for organ in get_lifecycle_manager().organs():
+        if not organ.critical:
+            continue
+        if organ.state is State.ACTIVE:
+            continue
+        # An organ that has not been brought up yet is not a violation;
+        # one that is finalized or stuck in error is.
+        if organ.state in (State.UNCONFIGURED, State.INACTIVE):
+            continue
+        yield Violation(
+            subject=organ.name,
+            message=(
+                f"critical organ {organ.name!r} is {organ.state} "
+                f"({organ.last_error or 'no error recorded'})"
+            ),
+            remedy="the system is not ready while a critical organ is not active",
+        )
+
+
+@invariant(
+    "lifecycle.no_organ_stuck_mid_transition",
+    scope="middleware",
+    owner=_OWNER,
+    description="no organ has been sitting in an in-flight transition state",
+)
+def _no_stuck_transitions() -> Iterator[Violation]:
+    import time
+
+    from core.runtime.lifecycle import State, get_lifecycle_manager
+
+    in_flight = {
+        State.CONFIGURING,
+        State.ACTIVATING,
+        State.DEACTIVATING,
+        State.CLEANING_UP,
+        State.SHUTTING_DOWN,
+    }
+    now = time.time()
+    for organ in get_lifecycle_manager().organs():
+        if organ.state not in in_flight:
+            continue
+        stuck_for = now - organ.entered_state_at
+        if stuck_for > organ.transition_timeout_s * 2:
+            yield Violation(
+                subject=organ.name,
+                message=(
+                    f"{organ.name!r} has been {organ.state} for {stuck_for:.0f}s "
+                    f"(timeout {organ.transition_timeout_s:.0f}s) — the transition wedged"
+                ),
+                remedy="a transition that cannot time out cannot be recovered from",
+            )
+
+
+@invariant(
+    "qos.no_unresolved_mismatch",
+    scope="middleware",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="no subscriber requested QoS a publisher does not offer",
+)
+def _no_qos_mismatch() -> Iterator[Violation]:
+    from core.bus.qos import qos_report
+
+    for entry in qos_report()["qos_mismatches"]:
+        yield Violation(
+            subject=entry["topic"],
+            message="; ".join(entry["problems"]),
+            remedy="raise the publisher's profile, or lower what the subscriber asks for",
+        )
+
+
+@invariant(
+    "qos.state_topics_are_transient_local",
+    scope="middleware",
+    owner=_OWNER,
+    description="topics named as state retain their last value for late joiners",
+)
+def _state_topics_retain() -> Iterator[Violation]:
+    from core.bus.qos import qos_report
+
+    report = qos_report()
+    for topic, entry in report["topics"].items():
+        looks_like_state = topic.endswith(("state", "verdict", "phase", "pressure"))
+        if not looks_like_state:
+            continue
+        if entry["profile"]["durability"] != "transient_local":
+            yield Violation(
+                subject=topic,
+                message=(
+                    f"{topic!r} carries state but is volatile: an organ that "
+                    "subscribes after the last announcement never learns it, and "
+                    "nothing will republish"
+                ),
+                remedy="declare_topic(topic, qos.STATE)",
+            )
+
+
+@invariant(
+    "parameters.are_owned_and_described",
+    scope="middleware",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="every declared parameter names an owner and says what it does",
+)
+def _parameters_owned() -> Iterator[Violation]:
+    from core.runtime.parameters import parameters_report
+
+    for name, entry in parameters_report()["parameters"].items():
+        descriptor = entry["descriptor"]
+        missing = [
+            field
+            for field in ("owner", "description")
+            if not str(descriptor.get(field) or "").strip()
+        ]
+        if missing:
+            yield Violation(
+                subject=name,
+                message=f"parameter {name!r} is missing {' and '.join(missing)}",
+                remedy="a knob nobody owns is a knob nobody can retire",
+            )
+
+
+@invariant(
+    "parameters.numeric_bounds_are_declared",
+    scope="middleware",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="numeric parameters declare at least one bound",
+)
+def _parameters_bounded() -> Iterator[Violation]:
+    from core.runtime.parameters import parameters_report
+
+    for name, entry in parameters_report()["parameters"].items():
+        descriptor = entry["descriptor"]
+        if descriptor["type"] not in ("int", "float") or descriptor["allowed"]:
+            continue
+        if descriptor["minimum"] is None and descriptor["maximum"] is None:
+            yield Violation(
+                subject=name,
+                message=(
+                    f"numeric parameter {name!r} has no minimum or maximum; any "
+                    "value at all can be set on a live runtime"
+                ),
+                remedy="declare the range the consuming code actually tolerates",
+            )
+
+
+@invariant(
+    "diagnostics.nothing_is_stale",
+    scope="middleware",
+    owner=_OWNER,
+    description="no expected diagnostic has stopped reporting",
+)
+def _nothing_stale() -> Iterator[Violation]:
+    from core.health.diagnostics_aggregator import get_aggregator
+
+    aggregate = get_aggregator().aggregate()
+    for name in aggregate["stale"]:
+        yield Violation(
+            subject=name,
+            message=(
+                f"diagnostic {name!r} is STALE — it was expected to report and "
+                "stopped, which the health verdict cannot see on its own"
+            ),
+            remedy="find out why it stopped; silence is not the same as ok",
+        )
+
+
 def register_runtime_invariants() -> int:
     """Import-time registration is the real work; this returns the count."""
     from core.verify.invariants import get_registry
