@@ -847,6 +847,21 @@ app.include_router(multimodal_routes.router, prefix="/api", tags=["multimodal"])
 app.include_router(performance_routes.router, prefix="/api", tags=["performance"])
 app.include_router(mission_control_routes.router, prefix="/api", tags=["mission_control"])
 
+# Full-duplex voice (/ws/voice). Imported late and defensively: the voice
+# lane pulls in ONNX, Silero and the ASR stack, and a runtime that cannot
+# load them must still serve text chat rather than failing to boot.
+try:
+    from interface.routes import voice_duplex as voice_duplex_routes
+
+    app.include_router(voice_duplex_routes.router, tags=["voice"])
+except (ImportError, OSError, RuntimeError, AttributeError) as _voice_exc:
+    record_degradation(
+        "server.voice_duplex",
+        _voice_exc,
+        action="text chat stayed up; the full-duplex voice lane is unavailable",
+    )
+    logger.error("Full-duplex voice lane unavailable: %s", _voice_exc)
+
 # ── Reliability diagnostics ────────────────────────────────────────
 # Live at /api/diagnostics/reliability — exposes fault taxonomy, SLO burn
 # rates, FMEA coverage, contract violations, and tracing statistics.
