@@ -594,17 +594,17 @@ class BodyStateService:
         # Saturated fatigue is only diagnosable with its charge history. Say it
         # once per saturated stretch — enough to name the source in a live log,
         # never enough to become its own storm.
-        if self._metabolic.fatigue >= 0.95:
+        if self._metabolic.fatigue >= 0.95 or self._metabolic.recovery_debt >= 0.90:
             if not self._fatigue_saturation_reported:
                 self._fatigue_saturation_reported = True
                 logger.warning(
-                    "Body fatigue saturated at %.4f (recovery_debt %.4f). "
-                    "Charges so far by source: %s",
+                    "Body metabolic saturation: fatigue %.4f, recovery_debt "
+                    "%.4f. Charges so far by source: %s",
                     self._metabolic.fatigue,
                     self._metabolic.recovery_debt,
                     self.charge_attribution(),
                 )
-        elif self._metabolic.fatigue < 0.80:
+        elif self._metabolic.fatigue < 0.80 and self._metabolic.recovery_debt < 0.70:
             self._fatigue_saturation_reported = False
 
         snap = BodyHealthSnapshot(
