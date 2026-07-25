@@ -770,8 +770,14 @@ class TestOwnerAutonomyGating(unittest.TestCase):
                 "errors": [],
             }
 
-        original_authorize = OSAutomationCompilerSkill._authorize
-        original_finalize = OSAutomationCompilerSkill._finalize
+        # Capture through __dict__ so the STATICMETHOD DESCRIPTOR is restored,
+        # not the raw function underneath it. Restoring the bare function
+        # silently rebinds it as an instance method, so every later test in
+        # the process gets `self` prepended and dies with 'takes 1 positional
+        # argument but 2 were given' — a cross-file poisoning that looked
+        # like order-dependence in test_os_automation_skill.
+        original_authorize = OSAutomationCompilerSkill.__dict__["_authorize"]
+        original_finalize = OSAutomationCompilerSkill.__dict__["_finalize"]
         original_get_host = os_automation_module.get_host_automation
         OSAutomationCompilerSkill._authorize = staticmethod(authorize_for_test)
         OSAutomationCompilerSkill._finalize = staticmethod(finalize_for_test)
