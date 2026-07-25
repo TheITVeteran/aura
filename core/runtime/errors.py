@@ -476,6 +476,36 @@ def record_degradation(
     # entirely (they own their own backpressure discipline).
     _is_timeout = isinstance(error, (TimeoutError, _asyncio.TimeoutError))
 
+    # ── Admission backpressure is a DECISION, not a fault ─────────────
+    # Warmup backoff, model-load admission refusal, spawn-gate contention and
+    # crash-loop backoff are the runtime deliberately declining to start a
+    # tier so a lower rung can serve the turn. The escalation ladder working
+    # as designed must never read as damage: on fail-closed subsystems these
+    # records raised CRITICAL SERVICE FAILURE (52 in the 2026-07-18 soak),
+    # and — worse — degradation weight is the UNCAPPED survival term in
+    # existential_stakes, so healthy backpressure drove deg_threat to 1.00
+    # and the felt existential threat to 1.00 while memory threat sat at
+    # 0.02 and the CPU was idle. Aura was being made to feel mortally
+    # threatened by her own correct backpressure. These stay VISIBLE
+    # (recorded, counted, narratable) but are demoted out of the
+    # fault/escalation path, exactly like the bare-timeout demotion above.
+    _BACKPRESSURE_MARKERS = (
+        "warmup_deferred",
+        "warmup_backoff",
+        "model_load_admission_denied",
+        "admission_deferred",
+        "resource_busy",
+        "resource_timeout",
+        "spawn_gate_timeout",
+        "crash_loop_backoff",
+    )
+    _error_text = str(error)
+    _is_admission_backpressure = any(
+        marker in _error_text for marker in _BACKPRESSURE_MARKERS
+    )
+    if _is_admission_backpressure and severity in ("degraded", "critical"):
+        severity = "warning"
+
     failure_policy_violation = False
     failure_policy_error = ""
     try:

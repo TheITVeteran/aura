@@ -1077,6 +1077,36 @@ class InferenceGate:
         self._last_cortex_warmup_deferral_log_at = now
         logger.warning("⏸️ Cortex %s warmup deferred to protect RAM: %s", context, reason)
 
+    # Admission/backoff outcomes are the ladder DECIDING not to load a tier
+    # right now — the designed backpressure that lets a lower rung serve the
+    # turn. They are not faults: on the fail-closed inference_gate a
+    # degradation record escalates to CRITICAL SERVICE FAILURE, and the
+    # 2026-07-18 soak logged 52 of them from healthy deferrals alone. That
+    # noise burns the SLO error budget, raises `critical_incident_active`
+    # against an otherwise-serving runtime, and buries real criticals.
+    _EXPECTED_BACKPRESSURE_MARKERS = (
+        "foreground_warmup_deferred",
+        "warmup_deferred",
+        "model_load_admission_denied",
+        "resource_busy",
+        "resource_timeout",
+        "spawn_gate_timeout",
+        "crash_loop_backoff",
+        "warmup_backoff",
+    )
+
+    @classmethod
+    def _is_expected_inference_backpressure(cls, exc: BaseException) -> bool:
+        """True when a tier declined to run and the ladder can still serve.
+
+        The distinguishing question is never 'did something go wrong?' but
+        'did the runtime DECIDE this, and is a lower rung still available?'.
+        A decision the system made on purpose must be observable (info +
+        lane state + receipts) without being counted as a service failure.
+        """
+        text = str(exc or "")
+        return any(marker in text for marker in cls._EXPECTED_BACKPRESSURE_MARKERS)
+
     def _note_foreground_warmup_failure(self, warmup_exc: BaseException) -> bool:
         """Classify a foreground-warmup failure; returns True for RAM deferrals.
 
@@ -8116,13 +8146,27 @@ class InferenceGate:
                         f"{local_label} timed out after {timeout_val:.0f}s"
                     ) from timeout_exc
             except _INFERENCE_RECOVERABLE_ERRORS as e:
-                record_degradation(
-                    "inference_gate",
-                    e,
-                    severity="degraded",
-                    action="fell through to reflex or cloud fallback after local inference failure",
-                )
-                logger.warning("🛑 Local inference FAILURE: %s", e)
+                if self._is_expected_inference_backpressure(e):
+                    # The runtime declined this tier on purpose (admission,
+                    # backoff, gate) and the ladder is descending exactly as
+                    # designed. Recording it as a degradation on the
+                    # fail-closed inference_gate raises CRITICAL SERVICE
+                    # FAILURE for healthy behavior — 52 of them in the
+                    # 2026-07-18 soak, which is what tripped
+                    # `critical_incident_active` while the runtime served.
+                    logger.info(
+                        "🧠 Local tier declined by admission/backoff; descending "
+                        "the ladder: %s",
+                        e,
+                    )
+                else:
+                    record_degradation(
+                        "inference_gate",
+                        e,
+                        severity="degraded",
+                        action="fell through to reflex or cloud fallback after local inference failure",
+                    )
+                    logger.warning("🛑 Local inference FAILURE: %s", e)
 
         # 1.5. EMERGENCY REFLEX FALLBACK — tiny 1.5B model on CPU as absolute last local resort.
         # If Cortex AND Brainstem both failed for a user-facing request, the 1.5B Reflex

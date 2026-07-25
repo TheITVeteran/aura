@@ -1633,7 +1633,7 @@ def _spawn_gate_snapshot() -> dict[str, Any]:
 
 @contextlib.asynccontextmanager
 async def _spawn_gate_context(
-    *, owner: str = "unknown"
+    *, owner: str = "unknown", timeout_s: float | None = None
 ) -> AsyncIterator[dict[str, Any]]:
     """Cancellation-safe, bounded ownership of the global spawn gate.
 
@@ -1646,9 +1646,22 @@ async def _spawn_gate_context(
     Nonblocking acquisition on the event-loop thread is constant-time. Bounded
     polling preserves cross-loop/thread compatibility while guaranteeing a
     cancelled waiter can never acquire after its caller is gone.
+
+    ``timeout_s`` bounds the wait by the CALLER'S remaining budget. Waiting
+    past your own deadline is guaranteed-useless — and worse than useless
+    here, because the escalation ladder is serial: a 32B load that waits the
+    full 330 s process bound for a gate it will never get also spends the
+    turn's whole budget, so the Brainstem inherits seconds and the Reflex
+    inherits milliseconds, and NO tier answers (2026-07-18 soak: p50 167 s,
+    32 turns with no reply, while a 1.5 B fallback sat ready). A tier that
+    cannot even START loading inside its own budget must fail fast so the
+    next rung still has time to serve the user.
     """
 
-    deadline = time.monotonic() + float(_SPAWN_GATE_ACQUIRE_TIMEOUT_S)
+    bound = float(_SPAWN_GATE_ACQUIRE_TIMEOUT_S)
+    if timeout_s is not None:
+        bound = max(0.0, min(bound, float(timeout_s)))
+    deadline = time.monotonic() + bound
     acquired = False
     lease_token = uuid.uuid4().hex
     while not acquired:
@@ -1659,7 +1672,7 @@ async def _spawn_gate_context(
         if remaining <= 0.0:
             holder = _spawn_gate_snapshot()
             raise TimeoutError(
-                f"spawn_gate_timeout:{_SPAWN_GATE_ACQUIRE_TIMEOUT_S:.3f}s:"
+                f"spawn_gate_timeout:{bound:.3f}s:"
                 f"holder={holder['owner'] or 'unknown'}:age={holder['age_s']:.3f}s"
             )
         await asyncio.sleep(min(0.05, remaining))
@@ -6274,7 +6287,13 @@ class MLXLocalClient:
             ):
                 async with _spawn_gate_context(
                     owner=f"{os.path.basename(self.model_path)}:"
-                    f"{'foreground' if foreground_request else 'background'}"
+                    f"{'foreground' if foreground_request else 'background'}",
+                    # Never wait for the gate longer than this request can use
+                    # the worker it is waiting for: init_timeout already
+                    # carries the caller's remaining budget
+                    # (_request_scoped_init_timeout). Past it, the ladder
+                    # needs the time more than this tier does.
+                    timeout_s=init_timeout,
                 ):
                     return await self._ensure_worker_alive_inner(
                         request_is_background=request_is_background,

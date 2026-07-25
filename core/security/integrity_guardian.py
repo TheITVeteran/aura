@@ -352,8 +352,15 @@ class IntegrityGuardian:
         except (TypeError, ValueError):
             return 10.0
 
-    def _get_git_status_map(self) -> dict[str, str]:
-        """Returns a map of normalized path -> status code (e.g., 'M', 'D', '??')"""
+    def _get_git_status_map(self) -> dict[str, str] | None:
+        """Normalized path -> status code (e.g. 'M', 'D', '??').
+
+        Returns ``None`` when the local VCS state could NOT be established
+        (no repo, git unavailable, command failure). That is deliberately
+        distinct from an empty map (repo present, tree clean): auto-restore
+        destroys the file on disk, so it must fail SAFE when it cannot tell
+        whether a modification has a legitimate local explanation.
+        """
         try:
             with local_internal_governed_scope("security.integrity_guardian.git_status", domain="tool_execution"):
                 status = get_subprocess_gateway().run(
@@ -365,7 +372,7 @@ class IntegrityGuardian:
                     source="security.integrity_guardian.git_status",
             )
             if status.returncode not in (0, 1):
-                return {}
+                return None
 
             status_map = {}
             for line in status.stdout.splitlines():
@@ -379,18 +386,56 @@ class IntegrityGuardian:
         except _INTEGRITY_GUARDIAN_ERRORS as exc:
             record_degradation('integrity_guardian', exc)
             logger.debug("IntegrityGuardian: git status map lookup failed: %s", exc)
-            return {}
+            return None
 
-    def _should_auto_restore(self, path: str, git_status: dict[str, str]) -> bool:
-        from core.config import Environment, config
+    def _should_auto_restore(self, path: str, git_status: dict[str, str] | None) -> bool:
+        """Whether a hash mismatch may be repaired by OVERWRITING the file.
+
+        Auto-restore is destructive: it replaces the bytes on disk with the
+        HEAD blob. A security control must never destroy data whose
+        provenance it cannot establish — detection and evidence preservation
+        are always correct; destruction is only correct when the change is
+        genuinely unexplained.
+
+        A tracked file that the local VCS itself reports as modified HAS a
+        local explanation. In a git checkout, tamper and ordinary editing are
+        indistinguishable by hash alone, so the honest response is to alert
+        (which still happens — integrity_warning reaches EmergencyProtocol)
+        and keep the bytes, not to silently revert them. This was not
+        academic: during the 2026-07-18 soak the guardian restored
+        ``interface/routes/chat.py`` and four latent-cortex modules EIGHT
+        times each, reverting live uncommitted work under a parallel
+        session's feet while it was editing them.
+
+        The environment label is deliberately not part of this decision. A
+        real deployment has a clean tree, so the check costs it nothing; a
+        working checkout is dangerous to overwrite whatever it calls itself.
+        """
+        from core.config import config
 
         if not getattr(config.security, "auto_fix_enabled", False):
             return False
         normalized = self._normalize_repo_path(path)
         if not self._is_monitored_path(normalized):
             return False
-        is_dev = getattr(config, "env", Environment.DEV) == Environment.DEV
-        if is_dev and normalized in git_status:
+        if git_status is None:
+            # VCS state unknown → cannot establish that the change is
+            # unexplained → refuse to destroy. Fail safe, stay loud.
+            logger.warning(
+                "IntegrityGuardian: refusing auto-restore of %s — local VCS "
+                "state could not be established, so the change cannot be "
+                "shown to be unexplained. Alerting instead of overwriting.",
+                normalized,
+            )
+            return False
+        if normalized in git_status:
+            logger.warning(
+                "IntegrityGuardian: %s differs from its baseline but the "
+                "working tree explains it (git status=%s). Alerting; NOT "
+                "overwriting local bytes.",
+                normalized,
+                git_status.get(normalized, "?"),
+            )
             return False
         return True
 

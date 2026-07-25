@@ -3530,6 +3530,9 @@ def test_integrity_guardian_auto_restores_missing_file_when_enabled(monkeypatch,
 
     monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
     monkeypatch.setattr(guardian, "_hash_file", lambda p: "expected-hash")
+    # Deployment condition: clean tree, so the deletion has no local
+    # explanation and auto-heal is the correct response.
+    monkeypatch.setattr(guardian, "_get_git_status_map", lambda: {})
 
     alerts = guardian._verify_all()
 
@@ -3565,6 +3568,10 @@ def test_integrity_guardian_auto_restores_tampered_file_when_enabled(monkeypatch
         return True
 
     monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
+    # Model the deployment condition this test means: a clean tree, so the
+    # tamper has NO local explanation. (An unavailable git status is a
+    # different case and must never authorize overwriting a live tree.)
+    monkeypatch.setattr(guardian, "_get_git_status_map", lambda: {})
 
     hashes = ["actual-tampered-hash", "expected-hash"]
 

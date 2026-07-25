@@ -4145,7 +4145,7 @@ class UnitaryResponsePhase(Phase):
                     ack_response = " ".join(details)
                     new_state.cognition.last_response = ack_response
                     logger.info(
-                        "🎯 [CRITICAL FIX] Background task already started (outcome=started). "
+                        "🎯 Background task already started (outcome=started). "
                         "Returning evidence-bounded acknowledgment instead of LLM-generated response."
                     )
                     return new_state
@@ -4155,7 +4155,7 @@ class UnitaryResponsePhase(Phase):
                 "verifiable status."
             )
             logger.info(
-                "🎯 [CRITICAL FIX] Background task dispatched (outcome=started). "
+                "🎯 Background task dispatched (outcome=started). "
                 "Returning fail-closed missing-payload acknowledgment."
             )
             return new_state

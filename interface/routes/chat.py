@@ -9470,6 +9470,31 @@ def _collect_governed_action_lane_status(status: str) -> dict[str, Any]:
     return lane
 
 
+# A lane whose own failure reason says warmup was DEFERRED (backoff after
+# repeated stuck loads, admission refusal) is not warming toward ready — the
+# runtime has deliberately decided the cortex will not load right now. Turns
+# must not spend the cold-boot budget waiting for a model that is provably
+# not coming; the warm fallback needs that time to actually answer.
+_DEFERRED_WARMUP_REASON_MARKERS = (
+    "warmup_backoff",
+    "warmup_deferred",
+    "warmup_timeout",
+    "deferred_memory_pressure",
+)
+# Enough for the fallback ladder to cold-load a small model AND generate a
+# real reply — the point is a genuine answer from a lower rung, not a faster
+# apology.
+_DEFERRED_CORTEX_TURN_TIMEOUT_S = 75.0
+
+
+def _lane_warmup_is_deliberately_deferred(lane: dict[str, Any] | None) -> bool:
+    """True when the lane is held off warmup rather than progressing toward it."""
+    reason = str((lane or {}).get("last_failure_reason", "") or "").lower()
+    if not reason:
+        return False
+    return any(marker in reason for marker in _DEFERRED_WARMUP_REASON_MARKERS)
+
+
 def _foreground_timeout_for_lane(
     lane: dict[str, Any] | None,
     user_message: str = "",
@@ -9504,6 +9529,13 @@ def _foreground_timeout_for_lane(
             )
         return ready_timeout
     if state in {"warming", "recovering", "cold", "spawning", "handshaking"}:
+        if _lane_warmup_is_deliberately_deferred(lane):
+            # Deferred ≠ warming. Granting the cold-boot budget here spent
+            # the whole turn on a cortex the runtime had already decided not
+            # to load, leaving the Brainstem seconds and the Reflex
+            # milliseconds — 32 turns produced NO reply at all while a warm
+            # 1.5B sat idle (2026-07-18 soak). Give the ladder the time.
+            return _DEFERRED_CORTEX_TURN_TIMEOUT_S
         return 210.0
     return ready_timeout
 
