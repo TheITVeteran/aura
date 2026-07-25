@@ -27663,3 +27663,74 @@ Next: publish CP368, then resume SPARK-051's value-of-computation controller,
 starting with governed live retrieval semantics and independently distinct
 action effects. Final multi-hour soaks remain deferred until every shorter gate
 is green.
+
+## Checkpoint 2026-07-25-369: Source-Selective Cognitive Action Effects
+
+SPARK-051 advances without claiming completion. `SEARCH_MEMORY` and
+`RETRIEVE_EVIDENCE` previously changed the embedded instruction but then ran
+the same generic branch machinery over all admitted context. CP369 gives each
+action an independently distinguishable latent effect: it reads only the
+matching immutable source class, computes a bounded source summary, and writes
+that summary into every live branch's communication slot before the existing
+branch-specific cognitive operator and recurrent window execute.
+
+The source taxonomy is explicit. Durable and episodic memory sources match
+`SEARCH_MEMORY`; offline reference, world-model evidence, and governed
+evidence/tool observations match `RETRIEVE_EVIDENCE`. One-shot nonparametric
+memory truthfully participates in both provenance classes because its ingress
+contract marks it as an `evidence_observation` while its source remains
+`one_shot_memory`. Goal, body, affect, self-model, and unrelated slots cannot
+be silently read by either action.
+
+Each branch focus receipt binds the action and source class, branch and action
+step, exact source slots and labels, communication target, bounded strength,
+input/source/output/preserved-source tensor commitments, and exact tensor
+accounting. The action must change the workspace, preserve every immutable
+source slot, and feed its output exactly into the next branch cognitive
+operator. Resource accounting owns the focus work under action-specific
+operation names.
+
+The service reconstructs matching slots from the public cognitive-slot
+inventory, validates every focus receipt, requires complete live-branch
+coverage, proves focus-to-operator state lineage, and reconciles tensor totals.
+Tampering reports the dedicated `context_focus_execution_unproven` contract
+error. Receipts explicitly state `external_retrieval_effect=none`; this
+checkpoint cannot be mistaken for a new memory, corpus, web, or tool fetch.
+
+Seven direct contracts and two forced-controller tiny-Qwen episodes cover
+source taxonomy, causal state change, immutable evidence, distinct memory and
+evidence outputs, absent-source refusal, slot tampering, false external-fetch
+claims, the one-shot hybrid source, service reconstruction, and exact
+focus-to-operator lineage. The focused action/controller/branch/resource/
+service battery passes 251 tests. The complete combined latent/RLC ownership
+battery passes 1,252 tests.
+
+Ruff, bytecode compilation, and diff hygiene pass. Governance remains 1,973
+recognized calls in 1,847 buckets with 1,788 inherited migration-debt calls.
+Model-load ownership passes with 47 paths, 60 references, and zero findings.
+Resource-observation ownership scans 2,964 Python files with zero findings.
+The enterprise static ratchet passes at 168 findings, 38 high, zero critical,
+and no baseline regression.
+
+The reconciled dirty-candidate closeout audit passes over 8,033 tracked files,
+including 8,002 text files and 5,003 code files, and binds 4,255,743 text lines
+plus 1,599,692 code lines to the generated ledgers. Production readiness,
+architecture mapping, model-load ownership, and resource-observation ownership
+pass. `full_closeout_complete` remains correctly false: 501 code files have
+current full-file semantic receipts and 4,471 remain unreviewed.
+
+SPARK-051 remains open. These actions now have distinct causal semantics over
+already admitted context, but they do not yet initiate a governed fresh
+retrieval. `EXECUTE` still lacks an external orchestration executor, controller
+cells still need enough checked outcomes to leave bootstrap mode, and
+resident/live causal ablations have not established calibrated value or
+capability gain.
+
+Two cooperative certification and body-state checkpoints landed after CP368
+and before this integration (`fa74edf11` and `f999f892b`). Counting them and
+CP369 makes this total checkpoint record 495. The forecast remains 512-779
+total records, leaving approximately 17-284 records after this checkpoint.
+Checkpoint-count completion is approximately 63.5%-96.7%, with a midpoint
+planning estimate of 76.7%. Next: publish CP369, then implement SPARK-051's
+governed fresh-retrieval continuation and external execution protocol. Final
+multi-hour soaks remain deferred until every shorter gate is green.

@@ -1714,6 +1714,7 @@ class LatentCortexService:
             errors.append("branch_exchange_resource_binding_unproven")
         raw_action_trace = receipt.get("cognitive_action_trace")
         if isinstance(raw_action_trace, list) and raw_action_trace:
+            validating_context_focus = False
             try:
                 from core.brain.llm.latent_cortex.cognitive_operators import (
                     validate_operator_receipt,
@@ -1799,8 +1800,109 @@ class LatentCortexService:
                         or len({row["operator"] for row in rows}) != len(rows)
                     ):
                         raise ValueError("cognitive operator coverage is invalid")
+                from core.brain.llm.latent_cortex.context_focus import (
+                    CONTEXT_FOCUS_ACTIONS,
+                    validate_context_focus_receipt,
+                )
+                from core.brain.llm.latent_cortex.epistemic_state import (
+                    OperationKind,
+                )
+
+                validating_context_focus = True
+                raw_focus_trace = receipt.get("context_focus_trace")
+                if not isinstance(raw_focus_trace, list):
+                    raise ValueError("context focus trace is invalid")
+                cognitive_slots = receipt.get("cognitive_slots")
+                if not isinstance(cognitive_slots, list):
+                    raise ValueError("cognitive slot inventory is invalid")
+                focus_rows = [
+                    validate_context_focus_receipt(
+                        row,
+                        cognitive_slots=cognitive_slots,
+                    )
+                    for row in raw_focus_trace
+                ]
+                expected_focus_work: dict[str, dict[str, int]] = {}
+                for row in focus_rows:
+                    operation_name = f"context_focus:{row['action']}"
+                    expected = expected_focus_work.setdefault(
+                        operation_name,
+                        {
+                            "tensor_element_reads": 0,
+                            "tensor_element_writes": 0,
+                            "tensor_scalar_ops": 0,
+                            "host_scalar_ops": 0,
+                        },
+                    )
+                    accounting = row["tensor_accounting"]
+                    expected["tensor_element_reads"] += accounting["element_reads"]
+                    expected["tensor_element_writes"] += accounting["element_writes"]
+                    expected["tensor_scalar_ops"] += accounting["tensor_scalar_ops"]
+                    expected["host_scalar_ops"] += accounting["commitment_host_ops"]
+                observed_focus_names = {
+                    name for name in operations if name.startswith("context_focus:")
+                }
+                if observed_focus_names != set(expected_focus_work):
+                    raise ValueError("context focus resource coverage differs")
+                for operation_name, expected in expected_focus_work.items():
+                    operation = operations.get(operation_name)
+                    if not isinstance(operation, dict) or any(
+                        operation.get(name) != amount
+                        for name, amount in expected.items()
+                    ):
+                        raise ValueError("context focus resource totals differ")
+                    if any(
+                        operation.get(name) != 0
+                        for name in operation
+                        if name not in expected
+                    ):
+                        raise ValueError("context focus resource kind differs")
+                focus_by_step: dict[int, list[dict[str, Any]]] = {}
+                for row in focus_rows:
+                    focus_by_step.setdefault(row["action_step"], []).append(row)
+                if set(focus_by_step) - set(range(len(raw_action_trace))):
+                    raise ValueError("context focus step is orphaned")
+                operator_by_step_branch = {
+                    (row["action_step"], row["branch_index"]): row
+                    for row in operator_rows
+                }
+                for step, action_row in enumerate(raw_action_trace):
+                    transition = action_row["transition"]
+                    signal = action_row["state_signal"]
+                    action = OperationKind(transition["action"])
+                    rows = focus_by_step.get(step, [])
+                    if action not in CONTEXT_FOCUS_ACTIONS:
+                        if rows:
+                            raise ValueError(
+                                "non-context action claimed context focus"
+                            )
+                        continue
+                    active_branches = signal["active_branches"]
+                    if (
+                        len(rows) != active_branches
+                        or {row["action"] for row in rows} != {action.value}
+                        or len({row["branch_index"] for row in rows}) != len(rows)
+                    ):
+                        raise ValueError("context focus coverage is invalid")
+                    for row in rows:
+                        operator_row = operator_by_step_branch.get(
+                            (step, row["branch_index"])
+                        )
+                        if (
+                            operator_row is None
+                            or operator_row["action"] != action.value
+                            or operator_row["input_sha256"]
+                            != row["output_sha256"]
+                        ):
+                            raise ValueError(
+                                "context focus did not feed the cognitive operator"
+                            )
             except (ImportError, TypeError, ValueError):
-                errors.append("cognitive_operator_execution_unproven")
+                errors.append(
+                    "context_focus_execution_unproven"
+                    if validating_context_focus
+                    else "cognitive_operator_execution_unproven"
+                )
             try:
                 from core.brain.llm.latent_cortex.structural_diversity import (
                     validate_structural_diversity_receipt,
@@ -1915,7 +2017,7 @@ class LatentCortexService:
             except (ImportError, TypeError, ValueError):
                 errors.append("correlated_support_unproven")
         elif resource_accounting is not None and any(
-            name.startswith("cognitive_operator:")
+            name.startswith(("cognitive_operator:", "context_focus:"))
             for name in resource_accounting.get("operations", {})
         ):
             errors.append("cognitive_operator_execution_unproven")

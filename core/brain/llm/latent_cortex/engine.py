@@ -2480,6 +2480,7 @@ class LatentCortexEngine:
         )
         selected_actions: list[OperationKind] = []
         cognitive_operator_trace: list[dict[str, Any]] = []
+        context_focus_trace: list[dict[str, Any]] = []
         action_index = 0
         previous_residual = 1.0
         branch_verifier_scores: dict[int, float] = {}
@@ -3028,6 +3029,29 @@ class LatentCortexEngine:
 
                 if action is OperationKind.REGENERATE_FROM_PREFIX:
                     affected_branches += ensemble.revert_all_to_savepoint()
+                if (
+                    action
+                    in {
+                        OperationKind.SEARCH_MEMORY,
+                        OperationKind.RETRIEVE_EVIDENCE,
+                    }
+                    and not tree_search_handled
+                ):
+                    focus_receipts = ensemble.apply_context_focus(
+                        action=action,
+                        action_step=action_index,
+                        budget=budget,
+                    )
+                    context_focus_trace.extend(focus_receipts)
+                    affected_branches = max(
+                        affected_branches,
+                        len(focus_receipts),
+                    )
+                    outcome = (
+                        "memory_context_focused"
+                        if action is OperationKind.SEARCH_MEMORY
+                        else "evidence_context_focused"
+                    )
                 if action in _ACTION_CONTROL_TEXT and not tree_search_handled:
                     operator_receipts = ensemble.apply_cognitive_operators(
                         action_controls[action],
@@ -3541,6 +3565,7 @@ class LatentCortexEngine:
         if bytecode_events:
             receipt.bytecode_events = bytecode_events
         receipt.cognitive_operator_trace = cognitive_operator_trace
+        receipt.context_focus_trace = context_focus_trace
         receipt.value_of_computation.update(
             {
                 "executors": [action.value for action in action_executors],

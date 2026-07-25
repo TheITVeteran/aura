@@ -42,6 +42,8 @@ from core.brain.llm.latent_cortex.cognitive_operators import (
     execute_cognitive_operator,
     operator_for_role,
 )
+from core.brain.llm.latent_cortex.context_focus import apply_context_focus
+from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.escape import BranchEscapeLadder, EscapeConfig
 from core.brain.llm.latent_cortex.loop_core import transition_metrics
 from core.brain.llm.latent_cortex.recurrence import (
@@ -1363,6 +1365,40 @@ class BranchEnsemble:
                 accounting = receipt["tensor_accounting"]
                 budget.charge_tensor_work(
                     f"cognitive_operator:{branch.operator.value}",
+                    element_reads=accounting["element_reads"],
+                    element_writes=accounting["element_writes"],
+                    scalar_ops=accounting["tensor_scalar_ops"],
+                    host_scalar_ops=accounting["commitment_host_ops"],
+                )
+        return receipts
+
+    def apply_context_focus(
+        self,
+        *,
+        action: OperationKind,
+        action_step: int,
+        budget: ComputeBudget | None = None,
+    ) -> list[dict[str, Any]]:
+        """Focus live branches on the action's admitted source class."""
+
+        receipts: list[dict[str, Any]] = []
+        for branch in self.active():
+            output, receipt = apply_context_focus(
+                branch.z,
+                context_slots=branch.workspace.context_slots,
+                action=action,
+                branch_index=branch.index,
+                action_step=action_step,
+                comm_slot=int(self.config.comm_slot),
+                rms_clip_ratio=float(self.recurrence.rms_clip_ratio),
+            )
+            branch.z = output
+            branch.workspace.update(output)
+            receipts.append(receipt)
+            if budget is not None:
+                accounting = receipt["tensor_accounting"]
+                budget.charge_tensor_work(
+                    f"context_focus:{action.value}",
                     element_reads=accounting["element_reads"],
                     element_writes=accounting["element_writes"],
                     scalar_ops=accounting["tensor_scalar_ops"],

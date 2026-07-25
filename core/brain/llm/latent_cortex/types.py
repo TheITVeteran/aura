@@ -1436,6 +1436,9 @@ class EpisodeReceipt:
     value_of_computation: dict[str, Any] = field(default_factory=dict)
     cognitive_action_trace: list[dict[str, Any]] = field(default_factory=list)
     cognitive_operator_trace: list[dict[str, Any]] = field(default_factory=list)
+    # Source-selective causal writes for SEARCH_MEMORY and RETRIEVE_EVIDENCE.
+    # External re-fetch remains a separately governed service operation.
+    context_focus_trace: list[dict[str, Any]] = field(default_factory=list)
     # Wording-independent structural support classes reconstructed from the
     # primary action/operator/isolation traces. Different prose never creates
     # another vote; causal structure has to differ across six named facets.
@@ -1660,6 +1663,7 @@ class EpisodeReceipt:
             "value_of_computation": dict(self.value_of_computation),
             "cognitive_action_trace": [dict(row) for row in self.cognitive_action_trace],
             "cognitive_operator_trace": [dict(row) for row in self.cognitive_operator_trace],
+            "context_focus_trace": [dict(row) for row in self.context_focus_trace],
             "structural_diversity": dict(self.structural_diversity),
             "disagreement_graph": dict(self.disagreement_graph),
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),

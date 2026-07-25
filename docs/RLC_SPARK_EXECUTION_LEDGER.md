@@ -2001,10 +2001,37 @@ before those dependencies close is not admissible.
   journal without double-charging the enclosing episode. The worker cannot
   claim external EXECUTE authority, and unavailable actions fail closed.
 
+  CP369 removes one remaining synonym failure. `SEARCH_MEMORY` and
+  `RETRIEVE_EVIDENCE` no longer differ only by an embedded instruction passed
+  through the same generic branch operator. Each selected action first reads
+  only its matching immutable context class and writes a bounded summary into
+  each live branch's communication slot. Episodic/durable memory, one-shot
+  nonparametric memory, offline reference, world-model evidence, and governed
+  tool/evidence sources have explicit source-class rules; the one-shot source
+  truthfully participates as both memory provenance and typed evidence.
+
+  Every focus transition commits its source slots and labels, input/source/
+  output tensors, preserved-source tensor, branch/step identity, bounded
+  strength, and exact tensor accounting. Source slots must remain unchanged,
+  the output must differ from the input, and the following branch-specific
+  cognitive operator must consume the focus output exactly. The service
+  independently reconstructs source selection from the public cognitive-slot
+  inventory, verifies branch/step coverage and focus-to-operator chaining, and
+  matches every tensor-work total. The receipt explicitly says
+  `external_retrieval_effect=none`; this slice cannot claim a fresh fetch.
+
+  Seven direct focus contracts plus two forced-controller tiny-Qwen episodes
+  cover source taxonomy, causal/preserved state, distinct memory/evidence
+  outputs, absent-source refusal, inventory tampering, false external-fetch
+  claims, one-shot hybrid classification, service reconstruction, and
+  focus-to-operator lineage. Focused action/controller/branch/resource/service
+  coverage passes 251 tests; the complete combined latent/RLC ownership
+  battery passes 1,252 tests.
+
   SPARK-051 is not accepted yet: SEARCH_MEMORY and RETRIEVE_EVIDENCE currently
-  direct attention over already admitted context rather than initiating a new
-  governed fetch; EXECUTE still requires an external orchestration executor;
-  several actions need independently distinguishable semantics and sufficient
+  apply independently distinct source-selective effects over already admitted
+  context but do not yet initiate a new governed fetch; EXECUTE still requires
+  an external orchestration executor; the remaining actions need sufficient
   checked outcomes to leave bootstrap mode; and resident/live causal ablations
   have not established calibrated value or capability gain.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,

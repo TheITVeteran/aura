@@ -211,6 +211,123 @@ def test_receipt_maps_slots_to_organs(tiny_model):
     )
 
 
+@pytest.mark.parametrize(
+    ("action_name", "context_item", "expected_source", "expected_outcome"),
+    [
+        (
+            "search_memory",
+            _typed_memory_item(),
+            "memory",
+            "memory_context_focused",
+        ),
+        (
+            "retrieve_evidence",
+            {
+                "source": "reference",
+                "text": "Offline reference evidence about the current objective.",
+            },
+            "reference",
+            "evidence_context_focused",
+        ),
+    ],
+)
+def test_value_controller_actions_focus_only_the_matching_context_class(
+    tiny_model,
+    action_name,
+    context_item,
+    expected_source,
+    expected_outcome,
+):
+    from core.brain.llm.latent_cortex.context_focus import (
+        validate_context_focus_receipt,
+    )
+    from core.brain.llm.latent_cortex.epistemic_state import OperationKind
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        ActionEvidence,
+        build_evidence_snapshot,
+    )
+
+    action = OperationKind(action_name)
+    evidence = ActionEvidence()
+    for _ in range(8):
+        evidence = evidence.append(gain=1.0, cost=0.01)
+    snapshot = build_evidence_snapshot(
+        bucket="context-focus|none|short|s:mid|u:mid",
+        cells={action: evidence},
+    )
+    engine = LatentCortexEngine(
+        tiny_model,
+        FakeTokenizer(),
+        config=_config(
+            n_slots=6,
+            branches=BranchConfig(n_branches=1, exchange_interval=2),
+        ),
+    )
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        cognitive_context=[context_item],
+        action_policy_evidence=snapshot,
+    )
+
+    assert result.ok is True
+    trace = result.receipt.cognitive_action_trace
+    selected_step = next(
+        index
+        for index, row in enumerate(trace)
+        if row["transition"]["action"] == action.value
+    )
+    assert trace[selected_step]["transition"]["outcome"] == expected_outcome
+    focus_rows = [
+        row
+        for row in result.receipt.context_focus_trace
+        if row["action_step"] == selected_step
+    ]
+    assert len(focus_rows) == 1
+    focus = validate_context_focus_receipt(
+        focus_rows[0],
+        cognitive_slots=result.receipt.cognitive_slots,
+    )
+    assert focus["source_labels"] == [expected_source]
+    operator = next(
+        row
+        for row in result.receipt.cognitive_operator_trace
+        if row["action_step"] == selected_step
+    )
+    assert operator["input_sha256"] == focus["output_sha256"]
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    receipt = result.receipt.to_dict()
+    contract_config = {
+        "n_slots": 6,
+        "n_branches": 1,
+        "min_steps": 2,
+        "max_steps": 4,
+        "verifier_probe_max_tokens": 48,
+    }
+    errors = LatentCortexService._receipt_contract_errors(
+        receipt,
+        contract_config,
+        output_tokens=result.tokens,
+        output_text=FakeTokenizer().decode(result.tokens),
+        answer_replacement_private=result.answer_replacement_private,
+    )
+    assert "context_focus_execution_unproven" not in errors
+
+    import copy
+
+    tampered = copy.deepcopy(receipt)
+    tampered["context_focus_trace"][0]["source_slots"] = [5]
+    tampered_errors = LatentCortexService._receipt_contract_errors(
+        tampered,
+        contract_config,
+        output_tokens=result.tokens,
+        output_text=FakeTokenizer().decode(result.tokens),
+        answer_replacement_private=result.answer_replacement_private,
+    )
+    assert "context_focus_execution_unproven" in tampered_errors
+
+
 def test_prompt_tail_one_shot_recall_is_bound_before_recurrence(
     tiny_model, tmp_path, monkeypatch
 ):
