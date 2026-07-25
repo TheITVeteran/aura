@@ -849,6 +849,38 @@ class InferenceGate:
         return warming_age < load_deadline_s
 
     @staticmethod
+    def _cortex_worker_is_actively_generating(client: Any) -> bool:
+        """True when the worker is producing tokens right now.
+
+        The mid-LOAD guard above closed one half of the doom loop. This is the
+        other half, and it is the ~15-turn conversation ceiling: a generation
+        that overran its budget got the worker force-killed, which costs a
+        60-150s cold reload, which makes the NEXT turn slower, which overruns
+        sooner. The 2026-07-25 probe recorded twenty
+        "respawn_cortex_if_needed: cortex is dead" events across thirty turns,
+        the UnitaryResponsePhase climbing 25s → 100s, and the answered rate
+        falling 10/10 → 4/10 → 2/10 as it went.
+
+        A slow worker and a wedged worker are not the same thing. Slowness is
+        answered by the turn's own timeout and the fallback ladder; killing the
+        lane converts one slow turn into a broken session.
+
+        A generation that has run past AURA_CORTEX_GENERATION_DEADLINE_S is
+        genuinely wedged and may still be killed.
+        """
+        if client is None:
+            return False
+        if int(getattr(client, "_active_generations", 0) or 0) <= 0:
+            return False
+        started_at = float(getattr(client, "_active_generation_started_at", 0.0) or 0.0)
+        if not started_at:
+            return True  # generating, with no clock to condemn it by
+        deadline_s = InferenceGate._env_float(
+            "AURA_CORTEX_GENERATION_DEADLINE_S", 600.0
+        )
+        return (time.time() - started_at) < deadline_s
+
+    @staticmethod
     def _cortex_warmup_admission_snapshot(context: str = "background") -> dict[str, Any]:
         """Return whether a cold Cortex load is safe under current RAM pressure.
 
@@ -8726,6 +8758,14 @@ class InferenceGate:
             # idle-but-wedged nwait case — only stuck loads feed the
             # warmup-backoff so the cortex stops thrashing the GPU the
             # fallback needs.
+            if self._cortex_worker_is_actively_generating(client):
+                logger.info(
+                    "🛡️ [CASCADE CLEANUP] Not killing pid=%s: the worker is "
+                    "actively generating. A slow answer is not a wedged lane, "
+                    "and killing it costs a cold reload the next turn pays for.",
+                    getattr(proc, "pid", "unknown"),
+                )
+                return
             was_stuck_load = bool(
                 getattr(client, "_warmup_in_flight", False)
             ) or str(getattr(client, "_lane_state", "")) in {

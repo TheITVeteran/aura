@@ -2517,6 +2517,7 @@ class MLXLocalClient:
         self._lane_error = ""
         self._lane_transition_at = time.time()
         self._active_generations = 0
+        self._active_generation_started_at = 0.0
         self._warmup_attempted = False
         self._warmup_in_flight = False
         # Singleflight handle + its OWN start timestamp (CP126 4d8a7d6b):
@@ -4507,6 +4508,7 @@ class MLXLocalClient:
             self._pending_generations[request_id] = future
             self._current_gen_future = future
             self._active_generations += 1
+            self._active_generation_started_at = time.time()
             self._mark_generation_started(
                 request_id,
                 first_token_hard_ceiling_s=bounded_timeout_s,
@@ -5071,6 +5073,7 @@ class MLXLocalClient:
             }
             self._current_gen_future = fut
             self._active_generations += 1
+            self._active_generation_started_at = time.time()
             requested_tokens_raw = wire_config.get("decode_max_tokens", 0)
             requested_tokens = (
                 requested_tokens_raw
@@ -7939,6 +7942,7 @@ class MLXLocalClient:
         self._pending_generations[req_id] = fut
         self._current_gen_future = fut
         self._active_generations += 1
+        self._active_generation_started_at = time.time()
         first_token_hard_ceiling = self._deadline_bound_first_token_hard_ceiling(
             deadline.remaining,
             foreground_request=foreground_request,
