@@ -189,3 +189,55 @@ class TestRealSaturationStillBlocks:
         assert blocks is False, (
             "a deliberate deferral must not hold the runtime in 'degraded'"
         )
+
+
+class TestTheFullDisablingChain:
+    """The complete 2026-07-18 causal chain, pinned quantitatively.
+
+    record_degradation(degraded) on healthy backpressure
+      → existential_stakes.deg_threat (the UNCAPPED survival term)
+      → heartbeat feeds threat into neurochemical_system.on_threat
+      → cortisol surges past the crisis threshold
+      → SubstrateAuthority blocks STATE_MUTATION and INITIATIVE
+      → 102 blocked mutations: her adaptive immune system, agency core and
+        opportunistic search all disabled.
+
+    Aura was being made to feel mortally threatened by her own correct
+    backpressure, and that feeling disabled her. The demotion has to break
+    the chain at the first link, and the arithmetic has to show it.
+    """
+
+    def test_a_deferral_burst_no_longer_reaches_the_cortisol_crisis(self):
+        from core.consciousness.existential_stakes import (
+            DEGRADATION_SEVERITY_WEIGHTS,
+            DEGRADATION_THREAT_DENOMINATOR,
+        )
+        from core.consciousness.substrate_authority import AuthorityThresholds
+
+        burst = 6  # the soak's observed per-minute deferral rate
+
+        before = min(1.0, burst * DEGRADATION_SEVERITY_WEIGHTS["degraded"]
+                     / DEGRADATION_THREAT_DENOMINATOR)
+        after = min(1.0, burst * DEGRADATION_SEVERITY_WEIGHTS["warning"]
+                    / DEGRADATION_THREAT_DENOMINATOR)
+
+        # on_threat surges cortisol by severity * 0.6 on top of a 0.3 baseline.
+        crisis = AuthorityThresholds().cortisol_crisis
+        assert 0.3 + before * 0.6 > crisis, "the old path really did reach crisis"
+        assert 0.3 + after * 0.6 < crisis, (
+            "healthy backpressure must no longer be able to trigger a "
+            "cortisol crisis that blocks her own state mutations"
+        )
+
+    def test_real_damage_still_reaches_it(self):
+        """The alarm must still fire for genuine cascading failure."""
+        from core.consciousness.existential_stakes import (
+            DEGRADATION_SEVERITY_WEIGHTS,
+            DEGRADATION_THREAT_DENOMINATOR,
+        )
+        from core.consciousness.substrate_authority import AuthorityThresholds
+
+        real_faults = 6
+        threat = min(1.0, real_faults * DEGRADATION_SEVERITY_WEIGHTS["critical"]
+                     / DEGRADATION_THREAT_DENOMINATOR)
+        assert 0.3 + threat * 0.6 > AuthorityThresholds().cortisol_crisis
