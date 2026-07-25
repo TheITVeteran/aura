@@ -447,3 +447,54 @@ class TestDebtClearsInAQuietMinute:
                 {"integrity_risk": 0.05}, receipt_id=f"risk-{i}"
             )
         assert service._metabolic.recovery_debt > 0.4
+
+
+class TestTheEstimatorTracksTheLoad:
+    """An estimator slower than the thing it regulates cannot regulate it.
+
+    Measured 2026-07-25: a live-shaped load (40 charges of 0.013 over 20s =
+    0.026/s) drove recovery_debt from 0.91 to 0.996 while the 300-second
+    estimator read 0.0017/s — fifteen times low, because it was only 4% of the
+    way to steady state. The set-point machinery was correct and silently
+    inert, because its input never left the floor.
+
+    With the window matched to the ~40s saturation time, a sustained load from
+    full saturation settles at debt 0.32 / fatigue 0.34 — welfare terms 0.23
+    against the Will's 0.6 threshold.
+    """
+
+    def test_the_rate_estimate_converges_on_the_real_rate(self, service):
+        """rate += a/tau with rate *= exp(-dt/tau) settles at exactly n*a."""
+        per_charge, interval = 0.02, 0.25
+        expected = per_charge / interval          # units per second
+        for _ in range(int(240 / interval)):      # well past the time constant
+            service._observe_charge("fatigue", per_charge)
+            service._decay_charge_rates(interval)
+        assert service._fatigue_charge_rate == pytest.approx(expected, rel=0.15), (
+            f"estimator reads {service._fatigue_charge_rate:.4f} for a real "
+            f"{expected:.4f}/s load; a mis-scaled estimate makes the set-point inert"
+        )
+
+    def test_the_window_is_of_the_order_of_the_saturation_time(self, service):
+        assert service._CHARGE_RATE_HALF_LIFE_S <= 60.0, (
+            "debt saturates in about forty seconds under load; an estimator "
+            "slower than that cannot respond in time"
+        )
+
+    def test_a_sustained_load_from_saturation_reaches_the_set_point(self, service):
+        service._metabolic.recovery_debt = 0.95
+        service._metabolic.fatigue = 0.95
+        for _ in range(400):                      # 200s at 0.5s intervals
+            service._commit_cost_locked(
+                {"integrity_risk": 0.013, "fatigue": 0.02},
+                receipt_id=f"will-{time.time_ns()}",
+            )
+            _rest(service, 0.5)
+        owned = (
+            service._metabolic.recovery_debt * 0.4
+            + service._metabolic.fatigue * 0.3
+        )
+        assert owned < 0.35, (
+            f"welfare terms still contribute {owned:.3f} under a steady load; "
+            "the defer storm returns above ~0.4"
+        )

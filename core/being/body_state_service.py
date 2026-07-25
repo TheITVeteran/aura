@@ -430,26 +430,41 @@ class BodyStateService:
     # leaves headroom to signal with, high enough that it is not zero.
     _FATIGUE_SETPOINT = 0.30
     _DEBT_SETPOINT = 0.25
-    # How fast the rate estimate forgets. ~5 minutes, so a burst is visible as a
-    # burst and a sustained change becomes the new normal.
-    _CHARGE_RATE_HALF_LIFE_S = 300.0
+    # How fast the rate estimate forgets. Measured 2026-07-25: a live-shaped
+    # load (40 charges of 0.013 over 20s = 0.026/s) drove recovery_debt from
+    # 0.91 to 0.996 while a 300-second estimator still read 0.0017/s — 15x low,
+    # because it was only 4% of the way to steady state. An estimator slower
+    # than the thing it regulates cannot regulate it: debt saturates in about
+    # forty seconds under load, so the window has to be of that order.
+    #
+    # 45s tracks the load that actually saturates the signal and still lags a
+    # genuine spike, which is what keeps a surge above her own normal visible.
+    _CHARGE_RATE_HALF_LIFE_S = 45.0
+
+    @classmethod
+    def _charge_rate_tau(cls) -> float:
+        """e-folding time of the rate estimator, from its half-life."""
+        return cls._CHARGE_RATE_HALF_LIFE_S / math.log(2.0)
 
     def _observe_charge(self, kind: str, amount: float) -> None:
         """Fold one charge into the rate estimate (called under the lock)."""
         attr = "_fatigue_charge_rate" if kind == "fatigue" else "_debt_charge_rate"
-        # A charge is an impulse; convert to a rate contribution over the
-        # half-life window so the EMA is in units/second.
+        # A charge is an impulse. For rate += a/tau with rate *= exp(-dt/tau),
+        # a steady n charges/second of size a settles at exactly n*a — the real
+        # rate, in units per second. The earlier form mixed a half-life decay
+        # with a half-life divisor and under-read by more than an order of
+        # magnitude, which is how the set-point silently stopped working.
         setattr(
             self,
             attr,
-            getattr(self, attr, 0.0) + float(amount) / self._CHARGE_RATE_HALF_LIFE_S,
+            getattr(self, attr, 0.0) + float(amount) / self._charge_rate_tau(),
         )
 
     def _decay_charge_rates(self, elapsed: float) -> None:
         """Let the rate estimates forget at the half-life."""
         if elapsed <= 0:
             return
-        keep = 0.5 ** (elapsed / self._CHARGE_RATE_HALF_LIFE_S)
+        keep = math.exp(-elapsed / self._charge_rate_tau())
         self._fatigue_charge_rate *= keep
         self._debt_charge_rate *= keep
 
