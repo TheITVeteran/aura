@@ -362,9 +362,14 @@ def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
     if isinstance(divergence, bool) or not isinstance(divergence, (int, float)):
         raise ValueError("role solver divergence must be a real number")
     divergence_value = float(divergence)
-    if math.isinf(divergence_value) or (
-        math.isfinite(divergence_value) and divergence_value < 0.0
-    ):
+    # NaN must be refused, not merely infinities. `isinf(nan)` is False and
+    # `isfinite(nan)` is False, so the earlier form let NaN straight through
+    # — and NaN is the most damaging value here: it propagates silently
+    # through every downstream mean, and every comparison against it is
+    # False, so a poisoned divergence looks like a small one forever. If a
+    # runner cannot measure divergence it must say so structurally, not by
+    # emitting a float that quietly disables the statistics.
+    if not math.isfinite(divergence_value) or divergence_value < 0.0:
         raise ValueError(
             "role solver divergence must be non-negative (or NaN for no telemetry)"
         )
