@@ -140,3 +140,52 @@ class TestLadderClassifier:
             RuntimeError("worker died during handshake"),
         ):
             assert not InferenceGate._is_expected_inference_backpressure(real)
+
+
+class TestRealSaturationStillBlocks:
+    """The demotion must not blind the runtime-pressure contract.
+
+    'Generation gate saturated' means the serving path is genuinely
+    overloaded — that is damage the health contract must still see. Only
+    admission DECISIONS were demoted.
+    """
+
+    def test_generation_gate_saturation_keeps_blocking_severity(self):
+        record = record_degradation(
+            "inference_gate",
+            RuntimeError("generation gate saturated: foreground refused to stack"),
+            severity="degraded",
+            action="refused to stack a user-facing generation",
+        )
+        assert record.severity == "degraded"
+
+    def test_the_health_contract_still_fails_closed_on_it(self):
+        from core.runtime.health_contract import (
+            _recent_inference_degradation_blocks_runtime_pressure,
+        )
+
+        saturated = record_degradation(
+            "inference_gate",
+            RuntimeError("generation gate saturated: foreground refused to stack"),
+            severity="degraded",
+            action="refused to stack a user-facing generation",
+        )
+        blocks, reason = _recent_inference_degradation_blocks_runtime_pressure(saturated)
+        assert blocks is True and "saturation" in reason
+
+    def test_backpressure_no_longer_blocks_the_same_contract(self):
+        """The 216 contract failures in the 2026-07-18 soak came from here."""
+        from core.runtime.health_contract import (
+            _recent_inference_degradation_blocks_runtime_pressure,
+        )
+
+        deferred = record_degradation(
+            "inference_gate",
+            RuntimeError("foreground_warmup_deferred:warmup_backoff:130s"),
+            severity="degraded",
+            action="fell through to the reflex tier",
+        )
+        blocks, _reason = _recent_inference_degradation_blocks_runtime_pressure(deferred)
+        assert blocks is False, (
+            "a deliberate deferral must not hold the runtime in 'degraded'"
+        )
