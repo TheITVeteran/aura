@@ -6288,12 +6288,16 @@ class MLXLocalClient:
                 async with _spawn_gate_context(
                     owner=f"{os.path.basename(self.model_path)}:"
                     f"{'foreground' if foreground_request else 'background'}",
-                    # Never wait for the gate longer than this request can use
-                    # the worker it is waiting for: init_timeout already
-                    # carries the caller's remaining budget
-                    # (_request_scoped_init_timeout). Past it, the ladder
-                    # needs the time more than this tier does.
-                    timeout_s=init_timeout,
+                    # NOT scoped to init_timeout. Bounding the gate wait by
+                    # the caller's budget is the right idea and the context
+                    # manager supports it, but wiring it here moved other
+                    # paths onto the timeout branch, and one of those leaves
+                    # the durable model-lane owner unreconciled (lane FENCED,
+                    # admission blocked) — the lease-outlives-holder shape in
+                    # a new costume. The deferred-lane turn budget in
+                    # interface/routes/chat.py addresses the dominant cause
+                    # without that risk; re-scoping this wait needs the
+                    # durable-owner path made timeout-safe first.
                 ):
                     return await self._ensure_worker_alive_inner(
                         request_is_background=request_is_background,

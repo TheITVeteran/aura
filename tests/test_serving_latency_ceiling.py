@@ -15,8 +15,17 @@ and **32 turns that produced no reply at all** while a 1.5B reflex sat ready:
    Reflex 14.5 s. Neither could load-and-generate in a scrap. No tier
    answered: ``canonical_chat_no_reply``.
 
-Both halves are fixed here: budget by what the lane is actually DOING, and
-never wait for a gate past your own deadline.
+Fixed here: the turn budget follows what the lane is actually DOING, so a
+deferred cortex stops consuming a cold-boot budget and the ladder inherits
+real time.
+
+The spawn gate additionally gained the ability to bound its wait by the
+caller's budget (``timeout_s``), which is pinned below — but that bound is
+deliberately NOT wired into the live model-load path yet: a short scoped
+wait moves other paths onto the timeout branch, and one of those leaves the
+durable model-lane owner unreconciled (lane FENCED, admission blocked),
+which is the lease-outlives-holder failure in a new costume. Wiring it needs
+the durable-owner path made timeout-safe first.
 """
 from __future__ import annotations
 
