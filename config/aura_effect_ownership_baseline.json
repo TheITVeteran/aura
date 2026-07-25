@@ -3745,6 +3745,14 @@
       "scope": "<module>.LiveLearner.record_tick"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/prefix_stability.py",
+      "scope": "<module>.PrefixStabilityCalibrator.save"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -14634,6 +14642,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "4f308bd7db167a708bf9fa2764bef407e9c3b8c56f0229787aae4a9ace4344bf",
+  "inventory_sha256": "f41f17b375f34b62eefffe9d981b9a162ae69dace5e214b5f8b3e2916b83357b",
   "schema_version": 1
 }

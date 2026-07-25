@@ -810,6 +810,10 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.fast_weights.enabled is False
     assert cfg.verifier_probe_max_tokens == 48
     assert cfg.verifier_accept_non_regression is False
+    assert cfg.prefix_stability_enabled is True
+    assert cfg.prefix_stability_samples == 3
+    assert cfg.prefix_stability_max_tokens == 128
+    assert cfg.prefix_stability_calibrator is None
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
     assert cfg.contradiction_head is None
@@ -840,6 +844,10 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"verifier_probe_max_tokens": 15})
     with pytest.raises(ValueError, match="JSON boolean"):
         config_from_job({"verifier_accept_non_regression": "true"})
+    with pytest.raises(ValueError, match="outside"):
+        config_from_job({"prefix_stability_samples": 2})
+    with pytest.raises(ValueError, match="calibrator config"):
+        config_from_job({"prefix_stability_calibrator": {"mode": "learned"}})
     with pytest.raises(ValueError, match="requires head_path"):
         config_from_job({"uncertainty_head": {"mode": "learned"}})
     with pytest.raises(ValueError, match="cannot carry a head"):
@@ -2482,6 +2490,13 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
                     },
+                    "prefix_stability": {
+                        "requested": True,
+                        "available": False,
+                        "reason": "stubbed_worker_has_no_generator",
+                        "selection_effect": "none",
+                        "correctness_effect": "none",
+                    },
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,
@@ -3635,6 +3650,13 @@ def _full_success_stub_client(captured):
                         "available": False,
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
+                    },
+                    "prefix_stability": {
+                        "requested": True,
+                        "available": False,
+                        "reason": "stubbed_worker_has_no_generator",
+                        "selection_effect": "none",
+                        "correctness_effect": "none",
                     },
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",

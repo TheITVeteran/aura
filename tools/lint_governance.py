@@ -160,6 +160,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
             "core/brain/llm/latent_cortex/persistence.py",
+            # Task-disjoint prefix-stability calibration owns one exact,
+            # content-addressed artifact schema. It accepts no runtime action
+            # or arbitrary effect and is the sole writer for that evidence.
+            "core/learning/prefix_stability.py",
             "core/runtime/action_executor.py",
             "core/runtime/detached_subprocess_broker.py",
             "core/runtime/flight_recorder.py",

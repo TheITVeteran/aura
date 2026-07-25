@@ -213,8 +213,47 @@ def test_fresh_verifier_generation_uses_zero_offset_real_qwen_cache(tiny_model):
     assert context["initial_cache_offsets"] == [0] * N_LAYERS
     assert len(set(context["final_cache_offsets"])) == 1
     assert context["final_cache_offsets"][0] >= context["prompt_token_count"]
-    assert context["generated_token_count"] == 32
+    assert context["generated_token_count"] == 64
+    assert context["termination"] == "token_limit_contract_incomplete"
     assert generated["text"]
+
+
+def test_seeded_prefix_generation_is_local_reproducible_and_receipted(tiny_model):
+    class NumericTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(text, **_kwargs):
+            return [1 + (ord(char) % 120) for char in str(text)][:96] or [5]
+
+        @staticmethod
+        def decode(tokens):
+            return " ".join(str(token) for token in tokens)
+
+    engine = LatentCortexEngine(tiny_model, NumericTokenizer(), config=_config())
+
+    def generate(seed: int):
+        budget = ComputeBudget(max_layer_apps=100_000, wall_clock_s=30.0)
+        budget.bind_model(tiny_model)
+        return engine._fresh_verifier_generation(
+            "Continue from this verified prefix.",
+            budget,
+            max_tokens=32,
+            reserve_layer_apps=0,
+            temperature=0.7,
+            top_p=0.9,
+            sample_seed=seed,
+        )
+
+    first = generate(913)
+    repeat = generate(913)
+    assert first == repeat
+    context = first["context"]
+    assert context["schema"] == "aura.rlc.fresh_prefix_context.v1"
+    assert context["sample_seed"] == 913
+    assert context["temperature"] == 0.7
+    assert context["top_p"] == 0.9
+    assert context["initial_cache_offsets"] == [0] * N_LAYERS
 
 
 def test_admitted_fresh_refutation_causally_replaces_provisional_winner(

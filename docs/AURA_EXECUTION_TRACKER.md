@@ -27012,3 +27012,68 @@ Checkpoint-count completion is approximately 57.3%-90.1%, with a midpoint
 planning estimate of 70.1%. Next: publish CP358 and CP359, then implement
 SPARK-045's prefix-stability verifier. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-24-360: Stable Conclusions Must Recur From Verified Prefixes
+
+SPARK-045 adds a default-on conclusion-recurrence diagnostic after branch
+selection is complete. It finds a candidate's conclusion boundary through the
+atomic decomposition, then requires every preceding atom to pass the
+deterministic verifier router. Unknown prose and unsupported tool-bound claims
+cannot be mislabeled as verified and trigger no model generation.
+
+An admitted prefix is continued in three fresh zero-offset KV contexts. Each
+sample uses a local deterministic MLX key derived from immutable source
+commitments and the sample index, while the source conclusion remains hidden.
+The output contract binds candidate and prefix hashes. Canonical JSON, exact
+arithmetic claim sequences, and an explicitly named lexical fallback produce
+reconstructible conclusion signatures. Reference agreement, pairwise
+agreement, modal mass, normalized entropy, and a conservative raw-stability
+minimum are admitted only when every requested sample completes. Partial runs
+withhold the metric, and malformed generated evidence remains visible.
+
+The separate monotonic calibrator targets only whether a later independently
+receipted continuation repeats the conclusion signature. It has no correctness
+field or selection authority. Fit and held-out tasks and evidence identities
+must be disjoint; held-out AUC, Brier, ECE, and constant-baseline gates decide
+whether a content-addressed artifact may load. The operational JSONL trainer
+uses stable bounded reads, rejects duplicate keys, binds source hashes to the
+exact parsed bytes, writes through Aura's governed atomic gateway, and reports
+an explicit nonzero result for inadmissible calibration. Runtime remains
+honestly uncalibrated until an admitted pinned artifact is configured.
+
+The service independently reconstructs the boundary, prefix verification,
+prompt, seeds, isolated contexts, outputs, signatures, metric, calibration,
+and non-authority contract. The real MLX path proves same-key reproducibility
+without global RNG dependence. This work also repairs a strict-decoder defect:
+the generic sentence-grace condition previously terminated generation at the
+nominal token limit even when `FINAL_ANSWER` contract grace was active.
+Internal verifier decodes now force that contract and run to completion or the
+bounded contract-incomplete ceiling.
+
+Focused acceptance and integration coverage passes 230/230 and the complete
+latent-cortex ownership suite passes 946/946. Focused Ruff, bytecode
+compilation, diff hygiene, and governance lint pass. Governance remains at
+1,956 recognized calls, 1,830 buckets, and 1,783 inherited migration-debt
+calls. Exact parent/current enterprise scans remain identical at 187 findings
+and 39 high/critical findings; both expose the same inherited
+`broad_exception_review` baseline regression, so CP360 does not normalize or
+claim closure of that parallel checkpoint's defect. The repository closeout
+audit also exposes one inherited resource-observation ownership violation from
+that checkpoint: `core/runtime/foundations.py` calls `os.cpu_count()` directly
+instead of using the provenance-carrying `ResourceObserver`. The other bounded
+closeout gates pass; the expected dirty-worktree check is inapplicable until
+this staged checkpoint is committed. Neither inherited defect is attributed to
+SPARK-045 or hidden from the next-work declaration.
+
+This checkpoint proves prefix-regeneration mechanics and recurrence
+calibration infrastructure. It does not prove correctness prediction,
+resident-32B utility, adapter/RLC positive interaction, reasoning gain, or
+frontier capability. Those remain powered, externally rooted campaign claims.
+
+This is total checkpoint record 421. The forecast remains 466-733 total
+records, leaving approximately 45-312 records after this checkpoint.
+Checkpoint-count completion is approximately 57.4%-90.3%, with a midpoint
+planning estimate of 70.2%. Next: publish CP360, repair the inherited
+resource-observation and enterprise-gate broad-exception regressions, then
+implement SPARK-046's correlation-aware verifier fusion. Final multi-hour
+soaks remain deferred until every shorter gate is green.

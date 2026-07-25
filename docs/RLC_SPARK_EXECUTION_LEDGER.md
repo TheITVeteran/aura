@@ -1679,9 +1679,80 @@ before those dependencies close is not admissible.
   does not prove broad counterfactual competence, parameter-independent
   verification, a resident-32B gain, adapter interaction, or frontier
   capability.
-- [ ] **SPARK-045 - Prefix stability verifier.** Regenerate continuations from
-  verified prefixes, estimate conclusion stability, and calibrate the signal
-  separately from correctness.
+- [x] **SPARK-045 - Prefix stability verifier.** CP360 adds a default-on,
+  diagnostic-only recurrence measurement after the counterfactual tiebreak and
+  generative-refutation veto have finalized the selected branch. The candidate
+  is atomically decomposed and split before its first explicit conclusion, or
+  before its final atom when no explicit conclusion connective exists. The
+  deterministic verifier router must mark every prefix atom verified. Prose,
+  retrieval, simulation, planning, unsupported code bundles, unknown claims,
+  and single-atom answers therefore spend zero regeneration compute.
+
+  An admitted prefix is regenerated three times by default. Each continuation
+  starts from a newly allocated, all-zero-offset KV cache and receives a
+  deterministic local MLX random key derived from the objective, candidate,
+  sample index, and configured seed root. Sampling does not mutate or depend on
+  the process-global RNG stream. The source conclusion is withheld. The fresh
+  lane receives only the objective, exact verified prefix, and their content
+  commitments, and must return one strictly bound `FINAL_ANSWER` JSON object.
+  The receipt discloses that every lane shares the resident checkpoint, so
+  context isolation is proved without claiming parameter independence.
+
+  Conclusions are compared through an explicit signature hierarchy:
+  canonical JSON, exact arithmetic-claim sequences, then a named normalized
+  lexical surface fallback. Reference agreement, pairwise agreement, modal
+  mass, normalized entropy, and signature counts are reconstructed from every
+  complete sample. The public raw-stability value is the conservative minimum
+  of reference, pairwise, and modal agreement. One failed, malformed, oversized,
+  truncated, or context-invalid sample withholds the entire measurement rather
+  than cherry-picking survivors. Contract-refused model text and fresh-context
+  evidence remain committed for diagnosis instead of being erased.
+
+  `core/learning/prefix_stability.py` calibrates this statistic only against a
+  later independently receipted conclusion match. Its schema contains no
+  correctness label. A standard-library pool-adjacent-violators fit is
+  monotonic and linearithmic; fit and held-out calibration tasks and evidence
+  identities must be disjoint, both classes and multiple tasks are required,
+  and held-out AUC, Brier, ECE, and constant-baseline comparisons determine
+  admission. Artifacts use stable no-follow reads, an exact SHA-256 pin, a
+  governed atomic writer, and a strict content commitment. The bounded
+  `tools/train_prefix_stability_calibrator.py` JSONL path rejects duplicate
+  keys, binds report hashes to the exact bytes parsed, and exits nonzero for an
+  inadmissible artifact. Until such an artifact is configured, runtime reports
+  an explicit uncalibrated bootstrap signal with no probability.
+
+  The service independently rebuilds the candidate boundary, deterministic
+  prefix proof, prompt, sample seeds, strict outputs, signatures, metrics,
+  calibrator result, and both non-authority claims. Recommitted seed, context,
+  metric, conclusion, calibration, or authority substitutions fail closed.
+  The engine uses local per-draw MLX keys and a real tiny-Qwen test proves
+  same-seed reproducibility with zero initial cache offsets. CP360 also fixes a
+  pre-existing strict-contract defect: the generic sentence-grace stop
+  previously canceled the configured `FINAL_ANSWER` contract grace at the
+  original token limit. Internal verifier generation now always requires the
+  contract and reaches either contract completion or its bounded incomplete
+  ceiling.
+
+  Focused verifier, calibrator, real-engine, worker, service, generative,
+  counterfactual, and response-contract coverage passes 230/230. The complete
+  latent-cortex ownership suite passes 946/946. Strict focused Ruff, bytecode
+  compilation, diff hygiene, and governance ownership pass; the governance
+  inventory contains 1,956 recognized calls in 1,830 buckets with the inherited
+  1,783 migration-debt calls unchanged. Exact parent/current enterprise scans
+  are identical at 187 findings and 39 high/critical findings. Both retain the
+  same inherited `broad_exception_review` baseline regression introduced before
+  CP360, so this checkpoint does not call that global ratchet green. The full
+  closeout audit additionally identifies the same parallel checkpoint's direct
+  `os.cpu_count()` use in `core/runtime/foundations.py` as one inherited
+  resource-observation ownership violation. All other bounded audit gates pass;
+  the dirty-worktree gate necessarily remains red until the staged checkpoint
+  is committed. CP360 neither normalizes nor conceals either inherited defect.
+
+  This proves bounded prefix-regeneration mechanics, honest conclusion
+  recurrence measurement, task-disjoint calibration infrastructure, and
+  independent receipt reconstruction. It does not prove that recurrence
+  predicts correctness, broad semantic equivalence, resident-32B utility,
+  adapter interaction, reasoning gain, or frontier capability.
 - [ ] **SPARK-046 - Correlation-aware verifier fusion.** Track Wilson/confidence
   bounds, domain reliability, dependence between verifiers, and historical
   calibration; no single probabilistic verifier has absolute authority.

@@ -462,6 +462,16 @@ class CortexConfig:
     counterfactual_verifier_max_atoms: int = 1
     counterfactual_verifier_max_interventions: int = 2
     counterfactual_verifier_max_tokens: int = 128
+    # Fresh, seed-isolated continuations from a machine-verified prefix.
+    # The signal measures future conclusion recurrence, never correctness,
+    # and cannot affect branch selection in SPARK-045.
+    prefix_stability_enabled: bool = True
+    prefix_stability_samples: int = 3
+    prefix_stability_max_tokens: int = 128
+    prefix_stability_temperature: float = 0.35
+    prefix_stability_top_p: float = 0.9
+    prefix_stability_seed: int = 104_729
+    prefix_stability_calibrator: dict[str, Any] | None = None
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
     # when the candidate also proves descent on the answer-leak-proof proxy.
@@ -699,6 +709,45 @@ class CortexConfig:
             problems.append("counterfactual_verifier_max_interventions outside [1, 3]")
         if not integer_in(self.counterfactual_verifier_max_tokens, 32, 256):
             problems.append("counterfactual_verifier_max_tokens outside [32, 256]")
+        if type(self.prefix_stability_enabled) is not bool:
+            problems.append("prefix_stability_enabled must be boolean")
+        if not integer_in(self.prefix_stability_samples, 3, 8):
+            problems.append("prefix_stability_samples outside [3, 8]")
+        if not integer_in(self.prefix_stability_max_tokens, 32, 256):
+            problems.append("prefix_stability_max_tokens outside [32, 256]")
+        if (
+            not finite(self.prefix_stability_temperature)
+            or not 0.05 <= self.prefix_stability_temperature <= 1.5
+        ):
+            problems.append("prefix_stability_temperature outside [0.05, 1.5]")
+        if (
+            not finite(self.prefix_stability_top_p)
+            or not 0.1 <= self.prefix_stability_top_p <= 1.0
+        ):
+            problems.append("prefix_stability_top_p outside [0.1, 1]")
+        if not integer_in(self.prefix_stability_seed, -(2**63), 2**63 - 1):
+            problems.append("prefix_stability_seed must be a signed 64-bit integer")
+        if (
+            self.prefix_stability_calibrator is not None
+            and not isinstance(self.prefix_stability_calibrator, dict)
+        ):
+            problems.append("prefix_stability_calibrator must be a mapping or null")
+        elif self.prefix_stability_calibrator is not None:
+            calibrator = self.prefix_stability_calibrator
+            if (
+                set(calibrator) != {"mode", "artifact_path", "artifact_sha256"}
+                or calibrator.get("mode") != "learned"
+                or not isinstance(calibrator.get("artifact_path"), str)
+                or not calibrator.get("artifact_path")
+                or len(calibrator.get("artifact_path", "")) > 4096
+                or not isinstance(calibrator.get("artifact_sha256"), str)
+                or len(calibrator.get("artifact_sha256", "")) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in calibrator.get("artifact_sha256", "")
+                )
+            ):
+                problems.append("prefix_stability_calibrator config is invalid")
         if self.decode_contract not in ("none", "final_answer_v1"):
             problems.append("decode_contract must be 'none' or 'final_answer_v1'")
         if not integer_in(self.decode_contract_grace_tokens, 0, 4096):
@@ -1187,6 +1236,10 @@ class EpisodeReceipt:
     # The module can only tiebreak; it cannot outrank stronger correctness
     # evidence or claim independence from the shared resident checkpoint.
     counterfactual_verifier: dict[str, Any] = field(default_factory=dict)
+    # Seed-isolated continuations from a deterministically verified prefix.
+    # This is a recurrence diagnostic only; it cannot certify correctness or
+    # influence the selected branch.
+    prefix_stability: dict[str, Any] = field(default_factory=dict)
     critic_identity: dict[str, Any] = field(default_factory=dict)
     shared_blind_spots: dict[str, Any] = field(default_factory=dict)
     # Fresh-context virtual-width proof. Exact hidden-state contents stay
@@ -1488,6 +1541,7 @@ class EpisodeReceipt:
             "decoy_verification": dict(self.decoy_verification),
             "generative_verifier": dict(self.generative_verifier),
             "counterfactual_verifier": dict(self.counterfactual_verifier),
+            "prefix_stability": dict(self.prefix_stability),
             "critic_identity": dict(self.critic_identity),
             "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),

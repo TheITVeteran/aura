@@ -668,17 +668,25 @@ class LatentCortexEngine:
         *,
         max_tokens: int,
         reserve_layer_apps: int,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
+        sample_seed: int | None = None,
     ) -> dict[str, Any]:
         """Generate one verifier witness without importing solver KV state."""
 
-        from core.brain.llm.latent_cortex.generative_verifier import (
-            FRESH_CONTEXT_SCHEMA,
-        )
+        if sample_seed is None:
+            from core.brain.llm.latent_cortex.generative_verifier import (
+                FRESH_CONTEXT_SCHEMA as CONTEXT_SCHEMA,
+            )
+        else:
+            from core.brain.llm.latent_cortex.prefix_stability import (
+                PREFIX_STABILITY_CONTEXT_SCHEMA as CONTEXT_SCHEMA,
+            )
 
         tokens = self._encode(prompt, None, None)
-        contract_extension = (
-            min(64, max_tokens) if self.config.decode_contract == "final_answer_v1" else 0
-        )
+        # Internal verifier prompts always require the strict FINAL_ANSWER
+        # contract, independently of the user-facing decode profile.
+        contract_extension = min(64, max_tokens)
         required = (len(tokens) + max_tokens + contract_extension) * self.n_layers
         if required + reserve_layer_apps > budget.remaining_layer_apps:
             raise RuntimeError("fresh_verifier_budget_unavailable")
@@ -704,8 +712,10 @@ class LatentCortexEngine:
                 budget,
                 logits,
                 max_tokens=max_tokens,
-                temperature=0.0,
-                top_p=1.0,
+                temperature=temperature,
+                top_p=top_p,
+                sample_seed=sample_seed,
+                final_answer_contract=True,
                 sentence_grace_tokens=0,
                 contract_grace_tokens=min(64, max_tokens),
             )
@@ -724,7 +734,7 @@ class LatentCortexEngine:
         return {
             "text": text,
             "context": {
-                "schema": FRESH_CONTEXT_SCHEMA,
+                "schema": CONTEXT_SCHEMA,
                 "prompt_token_count": len(tokens),
                 "generated_token_count": len(generated),
                 "termination": termination,
@@ -733,6 +743,15 @@ class LatentCortexEngine:
                 "all_initial_offsets_zero": True,
                 "solver_context_imported": False,
                 "parameter_relation": "shared_resident_checkpoint",
+                **(
+                    {
+                        "sample_seed": sample_seed,
+                        "temperature": float(temperature),
+                        "top_p": float(top_p),
+                    }
+                    if sample_seed is not None
+                    else {}
+                ),
             },
         }
 
@@ -793,6 +812,7 @@ class LatentCortexEngine:
         top_p: float = 1.0,
         *,
         budget: ComputeBudget | None = None,
+        random_key: Any | None = None,
     ) -> int:
         import mlx.core as mx
 
@@ -818,9 +838,17 @@ class LatentCortexEngine:
                     mx.log(sorted_probabilities),
                     mx.full(sorted_probabilities.shape, -1e9),
                 )
-                selected = int(mx.random.categorical(filtered_logits))
+                selected = int(
+                    mx.random.categorical(filtered_logits)
+                    if random_key is None
+                    else mx.random.categorical(filtered_logits, key=random_key)
+                )
                 return int(sorted_indices[selected])
-            return int(mx.random.categorical(scaled))
+            return int(
+                mx.random.categorical(scaled)
+                if random_key is None
+                else mx.random.categorical(scaled, key=random_key)
+            )
         return int(mx.argmax(logits))
 
     def _decode(
@@ -841,6 +869,8 @@ class LatentCortexEngine:
         force_exact_tokens: bool = False,
         external_step_logits: Callable[[int], Any] | None = None,
         external_step_lanes: int = 1,
+        sample_seed: int | None = None,
+        final_answer_contract: bool | None = None,
     ) -> tuple[list[int], str]:
         """Minimal sampler: first token from ``initial_logits`` (the logits of
         the last persisted position — prompt tail or final thought slot), then
@@ -876,6 +906,12 @@ class LatentCortexEngine:
             raise ValueError("contract_grace_tokens must be an integer in [0, 4096]")
         if type(force_exact_tokens) is not bool:
             raise TypeError("force_exact_tokens must be boolean")
+        if sample_seed is not None and (
+            type(sample_seed) is not int or not 0 <= sample_seed <= 0x7FFFFFFF
+        ):
+            raise ValueError("sample_seed must be null or an integer inside [0, 2^31-1]")
+        if final_answer_contract is not None and type(final_answer_contract) is not bool:
+            raise TypeError("final_answer_contract must be boolean or null")
         if (
             type(external_step_lanes) is not int
             or external_step_lanes < 1
@@ -884,10 +920,15 @@ class LatentCortexEngine:
             raise ValueError("external decode lane count is invalid")
 
         out: list[int] = []
+        stochastic_draw = 0
         newline_run = 0
         suppressions = 0
         self._last_decode_newline_suppressions = 0
-        contract_required = self.config.decode_contract == "final_answer_v1"
+        contract_required = (
+            self.config.decode_contract == "final_answer_v1"
+            if final_answer_contract is None
+            else final_answer_contract
+        )
         if contract_required and self.tokenizer is None:
             raise ValueError("final_answer_v1 decode contract requires a tokenizer")
         contract_satisfied = False
@@ -948,7 +989,7 @@ class LatentCortexEngine:
             product-quality gate (excessive_blank_lines). Masking newline
             logits for the next sample is a sampling CONSTRAINT — the emitted
             text is still entirely the model's own tokens, never edited."""
-            nonlocal suppressions
+            nonlocal stochastic_draw, suppressions
             logits = penalize_repeats(logits)
             # EOS floor: below decode_min_tokens, end-of-sequence logits are
             # masked so sampling variance cannot abandon the answer a few
@@ -961,7 +1002,19 @@ class LatentCortexEngine:
                 eos_ids = mx.array(sorted(eos))
                 gathered = logits[eos_ids]
                 logits = logits.at[eos_ids].add(mx.full(gathered.shape, -1e9) - gathered)
-            token = self._sample(logits, temp, nucleus, budget=budget)
+            random_key = None
+            if sample_seed is not None and temp > 0.0:
+                random_key = mx.random.key(
+                    (sample_seed + stochastic_draw * 0x9E3779B1) & 0x7FFFFFFF
+                )
+                stochastic_draw += 1
+            token = self._sample(
+                logits,
+                temp,
+                nucleus,
+                budget=budget,
+                random_key=random_key,
+            )
             if self.tokenizer is None or newline_run < _MAX_NEWLINE_RUN:
                 return token, sample_logprob(logits, token)
             masked = logits
@@ -974,7 +1027,19 @@ class LatentCortexEngine:
                     mx.full(masked.shape, -1e9),
                     masked,
                 )
-                token = self._sample(masked, temp, nucleus, budget=budget)
+                random_key = None
+                if sample_seed is not None and temp > 0.0:
+                    random_key = mx.random.key(
+                        (sample_seed + stochastic_draw * 0x9E3779B1) & 0x7FFFFFFF
+                    )
+                    stochastic_draw += 1
+                token = self._sample(
+                    masked,
+                    temp,
+                    nucleus,
+                    budget=budget,
+                    random_key=random_key,
+                )
             return token, sample_logprob(masked, token)
 
         # Contract-aware termination (CP180): once a single FINAL_ANSWER
@@ -1024,7 +1089,7 @@ class LatentCortexEngine:
                         "token_limit" if index + 1 == int(limit) else "token_limit_sentence_grace"
                     )
                     break
-                if index + 1 >= int(limit) + grace_tokens:
+                elif index + 1 >= int(limit) + grace_tokens:
                     # Grace exhausted without punctuation: still a fragment,
                     # and the receipt says so honestly.
                     termination = "token_limit"
@@ -3748,6 +3813,63 @@ class LatentCortexEngine:
             }
         if generative_only_branch_refuted:
             raise RuntimeError("generative_verifier_refuted_only_branch")
+
+        # SPARK-045: measure whether the selected conclusion recurs when the
+        # resident checkpoint is restarted from the same deterministically
+        # verified prefix. Every continuation receives a fresh zero-offset KV
+        # cache and a local deterministic RNG key. This evidence is diagnostic
+        # only: it cannot choose a branch or certify correctness.
+        if (
+            self.config.prefix_stability_enabled
+            and verification_objective.strip()
+            and winner.index in branch_probe_texts
+        ):
+            try:
+                from core.brain.llm.latent_cortex.prefix_stability import (
+                    run_prefix_stability_verifier,
+                )
+
+                receipt.prefix_stability = run_prefix_stability_verifier(
+                    branch_probe_texts[winner.index],
+                    objective=verification_objective,
+                    samples=self.config.prefix_stability_samples,
+                    temperature=self.config.prefix_stability_temperature,
+                    top_p=self.config.prefix_stability_top_p,
+                    seed_root=self.config.prefix_stability_seed,
+                    calibrator_config=self.config.prefix_stability_calibrator,
+                    generate=lambda prompt, seed, temperature, top_p: (
+                        self._fresh_verifier_generation(
+                            prompt,
+                            budget,
+                            max_tokens=self.config.prefix_stability_max_tokens,
+                            reserve_layer_apps=safety_reserve,
+                            temperature=temperature,
+                            top_p=top_p,
+                            sample_seed=seed,
+                        )
+                    ),
+                )
+            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+                receipt.flag(f"prefix_stability_abstained:{type(exc).__name__}")
+                receipt.prefix_stability = {
+                    "requested": True,
+                    "available": False,
+                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "selection_effect": "none",
+                    "correctness_effect": "none",
+                }
+        elif self.config.prefix_stability_enabled:
+            receipt.prefix_stability = {
+                "requested": True,
+                "available": False,
+                "reason": (
+                    "verification_objective_unavailable"
+                    if not verification_objective.strip()
+                    else "selected_branch_probe_unavailable"
+                ),
+                "selection_effect": "none",
+                "correctness_effect": "none",
+            }
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
         receipt.steps_taken = winner.steps

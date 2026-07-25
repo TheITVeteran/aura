@@ -245,6 +245,13 @@ class LatentCortexService:
             "counterfactual_verifier_max_atoms": 1,
             "counterfactual_verifier_max_interventions": 2,
             "counterfactual_verifier_max_tokens": 128,
+            "prefix_stability_enabled": True,
+            "prefix_stability_samples": 3,
+            "prefix_stability_max_tokens": 128,
+            "prefix_stability_temperature": 0.35,
+            "prefix_stability_top_p": 0.9,
+            "prefix_stability_seed": 104_729,
+            "prefix_stability_calibrator": None,
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
@@ -293,6 +300,13 @@ class LatentCortexService:
                     "counterfactual_verifier_max_atoms": 1,
                     "counterfactual_verifier_max_interventions": 2,
                     "counterfactual_verifier_max_tokens": 96,
+                    "prefix_stability_enabled": True,
+                    "prefix_stability_samples": 3,
+                    "prefix_stability_max_tokens": 128,
+                    "prefix_stability_temperature": 0.35,
+                    "prefix_stability_top_p": 0.9,
+                    "prefix_stability_seed": 104_729,
+                    "prefix_stability_calibrator": None,
                     "input_context_max_chars": 9000,
                     "allow_vanilla_fallback": False,
                 }
@@ -733,6 +747,44 @@ class LatentCortexService:
                 and counterfactual.get("reason")
             ):
                 errors.append("counterfactual_verifier_unreceipted")
+        prefix_stability = receipt.get("prefix_stability")
+        if config.get("prefix_stability_enabled") is True:
+            if (
+                isinstance(prefix_stability, dict)
+                and prefix_stability.get("schema")
+                == "aura.rlc.prefix_stability_verifier.v1"
+            ):
+                try:
+                    from core.brain.llm.latent_cortex.prefix_stability import (
+                        validate_prefix_stability_envelope,
+                    )
+
+                    validate_prefix_stability_envelope(
+                        prefix_stability,
+                        expected_calibrator_config=config.get(
+                            "prefix_stability_calibrator"
+                        ),
+                    )
+                except (ImportError, KeyError, OSError, TypeError, ValueError):
+                    errors.append("prefix_stability_unproven")
+            elif not (
+                isinstance(prefix_stability, dict)
+                and set(prefix_stability)
+                == {
+                    "requested",
+                    "available",
+                    "reason",
+                    "selection_effect",
+                    "correctness_effect",
+                }
+                and prefix_stability.get("requested") is True
+                and prefix_stability.get("available") is False
+                and prefix_stability.get("selection_effect") == "none"
+                and prefix_stability.get("correctness_effect") == "none"
+                and isinstance(prefix_stability.get("reason"), str)
+                and prefix_stability.get("reason")
+            ):
+                errors.append("prefix_stability_unreceipted")
         if config.get("critic_blind_spot_evidence") is not None:
             try:
                 from core.brain.llm.latent_cortex.critic_identity import (

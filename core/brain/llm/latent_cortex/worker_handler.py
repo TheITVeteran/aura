@@ -97,6 +97,13 @@ _CONFIG_KEYS = {
     "counterfactual_verifier_max_atoms",
     "counterfactual_verifier_max_interventions",
     "counterfactual_verifier_max_tokens",
+    "prefix_stability_enabled",
+    "prefix_stability_samples",
+    "prefix_stability_max_tokens",
+    "prefix_stability_temperature",
+    "prefix_stability_top_p",
+    "prefix_stability_seed",
+    "prefix_stability_calibrator",
     "jitter_scale",
     "input_context_max_chars",
     "isolation_steps",
@@ -265,6 +272,25 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         counterfactual_verifier_max_tokens=_typed_value(
             raw, "counterfactual_verifier_max_tokens", 128, int
         ),
+        prefix_stability_enabled=_typed_value(
+            raw, "prefix_stability_enabled", True, bool
+        ),
+        prefix_stability_samples=_typed_value(
+            raw, "prefix_stability_samples", 3, int
+        ),
+        prefix_stability_max_tokens=_typed_value(
+            raw, "prefix_stability_max_tokens", 128, int
+        ),
+        prefix_stability_temperature=_typed_value(
+            raw, "prefix_stability_temperature", 0.35, float
+        ),
+        prefix_stability_top_p=_typed_value(
+            raw, "prefix_stability_top_p", 0.9, float
+        ),
+        prefix_stability_seed=_typed_value(
+            raw, "prefix_stability_seed", 104_729, int
+        ),
+        prefix_stability_calibrator=raw.get("prefix_stability_calibrator"),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool
         ),
