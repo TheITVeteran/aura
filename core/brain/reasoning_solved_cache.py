@@ -70,6 +70,10 @@ class SolvedEntry:
     mode: str
     task_type: str
     verifiers_run: list[str] = field(default_factory=list)
+    # Which required-evidence items the cached derivation actually saw. A
+    # later request naming evidence absent from this list is asking a
+    # different question and must not be served from here (CP126 236526e0).
+    required_evidence: list[str] = field(default_factory=list)
     stored_at: float = field(default_factory=time.time)
     last_hit_at: float = field(default_factory=time.time)
     hits: int = 0
@@ -81,6 +85,7 @@ class SolvedEntry:
             "mode": self.mode,
             "task_type": self.task_type,
             "verifiers_run": list(self.verifiers_run),
+            "required_evidence": list(self.required_evidence),
             "stored_at": self.stored_at,
             "last_hit_at": self.last_hit_at,
             "hits": self.hits,
@@ -94,6 +99,10 @@ class SolvedEntry:
             mode=str(data.get("mode", "")),
             task_type=str(data.get("task_type", "")),
             verifiers_run=list(data.get("verifiers_run", []) or []),
+            # Absent on entries written before this field existed. Empty
+            # means "covered nothing", so any evidence requirement misses —
+            # the safe direction for a stale entry.
+            required_evidence=list(data.get("required_evidence", []) or []),
             stored_at=float(data.get("stored_at", time.time()) or time.time()),
             last_hit_at=float(data.get("last_hit_at", time.time()) or time.time()),
             hits=int(data.get("hits", 0) or 0),
@@ -158,6 +167,7 @@ class ReasoningSolvedCache:
         confidence: float,
         mode: str,
         verifiers_run: list[str] | None = None,
+        required_evidence: list[str] | None = None,
         verified: bool,
     ) -> bool:
         """Store a verifier-clean answer. Returns True if stored.
@@ -185,6 +195,11 @@ class ReasoningSolvedCache:
                 mode=str(mode or ""),
                 task_type=str(task_type or "").strip().lower(),
                 verifiers_run=list(verifiers_run or []),
+                required_evidence=[
+                    str(item).strip().lower()
+                    for item in (required_evidence or [])
+                    if str(item).strip()
+                ],
                 stored_at=now,
                 last_hit_at=now,
                 hits=0,

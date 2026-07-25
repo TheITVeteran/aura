@@ -113,13 +113,28 @@ _FACT_HINT = re.compile(r"\b(what is|who is|when did|define|explain|fact|true th
 
 
 def classify_task_type(text: str) -> str:
+    """Classify a problem, checking the SOURCE-DEPENDENT class first.
+
+    CP126 93e56508. The code regex ran before the repository regex, and
+    _CODE_HINT matches ordinary words like "code", "function", "class",
+    "import" and "bug". So "where is the retry logic implemented in this
+    codebase" classified as `code` — a source-INDEPENDENT type, which
+    changes verifier selection and admits the answer to the solved cache and
+    to self-improvement traces.
+
+    That is unsound for a question whose answer depends on the mutable
+    source tree: the file moves, the function is renamed, and a cached
+    answer keeps being served as current truth. Repository questions are
+    therefore recognised first, so a question that is about the codebase is
+    classified as being about the codebase even when it mentions code.
+    """
     t = str(text or "")
+    if _REPO_HINT.search(t):
+        return "repo_audit"
     if _CODE_HINT.search(t):
         return "code"
     if _MATH_HINT.search(t):
         return "math"
-    if _REPO_HINT.search(t):
-        return "repo_audit"
     if _PLAN_HINT.search(t):
         return "planning"
     if _FACT_HINT.search(t):
@@ -187,6 +202,7 @@ class AmplificationRequest:
     mode: ReasoningMode | None = None
     time_budget_s: float = 30.0
     sample_budget: int | None = None
+    # NOTE: clamped via _admit_sample_budget before use — see CP126 bbb356e0.
     required_evidence: list[str] = field(default_factory=list)
     context: dict[str, Any] = field(default_factory=dict)
 
@@ -250,6 +266,94 @@ class AmplifiedAnswer:
             "generation_metadata": dict(self.generation_metadata),
             "text_mutations": [dict(item) for item in self.text_mutations],
         }
+
+
+def _admit_sample_budget(requested: Any, mode: "ReasoningMode") -> int:
+    """Resolve a sample budget that is always inside the documented cap.
+
+    CP126 bbb356e0. Only Phi-resolved counts were clamped to _MAX_SAMPLES;
+    an explicit ``sample_budget`` was accepted unchanged and handed to the
+    batch lane or expanded into that many concurrent serial tasks. Zero fell
+    back to the mode default while negatives were coerced to one in some
+    paths and passed to courtroom sizing in others, so a malformed or
+    hostile request could open an unbounded candidate batch.
+
+    One admission point, one rule: a usable positive request is honoured up
+    to the cap; anything else takes the mode default.
+    """
+    default = _MODE_BUDGET[mode]
+    if requested is None or isinstance(requested, bool):
+        return max(1, min(_MAX_SAMPLES, default))
+    try:
+        value = int(requested)
+    except (TypeError, ValueError):
+        return max(1, min(_MAX_SAMPLES, default))
+    if value <= 0:
+        return max(1, min(_MAX_SAMPLES, default))
+    return max(1, min(_MAX_SAMPLES, value))
+
+
+def _cache_hit_is_insufficient(
+    cached: Any, *, request: Any, problem: Any
+) -> str:
+    """Why this cached answer may NOT serve this request, or "" if it may.
+
+    A cache is sound only when the question it answered is at least as
+    strong as the one being asked. These are the ways that can fail.
+    """
+    # 1. Strength. A cached derivation produced under a weaker mode cannot
+    #    satisfy a stronger one — PROOF above all, which is defined by
+    #    refusing to answer unless a verifier actually cleared it.
+    requested_mode = ReasoningMode(request.mode) if request.mode else None
+    if requested_mode is ReasoningMode.PROOF:
+        if str(cached.mode or "").lower() != ReasoningMode.PROOF.value:
+            return "proof_requires_proof_grade_derivation"
+    if requested_mode is not None:
+        want = _MODE_BUDGET.get(requested_mode, 0)
+        try:
+            have = _MODE_BUDGET.get(ReasoningMode(str(cached.mode or "")), 0)
+        except ValueError:
+            have = 0
+        if have < want:
+            return "cached_mode_weaker_than_requested"
+
+    # 2. Risk. A high-stakes request is precisely the one that must not be
+    #    answered from a derivation made when nothing was at stake.
+    if str(getattr(request, "risk_level", "") or "").lower() == "high":
+        if str(cached.mode or "").lower() not in {
+            ReasoningMode.DEEP.value,
+            ReasoningMode.EXTREME.value,
+            ReasoningMode.PROOF.value,
+        }:
+            return "high_risk_requires_deep_derivation"
+
+    # 3. Evidence. Required evidence the cached run never saw means the
+    #    cached answer is not an answer to THIS question.
+    required = {
+        str(item).strip().lower()
+        for item in (getattr(request, "required_evidence", None) or [])
+        if str(item).strip()
+    }
+    if required:
+        satisfied = {
+            str(item).strip().lower()
+            for item in (getattr(cached, "required_evidence", None) or [])
+            if str(item).strip()
+        }
+        missing = required - satisfied
+        if missing:
+            return "required_evidence_not_covered:" + ",".join(sorted(missing))
+
+    # NOT a rule: "empty verifiers_run means unverified". That was tried and
+    # is wrong. ReasoningSolvedCache.put refuses to store anything with
+    # verified=False, so presence in the cache already guarantees a verifier
+    # cleared the answer; verifiers_run is provenance, not proof-of-
+    # existence. Treating a missing label as a missing verification disabled
+    # the cache for legitimate entries — a live regression caught by
+    # test_amplify_cache_hit_bypasses_generation. The store gate is the
+    # verification guarantee; the three checks above are what a cache hit
+    # can actually get wrong.
+    return ""
 
 
 class ReasoningAmplifierV2:
@@ -523,6 +627,24 @@ class ReasoningAmplifierV2:
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("amplifier_v2_cache_get", exc)
                 cached = None
+            # CP126 236526e0. The lookup sits ahead of mode selection, risk
+            # handling, evidence gathering, verification and calibration, so
+            # ANY nonempty entry was returned as verified with agreement
+            # 1.0 — including for a PROOF or high-stakes request carrying
+            # new required evidence that no cached derivation ever saw. A
+            # cache may only answer a question at least as weak as the one
+            # it answered before; anything stronger has to be re-derived.
+            if cached is not None and cached.answer:
+                _cache_refusal = _cache_hit_is_insufficient(
+                    cached, request=request, problem=problem,
+                )
+                if _cache_refusal:
+                    logger.info(
+                        "🧠 [AmplifyV2] solved-cache hit REFUSED task=%s: %s",
+                        problem.task_type, _cache_refusal,
+                    )
+                    fallbacks.append(f"solved_cache_refused:{_cache_refusal}")
+                    cached = None
             if cached is not None and cached.answer:
                 logger.info(
                     "🧠 [AmplifyV2] solved-cache HIT task=%s conf=%.2f (hits=%d)",
@@ -537,8 +659,11 @@ class ReasoningAmplifierV2:
                     valid_candidates=1,
                     winning_candidate_id=None,
                     confidence=cached.confidence,
-                    agreement=1.0,
-                    epistemic_status="verified",
+                    # Agreement is a measure ACROSS candidates. A cache hit
+                    # ran none, so there is nothing to agree; reporting 1.0
+                    # manufactured unanimity out of a single stored string.
+                    agreement=0.0,
+                    epistemic_status="verified_cached",
                     budget_used={"samples": 0, "time_s": round(time.monotonic() - start, 3), "cache": True},
                     fallbacks_used=["solved_cache_hit"],
                 )
@@ -569,7 +694,7 @@ class ReasoningAmplifierV2:
         # from contaminating the comparison, those reads can initialize live
         # services and persistence from inside an otherwise read-only checkout.
         affect = {} if sealed_evaluation else self._read_substrate()
-        sample_budget = request.sample_budget or _MODE_BUDGET[mode]
+        sample_budget = _admit_sample_budget(request.sample_budget, mode)
         if request.mode is None:
             if _flag_on("AURA_PHI_GATED_COMPUTE"):
                 resolved_mode, resolved_samples, time_mult = self._resolve_compute_budget(mode, affect)
@@ -583,7 +708,7 @@ class ReasoningAmplifierV2:
                     fallbacks.append(f"phi_time_x{time_mult}")
             elif self._should_deepen(affect):
                 mode = self._deepen(mode)
-                sample_budget = request.sample_budget or _MODE_BUDGET[mode]
+                sample_budget = _admit_sample_budget(request.sample_budget, mode)
                 fallbacks.append("substrate_deepened")
 
         # 2. retrieve failure-mode guards from prior reasoning.
@@ -661,8 +786,14 @@ class ReasoningAmplifierV2:
         # verifier-dirty, a stronger generator (72B / api_deep) is wired, and budget
         # remains, spend one bounded pass on the strong tier and adopt a clean candidate.
         # "Go get the answer where it lives" — Wall-2/Wall-3 loophole, never implicit.
+        # CP126 8b2be13e. Gated on `not verifier_ok`, so a VACUOUS pass —
+        # ok=True with checked=False, the verifier having evaluated nothing —
+        # suppressed escalation entirely. That stops the search at precisely
+        # the moment it has learned the least: an unevaluated answer is not
+        # evidence that a stronger tier is unnecessary. Escalation now turns
+        # on the same conjunction the final verdict uses.
         if (
-            not verifier_ok
+            not (verifier_ok and verifier_checked)
             and self._escalate_generate is not None
             and mode in (ReasoningMode.DEEP, ReasoningMode.EXTREME, ReasoningMode.PROOF)
             and time.monotonic() < deadline
@@ -784,6 +915,17 @@ class ReasoningAmplifierV2:
         # arithmetic to evaluate) must never be cached, or a wrong answer gets served as
         # truth forever. The hard bench caught exactly this poisoning.
         if "solved_cache_hit" not in fallbacks and not read_only_evaluation:
+            # CP126 d45893c2. Verification ran against `answer`; the
+            # calibration gate may then rewrite it into `calibrated_answer`.
+            # Storing the REWRITE under the original verifier's pass lets an
+            # unverified mutation become durable truth and training data.
+            #
+            # The verified text is the artifact that actually earned the
+            # pass, so that is what is persisted. The calibrated text is a
+            # presentation-layer hedge and is still what the caller sees; it
+            # simply does not get to inherit a verdict it never faced.
+            _durable_answer = answer
+            _calibration_diverged = calibrated_answer != answer
             if verified_pass:
                 # Memoize verifier-clean source-independent derivations for instant re-use.
                 if _flag_on("AURA_REASONING_CACHE") and not request.context.get("skip_cache"):
@@ -793,12 +935,19 @@ class ReasoningAmplifierV2:
                         get_reasoning_solved_cache().put(
                             problem.objective,
                             problem.task_type,
-                            answer=calibrated_answer,
+                            answer=_durable_answer,
                             confidence=confidence,
                             mode=mode.value,
                             verifiers_run=[v for v in verifiers_run if v],
+                            required_evidence=list(request.required_evidence or []),
                             verified=verified_pass,
                         )
+                        if _calibration_diverged:
+                            logger.info(
+                                "🧠 [AmplifyV2] cached the VERIFIED text; the "
+                                "calibrated rewrite was not re-verified and is "
+                                "not persisted as truth."
+                            )
                     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation("amplifier_v2_cache_put", exc)
                 # Capture as a STaR self-improvement training trace (internal bootstrap).
@@ -808,7 +957,7 @@ class ReasoningAmplifierV2:
                     get_reasoning_self_improvement().record_win(
                         problem.objective,
                         problem.task_type,
-                        answer=calibrated_answer,
+                        answer=_durable_answer,
                         confidence=confidence,
                         mode=mode.value,
                         verified=verified_pass,
@@ -824,7 +973,11 @@ class ReasoningAmplifierV2:
                     get_procedural_memory().record_win(
                         objective=problem.objective,
                         task_type=problem.task_type,
-                        answer=calibrated_answer,
+                        # The third durable sink named by CP126 d45893c2,
+                        # alongside the solved cache and the self-improvement
+                        # trace. All three take the text that was actually
+                        # verified, never the post-hoc calibration rewrite.
+                        answer=_durable_answer,
                         strategy=f"{mode.value}/{strategy}",
                         verifiers=[v for v in verifiers_run if v],
                         confidence=confidence,
