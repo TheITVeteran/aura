@@ -151,6 +151,10 @@ resource-observation-audit:
 	@echo "📏 Auditing host-resource observation ownership and provenance..."
 	@$(PYTHON) tools/closeout/audit_resource_observation_ownership.py
 
+integration-liveness:
+	@echo "🔌 Probing optional integrations with real imports..."
+	@$(PYTHON) tools/audit_integration_liveness.py
+
 security:
 	@echo "🔐 Running local security scan..."
 	@$(PYTHON) tools/security_scan.py
@@ -238,7 +242,7 @@ smoke:
 	@$(PYTHON) -m pytest $(SMOKE_TEST_TARGETS)
 	@echo "✅ Smoke suite passed"
 
-quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit architecture-map compile lint governance-lint security typecheck smoke
+quality: source-hygiene enterprise-gate enterprise-collect production-gate frontend-contract cognitive-gate-audit skill-catalog-audit model-load-audit resource-observation-audit integration-liveness architecture-map compile lint governance-lint security typecheck smoke
 	@echo "🏁 Quality gates passed"
 
 decisive:

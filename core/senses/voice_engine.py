@@ -159,8 +159,25 @@ def _sounddevice_available() -> bool:
 
 
 def _stt_dependency_available() -> bool:
+    """Whether speech-to-text can actually run.
+
+    find_spec answers "is this module on disk", which is not the question a
+    readiness surface is asking. A package that is present but raises on
+    import — a moved API, a missing transitive dependency, an incompatible
+    version — reported available here, so the UI showed STT ready for a
+    dead path. That is how the Coqui voice path stayed broken unnoticed.
+
+    Ground truth, in order: a successful import proves availability; a
+    RECORDED FAILED import disproves it; only when neither has happened does
+    presence on disk stand in, and then it is a presence signal, not a
+    promise.
+    """
     if _WhisperModel is not None:
         return True
+    if _whisper_import_attempted:
+        # We tried and it did not work. Presence on disk cannot overrule
+        # having actually failed to import it.
+        return False
     try:
         return importlib.util.find_spec("faster_whisper") is not None
     except (ImportError, AttributeError, RuntimeError, ValueError):
@@ -198,6 +215,18 @@ def _load_tts_api():
 
 
 def _tts_dependency_available() -> bool:
+    """Whether the Coqui TTS backend can actually run.
+
+    Same defect as the STT check above, and this is the one that bit: the
+    XTTS path was dead from an import error while this returned True,
+    because ``_tts_api_import_error`` was recorded and then never consulted.
+    A status surface that reports a backend available after watching its
+    import fail is worse than one that reports nothing.
+    """
+    if TTS is not None:
+        return True
+    if _tts_api_import_attempted:
+        return False
     try:
         return importlib.util.find_spec("TTS") is not None
     except (ImportError, AttributeError, RuntimeError, ValueError):
