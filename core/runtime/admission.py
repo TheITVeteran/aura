@@ -171,6 +171,7 @@ def _fingerprint(obj: Any) -> str:
     try:
         return json.dumps(obj, sort_keys=True, default=repr)[:4096]
     except Exception:  # noqa: BLE001 — unserializable objects fall back to repr
+        logger.debug("admission fingerprint JSON encoding failed", exc_info=True)
         return repr(obj)[:4096]
 
 

@@ -123,7 +123,7 @@ def _record_to_bag(topic: str, data: Any) -> None:
 
         record(topic, data)
     except Exception:  # noqa: BLE001 — the recorder is never load-bearing
-        pass  # no-op: recording must never affect delivery
+        logger.debug("bus recorder capture failed for topic %s", topic, exc_info=True)
 
 
 class AuraEventBus:

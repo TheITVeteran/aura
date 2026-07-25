@@ -1096,7 +1096,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
         caveat = credibility_caveat()
         if caveat:
             block["credibility_caveat"] = caveat
-    except Exception as exc:  # pragma: no cover — integrity reporting is additive
+    except Exception as exc:  # noqa: BLE001 — integrity reporting is additive
         block["taint_error"] = repr(exc)
     try:
         from core.runtime.lockdep import lockdep_report
@@ -1107,7 +1107,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
             "acquires_checked": lock_report["acquires_checked"],
             "splats": lock_report["splats"],
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["lockdep_error"] = repr(exc)
     try:
         from core.runtime.pressure_stall import psi_narrative, psi_report, saturated_resources
@@ -1115,7 +1115,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
         block["pressure"] = psi_report()
         block["pressure_saturated"] = saturated_resources()
         block["pressure_narrative"] = psi_narrative()
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["pressure_error"] = repr(exc)
     try:
         from core.observability.histograms import histograms_report
@@ -1143,7 +1143,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
                 "at_the_limit": posture["at_the_limit"],
             },
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["observability_error"] = repr(exc)
     try:
         from core.bus.qos import qos_report
@@ -1180,7 +1180,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
                 for k in ("ring_size", "ring_span_s", "dumps", "recording")
             },
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["middleware_error"] = repr(exc)
     try:
         from core.runtime.admission import admission_report
@@ -1207,19 +1207,19 @@ def _runtime_integrity_block() -> dict[str, Any]:
             "controllers": reconcile_report(),
             "leases": lease_report(),
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["orchestration_error"] = repr(exc)
     try:
         from core.runtime.sanitizers import sanitizer_report
 
         block["sanitizers"] = sanitizer_report()
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["sanitizers_error"] = repr(exc)
     try:
         from core.verify.invariants import last_report
 
         block["verifier"] = last_report()
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["verifier_error"] = repr(exc)
     try:
         from core.pipeline.pass_manager import pass_manager_report
@@ -1230,7 +1230,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
             "skips": passes["skips"],
             "hottest": passes["hottest"],
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["passes_error"] = repr(exc)
     try:
         from core.runtime.oom_policy import oom_report
@@ -1243,7 +1243,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
             "recent_sheds": oom["recent_sheds"][-3:],
             "restart_requested": oom["restart_requested"],
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["oom_error"] = repr(exc)
     return block
 

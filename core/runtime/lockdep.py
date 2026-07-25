@@ -429,7 +429,7 @@ class LockdepValidator:
                 extra={"kind": kind, "signature": signature, "held": list(splat.held)},
                 enforce_failure_policy=False,
             )
-        except Exception:  # pragma: no cover — never let reporting break the lock
+        except Exception:  # noqa: BLE001 — never let reporting break the lock
             logger.debug("lockdep degradation record failed", exc_info=True)
 
     def splats(self) -> list[Splat]:
@@ -576,7 +576,7 @@ class CheckedAsyncLock:
         _VALIDATOR.on_acquire(self._name, rank=self._rank, is_async=True, reentrant=False)
         try:
             await self._lock.acquire()
-        except BaseException:
+        except BaseException:  # noqa: BLE001 — release bookkeeping precedes propagation
             _VALIDATOR.on_release(self._name, is_async=True)
             raise
         return True

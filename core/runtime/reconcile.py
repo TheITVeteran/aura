@@ -248,7 +248,8 @@ class RateLimitingQueue:
 
     async def get(self) -> Request | None:
         """Wait for the next item. Returns None once shut down and drained."""
-        while True:
+        drained = False
+        while not drained:
             with self._lock:
                 if self._queue:
                     req = self._queue.pop(0)
@@ -256,9 +257,11 @@ class RateLimitingQueue:
                     self._processing.add(req.key)
                     return req
                 if self._shutdown:
-                    return None
+                    drained = True
+                    continue
                 self._wakeup.clear()
             await self._wakeup.wait()
+        return None
 
     def done(self, request: Request) -> None:
         """Release a key. A dirty key gets exactly one more pass."""

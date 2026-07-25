@@ -153,7 +153,7 @@ class OomPolicy:
     def _safe_footprint(policy: OrganPolicy) -> int:
         try:
             return max(0, int(policy.footprint()))
-        except Exception:  # pragma: no cover — a broken probe must not block shedding
+        except Exception:  # noqa: BLE001 — a broken probe must not block shedding
             logger.debug("footprint probe failed for %s", policy.name, exc_info=True)
             return 0
 
@@ -223,7 +223,7 @@ class OomPolicy:
             try:
                 if free_bytes_now() >= target_free_bytes:
                     break
-            except Exception:  # pragma: no cover — probe failure means keep shedding
+            except Exception:  # noqa: BLE001 — probe failure means keep shedding
                 logger.debug("free-memory probe failed", exc_info=True)
             victim = self.select_victim(total)
             if victim is None:
@@ -234,7 +234,7 @@ class OomPolicy:
             freed = 0
             try:
                 freed = int(victim.shed() or 0) if victim.shed else 0
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — organ callbacks are external boundaries
                 logger.error("OOM shed of %s failed: %s", victim.name, exc)
                 freed = 0
             if freed <= 0:
@@ -309,7 +309,7 @@ class OomPolicy:
             # keepalive supervisor relaunch; SIGKILL does neither.
             request_shutdown(reason=f"oom_terminal: {reason}")
             requested = True
-        except Exception:
+        except Exception:  # noqa: BLE001 — terminal recovery checks every available channel
             logger.debug("controlled shutdown channel unavailable", exc_info=True)
         try:
             from core.runtime.errors import record_degradation
@@ -324,7 +324,7 @@ class OomPolicy:
                     else "no restart channel available; recorded terminal OOM"
                 ),
             )
-        except Exception:  # pragma: no cover
+        except Exception:  # noqa: BLE001 — terminal evidence cannot block recovery
             logger.debug("terminal OOM degradation record failed", exc_info=True)
         return True
 
@@ -361,7 +361,7 @@ def _total_memory_bytes() -> int:
         from core.runtime.resource_psutil import virtual_memory
 
         return int(getattr(virtual_memory(), "total", 0) or 0)
-    except Exception:  # pragma: no cover — scoring degrades to adj-only
+    except Exception:  # noqa: BLE001 — scoring degrades to adjustment-only
         logger.debug("virtual_memory unavailable for OOM scoring", exc_info=True)
         return 0
 
@@ -377,7 +377,7 @@ def _append_shed_log(event: ShedEvent) -> None:
         line = json.dumps(event.to_dict(), separators=(",", ":")) + "\n"
         with local_internal_governed_scope("oom_policy.shed_log"):
             get_file_write_gateway().append_text(path, line, source="oom_policy")
-    except Exception:  # pragma: no cover — the log is evidence, not a dependency
+    except Exception:  # noqa: BLE001 — the log is evidence, not a dependency
         logger.debug("OOM shed log append failed", exc_info=True)
 
 

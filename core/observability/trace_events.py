@@ -331,14 +331,20 @@ class Tracer:
         body = json.dumps(self.to_trace_json(), separators=(",", ":"))
         try:
             from core.governance_context import local_internal_governed_scope
-            from core.runtime.atomic_writer import (
-                async_atomic_write_text,
-                async_ensure_private_directory,
-            )
+            from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("tracer.write"):
-                await async_ensure_private_directory(target.parent)
-                await async_atomic_write_text(target, body, durable=False)
+                gateway = get_file_write_gateway()
+                await gateway.ensure_directory_async(
+                    target.parent,
+                    source="tracer.write",
+                )
+                await gateway.write_text_async(
+                    target,
+                    body,
+                    durable=False,
+                    source="tracer.write",
+                )
         except Exception:  # noqa: BLE001 — a trace is evidence, never a dependency
             logger.warning("trace write failed", exc_info=True)
             return None

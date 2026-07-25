@@ -27052,18 +27052,21 @@ bounded contract-incomplete ceiling.
 
 Focused acceptance and integration coverage passes 230/230 and the complete
 latent-cortex ownership suite passes 946/946. Focused Ruff, bytecode
-compilation, diff hygiene, and governance lint pass. Governance remains at
-1,956 recognized calls, 1,830 buckets, and 1,783 inherited migration-debt
-calls. Exact parent/current enterprise scans remain identical at 187 findings
-and 39 high/critical findings; both expose the same inherited
-`broad_exception_review` baseline regression, so CP360 does not normalize or
-claim closure of that parallel checkpoint's defect. The repository closeout
-audit also exposes one inherited resource-observation ownership violation from
-that checkpoint: `core/runtime/foundations.py` calls `os.cpu_count()` directly
-instead of using the provenance-carrying `ResourceObserver`. The other bounded
-closeout gates pass; the expected dirty-worktree check is inapplicable until
-this staged checkpoint is committed. Neither inherited defect is attributed to
-SPARK-045 or hidden from the next-work declaration.
+compilation, diff hygiene, and governance lint pass on CP360's original
+`b984906f4` integration base. That tree contains 1,956 recognized governance
+calls in 1,830 buckets with 1,783 inherited migration-debt calls. Exact
+parent/current enterprise scans there are identical at 187 findings and 39
+high/critical findings; both expose the same inherited
+`broad_exception_review` baseline regression. The repository closeout audit on
+that base additionally exposes one inherited resource-observation ownership
+violation: `core/runtime/foundations.py` calls `os.cpu_count()` directly
+instead of using the provenance-carrying `ResourceObserver`.
+
+Reconciliation onto the newer `main` brought three additional parallel
+maturity checkpoints and their own governance and enterprise regressions.
+CP361 records and repairs the combined-tree defects. CP360 neither attributes
+those parallel changes to SPARK-045 nor treats its pre-rebase measurements as
+evidence about a different tree.
 
 This checkpoint proves prefix-regeneration mechanics and recurrence
 calibration infrastructure. It does not prove correctness prediction,
@@ -27077,3 +27080,61 @@ planning estimate of 70.2%. Next: publish CP360, repair the inherited
 resource-observation and enterprise-gate broad-exception regressions, then
 implement SPARK-046's correlation-aware verifier fusion. Final multi-hour
 soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-24-361: Maturity Infrastructure Rejoins Aura's Ownership Contract
+
+Rebasing CP360 onto the latest `main` incorporated parallel ROS 2,
+Kubernetes, and LLVM-inspired maturity checkpoints. The combined tree exposed
+real integration debt: nine unowned effect buckets, one direct
+`os.cpu_count()` observation, three blocking sleeps inside async tests, seven
+silent broad-exception swallows, two literal unbounded loops, and 27
+unreviewed broad exception boundaries. The enterprise gate consequently rose
+to 212 findings with 53 high/critical findings and five baseline regressions.
+CP361 repairs those defects without increasing any ratchet. A subsequent
+Chromium-style observability checkpoint arrived during the publication race
+and added two direct atomic trace writes, executable `DEPS` parsing, one raw
+test subprocess, one silent telemetry swallow, one literal loop, and three
+unreviewed isolation boundaries. Those combined-tree defects are included in
+the same reconciliation rather than left behind the checkpoint.
+
+Pressure-capacity discovery now obtains CPU count through the
+provenance-bearing `ResourceObserver`. The quota implementation no longer uses
+a local dictionary name that the ownership scanner could confuse with the
+third-party `requests` client. Bus-bag and leader-lease persistence now route
+through `FileWriteGateway`, remain inside named internal governance scopes,
+and are narrowly registered as canonical bounded evidence owners. Their
+paths are runtime-derived rather than user-selected. Governance returns to an
+exact baseline of 1,966 recognized calls in 1,840 buckets while the 1,783
+historic migration-debt calls remain unchanged. The independent
+resource-observation audit scans 2,924 Python files and reports zero findings.
+Trace export follows the same governed gateway contract as bus bags and
+leases. Its former direct atomic primitives are gone.
+
+The middleware tests now await elapsed time instead of blocking the event
+loop. Reconcile-queue shutdown has an explicit drained state, and QoS stream
+lifetime has an explicit generator-close event. Failure-isolation boundaries
+around boot activation, OOM reclaim, lock checking, health add-ons,
+sanitizers, and invariant reporting are individually reviewed and marked;
+they continue to catch arbitrary plugin/callback failures where narrowing
+would break liveness. Previously silent recorder, fingerprint, usage-probe,
+boot-identity, and sanitizer failures now leave debug evidence.
+The layering gate now parses only literal `description` and `include_rules`
+assignments through `ast.literal_eval`; it never compiles or executes a
+repository `DEPS` file. A malicious-code regression proves the parser cannot
+create its sentinel file. The layering integration test calls the gate in
+process instead of opening an ungoverned subprocess.
+
+The maturity integration battery passes 201/201. The complete latent-cortex
+ownership battery remains green at 946/946 after rebase. Focused Ruff, diff
+hygiene, governance ownership, and resource-observation ownership pass. The
+enterprise static gate returns to green at 168 findings, 38 high findings,
+zero critical findings, and no baseline regression: broad-exception review is
+40/40, swallowed broad exceptions 11/11, unbounded-loop review 15/15, and
+async blocking sleep 0/0. No baseline maximum was raised.
+
+This is total checkpoint record 422. The forecast remains 466-733 total
+records, leaving approximately 44-311 records after this checkpoint.
+Checkpoint-count completion is approximately 57.6%-90.6%, with a midpoint
+planning estimate of 70.4%. Next: publish CP360 and CP361, then implement
+SPARK-046's correlation-aware verifier fusion. Final multi-hour soaks remain
+deferred until every shorter gate is green.

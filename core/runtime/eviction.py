@@ -310,6 +310,7 @@ class EvictionManager:
         try:
             usage = candidate.usage() or {}
         except Exception:  # noqa: BLE001
+            logger.debug("usage probe failed for eviction candidate %s", candidate.name, exc_info=True)
             return 0.0
         worst = 0.0
         for kind, used in usage.items():
@@ -530,6 +531,11 @@ def _bytes_probe(candidate: Evictable) -> Callable[[], int] | None:
         try:
             usage = candidate.usage() or {}
         except Exception:  # noqa: BLE001
+            logger.debug(
+                "memory usage probe failed for eviction candidate %s",
+                candidate.name,
+                exc_info=True,
+            )
             return 0
         return int(usage.get("memory_bytes", 0) or 0)
 

@@ -103,6 +103,7 @@ def _boot_id() -> str:
     try:
         return f"{int(_host_boot_time())}"
     except Exception:  # noqa: BLE001
+        logger.debug("host boot identity unavailable", exc_info=True)
         return "unknown"
 
 
@@ -258,16 +259,18 @@ class LeaderElector:
 
     def _write_sync(self, record: LeaseRecord) -> bool:
         from core.governance_context import local_internal_governed_scope
-        from core.runtime.atomic_writer import atomic_write_text, ensure_private_directory
+        from core.runtime.file_write_gateway import get_file_write_gateway
 
         path = _lease_path(self.name)
         try:
             with local_internal_governed_scope(f"lease.{self.name}"):
-                ensure_private_directory(path.parent)
-                atomic_write_text(
+                gateway = get_file_write_gateway()
+                gateway.ensure_directory(path.parent, source=f"lease.{self.name}")
+                gateway.write_text(
                     path,
                     json.dumps(record.to_dict(), indent=2, sort_keys=True),
                     durable=True,
+                    source=f"lease.{self.name}",
                 )
             return True
         except Exception:  # noqa: BLE001 — a failed write means we do not hold it
@@ -277,19 +280,21 @@ class LeaderElector:
     async def _write(self, record: LeaseRecord) -> bool:
         """Async lane: the fsync happens on a worker thread, never on the loop."""
         from core.governance_context import local_internal_governed_scope
-        from core.runtime.atomic_writer import (
-            async_atomic_write_text,
-            async_ensure_private_directory,
-        )
+        from core.runtime.file_write_gateway import get_file_write_gateway
 
         path = _lease_path(self.name)
         try:
             with local_internal_governed_scope(f"lease.{self.name}"):
-                await async_ensure_private_directory(path.parent)
-                await async_atomic_write_text(
+                gateway = get_file_write_gateway()
+                await gateway.ensure_directory_async(
+                    path.parent,
+                    source=f"lease.{self.name}",
+                )
+                await gateway.write_text_async(
                     path,
                     json.dumps(record.to_dict(), indent=2, sort_keys=True),
                     durable=True,
+                    source=f"lease.{self.name}",
                 )
             return True
         except Exception:  # noqa: BLE001

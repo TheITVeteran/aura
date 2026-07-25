@@ -181,14 +181,20 @@ class BusRecorder:
         )
         try:
             from core.governance_context import local_internal_governed_scope
-            from core.runtime.atomic_writer import (
-                async_atomic_write_text,
-                async_ensure_private_directory,
-            )
+            from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("bus_recorder.dump"):
-                await async_ensure_private_directory(target.parent)
-                await async_atomic_write_text(target, body + "\n", durable=False)
+                gateway = get_file_write_gateway()
+                await gateway.ensure_directory_async(
+                    target.parent,
+                    source="bus_recorder.dump",
+                )
+                await gateway.write_text_async(
+                    target,
+                    body + "\n",
+                    durable=False,
+                    source="bus_recorder.dump",
+                )
         except Exception:  # noqa: BLE001 — evidence, never a dependency
             logger.warning("bus bag dump failed", exc_info=True)
             return None
@@ -214,14 +220,20 @@ class BusRecorder:
             return None
         try:
             from core.governance_context import local_internal_governed_scope
-            from core.runtime.atomic_writer import (
-                async_atomic_write_text,
-                async_ensure_private_directory,
-            )
+            from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("bus_recorder.file"):
-                await async_ensure_private_directory(path.parent)
-                await async_atomic_write_text(path, "\n".join(buffer) + "\n", durable=True)
+                gateway = get_file_write_gateway()
+                await gateway.ensure_directory_async(
+                    path.parent,
+                    source="bus_recorder.file",
+                )
+                await gateway.write_text_async(
+                    path,
+                    "\n".join(buffer) + "\n",
+                    durable=True,
+                    source="bus_recorder.file",
+                )
         except Exception:  # noqa: BLE001
             logger.warning("bus bag file write failed", exc_info=True)
             return None

@@ -160,6 +160,12 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
             "core/brain/llm/latent_cortex/persistence.py",
+            # Bus bags and cross-process leases are bounded internal evidence
+            # stores. Their paths are runtime-derived, never user-selected,
+            # and each write executes inside a named governed scope.
+            "core/observability/bus_recorder.py",
+            "core/observability/trace_events.py",
+            "core/runtime/lease.py",
             # Task-disjoint prefix-stability calibration owns one exact,
             # content-addressed artifact schema. It accepts no runtime action
             # or arbitrary effect and is the sole writer for that evidence.

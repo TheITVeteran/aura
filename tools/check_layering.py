@@ -82,7 +82,7 @@ class Violation:
 
 
 def parse_deps(path: Path) -> DepsFile:
-    """Parse a DEPS file. It is Python, evaluated as a literal namespace."""
+    """Parse the two allowed literal assignments in a DEPS file."""
     deps = DepsFile(directory=path.parent)
     try:
         source = path.read_text(encoding="utf-8")
@@ -90,8 +90,25 @@ def parse_deps(path: Path) -> DepsFile:
         return deps
     namespace: dict[str, object] = {}
     try:
-        exec(compile(source, str(path), "exec"), {"__builtins__": {}}, namespace)  # noqa: S102
-    except Exception as exc:  # noqa: BLE001 — a broken DEPS is a build error
+        tree = ast.parse(source, filename=str(path), mode="exec")
+        for statement in tree.body:
+            if (
+                isinstance(statement, ast.Expr)
+                and isinstance(statement.value, ast.Constant)
+                and isinstance(statement.value.value, str)
+            ):
+                continue
+            if (
+                not isinstance(statement, ast.Assign)
+                or len(statement.targets) != 1
+                or not isinstance(statement.targets[0], ast.Name)
+                or statement.targets[0].id not in {"description", "include_rules"}
+            ):
+                raise ValueError(
+                    "DEPS permits only literal description/include_rules assignments"
+                )
+            namespace[statement.targets[0].id] = ast.literal_eval(statement.value)
+    except (SyntaxError, ValueError, TypeError) as exc:
         print(f"error: cannot parse {path}: {exc}", file=sys.stderr)
         return deps
     deps.description = str(namespace.get("description", "") or "")
@@ -119,13 +136,15 @@ def rules_for(directory: Path, deps: dict[Path, DepsFile], root: Path) -> list[R
     """Rules inherit down the tree; nearest directory's rules come first."""
     collected: list[Rule] = []
     current = directory
-    while True:
+    reached_boundary = False
+    while not reached_boundary:
         entry = deps.get(current)
         if entry is not None:
             collected.extend(entry.rules)
-        if current == root or current.parent == current:
-            break
-        current = current.parent
+        parent = current.parent
+        reached_boundary = current == root or parent == current
+        if not reached_boundary:
+            current = parent
     return collected
 
 

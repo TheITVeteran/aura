@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -593,13 +591,25 @@ def test_the_shipped_handler_postures_hold_the_rule():
 # ── layering gate ─────────────────────────────────────────────────────
 
 def test_the_layering_gate_passes_on_the_current_tree():
-    result = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "tools" / "check_layering.py")],
-        capture_output=True,
-        text=True,
-        cwd=str(PROJECT_ROOT),
+    from tools.check_layering import main
+
+    assert main([]) == 0
+
+
+def test_deps_parser_never_executes_code(tmp_path):
+    from tools.check_layering import parse_deps
+
+    marker = tmp_path / "executed"
+    deps_file = tmp_path / "DEPS"
+    deps_file.write_text(
+        f'include_rules = []\nopen({str(marker)!r}, "w").write("unsafe")\n',
+        encoding="utf-8",
     )
-    assert result.returncode == 0, result.stderr
+
+    parsed = parse_deps(deps_file)
+
+    assert parsed.rules == []
+    assert not marker.exists()
 
 
 def test_the_layering_gate_catches_a_new_upward_import(tmp_path):

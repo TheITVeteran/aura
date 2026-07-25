@@ -25,7 +25,6 @@ from core.bus.qos import (
 from core.health import diagnostics_aggregator as diag_mod
 from core.health.diagnostics_aggregator import (
     Analyzer,
-    DiagnosticStatus,
     DiagnosticsAggregator,
     Level,
 )
@@ -288,7 +287,7 @@ def test_lifespan_expires_retained_samples():
         profile = QosProfile(durability=Durability.TRANSIENT_LOCAL, lifespan_s=0.05, depth=5)
         bus.declare_publisher("brief", profile)
         await bus.publish("brief", "old")
-        time.sleep(0.06)
+        await asyncio.sleep(0.06)
         return bus.retained("brief", profile=profile)
 
     assert asyncio.run(scenario()) == []
@@ -317,7 +316,7 @@ def test_deadline_miss_fires_a_callback():
         bus.declare_publisher("mind.tick", QosProfile(deadline_s=0.02))
         bus.on_deadline_missed("mind.tick", lambda t, gap: fired.append((t, gap)))
         await bus.publish("mind.tick", 1)
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         return bus.check_deadlines()
 
     missed = asyncio.run(scenario())
@@ -333,7 +332,7 @@ def test_liveliness_is_lost_when_a_publisher_goes_quiet():
         bus.declare_publisher("hb", QosProfile(liveliness_lease_s=0.02))
         bus.on_liveliness_lost("hb", lost.append)
         await bus.publish("hb", 1)
-        time.sleep(0.05)
+        await asyncio.sleep(0.05)
         return bus.check_liveliness()
 
     assert asyncio.run(scenario()) == ["hb"]

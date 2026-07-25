@@ -113,15 +113,18 @@ class LimitRange:
     maximum: dict[str, float] = field(default_factory=dict)
 
     def apply(self, spec: ResourceSpec) -> ResourceSpec:
-        requests = {**self.default_requests, **spec.requests}
+        resource_requests = {**self.default_requests, **spec.requests}
         limits = {**self.default_limits, **spec.limits}
         # A request above its own limit is incoherent; clamp it rather
         # than admit a spec that can never be satisfied.
         for kind, limit in limits.items():
-            if requests.get(kind, 0.0) > limit:
-                requests[kind] = limit
+            if resource_requests.get(kind, 0.0) > limit:
+                resource_requests[kind] = limit
         return ResourceSpec(
-            name=spec.name, requests=requests, limits=limits, priority=spec.priority
+            name=spec.name,
+            requests=resource_requests,
+            limits=limits,
+            priority=spec.priority,
         )
 
     def violations(self, spec: ResourceSpec) -> list[str]:

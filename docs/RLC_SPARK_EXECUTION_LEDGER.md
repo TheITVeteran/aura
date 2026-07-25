@@ -1736,17 +1736,18 @@ before those dependencies close is not admissible.
   Focused verifier, calibrator, real-engine, worker, service, generative,
   counterfactual, and response-contract coverage passes 230/230. The complete
   latent-cortex ownership suite passes 946/946. Strict focused Ruff, bytecode
-  compilation, diff hygiene, and governance ownership pass; the governance
-  inventory contains 1,956 recognized calls in 1,830 buckets with the inherited
-  1,783 migration-debt calls unchanged. Exact parent/current enterprise scans
-  are identical at 187 findings and 39 high/critical findings. Both retain the
-  same inherited `broad_exception_review` baseline regression introduced before
-  CP360, so this checkpoint does not call that global ratchet green. The full
-  closeout audit additionally identifies the same parallel checkpoint's direct
-  `os.cpu_count()` use in `core/runtime/foundations.py` as one inherited
-  resource-observation ownership violation. All other bounded audit gates pass;
-  the dirty-worktree gate necessarily remains red until the staged checkpoint
-  is committed. CP360 neither normalizes nor conceals either inherited defect.
+  compilation, diff hygiene, and governance ownership pass on CP360's original
+  `b984906f4` integration base; its governance inventory contains 1,956
+  recognized calls in 1,830 buckets with the inherited 1,783 migration-debt
+  calls unchanged. Exact parent/current enterprise scans on that tree are
+  identical at 187 findings and 39 high/critical findings. Both retain the
+  inherited `broad_exception_review` baseline regression, and the full closeout
+  audit identifies the same parallel checkpoint's direct `os.cpu_count()` use
+  as one resource-observation ownership violation. Rebase onto a newer `main`
+  subsequently introduced three more parallel maturity checkpoints. CP361
+  repairs the resulting combined-tree ownership and enterprise regressions;
+  CP360 does not present its pre-rebase evidence as a measurement of that
+  different tree.
 
   This proves bounded prefix-regeneration mechanics, honest conclusion
   recurrence measurement, task-disjoint calibration infrastructure, and

@@ -43,13 +43,11 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from core.runtime.taint import TaintFlag, taint
 
 logger = logging.getLogger("Aura.Sanitizer")
-
-T = TypeVar("T")
 
 #: Findings are deduplicated by signature; this caps distinct findings.
 MAX_FINDINGS = 512
@@ -113,7 +111,7 @@ class SanitizerLog:
                 extra={"sanitizer": sanitizer, "signature": signature},
                 enforce_failure_policy=False,
             )
-        except Exception:  # pragma: no cover — reporting is never load-bearing
+        except Exception:  # noqa: BLE001 — reporting is never load-bearing
             logger.debug("sanitizer degradation record failed", exc_info=True)
         return True
 
@@ -234,7 +232,7 @@ class Poisoned:
         return f"<Poisoned {label!r}>"
 
 
-class PoisonPool(Generic[T]):
+class PoisonPool[T]:
     """An object pool that poisons on release.
 
     ``acquire()`` hands out a live object; ``release()`` marks it dead and
@@ -331,7 +329,7 @@ def _iter_numbers(value: Any, *, limit: int = 4096) -> Iterator[float]:
         try:
             value = tolist()
         except Exception:  # noqa: BLE001 — fall through to sequence handling
-            pass
+            logger.debug("numeric sanitizer could not materialize array-like", exc_info=True)
     if isinstance(value, (str, bytes)):
         return
     if isinstance(value, dict):
@@ -393,6 +391,7 @@ def sanitize_finite(name: str, value: Any, *, fill: float = 0.0) -> Any:
         try:
             value = tolist()
         except Exception:  # noqa: BLE001
+            logger.debug("finite-value sanitizer could not materialize array-like", exc_info=True)
             return value
     if isinstance(value, list):
         return [

@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -152,7 +151,7 @@ class MemorySentinel:
             if not observation.available or observation.total_bytes <= 0:
                 return None
             return int(observation.available_bytes), int(observation.total_bytes)
-        except Exception:
+        except Exception:  # noqa: BLE001 — resource providers are optional at this boundary
             logger.debug("memory sentinel sample failed", exc_info=True)
             return None
 
@@ -181,7 +180,7 @@ class MemorySentinel:
                 },
                 category="resource",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — telemetry is additive to reclaim
             logger.debug("observability sampling failed", exc_info=True)
         try:
             from core.runtime.memory_infra import DetailLevel, get_memory_infra
@@ -191,7 +190,7 @@ class MemorySentinel:
                 if available_fraction <= SOFT_PRESSURE_AVAILABLE_FRACTION
                 else DetailLevel.BACKGROUND
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — attribution is additive to reclaim
             logger.debug("memory dump failed", exc_info=True)
 
     def _evaluate(self) -> None:
@@ -206,7 +205,7 @@ class MemorySentinel:
             self._rescan_countdown = self.rescan_every
             try:
                 _register_oom_organs()
-            except Exception:
+            except Exception:  # noqa: BLE001 — organ discovery cannot stop reclaim
                 logger.debug("OOM organ rescan failed", exc_info=True)
 
         # Graded eviction runs before the crude OOM ladder: reclaim caches
@@ -224,7 +223,7 @@ class MemorySentinel:
                 self.evictions += len(
                     [a for a in outcome.get("actions", ()) if a.get("action") == "evict"]
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 — eviction cannot stop emergency reclaim
                 logger.debug("eviction enforcement failed", exc_info=True)
 
         sample = self._sample_memory()
@@ -316,8 +315,9 @@ def _declare_pressure_capacities() -> dict[str, int]:
     whether the throughput-collapse signal is meaningful or trivially true.
     """
     from core.runtime.pressure_stall import Resource, declare_capacity
+    from core.runtime.resource_observation import get_resource_observer
 
-    cpus = max(1, os.cpu_count() or 1)
+    cpus = max(1, int(get_resource_observer().compute().cpu_count))
     capacities: dict[str, int] = {
         # Cognition lanes contend for compute; the host's core count is the
         # honest ceiling.
@@ -345,7 +345,7 @@ def _model_lane_capacity() -> int:
             value = getattr(controller, attr, None)
             if isinstance(value, int) and value > 0:
                 return value
-    except Exception:
+    except Exception:  # noqa: BLE001 — model-lane discovery has a safe unit fallback
         logger.debug("model lane capacity probe unavailable", exc_info=True)
     return 1
 
@@ -447,7 +447,7 @@ async def _activate_kernel_discipline(*, foreground_only: bool) -> ActivationRes
                 name="foundations.memory_sentinel",
                 timeout=5.0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — shutdown registration is additive
             logger.debug("memory sentinel shutdown registration skipped", exc_info=True)
 
     return ActivationResult(
@@ -541,7 +541,7 @@ async def _activate_orchestration(*, foreground_only: bool) -> ActivationResult:
                 name="controller_manager",
                 timeout=10.0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — shutdown registration is additive
             logger.debug("orchestration shutdown registration skipped", exc_info=True)
 
     return ActivationResult(
@@ -890,7 +890,7 @@ async def activate_foundations(*, foreground_only: bool = False) -> dict[str, An
         from core.container import ServiceContainer
 
         ServiceContainer.register_instance("foundations_report", report, required=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 — report registration is additive
         logger.debug("foundations report registration skipped", exc_info=True)
     return report
 

@@ -318,7 +318,7 @@ def _record(report: VerifyReport) -> None:
             extra={"violations": [v.to_dict() for v in report.errors[:16]]},
             enforce_failure_policy=False,
         )
-    except Exception:  # pragma: no cover — reporting must not break verification
+    except Exception:  # noqa: BLE001 — reporting must not break verification
         logger.debug("verifier degradation record failed", exc_info=True)
 
 

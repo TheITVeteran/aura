@@ -3817,6 +3817,38 @@
       "scope": "<module>.MetaCognitiveMonitor._log_reflection"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/bus_recorder.py",
+      "scope": "<module>.BusRecorder.dump"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/bus_recorder.py",
+      "scope": "<module>.BusRecorder.dump"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/bus_recorder.py",
+      "scope": "<module>.BusRecorder.stop_file"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/bus_recorder.py",
+      "scope": "<module>.BusRecorder.stop_file"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3831,6 +3863,22 @@
       "count": 2,
       "path": "core/observability/logging_hmac.py",
       "scope": "<module>.append_audit"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/trace_events.py",
+      "scope": "<module>.Tracer.write"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/observability/trace_events.py",
+      "scope": "<module>.Tracer.write"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
@@ -4223,6 +4271,38 @@
       "count": 1,
       "path": "core/runtime/homeostate.py",
       "scope": "<module>._state_file_directory"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/lease.py",
+      "scope": "<module>.LeaderElector._write"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/lease.py",
+      "scope": "<module>.LeaderElector._write"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/lease.py",
+      "scope": "<module>.LeaderElector._write_sync"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/lease.py",
+      "scope": "<module>.LeaderElector._write_sync"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json",
@@ -14642,6 +14722,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "f41f17b375f34b62eefffe9d981b9a162ae69dace5e214b5f8b3e2916b83357b",
+  "inventory_sha256": "298fbd8f4710bafdc2c0c48db2e078ed817226cd1d4888f5483772bf8c2cd2dc",
   "schema_version": 1
 }

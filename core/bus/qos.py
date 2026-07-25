@@ -90,7 +90,7 @@ class QosProfile:
             "liveliness_lease_s": self.liveliness_lease_s,
         }
 
-    def incompatibilities(self, offered: "QosProfile") -> list[str]:
+    def incompatibilities(self, offered: QosProfile) -> list[str]:
         """What this profile requests that ``offered`` does not provide."""
         problems: list[str] = []
         if self.reliability > offered.reliability:
@@ -241,7 +241,6 @@ class QosBus:
         now = time.time()
         with self._lock:
             state.sequence += 1
-            sample = Sample(topic=topic, data=data, published_at=now, sequence=state.sequence)
             if state.profile.durability is Durability.TRANSIENT_LOCAL:
                 # Retain a snapshot, never the caller's object. The bus
                 # stamps routing metadata onto dict payloads in place, and
@@ -345,11 +344,13 @@ class QosBus:
         queue, history = await self.subscribe(topic, profile=profile)
         for sample in history:
             yield sample.data
+        stream_closed = asyncio.Event()
         try:
-            while True:
+            while not stream_closed.is_set():
                 event = await queue.get()
                 yield event[1] if isinstance(event, tuple) else event
         finally:
+            stream_closed.set()
             from core.event_bus import get_event_bus
 
             with contextlib.suppress(Exception):

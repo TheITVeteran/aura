@@ -82,7 +82,7 @@ def _fsync_file(fd: int) -> None:
 
         record("Aura.Fsync.DurationMs", (time.perf_counter() - started) * 1000.0)
     except Exception:  # noqa: BLE001 — telemetry never blocks durability
-        pass  # no-op: the write already happened
+        logger.debug("fsync histogram recording failed", exc_info=True)
 
 
 def _fsync_dir(directory: Path) -> None:
