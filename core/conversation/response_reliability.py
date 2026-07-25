@@ -4523,6 +4523,70 @@ def _has_stale_diagnostic_floor_leak(user_message: Any, reply_text: Any) -> bool
     return True
 
 
+# A reply that only PROMISES to answer, or only talks ABOUT the reply, is
+# not an answer. The 2026-07-18 soak delivered "Let me consider that
+# carefully." and "I'm working through that one right now." as complete
+# final replies, and repair meta-commentary ("That reply drifted away from
+# your actual question...") in place of the answer itself. Each is
+# technically true and entirely useless — the "shallow, lazy,
+# technically-true" surface that makes a working mind look broken.
+_PROMISE_ONLY_REPLY_RE = re.compile(
+    r"^(?:ok(?:ay)?[,.\s]*)?"
+    r"(?:i(?:'m| am)\s+(?:currently\s+)?(?:working|thinking|looking|considering|processing)"
+    r"|let me\s+(?:consider|think|look|check|work)"
+    r"|i(?:'ll| will)\s+(?:consider|think|look|check|work|get)"
+    r"|give me a (?:moment|second|minute)"
+    r"|one (?:moment|second))"
+    r"[^.!?\n]{0,80}[.!?]?\s*$",
+    re.IGNORECASE,
+)
+# Meta-commentary about the reply, delivered instead of a reply.
+_REPLY_ABOUT_THE_REPLY_RE = re.compile(
+    r"\b(?:that|this) (?:reply|answer|response) (?:drifted|wandered|missed|did not|didn't)\b"
+    r"|\bthe anchor is your question\b",
+    re.IGNORECASE,
+)
+
+
+# When the user asks what she is DOING, a present-activity answer is the
+# answer — "I'm thinking about it" is responsive to "what are you doing?"
+# and empty only to "what is the history of consensus?".
+_ACTIVITY_QUESTION_RE = re.compile(
+    r"\b(?:what (?:are|r) you (?:doing|working on|up to|thinking)"
+    r"|are you (?:there|busy|working|thinking|awake|ok)"
+    r"|how(?:'s| is) it going"
+    r"|what(?:'s| is) (?:your )?status"
+    r"|you (?:there|with me|around))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_promise_without_answer(user_message: Any, reply_text: Any) -> bool:
+    """True when the whole reply is a promise to answer, not an answer.
+
+    Deliberately narrow: it fires only when the ENTIRE reply is the promise
+    AND the user asked for content. "Let me check — the answer is 42."
+    carries content; "I'm thinking about it" answers "what are you doing?".
+    The failure being caught is emptiness, not politeness.
+    """
+    raw = str(reply_text or "").strip()
+    if not raw or len(raw) > 240:
+        return False
+    if _ACTIVITY_QUESTION_RE.search(str(user_message or "")):
+        return False
+    # Any sign of actual content redeems the reply: a promise that is
+    # followed by the answer is just courtesy, not emptiness.
+    lowered = raw.lower()
+    carries_content = bool(
+        re.search(r"\d", raw)
+        or re.search(r"\b(?:is|are|was|were|because|means|so that|here'?s)\b", lowered)
+        or ":" in raw
+    )
+    if not carries_content and _PROMISE_ONLY_REPLY_RE.match(raw):
+        return True
+    return bool(_REPLY_ABOUT_THE_REPLY_RE.search(raw)) and _word_count(raw) <= 40
+
+
 def _has_pseudo_commitment_status_leak(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "").strip()
     if not raw or not _PSEUDO_COMMITMENT_STATUS_RE.search(raw):
@@ -4910,6 +4974,8 @@ def _model_text_integrity_reasons(
         reasons.append("stale_diagnostic_floor_leak")
     if user_facing and _has_pseudo_commitment_status_leak(prompt, raw):
         reasons.append("pseudo_commitment_status_leak")
+    if user_facing and _is_promise_without_answer(prompt, raw):
+        reasons.append("promise_without_answer")
     if user_facing and is_non_answer_repair_floor_reply(raw):
         expected_floor = reliability_floor_for_user(prompt) if prompt else ""
         matches_expected_floor = bool(expected_floor and _normalize(expected_floor) == _normalize(raw))

@@ -20287,10 +20287,17 @@ async def api_chat(
                 "canonical_chat_no_reply",
                 state="failed",
             )
+            # Human prose on the product surface; the machine identity lives
+            # in the `status` field where tooling reads it. The old text
+            # shipped 'canonical chat lane', 'implicit legacy fallback' and a
+            # raw 'status=' token straight to the user — internal vocabulary
+            # that explains nothing to the person waiting for an answer
+            # (2026-07-18 soak: 32 turns of it).
             failure_reply = (
-                "The live cognitive chat lane did not produce a safe canonical reply, "
-                "and Aura refused the implicit legacy fallback. "
-                "status=canonical_chat_no_reply"
+                "I couldn't put together an answer I'd stand behind for that one, "
+                "and I won't hand you a thinner substitute and call it mine. "
+                "The full reasoning path didn't complete — worth retrying in a "
+                "moment, and the runtime logs carry the detail."
             )
             if pending_exchange_id:
                 await _complete_logged_exchange(
