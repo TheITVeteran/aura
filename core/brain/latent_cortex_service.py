@@ -1739,6 +1739,21 @@ class LatentCortexService:
             except (ImportError, TypeError, ValueError):
                 errors.append("structural_diversity_unproven")
             try:
+                from core.brain.llm.latent_cortex.disagreement_graph import (
+                    validate_disagreement_graph_receipt,
+                )
+
+                validate_disagreement_graph_receipt(
+                    receipt.get("disagreement_graph"),
+                    n_branches=int(receipt.get("n_branches")),
+                    operator_trace=receipt.get("cognitive_operator_trace"),
+                    action_trace=raw_action_trace,
+                    structural_diversity=receipt.get("structural_diversity"),
+                    blind_review=receipt.get("blind_review"),
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("disagreement_graph_unproven")
+            try:
                 from core.brain.llm.latent_cortex.correlated_support import (
                     validate_correlated_support_receipt,
                 )

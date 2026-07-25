@@ -27197,3 +27197,55 @@ Checkpoint-count completion is approximately 57.7%-90.8%, with a midpoint
 planning estimate of 70.6%. Next: publish CP362, then implement SPARK-047's
 dependency-level disagreement graph. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-24-363: Dependency-Level Disagreement Graph
+
+SPARK-047 turns branch disagreement from an aggregate distance into an exact,
+receipt-bound localization. The runtime reconstructs each branch's ordered
+causal program from the action and cognitive-operator traces. Every pair records
+its longest exactly shared program prefix and the first differing action step,
+role, operator, transform, changed slots, protected slots, input/output state
+commitments, and source operator receipt. Different tensor states under the
+same causal program do not count as different reasoning structures.
+
+Where the runtime already decoded a complete branch-probe inventory, it builds
+the existing bounded atomic claim/dependency envelopes and binds every source
+hash to the independently blinded candidate commitment. Pairwise comparison
+then identifies the first exact claim divergence and carries the disputed
+atom's kind, span, content commitment, dependency cues, and touching dependency
+transitions. Conditional atoms are named as disputed assumptions; declared-edge
+differences are named as dependency transitions. The public graph contains
+commitments rather than candidate prose or hidden reasoning tensors.
+
+The boundary remains deliberately strict. Exact text equality can establish a
+shared prefix, but differing wording is never promoted to semantic equivalence.
+The receipt declares no wording authority, semantic-equivalence claim,
+selection effect, or repair effect. The signed worker reconstructs source
+spans; the service validates the bounded atomic envelopes, blind-review source
+bindings, primary operator/action lineage, all graph results, and the
+non-authority contract. Any changed branch coverage, source commitment,
+localization, or authority field fails reconstruction. SPARK-048 remains
+responsible for choosing the cheapest diagnostic operation, while SPARK-049
+must prove local invalidation and repair.
+
+Six direct adversarial contracts cover exact shared-prefix localization,
+disputed-assumption detection, decoded-candidate absence, equal-program/different-
+state non-disagreement, blind-source mismatch, receipt tampering, and the
+no-semantic-equivalence boundary. The focused graph, engine, service, and
+structural-diversity battery passes 150/150. The complete 61-file latent/RLC
+ownership battery passes 1,099/1,099. Ruff, bytecode compilation, diff hygiene,
+governance ownership, resource-observation ownership, and the enterprise static
+ratchet pass. Governance remains exactly 1,968 recognized calls in 1,842
+buckets with 1,783 inherited migration-debt calls. Resource observation scans
+2,926 Python files with zero findings. The enterprise gate remains at 168
+findings, 38 high, zero critical, and no baseline regression. This checkpoint
+does not claim semantic equivalence, answer correctness, diagnostic-action
+success, local repair, resident-32B gain, adapter interaction, broad reasoning
+gain, or frontier capability.
+
+This is total checkpoint record 424. The forecast remains 466-733 total
+records, leaving approximately 42-309 records after this checkpoint.
+Checkpoint-count completion is approximately 57.8%-91.0%, with a midpoint
+planning estimate of 70.7%. Next: publish CP363, then implement SPARK-048's
+evidence-bound diagnostic action selection. Final multi-hour soaks remain
+deferred until every shorter gate is green.

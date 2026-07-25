@@ -4738,6 +4738,27 @@ class LatentCortexEngine:
             )
             if receipt.structural_diversity.get("certified") is not True:
                 receipt.flag("structural_diversity_unproven")
+            from core.brain.llm.latent_cortex.disagreement_graph import (
+                build_disagreement_graph_receipt,
+                decompose_branch_candidates,
+            )
+
+            candidate_decompositions = (
+                decompose_branch_candidates(
+                    branch_probe_texts,
+                    objective=verification_objective,
+                )
+                if len(branch_probe_texts) == len(ensemble.branches)
+                else {}
+            )
+            receipt.disagreement_graph = build_disagreement_graph_receipt(
+                n_branches=len(ensemble.branches),
+                operator_trace=receipt.cognitive_operator_trace,
+                action_trace=receipt.cognitive_action_trace,
+                structural_diversity=receipt.structural_diversity,
+                candidate_decompositions=candidate_decompositions,
+                blind_review=receipt.blind_review,
+            )
             from core.brain.llm.latent_cortex.correlated_support import (
                 build_correlated_support_receipt,
             )

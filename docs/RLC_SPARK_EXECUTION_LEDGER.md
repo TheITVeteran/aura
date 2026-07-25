@@ -1800,8 +1800,46 @@ before those dependencies close is not admissible.
   honestly in `bootstrap_unmeasured`; this checkpoint does not claim that any
   verifier predicts correctness, that fusion may replace an answer, resident
   32B gains, adapter interaction, broad reasoning gain, or frontier capability.
-- [ ] **SPARK-047 - Disagreement graph.** Localize the earliest dependency where
+- [x] **SPARK-047 - Disagreement graph.** Localize the earliest dependency where
   branches diverge and identify the exact disputed assumption or transition.
+
+  CP363 adds a machine-checkable, pairwise disagreement graph over the primary
+  cognitive-action and cognitive-operator receipts. For every branch pair it
+  reconstructs the ordered causal program, finds the longest exactly equal
+  program prefix, and binds the first differing action, role, operator,
+  transform, mutable-slot set, protected-slot set, and pre/post tensor
+  commitments to their original operator-receipt hashes. Distinct hidden states
+  running the same causal program do not become a disagreement.
+
+  When complete decoded branch probes exist, the engine also source-reconstructs
+  the existing atomic claim/dependency envelopes and binds each source hash to
+  the corresponding independently blinded candidate commitment. The graph then
+  finds the longest exact claim prefix and records the first disputed atom, its
+  type, source span, content hash, dependency cues, and every transition touching
+  it. A conditional atom or condition cue is reported as the exact disputed
+  assumption; differing declared edges are reported as a dependency transition.
+  No candidate text or hidden-state tensor enters the public receipt.
+
+  Equality is intentionally strict. The graph never claims two paraphrases are
+  semantically equivalent, never treats wording as correctness evidence, and
+  explicitly records the worker-source/service-commitment validation boundary.
+  It has no selection or repair effect; SPARK-048 must choose a diagnostic
+  operation, and SPARK-049 must separately prove bounded invalidation and
+  repair. The service independently reconstructs the graph from primary
+  receipts and rejects changed localization, branch coverage, source binding,
+  or authority fields.
+
+  Six direct adversarial graph contracts and the updated engine/service
+  integration pass 150/150 focused tests. The complete 61-file latent/RLC
+  ownership battery passes 1,099/1,099. Ruff, compilation, diff hygiene,
+  governance ownership, resource-observation ownership, and the enterprise
+  ratchet pass. Governance remains exactly 1,968 recognized calls in 1,842
+  buckets with 1,783 inherited migration-debt calls. Resource observation scans
+  2,926 Python files with zero findings. The enterprise gate remains at 168
+  findings, 38 high, zero critical, and no baseline regression. This proves
+  exact structural and hash-bound decoded-claim localization; it does not prove
+  semantic equivalence, candidate correctness, repair success, resident-32B
+  gain, adapter interaction, broad reasoning gain, or frontier capability.
 - [ ] **SPARK-048 - Diagnostic action selection.** Choose the cheapest operation
   expected to resolve each disagreement: execute, retrieve, prove, simulate,
   falsify, regenerate from prefix, or ask a specialized verifier.

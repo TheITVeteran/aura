@@ -1415,6 +1415,10 @@ class EpisodeReceipt:
     # primary action/operator/isolation traces. Different prose never creates
     # another vote; causal structure has to differ across six named facets.
     structural_diversity: dict[str, Any] = field(default_factory=dict)
+    # Pairwise exact-prefix graph over causal operator programs and, when
+    # decoded branch probes exist, their hash-bound claims/dependencies.
+    # Diagnostic only: later policy chooses what operation resolves a dispute.
+    disagreement_graph: dict[str, Any] = field(default_factory=dict)
     correlated_support: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
@@ -1623,6 +1627,7 @@ class EpisodeReceipt:
             "cognitive_action_trace": [dict(row) for row in self.cognitive_action_trace],
             "cognitive_operator_trace": [dict(row) for row in self.cognitive_operator_trace],
             "structural_diversity": dict(self.structural_diversity),
+            "disagreement_graph": dict(self.disagreement_graph),
             "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
