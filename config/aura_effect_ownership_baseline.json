@@ -13402,6 +13402,14 @@
     },
     {
       "callee": "subprocess.run",
+      "canonical_owner": false,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/runtime/integration_liveness.py",
+      "scope": "<module>.probe"
+    },
+    {
+      "callee": "subprocess.run",
       "canonical_owner": true,
       "category": "raw_subprocess",
       "count": 1,
@@ -14469,6 +14477,14 @@
       "canonical_owner": false,
       "category": "will_decision",
       "count": 1,
+      "path": "core/brain/personality_engine.py",
+      "scope": "<module>.PersonalityEngine.check_integrity"
+    },
+    {
+      "callee": "core.governance.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
       "path": "core/brain/verifier_curriculum.py",
       "scope": "<module>.VerifierCurriculumLoop._authorized"
     },
@@ -14746,6 +14762,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c539e0c9a8fa22947fbddf5b1fc019d451bcc8c2486a1b18cd1c461b75d15aa7",
+  "inventory_sha256": "3867a18ee4179ce6b152d9a975f06ca5bc2b82c7587bf51e14693337a81ed750",
   "schema_version": 1
 }

@@ -348,6 +348,23 @@ class BaseSkill(ABC):
         normalized_result["skill"] = self.name
         normalized_result["duration_ms"] = round(duration_ms, 1)
         deferred = str(normalized_result.get("status", "") or "").lower() == "deferred"
+        # A failure with no stated cause is undiagnosable and un-learnable.
+        # The live soak recorded `Task web_search failed:` with an EMPTY
+        # message, and the surprise engine banked
+        # `{'status': 'failed', 'error': ''}` — a maximal-surprise learning
+        # signal carrying zero information about what to do differently.
+        # Every skill failure names its cause or says plainly that the skill
+        # returned none; silence is never an acceptable failure surface.
+        if not normalized_result["ok"] and not deferred:
+            stated_cause = str(normalized_result.get("error", "") or "").strip()
+            if not stated_cause:
+                status_hint = str(normalized_result.get("status", "") or "").strip()
+                reason_hint = str(normalized_result.get("reason", "") or "").strip()
+                normalized_result["error"] = (
+                    f"{self.name} reported failure without a cause"
+                    + (f" (status={status_hint})" if status_hint else "")
+                    + (f" (reason={reason_hint})" if reason_hint else "")
+                )
 
         if deferred:
             logger.info(
@@ -371,11 +388,12 @@ class BaseSkill(ABC):
         return normalized_result
 
     def _error_result(self, error: str, elapsed: float) -> dict[str, Any]:
-        """Build a standardized error result."""
+        """Build a standardized error result. The cause is never empty."""
+        stated = str(error or "").strip()
         return {
             "ok": False,
             "skill": self.name,
-            "error": error,
+            "error": stated or f"{self.name} failed without reporting a cause",
             "duration_ms": round(elapsed * 1000, 1)
         }
 

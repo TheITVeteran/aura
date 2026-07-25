@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.runtime.errors import describe_error, record_degradation
 from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker, mark_task_protected
@@ -190,7 +190,11 @@ class Scheduler:
                 action="marked scheduled task failed and escalated critical task to recovery",
                 extra={"task": spec.name, "critical": spec.critical},
             )
-            logger.error("Task %s failed: %s", spec.name, e)
+            # describe_error, not str(e): a bare RuntimeError() renders as
+            # nothing, and "Task web_search failed: " with an empty cause is
+            # exactly what made the 2026-07-18 soak's tool failures
+            # undiagnosable.
+            logger.error("Task %s failed: %s", spec.name, describe_error(e))
             if spec.critical:
                 logger.critical("CRITICAL Task %s failed! Triggering recovery.", spec.name)
                 self.state = Lifecycle.RECOVERING
