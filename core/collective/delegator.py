@@ -56,6 +56,33 @@ def swarm_debate_failure_reason(result: Any) -> str:
     return ""
 
 
+# Markers that mean a generation was DEFERRED rather than attempted and failed.
+# A deferral produces no text for the same reason a queued job produces no
+# output: it has not run yet.
+_GENERATION_DEFERRAL_MARKERS = (
+    "queued",
+    "admission",
+    "headroom",
+    "backpressure",
+    "deferred",
+    "warmup",
+    "resource_busy",
+    "foreground_priority",
+)
+
+
+def _deferred_generation_reason(result: Any) -> str:
+    """Return the deferral reason for an empty generation, or "" if it ran."""
+    for field in ("status", "error", "reason", "deferral_reason"):
+        value = getattr(result, field, None)
+        if value is None and isinstance(result, dict):
+            value = result.get(field)
+        text = str(value or "").strip().lower()
+        if text and any(m in text for m in _GENERATION_DEFERRAL_MARKERS):
+            return str(value)
+    return ""
+
+
 class SwarmAgent:
     """A lightweight parallel executor with explicit lifecycle state."""
 
@@ -934,6 +961,31 @@ FINAL SYNTHESIS:"""
             content = result.content if hasattr(result, "content") else str(result)
             agent.result = str(content or "").strip()
             if not agent.result:
+                # An empty shard is not automatically a broken engine. Under
+                # foreground load the router QUEUES a background shard —
+                #   Router: Queueing background inference until admission
+                #   clears for origin=response_generation_background_reflection
+                #   reason=foreground_headroom_reserved
+                # — and a queued shard has produced nothing because it never
+                # ran. The 2026-07-25 capability run raised twenty
+                # "Swarm cognitive engine returned empty output" degradations
+                # and incidents that way, all of them describing admission
+                # working exactly as designed while a real person was being
+                # served on the foreground lane.
+                #
+                # A shard that was deferred is DEFERRED. One that actually ran
+                # and produced nothing is still a failure and still raises.
+                deferral = _deferred_generation_reason(result)
+                if deferral:
+                    agent.status = "DEFERRED"
+                    agent.error = deferral
+                    self.logger.info(
+                        "Swarm agent %s deferred by admission (%s); the "
+                        "foreground lane has priority.",
+                        agent.id,
+                        deferral,
+                    )
+                    return
                 raise RuntimeError("Swarm cognitive engine returned empty output")
             agent.status = "COMPLETED"
             self._pulse_mycelium(success=True)
