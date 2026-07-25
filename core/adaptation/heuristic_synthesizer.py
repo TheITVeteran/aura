@@ -48,16 +48,30 @@ class HeuristicSynthesizer:
                 self._active_heuristics = []
 
     def _save(self):
-        """Persist heuristics to disk."""
+        """Persist heuristics to disk.
+
+        Internal maintenance write: it must carry its own governed scope, or
+        the live runtime refuses it as a governance violation. Unscoped, this
+        raised GovernanceViolationError out of curiosity_explorer — which is
+        fail-closed, so an ordinary heuristic save became a CRITICAL SERVICE
+        FAILURE and drove the felt existential threat to 0.99 at boot
+        (2026-07-25).
+        """
+        from core.governance_context import local_internal_governed_scope
+
         self.heuristics_path.parent.mkdir(parents=True, exist_ok=True)
-        get_file_write_gateway().write_text(
-            self.heuristics_path,
-            json.dumps({
-                "heuristics": self._active_heuristics,
-                "updated_at": time.time()
-            }, indent=2),
-            source="adaptation.heuristic_synthesizer.state",
-        )
+        with local_internal_governed_scope(
+            "adaptation.heuristic_synthesizer.state",
+            domain="file_write",
+        ):
+            get_file_write_gateway().write_text(
+                self.heuristics_path,
+                json.dumps({
+                    "heuristics": self._active_heuristics,
+                    "updated_at": time.time()
+                }, indent=2),
+                source="adaptation.heuristic_synthesizer.state",
+            )
 
     def _trim_heuristics(self) -> None:
         if len(self._active_heuristics) <= MAX_ACTIVE_HEURISTICS:

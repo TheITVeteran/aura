@@ -254,13 +254,22 @@ class IntegrityGuard:
     def _write_audit_log(self, report: AuditReport) -> None:
         try:
             self.audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().append_text(
-                self.audit_log_path,
-                f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {report}\n",
-                source="brain.cognitive.integrity_check.audit_log",
-            )
+            # Internal maintenance write: unscoped, the live runtime refuses
+            # it as a governance violation and the belief-integrity audit
+            # trail is silently lost — an audit log that vanishes under
+            # governance is worse than none (observed live 2026-07-18).
+            with local_internal_governed_scope(
+                "brain.cognitive.integrity_check.audit_log",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    self.audit_log_path,
+                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {report}\n",
+                    source="brain.cognitive.integrity_check.audit_log",
+                )
         except (OSError, IOError) as exc:
             record_degradation('integrity_check', exc)
             logger.warning("Failed to write audit log: %s", exc)
