@@ -111,6 +111,61 @@ PHILOSOPHY = [
     "Is there a difference between being patient and being slow to care? Brief.",
 ]
 
+# ── Capability turns ─────────────────────────────────────────────────────────
+# Conversation alone does not exercise what Aura is FOR. These turns drive the
+# internal amplifiers (multi-step reasoning, self-model, memory) and the
+# external surface (search, tools, skills) and score them on a checkable
+# answer, so "she has the capability" and "the capability works" stop being the
+# same sentence.
+
+# (question, expected_substring) — reasoning that needs more than one step and
+# has exactly one right answer, so an amplifier either helped or it did not.
+REASONING = [
+    (
+        "A train leaves at 14:20 and the trip takes 95 minutes. What time does "
+        "it arrive? Just the time.",
+        "15:55",
+    ),
+    (
+        "I have 3 boxes. Two hold 12 items each and one holds 9. I give away 7 "
+        "items. How many are left? Just the number.",
+        "26",
+    ),
+    (
+        "If every A is a B, and every B is a C, and x is an A — is x a C? "
+        "Answer yes or no first, then one sentence why.",
+        "yes",
+    ),
+    (
+        "Sort these by size, smallest first, on one line: 3/4, 0.6, 5/8, 0.71",
+        "0.6",
+    ),
+    (
+        "A shirt costs 40 after a 20% discount. What was the original price? "
+        "Just the number.",
+        "50",
+    ),
+]
+
+# External capability: must actually reach the world and come back with it.
+EXTERNAL = [
+    "Search the web for the current stable version of Python and tell me the "
+    "version number in your reply.",
+    "Look up what MLX is (the Apple framework) and give me one sentence on what "
+    "it does, based on what you find.",
+    "Find out who wrote the novel Solaris and reply with just the author's name.",
+]
+
+# Internal capability: her own state and machinery, answered from the inside.
+SELF_CAPABILITY = [
+    "Without searching: name three capabilities you actually have right now, "
+    "and for each one say how you know you have it.",
+    "What reasoning tools do you have available for a hard multi-step problem, "
+    "and when would you reach for one? Answer right here.",
+    "Tell me one thing you learned or retained earlier in this session, and how "
+    "you know it is really yours rather than something you are inferring.",
+]
+
 # fact plants and their later probes: (plant_text, probe_text, expected_substring)
 RETENTION = [
     (
@@ -144,6 +199,9 @@ def build_script(turns: int, seed: int) -> list[dict]:
         + [{"kind": "math", "text": q, "expect": a} for q, a in MATH]
         + [{"kind": "introspection", "text": t} for t in INTROSPECTION]
         + [{"kind": "philosophy", "text": t} for t in PHILOSOPHY]
+        + [{"kind": "reasoning", "text": q, "expect": a} for q, a in REASONING]
+        + [{"kind": "external", "text": t} for t in EXTERNAL]
+        + [{"kind": "self_capability", "text": t} for t in SELF_CAPABILITY]
     )
     # Cycle pools with light wording variation so every turn is unique text.
     i = 0
@@ -392,6 +450,9 @@ def main() -> int:
     reflex_hits: list[int] = []
     math_total = math_ok = 0
     retention_total = retention_ok = 0
+    reasoning_total = reasoning_ok = 0
+    external_total = external_ok = 0
+    self_capability_total = self_capability_ok = 0
     server_lost_at: int | None = None
     replies_seen: dict[str, int] = {}
 
@@ -474,6 +535,37 @@ def main() -> int:
                 retention_total += 1
                 correct = entry["expect"].lower() in reply.lower()
                 retention_ok += int(bool(correct))
+            elif entry["kind"] == "reasoning" and not dead:
+                reasoning_total += 1
+                correct = entry["expect"].lower() in re.sub(r"[,\s]", "", reply).lower()
+                reasoning_ok += int(bool(correct))
+            elif entry["kind"] == "external" and not dead:
+                # An external turn passes when it came back with WORLD content,
+                # not an apology about not having reached it.
+                external_total += 1
+                lowered = reply.lower()
+                reached = len(reply.strip()) > 60 and not any(
+                    marker in lowered
+                    for marker in (
+                        "stand behind",
+                        "could not",
+                        "couldn't",
+                        "unable to",
+                        "no internet",
+                        "cannot browse",
+                        "don't have access",
+                    )
+                )
+                correct = reached
+                external_ok += int(bool(reached))
+            elif entry["kind"] == "self_capability" and not dead:
+                self_capability_total += 1
+                lowered = reply.lower()
+                answered = len(reply.strip()) > 80 and not any(
+                    marker in lowered for marker in ("stand behind", "couldn't", "could not")
+                )
+                correct = answered
+                self_capability_ok += int(bool(answered))
 
             record = {
                 "event": "turn",
@@ -530,6 +622,14 @@ def main() -> int:
             failures.append(f"reflex_canned_on_substantive={reflex_hits[:10]}")
         if retention_total and retention_ok < retention_total:
             failures.append(f"retention={retention_ok}/{retention_total}")
+        if reasoning_total and reasoning_ok / reasoning_total < 0.8:
+            failures.append(f"reasoning={reasoning_ok}/{reasoning_total}")
+        if external_total and external_ok / external_total < 0.8:
+            failures.append(f"external_capability={external_ok}/{external_total}")
+        if self_capability_total and self_capability_ok / self_capability_total < 0.8:
+            failures.append(
+                f"self_capability={self_capability_ok}/{self_capability_total}"
+            )
         if math_total and math_ok / math_total < 0.8:
             failures.append(f"math_accuracy={math_ok}/{math_total}")
         if end_incidents.get("has_critical"):
@@ -557,6 +657,9 @@ def main() -> int:
             "task_hijacks": len(hijacks),
             "reflex_canned": len(reflex_hits),
             "math": f"{math_ok}/{math_total}",
+            "reasoning": f"{reasoning_ok}/{reasoning_total}",
+            "external_capability": f"{external_ok}/{external_total}",
+            "self_capability": f"{self_capability_ok}/{self_capability_total}",
             "retention": f"{retention_ok}/{retention_total}",
             "max_identical_reply_count": dup_max,
             "start_snapshot": start_snap,
