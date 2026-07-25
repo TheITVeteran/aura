@@ -93,6 +93,10 @@ _CONFIG_KEYS = {
     "generative_verifier_enabled",
     "generative_verifier_max_atoms",
     "generative_verifier_max_tokens",
+    "counterfactual_verifier_enabled",
+    "counterfactual_verifier_max_atoms",
+    "counterfactual_verifier_max_interventions",
+    "counterfactual_verifier_max_tokens",
     "jitter_scale",
     "input_context_max_chars",
     "isolation_steps",
@@ -248,6 +252,18 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         ),
         generative_verifier_max_tokens=_typed_value(
             raw, "generative_verifier_max_tokens", 160, int
+        ),
+        counterfactual_verifier_enabled=_typed_value(
+            raw, "counterfactual_verifier_enabled", True, bool
+        ),
+        counterfactual_verifier_max_atoms=_typed_value(
+            raw, "counterfactual_verifier_max_atoms", 1, int
+        ),
+        counterfactual_verifier_max_interventions=_typed_value(
+            raw, "counterfactual_verifier_max_interventions", 2, int
+        ),
+        counterfactual_verifier_max_tokens=_typed_value(
+            raw, "counterfactual_verifier_max_tokens", 128, int
         ),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool

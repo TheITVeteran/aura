@@ -296,6 +296,123 @@ def test_admitted_fresh_refutation_causally_replaces_provisional_winner(
     assert result.receipt.selected_branch == 1
 
 
+def test_counterfactual_verifier_causally_breaks_only_equal_score_tie(
+    tiny_model,
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex.task_verifiers import check_arithmetic_claims
+
+    candidates = {
+        0: "The first answer is 4 + 3 = 7.",
+        1: "The second answer is 4 + 3 = 7.",
+    }
+
+    class ProbeTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(tokens):
+            values = list(tokens)
+            if values == [100]:
+                return candidates[0]
+            if values == [101]:
+                return candidates[1]
+            return "A complete final answer."
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        ProbeTokenizer(),
+        config=_config(
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            counterfactual_verifier_max_tokens=64,
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    def verifier(text: str) -> float:
+        if text.startswith("Independent consistency check:"):
+            checked = check_arithmetic_claims(text)
+            return float(checked["score"] if checked["score"] is not None else 0.0)
+        return 0.8
+
+    def fresh(prompt: str, *_args, **_kwargs):
+        claim = re.search(r"ANONYMIZED_CLAIM_SHA256: ([0-9a-f]{64})", prompt)
+        intervention = re.search(r"INTERVENTION_SHA256: ([0-9a-f]{64})", prompt)
+        inputs = re.search(r"COUNTERFACTUAL_INPUT: (-?\d+) ([+\-*/]) (-?\d+)", prompt)
+        claim_text = re.search(
+            r"ANONYMIZED_CLAIM:\n(.*?)\nINTERVENTION_SHA256:",
+            prompt,
+            re.DOTALL,
+        )
+        assert claim and intervention and inputs and claim_text
+        left, operator, right = int(inputs.group(1)), inputs.group(2), int(inputs.group(3))
+        actual = {
+            "+": left + right,
+            "-": left - right,
+            "*": left * right,
+            "/": left // right,
+        }[operator]
+        predicted = 7 if claim_text.group(1) == candidates[0] else actual
+        payload = {
+            "claim_sha256": claim.group(1),
+            "intervention_sha256": intervention.group(1),
+            "prediction": f"{left} {operator} {right} = {predicted}",
+        }
+        return {
+            "text": "FINAL_ANSWER: " + json.dumps(payload, separators=(",", ":")),
+            "context": {
+                "schema": "aura.rlc.fresh_verifier_context.v1",
+                "prompt_token_count": 1,
+                "generated_token_count": 16,
+                "termination": "contract_complete",
+                "initial_cache_offsets": [0] * N_LAYERS,
+                "final_cache_offsets": [16] * N_LAYERS,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
+    monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
+    result = engine.reason(
+        prompt="Compute 4 + 3 and explain sensitivity.",
+        verifier=verifier,
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert result.ok
+    counterfactual = result.receipt.counterfactual_verifier
+    assert counterfactual["selection_authority_admitted"] is True
+    assert counterfactual["selection_effect"] == "winner_replaced"
+    assert counterfactual["source_selected_branch"] == 0
+    assert counterfactual["selected_branch"] == 1
+    assert result.receipt.selected_branch == 1
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    contract_errors = LatentCortexService._receipt_contract_errors(
+        result.receipt.to_dict(),
+        {
+            "n_slots": 4,
+            "n_branches": 2,
+            "min_steps": 2,
+            "max_steps": 6,
+            "verifier_probe_max_tokens": 48,
+            "generative_verifier_enabled": True,
+            "counterfactual_verifier_enabled": True,
+        },
+    )
+    assert "counterfactual_verifier_unproven" not in contract_errors
+    assert "blind_or_decoy_branch_review_unproven" not in contract_errors
+
+
 def test_heterogeneous_dual_lane_decode_is_real_equal_compute_and_restoring(
     tiny_model,
 ):

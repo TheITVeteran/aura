@@ -14,6 +14,7 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
+from core.brain.llm.latent_cortex.loop_core import canonical_sha256  # noqa: E402
 from core.brain.llm.latent_cortex.neural_uncertainty import (  # noqa: E402
     LEARNED,
     NeuralUncertaintyRuntime,
@@ -220,6 +221,77 @@ def test_disabled_runtime_emits_no_confidence(tiny_model):
     assert receipt["observation_count"] == 0
     assert receipt["supported_count"] == 0
     assert receipt["branches"][0]["observations"] == []
+
+
+@pytest.mark.parametrize(
+    "selection_basis",
+    [
+        "task_verifier_counterfactual_tiebreak",
+        "task_verifier_generative_refutation_veto",
+        "task_verifier_counterfactual_tiebreak_generative_refutation_veto",
+    ],
+)
+def test_admitted_selection_pipeline_provenance_is_reconstructible(
+    tiny_model,
+    selection_basis,
+):
+    result = LatentCortexEngine(
+        tiny_model,
+        _Tokenizer(),
+        config=_config(),
+    ).reason(
+        token_ids=[5, 9, 17, 3, 42, 7],
+        budget=ComputeBudget(),
+    )
+    receipt = copy.deepcopy(result.receipt.neural_uncertainty)
+    receipt["selection_basis"] = selection_basis
+    receipt["selection_causal"] = False
+    payload = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = canonical_sha256(payload)
+
+    validate_neural_uncertainty_receipt(
+        receipt,
+        expected_runtime=NeuralUncertaintyRuntime.from_config(None),
+        update_acceptance=result.receipt.update_acceptance,
+        expected_n_branches=1,
+    )
+
+
+@pytest.mark.parametrize(
+    "selection_basis",
+    [
+        "neural_uncertainty_counterfactual_tiebreak",
+        "process_verifier_generative_refutation_veto",
+        "task_verifier_generative_refutation_veto_counterfactual_tiebreak",
+        "task_verifier_counterfactual_tiebreak_counterfactual_tiebreak",
+        "task_verifier_unknown_override",
+    ],
+)
+def test_unproducible_selection_pipeline_provenance_is_rejected(
+    tiny_model,
+    selection_basis,
+):
+    result = LatentCortexEngine(
+        tiny_model,
+        _Tokenizer(),
+        config=_config(),
+    ).reason(
+        token_ids=[5, 9, 17, 3, 42, 7],
+        budget=ComputeBudget(),
+    )
+    receipt = copy.deepcopy(result.receipt.neural_uncertainty)
+    receipt["selection_basis"] = selection_basis
+    receipt["selection_causal"] = False
+    payload = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    receipt["receipt_sha256"] = canonical_sha256(payload)
+
+    with pytest.raises(ValueError, match="aggregate evidence differs"):
+        validate_neural_uncertainty_receipt(
+            receipt,
+            expected_runtime=NeuralUncertaintyRuntime.from_config(None),
+            update_acceptance=result.receipt.update_acceptance,
+            expected_n_branches=1,
+        )
 
 
 def test_rehashed_prediction_and_source_tampering_are_rejected(

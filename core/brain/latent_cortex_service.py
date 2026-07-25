@@ -241,6 +241,10 @@ class LatentCortexService:
             "generative_verifier_enabled": True,
             "generative_verifier_max_atoms": 1,
             "generative_verifier_max_tokens": 160,
+            "counterfactual_verifier_enabled": True,
+            "counterfactual_verifier_max_atoms": 1,
+            "counterfactual_verifier_max_interventions": 2,
+            "counterfactual_verifier_max_tokens": 128,
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
@@ -285,6 +289,10 @@ class LatentCortexService:
                     # The strict JSON contract includes a 64-character claim
                     # commitment; shorter budgets truncate before the witness.
                     "generative_verifier_max_tokens": 128,
+                    "counterfactual_verifier_enabled": True,
+                    "counterfactual_verifier_max_atoms": 1,
+                    "counterfactual_verifier_max_interventions": 2,
+                    "counterfactual_verifier_max_tokens": 96,
                     "input_context_max_chars": 9000,
                     "allow_vanilla_fallback": False,
                 }
@@ -616,6 +624,7 @@ class LatentCortexService:
             except (ImportError, TypeError, ValueError):
                 errors.append("atomic_decomposition_unproven")
         generative = receipt.get("generative_verifier")
+        verified_generation: dict[str, Any] | None = None
         if config.get("generative_verifier_enabled") is True:
             if (
                 isinstance(generative, dict)
@@ -636,8 +645,9 @@ class LatentCortexService:
                         raise ValueError("generative refutation was not applied to selection")
                     if effect == "no_alternative":
                         raise ValueError("generative verifier refuted the only branch")
-                except (ImportError, TypeError, ValueError):
+                except (ImportError, KeyError, TypeError, ValueError):
                     errors.append("generative_verifier_unproven")
+                    verified_generation = None
             elif not (
                 isinstance(generative, dict)
                 and generative.get("requested") is True
@@ -647,6 +657,82 @@ class LatentCortexService:
                 and generative.get("reason")
             ):
                 errors.append("generative_verifier_unreceipted")
+        counterfactual = receipt.get("counterfactual_verifier")
+        verified_counterfactual: dict[str, Any] | None = None
+        if config.get("counterfactual_verifier_enabled") is True:
+            if (
+                isinstance(counterfactual, dict)
+                and counterfactual.get("schema") == "aura.rlc.counterfactual_verifier.v1"
+            ):
+                try:
+                    from core.brain.llm.latent_cortex.counterfactual_verifier import (
+                        validate_counterfactual_verifier_envelope,
+                    )
+
+                    verified_counterfactual = (
+                        validate_counterfactual_verifier_envelope(counterfactual)
+                    )
+                    blind_review = receipt.get("blind_review")
+                    blind_rows = (
+                        blind_review.get("rows")
+                        if isinstance(blind_review, dict)
+                        else None
+                    )
+                    if not isinstance(blind_rows, list):
+                        raise ValueError("counterfactual verifier lacks blind score evidence")
+                    blind_scores = {
+                        int(row["branch"]): float(row["score"])
+                        for row in blind_rows
+                        if isinstance(row, dict)
+                    }
+                    expected_scores = {
+                        str(branch): round(score, 6)
+                        for branch, score in blind_scores.items()
+                    }
+                    if (
+                        len(expected_scores) != len(blind_rows)
+                        or verified_counterfactual["task_scores"] != expected_scores
+                    ):
+                        raise ValueError("counterfactual task scores differ from blind review")
+                    source_selected = verified_counterfactual["source_selected_branch"]
+                    if source_selected != max(
+                        range(len(blind_scores)),
+                        key=lambda branch: blind_scores[branch],
+                    ):
+                        raise ValueError("counterfactual source winner differs from task scores")
+                    generated_effect = (
+                        verified_generation.get("selection_effect")
+                        if isinstance(verified_generation, dict)
+                        else "none"
+                    )
+                    if generated_effect == "winner_replaced":
+                        if (
+                            verified_generation.get("vetoed_branch")
+                            != verified_counterfactual["selected_branch"]
+                        ):
+                            raise ValueError(
+                                "generative verifier did not follow counterfactual selection"
+                            )
+                    elif (
+                        verified_counterfactual["selection_authority_admitted"] is True
+                        and receipt.get("selected_branch")
+                        != verified_counterfactual["selected_branch"]
+                    ):
+                        raise ValueError(
+                            "counterfactual verifier selection was not applied"
+                        )
+                except (ImportError, KeyError, TypeError, ValueError):
+                    errors.append("counterfactual_verifier_unproven")
+                    verified_counterfactual = None
+            elif not (
+                isinstance(counterfactual, dict)
+                and counterfactual.get("requested") is True
+                and counterfactual.get("available") is False
+                and counterfactual.get("selection_effect") == "none"
+                and isinstance(counterfactual.get("reason"), str)
+                and counterfactual.get("reason")
+            ):
+                errors.append("counterfactual_verifier_unreceipted")
         if config.get("critic_blind_spot_evidence") is not None:
             try:
                 from core.brain.llm.latent_cortex.critic_identity import (
@@ -1631,6 +1717,17 @@ class LatentCortexService:
                     episode_id=receipt.get("episode_id"),
                     objective_sha256=receipt.get("input_tokens_sha256"),
                 )
+                review_selected_branch = receipt.get("selected_branch")
+                if isinstance(verified_counterfactual, dict):
+                    review_selected_branch = verified_counterfactual[
+                        "source_selected_branch"
+                    ]
+                elif (
+                    isinstance(verified_generation, dict)
+                    and verified_generation.get("selection_effect")
+                    == "winner_replaced"
+                ):
+                    review_selected_branch = verified_generation["vetoed_branch"]
                 validate_blind_review_receipt(
                     receipt.get("blind_review"),
                     n_branches=int(receipt.get("n_branches")),
@@ -1638,7 +1735,7 @@ class LatentCortexService:
                     isolation_receipt=receipt.get("branch_isolation"),
                     objective_sha256=receipt.get("input_tokens_sha256"),
                     episode_id=receipt.get("episode_id"),
-                    selected_branch=receipt.get("selected_branch"),
+                    selected_branch=review_selected_branch,
                     decoy_receipt=receipt.get("decoy_verification"),
                 )
                 honest_flags = receipt.get("honest_flags")

@@ -26913,3 +26913,70 @@ count completion is approximately 57.0%-89.7%, with a midpoint planning
 estimate of 69.7%. Next: publish CP357, then implement SPARK-044's
 counterfactual verifier. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-24-358: Counterfactual Claims Must Move When Their Causes Move
+
+SPARK-044 adds a default-on counterfactual verifier between admitted blind task
+selection and the existing generative-refutation veto. Its authority is
+strictly narrower than either lane: it may resolve only a top task-score tie
+inside the six-decimal public `1e-6` boundary. Non-ties spend no generated
+tokens, and no lower task-verifier score can be promoted.
+
+The v1 protocol operates on exact integer arithmetic claims. It decomposes each
+tied candidate into visible atoms, selects the deterministic first-N supported
+claims, and constructs a bounded sequence of left-input, right-input, and
+operator interventions. An intervention is retained only when its exact
+consequence differs from the candidate's displayed result. Every tied branch
+must receive complete equal-size coverage; missing arithmetic support, an
+abstention, malformed output, a truncated contract, or unequal coverage denies
+selection authority.
+
+Each prediction runs in a fresh zero-offset model context without branch
+identity or imported solver state. The receipt explicitly discloses that these
+contexts share the resident checkpoint and therefore does not claim parameter
+independence. Output must be a single bound `FINAL_ANSWER` JSON object carrying
+the exact claim and intervention commitments plus one machine-checkable integer
+equality. The model proposes the result, but deterministic recomputation alone
+classifies correct change, invariant failure, or incorrect change.
+
+The source implementation digest, complete visible candidates and objective,
+atomic decompositions, deterministic intervention order, prompt commitments,
+fresh-context evidence, exact predictions, outcomes, public task scores, and
+selection effect are all committed. The service reconstructs the envelope,
+matches its six-decimal scores to the unrounded blind-review source, verifies
+the original task-selected winner, proves the tiebreak reached final selection,
+and, when applicable, proves the later generative veto challenged the
+counterfactual-selected branch. A three-way tie remains unresolved unless one
+branch has uniquely best reconstructed evidence; deterministic branch order
+cannot manufacture authority.
+
+This integration also exposed and closes two older proof-path defects.
+Value-of-computation rewards are now calculated from the same eight-decimal
+public state carried by their transition receipts, preventing an honest
+boundary-rounded episode from failing reconstruction. Neural-uncertainty
+provenance now accepts only the direct selection modes and three ordered
+task-verifier override pipelines the engine can actually emit. Unknown,
+duplicated, reordered, neural, or process-verifier override strings remain
+fail-closed. This repairs the existing generative-refutation composition as
+well as the new counterfactual path.
+
+Focused counterfactual, engine, worker, service, and neural-uncertainty coverage
+passes 163/163. The complete latent-cortex ownership battery passes
+1,077/1,077 in 35.10 seconds. Strict Ruff, bytecode compilation, diff hygiene,
+and governance ownership pass. Exact parent/current enterprise scans each
+contain 168 findings and 38 high/critical findings with identical semantic
+identities, so CP358 introduces no scanner debt.
+
+This checkpoint proves bounded exact-arithmetic intervention, equal-coverage
+selection causality, ordered verifier composition, and independently
+reconstructible receipts. It does not prove general causal reasoning,
+independent verifier parameters, resident-32B utility, adapter interaction,
+reasoning gain, or frontier capability. Those claims remain gated on powered,
+externally rooted campaigns.
+
+This is total checkpoint record 419. The forecast remains 466-733 total
+records, leaving approximately 47-314 records after this checkpoint.
+Checkpoint-count completion is approximately 57.2%-89.9%, with a midpoint
+planning estimate of 69.9%. Next: publish CP358, then implement SPARK-045's
+prefix-stability verifier. Final multi-hour soaks remain deferred until every
+shorter gate is green.

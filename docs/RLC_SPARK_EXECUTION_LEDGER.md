@@ -1626,9 +1626,59 @@ before those dependencies close is not admissible.
   resident-32B utility, adapter interaction, reasoning gain, or frontier
   capability; those claims still require an externally rooted powered
   campaign and cannot be inferred from synthetic admission.
-- [ ] **SPARK-044 - Counterfactual verifier.** Perturb assumptions and inputs,
-  require predicted consequence changes, and penalize fragile claims that remain
-  invariant when they should move.
+- [x] **SPARK-044 - Counterfactual verifier.** CP358 adds a default-on,
+  bounded counterfactual lane after admitted blind task verification and before
+  the existing generative-refutation veto. It may act only when the
+  six-decimal public task scores place at least two branches inside the
+  configured `1e-6` top-score boundary. A stronger task-verifier score is never
+  displaced, and a non-tie spends zero model-generation compute.
+
+  The v1 protocol targets exact integer arithmetic claims. For each tied branch
+  it extracts the same bounded number of visible atomic claims and applies the
+  deterministic first-N sequence of left-input, right-input, and operator
+  interventions. Every intervention is accepted only when its exact
+  consequence differs from the candidate's visible result, eliminating the
+  ambiguous case where an unchanged number is nevertheless correct by
+  coincidence. Every tied branch must receive complete equal-size coverage;
+  partial, unsupported, malformed, or truncated evidence abstains.
+
+  Generation occurs in a fresh zero-offset KV context with no solver state or
+  branch ownership identity. The shared resident checkpoint is disclosed, so
+  the receipt claims context separation but never parameter independence.
+  Output must be one strictly bound `FINAL_ANSWER` JSON object containing the
+  claim commitment, intervention commitment, and one exact integer equality.
+  Model output proposes a consequence; deterministic arithmetic reconstruction
+  alone assigns `correct_change`, `invariant_failure`, or `incorrect_change`.
+
+  The complete candidate text, objective, atomic decomposition, interventions,
+  prompt commitments, fresh-context evidence, exact prediction, outcomes,
+  task-score boundary, and implementation source digest land in the receipt.
+  The service independently rebuilds all of them, reconstructs the unrounded
+  blind-review source winner and six-decimal counterfactual boundary, proves
+  the override reached final selection, and proves any later generative veto
+  challenged the counterfactual-selected branch. A multiway tie receives
+  authority only when the best counterfactual evidence is unique; branch index
+  can never manufacture a winner.
+
+  CP358 also closes two proof-contract defects surfaced by the new integration.
+  Value-of-computation rewards are now calculated from the same eight-decimal
+  public transition state that validators reconstruct, eliminating
+  precision-boundary false failures. Neural-uncertainty selection provenance
+  admits only the three runtime-producible ordered task-verifier override
+  pipelines and rejects unknown, duplicated, reordered, or impossible
+  modifiers. This repairs both the new counterfactual path and the older
+  generative-refutation path without weakening neural selection authority.
+
+  Focused engine, worker, service, counterfactual, and uncertainty coverage
+  passes 163/163. The complete latent-cortex ownership suite passes 1,077/1,077
+  in 35.10 seconds. Strict Ruff, bytecode compilation, diff hygiene,
+  governance ownership, and the enterprise ratchet pass. Exact parent/current
+  scans both contain 168 findings and 38 high/critical findings with identical
+  semantic finding identities. This proves bounded arithmetic intervention
+  mechanics, selection causality, and independent receipt reconstruction. It
+  does not prove broad counterfactual competence, parameter-independent
+  verification, a resident-32B gain, adapter interaction, or frontier
+  capability.
 - [ ] **SPARK-045 - Prefix stability verifier.** Regenerate continuations from
   verified prefixes, estimate conclusion stability, and calibrate the signal
   separately from correctness.

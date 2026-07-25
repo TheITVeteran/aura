@@ -3329,16 +3329,24 @@ class LatentCortexEngine:
 
                 after_residual = self._mean_latest_residual(ensemble)
                 after_disagreement = ensemble.disagreement(budget=budget)
+                # The receipt carries eight-decimal public state. Reward
+                # metrics must be derived from that same state or a rounding
+                # boundary can make an honestly emitted transition fail its
+                # independent reconstruction.
+                public_before_residual = round(before_residual, 8)
+                public_before_disagreement = round(before_disagreement, 8)
+                public_after_residual = round(after_residual, 8)
+                public_after_disagreement = round(after_disagreement, 8)
                 checked = previous_verifier_score is not None and probe_score is not None
                 verified_delta = probe_score - previous_verifier_score if checked else 0.0
                 before_uncertainty = max(
-                    before_residual,
-                    before_disagreement,
+                    public_before_residual,
+                    public_before_disagreement,
                     1.0 - previous_verifier_score if previous_verifier_score is not None else 1.0,
                 )
                 after_uncertainty = max(
-                    after_residual,
-                    after_disagreement,
+                    public_after_residual,
+                    public_after_disagreement,
                     1.0 - probe_score if probe_score is not None else before_uncertainty,
                 )
                 cost_fraction = max(
@@ -3357,7 +3365,11 @@ class LatentCortexEngine:
                     ),
                     diversity_gain=max(
                         -1.0,
-                        min(1.0, after_disagreement - before_disagreement),
+                        min(
+                            1.0,
+                            public_after_disagreement
+                            - public_before_disagreement,
+                        ),
                     ),
                     unsupported_confidence=(
                         max(0.0, min(1.0, -verified_delta)) if checked else 0.0
@@ -3382,8 +3394,8 @@ class LatentCortexEngine:
                         "transition": transition,
                         "state_signal": state_signal.to_dict(),
                         "state_before": {
-                            "residual": round(before_residual, 8),
-                            "disagreement": round(before_disagreement, 8),
+                            "residual": public_before_residual,
+                            "disagreement": public_before_disagreement,
                             "verifier_score": previous_verifier_score,
                             "budget_remaining_fraction": round(
                                 state_signal.budget_remaining_fraction,
@@ -3391,8 +3403,8 @@ class LatentCortexEngine:
                             ),
                         },
                         "state_after": {
-                            "residual": round(after_residual, 8),
-                            "disagreement": round(after_disagreement, 8),
+                            "residual": public_after_residual,
+                            "disagreement": public_after_disagreement,
                             "verifier_score": accepted_verifier_score,
                             "observed_verifier_score": probe_score,
                         },
@@ -3525,6 +3537,7 @@ class LatentCortexEngine:
         )
         branch_verifier_score: float | None = None
         branch_probe_texts: dict[int, str] = {}
+        blind_scores: dict[int, float] = {}
         if (
             pending_verifier is not None
             and self.tokenizer is not None
@@ -3598,6 +3611,70 @@ class LatentCortexEngine:
                 receipt.flag("branch_verifier_skipped_budget")
             verifier = None
             winner = select_without_task_verifier()
+
+        # SPARK-044: counterfactual generation is allowed to resolve only a
+        # calibrated top task-verifier tie. Every tied candidate receives the
+        # same exact arithmetic interventions in a fresh zero-offset context;
+        # deterministic recomputation, not generated prose, assigns the
+        # robustness score. Stronger task-verifier evidence is never displaced.
+        if (
+            self.config.counterfactual_verifier_enabled
+            and verifier is not None
+            and verification_objective.strip()
+            and len(branch_probe_texts) == len(ensemble.branches)
+            and len(blind_scores) == len(ensemble.branches)
+        ):
+            try:
+                from core.brain.llm.latent_cortex.counterfactual_verifier import (
+                    run_counterfactual_verifier,
+                )
+
+                receipt.counterfactual_verifier = run_counterfactual_verifier(
+                    branch_probe_texts,
+                    objective=verification_objective,
+                    task_scores={
+                        branch: round(score, 6)
+                        for branch, score in blind_scores.items()
+                    },
+                    selected_branch=winner.index,
+                    max_atoms=self.config.counterfactual_verifier_max_atoms,
+                    max_interventions=(
+                        self.config.counterfactual_verifier_max_interventions
+                    ),
+                    generate=lambda prompt: self._fresh_verifier_generation(
+                        prompt,
+                        budget,
+                        max_tokens=self.config.counterfactual_verifier_max_tokens,
+                        reserve_layer_apps=safety_reserve,
+                    ),
+                )
+                if receipt.counterfactual_verifier["selection_authority_admitted"]:
+                    selected = int(receipt.counterfactual_verifier["selected_branch"])
+                    winner = next(
+                        branch for branch in ensemble.branches if branch.index == selected
+                    )
+                    selection_basis = f"{selection_basis}_counterfactual_tiebreak"
+            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+                receipt.flag(f"counterfactual_verifier_abstained:{type(exc).__name__}")
+                receipt.counterfactual_verifier = {
+                    "requested": True,
+                    "available": False,
+                    "reason": f"{type(exc).__name__}:{exc}"[:240],
+                    "selection_effect": "none",
+                }
+        elif self.config.counterfactual_verifier_enabled:
+            receipt.counterfactual_verifier = {
+                "requested": True,
+                "available": False,
+                "reason": (
+                    "admitted_task_verifier_unavailable"
+                    if verifier is None
+                    else "verification_objective_unavailable"
+                    if not verification_objective.strip()
+                    else "complete_branch_probe_inventory_unavailable"
+                ),
+                "selection_effect": "none",
+            }
 
         # SPARK-042: challenge the provisional winner in an entirely fresh KV
         # context. This is intentionally a refutation veto, not another

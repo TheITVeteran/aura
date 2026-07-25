@@ -15,6 +15,19 @@ NEURAL_UNCERTAINTY_RECEIPT_SCHEMA = "aura.rlc.neural_uncertainty_receipt.v1"
 NEURAL_UNCERTAINTY_OBSERVATION_SCHEMA = "aura.rlc.neural_uncertainty_observation.v1"
 UNAVAILABLE = "unavailable"
 LEARNED = "learned"
+_DIRECT_SELECTION_BASES = frozenset(
+    {
+        "convergence",
+        "neural_uncertainty",
+        "process_verifier",
+        "task_verifier",
+    }
+)
+_ADMITTED_SELECTION_PIPELINES = _DIRECT_SELECTION_BASES | {
+    "task_verifier_counterfactual_tiebreak",
+    "task_verifier_generative_refutation_veto",
+    "task_verifier_counterfactual_tiebreak_generative_refutation_veto",
+}
 
 
 def _is_sha256(value: Any) -> bool:
@@ -203,13 +216,7 @@ def build_neural_uncertainty_receipt(
     if (
         type(selected_branch) is not int
         or not 0 <= selected_branch < len(branches)
-        or selection_basis
-        not in {
-            "convergence",
-            "neural_uncertainty",
-            "process_verifier",
-            "task_verifier",
-        }
+        or selection_basis not in _ADMITTED_SELECTION_PIPELINES
     ):
         raise ValueError("neural-uncertainty selection identity is invalid")
     latest_scores = {
@@ -341,13 +348,7 @@ def validate_neural_uncertainty_receipt(
         or receipt["selection_eligible"] is not selection_eligible
         or type(selected_branch) is not int
         or not 0 <= selected_branch < expected_n_branches
-        or selection_basis
-        not in {
-            "convergence",
-            "neural_uncertainty",
-            "process_verifier",
-            "task_verifier",
-        }
+        or selection_basis not in _ADMITTED_SELECTION_PIPELINES
         or receipt["selection_causal"] is not (selection_basis == "neural_uncertainty")
         or (
             selection_basis == "neural_uncertainty"
