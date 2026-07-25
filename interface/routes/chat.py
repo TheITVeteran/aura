@@ -20157,11 +20157,15 @@ async def api_chat(
             except TimeoutError as e:
                 kernel_timed_out = True
                 await _cancel_kernel_task_if_pending("kernel_timeout")
-                logger.error(
-                    "KernelInterface chat timed out; refusing legacy replay for the same foreground request: %s (%s)",
+                # A timeout is a control-flow outcome, not a crash. Dumping a
+                # full asyncio traceback for every slow turn buries the real
+                # ones: the 2026-07-25 capability run printed CancelledError
+                # chains into the operator's terminal for turns that simply
+                # took too long and were handled exactly as designed.
+                logger.warning(
+                    "KernelInterface chat timed out after its budget; the "
+                    "fallback ladder takes this turn (%s).",
                     type(e).__name__,
-                    e,
-                    exc_info=True,
                 )
             except _CHAT_RECOVERABLE_ERRORS as e:
                 record_degradation('chat', e)

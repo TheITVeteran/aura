@@ -2302,6 +2302,22 @@ _REQUEST_COVERAGE_REASONS = frozenset(
         "low_signal_reliability_reply",
         "detail_request_deflection",
         "prompt_echo_contamination",
+        # Every one of these is a claim about the reply's FIT TO THE REQUEST,
+        # not about the reply itself. Live 2026-07-25: "Here. Bit more settled
+        # than an hour ago." — a correct answer to "more settled or more
+        # strained than an hour ago?" — was rejected as a
+        # generic_memory_pin_acknowledgement, because the validation prompt was
+        # 2,705 characters of assembled context containing an earlier memory
+        # pin. The reply was fine; the comparison was impossible.
+        "generic_memory_pin_acknowledgement",
+        "off_topic_self_reflection_reply",
+        "missing_self_condition_answer",
+        "missing_future_memory_answer",
+        "missing_identity_answer",
+        "unsupported_memory_guarantee",
+        "low_signal_acknowledgement_placeholder",
+        "persona_card_deflection",
+        "contextual_relevance_miss",
     }
 )
 
