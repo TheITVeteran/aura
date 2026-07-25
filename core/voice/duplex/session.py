@@ -64,6 +64,7 @@ from core.voice.duplex.paralinguistics import (
 )
 from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
 from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
+from core.voice.duplex.streaming_reply import ClauseValidator, is_streamable
 from core.voice.duplex.style import StyleController
 from core.voice.duplex.tts_stream import CancellationToken, StreamingTts
 from core.voice.duplex.vad_gate import SpeechEvent, VadGate
@@ -778,6 +779,21 @@ class DuplexVoiceSession:
             self._filler_task = self._spawn(self._run_fillers(time.monotonic()))
 
             cognition_started = time.perf_counter()
+
+            # Narrow streaming carve-out. Only conversational turns, every
+            # clause validated before it is spoken, and any doubt at all
+            # falls through to the fully governed buffered path below.
+            if self._config.stream_reply:
+                eligibility = is_streamable(transcript)
+                if eligibility.ok:
+                    if await self._speak_streaming(transcript):
+                        self._metrics.cognition_ms = (
+                            time.perf_counter() - cognition_started
+                        ) * 1000.0
+                        return
+                else:
+                    logger.debug("Streaming declined: %s", eligibility.reason)
+
             reply = await self._mind.respond(
                 transcript, delivery_context=self._delivery.as_context()
             )
@@ -852,6 +868,167 @@ class DuplexVoiceSession:
             task.cancel()
 
     # ── speech output ────────────────────────────────────────────────────
+
+    async def _speak_streaming(self, transcript: str) -> bool:
+        """Speak clauses as they are generated. Returns True if it handled the turn.
+
+        Returning False means nothing irreversible happened and the caller
+        should run the fully governed buffered path instead. That is the
+        default outcome for every kind of doubt: an empty stream, an
+        unavailable engine, or a clause that fails validation before any
+        audio has gone out.
+        """
+        validator = ClauseValidator()
+        chunker = StreamingChunker(
+            first_max_chars=self._config.tts.first_chunk_max_chars,
+            max_chars=self._config.tts.chunk_max_chars,
+        )
+        spec = self._prosody_spec()
+        self._utterance_counter += 1
+        track = _SpeakingTrack(
+            utterance_id=self._utterance_counter,
+            intended="",
+            started_at=time.monotonic(),
+        )
+
+        spoken_any = False
+        seq = 0
+
+        async def _emit(clause: str) -> bool:
+            """Validate, synthesise and send one clause. False = abort."""
+            nonlocal spoken_any, seq
+            verdict = validator.check(clause)
+            if not verdict.ok:
+                logger.warning("Streaming clause rejected (%s): %r", verdict.reason, clause[:60])
+                await self._mind.publish(
+                    "stream_clause_rejected", {"reason": verdict.reason}
+                )
+                return False
+
+            result = await self._tts.synthesize(clause, spec, track.token)
+            if result is None or track.token.cancelled:
+                return False
+
+            if not spoken_any:
+                # First audio: only now is the turn committed to streaming.
+                self._stop_fillers()
+                self._speaking = track
+                self._client_played_s = 0.0
+                self._overlap.reset()
+                self._overlap_audio = []
+                self._metrics.first_audio_at = time.monotonic()
+                self._metrics.tts_first_chunk_ms = result.synth_ms
+                await self._set_state(SessionState.SPEAKING)
+                spoken_any = True
+
+            track.chunks.append((result.text, result.duration_s))
+            track.sent_duration_s += result.duration_s
+            track.intended = f"{track.intended} {result.text}".strip()
+            self._echo.note_spoken(result.text)
+
+            await self._send_json(
+                {"type": protocol.EVT_SPEAKING_CHUNK, "text": result.text, "seq": seq}
+            )
+            await self._send_binary(
+                protocol.encode_audio(
+                    float32_to_pcm16(result.samples),
+                    opcode=protocol.AudioOpcode.SPEECH,
+                    seq=seq,
+                    utterance_id=track.utterance_id,
+                )
+            )
+            seq += 1
+            return True
+
+        try:
+            async for piece in self._mind.stream_response(
+                transcript, delivery_context=self._delivery.as_context()
+            ):
+                if track.token.cancelled:
+                    break
+                for clause in chunker.push(piece):
+                    if not await _emit(clause):
+                        return await self._abandon_stream(track, spoken_any)
+            if not track.token.cancelled:
+                for clause in chunker.flush():
+                    if not await _emit(clause):
+                        return await self._abandon_stream(track, spoken_any)
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:
+            record_degradation(
+                "voice_duplex.streaming",
+                exc,
+                action="abandoned the streamed reply; falling back to the governed turn",
+                severity="warning",
+            )
+            return await self._abandon_stream(track, spoken_any)
+
+        if not spoken_any:
+            # The stream produced nothing usable. Nothing was said, so the
+            # buffered path can answer cleanly.
+            return False
+
+        await self._send_binary(
+            protocol.encode_audio(
+                b"",
+                opcode=protocol.AudioOpcode.SPEECH,
+                seq=seq,
+                utterance_id=track.utterance_id,
+                last=True,
+            )
+        )
+        await self._send_json({"type": protocol.EVT_REPLY, "text": track.intended})
+        await self._await_playback_drain(track)
+        if track.token.cancelled or self._speaking is not track:
+            return True
+
+        self._mind.record_spoken(
+            SpokenRecord(
+                intended=track.intended,
+                spoken=track.intended,
+                interrupted=False,
+                started_at=track.started_at,
+                ended_at=time.monotonic(),
+            )
+        )
+        self._speaking = None
+        await self._send_json({"type": protocol.EVT_METRICS, **self._metrics.as_dict()})
+        await self._mind.publish(
+            "spoke", {"chars": len(track.intended), "streamed": True, **self._metrics.as_dict()}
+        )
+        await self._set_state(SessionState.LISTENING)
+        return True
+
+    async def _abandon_stream(self, track: _SpeakingTrack, spoken_any: bool) -> bool:
+        """Give up on a streamed reply. Returns True if the turn is finished.
+
+        If nothing was spoken this is invisible — the caller re-runs the
+        governed path and the user never knows. If audio already went out we
+        cannot unsay it, so she stops and says so, and the governed path then
+        answers properly. Honest and slightly awkward beats fluent and wrong.
+        """
+        track.token.cancel()
+        if not spoken_any:
+            self._speaking = None
+            return False
+
+        await self._send_json({"type": protocol.EVT_FLUSH, "utterance_id": track.utterance_id})
+        self._mind.record_spoken(
+            SpokenRecord(
+                intended=track.intended,
+                spoken=track.intended,
+                interrupted=True,
+                started_at=track.started_at,
+                ended_at=time.monotonic(),
+            )
+        )
+        self._speaking = None
+        await self._speak_text(
+            "Sorry — that came out wrong. Let me say it properly.",
+            cause=ThinkingCause.UNCERTAINTY,
+        )
+        return False
 
     async def _speak_reply(self, reply: str) -> None:
         await self._send_json({"type": protocol.EVT_REPLY, "text": reply})

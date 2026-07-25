@@ -345,6 +345,15 @@ class DuplexConfig:
         default_factory=lambda: _env_int("AURA_VOICE_REPLY_WORDS", 45)
     )
 
+    # Speak clauses as they are generated instead of waiting for the whole
+    # reply. Takes time-to-first-audio from ~4.4s to ~1.1s, at the cost of
+    # the first clause leaving her mouth before the complete reply has
+    # cleared validation. Narrowly gated and fails closed — see
+    # streaming_reply.py for what bounds the risk.
+    stream_reply: bool = field(
+        default_factory=lambda: _env_flag("AURA_VOICE_STREAM_REPLY", True)
+    )
+
     @classmethod
     def load(cls) -> DuplexConfig:
         return cls()

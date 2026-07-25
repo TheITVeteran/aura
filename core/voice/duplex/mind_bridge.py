@@ -32,7 +32,7 @@ import contextlib
 import logging
 import re
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -271,6 +271,44 @@ class MindBridge:
 
         parts.append(transcript)
         return "\n\n".join(parts)
+
+    async def stream_response(
+        self, transcript: str, *, delivery_context: str = ""
+    ) -> AsyncIterator[str]:
+        """Token stream for the narrow streaming carve-out.
+
+        Uses ``CognitiveEngine.think_stream``, which routes to the LLM router
+        directly and therefore does *not* run the governance phases the
+        buffered path does. That is precisely why the caller gates this to
+        conversational turns and validates every clause before speaking it —
+        the safety here lives in the caller, not in this method, and the
+        caller must abandon to :meth:`respond` on any doubt.
+        """
+        transcript = (transcript or "").strip()
+        if not transcript:
+            return
+
+        effective = self._compose_effective_message(transcript, delivery_context)
+        self._turn_active = True
+        try:
+            from core.container import ServiceContainer
+
+            engine = ServiceContainer.get("cognitive_engine", default=None)
+            if engine is None or not hasattr(engine, "think_stream"):
+                return
+            async for chunk in engine.think_stream(effective, origin="user"):
+                text = str(chunk or "")
+                if text:
+                    yield text
+        except (RuntimeError, ValueError, AttributeError, ImportError, TypeError, OSError) as exc:
+            record_degradation(
+                "voice_duplex.mind",
+                exc,
+                action="streaming reply aborted; caller falls back to the governed turn",
+                severity="warning",
+            )
+        finally:
+            self._turn_active = False
 
     # ── spoken-truth accounting ──────────────────────────────────────────
 

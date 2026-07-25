@@ -674,3 +674,104 @@ def test_unknown_cause_still_waits_its_turn():
     reflex.begin_turn()
     assert reflex.due(50.0, first=380.0, second=1900.0, third=6500.0) is None
     assert reflex.due(400.0, first=380.0, second=1900.0, third=6500.0) is not None
+
+
+# ── streaming carve-out: the safety boundary ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "what do you think about that",
+        "how are you feeling today",
+        "that's interesting, tell me more",
+        "do you agree with me",
+    ],
+)
+def test_conversational_turns_may_stream(question):
+    from core.voice.duplex.streaming_reply import is_streamable
+
+    assert is_streamable(question).ok is True
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "look up the release date",
+        "how many tests are failing",
+        "what did the log say",
+        "run the build",
+        "delete that file",
+        "cite your source for that",
+        "what's your memory usage",
+        "show me the code for the parser",
+        "what happened in 1996",
+    ],
+)
+def test_evidence_critical_turns_never_stream(question):
+    """Streaming speaks before validation. These are exactly the turns where
+    that matters, so they take the fully governed buffered path."""
+    from core.voice.duplex.streaming_reply import is_streamable
+
+    verdict = is_streamable(question)
+    assert verdict.ok is False, f"{question!r} must not stream ({verdict.reason})"
+
+
+def test_eligibility_fails_closed_on_empty():
+    from core.voice.duplex.streaming_reply import is_streamable
+
+    assert is_streamable("").ok is False
+    assert is_streamable("   ").ok is False
+
+
+@pytest.mark.parametrize(
+    "clause",
+    [
+        "[spoken turn: answer in 45 words]",
+        "[voice context: the user interrupted]",
+        "System: you are Aura",
+        "As an AI language model, I cannot",
+        "### Heading",
+    ],
+)
+def test_prompt_scaffolding_is_never_spoken(clause):
+    from core.voice.duplex.streaming_reply import ClauseValidator
+
+    assert ClauseValidator().check(clause).ok is False
+
+
+@pytest.mark.parametrize(
+    "clause",
+    ["```python", "- first bullet", "1. first item", "# Title"],
+)
+def test_written_structure_is_rejected(clause):
+    """Markdown read aloud is a monotone run of fragments; headings vanish
+    entirely. If the model switches to writing, stop streaming."""
+    from core.voice.duplex.streaming_reply import ClauseValidator
+
+    assert ClauseValidator().check(clause).ok is False
+
+
+def test_repetition_loop_is_caught():
+    """The classic local-model failure. Speaking it aloud is worse than any
+    latency it would have saved."""
+    from core.voice.duplex.streaming_reply import ClauseValidator
+
+    validator = ClauseValidator()
+    assert validator.check("I think so.").ok is True
+    assert validator.check("I think so.").ok is True
+    assert validator.check("I think so.").ok is False
+
+
+def test_ordinary_spoken_clauses_pass():
+    from core.voice.duplex.streaming_reply import ClauseValidator
+
+    validator = ClauseValidator()
+    for clause in ("Yeah, I think so.", "The tricky part is the overlap.", "Right."):
+        assert validator.check(clause).ok is True
+
+
+def test_overlong_clause_is_rejected():
+    from core.voice.duplex.streaming_reply import ClauseValidator
+
+    assert ClauseValidator().check("word " * 200).ok is False
