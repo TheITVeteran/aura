@@ -85,6 +85,7 @@ class MemorySentinel:
         self._memory_stalled = False
         self.samples = 0
         self.sheds = 0
+        self.evictions = 0
         #: Re-scan the container for new shed candidates every ~60s.
         self.rescan_every = max(1, int(60.0 / max(interval_s, 0.1)))
         self._rescan_countdown = self.rescan_every
@@ -170,6 +171,24 @@ class MemorySentinel:
             except Exception:
                 logger.debug("OOM organ rescan failed", exc_info=True)
 
+        # Graded eviction runs before the crude OOM ladder: reclaim caches
+        # first, evict BestEffort organs next, and only then let the OOM
+        # policy pick a victim. Gated fail-OPEN — skipping protective work
+        # because another process might be doing it is the wrong failure
+        # direction. See lease.should_act_as_singleton.
+        from core.runtime.lease import RUNTIME_LEASE, should_act_as_singleton
+
+        if should_act_as_singleton(RUNTIME_LEASE):
+            try:
+                from core.runtime.eviction import get_eviction_manager
+
+                outcome = get_eviction_manager().enforce()
+                self.evictions += len(
+                    [a for a in outcome.get("actions", ()) if a.get("action") == "evict"]
+                )
+            except Exception:
+                logger.debug("eviction enforcement failed", exc_info=True)
+
         sample = self._sample_memory()
         if sample is None:
             return
@@ -232,6 +251,7 @@ class MemorySentinel:
             "interval_s": self.interval_s,
             "samples": self.samples,
             "sheds": self.sheds,
+            "evictions": self.evictions,
             "memory_stall_open": self._memory_stalled,
         }
 
@@ -444,11 +464,71 @@ async def _activate_verification(*, foreground_only: bool) -> ActivationResult:
     )
 
 
+async def _activate_orchestration(*, foreground_only: bool) -> ActivationResult:
+    """Wave 3 — admission, quota, eviction, controllers, leader election."""
+    from core.runtime.eviction import get_eviction_manager
+    from core.runtime.lease import RUNTIME_LEASE, get_elector
+    from core.runtime.quota import install_quota_admission
+    from core.runtime.reconcile import get_controller_manager
+
+    quota_hook = install_quota_admission()
+    oom_scores = get_eviction_manager().sync_oom_scores()
+    started_controllers = await get_controller_manager().start_all()
+
+    # Contend for the runtime lease. Not holding it is not an error — it
+    # is the *answer*, and it is the answer that used to require reading
+    # memory graphs after the duplicate-runtime cascade had already
+    # happened. Never blocks boot.
+    leader = False
+    if not foreground_only:
+        elector = get_elector(RUNTIME_LEASE)
+        await elector.start()
+        # One synchronous attempt so the boot report says something true
+        # rather than "pending".
+        leader = await elector.try_acquire_or_renew()
+        try:
+            from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+            coordinator = get_shutdown_coordinator()
+            coordinator.register(
+                elector.stop,
+                phase="task_supervisor",
+                name=f"lease.{RUNTIME_LEASE}",
+                timeout=5.0,
+            )
+            coordinator.register(
+                get_controller_manager().stop_all,
+                phase="task_supervisor",
+                name="controller_manager",
+                timeout=10.0,
+            )
+        except Exception:
+            logger.debug("orchestration shutdown registration skipped", exc_info=True)
+
+    return ActivationResult(
+        name="orchestration",
+        ok=True,
+        detail=(
+            f"admission chain live (quota hook {'installed' if quota_hook else 'present'}), "
+            f"{len(oom_scores)} QoS→OOM scores synced, "
+            f"{len(started_controllers)} controller(s) started, "
+            f"runtime lease {'HELD' if leader else 'not held'}"
+        ),
+        data={
+            "quota_admission_installed": quota_hook,
+            "qos_oom_scores": oom_scores,
+            "controllers": started_controllers,
+            "runtime_lease_held": leader,
+        },
+    )
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("kernel_discipline", _activate_kernel_discipline),
     ("verification", _activate_verification),
+    ("orchestration", _activate_orchestration),
 ]
 
 

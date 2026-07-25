@@ -381,6 +381,166 @@ def _flags_documented() -> Iterator[Violation]:
             )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Orchestration
+# ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "admission.validators_do_not_mutate",
+    scope="orchestration",
+    owner=_OWNER,
+    description="no validating admission hook has been caught mutating its input",
+)
+def _validators_do_not_mutate() -> Iterator[Violation]:
+    from core.runtime.sanitizers import sanitizer_report
+
+    for finding in sanitizer_report()["findings"]:
+        if finding["sanitizer"] == "admission":
+            yield Violation(
+                subject=finding["signature"].split(":", 1)[-1],
+                message=finding["message"],
+                remedy="move the edit into a mutating hook, which runs before validation",
+            )
+
+
+@invariant(
+    "quota.guaranteed_specs_are_coherent",
+    scope="orchestration",
+    owner=_OWNER,
+    description="a Guaranteed organ's requests equal its limits on every resource",
+)
+def _guaranteed_specs_coherent() -> Iterator[Violation]:
+    from core.runtime.quota import QosClass, get_quota_registry
+
+    for name, spec in get_quota_registry().specs().items():
+        if spec.qos_class is not QosClass.GUARANTEED:
+            continue
+        for kind, limit in spec.limits.items():
+            requested = spec.requests.get(kind)
+            if requested is None or abs(requested - limit) > 1e-9:
+                yield Violation(
+                    subject=f"{name}.{kind}",
+                    message=(
+                        f"{name!r} is classed Guaranteed but requests "
+                        f"{requested} against a limit of {limit}"
+                    ),
+                    remedy="set the request equal to the limit, or accept Burstable",
+                )
+
+
+@invariant(
+    "eviction.guaranteed_organs_are_protected",
+    scope="orchestration",
+    owner=_OWNER,
+    description="no Guaranteed organ appears in the eviction order",
+)
+def _guaranteed_protected() -> Iterator[Violation]:
+    from core.runtime.eviction import eviction_report
+    from core.runtime.quota import QosClass, get_quota_registry
+
+    order = set(eviction_report()["eviction_order"])
+    registry = get_quota_registry()
+    for name in order:
+        if registry.qos_class(name) is QosClass.GUARANTEED:
+            yield Violation(
+                subject=name,
+                message=(
+                    f"{name!r} is Guaranteed but is in the eviction order; the "
+                    "guarantee it was given does not hold"
+                ),
+                remedy="exclude Guaranteed organs from eviction_order()",
+            )
+
+
+@invariant(
+    "eviction.thresholds_are_ordered",
+    scope="orchestration",
+    owner=_OWNER,
+    description="each signal's hard threshold is stricter than its soft one",
+)
+def _thresholds_ordered() -> Iterator[Violation]:
+    from core.runtime.eviction import Comparison, eviction_report
+
+    by_signal: dict[str, list[dict]] = {}
+    for entry in eviction_report()["thresholds"]:
+        by_signal.setdefault(entry["signal"], []).append(entry)
+    for signal, entries in by_signal.items():
+        hard = [e for e in entries if e["hard"]]
+        soft = [e for e in entries if not e["hard"]]
+        if not hard or not soft:
+            continue
+        for h in hard:
+            for s in soft:
+                if h["comparison"] != s["comparison"]:
+                    continue
+                stricter = (
+                    h["value"] < s["value"]
+                    if h["comparison"] == str(Comparison.BELOW)
+                    else h["value"] > s["value"]
+                )
+                if not stricter:
+                    yield Violation(
+                        subject=signal,
+                        message=(
+                            f"hard threshold {h['value']} is not stricter than the "
+                            f"soft threshold {s['value']} on {signal}; the hard one "
+                            "fires first and the grace period never applies"
+                        ),
+                        remedy="make the hard threshold stricter, or drop the soft one",
+                    )
+
+
+@invariant(
+    "reconcile.queues_are_draining",
+    scope="orchestration",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="no controller queue is deep and backing off at the same time",
+)
+def _queues_draining() -> Iterator[Violation]:
+    from core.runtime.reconcile import reconcile_report
+
+    for entry in reconcile_report()["controllers"]:
+        queue = entry["queue"]
+        if queue["depth"] > 32 and queue["backing_off"]:
+            yield Violation(
+                subject=entry["name"],
+                message=(
+                    f"controller {entry['name']!r} has {queue['depth']} queued keys "
+                    f"while {len(queue['backing_off'])} are backing off; it is not "
+                    "converging"
+                ),
+                remedy="look at last_error; a reconciler that always fails never drains",
+            )
+
+
+@invariant(
+    "lease.no_live_duplicate_holder",
+    scope="orchestration",
+    owner=_OWNER,
+    description="no lease we want is held by another live process on this host",
+)
+def _no_duplicate_holder() -> Iterator[Violation]:
+    from core.runtime.lease import lease_report
+
+    for entry in lease_report()["leases"]:
+        record = entry.get("record")
+        if not record or entry["is_leader"]:
+            continue
+        holder = record["identity"]
+        ours = entry["identity"]
+        if holder["host"] == ours["host"] and holder["pid"] != ours["pid"]:
+            yield Violation(
+                subject=entry["name"],
+                message=(
+                    f"lease {entry['name']!r} is held by pid {holder['pid']} on this "
+                    f"host while pid {ours['pid']} also wants it — two runtimes are "
+                    "contending for the same exclusive work"
+                ),
+                remedy="stop the other runtime; duplicate runtimes double memory",
+            )
+
+
 def register_runtime_invariants() -> int:
     """Import-time registration is the real work; this returns the count."""
     from core.verify.invariants import get_registry

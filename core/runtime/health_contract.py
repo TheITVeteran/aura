@@ -1118,6 +1118,33 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover
         block["pressure_error"] = repr(exc)
     try:
+        from core.runtime.admission import admission_report
+        from core.runtime.eviction import eviction_report
+        from core.runtime.lease import lease_report
+        from core.runtime.quota import quota_report
+        from core.runtime.reconcile import reconcile_report
+
+        admission = admission_report()
+        eviction = eviction_report()
+        block["orchestration"] = {
+            "admission": {
+                "hooks": len(admission["mutating"]) + len(admission["validating"]),
+                "admitted": admission["admitted"],
+                "denied": admission["denied"],
+            },
+            "quota": quota_report()["by_qos_class"],
+            "eviction": {
+                "eviction_order": eviction["eviction_order"],
+                "breached": eviction["currently_breached"],
+                "reclaims": eviction["reclaims"],
+                "evictions": eviction["evictions"],
+            },
+            "controllers": reconcile_report(),
+            "leases": lease_report(),
+        }
+    except Exception as exc:  # pragma: no cover
+        block["orchestration_error"] = repr(exc)
+    try:
         from core.runtime.sanitizers import sanitizer_report
 
         block["sanitizers"] = sanitizer_report()
