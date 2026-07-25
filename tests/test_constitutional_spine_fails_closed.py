@@ -243,3 +243,86 @@ class TestTrainingAdmissionRequiresAConstitution:
 
         doc = inspect.getdoc(STaRReasoner._heuristic_constitutional_check) or ""
         assert "never admit" in doc or "can never admit" in doc
+
+
+class TestDurabilityIsNotClaimedWithoutWriting:
+    """``4f3b7d53`` — _submit_intent returned success when the executive was
+    absent, writing nothing and enqueuing nothing, while the comment claimed
+    the intent was queued. Receipts marked episodic memories, facts and
+    beliefs committed while the data was discarded: silent loss reported as
+    success, on the path whose whole job is durability."""
+
+    def _persister(self):
+        from core.autonomy.memory_persister import MemoryPersister
+
+        return MemoryPersister.__new__(MemoryPersister)
+
+    def _intent(self):
+        return type("I", (), {"intent_id": "i1"})()
+
+    def test_no_executive_is_not_a_commit(self):
+        persister = self._persister()
+        persister._executive = None
+        ok, err = persister._submit_intent(self._intent())
+        assert ok is False
+        assert err == "executive_unavailable"
+
+    def test_an_async_only_executive_is_not_a_commit(self):
+        persister = self._persister()
+        persister._executive = type("E", (), {})()
+        ok, err = persister._submit_intent(self._intent())
+        assert ok is False
+        assert "sync_evaluator" in err
+
+    def test_the_caller_already_queues_failures(self):
+        """The retry machinery existed; this function never let it run."""
+        from core.autonomy import memory_persister as mod
+
+        source = inspect.getsource(mod)
+        assert "self._enqueue(" in source
+        assert "queued_for_retry" in source
+
+
+class TestHighRiskToolsNeedRestraintsThatRan:
+    """``be7d1d4f`` — dvg absent, dvg raising, cwm absent and cwm raising all
+    fell through to approval for python_sandbox, shell_executor and
+    file_operations, and tool names from model output had no allowlist."""
+
+    def test_only_known_tools_are_dispatchable(self):
+        from core.agency.agency_core import _DISPATCHABLE_SHARD_TOOLS
+
+        assert "exfiltrate_secrets" not in _DISPATCHABLE_SHARD_TOOLS
+        assert "python_sandbox" in _DISPATCHABLE_SHARD_TOOLS
+
+    def test_the_high_risk_set_is_the_blast_radius(self):
+        from core.agency.agency_core import (
+            _DISPATCHABLE_SHARD_TOOLS,
+            _HIGH_RISK_SHARD_TOOLS,
+        )
+
+        assert _HIGH_RISK_SHARD_TOOLS == {
+            "python_sandbox", "shell_executor", "file_operations",
+        }
+        assert _HIGH_RISK_SHARD_TOOLS <= _DISPATCHABLE_SHARD_TOOLS
+
+    def test_an_unknown_tool_name_is_refused(self):
+        from core.agency import agency_core as mod
+
+        source = inspect.getsource(mod)
+        assert "unknown_tool_name" in source
+        assert "_DISPATCHABLE_SHARD_TOOLS" in source
+
+    def test_both_restraints_must_have_actually_run(self):
+        from core.agency import agency_core as mod
+
+        source = inspect.getsource(mod)
+        assert "_value_check_done" in source
+        assert "_causal_check_done" in source
+        assert "blocked_ungated:" in source
+
+    def test_a_failed_restraint_is_recorded_at_critical(self):
+        from core.agency import agency_core as mod
+
+        source = inspect.getsource(mod)
+        assert "value-graph check FAILED for high-risk tool" in source
+        assert "causal simulation FAILED for high-risk tool" in source

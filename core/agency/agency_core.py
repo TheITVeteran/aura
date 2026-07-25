@@ -476,22 +476,46 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                     name = t["name"]
                     payload = t["payload"]
                     is_blocked = False
+                    # CP126 be7d1d4f. Every safety check below could be
+                    # ABSENT or FAIL and leave the tool approved: dvg None,
+                    # dvg raising, cwm None, cwm raising — all fell through
+                    # to approval. For python_sandbox / shell_executor /
+                    # file_operations that is the whole blast radius of the
+                    # agent. "We could not check" is not "it is safe".
+                    _high_risk = name in _HIGH_RISK_SHARD_TOOLS
+                    _value_check_done = not _high_risk
+                    _causal_check_done = not _high_risk
+
+                    # A tool name comes from model output. Without a local
+                    # allowlist an invented name reaches dispatch unchecked.
+                    if name not in _DISPATCHABLE_SHARD_TOOLS:
+                        blocked_tools.append((name, "unknown_tool_name"))
+                        _record_agency_degradation(
+                            RuntimeError(f"shard requested unknown tool {name!r}"),
+                            action="refused an unrecognised tool name from model output",
+                        )
+                        continue
                     try:
                         dvg = ServiceContainer.get("dynamic_value_graph", default=None)
-                        if dvg and name in ["python_sandbox", "shell_executor", "file_operations"]:
+                        if dvg and name in _HIGH_RISK_SHARD_TOOLS:
                             status_dict = dvg.get_status().get("nodes", {})
                             top_values = sorted(status_dict.values(), key=lambda v: v.get("weight", 0), reverse=True)[:3]
                             if any(v.get("status") == "provisional" for v in top_values):
                                 is_blocked = True
+                            _value_check_done = True
                     except _AGENCY_BOUNDARY_ERRORS as e:
-                        _record_agency_degradation(e, action=f"dynamic value graph check skipped for {name}")
+                        _record_agency_degradation(
+                            e,
+                            action=f"value-graph check FAILED for high-risk tool {name}",
+                            severity="critical" if _high_risk else "warning",
+                        )
                         logger.error("Error checking provisional values: %s", e)
 
                     if is_blocked:
                         blocked_tools.append((name, "blocked_by_provisional_value"))
                         logger.warning("🛡️ Value Graph Blocked tool %s due to provisional status.", name)
                     else:
-                        if name in ["python_sandbox", "shell_executor", "file_operations"]:
+                        if name in _HIGH_RISK_SHARD_TOOLS:
                             try:
                                 cwm = ServiceContainer.get("causal_world_model", default=None)
                                 if cwm:
@@ -526,9 +550,35 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                                             is_blocked = True
                                             blocked_tools.append((name, "vetoed_by_causal_mcts_rollout"))
                                             logger.warning("🛡️ MCTS Simulation Vetoed %s: Predicted catastrophic system degradation.", name)
+                                    _causal_check_done = True
                             except _AGENCY_BOUNDARY_ERRORS as mcts_e:
-                                _record_agency_degradation(mcts_e, action=f"causal tool simulation skipped for {name}")
+                                _record_agency_degradation(
+                                    mcts_e,
+                                    action=f"causal simulation FAILED for high-risk tool {name}",
+                                    severity="critical",
+                                )
                                 logger.error("Failed to run MCTS simulation: %s", mcts_e)
+
+                        # A high-risk tool needs BOTH restraints to have
+                        # actually run. Absent or broken means refused.
+                        if not is_blocked and not (_value_check_done and _causal_check_done):
+                            is_blocked = True
+                            missing = []
+                            if not _value_check_done:
+                                missing.append("dynamic_value_graph")
+                            if not _causal_check_done:
+                                missing.append("causal_world_model")
+                            blocked_tools.append(
+                                (name, "blocked_ungated:" + ",".join(missing))
+                            )
+                            _record_agency_degradation(
+                                RuntimeError(
+                                    f"high-risk tool {name} refused; "
+                                    f"unavailable restraints: {', '.join(missing)}"
+                                ),
+                                action="refused a high-risk tool whose safety checks could not run",
+                                severity="critical",
+                            )
 
                         if not is_blocked:
                             approved_tools.append((name, payload))
@@ -666,6 +716,26 @@ class AgencyState(BaseModel):
     last_audio_event: float = 0.0
     current_ambient_context: str = ""
     perceptual_buffer: dict[str, Any] = Field(default_factory=dict)
+
+
+# Tools a shard may dispatch at all. A tool name comes from model output, so
+# without a local allowlist an invented name reaches dispatch unchecked.
+_DISPATCHABLE_SHARD_TOOLS = frozenset({
+    "python_sandbox",
+    "shell_executor",
+    "file_operations",
+    "web_search",
+    "memory_query",
+    "vision_query",
+})
+
+# The subset whose blast radius requires every restraint to have actually
+# run — not merely to have been attempted.
+_HIGH_RISK_SHARD_TOOLS = frozenset({
+    "python_sandbox",
+    "shell_executor",
+    "file_operations",
+})
 
 
 class AgencyCore:

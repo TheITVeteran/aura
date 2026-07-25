@@ -367,16 +367,30 @@ class MemoryPersister:
     # ── Executive submission ─────────────────────────────────────────────
 
     def _submit_intent(self, intent: Any) -> tuple[bool, str]:
+        """Submit one intent to the executive. False means NOT committed.
+
+        CP126 4f3b7d53. Both no-executive paths returned success while
+        writing nothing and enqueuing nothing — the comment claimed the
+        intent was recorded to the queue and no queue write existed. So
+        receipts marked episodic memories, facts and beliefs committed while
+        the data was discarded: silent loss, reported as success, on the
+        path whose whole job is durability.
+
+        Returning failure is the entire fix, because the caller already
+        does the right thing with it — _enqueue() to the retry queue and
+        queued_for_retry on the receipt. The machinery was there; this
+        function just never let it run.
+        """
         if self._executive is None:
-            # No live executive — record the intent to the queue but
-            # consider this a soft success so callers can still proceed.
-            return True, ""
+            return False, "executive_unavailable"
         try:
             evaluator = getattr(self._executive, "evaluate_sync", None) or getattr(self._executive, "submit_sync", None)
             if evaluator is None:
-                # async-only executive: fall back to logging
-                logger.debug("executive has no sync evaluator; intent left for async submission: %s", intent.intent_id)
-                return True, ""
+                logger.debug(
+                    "executive has no sync evaluator; intent queued for retry: %s",
+                    intent.intent_id,
+                )
+                return False, "executive_has_no_sync_evaluator"
             decision = evaluator(intent)
             outcome = getattr(decision, "outcome", None)
             outcome_str = getattr(outcome, "value", str(outcome))
