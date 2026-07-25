@@ -245,3 +245,91 @@ class TestAnObservationIsNotACharge:
         )
         assert service._metabolic.fatigue > 0.0
         assert service._metabolic.recovery_debt > 0.0
+
+
+class TestARefusalCostsNothing:
+    """The charge the ledger exposed — and the loop it closed.
+
+    The final verification run showed only 0.175 of fatigue ever charged
+    through the cost path while ``body_fatigue`` sat at 0.985. The charger was
+    ``_on_consequence``: a bare ``fatigue += 0.02`` on every "failure"
+    consequence, outside every receipt and every ledger.
+
+    When the Will DEFERS an action on welfare grounds, the welfare transaction
+    still completes as a "failure". So the defer storm charged fatigue, which
+    raised recovery_drive, which caused more defers. Declining to act spends
+    nothing; charging for it is how a tired system talks itself into staying
+    tired.
+    """
+
+    def _event(self, *, error="", action="did a thing", outcome="failure"):
+        from core.runtime.consequence_bus import ConsequenceEvent
+
+        return ConsequenceEvent(
+            event_id=f"evt-{error or action}-{time.time_ns()}",
+            timestamp=time.time(),
+            source="welfare_transaction",
+            domain="initiative",
+            action_content=action,
+            actual_outcome=outcome,
+            recovery_required=0.3,
+            error=error,
+        )
+
+    def test_a_deferred_action_charges_nothing(self, service):
+        service._metabolic.fatigue = 0.0
+        service._metabolic.recovery_debt = 0.0
+        for _ in range(50):
+            service._on_consequence(
+                self._event(error="aura_now_defer: requires stabilization first")
+            )
+        assert service._metabolic.fatigue == 0.0
+        assert service._metabolic.recovery_debt == 0.0
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "welfare_recovery_required_before_action",
+            "model_load_admission_denied",
+            "queued until admission clears",
+            "SubstrateAuthority blocked the mutation",
+        ],
+    )
+    def test_every_refusal_shape_is_free(self, service, reason):
+        service._metabolic.fatigue = 0.0
+        service._on_consequence(self._event(error=reason))
+        assert service._metabolic.fatigue == 0.0
+
+    def test_work_that_actually_failed_still_costs(self, service):
+        service._metabolic.fatigue = 0.0
+        service._on_consequence(
+            self._event(error="ConnectionError: the endpoint went away")
+        )
+        assert service._metabolic.fatigue == pytest.approx(0.02)
+        assert service._metabolic.recovery_debt > 0.0
+
+    def test_a_real_failure_is_now_in_the_ledger(self, service):
+        """It used to be invisible, which is why it took a day to find."""
+        service._on_consequence(self._event(error="TimeoutError: worker gone"))
+        assert service.charge_attribution()["fatigue"], (
+            "an unledgered charge is an unfindable one"
+        )
+
+    def test_a_republished_failure_charges_once(self, service):
+        from core.runtime.consequence_bus import ConsequenceEvent
+
+        service._metabolic.fatigue = 0.0
+        for _ in range(10):
+            service._on_consequence(
+                ConsequenceEvent(
+                    event_id="evt-stable",
+                    timestamp=time.time(),
+                    source="welfare_transaction",
+                    domain="initiative",
+                    action_content="one failed action",
+                    actual_outcome="failure",
+                    recovery_required=0.3,
+                    error="ValueError: bad input",
+                )
+            )
+        assert service._metabolic.fatigue == pytest.approx(0.02)

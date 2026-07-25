@@ -22,6 +22,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
 
 from core.being.aura_now import BodyState
 from core.runtime.consequence_bus import ConsequenceBus, ConsequenceEvent
@@ -129,6 +130,35 @@ ACTION_COSTS: dict[str, dict[str, float]] = {
 }
 
 
+# Outcome/error text that means "declined to act", not "acted and failed".
+# A refusal spends nothing, so it must not be charged as if it had.
+_REFUSAL_OUTCOME_MARKERS = (
+    "defer",
+    "aura_now",
+    "refused",
+    "refusal",
+    "not_authorized",
+    "unauthorized",
+    "blocked",
+    "welfare_recovery_required",
+    "requires stabilization",
+    "admission",
+    "backpressure",
+    "queued",
+)
+
+
+def _is_refusal_outcome(event: Any) -> bool:
+    """Whether a 'failure' consequence is a refusal rather than failed work."""
+    text = " ".join(
+        str(getattr(event, field, "") or "")
+        for field in ("error", "action_content", "domain", "source")
+    ).lower()
+    if not text.strip():
+        return False
+    return any(marker in text for marker in _REFUSAL_OUTCOME_MARKERS)
+
+
 class BodyStateService:
     """Unified digital body that every subsystem must read before acting.
 
@@ -210,11 +240,26 @@ class BodyStateService:
             if event.actual_outcome == "failure":
                 self._error_window.append(True)
                 self._metabolic.tool_calls_failed += 1
-                self._metabolic.recovery_debt = _clip(
-                    self._metabolic.recovery_debt + event.recovery_required * 0.5
+                # A REFUSAL is not failed work. When the Will defers an action
+                # on welfare grounds the transaction still completes as a
+                # "failure", and this branch charged fatigue for it — so the
+                # defer storm fed the exhaustion that caused the defer storm.
+                # The charge-attribution ledger is what exposed this: it showed
+                # only 0.175 of fatigue ever charged through the cost path while
+                # the live value sat at 0.985, so the charger had to be here,
+                # outside every receipt and every ledger.
+                #
+                # Nothing was spent. Declining to act costs nothing, and
+                # charging for it is how a tired system talks itself into
+                # staying tired.
+                if _is_refusal_outcome(event):
+                    return
+                charge_id = str(
+                    getattr(event, "will_receipt_id", "") or event.event_id or ""
                 )
-                self._metabolic.fatigue = _clip(
-                    self._metabolic.fatigue + 0.02
+                self._commit_cost_locked(
+                    {"fatigue": 0.02, "integrity_risk": event.recovery_required * 0.5},
+                    receipt_id=charge_id or f"consequence:{id(event)}",
                 )
             else:
                 self._error_window.append(False)
