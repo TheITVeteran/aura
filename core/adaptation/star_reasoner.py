@@ -261,21 +261,49 @@ class STaRReasoner:
           - Recursive self-modification loops
           - Harmful reasoning patterns
         """
+        # CP126 ab22e91f. A missing or failing gate fell back to a substring
+        # denylist of about a dozen phrases and accepted everything else —
+        # contradicting this module's own claim that all training data
+        # passes the ConstitutionalGate. Admission to training is a DURABLE
+        # mutation path: self-training on unvetted traces is precisely how a
+        # model amplifies its own garbage, and a keyword list is not a
+        # constitution.
+        #
+        # The heuristic is kept as defence in depth, never as a substitute:
+        # it can still reject, it can no longer admit.
         gate = ServiceContainer.get("constitutional_gate", default=None)
         if gate is None:
-            # No gate registered — use built-in heuristics
-            return self._heuristic_constitutional_check(trace)
+            record_degradation(
+                'star_reasoner',
+                RuntimeError("constitutional_gate unavailable"),
+                severity="warning",
+                action="refused STaR training admission without a constitutional decision",
+            )
+            return False
 
         try:
-            return gate.check_training_sample(trace.to_training_sample())
+            approved = bool(gate.check_training_sample(trace.to_training_sample()))
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('star_reasoner', e)
-            logger.debug("Constitutional gate check failed: %s", e)
-            return self._heuristic_constitutional_check(trace)
+            record_degradation(
+                'star_reasoner',
+                e,
+                severity="warning",
+                action="refused STaR training admission after the constitutional gate failed",
+            )
+            return False
+
+        # Both must agree. The gate is the authority; the heuristic is a
+        # second pair of eyes that can only ever subtract.
+        return approved and self._heuristic_constitutional_check(trace)
 
     @staticmethod
     def _heuristic_constitutional_check(trace: TaskTrace) -> bool:
-        """Basic heuristic constitutional checks."""
+        """Keyword defence in depth. NOT a substitute for the gate.
+
+        This can reject a trace; it can never admit one. Passing it means
+        only "no known-dangerous phrase was found", which is not a
+        constitutional decision (CP126 ab22e91f).
+        """
         text = (trace.task_description + " " + trace.final_answer + " " +
                 " ".join(trace.reasoning_steps)).lower()
 

@@ -4385,7 +4385,35 @@ class CapabilityEngine(AuraBaseModule):
                             "status": "blocked_by_need_to_know",
                         }
             except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as _gate_exc:
-                self.logger.debug("Derived conscience/outcome gate degraded: %s", _gate_exc)
+                # CP126 71faa1ce. One broad handler covered conscience,
+                # outcome simulation, user advocate AND need-to-know, then
+                # logged at debug — so a single malformed service response
+                # disabled every derived restraint for that action, silently.
+                #
+                # A restraint that cannot run has not cleared the action. The
+                # failure is recorded at critical, and for anything with real
+                # blast radius the action is refused rather than executed
+                # unrestrained. Low-risk skills continue, because refusing
+                # everything on any gate hiccup would take the runtime down
+                # for no safety gain.
+                _record_capability_degradation(
+                    _gate_exc,
+                    action=(
+                        "derived conscience / outcome / advocate / need-to-know "
+                        f"gate could not evaluate skill {skill_name!r}"
+                    ),
+                    severity="critical",
+                )
+                if _gates_required_for(effect_scope, is_forged=bool(is_forged)):
+                    return {
+                        "ok": False,
+                        "error": (
+                            "derived safety gates could not be evaluated for this "
+                            "action; refusing rather than executing unrestrained"
+                        ),
+                        "status": "blocked_by_ungated_risk",
+                        "gate_error": f"{type(_gate_exc).__name__}: {_gate_exc}",
+                    }
 
             # 3. Adaptation & Security (Rosetta Stone / Sandbox)
             exec_params = params
@@ -5552,6 +5580,21 @@ class CapabilityEngine(AuraBaseModule):
             and metadata.dependency_ready
             for name, metadata in skills.items()
         )
+
+
+def _gates_required_for(effect_scope: Any, *, is_forged: bool) -> bool:
+    """Whether an action's blast radius makes the derived gates mandatory.
+
+    A forged skill is code Aura wrote for herself, and anything reaching
+    outside the process can affect the world. For those, a gate that could
+    not be evaluated must block. Purely internal, read-only work continues:
+    a safety system that halts the runtime whenever a service hiccups buys
+    no safety and costs availability.
+    """
+    if is_forged:
+        return True
+    scope = str(effect_scope or "").strip().lower()
+    return scope not in {"", "none", "internal", "read_only", "readonly", "local_read"}
 
 
 async def execute_tool(

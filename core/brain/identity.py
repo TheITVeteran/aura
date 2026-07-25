@@ -41,6 +41,11 @@ def _clean_prompt_field(text: Any, *, limit: int = _MAX_PROMPT_FIELD_CHARS) -> s
         cleaned = cleaned[: max(0, limit - 1)].rstrip() + "…"
     return cleaned
 
+# Identity must be loadable before the constitution registers, but a
+# permissive window that outlives boot is a defect, so it is bounded.
+_IDENTITY_BOOTSTRAP_WINDOW_S = 180.0
+
+
 @dataclass
 class KinshipMarker:
     """Represents a deep social bond."""
@@ -190,17 +195,60 @@ class IdentityService:
             return False
 
     def _constitutional_gate_active(self) -> bool:
+        """Whether identity writes must pass the constitutional gate.
+
+        CP126 c239ba4d. _approve_identity_write returns True whenever this
+        is False, so durable insight and goal writes went through with no
+        constitutional decision during startup, tests, degraded operation or
+        registration drift — and a lookup that RAISED also returned False,
+        selecting the permissive answer from an error that established
+        nothing.
+
+        An error now means the gate applies. The genuine startup window,
+        where nothing has registered yet and identity must still load, is
+        preserved but bounded and reported once, so a permissive window that
+        outlives boot stops being invisible.
+        """
         try:
             from core.container import ServiceContainer
 
-            return (
+            if (
                 ServiceContainer.has("executive_core")
                 or ServiceContainer.has("aura_kernel")
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
+            ):
+                return True
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation(
+                "identity",
+                exc,
+                severity="critical",
+                action="required the constitutional gate after a failed activation lookup",
             )
-        except (ImportError, AttributeError, RuntimeError):
+            return True
+
+        # Lazily anchored so every construction path is safe, including the
+        # __new__-based ones used in tests and recovery.
+        started = getattr(self, "_identity_started_at", None)
+        if started is None:
+            started = time.time()
+            self._identity_started_at = started
+        elapsed = time.time() - started
+        if elapsed <= _IDENTITY_BOOTSTRAP_WINDOW_S:
             return False
+        if not getattr(self, "_identity_bootstrap_expired_reported", False):
+            self._identity_bootstrap_expired_reported = True
+            record_degradation(
+                "identity",
+                RuntimeError(
+                    "no constitutional service registered "
+                    f"{elapsed:.0f}s after start; gating identity writes"
+                ),
+                severity="critical",
+                action="closed the identity bootstrap window",
+            )
+        return True
 
     def _approve_identity_write(
         self,

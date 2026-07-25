@@ -128,6 +128,13 @@ def _tool_result_is_deferred(result: Any) -> bool:
     return "background_deferred:" in str(result or "").lower()
 
 
+# How long after start the constitution may run with degraded approval
+# semantics because its enforcement services have not registered yet. Boot
+# would deadlock against its own constitution without this; a window that
+# outlives boot is a defect, so it is bounded and reported.
+_BOOTSTRAP_LENIENCY_WINDOW_S = 180.0
+
+
 class BeliefAuthority:
     """Single epistemic entry point for durable belief writes."""
 
@@ -288,6 +295,10 @@ class ConstitutionalCore:
 
     def __init__(self, orchestrator: Any = None) -> None:
         self.orchestrator = orchestrator
+        # Anchors the bootstrap leniency window. A degraded constitution is
+        # acceptable while the runtime comes up and never after.
+        self._constitution_started_at = time.time()
+        self._bootstrap_window_expired_reported = False
         self.belief_authority = BeliefAuthority()
         self._decision_history: deque[ConstitutionalDecision] = deque(
             maxlen=working_history_retention_policy("AURA_CONSTITUTION_DECISION_HISTORY_MAX").max_items
@@ -1588,17 +1599,60 @@ class ConstitutionalCore:
         return getattr(orch, "state_repo", None) or ServiceContainer.get("state_repository", default=None)
 
     def _strict_enforcement_active(self) -> bool:
+        """Whether constitutional decisions must be strictly enforced.
+
+        True means a missing executive core or authority gateway REJECTS the
+        proposal; False means degraded approval semantics apply.
+
+        CP126 3da26028. Two ways this failed open. A lookup that raised
+        returned False — so an error, which tells us nothing about whether
+        enforcement applies, silently selected the lenient answer. And the
+        pre-registration window was inferred from absence and unbounded, so
+        constitutional paths could run degraded indefinitely while
+        security-critical execution was already reachable.
+
+        Now: an error means strict, because not knowing whether the
+        constitution applies is not a licence to skip it. The startup window
+        where services genuinely have not registered yet is preserved — boot
+        would otherwise deadlock against its own constitution — but it is
+        bounded in time and reported once, so a degraded window that
+        outlives boot becomes visible instead of permanent.
+        """
         try:
-            return (
+            if (
                 ServiceContainer.has("executive_core")
                 or ServiceContainer.has("aura_kernel")
                 or ServiceContainer.has("kernel_interface")
                 or bool(getattr(ServiceContainer, "_registration_locked", False))
-            )
+            ):
+                return True
         except (RuntimeError, AttributeError, TypeError) as exc:
-            record_degradation("constitution", exc)
-            logger.debug("Strict enforcement state lookup failed: %s", exc)
+            record_degradation(
+                "constitution",
+                exc,
+                severity="critical",
+                action="enforced STRICT constitutional semantics after a failed strictness lookup",
+            )
+            return True
+
+        # No enforcement signal. Legitimate only while the runtime is still
+        # coming up.
+        elapsed = time.time() - self._constitution_started_at
+        if elapsed <= _BOOTSTRAP_LENIENCY_WINDOW_S:
             return False
+
+        if not self._bootstrap_window_expired_reported:
+            self._bootstrap_window_expired_reported = True
+            record_degradation(
+                "constitution",
+                RuntimeError(
+                    "no constitutional enforcement service registered "
+                    f"{elapsed:.0f}s after start; enforcing strict semantics"
+                ),
+                severity="critical",
+                action="closed the constitutional bootstrap window",
+            )
+        return True
 
     def _get_executive_core(self) -> Any:
         try:
