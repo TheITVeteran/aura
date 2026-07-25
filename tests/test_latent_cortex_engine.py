@@ -122,6 +122,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.local_repair["request_count"] == 0
     assert r.local_repair["repair_effect"] == "none"
     assert r.local_repair["answer_selection_effect"] == "none"
+    assert r.answer_replacement["decision"] == "retain"
+    assert r.answer_replacement["answer_selection_effect"] == "retained"
+    assert r.answer_replacement["latent_state_effect"] == "none"
     assert r.correlated_support["raw_support_count"] == 2
     assert r.correlated_support["evidence_state"] == "bootstrap_unmeasured"
     assert r.correlated_support["confidence_multiplier"] <= 1.0
@@ -354,7 +357,7 @@ def test_admitted_fresh_refutation_causally_replaces_provisional_winner(
     assert result.receipt.selected_branch == 1
 
 
-def test_exact_refutation_runs_bounded_local_repair_without_replacing_answer(
+def test_exact_refutation_repair_replaces_only_after_confidence_bound_authority(
     tiny_model,
     monkeypatch,
 ):
@@ -362,17 +365,21 @@ def test_exact_refutation_runs_bounded_local_repair_without_replacing_answer(
         eos_token_id = None
 
         @staticmethod
-        def encode(_text, **_kwargs):
+        def encode(text, **_kwargs):
+            if text == "2 + 2 = 4.":
+                return [102]
             return [5]
 
         @staticmethod
         def decode(tokens):
             values = list(tokens)
             if values == [100]:
-                return "Prelude stays fixed. Therefore 2 + 2 = 5."
+                return "2 + 2 = 4."
             if values == [101]:
-                return "Prelude stays fixed. Therefore 2 + 2 = 4."
-            return "A complete final answer."
+                return "2 + 2 = 5."
+            if values == [102]:
+                return "2 + 2 = 4."
+            return "2 + 2 = 5."
 
     engine = LatentCortexEngine(
         tiny_model,
@@ -392,14 +399,14 @@ def test_exact_refutation_runs_bounded_local_repair_without_replacing_answer(
     )
 
     def verifier(text: str) -> float:
-        return 0.9 if "= 4" in text else 0.1
+        return 0.9 if "= 5" in text else 0.1
 
     def fresh(prompt: str, *_args, **_kwargs):
         assert "PRESERVED_PREFIX:" in prompt
         return {
             "text": (
                 'FINAL_ANSWER: {"replacement_suffix":'
-                '"Therefore 2 + 2 = 4."}'
+                '"2 + 2 = 4."}'
             ),
             "context": {
                 "schema": "aura.rlc.fresh_verifier_context.v1",
@@ -431,6 +438,12 @@ def test_exact_refutation_runs_bounded_local_repair_without_replacing_answer(
     assert repair["original_branch_commitments_before"] == (
         repair["original_branch_commitments_after"]
     )
+    replacement = result.receipt.answer_replacement
+    assert replacement["intended_decision"] == "replace"
+    assert replacement["decision"] == "replace"
+    assert replacement["answer_selection_effect"] == "replaced"
+    assert result.text == "2 + 2 = 4."
+    assert result.tokens == [102]
 
 
 def test_counterfactual_verifier_causally_breaks_only_equal_score_tie(

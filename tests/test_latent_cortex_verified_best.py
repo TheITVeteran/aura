@@ -643,6 +643,7 @@ def test_real_tiny_qwen_branch_action_runs_verified_latent_tree_and_service_acce
     )
 
     assert result.ok is True
+    assert result.answer_replacement_private == {}
     receipt = result.receipt.to_dict()
     tree = receipt["latent_tree_search"]
     assert tree["status"] == "executed"

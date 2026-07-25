@@ -1871,10 +1871,15 @@ class LatentCortexEngine:
         failure_reason = ""
         out_tokens: list[int] = []
         decode_token_logprobs: list[float] = []
+        answer_replacement_private: dict[str, Any] = {}
         transient_cleanup_registry: list[Any] = []
         try:
             try:
-                out_tokens, receipt = self._latent_episode(
+                (
+                    out_tokens,
+                    receipt,
+                    answer_replacement_private,
+                ) = self._latent_episode(
                     tokens,
                     budget,
                     metered_verifier,
@@ -1895,6 +1900,10 @@ class LatentCortexEngine:
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
                     transient_cleanup_registry=transient_cleanup_registry,
                 )
+                if (
+                    receipt.answer_replacement.get("decision") == "abstain"
+                ):
+                    failure_reason = "answer_replacement_abstained"
             except _FastWeightCleanupError as exc:
                 record_degradation(
                     "latent_cortex",
@@ -2031,6 +2040,10 @@ class LatentCortexEngine:
             # answer, not the budget dimension that ended sampling.
             "wall_reserve_sentence_grace",
             "wall_reserve",
+            # A separately generated, exactly round-tripped repair cleared
+            # the confidence-bound authority gate and replaced the ordinary
+            # neural decode.
+            "confidence_bound_replacement",
         }:
             failure_reason = f"decode_incomplete:{receipt.decode_termination}"
         if receipt.params_unchanged is False:
@@ -2041,6 +2054,7 @@ class LatentCortexEngine:
                 receipt=receipt,
                 reason="checkpoint_invariant_violated",
                 decode_token_logprobs=decode_token_logprobs,
+                answer_replacement_private=answer_replacement_private,
             )
         if failure_reason:
             return LatentReasoningResult(
@@ -2049,6 +2063,7 @@ class LatentCortexEngine:
                 receipt=receipt,
                 reason=failure_reason,
                 decode_token_logprobs=decode_token_logprobs,
+                answer_replacement_private=answer_replacement_private,
             )
 
         text = (
@@ -2060,6 +2075,7 @@ class LatentCortexEngine:
             receipt=receipt,
             tokens=out_tokens,
             decode_token_logprobs=decode_token_logprobs,
+            answer_replacement_private=answer_replacement_private,
         )
 
     # The latent phases, separated so the fallback wrapper stays readable.
@@ -2085,12 +2101,13 @@ class LatentCortexEngine:
         token_logprobs_out: list[float] | None = None,
         decode_sentence_grace_tokens: int | None = None,
         transient_cleanup_registry: list[Any] | None = None,
-    ) -> tuple[list[int], EpisodeReceipt]:
+    ) -> tuple[list[int], EpisodeReceipt, dict[str, Any]]:
         import mlx.core as mx
 
         episode_started = (
             float(episode_started) if episode_started is not None else time.monotonic()
         )
+        answer_replacement_private: dict[str, Any] = {}
         stage_started = time.monotonic()
         if self._cancel_requested(cancel_check):
             raise _LatentEpisodeCancelledError("admission")
@@ -3680,6 +3697,8 @@ class LatentCortexEngine:
         # Localize branch disagreements while the exact probe inventory and
         # action lineage are both available. Repair generation is deferred
         # until the established verifier mesh has consumed its own budget.
+        prepared_repairs: list[dict[str, Any]] = []
+        generated_repairs: dict[str, dict[str, Any]] = {}
         if receipt.cognitive_operator_trace:
             from core.brain.llm.latent_cortex.structural_diversity import (
                 build_structural_diversity_receipt,
@@ -3957,7 +3976,6 @@ class LatentCortexEngine:
         # adds a separately verified candidate, and cannot mutate a branch or
         # replace the accepted answer.
         if receipt.cognitive_operator_trace:
-            generated_repairs: dict[str, dict[str, Any]] = {}
             repair_failures: dict[str, str] = {}
             for repair_request in prepared_repairs:
                 request_id = str(repair_request["request_id"])
@@ -4797,7 +4815,7 @@ class LatentCortexEngine:
                 final_decode_transaction.observe_mutation(cache)
                 winner.kv_boundary_sha256 = final_decode_transaction.commit(
                     label="final_output_lane",
-                    authority="user_visible_decode",
+                    authority="confidence_bound_output_candidate",
                     latent_sha256=tensor_sha256(winner.z),
                     final=True,
                 )
@@ -4822,6 +4840,97 @@ class LatentCortexEngine:
                     first_logits_sha256=(receipt.first_logits_digest),
                     fusion_audit=final_fusion_audit,
                 )
+            if receipt.cognitive_operator_trace:
+                from core.brain.llm.latent_cortex.answer_replacement import (
+                    MAX_REPLACEMENT_OUTPUT_TOKENS,
+                    build_answer_replacement_receipt,
+                )
+
+                baseline_text = (
+                    self.tokenizer.decode(out_tokens)
+                    if self.tokenizer is not None and out_tokens
+                    else ""
+                )
+
+                def encode_replacement(value: str) -> list[int]:
+                    if self.tokenizer is None:
+                        raise ValueError("replacement tokenizer is unavailable")
+                    try:
+                        encoded = self.tokenizer.encode(
+                            value,
+                            add_special_tokens=False,
+                        )
+                    except TypeError:
+                        encoded = self.tokenizer.encode(value)
+                    return list(encoded)
+
+                replacement_output_limit = min(
+                    MAX_REPLACEMENT_OUTPUT_TOKENS,
+                    int(decode_limit)
+                    + (
+                        int(self.config.decode_contract_grace_tokens)
+                        if receipt.decode_contract_required
+                        else int(
+                            _SENTENCE_GRACE_TOKENS
+                            if decode_sentence_grace_tokens is None
+                            else decode_sentence_grace_tokens
+                        )
+                    ),
+                )
+                (
+                    replacement_receipt,
+                    accepted_tokens,
+                    answer_replacement_private,
+                ) = (
+                    build_answer_replacement_receipt(
+                        disagreement_graph=receipt.disagreement_graph,
+                        diagnostic_selection=receipt.diagnostic_action_selection,
+                        local_repair=receipt.local_repair,
+                        selected_branch=winner.index,
+                        branch_candidates=branch_probe_texts,
+                        generated_repairs=generated_repairs,
+                        objective=verification_objective,
+                        baseline_text=baseline_text,
+                        baseline_tokens=out_tokens,
+                        encode=encode_replacement,
+                        decode=lambda values: (
+                            self.tokenizer.decode(list(values))
+                            if self.tokenizer is not None
+                            else ""
+                        ),
+                        enabled=self.config.answer_replacement_enabled,
+                        margin=self.config.answer_replacement_margin,
+                        max_output_tokens=replacement_output_limit,
+                    )
+                )
+                receipt.answer_replacement = replacement_receipt
+                decision = replacement_receipt["decision"]
+                if decision == "replace":
+                    out_tokens = accepted_tokens
+                    if token_logprobs_out is not None:
+                        token_logprobs_out.clear()
+                    decode_termination = "confidence_bound_replacement"
+                    receipt.decode_contract_grace_used_tokens = max(
+                        0,
+                        len(out_tokens) - int(decode_limit),
+                    )
+                    receipt.flag("confidence_bound_answer_replaced")
+                    if receipt.decode_contract_required:
+                        from core.brain.llm.latent_cortex.answer_contract import (
+                            is_contract_complete,
+                        )
+
+                        receipt.decode_contract_satisfied = is_contract_complete(
+                            self.tokenizer.decode(out_tokens)
+                        )
+                elif decision == "abstain":
+                    out_tokens = []
+                    if token_logprobs_out is not None:
+                        token_logprobs_out.clear()
+                    decode_termination = "confidence_bound_abstention"
+                    receipt.flag("confidence_bound_answer_abstained")
+                receipt.decode_generated_tokens = len(out_tokens)
+                receipt.decode_termination = decode_termination
             if decode_termination.startswith("budget_") or decode_termination == "wall_reserve":
                 receipt.flag(f"decode_{decode_termination}")
             stage_started = self._stage_checkpoint(
@@ -4891,7 +5000,7 @@ class LatentCortexEngine:
         receipt.latent_telemetry = telemetry.to_receipt()
         if self._episode_probe_cache is not None:
             receipt.probe_cache = self._episode_probe_cache.to_receipt()
-        return out_tokens, receipt
+        return out_tokens, receipt, answer_replacement_private
 
     def _finalize_fast_weights(
         self,

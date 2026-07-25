@@ -107,6 +107,8 @@ _CONFIG_KEYS = {
     "local_repair_enabled",
     "local_repair_max_attempts",
     "local_repair_max_tokens",
+    "answer_replacement_enabled",
+    "answer_replacement_margin",
     "verifier_fusion_evidence",
     "jitter_scale",
     "input_context_max_chars",
@@ -303,6 +305,12 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         ),
         local_repair_max_tokens=_typed_value(
             raw, "local_repair_max_tokens", 128, int
+        ),
+        answer_replacement_enabled=_typed_value(
+            raw, "answer_replacement_enabled", True, bool
+        ),
+        answer_replacement_margin=_typed_value(
+            raw, "answer_replacement_margin", 0.05, float
         ),
         verifier_fusion_evidence=raw.get("verifier_fusion_evidence"),
         verifier_accept_non_regression=_typed_value(

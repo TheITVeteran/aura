@@ -847,6 +847,8 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.local_repair_enabled is True
     assert cfg.local_repair_max_attempts == 1
     assert cfg.local_repair_max_tokens == 128
+    assert cfg.answer_replacement_enabled is True
+    assert cfg.answer_replacement_margin == pytest.approx(0.05)
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
     assert cfg.contradiction_head is None
@@ -883,6 +885,8 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"local_repair_max_attempts": 9})
     with pytest.raises(ValueError, match="outside"):
         config_from_job({"local_repair_max_tokens": 16})
+    with pytest.raises(ValueError, match="outside"):
+        config_from_job({"answer_replacement_margin": 1.0})
     with pytest.raises(ValueError, match="calibrator config"):
         config_from_job({"prefix_stability_calibrator": {"mode": "learned"}})
     with pytest.raises(ValueError, match="requires head_path"):
@@ -1314,6 +1318,21 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         "comm_slot": 0,
         "decode_max_tokens": 6,
     }
+    answer_contract_args = {
+        "output_tokens": body["tokens"],
+        "output_text": body["text"],
+        "answer_replacement_private": body[
+            "answer_replacement_private"
+        ],
+        "expected_objective": "compose the deepest thought",
+    }
+    assert "answer_replacement_unproven" not in (
+        LatentCortexService._receipt_contract_errors(
+            body["receipt"],
+            contract_config,
+            **answer_contract_args,
+        )
+    )
     assert "cognitive_operator_execution_unproven" not in (
         LatentCortexService._receipt_contract_errors(
             body["receipt"],
@@ -1427,6 +1446,15 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     tampered["local_repair"]["accepted_answer_effect"] = "replaced"
     assert "local_repair_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["answer_replacement"]["answer_selection_effect"] = "replaced"
+    assert "answer_replacement_unproven" in (
+        LatentCortexService._receipt_contract_errors(
+            tampered,
+            contract_config,
+            **answer_contract_args,
+        )
     )
     tampered = copy.deepcopy(body["receipt"])
     tampered["correlated_support"]["effective_support_count"] = 1.0

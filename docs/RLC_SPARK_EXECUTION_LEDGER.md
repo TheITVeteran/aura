@@ -1926,9 +1926,58 @@ before those dependencies close is not admissible.
   does not claim that non-exact recommendations resolved a dispute, that a
   repair replaced an accepted answer, resident-32B gain, adapter interaction,
   broad reasoning gain, or frontier capability.
-- [ ] **SPARK-050 - Confidence-bound answer replacement.** Replace an accepted
+- [x] **SPARK-050 - Confidence-bound answer replacement.** Replace an accepted
   answer only when the new lower confidence bound exceeds the old upper bound
   plus a preregistered margin; otherwise retain, qualify, or abstain.
+
+  CP368 adds the default-on answer authority that CP367 deliberately withheld.
+  It compares an admitted repair against the text produced by the actual final
+  decoder, not a short branch probe or verifier surrogate. Promotion requires
+  the repaired candidate's lower bound to exceed that final decode's upper
+  bound by the configured 0.05 margin, plus a same-verifier-class transition
+  from exact refutation to exact verification on the failed atom. A verified
+  final decode is retained. A known exact refutation without a dominant repair
+  abstains, including when the bounded repair-request budget omitted the
+  selected branch. Disabled or unresolved cases retain without borrowing
+  authority.
+
+  The interval object is intentionally narrow and named in every receipt:
+  conjunctive full-span exact-claim validity. Complete exact integer arithmetic
+  can receive `[1, 1]`; deterministic arithmetic, Python-syntax, or JSON-syntax
+  refutations receive `[0, 0]`; partial arithmetic, ordinary prose, successful
+  Python/JSON parsing, and every unsupported claim remain `[0, 1]`. Syntax
+  success is never mislabeled as semantic correctness. Objective relevance,
+  requested-facet coverage, and complete final-answer structure remain owned
+  by the parent service output-quality gate.
+
+  The worker commits the ordinary neural decode as the final-output candidate
+  before this policy runs. Replacement text must round-trip through the
+  resident tokenizer and remain inside the original decode-plus-grace token
+  envelope, capped at 1,024 tokens; failure abstains rather than silently
+  retaining a refuted answer. Branch text, admitted repair text, original
+  decode text, and original decode tokens cross only the internal
+  worker-to-service IPC boundary. The service removes that private envelope
+  before product return, independently reruns decomposition and deterministic
+  routing, reconstructs every interval and decision, binds the original decode
+  tokens (including heterogeneous decode), and verifies the accepted output
+  text and token commitments.
+
+  Sixteen direct answer-authority contracts cover dominance, conservative
+  unknowns, selected/nonselected branches, explicit disable, output/margin/
+  upstream/private-evidence tampering, tokenizer and output-envelope failure,
+  mixed true-arithmetic/false-prose content, syntax-only verification,
+  actual-final-decode comparison, omitted repair requests, rejected repair
+  authority, and original-token tampering. Focused answer, engine, service,
+  contract, and heterogeneous integration coverage passes 196 tests. The
+  complete combined latent/RLC ownership battery passes 1,243 tests. Ruff,
+  compilation, diff hygiene, governance ownership, resource-observation
+  ownership, model-load ownership, and the enterprise ratchet pass without a
+  baseline increase.
+
+  This proves conservative exact-refutation answer replacement mechanics. It
+  does not prove semantic correctness for unsupported claims, resident-32B
+  gain, adapter interaction, broad reasoning gain, frontier capability, or
+  long-duration live reliability.
 
 ## F. Adaptive compute and control
 

@@ -27584,3 +27584,82 @@ approximately 62.8%-95.5%, with a midpoint planning estimate of 75.8%. Next:
 publish CP367, then implement
 SPARK-050's confidence-bound answer replacement. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-368: Confidence-Bound Answer Replacement
+
+SPARK-050 closes the answer-authority boundary that CP367 intentionally left
+open. The worker now treats the ordinary neural final decode as a committed
+candidate and permits a locally repaired candidate to replace it only when the
+repair's lower confidence bound exceeds the actual final decode's upper bound
+by the preregistered 0.05 margin. The comparison is not made against a short
+branch probe. It additionally requires the selected branch, the original exact
+refutation, the admitted repair transaction, and the same verifier class to
+reconstruct as one lineage.
+
+The proved interval object is explicitly
+`conjunctive_full_span_exact_claim_validity`, not universal answer quality.
+Complete full-span exact integer arithmetic can earn `[1, 1]`. Deterministic
+arithmetic, Python-syntax, or JSON-syntax refutations earn `[0, 0]`. Successful
+syntax parsing, partial arithmetic, ordinary prose, and unsupported claims
+remain `[0, 1]` and cannot authorize replacement. The parent service's output
+quality contract remains responsible for relevance, requested facets, and
+complete answer structure.
+
+Known exact refutations now fail conservatively. A verified actual decode is
+retained; a selected refutation without a dominating admitted repair abstains,
+including when the bounded repair-request budget did not include that selected
+branch. Explicit disable and unresolved intervals retain without acquiring new
+authority. A dominant repair must round-trip exactly through the resident
+tokenizer and fit within the original decode-plus-grace envelope, capped at
+1,024 tokens. Tokenization or envelope failure abstains rather than silently
+returning a refuted baseline.
+
+The public receipt contains only hashes, intervals, lineage, policy, and
+decision evidence. Private branch text, admitted repair text, original final
+decode text, and original final decode tokens cross the internal worker-to-
+service IPC boundary for independent replay, then the service removes that
+envelope before any product return. The service reruns atomic decomposition
+and deterministic routing, reconstructs every interval and decision, verifies
+the original decode token commitment (including the heterogeneous decoder
+receipt), and binds the accepted output text and tokens.
+
+Sixteen direct adversarial contracts cover exact dominance, unknown intervals,
+selected and nonselected branches, explicit disable, output/policy/upstream/
+private-evidence tampering, tokenizer and token-envelope failure, mixed exact
+and unsupported content, syntax-only evidence, actual-final-decode comparison,
+repair-request truncation, rejected repair authority, and original-token
+tampering. Focused answer, engine, service, decode-contract, and heterogeneous
+integration coverage passes 196 tests. The complete combined latent/RLC
+ownership battery passes 1,243 tests.
+
+Ruff, bytecode compilation, and diff hygiene pass. Governance remains 1,973
+recognized calls in 1,847 buckets with 1,788 inherited migration-debt calls.
+Model-load ownership passes with 47 paths, 60 references, and zero findings.
+Resource-observation ownership scans 2,963 Python files with zero findings.
+The enterprise static ratchet passes at 168 findings, 38 high, zero critical,
+and no baseline regression.
+
+The reconciled dirty-candidate closeout audit also passes. It enumerates 8,030
+tracked files, including 7,999 text files and 5,001 code files, and binds
+4,254,596 text lines plus 1,598,778 code lines to the generated ledgers. Its
+production-readiness contract, architecture dependency map, model-load
+ownership, and resource-observation gates pass. The audit correctly preserves
+`full_closeout_complete=false`: 4,473 code files remain without current
+full-file semantic receipts, so mechanical enumeration is not represented as
+semantic completion.
+
+This checkpoint proves conservative confidence-bound replacement for the
+narrow deterministic object above. It does not prove semantic correctness for
+unsupported claims, resident-32B improvement, adapter interaction, broad
+reasoning gain, frontier capability, or long-duration live reliability.
+
+Two cooperative conversation-reliability and live-verification checkpoints
+landed after CP367 and before this integration (`1cade9235` and `d07e67b00`).
+Counting them and CP368 makes this total checkpoint record 492. The forecast
+remains 512-779 total records, leaving approximately 20-287 records after this
+checkpoint. Checkpoint-count completion is approximately 63.2%-96.1%, with a
+midpoint planning estimate of 76.2%.
+Next: publish CP368, then resume SPARK-051's value-of-computation controller,
+starting with governed live retrieval semantics and independently distinct
+action effects. Final multi-hour soaks remain deferred until every shorter gate
+is green.

@@ -12,6 +12,14 @@ Public surface:
     run_experiment_*                       — experiments.py (falsification harness)
 """
 
+from core.brain.llm.latent_cortex.answer_replacement import (
+    ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
+    ANSWER_REPLACEMENT_SCHEMA,
+    DEFAULT_REPLACEMENT_MARGIN,
+    MAX_REPLACEMENT_OUTPUT_TOKENS,
+    build_answer_replacement_receipt,
+    validate_answer_replacement_receipt,
+)
 from core.brain.llm.latent_cortex.atomic_decomposition import (
     ATOMIC_DECOMPOSITION_SCHEMA,
     AtomKind,
@@ -77,11 +85,14 @@ from core.brain.llm.latent_cortex.virtual_quanta import (
 )
 
 __all__ = [
+    "ANSWER_REPLACEMENT_PRIVATE_SCHEMA",
+    "ANSWER_REPLACEMENT_SCHEMA",
     "ATOMIC_DECOMPOSITION_SCHEMA",
     "AtomKind",
     "BranchConfig",
     "ComputeBudget",
     "CortexConfig",
+    "DEFAULT_REPLACEMENT_MARGIN",
     "DETERMINISTIC_ROUTER_SCHEMA",
     "DISAGREEMENT_GRAPH_SCHEMA",
     "DIAGNOSTIC_ACTION_SELECTOR_SCHEMA",
@@ -91,6 +102,7 @@ __all__ = [
     "LatentReasoningResult",
     "LatentTreeSearchConfig",
     "LOCAL_REPAIR_SCHEMA",
+    "MAX_REPLACEMENT_OUTPUT_TOKENS",
     "RecurrenceConfig",
     "RouteOutcome",
     "TransitionKind",
@@ -98,6 +110,7 @@ __all__ = [
     "WorkspaceConfig",
     "atom_ids",
     "build_atomic_decomposition",
+    "build_answer_replacement_receipt",
     "build_candidate_routes",
     "build_deterministic_router_receipt",
     "build_diagnostic_action_selector_receipt",
@@ -112,6 +125,7 @@ __all__ = [
     "router_check",
     "parse_local_repair_generation",
     "prepare_local_repair_requests",
+    "validate_answer_replacement_receipt",
     "validate_latent_tree_receipt",
     "validate_latent_tree_transaction",
     "validate_atomic_decomposition",

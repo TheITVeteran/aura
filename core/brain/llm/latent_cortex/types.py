@@ -473,11 +473,15 @@ class CortexConfig:
     prefix_stability_seed: int = 104_729
     prefix_stability_calibrator: dict[str, Any] | None = None
     # Exact verifier refutations may trigger one source-private regeneration
-    # from the last unchanged atomic prefix. The result enters only the
-    # candidate pool; answer replacement belongs to the later confidence gate.
+    # from the last unchanged atomic prefix.
     local_repair_enabled: bool = True
     local_repair_max_attempts: int = 1
     local_repair_max_tokens: int = 128
+    # A repaired candidate can replace the accepted branch answer only when
+    # its deterministic correctness lower bound clears the original upper
+    # bound by this preregistered margin.
+    answer_replacement_enabled: bool = True
+    answer_replacement_margin: float = 0.05
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
     # when the candidate also proves descent on the answer-leak-proof proxy.
@@ -971,6 +975,15 @@ class CortexConfig:
             problems.append("local_repair_max_attempts outside [0, 8]")
         if not integer_in(self.local_repair_max_tokens, 32, 512):
             problems.append("local_repair_max_tokens outside [32, 512]")
+        if type(self.answer_replacement_enabled) is not bool:
+            problems.append("answer_replacement_enabled must be boolean")
+        if (
+            isinstance(self.answer_replacement_margin, bool)
+            or not isinstance(self.answer_replacement_margin, (int, float))
+            or not math.isfinite(float(self.answer_replacement_margin))
+            or not 0.0 <= float(self.answer_replacement_margin) < 1.0
+        ):
+            problems.append("answer_replacement_margin outside [0, 1)")
         if self.local_exploration is not None:
             if not isinstance(self.local_exploration, dict):
                 problems.append("local_exploration must be a mapping or null")
@@ -1435,9 +1448,11 @@ class EpisodeReceipt:
     # bound to deterministic routes and measured/declared action costs.
     diagnostic_action_selection: dict[str, Any] = field(default_factory=dict)
     # Source-private regeneration from an exactly refuted atom. Original
-    # branch commitments remain immutable and the repaired candidate has no
-    # answer-selection authority until SPARK-050.
+    # branch commitments remain immutable.
     local_repair: dict[str, Any] = field(default_factory=dict)
+    # Independently reconstructable lower-bound > upper-bound authority for
+    # promoting a repaired candidate into the user-visible output.
+    answer_replacement: dict[str, Any] = field(default_factory=dict)
     correlated_support: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
@@ -1649,6 +1664,7 @@ class EpisodeReceipt:
             "disagreement_graph": dict(self.disagreement_graph),
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),
             "local_repair": dict(self.local_repair),
+            "answer_replacement": dict(self.answer_replacement),
             "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),
@@ -1684,6 +1700,10 @@ class LatentReasoningResult:
     # Opt-in behavior-policy trace for recurrence-native training. Empty for
     # every ordinary live request; callers must explicitly request capture.
     decode_token_logprobs: list[float] = field(default_factory=list)
+    # Internal worker-to-service evidence used to rerun answer-replacement
+    # verification outside the model worker. The service removes it before
+    # returning any result to product callers.
+    answer_replacement_private: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1692,6 +1712,9 @@ class LatentReasoningResult:
             "reason": self.reason,
             "tokens": list(self.tokens),
             "decode_token_logprobs": list(self.decode_token_logprobs),
+            "answer_replacement_private": dict(
+                self.answer_replacement_private
+            ),
             "receipt": self.receipt.to_dict(),
         }
 

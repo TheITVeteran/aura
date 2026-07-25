@@ -170,8 +170,15 @@ def test_contract_masks_early_eos_and_completes_inside_bounded_grace():
     remaining = iter(ord(char) for char in text)
     observed_eos_logits: list[float] = []
 
-    def eos_pressured_sample(logits, _temperature, _top_p, *, budget=None):
-        del budget
+    def eos_pressured_sample(
+        logits,
+        _temperature,
+        _top_p,
+        *,
+        budget=None,
+        random_key=None,
+    ):
+        del budget, random_key
         eos_logit = float(logits[0].item())
         observed_eos_logits.append(eos_logit)
         if eos_logit > -1e8:
@@ -203,8 +210,15 @@ def test_contract_incomplete_exhaustion_is_bounded_and_receipted():
         ),
     )
 
-    def never_complete(logits, _temperature, _top_p, *, budget=None):
-        del budget
+    def never_complete(
+        logits,
+        _temperature,
+        _top_p,
+        *,
+        budget=None,
+        random_key=None,
+    ):
+        del budget, random_key
         return ord("x") if float(logits[0].item()) < -1e8 else 0
 
     engine._sample = never_complete

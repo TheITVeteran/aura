@@ -396,6 +396,9 @@ class LatentCortexService:
         expected_worker_identity: dict[str, Any] | None = None,
         output_tokens: Any = ...,
         expected_domain: str = "general",
+        output_text: Any = ...,
+        answer_replacement_private: Any = None,
+        expected_objective: str = "",
     ) -> list[str]:
         if not isinstance(receipt, dict):
             return ["receipt_not_mapping"]
@@ -1244,11 +1247,32 @@ class LatentCortexService:
                 validate_heterogeneous_decode_receipt,
             )
 
-            validate_heterogeneous_decode_receipt(
-                receipt.get("heterogeneous_decode"),
-                integration=receipt.get("heterogeneous_integration"),
-                expected_output_tokens=output_tokens,
+            replacement_applied = (
+                isinstance(receipt.get("answer_replacement"), dict)
+                and receipt["answer_replacement"].get("decision") == "replace"
             )
+            if replacement_applied:
+                if (
+                    not isinstance(answer_replacement_private, dict)
+                    or not isinstance(
+                        answer_replacement_private.get("baseline_tokens"),
+                        list,
+                    )
+                ):
+                    raise ValueError("replacement baseline tokens are unavailable")
+                validate_heterogeneous_decode_receipt(
+                    receipt.get("heterogeneous_decode"),
+                    integration=receipt.get("heterogeneous_integration"),
+                    expected_output_tokens=answer_replacement_private[
+                        "baseline_tokens"
+                    ],
+                )
+            else:
+                validate_heterogeneous_decode_receipt(
+                    receipt.get("heterogeneous_decode"),
+                    integration=receipt.get("heterogeneous_integration"),
+                    expected_output_tokens=output_tokens,
+                )
         except (ImportError, TypeError, ValueError):
             errors.append("heterogeneous_decode_unproven")
         try:
@@ -1835,6 +1859,50 @@ class LatentCortexService:
             except (ImportError, KeyError, TypeError, ValueError):
                 errors.append("local_repair_unproven")
             try:
+                from core.brain.llm.latent_cortex.answer_replacement import (
+                    validate_answer_replacement_receipt,
+                )
+                from core.brain.llm.latent_cortex.worker_handler import (
+                    config_from_job,
+                )
+
+                executed_config = config_from_job(config)
+                from core.brain.llm.latent_cortex.answer_replacement import (
+                    MAX_REPLACEMENT_OUTPUT_TOKENS,
+                )
+
+                replacement_output_limit = min(
+                    MAX_REPLACEMENT_OUTPUT_TOKENS,
+                    int(executed_config.decode_max_tokens)
+                    + (
+                        int(executed_config.decode_contract_grace_tokens)
+                        if executed_config.decode_contract == "final_answer_v1"
+                        else 48
+                    ),
+                )
+                validate_answer_replacement_receipt(
+                    receipt.get("answer_replacement"),
+                    disagreement_graph=receipt.get("disagreement_graph"),
+                    diagnostic_selection=receipt.get(
+                        "diagnostic_action_selection"
+                    ),
+                    local_repair=receipt.get("local_repair"),
+                    private_evidence=answer_replacement_private,
+                    expected_objective=expected_objective,
+                    expected_selected_branch=int(receipt.get("selected_branch")),
+                    expected_enabled=executed_config.answer_replacement_enabled,
+                    expected_margin=executed_config.answer_replacement_margin,
+                    expected_max_output_tokens=replacement_output_limit,
+                    expected_output_text=(
+                        output_text if isinstance(output_text, str) else None
+                    ),
+                    expected_output_tokens=(
+                        output_tokens if isinstance(output_tokens, list) else None
+                    ),
+                )
+            except (ImportError, KeyError, TypeError, ValueError):
+                errors.append("answer_replacement_unproven")
+            try:
                 from core.brain.llm.latent_cortex.correlated_support import (
                     validate_correlated_support_receipt,
                 )
@@ -1952,7 +2020,10 @@ class LatentCortexService:
                 errors.append("decode_contract_requirement_unreceipted")
             if receipt.get("decode_contract_satisfied") is not True:
                 errors.append("decode_contract_unsatisfied")
-            if receipt.get("decode_termination") != "contract_complete":
+            if receipt.get("decode_termination") not in {
+                "contract_complete",
+                "confidence_bound_replacement",
+            }:
                 errors.append("decode_contract_termination_mismatch")
             if (
                 type(configured_contract_grace) is not int
@@ -1994,6 +2065,7 @@ class LatentCortexService:
             # the completeness judge either way.
             "wall_reserve_sentence_grace",
             "wall_reserve",
+            "confidence_bound_replacement",
         }:
             errors.append("decode_incomplete")
         decode_bridge_policy = config.get("decode_bridge_policy", "none")
@@ -3160,6 +3232,11 @@ class LatentCortexService:
                 action_policy_matches = False
         contract_errors: list[str] = []
         quality_receipt: dict[str, Any] | None = None
+        private_answer_replacement = result.pop(
+            "answer_replacement_private",
+            None,
+        )
+        visible_objective = self._visible_objective(question, messages)
         if result.get("ok") is True:
             contract_errors = self._receipt_contract_errors(
                 raw_receipt,
@@ -3168,13 +3245,16 @@ class LatentCortexService:
                 worker_identity,
                 result.get("tokens"),
                 domain,
+                output_text=result.get("text"),
+                answer_replacement_private=private_answer_replacement,
+                expected_objective=visible_objective,
             )
             if not contract_errors:
                 quality_receipt = evaluate_latent_output(
                     result.get("text"),
                     generated_tokens=result_receipt.get("decode_generated_tokens"),
                     termination=result_receipt.get("decode_termination"),
-                    objective=self._visible_objective(question, messages),
+                    objective=visible_objective,
                 )
                 result_receipt["output_quality"] = quality_receipt
                 result["receipt"] = result_receipt
