@@ -187,3 +187,40 @@ class TestTheTrainerConsultsTheGuard:
     def test_the_verdict_is_recorded_on_the_baseline(self):
         source = self._trainer_source()
         assert 'baseline_eval["scope_reachability"]' in source
+
+
+class TestARefusalNamesTheRemedy:
+    """A refusal that does not say what would work is only half a finding."""
+
+    def test_a_decode_path_refusal_points_at_distillation(self):
+        verdict = sr.assess(
+            {"no_marker": 40}, adapter_scope="latent_slots_only",
+        )
+        assert verdict.should_refuse is True
+        assert "decode path" in verdict.remedy
+        assert "latent_adapter_distillation" in verdict.remedy
+
+    def test_a_task_side_refusal_says_no_weight_update_helps(self):
+        verdict = sr.assess(
+            {"task_malformed": 40}, adapter_scope="latent_slots_only",
+        )
+        assert verdict.should_refuse is True
+        assert "no weight update" in verdict.remedy
+
+    def test_a_permitted_run_carries_no_remedy(self):
+        verdict = sr.assess({"incorrect": 40}, adapter_scope="latent_slots_only")
+        assert verdict.should_refuse is False
+        assert verdict.remedy == ""
+
+    def test_the_remedy_is_serialized(self):
+        payload = sr.assess(
+            {"no_marker": 40}, adapter_scope="latent_slots_only",
+        ).to_dict()
+        assert payload["remedy"]
+
+    def test_the_trainer_prints_the_remedy(self):
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        source = (root / "tools" / "train_grpo.py").read_text(encoding="utf-8")
+        assert "[halt] remedy:" in source

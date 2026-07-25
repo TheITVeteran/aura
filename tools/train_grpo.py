@@ -1772,6 +1772,8 @@ def main() -> int:
                         f"failures: {_reach.detail}",
                         flush=True,
                     )
+                    if _reach.remedy:
+                        print(f"[halt] remedy: {_reach.remedy}", flush=True)
                     training_allowed = False
                     halt_reason = "scope_unreachable"
 

@@ -97,6 +97,29 @@ UNREACHABLE = "unreachable"
 UNKNOWN = "unknown"
 
 
+# A refusal that does not say what would work is only half a finding.
+_REMEDIES: dict[str, str] = {
+    SITE_DECODE: (
+        "the failures are in the decode path, so the fix must reach it: "
+        "widen the trainable scope to the coda/late layers, or run a "
+        "distillation pass first (tools/latent_consolidation_train.py, "
+        "core/learning/latent_adapter_distillation.py) to teach those layers "
+        "to accept recurrent states. Distillation gives a dense per-token "
+        "signal and does not depend on a nonzero base reward rate, which is "
+        "what RL here does not have"
+    ),
+    SITE_PROMPT: (
+        "the failures are in the tasks or prompts, which no weight update "
+        "repairs; fix the task generator or the prompt contract first"
+    ),
+}
+
+
+def _remedy_for(sites: list[str]) -> str:
+    parts = [_REMEDIES[site] for site in sites if site in _REMEDIES]
+    return "; ".join(parts)
+
+
 @dataclass
 class ReachabilityVerdict:
     """Whether training under this scope can affect the observed failures."""
@@ -111,6 +134,7 @@ class ReachabilityVerdict:
     by_site: dict[str, int] = field(default_factory=dict)
     unrecognized: dict[str, int] = field(default_factory=dict)
     detail: str = ""
+    remedy: str = ""
 
     @property
     def should_refuse(self) -> bool:
@@ -130,6 +154,7 @@ class ReachabilityVerdict:
             "by_site": dict(self.by_site),
             "unrecognized": dict(self.unrecognized),
             "detail": self.detail,
+            "remedy": self.remedy,
         }
 
 
@@ -214,6 +239,7 @@ def assess(
     if share >= unreachable_share:
         outside = sorted(site for site in by_site if site not in reaches)
         base.verdict = UNREACHABLE
+        base.remedy = _remedy_for(sorted(site for site in by_site if site not in reaches))
         base.detail = (
             f"{out_of_scope} of {attributed} failures ({share:.0%}) are at "
             f"{', '.join(outside)}, which scope {adapter_scope!r} cannot "
