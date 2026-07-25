@@ -255,3 +255,92 @@ class TestLedgerVerificationDoesNotBlockTheLoop:
         source = inspect.getsource(VerifierFoundry.verify_ledger)
         assert "self.flush_ledger()" in source
         assert "self._verify_ledger_locked()" in source
+
+
+class TestVerifierReceiptsAreAttestationsNotCopies:
+    """``e404e00c`` — every receipt field was checked by comparing it to the
+    corresponding trial field. That proves the two objects hold the same
+    bytes — duplicate storage — and nothing about whether execution or
+    scoring happened. A producer could emit the trial twice and pass."""
+
+    def _trial(self):
+        return {
+            "trial_id": "t1",
+            "task_payload_sha256": "a" * 64,
+            "scorer_config_sha256": "b" * 64,
+            "treatment_output_sha256": "c" * 64,
+            "control_output_sha256": "d" * 64,
+            "treatment_success": True,
+            "control_success": False,
+            "verifier_blinded": True,
+            "evaluation_started_at": 1.0,
+        }
+
+    def _receipt(self, trial, **overrides):
+        from core.brain.llm.latent_cortex.frontier_artifacts import (
+            TRIAL_VERIFIER_RECEIPT_SCHEMA,
+        )
+
+        receipt = {k: v for k, v in trial.items() if k != "evaluation_started_at"}
+        receipt.update(
+            {
+                "schema": TRIAL_VERIFIER_RECEIPT_SCHEMA,
+                "scorer_implementation_sha256": "e" * 64,
+                "verified_at": 2.0,
+                "worker_identity_sha256": "9" * 64,
+                "executable_sha256": "8" * 64,
+            }
+        )
+        receipt.update(overrides)
+        return receipt
+
+    def _validate(self, receipt, trial):
+        from core.brain.llm.latent_cortex.frontier_artifacts import (
+            _validate_trial_verifier_receipt,
+        )
+
+        return _validate_trial_verifier_receipt(receipt, trial)
+
+    def test_a_pure_mirror_of_the_trial_is_refused(self):
+        trial = self._trial()
+        mirror = self._receipt(trial)
+        del mirror["worker_identity_sha256"]
+        del mirror["executable_sha256"]
+        with pytest.raises(Exception):
+            self._validate(mirror, trial)
+
+    def test_a_receipt_with_execution_provenance_is_accepted(self):
+        trial = self._trial()
+        assert self._validate(self._receipt(trial), trial) is None
+
+    @pytest.mark.parametrize(
+        "field", ["worker_identity_sha256", "executable_sha256"],
+    )
+    def test_malformed_provenance_is_refused(self, field):
+        trial = self._trial()
+        with pytest.raises(Exception):
+            self._validate(self._receipt(trial, **{field: "not-a-hash"}), trial)
+
+    def test_provenance_mirrored_from_the_trial_is_refused(self):
+        """If the trial ever gains these fields, copying them is not
+        evidence either — the receipt must stay independent."""
+        trial = self._trial()
+        trial["worker_identity_sha256"] = "9" * 64
+        with pytest.raises(Exception):
+            self._validate(self._receipt(trial), trial)
+
+    def test_the_bundle_requires_one_worker_and_one_executable(self):
+        from core.brain.llm.latent_cortex import frontier_artifacts
+
+        source = inspect.getsource(frontier_artifacts)
+        assert "trial_verifier_worker_identity_inconsistent" in source
+        assert "trial_verifier_executable_inconsistent" in source
+
+    def test_the_attestation_limit_is_stated_not_implied(self):
+        """Binding is verified; signatures are not. A consistently
+        fabricated bundle still passes, and saying so is the point."""
+        from core.brain.llm.latent_cortex import frontier_artifacts
+
+        source = inspect.getsource(frontier_artifacts)
+        assert "binding_verified_unsigned" in source
+        assert "HONEST LIMIT" in source

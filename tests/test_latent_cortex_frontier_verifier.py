@@ -128,6 +128,13 @@ def _build_package(
             "verifier_blinded": trial["verifier_blinded"],
             "scorer_implementation_sha256": "a" * 64,
             "verified_at": trial["evaluation_started_at"] + 0.5,
+            # CP126 e404e00c: execution provenance. These are absent from
+            # the trial by construction, so they cannot be satisfied by
+            # mirroring it — which is what made the old check prove
+            # duplicate storage rather than execution. One measured run has
+            # one worker and one executable, so they are constant here.
+            "worker_identity_sha256": "9" * 64,
+            "executable_sha256": "8" * 64,
         }
         verifier_payload = canonical_json_bytes(verifier_receipt)
         trial["verifier_receipt_sha256"] = hashlib.sha256(verifier_payload).hexdigest()

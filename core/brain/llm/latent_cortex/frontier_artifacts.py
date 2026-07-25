@@ -340,6 +340,26 @@ def _validate_raw_directory(root: Path, expected_paths: set[str]) -> None:
 
 
 def _validate_trial_verifier_receipt(receipt: Any, trial: Mapping[str, Any]) -> None:
+    """Validate one trial's verifier receipt as ATTESTATION, not as a copy.
+
+    CP126 e404e00c. Every field here was checked by comparing it to the
+    corresponding field on the trial. That proves the two objects hold the
+    same bytes — duplicate storage — and nothing about whether any execution
+    or scoring actually happened. A producer could emit the trial twice and
+    satisfy the whole check.
+
+    The receipt must therefore carry facts the trial does NOT contain, which
+    can only come from the process that ran it: which worker executed the
+    scoring and which executable it ran. Those are required, well-formed,
+    and (in the caller) required to agree across the bundle — a bundle whose
+    trials claim different workers or executables is not one measured run.
+
+    HONEST LIMIT: this is binding, not cryptographic attestation. There is
+    no signature over the receipt, so a producer that fabricates the whole
+    bundle consistently still passes. Closing that needs signed worker
+    receipts with a key the verifier holds independently; it is named here
+    rather than implied by the word "receipt".
+    """
     expected_fields = {
         "schema",
         "trial_id",
@@ -352,6 +372,10 @@ def _validate_trial_verifier_receipt(receipt: Any, trial: Mapping[str, Any]) -> 
         "verifier_blinded",
         "scorer_implementation_sha256",
         "verified_at",
+        # Execution provenance — absent from the trial by construction, so
+        # these cannot be satisfied by mirroring it.
+        "worker_identity_sha256",
+        "executable_sha256",
     }
     if not isinstance(receipt, dict) or set(receipt) != expected_fields:
         _fail("trial_verifier_receipt_schema_invalid")
@@ -371,6 +395,15 @@ def _validate_trial_verifier_receipt(receipt: Any, trial: Mapping[str, Any]) -> 
             _fail("trial_verifier_receipt_binding_mismatch")
     if not _is_sha256(receipt.get("scorer_implementation_sha256")):
         _fail("trial_verifier_implementation_invalid")
+    # Execution provenance must be present and well-formed. A field the
+    # trial does not carry cannot be produced by copying the trial.
+    for provenance_field in ("worker_identity_sha256", "executable_sha256"):
+        if not _is_sha256(receipt.get(provenance_field)):
+            _fail("trial_verifier_execution_provenance_invalid")
+        if provenance_field in trial:
+            # If the trial ever gains these fields, mirroring them is not
+            # evidence either — the receipt must still be independent.
+            _fail("trial_verifier_execution_provenance_mirrored")
     verified_at = receipt.get("verified_at")
     evaluation_started_at = trial.get("evaluation_started_at")
     if (
@@ -479,6 +512,11 @@ def verify_raw_artifact_package(
     store_receipts[_STRUCTURED_STORE] = structured_receipt
 
     lineage: list[dict[str, Any]] = []
+    # Execution provenance observed across the bundle. One measured run has
+    # one worker and one executable; more than one means separate runs were
+    # collated and presented as a single comparison.
+    _worker_ids: set[str] = set()
+    _executables: set[str] = set()
     for trial_id in sorted(trials):
         trial = trials[trial_id]
         row: dict[str, Any] = {"trial_id": trial_id}
@@ -501,15 +539,32 @@ def verify_raw_artifact_package(
             row["provider_receipt_sha256"] = expected_provider_digest
         verifier_receipt = decoded_stores["verifier_receipts"][trial_id].get("receipt")
         _validate_trial_verifier_receipt(verifier_receipt, trial)
+        # One measured run means ONE worker and one executable across every
+        # trial. Divergence means the bundle is a collation of separate runs
+        # presented as a single comparison.
+        _worker_ids.add(str(verifier_receipt.get("worker_identity_sha256") or ""))
+        _executables.add(str(verifier_receipt.get("executable_sha256") or ""))
         for field in _STRUCTURED_FIELDS:
             if structured[trial_id].get(field) != trial.get(field):
                 _fail("structured_receipts_bundle_mismatch")
         row["structured_receipt_sha256"] = canonical_sha256(structured[trial_id])
         lineage.append(row)
 
+    if len(_worker_ids) > 1:
+        _fail("trial_verifier_worker_identity_inconsistent")
+    if len(_executables) > 1:
+        _fail("trial_verifier_executable_inconsistent")
+
     receipt: dict[str, Any] = {
         "schema": ARTIFACT_VERIFICATION_SCHEMA,
         "accepted": True,
+        # Named so a reader is not left to infer it: binding is verified,
+        # cryptographic attestation is not. A consistently fabricated bundle
+        # still passes; closing that needs signed worker receipts against a
+        # key this verifier holds independently.
+        "attestation_level": "binding_verified_unsigned",
+        "worker_identity_sha256": next(iter(_worker_ids), ""),
+        "executable_sha256": next(iter(_executables), ""),
         "manifest_sha256": manifest_sha256,
         "artifact_store_count": len(store_receipts),
         "artifact_bytes": sum(item["size_bytes"] for item in store_receipts.values()),
