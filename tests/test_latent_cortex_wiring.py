@@ -168,6 +168,36 @@ def _latent_tree_fields(config, *, episode_id: str) -> dict:
     }
 
 
+def _verifier_fusion_fields(config: dict, *, selected_branch: int = 0) -> dict:
+    from core.brain.llm.latent_cortex.verifier_fusion import (
+        build_verifier_fusion_receipt,
+    )
+
+    unavailable = {
+        "requested": True,
+        "available": False,
+        "reason": "stubbed_worker_has_no_generator",
+        "selection_effect": "none",
+    }
+    prefix_unavailable = {
+        **unavailable,
+        "correctness_effect": "none",
+    }
+    return {
+        "verifier_fusion": build_verifier_fusion_receipt(
+            blind_review=None,
+            decoy_verification=None,
+            generative_verifier=unavailable,
+            counterfactual_verifier=unavailable,
+            prefix_stability=prefix_unavailable,
+            neural_uncertainty=None,
+            mistake_locator=None,
+            selected_branch=selected_branch,
+            evidence=config.get("verifier_fusion_evidence"),
+        )
+    }
+
+
 def _branch_isolation_fields(config, *, exchanges=0):
     count = config["n_branches"]
     required = config["isolation_steps"]
@@ -2490,13 +2520,14 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
                     },
-                    "prefix_stability": {
+                        "prefix_stability": {
                         "requested": True,
                         "available": False,
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
-                        "correctness_effect": "none",
-                    },
+                            "correctness_effect": "none",
+                        },
+                        **_verifier_fusion_fields(kwargs["config"]),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,
@@ -2548,6 +2579,12 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
         "bootstrap_unmeasured",
         "measured",
     }
+    fusion_evidence = captured["config"]["verifier_fusion_evidence"]
+    assert fusion_evidence["schema"] == "aura.rlc.verifier_fusion_evidence.v1"
+    assert fusion_evidence["scopes"]["domain"]["bucket"] == fusion_evidence["bucket"]
+    assert result["receipt"]["verifier_fusion"]["authority_mode"] == (
+        "diagnostic_fusion_no_single_probabilistic_authority"
+    )
     assert captured["budget"]["max_layer_apps"] > 0
     assert captured["runtime_controls"] == {
         "clean_user_surface_recurrent_loops": 2,
@@ -3658,6 +3695,7 @@ def _full_success_stub_client(captured):
                         "selection_effect": "none",
                         "correctness_effect": "none",
                     },
+                    **_verifier_fusion_fields(kwargs["config"]),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,

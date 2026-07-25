@@ -159,6 +159,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/agency/tool_orchestrator.py",
             "core/agency/self_repair_backlog.py",
+            # Independently checked verifier outcomes are append-only,
+            # schema-bound calibration evidence under Aura's data directory.
+            # The ledger accepts no arbitrary runtime action or user path and
+            # writes only from its named internal governance scope.
+            "core/brain/llm/latent_cortex/verifier_fusion.py",
             "core/brain/llm/latent_cortex/persistence.py",
             # Bus bags and cross-process leases are bounded internal evidence
             # stores. Their paths are runtime-derived, never user-selected,

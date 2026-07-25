@@ -104,6 +104,7 @@ _CONFIG_KEYS = {
     "prefix_stability_top_p",
     "prefix_stability_seed",
     "prefix_stability_calibrator",
+    "verifier_fusion_evidence",
     "jitter_scale",
     "input_context_max_chars",
     "isolation_steps",
@@ -291,6 +292,7 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             raw, "prefix_stability_seed", 104_729, int
         ),
         prefix_stability_calibrator=raw.get("prefix_stability_calibrator"),
+        verifier_fusion_evidence=raw.get("verifier_fusion_evidence"),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool
         ),

@@ -1754,9 +1754,52 @@ before those dependencies close is not admissible.
   independent receipt reconstruction. It does not prove that recurrence
   predicts correctness, broad semantic equivalence, resident-32B utility,
   adapter interaction, reasoning gain, or frontier capability.
-- [ ] **SPARK-046 - Correlation-aware verifier fusion.** Track Wilson/confidence
+- [x] **SPARK-046 - Correlation-aware verifier fusion.** Track Wilson/confidence
   bounds, domain reliability, dependence between verifiers, and historical
   calibration; no single probabilistic verifier has absolute authority.
+
+  CP362 adds a default-on, service-supplied verifier mesh over five
+  probabilistic evidence classes plus the separately tracked deterministic
+  generative-refutation lane. An append-only governed ledger accepts only
+  independently checked, task-committed outcomes whose individual signals bind
+  the exact source receipt and whose correctness label binds a separate grading
+  receipt. It produces content-addressed domain and global evidence snapshots
+  with ten fixed calibration bins, Brier score, expected
+  calibration error, directional accuracy, 95% Wilson intervals, and pairwise
+  verifier error tables. Domain calibration is preferred; a global fallback is
+  named as global rather than relabeled as domain evidence.
+
+  The runtime normalizes the selected branch's decoy-admitted blind score,
+  equal-score counterfactual robustness, conclusion recurrence, hidden-state
+  correctness estimate, and accepted-transition process score. Absence of a
+  generative refutation is explicitly not positive evidence, and a refutation
+  of the provisional winner is not reassigned to its replacement. Calibration
+  bins require eight checked outcomes and overall directional reliability
+  requires twelve. Positive error correlation is shrunk toward zero only after
+  twelve paired outcomes; missing paired history receives a conservative
+  dependence upper bound of one and cannot pass the fusion gate.
+
+  A fused measurement requires at least two calibrated sources, complete
+  measured pairwise dependence, and 1.5 effective independent sources. Source
+  weights are quality/sample/dependence adjusted and hard-capped at 0.5.
+  Dependence widens the combined confidence interval. The receipt exposes
+  support, opposition, inconclusiveness, or insufficient independent evidence,
+  but grants neither branch-selection nor correctness authority and has no
+  execution effect. The service independently reconstructs the complete
+  evidence snapshot and fusion receipt; changed history, source signal,
+  dependence, weight, interval, verdict, or authority field fails closed.
+
+  Ten direct adversarial contracts cover bootstrap abstention, two-source
+  admission, the single-source boundary, labeled global fallback, measured
+  shared-error discounting, unknown-dependence collapse, receipt/evidence
+  tampering, worker config validation, governed durable restore/duplicate
+  refusal, and final-branch extraction. The focused mesh and service battery
+  passes 106/106; the complete latent/RLC ownership battery passes 1,093/1,093.
+  Ruff, compilation, diff hygiene, governance ownership, resource-observation
+  ownership, and the enterprise static ratchet pass. The live ledger starts
+  honestly in `bootstrap_unmeasured`; this checkpoint does not claim that any
+  verifier predicts correctness, that fusion may replace an answer, resident
+  32B gains, adapter interaction, broad reasoning gain, or frontier capability.
 - [ ] **SPARK-047 - Disagreement graph.** Localize the earliest dependency where
   branches diverge and identify the exact disputed assumption or transition.
 - [ ] **SPARK-048 - Diagnostic action selection.** Choose the cheapest operation

@@ -1216,6 +1216,25 @@ class LatentCortexService:
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("mistake_locator_unproven")
         try:
+            from core.brain.llm.latent_cortex.verifier_fusion import (
+                validate_verifier_fusion_receipt,
+            )
+
+            validate_verifier_fusion_receipt(
+                receipt.get("verifier_fusion"),
+                blind_review=receipt.get("blind_review"),
+                decoy_verification=receipt.get("decoy_verification"),
+                generative_verifier=receipt.get("generative_verifier"),
+                counterfactual_verifier=receipt.get("counterfactual_verifier"),
+                prefix_stability=receipt.get("prefix_stability"),
+                neural_uncertainty=receipt.get("neural_uncertainty"),
+                mistake_locator=receipt.get("mistake_locator"),
+                selected_branch=receipt.get("selected_branch"),
+                evidence=config.get("verifier_fusion_evidence"),
+            )
+        except (ImportError, TypeError, ValueError):
+            errors.append("verifier_fusion_unproven")
+        try:
             from core.brain.llm.latent_cortex.stop_gate import (
                 StopGateRuntime,
                 validate_stop_gate_receipt,
@@ -2489,6 +2508,43 @@ class LatentCortexService:
         ) as exc:
             logger.debug("Branch correlation evidence unavailable: %s", exc)
             config["branch_correlation_evidence"] = None
+        try:
+            from core.brain.llm.latent_cortex.execution_controller import context_bucket
+            from core.brain.llm.latent_cortex.verifier_fusion import (
+                get_verifier_fusion_ledger,
+            )
+
+            verifier_bucket = (
+                str(controller_decision.get("bucket") or "")
+                if controller_decision is not None
+                else context_bucket(
+                    self._visible_objective(question, messages),
+                    domain,
+                    stakes,
+                    uncertainty,
+                )
+            )
+            verifier_ledger = get_verifier_fusion_ledger()
+            config["verifier_fusion_evidence"] = verifier_ledger.evidence(
+                bucket=verifier_bucket
+            )
+            self._last_allocation["verifier_fusion"] = {
+                **verifier_ledger.status(),
+                "bucket": verifier_bucket,
+                "evidence_state": config["verifier_fusion_evidence"][
+                    "evidence_state"
+                ],
+            }
+        except (
+            ImportError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug("Verifier fusion evidence unavailable: %s", exc)
+            config["verifier_fusion_evidence"] = None
         if allocation_profile == "resident_32b_interactive_full_stack_v2":
             try:
                 from core.brain.llm.latent_cortex.critic_identity import (

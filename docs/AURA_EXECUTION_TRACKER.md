@@ -27138,3 +27138,62 @@ Checkpoint-count completion is approximately 57.6%-90.6%, with a midpoint
 planning estimate of 70.4%. Next: publish CP360 and CP361, then implement
 SPARK-046's correlation-aware verifier fusion. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-24-362: Correlation-Aware Verifier Mesh
+
+SPARK-046 replaces informal agreement between heterogeneous verifiers with a
+checked statistical evidence boundary. A governed append-only ledger accepts
+only independently graded outcomes that bind a task, context bucket, final
+correctness label, probability, verifier identity, and exact source-receipt
+commitment. Its service-supplied snapshot separates domain from global
+history and carries ten-bin calibration, Brier score, expected calibration
+error, directional accuracy, 95% Wilson intervals, and pairwise error tables
+for the blind task reviewer, counterfactual robustness, prefix recurrence,
+hidden-state uncertainty head, and process verifier. Generative refutation is
+tracked as a distinct deterministic lane: failure to refute is never positive
+evidence, and evidence about a vetoed provisional answer is never reassigned
+to its replacement.
+Every correctness label also binds the exact independent grading receipt;
+an unanchored `checked` assertion is rejected before it can enter history.
+
+The runtime calibrates only signals present for the final selected branch.
+Eight observations are required for a calibration bin and twelve for
+directional reliability or pairwise dependence. Domain history is preferred;
+global fallback remains labeled as global. Positive historical error
+correlation is shrunk and charged against source weight and effective support.
+Unknown dependence is not treated as independence: an unmeasured pair receives
+a conservative upper bound of one and forces the fused measurement to abstain.
+A measurement requires at least two calibrated sources, complete paired
+dependence coverage, and 1.5 effective independent sources. Each source is
+hard-capped at half of the fused weight, and measured dependence widens the
+combined confidence interval.
+
+This checkpoint does not give the mesh branch-selection, correctness, answer
+replacement, or execution authority. The receipt always reports both authority
+booleans false and both effects `none`; SPARK-050 must consume these confidence
+bounds under its separate old-versus-new replacement contract. The service
+independently reconstructs every current signal, historical calibration choice,
+dependence estimate, weight, effective-source count, interval, verdict, and
+non-authority field. A changed worker snapshot or receipt fails closed.
+Final-branch extraction and the ledger API give independently scoring campaign
+code a direct, receipt-bound path to populate future history without mistaking
+the prior generative-veto target for the final answer.
+
+Ten direct adversarial verifier-fusion tests and the updated service contracts
+pass 106/106. The complete latent/RLC ownership battery passes 1,093/1,093.
+Ruff, bytecode compilation, diff hygiene, governance ownership, and the
+resource-observation audit pass. Governance contains 1,968 recognized calls in
+1,842 buckets; the two new writes are reviewed canonical ledger owners and the
+1,783 inherited migration-debt calls do not increase. Resource observation
+scans 2,925 Python files with zero findings. The enterprise ratchet remains
+green at 168 findings, 38 high, zero critical, and no baseline regression. The
+checked-outcome ledger begins honestly as `bootstrap_unmeasured`; no
+correctness-prediction, resident-32B gain, adapter interaction, broad reasoning
+gain, or frontier claim is made.
+
+This is total checkpoint record 423. The forecast remains 466-733 total
+records, leaving approximately 43-310 records after this checkpoint.
+Checkpoint-count completion is approximately 57.7%-90.8%, with a midpoint
+planning estimate of 70.6%. Next: publish CP362, then implement SPARK-047's
+dependency-level disagreement graph. Final multi-hour soaks remain deferred
+until every shorter gate is green.

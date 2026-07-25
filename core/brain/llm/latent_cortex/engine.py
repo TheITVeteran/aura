@@ -4173,6 +4173,21 @@ class LatentCortexEngine:
             domain=domain,
             process_selection_used=selection_basis == "process_verifier",
         )
+        from core.brain.llm.latent_cortex.verifier_fusion import (
+            build_verifier_fusion_receipt,
+        )
+
+        receipt.verifier_fusion = build_verifier_fusion_receipt(
+            blind_review=receipt.blind_review,
+            decoy_verification=receipt.decoy_verification,
+            generative_verifier=receipt.generative_verifier,
+            counterfactual_verifier=receipt.counterfactual_verifier,
+            prefix_stability=receipt.prefix_stability,
+            neural_uncertainty=receipt.neural_uncertainty,
+            mistake_locator=receipt.mistake_locator,
+            selected_branch=winner.index,
+            evidence=self.config.verifier_fusion_evidence,
+        )
         escape_receipts: dict[str, Any] = {}
         for branch in ensemble.branches:
             if branch.escape is not None and branch.escape.attempts:

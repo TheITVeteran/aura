@@ -539,6 +539,10 @@ class CortexConfig:
     # bootstrap state: duplicate programs still collapse, but no empirical
     # relationship is invented before independently graded paired outcomes.
     branch_correlation_evidence: dict[str, Any] | None = None
+    # Domain/global verifier reliability, calibration, and shared-error
+    # evidence assembled only from independently checked outcomes. None is an
+    # explicit unmeasured bootstrap and never creates correctness authority.
+    verifier_fusion_evidence: dict[str, Any] | None = None
     # Independently graded generator/critic outcomes, keyed to the exact
     # function identities. The worker validates this before the critic can
     # influence recurrence; None is an honest unmeasured bootstrap.
@@ -1015,6 +1019,15 @@ class CortexConfig:
                     LatentTreeSearchConfig.from_value(self.latent_tree_search)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if self.verifier_fusion_evidence is not None:
+            try:
+                from core.brain.llm.latent_cortex.verifier_fusion import (
+                    validate_verifier_fusion_evidence,
+                )
+
+                validate_verifier_fusion_evidence(self.verifier_fusion_evidence)
+            except (TypeError, ValueError) as exc:
+                problems.append(f"verifier_fusion_evidence invalid: {exc}")
         if self.escape is not None:
             if not isinstance(self.escape, dict):
                 problems.append("escape must be a mapping or null")
@@ -1240,6 +1253,10 @@ class EpisodeReceipt:
     # This is a recurrence diagnostic only; it cannot certify correctness or
     # influence the selected branch.
     prefix_stability: dict[str, Any] = field(default_factory=dict)
+    # Historically calibrated, dependence-discounted verifier mesh. SPARK-046
+    # is diagnostic only; later replacement policy must consume its confidence
+    # bounds without promoting any individual probabilistic source.
+    verifier_fusion: dict[str, Any] = field(default_factory=dict)
     critic_identity: dict[str, Any] = field(default_factory=dict)
     shared_blind_spots: dict[str, Any] = field(default_factory=dict)
     # Fresh-context virtual-width proof. Exact hidden-state contents stay
@@ -1542,6 +1559,7 @@ class EpisodeReceipt:
             "generative_verifier": dict(self.generative_verifier),
             "counterfactual_verifier": dict(self.counterfactual_verifier),
             "prefix_stability": dict(self.prefix_stability),
+            "verifier_fusion": dict(self.verifier_fusion),
             "critic_identity": dict(self.critic_identity),
             "shared_blind_spots": dict(self.shared_blind_spots),
             "branch_isolation": dict(self.branch_isolation),

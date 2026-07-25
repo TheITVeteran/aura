@@ -3201,6 +3201,22 @@
       "scope": "<module>.LatentCortexPersistence._commit"
     },
     {
+      "callee": "<file_write_gateway>.append_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/verifier_fusion.py",
+      "scope": "<module>.VerifierFusionLedger.record_checked"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/verifier_fusion.py",
+      "scope": "<module>.VerifierFusionLedger.record_checked"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -14722,6 +14738,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "298fbd8f4710bafdc2c0c48db2e078ed817226cd1d4888f5483772bf8c2cd2dc",
+  "inventory_sha256": "6ec9dbfac5009ff2170e8744e2efe975012d51afc9f5ad79f80c94c56c5a21f8",
   "schema_version": 1
 }
