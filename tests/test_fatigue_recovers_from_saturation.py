@@ -171,3 +171,77 @@ class TestChargeAttribution:
     def test_relief_is_not_recorded_as_a_charge(self, service):
         service._commit_cost_locked({"fatigue": -0.05}, receipt_id="stabilization:1")
         assert service.charge_attribution()["fatigue"] == {}
+
+
+class TestAnObservationIsNotACharge:
+    """The feedback loop that pinned live fatigue at 1.0 for whole sessions.
+
+    WelfareTransaction publishes ``actual_body_cost`` as ``b_delta`` — the
+    OBSERVED change in body state across the transaction, i.e. fatigue that was
+    already charged. ``_on_consequence`` fell back to the event's unique id when
+    no Will receipt was present, so every such publication charged that observed
+    fatigue AGAIN: measured fatigue became new fatigue, which enlarged the next
+    transaction's delta, which charged more.
+
+    That is why proportional recovery could not move the live number. The decay
+    was never the binding constraint — the loop tracked it.
+    """
+
+    def _consequence(self, *, receipt: str, fatigue: float = 0.2):
+        from core.runtime.consequence_bus import ConsequenceEvent
+
+        return ConsequenceEvent(
+            event_id=f"evt-{receipt or 'none'}-{fatigue}",
+            timestamp=time.time(),
+            source="welfare_transaction",
+            domain="response",
+            action_content="a completed turn",
+            actual_outcome="success",
+            actual_body_cost={"fatigue": fatigue},
+            will_receipt_id=receipt,
+        )
+
+    def test_an_unauthorized_observation_charges_nothing(self, service):
+        service._metabolic.fatigue = 0.0
+        service._on_consequence(self._consequence(receipt=""))
+        assert service._metabolic.fatigue == 0.0
+
+    def test_repeated_observations_cannot_ratchet_fatigue(self, service):
+        """The live shape: the same measured delta republished many times."""
+        service._metabolic.fatigue = 0.3
+        for _ in range(40):
+            service._on_consequence(self._consequence(receipt="", fatigue=0.2))
+        assert service._metabolic.fatigue <= 0.3, (
+            "an observed delta re-charged as a cost is a feedback loop that "
+            "pins fatigue at saturation forever"
+        )
+
+    def test_an_authorized_cost_is_still_charged_once(self, service):
+        service._metabolic.fatigue = 0.0
+        service._on_consequence(self._consequence(receipt="will-abc"))
+        assert service._metabolic.fatigue == pytest.approx(0.2)
+
+    def test_an_authorized_cost_is_idempotent(self, service):
+        service._metabolic.fatigue = 0.0
+        for _ in range(10):
+            service._on_consequence(self._consequence(receipt="will-abc"))
+        assert service._metabolic.fatigue == pytest.approx(0.2)
+
+    def test_failure_consequences_still_register_their_toll(self, service):
+        """Removing the double-charge must not make failures free."""
+        from core.runtime.consequence_bus import ConsequenceEvent
+
+        service._metabolic.fatigue = 0.0
+        service._on_consequence(
+            ConsequenceEvent(
+                event_id="evt-fail",
+                timestamp=time.time(),
+                source="welfare_transaction",
+                domain="response",
+                action_content="a failed turn",
+                actual_outcome="failure",
+                recovery_required=0.4,
+            )
+        )
+        assert service._metabolic.fatigue > 0.0
+        assert service._metabolic.recovery_debt > 0.0

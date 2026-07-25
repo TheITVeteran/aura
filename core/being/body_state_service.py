@@ -224,10 +224,24 @@ class BodyStateService:
             # A Will receipt may already have committed the authorization cost.
             # Reusing it here makes later execution/consequence publication
             # idempotent instead of charging the same action twice.
-            if event.actual_body_cost:
+            #
+            # Without a receipt there is no idempotency at all, and this became
+            # a feedback loop that pinned fatigue at 1.0 for entire sessions.
+            # WelfareTransaction publishes actual_body_cost as b_delta — the
+            # OBSERVED change in body state across the transaction, i.e. the
+            # fatigue that was already charged. Falling back to the unique
+            # event_id made every such publication a fresh charge, so measured
+            # fatigue was re-charged as new fatigue, which enlarged the next
+            # transaction's delta, which charged more. That is why proportional
+            # recovery (0.99 → 0.82 in twelve seconds, proven in isolation)
+            # could not move the live value: the loop tracked the decay.
+            #
+            # An observation is not an authorization. No receipt, no charge.
+            authorization = str(getattr(event, "will_receipt_id", "") or "").strip()
+            if event.actual_body_cost and authorization:
                 self._commit_cost_locked(
                     event.actual_body_cost,
-                    receipt_id=event.will_receipt_id or event.event_id,
+                    receipt_id=authorization,
                 )
 
     def update_body(self, body: BodyState) -> None:
