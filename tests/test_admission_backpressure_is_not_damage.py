@@ -241,3 +241,45 @@ class TestTheFullDisablingChain:
         threat = min(1.0, real_faults * DEGRADATION_SEVERITY_WEIGHTS["critical"]
                      / DEGRADATION_THREAT_DENOMINATOR)
         assert 0.3 + threat * 0.6 > AuthorityThresholds().cortisol_crisis
+
+
+def test_a_silent_timeout_is_classified_by_its_action():
+    """A bare asyncio TimeoutError carries no message at all.
+
+    Live 2026-07-25, under probe load:
+        [DEGRADATION] inference_gate (degraded):
+        TimeoutError: <no message; raised in asyncio.timeouts:__aexit__:115>
+        -> skipped cold primary attempt or fell back after foreground warmup
+        NEW INCIDENT INC-... [degraded]
+
+    The action line says plainly that the ladder handled it, and the marker
+    scan only read the exception text — which was empty — so a handled handoff
+    became a degraded record and an incident. A caller that names its own
+    backpressure in the action should not also have to encode it in an
+    exception message it does not control.
+    """
+    import inspect
+
+    from core.runtime.errors import record_degradation
+
+    assert str(TimeoutError()) == "", "the premise: the exception is silent"
+
+    src = inspect.getsource(record_degradation)
+    assert "_action_text" in src, "the action line must be readable by the scan"
+    assert "marker in _error_text or marker in _action_text" in src, (
+        "an empty exception message must not hide backpressure the caller named"
+    )
+
+
+def test_the_scan_still_requires_a_backpressure_word():
+    """Reading the action must not turn every action into backpressure."""
+    import inspect
+
+    from core.runtime.errors import record_degradation
+
+    src = inspect.getsource(record_degradation)
+    # The demotion is still gated on the marker tuple, not on any action text.
+    assert "_BACKPRESSURE_MARKERS" in src
+    assert 'severity in ("degraded", "critical")' in src, (
+        "only degraded/critical are demoted; nothing is silently upgraded"
+    )

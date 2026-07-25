@@ -500,8 +500,18 @@ def record_degradation(
         "crash_loop_backoff",
     )
     _error_text = str(error)
+    _action_text = str(action or "")
+    # A bare asyncio TimeoutError carries NO message, so classifying on the
+    # exception text alone sees nothing and a handled handoff lands as
+    # "degraded" plus an incident. Live 2026-07-25:
+    #   TimeoutError: <no message; raised in asyncio.timeouts:__aexit__>
+    #   -> "skipped cold primary attempt or fell back after foreground warmup"
+    # The action line states plainly that the ladder handled it. Read it too —
+    # a caller that names its own backpressure in the action should not have to
+    # also encode it in an exception message it does not control.
     _is_admission_backpressure = any(
-        marker in _error_text for marker in _BACKPRESSURE_MARKERS
+        marker in _error_text or marker in _action_text
+        for marker in _BACKPRESSURE_MARKERS
     )
     if _is_admission_backpressure and severity in ("degraded", "critical"):
         severity = "warning"
