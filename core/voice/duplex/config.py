@@ -106,6 +106,26 @@ class AsrConfig:
     )
     language: str = "en"
 
+    # Speculative final decode.
+    #
+    # The endpointer spends 340–1500 ms *deliberately waiting* to see whether
+    # the user resumes. That wait is dead time in which the machine is idle,
+    # and the final decode (~320 ms) then runs afterwards in series. Starting
+    # it during the wait overlaps the two, so by the time the endpoint
+    # confirms, the transcript her mind needs already exists.
+    #
+    # The decode is a pure function of the audio — no side effects — so a
+    # wasted one costs only some CPU. It is discarded the instant speech
+    # resumes, because then it describes a sentence that is not over.
+    speculative_final: bool = field(
+        default_factory=lambda: _env_flag("AURA_VOICE_SPECULATIVE_ASR", True)
+    )
+    # Far enough into the pause that this is probably a real turn end, early
+    # enough that the decode finishes before the endpoint fires.
+    speculate_after_ms: float = field(
+        default_factory=lambda: _env_float("AURA_VOICE_SPECULATE_AFTER_MS", 130.0)
+    )
+
 
 @dataclass(slots=True)
 class EndpointConfig:
@@ -234,8 +254,16 @@ class TtsConfig:
     # First spoken chunk is deliberately tiny: time-to-first-audio dominates
     # perceived latency, and a 3-word opener sounds like a person starting to
     # answer. Later chunks grow because longer context = better prosody.
+    #
+    # Measured on this host, synthesis cost tracks output duration closely:
+    #   "Yeah."                      140 ms
+    #   "Yeah, I think so."          193 ms
+    #   "Okay, so the short answer"  251 ms
+    # so shrinking the opener from 48 to 24 characters buys ~110 ms of
+    # perceived latency for free. Below about 20 the opener stops carrying
+    # enough prosody and the reply sounds like it starts on a stutter.
     first_chunk_max_chars: int = field(
-        default_factory=lambda: _env_int("AURA_VOICE_FIRST_CHUNK_CHARS", 48)
+        default_factory=lambda: _env_int("AURA_VOICE_FIRST_CHUNK_CHARS", 24)
     )
     chunk_max_chars: int = field(
         default_factory=lambda: _env_int("AURA_VOICE_CHUNK_CHARS", 180)
@@ -297,6 +325,24 @@ class DuplexConfig:
     # How long a cognition turn may run before the lane gives up and says so.
     cognition_timeout_s: float = field(
         default_factory=lambda: _env_float("AURA_VOICE_COGNITION_TIMEOUT_S", 120.0)
+    )
+
+    # Target length for a spoken reply, in words.
+    #
+    # This is the single largest latency lever in the whole lane, and it is
+    # not a trick. The governed turn returns its reply as one finished
+    # string, so nothing can be spoken until the last token is decoded —
+    # which makes time-to-first-audio proportional to *total* reply length.
+    # At a typical local decode rate, a 150-word answer is several seconds
+    # before the first syllable; a 40-word answer is roughly a quarter of
+    # that, and the first word arrives that much sooner.
+    #
+    # It is also simply correct for the medium. Nobody says a 150-word
+    # paragraph on a phone call; they answer, then wait to see if you want
+    # more. Reading a written-length reply aloud is the thing that makes
+    # voice assistants exhausting.
+    spoken_reply_words: int = field(
+        default_factory=lambda: _env_int("AURA_VOICE_REPLY_WORDS", 45)
     )
 
     @classmethod

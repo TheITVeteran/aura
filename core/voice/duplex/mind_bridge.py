@@ -119,10 +119,12 @@ class MindBridge:
         session_id: str,
         responder: Responder | None = None,
         cognition_timeout_s: float = 120.0,
+        spoken_reply_words: int = 45,
     ) -> None:
         self._session_id = session_id
         self._responder = responder or _default_responder
         self._timeout_s = cognition_timeout_s
+        self._spoken_reply_words = int(spoken_reply_words)
         self._activity_task: asyncio.Task[None] | None = None
         self._activity_callback: Callable[[str], None] | None = None
         self._turn_active = False
@@ -170,29 +172,51 @@ class MindBridge:
 
         return (reply or "").strip() or None
 
-    def _compose_effective_message(self, transcript: str) -> str:
-        """Prepend any correction the last turn's interruption implies.
+    def _spoken_turn_directive(self) -> str:
+        """Tell the engine this reply will be heard, not read.
 
-        The visible message stays the user's raw words; only the message the
-        engine reasons over carries the note, so the transcript shown in the
-        UI is never polluted with machine annotations.
+        Serves two ends at once, which is why it is worth a prompt slot.
+
+        Latency: the governed turn returns one finished string, so nothing
+        can be spoken until the final token is decoded. Reply length is
+        therefore *directly* time-to-first-audio, and this is the largest
+        single lever in the lane.
+
+        Quality: written-length prose read aloud is what makes voice
+        assistants tiring. Markdown is worse — a spoken bullet list is just
+        a monotone run of fragments, and headings vanish entirely.
         """
-        pending = self._pending_interruption
-        if pending is None or not pending.interrupted:
-            return transcript
-
-        unheard = pending.unheard
-        if not unheard:
-            return transcript
-
-        heard = pending.spoken.strip()
-        note = (
-            "[voice context: the user interrupted your previous spoken reply. "
-            f"They heard only: \"{heard[:400]}\". "
-            f"They did not hear: \"{unheard[:400]}\". "
-            "Treat the unheard part as unsaid — do not assume they know it.]"
+        return (
+            "[spoken turn: this reply is going to be read aloud in a live "
+            f"conversation. Answer in about {self._spoken_reply_words} words or "
+            "fewer, as natural speech. No markdown, no lists, no headings, no "
+            "code blocks. Lead with the useful part; leave detail for if they "
+            "ask. It is fine to be brief.]"
         )
-        return f"{note}\n\n{transcript}"
+
+    def _compose_effective_message(self, transcript: str) -> str:
+        """Build what the engine reasons over for this turn.
+
+        The visible message stays the user's raw words; only this carries the
+        machine annotations, so the transcript shown in the UI is never
+        polluted with them.
+        """
+        parts: list[str] = [self._spoken_turn_directive()]
+
+        pending = self._pending_interruption
+        if pending is not None and pending.interrupted:
+            unheard = pending.unheard
+            if unheard:
+                heard = pending.spoken.strip()
+                parts.append(
+                    "[voice context: the user interrupted your previous spoken "
+                    f'reply. They heard only: "{heard[:400]}". '
+                    f'They did not hear: "{unheard[:400]}". '
+                    "Treat the unheard part as unsaid — do not assume they know it.]"
+                )
+
+        parts.append(transcript)
+        return "\n\n".join(parts)
 
     # ── spoken-truth accounting ──────────────────────────────────────────
 

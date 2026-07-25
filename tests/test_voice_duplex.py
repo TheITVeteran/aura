@@ -148,10 +148,30 @@ def test_interruption_hands_the_unheard_tail_to_the_next_turn():
     assert effective.endswith("wait, what?")
 
 
-def test_uninterrupted_turn_adds_no_context_note():
+def test_uninterrupted_turn_adds_no_interruption_note():
     bridge = MindBridge(session_id="t")
     bridge.record_spoken(SpokenRecord(intended="All of it.", spoken="All of it.", interrupted=False))
-    assert bridge._compose_effective_message("next question") == "next question"
+    effective = bridge._compose_effective_message("next question")
+
+    assert "did not hear" not in effective
+    assert effective.endswith("next question")
+
+
+def test_every_voice_turn_carries_the_spoken_length_directive():
+    """Reply length *is* time-to-first-audio on this path.
+
+    The governed turn returns one finished string, so nothing can be spoken
+    until the last token is decoded. Dropping this directive silently costs
+    seconds per reply, so it is pinned.
+    """
+    bridge = MindBridge(session_id="t", spoken_reply_words=45)
+    effective = bridge._compose_effective_message("what do you think?")
+
+    assert "spoken turn" in effective
+    assert "45 words" in effective
+    assert "No markdown" in effective
+    # The user's own words still arrive last and verbatim.
+    assert effective.endswith("what do you think?")
 
 
 # ── echo rejection ───────────────────────────────────────────────────────

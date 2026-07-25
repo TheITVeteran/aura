@@ -47,7 +47,7 @@ from core.voice.duplex.config import (
     DuplexConfig,
 )
 from core.voice.duplex.echo_guard import EchoGuard
-from core.voice.duplex.endpointing import Endpointer
+from core.voice.duplex.endpointing import Completeness, Endpointer
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
 from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
 from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
@@ -82,6 +82,7 @@ class TurnMetrics:
     reply_ready_at: float = 0.0
     first_audio_at: float = 0.0
     asr_ms: float = 0.0
+    asr_speculative_ms: float = 0.0  # decode that ran inside the endpoint wait
     cognition_ms: float = 0.0
     tts_first_chunk_ms: float = 0.0
 
@@ -93,6 +94,7 @@ class TurnMetrics:
         )
         return {
             "asr_ms": round(self.asr_ms, 1),
+            "asr_speculative_ms": round(self.asr_speculative_ms, 1),
             "cognition_ms": round(self.cognition_ms, 1),
             "tts_first_chunk_ms": round(self.tts_first_chunk_ms, 1),
             "time_to_first_audio_ms": round(ttfa, 1),
@@ -172,6 +174,7 @@ class DuplexVoiceSession:
         self._mind = mind or MindBridge(
             session_id=session_id,
             cognition_timeout_s=self._config.cognition_timeout_s,
+            spoken_reply_words=self._config.spoken_reply_words,
         )
 
         self._splitter = FrameSplitter(VAD_FRAME_SAMPLES)
@@ -195,6 +198,10 @@ class DuplexVoiceSession:
         self._client_played_s = 0.0
         self._metrics = TurnMetrics()
         self._stable_text = ""
+        # A final decode started during the endpoint's silence wait, valid
+        # only until the user speaks again.
+        self._speculative: Any = None
+        self._speculative_task: asyncio.Task[None] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -315,6 +322,10 @@ class DuplexVoiceSession:
         if vf.event is SpeechEvent.PAUSE:
             await self._on_pause(vf.silence_ms, vf.speech_ms)
         elif vf.event in (SpeechEvent.CONTINUING, SpeechEvent.RESUMED):
+            if vf.event is SpeechEvent.RESUMED:
+                # They were not finished after all, so any speculative
+                # transcript describes an unfinished sentence. Drop it.
+                self._discard_speculation()
             self._maybe_schedule_partial()
 
     async def _begin_user_turn(self) -> None:
@@ -327,6 +338,7 @@ class DuplexVoiceSession:
 
         self._utterance.begin()
         self._asr.reset()
+        self._discard_speculation()
         self._stable_text = ""
         # A partial decode started for the previous utterance can still be
         # in flight. Bump the generation so its result is discarded instead
@@ -348,6 +360,10 @@ class DuplexVoiceSession:
             await self._end_user_turn(decision.reason)
             return
 
+        # The endpointer is about to spend hundreds of milliseconds waiting
+        # to see whether they resume. Spend that time decoding instead.
+        self._maybe_speculate_final(decision, silence_ms)
+
         # Not an endpoint — so this gap is a prosodic boundary, which is
         # exactly where acknowledgement belongs.
         bc = self._backchannel.consider(
@@ -364,6 +380,54 @@ class DuplexVoiceSession:
             await self._mind.publish("backchannel", {"text": bc.text, "register": bc.register})
 
         self._maybe_schedule_partial()
+
+    def _maybe_speculate_final(self, decision: Any, silence_ms: float) -> None:
+        """Start the final decode during the endpoint's wait, not after it.
+
+        The endpointer deliberately waits 340–1500 ms to see whether the user
+        resumes. Serially, the ~320 ms final decode then happens *after* that
+        wait, so the two costs add. Overlapping them means that when the
+        endpoint confirms, the transcript her mind needs already exists.
+
+        Safe because a decode is a pure function of the audio: a wasted one
+        costs CPU and nothing else. It is thrown away the instant speech
+        resumes, since it would then describe an unfinished sentence.
+        """
+        cfg = self._config.asr
+        if not cfg.speculative_final or self._speculative is not None:
+            return
+        if self._speculative_task is not None and not self._speculative_task.done():
+            return
+        if silence_ms < cfg.speculate_after_ms:
+            return
+        # A trailing "um" means they are audibly still composing; speculating
+        # there would burn a decode on a sentence that is about to grow.
+        if getattr(decision, "completeness", None) is Completeness.THINKING:
+            return
+        if self._utterance.sample_count == 0:
+            return
+        self._speculative_task = self._spawn(self._run_speculative_final())
+
+    async def _run_speculative_final(self) -> None:
+        audio = self._utterance.audio()
+        if audio.size == 0:
+            return
+        generation = self._utterance_generation
+        result = await self._asr.finalize(audio)
+        # Two ways this can be stale: a whole new utterance began, or they
+        # resumed mid-pause and _discard_speculation cleared the slot.
+        if generation != self._utterance_generation:
+            return
+        if self._vad.in_speech and self._vad.last_probability >= self._config.vad.speech_threshold:
+            return
+        self._speculative = result
+
+    def _discard_speculation(self) -> None:
+        self._speculative = None
+        task = self._speculative_task
+        self._speculative_task = None
+        if task is not None and not task.done():
+            task.cancel()
 
     def _maybe_schedule_partial(self) -> None:
         """Kick off an incremental decode if one is due and none is running."""
@@ -494,8 +558,17 @@ class DuplexVoiceSession:
 
     async def _run_turn(self, audio: np.ndarray, reason: str) -> None:
         try:
-            final = await self._asr.finalize(audio)
-            self._metrics.asr_ms = final.decode_ms
+            speculative = self._speculative
+            self._speculative = None
+            if speculative is not None:
+                # Already decoded during the endpoint's wait — the turn's
+                # transcript costs nothing here.
+                final = speculative
+                self._metrics.asr_ms = 0.0
+                self._metrics.asr_speculative_ms = speculative.decode_ms
+            else:
+                final = await self._asr.finalize(audio)
+                self._metrics.asr_ms = final.decode_ms
             self._metrics.final_transcript_at = time.monotonic()
 
             transcript = final.stable.strip()
