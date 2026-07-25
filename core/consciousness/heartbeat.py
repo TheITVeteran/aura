@@ -23,6 +23,12 @@ from .global_workspace import CognitiveCandidate
 
 logger = logging.getLogger("Consciousness.Heartbeat")
 
+# How much the existential threat must RISE before it is signalled as acute,
+# and the level at which it is always signalled regardless of trend. A steady
+# resting threat is a state; an acute signal is for a change or for real danger.
+_THREAT_RISE_TO_SIGNAL = 0.10
+_THREAT_ALWAYS_SIGNAL = 0.75
+
 _RECOVERABLE_HEARTBEAT_ERRORS = (
     AttributeError,
     ImportError,
@@ -404,10 +410,37 @@ class CognitiveHeartbeat:
             stakes = ServiceContainer.get("existential_stakes", default=None)
             if stakes:
                 threat = stakes.update()
-                # Feed threat directly into the neurochemical system
+                # Feed threat into the neurochemical system — but ACUTELY, on a
+                # rise or at a genuinely dangerous level, not on every tick of a
+                # steady state.
+                #
+                # A resident 32B holds ~20GB against a 40GB limit, so
+                # memory_threat rests near 0.5 forever BY DESIGN. The old flat
+                # `threat > 0.2` gate turned that resting level into a cortisol
+                # surge on every heartbeat; surges outrun the tonic return, and
+                # the 2026-07-25 verification run crossed the 0.85 crisis line
+                # and blocked 15 STATE_MUTATIONs on a runtime with zero
+                # degradations, zero incidents and every probe passing. Holding
+                # the model resident is the architecture working, not a
+                # creeping approach to OOM.
+                #
+                # This is the same distinction the module below already draws
+                # for CPU and loop lag ("NORMAL during heavy 32B generation"),
+                # applied to the resting memory footprint: what signals danger
+                # is the RISE toward the limit, and any sustained level high
+                # enough to be dangerous on its own.
                 ncs = ServiceContainer.get("neurochemical_system", default=None)
-                if ncs and threat > 0.2:
-                    ncs.on_threat(severity=threat)
+                if ncs:
+                    previous = float(getattr(self, "_last_signalled_threat", 0.0))
+                    rising = threat >= previous + _THREAT_RISE_TO_SIGNAL
+                    dangerous = threat >= _THREAT_ALWAYS_SIGNAL
+                    if threat > 0.2 and (rising or dangerous):
+                        ncs.on_threat(severity=threat)
+                    # Track the level either way so a slow climb still trips the
+                    # rise test, and a genuine fall re-arms it.
+                    self._last_signalled_threat = (
+                        threat if (rising or dangerous) else min(previous, threat)
+                    )
         except _RECOVERABLE_HEARTBEAT_ERRORS as e:
             _record_heartbeat_degradation(
                 e,
