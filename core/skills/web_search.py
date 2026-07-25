@@ -189,7 +189,18 @@ class EnhancedWebSearchSkill(BaseSkill):
                     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation("web_search", exc, severity="warning", action="continued without deep evidence deliberation")
                     return normalized
-                logger.warning("Deep Research returned an empty answer for '%s'; falling back to retrieval pipeline.", query)
+                # "Empty answer" used to be the whole story, which read as
+                # "the research found nothing". Usually it found plenty and
+                # could not synthesize it — on 2026-07-25, because background
+                # inference was queued behind foreground headroom. Those are
+                # different failures and only one of them is about the web.
+                logger.warning(
+                    "Deep Research produced no answer for '%s' (%s; %d source(s) "
+                    "gathered); falling back to retrieval pipeline.",
+                    query,
+                    res.get("synthesis_detail") or res.get("synthesis_status") or "no detail",
+                    len(res.get("sources") or []),
+                )
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation(
                     "web_search",

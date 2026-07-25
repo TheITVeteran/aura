@@ -47,6 +47,8 @@ class ResearchState:
     is_sufficient: bool = False
     final_answer: str = ""
     all_sources: List[Dict[str, str]] = field(default_factory=list)
+    synthesis_status: str = "pending"
+    synthesis_detail: str = ""
 
 
 class ResearchPhase(Enum):
@@ -260,7 +262,28 @@ async def synthesize_answer(
         options={"num_predict": 4096, "temperature": 0.3, "num_ctx": 16384}
     )
 
-    state.final_answer = result.get("response", "No answer generated.")
+    text = str((result or {}).get("response") or "").strip()
+    if not text:
+        # Synthesis that produced nothing is not a completed synthesis. On
+        # 2026-07-25 the model call returned instantly and empty because
+        # background inference was queued behind foreground headroom; the
+        # pipeline still announced 'complete' and the caller discarded five
+        # real fetched sources. Name it, and keep the evidence.
+        state.synthesis_status = "no_text"
+        state.synthesis_detail = str(
+            (result or {}).get("error")
+            or (result or {}).get("status")
+            or "the model returned no text"
+        )
+        state.final_answer = ""
+        logger.warning(
+            "Synthesis produced no text (%s); %d source(s) retained unsynthesized.",
+            state.synthesis_detail, len(state.all_sources),
+        )
+        return state
+
+    state.synthesis_status = "ok"
+    state.final_answer = text
     logger.info("Synthesis complete: %d chars", len(state.final_answer))
     return state
 
@@ -324,10 +347,18 @@ async def run_deep_research(
     _notify(ResearchPhase.COMPLETE)
 
     duration = time.time() - start_time
-    logger.info(
-        "Deep research complete: %d loops, %d queries, %d sources, %.1fs",
-        state.loop_count, len(state.search_queries), len(state.all_sources), duration
-    )
+    if state.synthesis_status == "ok":
+        logger.info(
+            "Deep research complete: %d loops, %d queries, %d sources, %.1fs",
+            state.loop_count, len(state.search_queries), len(state.all_sources), duration
+        )
+    else:
+        logger.warning(
+            "Deep research gathered %d source(s) over %d quer(ies) in %.1fs but "
+            "could not synthesize them (%s) — reporting unsynthesized, not complete.",
+            len(state.all_sources), len(state.search_queries), duration,
+            state.synthesis_detail or state.synthesis_status,
+        )
 
     # Deduplicate sources
     seen_urls = set()
@@ -340,6 +371,8 @@ async def run_deep_research(
 
     return {
         "answer": state.final_answer,
+        "synthesis_status": state.synthesis_status,
+        "synthesis_detail": state.synthesis_detail,
         "sources": unique_sources,
         "loops": state.loop_count,
         "queries_used": state.search_queries + [q for r in state.search_results for q in [r.query]],
