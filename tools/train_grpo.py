@@ -1704,6 +1704,8 @@ def main() -> int:
             last_durable_step = step
             return path
 
+        # Default-open: only an explicit refusal below closes it.
+        training_allowed = True
         if resumed is None:
             if execution_spec is None:
                 baseline_eval = evaluate_heldout(
@@ -1737,7 +1739,43 @@ def main() -> int:
                 flush=True,
             )
 
-        training_allowed = True
+            # SCOPE REACHABILITY. The baseline has just told us WHERE the
+            # episodes fail. If every one of those failures lives outside
+            # the parameters this run may train, no amount of optimisation
+            # can reduce the loss — it has no causal path to the failure.
+            #
+            # This is checked here, before calibration, because calibration
+            # alone costs over an hour. Seven consecutive campaigns
+            # (cp259/271/273/285/291/294/305) ran with adapter_scope
+            # latent_slots_only against failures that were 100% decode-path
+            # output-contract failures, burned ~86 minutes each, and
+            # produced no gradient because every reward was zero.
+            if execution_spec is not None:
+                from core.learning.scope_reachability import (
+                    assess as _assess_scope_reach,
+                    merge_reason_counts as _merge_reasons,
+                )
+
+                _reach = _assess_scope_reach(
+                    _merge_reasons(
+                        baseline_eval.get("score_reasons"),
+                        baseline_eval.get("contract_reasons"),
+                    ),
+                    adapter_scope=getattr(
+                        execution_spec, "adapter_scope", "",
+                    ),
+                )
+                baseline_eval["scope_reachability"] = _reach.to_dict()
+                if _reach.should_refuse:
+                    print(
+                        "[halt] trainable scope cannot reach the observed "
+                        f"failures: {_reach.detail}",
+                        flush=True,
+                    )
+                    training_allowed = False
+                    halt_reason = "scope_unreachable"
+
+
         if args.calibrate and resumed is None:
             cal_group = min(config.group_size, args.calibrate_group)
             cal_tokens = _calibration_token_budget(
