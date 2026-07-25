@@ -68,6 +68,7 @@ class TestALostAbortRaceIsNotDamage:
         "reason",
         [
             "inference_gate_generation_timeout:Reflex:14.4s",
+            "endpoint_timeout:Cortex:150.0s",
             "first_token_timeout",
             "kernel_soft_deadline",
             "deadline_missed",

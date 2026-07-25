@@ -50,8 +50,13 @@ logger = logging.getLogger("LLM.MLX")
 
 # Abort reasons that race a finishing generation: losing that race is the
 # timeout working, not a fault.
+# Any TIMEOUT-shaped reason races a finishing generation; enumerating them one
+# at a time missed endpoint_timeout and killed a healthy idle Cortex worker
+# 150s into a live probe, buying a full cold reload for a turn already served.
+# Deliberate kills (memory_pressure, operator_requested, crash_loop_backoff,
+# model_swap) contain none of these words and are unaffected.
 _ABORT_RACE_MARKERS_RE = re.compile(
-    r"generation_timeout|first_token|soft_deadline|deadline_missed|"
+    r"timeout|timed_out|first_token|soft_deadline|deadline|"
     r"turn_complete|request_finished",
     re.IGNORECASE,
 )
