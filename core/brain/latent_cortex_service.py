@@ -1808,6 +1808,19 @@ class LatentCortexService:
             except (ImportError, TypeError, ValueError):
                 errors.append("disagreement_graph_unproven")
             try:
+                from core.brain.llm.latent_cortex.diagnostic_action_selector import (
+                    validate_diagnostic_action_selector_receipt,
+                )
+
+                validate_diagnostic_action_selector_receipt(
+                    receipt.get("diagnostic_action_selection"),
+                    disagreement_graph=receipt.get("disagreement_graph"),
+                    value_policy=receipt.get("value_of_computation"),
+                    action_trace=raw_action_trace,
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("diagnostic_action_selection_unproven")
+            try:
                 from core.brain.llm.latent_cortex.correlated_support import (
                     validate_correlated_support_receipt,
                 )

@@ -110,6 +110,15 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     )
     assert r.disagreement_graph["selection_effect"] == "none"
     assert r.disagreement_graph["repair_effect"] == "none"
+    assert r.diagnostic_action_selection["localized_plan_count"] == 1
+    assert r.diagnostic_action_selection["selected_plan_count"] == 1
+    assert r.diagnostic_action_selection["plans"][0]["selected"]["method"] == (
+        "regenerate_from_prefix"
+    )
+    assert r.diagnostic_action_selection["authority"] == (
+        "diagnostic_recommendation_only"
+    )
+    assert r.diagnostic_action_selection["execution_effect"] == "none"
     assert r.correlated_support["raw_support_count"] == 2
     assert r.correlated_support["evidence_state"] == "bootstrap_unmeasured"
     assert r.correlated_support["confidence_multiplier"] <= 1.0

@@ -27249,3 +27249,57 @@ Checkpoint-count completion is approximately 57.8%-91.0%, with a midpoint
 planning estimate of 70.7%. Next: publish CP363, then implement SPARK-048's
 evidence-bound diagnostic action selection. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-24-364: Evidence-Bound Diagnostic Action Selection
+
+SPARK-048 turns each localized SPARK-047 dispute into a checked diagnostic
+plan. The selector first binds the disputed atom to its deterministic verifier
+route. Integer arithmetic, Python syntax, and JSON parsing are real local
+executions, so a verified or refuted route is recorded as an already executed
+resolution with zero additional cost. Unsupported formal, source-retrieval,
+simulation, and planning routes identify the required operation class but do
+not claim that a solver, source, or simulator ran.
+
+For unresolved disputes the candidate set is retrieval, proof, simulation,
+falsification/counterexample, exact-prefix regeneration, and a specialized
+verifier. Capability is derived from the value controller's actual executor
+inventory and the stable memory, evidence, verifier, and savepoint signals in
+the primary action trace. A memory-only path selects `search_memory` rather
+than an unavailable evidence operation. The latent `formalize` transform is
+not treated as a theorem prover; the proof candidate remains unavailable until
+a genuine proof executor exists.
+
+Every candidate carries a preregistered structural applicability reason and a
+conservative action-cost estimate. Sparse cells use an explicitly labeled
+bootstrap cost and structural prior. At eight checked historical trials, the
+same service-supplied value-of-computation evidence replaces those assumptions
+with the measured verified-gain lower bound and cost upper bound. A mature
+action whose gain lower bound is nonpositive cannot win as an expected
+resolution. The selector takes the cheapest candidate inside the strongest
+supported applicability band and emits an explicit no-admissible-operation
+result when the real executor inventory cannot resolve the dispute.
+
+The service reconstructs the deterministic route envelopes, source atom
+bindings, executor capabilities, evidence snapshot, effectiveness/cost bounds,
+candidate ordering, and selected plan. Recommendation authority does not imply
+branch-selection, execution, or repair authority; all three effects remain
+`none`. SPARK-049 must execute a recommendation under a separate bounded
+invalidation-and-repair contract.
+
+Eleven direct selector contracts cover causal-prefix regeneration, exact
+arithmetic resolution, source retrieval, memory-only routing, measured-cost
+choice, measured nonpositive-gain refusal, unavailable-executor abstention,
+formal-proof honesty, evidence binding, authority tampering, and inconsistent
+capability flags. The focused selector, graph, value-controller, engine, and
+service battery passes 168/168. The complete 62-file latent/RLC ownership
+battery passes 1,110/1,110. This checkpoint does not claim that an unexecuted
+recommendation resolved a dispute, repaired a branch, improved the resident
+32B, established adapter interaction, produced broad reasoning gain, or
+reached frontier capability.
+
+This is total checkpoint record 425. The forecast remains 466-733 total
+records, leaving approximately 41-308 records after this checkpoint.
+Checkpoint-count completion is approximately 58.0%-91.2%, with a midpoint
+planning estimate of 70.9%. Next: publish CP364, then implement SPARK-049's
+bounded local invalidation and repair. Final multi-hour soaks remain deferred
+until every shorter gate is green.

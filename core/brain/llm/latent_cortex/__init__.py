@@ -29,6 +29,12 @@ from core.brain.llm.latent_cortex.deterministic_verifier_router import (
     router_check,
     validate_deterministic_router_envelope,
 )
+from core.brain.llm.latent_cortex.diagnostic_action_selector import (
+    DIAGNOSTIC_ACTION_SELECTOR_SCHEMA,
+    build_candidate_routes,
+    build_diagnostic_action_selector_receipt,
+    validate_diagnostic_action_selector_receipt,
+)
 from core.brain.llm.latent_cortex.disagreement_graph import (
     DISAGREEMENT_GRAPH_SCHEMA,
     build_disagreement_graph_receipt,
@@ -71,6 +77,7 @@ __all__ = [
     "CortexConfig",
     "DETERMINISTIC_ROUTER_SCHEMA",
     "DISAGREEMENT_GRAPH_SCHEMA",
+    "DIAGNOSTIC_ACTION_SELECTOR_SCHEMA",
     "EpisodeReceipt",
     "FastWeightsConfig",
     "LatentOptConfig",
@@ -83,7 +90,9 @@ __all__ = [
     "WorkspaceConfig",
     "atom_ids",
     "build_atomic_decomposition",
+    "build_candidate_routes",
     "build_deterministic_router_receipt",
+    "build_diagnostic_action_selector_receipt",
     "build_disagreement_graph_receipt",
     "build_empty_virtual_quanta_receipt",
     "build_empty_latent_tree_receipt",
@@ -97,6 +106,7 @@ __all__ = [
     "validate_atomic_decomposition",
     "validate_atomic_decomposition_envelope",
     "validate_deterministic_router_envelope",
+    "validate_diagnostic_action_selector_receipt",
     "validate_disagreement_graph_receipt",
     "run_virtual_quanta",
     "validate_virtual_quanta_receipt",

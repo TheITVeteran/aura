@@ -4759,6 +4759,29 @@ class LatentCortexEngine:
                 candidate_decompositions=candidate_decompositions,
                 blind_review=receipt.blind_review,
             )
+            from core.brain.llm.latent_cortex.diagnostic_action_selector import (
+                build_candidate_routes,
+                build_diagnostic_action_selector_receipt,
+            )
+
+            candidate_routes = (
+                build_candidate_routes(
+                    branch_probe_texts,
+                    objective=verification_objective,
+                    candidate_decompositions=candidate_decompositions,
+                )
+                if candidate_decompositions
+                else {}
+            )
+            receipt.diagnostic_action_selection = (
+                build_diagnostic_action_selector_receipt(
+                    disagreement_graph=receipt.disagreement_graph,
+                    candidate_routes=candidate_routes,
+                    action_policy_evidence=action_policy_evidence,
+                    value_policy=receipt.value_of_computation,
+                    action_trace=receipt.cognitive_action_trace,
+                )
+            )
             from core.brain.llm.latent_cortex.correlated_support import (
                 build_correlated_support_receipt,
             )

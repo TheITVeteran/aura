@@ -1840,9 +1840,47 @@ before those dependencies close is not admissible.
   exact structural and hash-bound decoded-claim localization; it does not prove
   semantic equivalence, candidate correctness, repair success, resident-32B
   gain, adapter interaction, broad reasoning gain, or frontier capability.
-- [ ] **SPARK-048 - Diagnostic action selection.** Choose the cheapest operation
+- [x] **SPARK-048 - Diagnostic action selection.** Choose the cheapest operation
   expected to resolve each disagreement: execute, retrieve, prove, simulate,
   falsify, regenerate from prefix, or ask a specialized verifier.
+
+  CP364 adds a post-localization selector for every pairwise SPARK-047 dispute.
+  It binds the exact disputed atom to the existing deterministic router before
+  considering model-mediated diagnostics. Exact arithmetic, Python syntax, and
+  JSON parse routes are recorded as already executed resolutions with their
+  verified/refuted receipts. Formal, source, simulation, and planning routes
+  identify the required verifier class without pretending that an unsupported
+  route ran.
+
+  The remaining candidates are source or memory retrieval, formal proof,
+  simulation, falsification/counterexample, regeneration from the exact shared
+  prefix, and a specialized assumption/transition verifier. Availability is
+  reconstructed from the value controller's actual executor inventory and the
+  stable memory, evidence, verifier, and savepoint flags in the primary action
+  trace. Memory-only retrieval uses `search_memory`, not the unavailable
+  evidence-retrieval executor. Latent `formalize` is explicitly not accepted as
+  a theorem prover; proof remains unavailable until a real proof executor is
+  wired.
+
+  Each method carries a preregistered structural applicability reason. Once an
+  action has eight checked historical trials, the selector replaces bootstrap
+  assumptions with the measured verified-gain lower confidence bound and cost
+  upper confidence bound from the same service-supplied value-of-computation
+  snapshot. A mature nonpositive gain bound cannot win. Among the highest
+  evidence-supported applicability band, the lowest conservative cost wins.
+  Sparse choices remain labeled structural bootstrap priors. If no real,
+  positive-evidence executor exists, the selector records
+  `no_admissible_diagnostic_operation` instead of inventing one.
+
+  The service independently reconstructs deterministic routes, capabilities,
+  evidence/cost bindings, candidate scores, and the selected plan. The selector
+  is recommendation-only: branch selection, execution, and repair effects are
+  all `none`. SPARK-049 must execute the selected diagnostic under a bounded
+  repair transaction. Eleven direct selector contracts plus updated graph,
+  value-controller, engine, and service tests pass 168/168; the complete
+  62-file latent/RLC ownership battery passes 1,110/1,110. This checkpoint does
+  not claim that an unexecuted recommendation resolved a dispute, repaired a
+  branch, improved the resident 32B, or established frontier capability.
 - [ ] **SPARK-049 - Local invalidation and repair.** Preserve verified ancestors,
   invalidate the failed node and descendants, regenerate from the last valid
   state, and prove unrelated correct work is unchanged.

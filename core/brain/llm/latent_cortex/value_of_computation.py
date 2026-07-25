@@ -443,6 +443,38 @@ _BASE_COST: dict[OperationKind, float] = {
 }
 
 
+def action_cost_estimate(
+    evidence_snapshot: Mapping[str, Any],
+    action: OperationKind | str,
+) -> dict[str, Any]:
+    """Return the conservative measured or declared bootstrap action cost."""
+
+    snapshot = validate_evidence_snapshot(evidence_snapshot)
+    try:
+        operation = action if isinstance(action, OperationKind) else OperationKind(action)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"unknown cognitive action: {action!r}") from exc
+    raw = snapshot["cells"].get(operation.value)
+    cell = ActionEvidence() if raw is None else ActionEvidence.from_dict(raw)
+    estimate = cell.estimate()
+    measured = bool(estimate["measured"])
+    return {
+        "action": operation.value,
+        "n": int(estimate["n"]),
+        "measured": measured,
+        "basis": "measured_cost_ucb" if measured else "declared_bootstrap_cost",
+        "gain_basis": "measured_gain_lcb" if measured else "unmeasured",
+        "gain_lower_bound": (
+            round(float(estimate["gain_lcb"]), 8) if measured else None
+        ),
+        "cost_upper_bound": round(
+            float(estimate["cost_ucb"]) if measured else _BASE_COST[operation],
+            8,
+        ),
+        "evidence_snapshot_sha256": snapshot["snapshot_sha256"],
+    }
+
+
 def _bootstrap_gain(action: OperationKind, state: CognitiveStateSignal) -> float:
     """Conservative structural prior used only while measurements are sparse."""
 
@@ -1227,6 +1259,7 @@ __all__ = [
     "ActionEvidence",
     "CognitiveStateSignal",
     "ValueOfComputationPolicy",
+    "action_cost_estimate",
     "build_evidence_snapshot",
     "feasible_actions",
     "transition_reward",

@@ -1412,6 +1412,11 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     tampered = copy.deepcopy(body["receipt"])
+    tampered["diagnostic_action_selection"]["execution_effect"] = "executed"
+    assert "diagnostic_action_selection_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
     tampered["correlated_support"]["effective_support_count"] = 1.0
     assert "correlated_support_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
