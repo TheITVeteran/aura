@@ -214,6 +214,12 @@ class ValidationTest:
         try:
             prediction = self.predict(model)
         except Exception as exc:  # noqa: BLE001 — could not run is not failed
+            logger.warning(
+                "Validation prediction %s failed for model %s",
+                self.name,
+                model.name,
+                exc_info=True,
+            )
             return TestResult(
                 test=self.name,
                 model=model.name,

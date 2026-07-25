@@ -1060,14 +1060,14 @@ def _sample_standard_telemetry() -> None:
         if memory.available and memory.total_bytes > 0:
             write("memory.available_fraction", memory.available_bytes / memory.total_bytes)
             write("memory.rss_bytes", int(memory.process_rss_bytes or 0))
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry must not stop the rate group
         logger.debug("memory telemetry sample failed", exc_info=True)
     try:
         from core.runtime.pressure_stall import Resource, pressure
 
         write("pressure.memory_full", pressure(Resource.MEMORY))
         write("pressure.inference_full", pressure(Resource.INFERENCE))
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry must not stop the rate group
         logger.debug("pressure telemetry sample failed", exc_info=True)
     try:
         from core.fsw.assertions import assertions_report
@@ -1079,7 +1079,7 @@ def _sample_standard_telemetry() -> None:
         write("runtime.lockdep_splats", len(lockdep_report()["splats"]))
         write("runtime.assertion_failures", assertions_report()["distinct_sites"])
         write("runtime.sanitizer_findings", sanitizer_report()["distinct_findings"])
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry must not stop the rate group
         logger.debug("integrity telemetry sample failed", exc_info=True)
     try:
         from core.fsw.rate_groups import rate_group_report
@@ -1091,7 +1091,7 @@ def _sample_standard_telemetry() -> None:
             "scheduler.consecutive_slips",
             max((g["consecutive_slips"] for g in groups), default=0),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry must not stop the rate group
         logger.debug("scheduler telemetry sample failed", exc_info=True)
     try:
         from core.fsw.health_checker import health_checker_report
@@ -1102,7 +1102,7 @@ def _sample_standard_telemetry() -> None:
             "health.unresponsive_components",
             len(health_checker_report()["unresponsive"]),
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - optional telemetry must not stop the rate group
         logger.debug("orchestration telemetry sample failed", exc_info=True)
 
 
@@ -1152,7 +1152,7 @@ async def _activate_flight_software(*, foreground_only: bool) -> ActivationResul
                 name="rate_groups",
                 timeout=5.0,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - shutdown registration is an additive bridge
             logger.debug("rate group shutdown registration skipped", exc_info=True)
 
     # One sample immediately so the dictionary is not empty at first read.

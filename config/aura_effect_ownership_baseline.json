@@ -7761,14 +7761,6 @@
       "scope": "<module>.SandboxedFileBroker.move_file"
     },
     {
-      "callee": "pathlib.Path().unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/self_code_improver.py",
-      "scope": "<module>._verify"
-    },
-    {
       "callee": "path.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13434,14 +13426,6 @@
     },
     {
       "callee": "subprocess.run",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/runtime/integration_liveness.py",
-      "scope": "<module>.probe"
-    },
-    {
-      "callee": "subprocess.run",
       "canonical_owner": true,
       "category": "raw_subprocess",
       "count": 1,
@@ -13705,14 +13689,6 @@
       "scope": "<module>.AppleScriptRunner.run"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/capabilities/self_code_improver.py",
-      "scope": "<module>._verify"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -13935,6 +13911,14 @@
       "count": 1,
       "path": "core/runtime/flagship_doctor.py",
       "scope": "<module>._run"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/integration_liveness.py",
+      "scope": "<module>.probe"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
@@ -14794,6 +14778,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e391bef9bc127cc56d178f726a9f1bac47363a07481e427f900966f8b57dbf02",
+  "inventory_sha256": "20ee7660f52b25a124feb4458bfa74b0def3c1f2873a66a0bd75d9100abe30cf",
   "schema_version": 1
 }

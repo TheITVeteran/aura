@@ -27424,3 +27424,81 @@ completion is approximately 60.5%-94.2%, with a midpoint planning estimate of
 73.8%. Next: publish CP364 and CP365, then implement
 SPARK-049's bounded local invalidation and repair. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-366: Self-Repair Executes and Reverses Under Evidence
+
+CP366 reviews Aura's live self-code improver as an execution boundary rather
+than accepting its generated-code tests at face value. The review found that
+candidate functions were written to a temporary file and launched through a
+plain read-only subprocess. That path was governed as a process launch but was
+not a native filesystem/network sandbox, so generated code could execute
+before promotion checks established that its capability surface was safe. The
+same review found direct `compile()` use inside the production gate, an
+unsigned and weakly validated rollback ledger, name-set capability comparison
+that could hide a new dangerous call behind an existing import, a race that
+could overwrite source changed during generation, and result semantics that
+could retain a failed enactment as `SUCCESS`.
+
+Behavioral candidates now run through `ToolOrchestrator`'s bounded
+syntax-admission lane and the same native-deny worker used by governed code
+execution. The lane validates type, nonempty source, a 120 KiB byte ceiling,
+and Python syntax before acquiring its single-flight execution lock. It skips
+repository formatting/type policy because a behavioral subject need not
+already satisfy repository style, but retains the macOS sandbox profile,
+filesystem and network denial, minimized environment, child-process/resource
+limits, deadline, framed transport, and output bounds. A real hostile probe
+attempted to write outside the sandbox and received
+`Operation not permitted`; the target did not exist afterward. Safe arithmetic
+executed and returned its expected result.
+
+Promotion now parses rather than executes the merged module. Dangerous
+capability comparison uses exact AST import/reference/call fingerprints with
+alias resolution and multiplicity. An unchanged inherited import is not
+relitigated, while a newly added call through that import, a changed dangerous
+call argument, an alias, or an extra invocation is a capability delta and is
+refused before behavioral execution. Checks must be finite JSON evidence under
+a 512 KiB serialized bound, goals are bounded to 16 KiB, and function names
+must be valid Python identifiers.
+
+Every rollback record is schema-v2 canonical JSON authenticated with
+HMAC-SHA256 under an atomically created private 256-bit local key. Record IDs,
+target confinement, function identity, exact function spans, source-size
+bounds, file hashes, timestamps, key identity, and signatures are independently
+validated through stable bounded reads before a restore can begin. Unsigned,
+tampered, traversal, target-mismatched, malformed, and oversized records fail
+closed. Rollback success now requires the exact recorded function pre-image;
+whitespace-stripped equivalence remains visible as diagnostic evidence but
+cannot claim restoration. Enactment rechecks the complete source pre-image
+after the durable rollback record is written and refuses to overwrite a newer
+edit. When enactment was requested, `ok` becomes true only after the source
+effect and durable receipt both verify; blocked or failed enactments are
+retained as blocked rather than success.
+
+The focused sandbox, promotion, rollback, and orchestration contract passes
+72/72. The complete self-code, self-improvement, self-modification, RSI, and
+sandbox test surface passes 422/422 after the final rebase. All 258 tests
+changed by the adjacent governed-duplex/integration checkpoint also pass on
+the exact combined tree, including the structural `None` contract for absent
+divergence telemetry. Ruff, diff hygiene, governance ownership, resource-observation
+ownership, model-load ownership, and the enterprise static ratchet pass.
+Governance contains 1,973 recognized calls in 1,847 buckets with 1,788
+inherited migration-debt calls; no ratchet maximum was raised.
+
+This checkpoint proves a materially stronger containment, promotion, source
+drift, authenticated rollback, and truthful-outcome substrate. It does not
+prove that Aura can autonomously diagnose and repair arbitrary production
+defects, match a frontier coding model, improve her resident 32B, or survive
+long-duration live operation. Those require the open immune-coding campaigns,
+SPARK-049's bounded local invalidation/repair contract, exact-app runtime
+evidence, and the final deferred soaks.
+
+Thirty-one cooperative fail-open, flight-software, knowledge, runtime-
+certification, backpressure, integrity, welfare, immune, curiosity, memory, and
+user-surface and live-lane commits landed after CP365 and before this final
+integration. Counting them and CP366 makes this total checkpoint record 484.
+The forecast advances to 512-779 total records, leaving
+approximately 28-295 records after this checkpoint. Checkpoint-count completion
+is approximately 62.1%-94.5%, with a midpoint planning estimate of 75.0%.
+Next: publish CP364 through CP366, then implement SPARK-049's bounded local
+invalidation and repair. Final multi-hour soaks remain deferred until every
+shorter gate is green.

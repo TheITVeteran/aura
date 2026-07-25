@@ -78,6 +78,8 @@ class TestWriteAheadLedger:
         )
         assert record["file_sha_before"] != record["file_sha_after"]
         assert record["target_file"] == str(target)
+        assert record["schema"] == "aura.self_code_enactment.v2"
+        assert record["integrity"]["algorithm"] == "hmac-sha256"
 
     def test_latest_enactment_lookup(self, ledger_dir, target):
         record_id = _enact(target)
@@ -134,9 +136,82 @@ class TestSymmetricRollback:
         assert outcome["ok"] is True
         assert 'case["a"] - case["b"]' in target.read_text(encoding="utf-8")
 
+    def test_semantic_equivalence_cannot_claim_exact_rollback(
+        self,
+        ledger_dir,
+        target,
+        monkeypatch,
+    ):
+        record_id = _enact(target)
+
+        async def _inexact_write(*, path, text, **_kwargs):
+            Path(path).write_text(
+                text.replace(
+                    'return case["a"] - case["b"]  # BUG: subtracts',
+                    'return case["a"] - case["b"]  # BUG: subtracts   ',
+                ),
+                encoding="utf-8",
+            )
+            return {
+                "ok": True,
+                "effect_verified": True,
+                "receipt_persisted": True,
+                "post_action_receipt_id": "receipt-inexact",
+            }
+
+        monkeypatch.setattr(sci, "_execute_self_code_write", _inexact_write)
+
+        outcome = asyncio.run(sci.rollback_enactment(record_id))
+
+        assert outcome["ok"] is False
+        assert outcome["status"] == "rollback_verification_failed"
+        assert outcome["function_pre_image_exact"] is False
+        assert outcome["function_pre_image_equivalent"] is True
+
     def test_missing_record_is_a_named_refusal(self, ledger_dir):
-        outcome = asyncio.run(sci.rollback_enactment("nope-does-not-exist"))
+        outcome = asyncio.run(
+            sci.rollback_enactment("20260724-000000-deadbeef-deadbeef")
+        )
         assert outcome == {"ok": False, "status": "no_enactment_record"}
+
+    def test_tampered_record_is_refused_before_restore(self, ledger_dir, target):
+        record_id = _enact(target)
+        record_path = ledger_dir / f"{record_id}.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["original_function_source"] = IMPROVED_FUNC
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        outcome = asyncio.run(sci.rollback_enactment(record_id))
+
+        assert outcome["ok"] is False
+        assert outcome["status"] == "invalid_enactment_record"
+        assert 'case["a"] + case["b"]' in target.read_text(encoding="utf-8")
+
+    def test_unsigned_record_is_refused(self, ledger_dir, target):
+        record_id = _enact(target)
+        record_path = ledger_dir / f"{record_id}.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record.pop("integrity")
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+
+        outcome = asyncio.run(sci.rollback_enactment(record_id))
+
+        assert outcome["status"] == "invalid_enactment_record"
+
+    def test_record_id_cannot_escape_the_ledger(self, ledger_dir, target):
+        outcome = asyncio.run(sci.rollback_enactment("../../forged"))
+        assert outcome["status"] == "invalid_enactment_record"
+
+    def test_explicit_target_must_match_signed_record(self, ledger_dir, target, tmp_path):
+        record_id = _enact(target)
+        other = tmp_path / "other.py"
+        other.write_text("def other():\n    return 1\n", encoding="utf-8")
+
+        outcome = asyncio.run(
+            sci.rollback_enactment(record_id, target_file=str(other))
+        )
+
+        assert outcome["status"] == "invalid_enactment_record"
 
 
 def test_enactment_receipt_failure_triggers_symmetric_compensation(
@@ -167,9 +242,9 @@ def test_enactment_receipt_failure_triggers_symmetric_compensation(
     async def _rollback(*_args, **_kwargs):
         return {"ok": True, "status": "rolled_back"}
 
-    def _verify(source, _func_name, _checks):
+    async def _verify(source, _func_name, _checks):
         # "the corrected source passes every check" — expressed in terms of
-        # the check count rather than a hardcoded 1, so the stub stays
+        # the check count rather than a hardcoded 1, so the test double stays
         # faithful as the fixture's evidence grows.
         return (len(_checks), []) if 'case["a"] + case["b"]' in source else (0, [])
 
@@ -204,3 +279,57 @@ def test_enactment_receipt_failure_triggers_symmetric_compensation(
     assert result.status == "enactment_receipt_failed_rolled_back"
     assert result.compensation == {"ok": True, "status": "rolled_back"}
     assert "receipt did not persist" in result.error
+
+
+def test_concurrent_source_change_is_refused_after_ledger_write(
+    target,
+    monkeypatch,
+):
+    async def _research(_goal):
+        return []
+
+    async def _generate(_prompt):
+        return IMPROVED_FUNC
+
+    async def _retain(*_args):
+        return "retained"
+
+    async def _record(**_kwargs):
+        target.write_text(
+            target.read_text(encoding="utf-8") + "\nEXTERNAL_EDIT = True\n",
+            encoding="utf-8",
+        )
+        return "record-1"
+
+    async def _write(**_kwargs):
+        raise AssertionError("a stale pre-image must never reach the write lane")
+
+    async def _verify(source, _func_name, checks):
+        return (len(checks), []) if 'case["a"] + case["b"]' in source else (0, [])
+
+    monkeypatch.setattr(sci, "_research", _research)
+    monkeypatch.setattr(sci, "_generate", _generate)
+    monkeypatch.setattr(sci, "_retain", _retain)
+    monkeypatch.setattr(sci, "_record_enactment", _record)
+    monkeypatch.setattr(sci, "_execute_self_code_write", _write)
+    monkeypatch.setattr(sci, "_verify", _verify)
+
+    result = asyncio.run(
+        sci.improve_function(
+            target_file=str(target),
+            func_name="add_numbers",
+            goal="fix addition",
+            checks=[
+                {"args": [{"a": 2, "b": 3}], "expected": 5},
+                {"args": [{"a": 0, "b": 0}], "expected": 0},
+                {"args": [{"a": -1, "b": 1}], "expected": 0},
+            ],
+            max_iters=1,
+            enact=True,
+        )
+    )
+
+    assert result.ok is False
+    assert result.enacted is False
+    assert result.status == "source_changed_before_enactment"
+    assert "EXTERNAL_EDIT" in target.read_text(encoding="utf-8")

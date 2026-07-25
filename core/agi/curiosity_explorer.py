@@ -132,7 +132,7 @@ class CuriosityExplorer:
         if len(self._queue) >= MAX_QUEUE_SIZE:
             return
 
-        # Generate exploration item from gaps or active topic. A placeholder
+        # Generate an exploration item from gaps or an active topic. A synthetic default
         # is not a topic: searching the web for "What do I not know about
         # something new?" is what the live 2026-07-25 idle hour actually did,
         # nine times, and the findings were unrelated OS release notes. If the
@@ -140,7 +140,7 @@ class CuriosityExplorer:
         topic = str(active_topic or "").strip()
         if not topic or topic.lower() in _PLACEHOLDER_TOPICS:
             logger.debug(
-                "CuriosityExplorer: no real topic (%r); not exploring a placeholder.",
+                "CuriosityExplorer: no real topic (%r); not exploring a synthetic default.",
                 active_topic,
             )
             return

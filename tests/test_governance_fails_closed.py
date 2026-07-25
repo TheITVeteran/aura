@@ -122,11 +122,64 @@ class TestSelfCodeMutationHasRealGates:
         assert any("introduces_dangerous_capability" in b for b in blockers)
         assert any("subprocess" in b for b in blockers)
 
+    def test_dangerous_candidate_is_blocked_before_behavioral_execution(self):
+        from core.capabilities.self_code_improver import _candidate_execution_blockers
+
+        blockers = _candidate_execution_blockers(
+            original_src=self.ORIGINAL,
+            candidate_src=(
+                "def add(a, b):\n"
+                "    import subprocess\n"
+                "    subprocess.run(['echo', 'escaped'])\n"
+                "    return a + b\n"
+            ),
+        )
+        assert len(blockers) == 1
+        assert "introduces_dangerous_capability" in blockers[0]
+        assert "subprocess.run" in blockers[0]
+
     def test_a_pre_existing_capability_is_not_relitigated(self):
-        """The function already had it; a bug fix is not the place to argue."""
+        """An unchanged import is not itself a new capability."""
         candidate = "def add(a, b):\n    import subprocess\n    return a + b\n"
         original = "def add(a, b):\n    import subprocess\n    return a - b\n"
         assert self._blockers(candidate=candidate, original=original) == []
+
+    def test_an_existing_import_cannot_hide_a_new_dangerous_call(self):
+        original = "def add(a, b):\n    import subprocess\n    return a - b\n"
+        candidate = (
+            "def add(a, b):\n"
+            "    import subprocess\n"
+            "    subprocess.run(['echo', 'escaped'])\n"
+            "    return a + b\n"
+        )
+        blockers = self._blockers(candidate=candidate, original=original)
+        assert any("subprocess.run" in blocker for blocker in blockers)
+
+    def test_changing_an_existing_dangerous_call_is_a_capability_delta(self):
+        original = (
+            "def add(a, b):\n"
+            "    import subprocess\n"
+            "    subprocess.run(['echo', 'old'])\n"
+            "    return a - b\n"
+        )
+        candidate = (
+            "def add(a, b):\n"
+            "    import subprocess\n"
+            "    subprocess.run(['echo', 'new'])\n"
+            "    return a + b\n"
+        )
+        blockers = self._blockers(candidate=candidate, original=original)
+        assert any("subprocess.run" in blocker for blocker in blockers)
+
+    def test_import_aliases_are_resolved_before_capability_comparison(self):
+        candidate = (
+            "def add(a, b):\n"
+            "    import subprocess as sp\n"
+            "    sp.run(['echo', 'escaped'])\n"
+            "    return a + b\n"
+        )
+        blockers = self._blockers(candidate=candidate)
+        assert any("subprocess.run" in blocker for blocker in blockers)
 
     def test_the_enactment_path_consults_the_gates(self):
         import inspect
@@ -138,6 +191,31 @@ class TestSelfCodeMutationHasRealGates:
         assert "promotion_blocked" in source
         # The refusal must precede the write.
         assert source.index("_promotion_blockers(") < source.index("_replace_function(src")
+
+    @pytest.mark.asyncio
+    async def test_behavioral_verification_uses_native_sandbox(self, monkeypatch):
+        from core.capabilities import self_code_improver as sci
+
+        observed = {}
+
+        class Sandbox:
+            async def execute_syntax_checked_python(self, source):
+                observed["source"] = source
+                return True, '[{"ok":true,"got":5,"expected":5}]'
+
+        monkeypatch.setattr(
+            "core.agency.tool_orchestrator.get_tool_orchestrator",
+            lambda: Sandbox(),
+        )
+        passed, details = await sci._verify(
+            "def add(a, b):\n    return a + b\n",
+            "add",
+            [{"args": [2, 3], "expected": 5}],
+        )
+
+        assert passed == 1
+        assert details[0]["got"] == 5
+        assert "def add(a, b)" in observed["source"]
 
 
 class TestRollbackReportsWhatItAchieved:

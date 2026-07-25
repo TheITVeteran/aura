@@ -7,6 +7,7 @@ knowledge gaps dynamically.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
@@ -595,6 +596,34 @@ class ToolOrchestrator:
                 error_details += f"\nLinter:\n{report.ruff_output}"
             return False, f"Code Validation Failed:\n{error_details}"
 
+        async with self._repl_lock:
+            return await self._execute_admitted_python(script_content)
+
+    async def execute_syntax_checked_python(
+        self,
+        script_content: str,
+    ) -> tuple[bool, str]:
+        """Execute untyped code only after syntax admission and native isolation.
+
+        This entrypoint exists for behavioral probes whose subject may not meet
+        repository mypy/formatting policy. It deliberately skips
+        :class:`CodeGuardian`, but not the security boundary: payload size,
+        syntax, single-flight execution, sandbox-exec, network/filesystem
+        denial, environment minimization, deadlines, resource limits, framed
+        transport, and output bounds all remain mandatory.
+        """
+
+        if not isinstance(script_content, str) or not script_content.strip():
+            self._last_python_failure_kind = "validation"
+            return False, "Code Validation Failed: Python source must be non-empty."
+        if len(script_content.encode("utf-8")) > _MAX_CODE_BYTES:
+            self._last_python_failure_kind = "validation"
+            return False, "Code Validation Failed: Python source exceeds 120 KiB."
+        try:
+            ast.parse(script_content, filename="<aura_syntax_checked_sandbox>")
+        except (SyntaxError, ValueError, TypeError) as exc:
+            self._last_python_failure_kind = "validation"
+            return False, f"Code Validation Failed: {exc}"
         async with self._repl_lock:
             return await self._execute_admitted_python(script_content)
 

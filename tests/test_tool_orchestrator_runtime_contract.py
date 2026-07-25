@@ -197,6 +197,34 @@ async def test_oversized_python_is_rejected_before_worker_launch(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_syntax_checked_python_keeps_native_worker_boundary(monkeypatch):
+    orch = ToolOrchestrator()
+    observed = {}
+
+    async def admitted(code):
+        observed["code"] = code
+        return True, "ok"
+
+    monkeypatch.setattr(orch, "_execute_admitted_python", admitted)
+
+    assert await orch.execute_syntax_checked_python("value = 1") == (True, "ok")
+    assert observed["code"] == "value = 1"
+
+
+@pytest.mark.asyncio
+async def test_syntax_checked_python_refuses_invalid_source_before_launch(monkeypatch):
+    orch = ToolOrchestrator()
+    should_not_launch = LaunchShouldNotRun()
+    orch._spawn_ready_worker = should_not_launch
+
+    success, output = await orch.execute_syntax_checked_python("def broken(:")
+
+    assert success is False
+    assert "Code Validation Failed" in output
+    assert should_not_launch.called is False
+
+
+@pytest.mark.asyncio
 async def test_code_guardian_validation_does_not_block_event_loop(monkeypatch):
     orch = ToolOrchestrator()
     release = threading.Event()

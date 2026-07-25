@@ -1128,7 +1128,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
             "unsupported_claims": [c["statement"] for c in get_suite().unsupported_claims()],
             "metta": {k: metta_report()[k] for k in ("rules", "reductions", "truncations")},
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 - each health add-on is isolated
         block["self_model_error"] = repr(exc)
     try:
         from core.fsw.assertions import assertions_report
@@ -1164,7 +1164,7 @@ def _runtime_integrity_block() -> dict[str, Any]:
                 "dispatched": command_report()["dispatched"],
             },
         }
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001 - each health add-on is isolated
         block["flight_software_error"] = repr(exc)
     try:
         from core.observability.histograms import histograms_report

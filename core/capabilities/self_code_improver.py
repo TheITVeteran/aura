@@ -27,21 +27,26 @@ from __future__ import annotations
 import ast
 import asyncio
 import hashlib
+import hmac
 import json
+import keyword
 import logging
+import math
 import os
-import subprocess
-import sys
-import tempfile
+import re
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.governance.will import ActionDomain
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
+from core.runtime.file_read_gateway import read_stable_bytes
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.skill_contract import ActionExpectation
 
 logger = logging.getLogger("Aura.SelfCodeImprover")
@@ -58,6 +63,20 @@ _SENSITIVE_PATH_MARKERS = (
 _MAX_CHECKS = 200
 _MAX_ITERS = 10
 _MAX_VERIFY_OUTPUT = 256 * 1024
+_MAX_ENACTMENT_RECORD_BYTES = 512 * 1024
+_MAX_FUNCTION_SOURCE_BYTES = 192 * 1024
+_MAX_CHECKS_BYTES = 512 * 1024
+_MAX_GOAL_BYTES = 16 * 1024
+_ENACTMENT_KEY_BYTES = 32
+_RECORD_ID_RE = re.compile(
+    r"^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}-[0-9a-f]{8}$"
+)
+_HEX_32_RE = re.compile(r"^[0-9a-f]{32}$")
+_HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class EnactmentRecordError(ValueError):
+    """An enactment record failed its structural or integrity contract."""
 
 
 def _self_code_root() -> Path:
@@ -97,6 +116,17 @@ def _validate_checks(checks: Any) -> list[dict[str, Any]]:
             raise ValueError("each check must be a mapping with 'args' and 'expected'")
         if not isinstance(c["args"], list):
             raise ValueError("check 'args' must be a list")
+    try:
+        encoded = json.dumps(
+            checks,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("checks must contain bounded JSON values") from exc
+    if len(encoded) > _MAX_CHECKS_BYTES:
+        raise ValueError(f"serialized checks exceed {_MAX_CHECKS_BYTES} bytes")
     return checks
 
 
@@ -108,6 +138,127 @@ def _fence(label: str, text: Any) -> str:
 
 def _sha(text: str) -> str:
     return hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()
+
+
+def _enactment_key_path() -> Path:
+    return _ENACTMENT_LEDGER_DIR.parent / ".self_code_enactment_hmac.key"
+
+
+def _read_enactment_key() -> bytes:
+    key = read_stable_bytes(_enactment_key_path(), max_bytes=_ENACTMENT_KEY_BYTES)
+    if len(key) != _ENACTMENT_KEY_BYTES:
+        raise EnactmentRecordError("enactment signing key has an invalid length")
+    return key
+
+
+async def _load_or_create_enactment_key() -> bytes:
+    try:
+        return await asyncio.to_thread(_read_enactment_key)
+    except FileNotFoundError:
+        candidate = os.urandom(_ENACTMENT_KEY_BYTES)
+        with local_internal_governed_scope(
+            "self_code_improver.enactment_signing_key",
+            domain="file_write",
+        ):
+            await get_file_write_gateway().write_bytes_if_absent_async(
+                _enactment_key_path(),
+                candidate,
+                source="self_code_improver.enactment_signing_key",
+            )
+        return await asyncio.to_thread(_read_enactment_key)
+
+
+def _record_signing_payload(record: dict[str, Any]) -> bytes:
+    unsigned = {key: value for key, value in record.items() if key != "integrity"}
+    try:
+        return json.dumps(
+            unsigned,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise EnactmentRecordError("enactment record is not canonical JSON") from exc
+
+
+def _signed_record(record: dict[str, Any], key: bytes) -> dict[str, Any]:
+    payload = _record_signing_payload(record)
+    signed = dict(record)
+    signed["integrity"] = {
+        "algorithm": "hmac-sha256",
+        "key_id": hashlib.sha256(key).hexdigest()[:16],
+        "signature": hmac.new(key, payload, hashlib.sha256).hexdigest(),
+    }
+    return signed
+
+
+def _validate_enactment_record(
+    payload: Any,
+    *,
+    expected_record_id: str,
+    expected_target: Path | None = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise EnactmentRecordError("enactment record must be an object")
+    record = {str(key): value for key, value in payload.items()}
+    if record.get("schema") != "aura.self_code_enactment.v2":
+        raise EnactmentRecordError("unsigned or unsupported enactment record schema")
+    record_id = str(record.get("id") or "")
+    if record_id != expected_record_id or not _RECORD_ID_RE.fullmatch(record_id):
+        raise EnactmentRecordError("enactment record identity mismatch")
+
+    integrity = record.get("integrity")
+    if not isinstance(integrity, dict):
+        raise EnactmentRecordError("enactment record has no integrity envelope")
+    signature = str(integrity.get("signature") or "")
+    key = _read_enactment_key()
+    if (
+        integrity.get("algorithm") != "hmac-sha256"
+        or integrity.get("key_id") != hashlib.sha256(key).hexdigest()[:16]
+        or not _HEX_64_RE.fullmatch(signature)
+        or not hmac.compare_digest(
+            signature,
+            hmac.new(key, _record_signing_payload(record), hashlib.sha256).hexdigest(),
+        )
+    ):
+        raise EnactmentRecordError("enactment record signature verification failed")
+
+    try:
+        target = _confine_target(record.get("target_file"))
+    except ValueError as exc:
+        raise EnactmentRecordError("enactment target is outside the source boundary") from exc
+    if expected_target is not None and target != expected_target:
+        raise EnactmentRecordError("enactment target does not match the requested file")
+
+    func_name = record.get("func_name")
+    if (
+        not isinstance(func_name, str)
+        or not func_name.isidentifier()
+        or keyword.iskeyword(func_name)
+    ):
+        raise EnactmentRecordError("enactment function name is invalid")
+    for source_key in ("original_function_source", "improved_function_source"):
+        source = record.get(source_key)
+        if (
+            not isinstance(source, str)
+            or not source
+            or len(source.encode("utf-8")) > _MAX_FUNCTION_SOURCE_BYTES
+        ):
+            raise EnactmentRecordError(f"{source_key} is missing or exceeds its bound")
+        extracted = _extract_function_source(source, func_name)
+        if extracted is None or extracted[0] != source:
+            raise EnactmentRecordError(f"{source_key} is not the exact named function")
+    for hash_key in ("file_sha_before", "file_sha_after"):
+        if not _HEX_32_RE.fullmatch(str(record.get(hash_key) or "")):
+            raise EnactmentRecordError(f"{hash_key} is invalid")
+    if record["file_sha_before"] == record["file_sha_after"]:
+        raise EnactmentRecordError("enactment does not change the target file")
+    at = record.get("at")
+    if not isinstance(at, (int, float)) or not math.isfinite(float(at)) or float(at) <= 0:
+        raise EnactmentRecordError("enactment timestamp is invalid")
+    record["target_file"] = str(target)
+    return record
 
 
 def _self_code_write_completed(result: dict[str, Any]) -> bool:
@@ -162,11 +313,15 @@ async def _record_enactment(
     improved_function: str,
 ) -> str:
     """Write-ahead rollback record: durable BEFORE the file mutates."""
+    canonical_original = _extract_function_source(original_function, func_name)
+    canonical_improved = _extract_function_source(improved_function, func_name)
+    if canonical_original is None or canonical_improved is None:
+        raise ValueError("enactment functions must contain the exact named function")
     # uuid suffix so concurrent identical outputs in the same second cannot
     # collide on one ledger record (11b0e21d).
     record_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(file_after)[:8]}-{uuid.uuid4().hex[:8]}"
     record = {
-        "schema": "aura.self_code_enactment.v1",
+        "schema": "aura.self_code_enactment.v2",
         "id": record_id,
         "at": time.time(),
         "target_file": str(path),
@@ -174,9 +329,11 @@ async def _record_enactment(
         "goal": goal,
         "file_sha_before": _sha(file_before),
         "file_sha_after": _sha(file_after),
-        "original_function_source": original_function,
-        "improved_function_source": improved_function,
+        "original_function_source": canonical_original[0],
+        "improved_function_source": canonical_improved[0],
     }
+    signing_key = await _load_or_create_enactment_key()
+    record = _signed_record(record, signing_key)
     action = await _execute_self_code_write(
         path=_ENACTMENT_LEDGER_DIR / f"{record_id}.json",
         text=json.dumps(record, indent=1),
@@ -193,32 +350,45 @@ async def _record_enactment(
 
 
 def _load_enactment(record_id: str) -> dict[str, Any] | None:
+    if not isinstance(record_id, str) or not _RECORD_ID_RE.fullmatch(record_id):
+        raise EnactmentRecordError("enactment record id is invalid")
+    record_path = _ENACTMENT_LEDGER_DIR / f"{record_id}.json"
     try:
         payload = json.loads(
-            (_ENACTMENT_LEDGER_DIR / f"{record_id}.json").read_text(encoding="utf-8")
+            read_stable_bytes(
+                record_path,
+                max_bytes=_MAX_ENACTMENT_RECORD_BYTES,
+            ).decode("utf-8")
         )
-        if not isinstance(payload, dict):
-            return None
-        return {str(key): value for key, value in payload.items()}
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EnactmentRecordError("enactment record is unreadable") from exc
+    return _validate_enactment_record(
+        payload,
+        expected_record_id=record_id,
+    )
 
 
 def latest_enactment_for(target_file: str) -> dict[str, Any] | None:
     """Most recent ledger record for a file (rollback without an id)."""
+    try:
+        target = _confine_target(target_file)
+    except ValueError:
+        return None
     try:
         records = sorted(_ENACTMENT_LEDGER_DIR.glob("*.json"), reverse=True)
     except OSError:
         return None
     for record_path in records:
         try:
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            record = _load_enactment(record_path.stem)
+        except EnactmentRecordError:
             continue
-        if not isinstance(record, dict):
+        if record is None:
             continue
-        if str(record.get("target_file")) == str(target_file):
-            return {str(key): value for key, value in record.items()}
+        if str(record.get("target_file")) == str(target):
+            return record
     return None
 
 
@@ -236,24 +406,90 @@ _DANGEROUS_MODULES = ("subprocess", "shutil", "ctypes", "socket", "pickle", "mar
 _MIN_CHECKS_FOR_ENACTMENT = 3
 
 
-def _referenced_names(source: str) -> set[str]:
-    """Call and attribute names a snippet reaches for, best-effort."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return set()
-    names: set[str] = set()
+def _import_aliases(tree: ast.AST) -> dict[str, str]:
+    aliases: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            names.add(node.id)
-        elif isinstance(node, ast.Attribute):
-            names.add(node.attr)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            module = getattr(node, "module", "") or ""
-            names.add(module.split(".")[0])
+        if isinstance(node, ast.Import):
             for alias in node.names:
-                names.add(alias.name.split(".")[0])
-    return names
+                aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                aliases[alias.asname or alias.name] = (
+                    f"{module}.{alias.name}".strip(".")
+                )
+    return aliases
+
+
+def _qualified_name(node: ast.AST, aliases: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        parent = _qualified_name(node.value, aliases)
+        return f"{parent}.{node.attr}".strip(".")
+    return ""
+
+
+def _dangerous_capability_fingerprints(source: str) -> Counter[str]:
+    """Return exact dangerous imports, references, and calls in source."""
+
+    tree = ast.parse(source)
+    aliases = _import_aliases(tree)
+    fingerprints: Counter[str] = Counter()
+    dangerous_names = set(_DANGEROUS_CALLS) | set(_DANGEROUS_MODULES)
+
+    for node in ast.walk(tree):
+        qualified = ""
+        category = ""
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            imported = []
+            module = getattr(node, "module", "") or ""
+            if module:
+                imported.append(module)
+            imported.extend(alias.name for alias in node.names)
+            if not any(
+                name.split(".")[0] in _DANGEROUS_MODULES
+                for name in imported
+            ):
+                continue
+            qualified = ",".join(sorted(imported))
+            category = "import"
+        elif isinstance(node, ast.Call):
+            qualified = _qualified_name(node.func, aliases)
+            parts = tuple(part for part in qualified.split(".") if part)
+            if not parts or (
+                parts[0] not in _DANGEROUS_MODULES
+                and parts[-1] not in _DANGEROUS_CALLS
+            ):
+                continue
+            category = "call"
+        elif isinstance(node, (ast.Attribute, ast.Name)) and isinstance(
+            getattr(node, "ctx", None),
+            ast.Load,
+        ):
+            qualified = _qualified_name(node, aliases)
+            parts = tuple(part for part in qualified.split(".") if part)
+            if not parts or (
+                parts[0] not in _DANGEROUS_MODULES
+                and parts[-1] not in dangerous_names
+            ):
+                continue
+            category = "reference"
+        else:
+            continue
+
+        structural = ast.dump(
+            node,
+            annotate_fields=True,
+            include_attributes=False,
+        )
+        fingerprints[f"{category}:{qualified}:{structural}"] += 1
+    return fingerprints
+
+
+def _capability_label(fingerprint: str) -> str:
+    _category, qualified, _structural = fingerprint.split(":", 2)
+    return qualified or "dynamic_execution"
 
 
 def _promotion_blockers(
@@ -278,18 +514,20 @@ def _promotion_blockers(
             f"{_MIN_CHECKS_FOR_ENACTMENT} required to mutate real source"
         )
 
-    # The candidate must be syntactically valid on its own...
-    try:
-        ast.parse(candidate_src)
-    except SyntaxError as exc:
-        blockers.append(f"candidate_does_not_parse: {exc}")
+    blockers.extend(
+        _candidate_execution_blockers(
+            original_src=original_src,
+            candidate_src=candidate_src,
+        )
+    )
+    if blockers:
         return blockers
 
-    # ...and the FILE must still compile once the replacement lands. A
-    # function that parses alone can still land badly indented or duplicated.
+    # The FILE must still parse once the replacement lands. A function that
+    # parses alone can still land badly indented or duplicated.
     try:
         merged = _replace_function(file_before, func_name, candidate_src)
-        compile(merged, "<self_code_candidate>", "exec")
+        ast.parse(merged, filename="<self_code_candidate>")
     except (SyntaxError, ValueError, TypeError) as exc:
         blockers.append(f"file_does_not_compile_after_replacement: {exc}")
         return blockers
@@ -300,17 +538,31 @@ def _promotion_blockers(
     if not extracted:
         blockers.append("function_not_extractable_after_replacement")
 
-    # No NEW dangerous capability relative to the original.
-    before = _referenced_names(original_src)
-    after = _referenced_names(candidate_src)
-    introduced = sorted(
-        name for name in (after - before)
-        if name in _DANGEROUS_CALLS or name in _DANGEROUS_MODULES
-    )
-    if introduced:
-        blockers.append("introduces_dangerous_capability: " + ", ".join(introduced))
-
     return blockers
+
+
+def _candidate_execution_blockers(
+    *,
+    original_src: str,
+    candidate_src: str,
+) -> list[str]:
+    """Refuse unsafe candidates before any behavioral execution."""
+
+    try:
+        ast.parse(candidate_src)
+    except SyntaxError as exc:
+        return [f"candidate_does_not_parse: {exc}"]
+
+    before = _dangerous_capability_fingerprints(original_src)
+    after = _dangerous_capability_fingerprints(candidate_src)
+    introduced = sorted({
+        _capability_label(fingerprint)
+        for fingerprint, count in after.items()
+        if count > before[fingerprint]
+    })
+    if introduced:
+        return ["introduces_dangerous_capability: " + ", ".join(introduced)]
+    return []
 
 
 async def rollback_enactment(
@@ -340,11 +592,33 @@ async def rollback_enactment(
                                    differs (drift preserved under force);
                                    honest, and NOT a complete undo
     """
-    record = _load_enactment(record_id) if record_id else latest_enactment_for(target_file)
+    try:
+        record = (
+            await asyncio.to_thread(_load_enactment, record_id)
+            if record_id
+            else await asyncio.to_thread(latest_enactment_for, target_file)
+        )
+    except EnactmentRecordError as exc:
+        return {
+            "ok": False,
+            "status": "invalid_enactment_record",
+            "error": str(exc),
+        }
     if not record:
         return {"ok": False, "status": "no_enactment_record"}
 
-    path = Path(str(record["target_file"]))
+    try:
+        path = _confine_target(record["target_file"])
+        if target_file and path != _confine_target(target_file):
+            raise EnactmentRecordError(
+                "requested target does not match enactment record"
+            )
+    except (ValueError, EnactmentRecordError) as exc:
+        return {
+            "ok": False,
+            "status": "invalid_enactment_record",
+            "error": str(exc),
+        }
     try:
         current = await asyncio.to_thread(path.read_text, encoding="utf-8")
     except OSError as exc:
@@ -379,12 +653,12 @@ async def rollback_enactment(
     function_exact = bool(
         extracted and extracted[0] == str(record["original_function_source"])
     )
-    function_ok = function_exact or bool(
+    function_equivalent = function_exact or bool(
         extracted
         and extracted[0].strip() == str(record["original_function_source"]).strip()
     )
     file_exact = _sha(final_text) == str(record.get("file_sha_before") or "")
-    restored_ok = function_ok
+    restored_ok = function_exact
     transaction_complete = _self_code_write_completed(action)
     outcome = {
         "ok": restored_ok and transaction_complete,
@@ -399,7 +673,7 @@ async def rollback_enactment(
         # undo from a function-scoped one without reading the source.
         "file_pre_image_restored": file_exact,
         "function_pre_image_exact": function_exact,
-        "function_pre_image_equivalent": function_ok,
+        "function_pre_image_equivalent": function_equivalent,
         "residual_drift": bool(restored_ok and not file_exact),
         "record_id": record["id"],
         "target_file": str(path),
@@ -490,16 +764,20 @@ def _extract_function_from_response(raw: str, func_name: str) -> str:
     return "\n".join(body).rstrip()
 
 
-def _verify(func_source: str, func_name: str, checks: list[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    """Run behavioral checks against a function in an isolated subprocess.
-    Each check: {"args": [...], "expected": <value>}. Returns (passed, details)."""
+async def _verify(
+    func_source: str,
+    func_name: str,
+    checks: list[dict[str, Any]],
+) -> tuple[int, list[dict[str, Any]]]:
+    """Run behavioral checks inside Aura's native-deny sandbox."""
     runner = (
-        "from typing import Any, Optional, List, Dict, Tuple, Sequence, Iterable, Union\n"
+        "from __future__ import annotations\n\n"
+        "import json\n\n\n"
         + func_source
         # Parse checks with json.loads at runtime — do NOT paste json.dumps output
         # as Python source: JSON null/true/false are not Python literals and would
         # raise NameError, silently zeroing the whole verification.
-        + "\n\nimport json\n_out=[]\n_CHECKS=json.loads(" + repr(json.dumps(checks)) + ")\n"
+        + "\n\n_out=[]\n_CHECKS=json.loads(" + repr(json.dumps(checks)) + ")\n"
         + "for _c in _CHECKS:\n"
         + "    try:\n"
         + f"        _got={func_name}(*_c['args'])\n"
@@ -508,38 +786,24 @@ def _verify(func_source: str, func_name: str, checks: list[dict[str, Any]]) -> t
         + "        _out.append({'ok': False, 'error': str(_e), 'expected': _c['expected']})\n"
         + "print(json.dumps(_out))\n"
     )
-    path = ""
     try:
-        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
-            fh.write(runner)
-            path = fh.name
-        from core.runtime.subprocess_gateway import get_subprocess_gateway
+        from core.agency.tool_orchestrator import get_tool_orchestrator
 
-        proc = get_subprocess_gateway().run(
-            [sys.executable, path],
-            capture_output=True,
-            timeout=15,
-            # The verifier runner only computes function outputs and prints JSON —
-            # no writes, no network. read_only keeps it off the effect-governance
-            # path (which would else raise GovernanceViolation outside a governed
-            # scope), while still requiring a specific single-line source label.
-            read_only=True,
-            source="tool_execution:self_code_improver.verify_checks",
+        success, output = await get_tool_orchestrator().execute_syntax_checked_python(
+            runner
         )
-        # Bound the captured output so a candidate that prints unbounded data
-        # can't exhaust memory (0326ce5b, partial).
-        out = (proc.stdout or "")[:_MAX_VERIFY_OUTPUT].strip().splitlines()
+        if not success:
+            return 0, [{"ok": False, "error": str(output)[:1000]}]
+        out = str(output or "")[:_MAX_VERIFY_OUTPUT].strip().splitlines()
         for line in reversed(out):
             if line.strip().startswith("["):
                 details = json.loads(line)
-                return sum(1 for d in details if d.get("ok")), details
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError) as exc:
+                if isinstance(details, list) and all(
+                    isinstance(detail, dict) for detail in details
+                ):
+                    return sum(1 for detail in details if detail.get("ok")), details
+    except (ImportError, RuntimeError, OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
         logger.debug("verify failed: %s", exc)
-    finally:
-        # Always clean up the verifier source, including on the failure paths
-        # where the old unlink was skipped (c9b26583).
-        if path:
-            Path(path).unlink(missing_ok=True)
     return 0, [{"ok": False, "error": "verification could not run"}]
 
 
@@ -632,6 +896,16 @@ async def improve_function(
     try:
         path = _confine_target(target_file)
         checks = _validate_checks(checks)
+        if (
+            not isinstance(func_name, str)
+            or not func_name.isidentifier()
+            or keyword.iskeyword(func_name)
+        ):
+            raise ValueError("func_name must be a valid Python identifier")
+        if not isinstance(goal, str) or not goal.strip():
+            raise ValueError("goal must be a non-empty string")
+        if len(goal.encode("utf-8")) > _MAX_GOAL_BYTES:
+            raise ValueError(f"goal exceeds {_MAX_GOAL_BYTES} bytes")
     except ValueError as exc:
         return ImproveResult(
             ok=False, target_file=str(target_file), func_name=func_name, goal=goal,
@@ -649,7 +923,7 @@ async def improve_function(
     original_src, _, _ = extracted
     result.original_source = original_src
 
-    original_passed, _ = await asyncio.to_thread(_verify, original_src, func_name, checks)
+    original_passed, _ = await _verify(original_src, func_name, checks)
     result.original_passed = original_passed
     if original_passed == len(checks):
         result.status = "already_meets_standard"
@@ -667,7 +941,14 @@ async def improve_function(
         if not candidate:
             failure = "no function returned; output the complete corrected function only"
             continue
-        passed, details = await asyncio.to_thread(_verify, candidate, func_name, checks)
+        execution_blockers = _candidate_execution_blockers(
+            original_src=original_src,
+            candidate_src=candidate,
+        )
+        if execution_blockers:
+            failure = "; ".join(execution_blockers)
+            continue
+        passed, details = await _verify(candidate, func_name, checks)
         if passed == len(checks):
             improved_src = candidate
             result.improved_passed = passed
@@ -684,7 +965,7 @@ async def improve_function(
         return result
 
     result.improved_source = improved_src
-    result.ok = True
+    result.ok = not enact
     result.status = "verified_improvement"
 
     if enact:
@@ -730,6 +1011,20 @@ async def improve_function(
                 original_function=original_src,
                 improved_function=improved_src,
             )
+            current_src = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            if current_src != src:
+                result.status = "source_changed_before_enactment"
+                result.error = (
+                    "target source changed after verification; refused to overwrite "
+                    "the newer pre-image"
+                )
+                result.lesson_retained = await _retain(
+                    func_name,
+                    goal,
+                    "BLOCKED",
+                    result.error,
+                )
+                return result
             action = await _execute_self_code_write(
                 path=path,
                 text=new_src,
@@ -742,6 +1037,7 @@ async def improve_function(
             )
             if _self_code_write_completed(action):
                 result.enacted = True
+                result.ok = True
             elif action.get("effect_verified") is True:
                 result.compensation = await rollback_enactment(
                     result.enactment_record,
@@ -763,14 +1059,29 @@ async def improve_function(
                     or action.get("status")
                     or "self-code action did not verify"
                 )
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            result.ok = False
             result.error = f"verified but enactment failed: {exc}"
             result.status = "verified_not_enacted"
 
+    retained_outcome = "SUCCESS" if result.ok else "BLOCKED"
+    retained_detail = (
+        f"the fix passed all {len(checks)} checks the original failed "
+        f"{len(checks)-original_passed} of; verified in isolation"
+    )
+    if enact:
+        retained_detail += (
+            " and enacted with a verified durable receipt."
+            if result.enacted
+            else f" but was not enacted ({result.status})."
+        )
+    else:
+        retained_detail += "; enactment was not requested."
     result.lesson_retained = await _retain(
-        func_name, goal, "SUCCESS",
-        f"the fix passed all {len(checks)} checks the original failed {len(checks)-original_passed} of; "
-        "verified in isolation before enacting.",
+        func_name,
+        goal,
+        retained_outcome,
+        retained_detail,
     )
     return result
 
