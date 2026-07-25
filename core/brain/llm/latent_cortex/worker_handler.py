@@ -447,7 +447,34 @@ def handle_latent_reason(
         }
     operation_authority = job.get("operation_authority")
     action_policy_evidence = job.get("action_policy_evidence")
-    if action_policy_evidence is None and isinstance(operation_authority, dict):
+    external_execution_offer = job.get("external_execution_offer")
+    if external_execution_offer is not None:
+        if operation_authority is None or action_policy_evidence is None:
+            return {
+                "status": "error",
+                "message": (
+                    "latent_reason external execution requires operation "
+                    "authority and action-policy evidence"
+                ),
+            }
+        try:
+            from core.brain.llm.latent_cortex.external_execution import (
+                validate_external_execution_offer,
+            )
+
+            external_execution_offer = validate_external_execution_offer(
+                external_execution_offer
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason external execution offer rejected: {exc}",
+            }
+    if (
+        external_execution_offer is None
+        and action_policy_evidence is None
+        and isinstance(operation_authority, dict)
+    ):
         try:
             from core.brain.llm.latent_cortex.value_of_computation import (
                 build_evidence_snapshot,
@@ -488,6 +515,7 @@ def handle_latent_reason(
                 budget=dict(job.get("budget") or {}),
                 cognitive_context=cognitive_context,
                 action_policy_evidence=action_policy_evidence,
+                external_execution_offer=external_execution_offer,
             )
         except (ImportError, TypeError, ValueError) as exc:
             return {
@@ -648,6 +676,7 @@ def handle_latent_reason(
         verifier=task_verifier,
         cognitive_context=cognitive_context,
         action_policy_evidence=action_policy_evidence,
+        external_execution_offer=external_execution_offer,
         cancel_check=cancel_check,
         progress=progress,
     )
@@ -732,6 +761,7 @@ def handle_latent_reason(
         cognitive_context=cognitive_context,
         operation_authority=operation_authority,
         action_policy_evidence=action_policy_evidence,
+        external_execution_offer=external_execution_offer,
         response_contract=response_contract,
     )
     body = result.to_dict()

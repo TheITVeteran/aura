@@ -356,3 +356,28 @@ async def test_service_does_not_continue_when_acquisition_repeats_context(monkey
     continuation = result["receipt"]["cognitive_acquisition"]
     assert continuation["continuation_reason"] == "no_new_context"
     assert continuation["second_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_external_execution_offer_cannot_enter_acquisition_continuation(
+    monkeypatch,
+):
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    service = LatentCortexService()
+    calls = 0
+
+    async def fake_deep_reason(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "deep_reason", fake_deep_reason)
+    result = await service.deep_reason_with_acquisition(
+        OBJECTIVE,
+        external_execution_offer={"untrusted": True},
+    )
+
+    assert result["ok"] is False
+    assert result["reason"] == "external_execution_requires_single_episode"
+    assert calls == 0

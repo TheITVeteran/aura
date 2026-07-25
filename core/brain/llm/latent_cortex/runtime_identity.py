@@ -52,6 +52,7 @@ def latent_request_payload_sha256(
     cognitive_context: Any = None,
     operation_authority: Any = None,
     action_policy_evidence: Any = None,
+    external_execution_offer: Any = None,
     response_contract: Any = None,
     verifier_guidance: Any = None,
     facet_reliability: Any = None,
@@ -72,6 +73,8 @@ def latent_request_payload_sha256(
         payload["operation_authority"] = operation_authority
     if action_policy_evidence is not None:
         payload["action_policy_evidence"] = action_policy_evidence
+    if external_execution_offer is not None:
+        payload["external_execution_offer"] = external_execution_offer
     if response_contract is not None:
         payload["response_contract"] = response_contract
     # CP126 9721b1be: verifier_guidance and facet_reliability are SEMANTIC

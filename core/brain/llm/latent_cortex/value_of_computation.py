@@ -592,7 +592,14 @@ class ValueOfComputationPolicy:
             raise ValueError("no executable cognitive action is feasible")
 
         # Terminal rules are explicit, preregistered, and dominate exploration.
-        if OperationKind.ANSWER in feasible and state.answer_verified:
+        if (
+            OperationKind.EXECUTE in feasible
+            and state.can_execute
+            and state.answer_verified
+        ):
+            chosen = OperationKind.EXECUTE
+            mode = "verified_execute"
+        elif OperationKind.ANSWER in feasible and state.answer_verified:
             chosen = OperationKind.ANSWER
             mode = "verified_stop"
         elif state.budget_remaining_fraction <= 0.03:
@@ -787,6 +794,7 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
     normalized["mode"] = _bounded_text(normalized.get("mode"), name="mode", limit=32)
     if normalized["mode"] not in {
         "verified_stop",
+        "verified_execute",
         "budget_stop",
         "budget_abstain",
         "budget_last_action",
@@ -1250,6 +1258,68 @@ def validate_action_trace_row(
     return normalized
 
 
+def validate_action_trace(
+    value: Any,
+    *,
+    evidence_snapshot: Mapping[str, Any],
+    executors: tuple[OperationKind, ...],
+) -> dict[str, Any]:
+    """Validate one complete, ordered cognitive-action lineage."""
+
+    if not isinstance(value, list) or not value:
+        raise ValueError("cognitive action trace must be a non-empty list")
+    if len(value) > 256:
+        raise ValueError("cognitive action trace exceeds its bounded length")
+    rows: list[dict[str, Any]] = []
+    selected: list[OperationKind] = []
+    previous_after: Mapping[str, Any] | None = None
+    previous_budget = 1.0
+    terminal_actions = {
+        OperationKind.ANSWER,
+        OperationKind.ABSTAIN,
+        OperationKind.EXECUTE,
+    }
+    for index, raw_row in enumerate(value):
+        row = validate_action_trace_row(
+            raw_row,
+            evidence_snapshot=evidence_snapshot,
+            executors=executors,
+        )
+        signal = CognitiveStateSignal.from_dict(row["state_signal"])
+        decision_action = OperationKind(row["decision"]["action"])
+        if signal.step_index != index:
+            raise ValueError("cognitive action trace step lineage is discontinuous")
+        if signal.previously_selected != tuple(selected):
+            raise ValueError("cognitive action trace history is discontinuous")
+        if index and selected[-1] in terminal_actions:
+            raise ValueError("cognitive action trace continued after a terminal action")
+        current_before = row["state_before"]
+        if previous_after is not None:
+            for name in ("residual", "disagreement"):
+                if (
+                    abs(
+                        float(current_before[name])
+                        - float(previous_after[name])
+                    )
+                    > 1e-7
+                ):
+                    raise ValueError(
+                        "cognitive action public state lineage is discontinuous"
+                    )
+        current_budget = float(current_before["budget_remaining_fraction"])
+        if current_budget > previous_budget + 1e-7:
+            raise ValueError("cognitive action budget lineage increased")
+        previous_budget = current_budget
+        previous_after = row["state_after"]
+        selected.append(decision_action)
+        rows.append(row)
+    return {
+        "rows": rows,
+        "selected_actions": [action.value for action in selected],
+        "trace_sha256": _canonical_sha256(rows),
+    }
+
+
 __all__ = [
     "ACTION_EVIDENCE_SCHEMA",
     "ACTION_TRANSITION_SCHEMA",
@@ -1264,6 +1334,7 @@ __all__ = [
     "feasible_actions",
     "transition_reward",
     "validate_action_decision",
+    "validate_action_trace",
     "validate_action_trace_row",
     "validate_action_transition",
     "validate_evidence_snapshot",

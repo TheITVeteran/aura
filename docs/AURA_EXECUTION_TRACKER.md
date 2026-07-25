@@ -27885,3 +27885,87 @@ planning estimate of 77.1%. Next: publish CP371, then implement SPARK-051's
 governed external `EXECUTE` protocol and checked action-calibration campaign
 before the next bounded resident verification. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-372: Governed External EXECUTE And Durable Effect Recovery
+
+SPARK-051 advances without claiming calibration, resident gain, or completion.
+A latent worker may now request one concrete effect from a bounded,
+digest-bound offer for an action that already passed Will. The worker never
+receives raw effect parameters or dispatch authority. The host independently
+reconstructs the offer, cognitive action trace, readiness decision,
+action-policy evidence, executor inventory, and successful runtime operation
+before any external dispatch can begin.
+
+`ExternalExecuteCoordinator` is the single durable owner of the handoff. Its
+digest-sealed transaction advances PREPARED -> DECIDED -> DISPATCHING ->
+terminal under an interprocess lock. Dispatch leases bind process identity and
+expiry; a live owner blocks duplicates, a dead owner is reaped, malformed
+abandonment identities cannot poison an active dispatch, and a restart that
+observes an uncertain effect records UNKNOWN_EFFECT instead of repeating a
+possibly completed action. Bounded abandoned-attempt retention prevents the
+recovery cache from growing indefinitely.
+
+The external path now requires a deterministic post-action receipt whose
+persisted object exactly matches the staged recovery contract. Success cannot
+name an absent receipt, substitute a contradictory receipt, or link evidence
+from another action/request. An exact durable receipt with verified transport
+and effect may reconcile UNKNOWN_EFFECT to SUCCEEDED without a second effect.
+Replay payloads are recursively redacted across arbitrary mapping
+implementations, bounded, committed, and rejected when secret-bearing or
+structurally malformed.
+
+The runtime-operation proof is versioned and reconstructable. It carries the
+host authority, pending intent, successful terminal operation, every selected
+action operation, admitted and final epistemic states, exact compute costs,
+and the durable journal receipt. Validation rebuilds the final state from the
+admitted state and operation sequence. The authority binds the admitted
+journal head and entry count; the final journal must extend that exact head by
+exactly one entry. A changed predecessor with a recomputed self-consistent head
+therefore fails rather than creating a forged history.
+
+Adversarial contracts cover failed EXECUTE lineage, missing/fabricated and
+contradictory post-action receipts, exact unknown-effect reconciliation,
+recursive non-dict secret containers, invalid abandonment identities, forged
+final state, and recomputed forged journal prefixes. The focused operation
+pair passes 47 tests. Broader action/epistemic, cortex engine/wiring, and
+desktop/ReAct/world-model regression layers pass 408 tests. Targeted Ruff and
+diff hygiene pass. Independent review returns ACCEPT with no P0-P2 findings.
+
+Governance recognizes the coordinator as the canonical owner of its bounded
+transaction store. The baseline matches at 1,974 recognized calls in 1,848
+buckets, and inherited migration debt decreases from 1,789 to 1,788 calls.
+The enterprise static ratchet, complete pytest collection gate, and all 37
+production-readiness checks pass.
+
+The dirty-candidate closeout audit also passes. It mechanically enumerates
+8,039 tracked files, including 8,008 text files and 5,009 code files, and
+binds 4,264,335 text lines plus 1,607,824 code lines to generated ledgers.
+Semantic status remains separately open and explicit: 524 code files have
+current full-file receipts while 4,454 remain unreviewed, so
+`full_closeout_complete=false`.
+
+This checkpoint does not prove the controller's sixteen cells are calibrated,
+that resident 32B execution selects better actions, that RLC improves broad
+reasoning, or that live external effects survive long-duration operation.
+SPARK-051 calibration v2 remains next: 16 actions by at least eight unique
+paired tasks, frozen treatment/control state, independent hidden-answer
+scoring, complete cost receipts, deduplicated and locked campaign evidence,
+simultaneous confidence bounds, and an independently verifiable journal.
+
+Nineteen cooperative reliability, lane, MLX, body, welfare, reasoning, probe,
+and error-classification commits landed after CP371 and before this
+integration (`6758623b7`, `7288f5adc`, `0e8e7f7d7`, `d9a963a89`,
+`003c627a6`, `cb04b1195`, `94ebea30c`, `f962561fa`, `31ab658bf`,
+`ac3cf8bbc`, `2f4b15c6a`, `bbd6a52d5`, `fd2cc9b07`, `aa713b416`,
+`dc17802a9`, `1e16a9266`, `817b0b9fb`, `48b94d58a`, and `a52064eb8`).
+Counting those records and CP372 makes the total checkpoint record 518.
+
+The previous 512-record lower forecast is exhausted while mandatory work
+remains. The forecast is therefore revised to 531-798 total records, carrying
+forward the prior uncertainty plus the 19 explicit cooperative records rather
+than treating them as free work. Approximately 13-280 records remain after
+this checkpoint. Checkpoint-count completion is approximately 64.9%-97.6%,
+with a midpoint planning estimate of 78.0%. Next: publish CP372, implement
+SPARK-051 calibration v2, then run bounded resident/live causal ablations and
+the fresh CP371 visible-request campaign. Final multi-hour soaks remain
+deferred until every shorter gate is green.

@@ -2028,12 +2028,44 @@ before those dependencies close is not admissible.
   coverage passes 251 tests; the complete combined latent/RLC ownership
   battery passes 1,252 tests.
 
-  SPARK-051 is not accepted yet: SEARCH_MEMORY and RETRIEVE_EVIDENCE currently
-  apply independently distinct source-selective effects over already admitted
-  context but do not yet initiate a new governed fetch; EXECUTE still requires
-  an external orchestration executor; the remaining actions need sufficient
-  checked outcomes to leave bootstrap mode; and resident/live causal ablations
-  have not established calibrated value or capability gain.
+  CP370 adds one bounded service-side acquisition continuation for a validated
+  SEARCH_MEMORY or RETRIEVE_EVIDENCE transition. The worker remains
+  compute-only. The host binds the objective, query, selected transition,
+  source inventory, one-attempt cap, and one-continuation cap; only a genuinely
+  new typed memory or offline-reference observation can buy a second recurrent
+  episode. Empty, unavailable, duplicate, and wrong-source outcomes remain
+  distinct and cannot mint compute. The final receipt commits both episodes,
+  the acquisition result, the returned round, and exhausted caps.
+
+  CP372 adds the missing governed external EXECUTE protocol. The worker sees
+  only a bounded digest-bound offer and can request, but cannot dispatch, an
+  already-Will-admitted effect. The host reconstructs the action trace,
+  readiness decision, action-policy evidence, successful epistemic operation,
+  and exact authority before one durable coordinator advances PREPARED ->
+  DECIDED -> DISPATCHING -> terminal. Dispatch and task leases prevent duplicate
+  owners; a crash after dispatch becomes UNKNOWN_EFFECT and requires
+  reconciliation rather than blind replay. Post-action receipts are
+  deterministic, persisted, contract-equal to the staged recovery record, and
+  required before success can be linked. Exact verified durable evidence can
+  reconcile an unknown effect without re-executing it.
+
+  The completed runtime-operation receipt now carries the admitted and final
+  epistemic states, every action operation, measured compute, and a journal
+  extension anchored to the authority's admitted head and entry count. The
+  independent verifier reconstructs the final state and rejects fabricated
+  authority, failed EXECUTE operations, missing or contradictory post-action
+  evidence, secret-bearing replay containers, malformed abandonment markers,
+  and self-consistent forged journal prefixes. An independent code review
+  returned ACCEPT with no P0-P2 findings after the final anchor repair.
+
+  SPARK-051 is not accepted yet. The sixteen actions now have concrete internal
+  semantics, governed memory/reference acquisition, or a governed external
+  dispatch path as applicable, but their controller cells still lack the
+  preregistered task-disjoint paired evidence needed to leave bootstrap mode.
+  Calibration v2, complete cost evidence, simultaneous confidence bounds,
+  independent hidden-answer scoring, campaign replay protection, and
+  resident/live causal ablations must still establish calibrated value and
+  capability gain.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

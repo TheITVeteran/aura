@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import inspect
 import json
@@ -182,6 +183,96 @@ class ActionExecutor:
             }
         )
 
+        # Terminal external-effect transactions are replayed before asking Will
+        # for a new decision. The original authorization and effect receipt are
+        # authoritative; minting a second Will receipt would split one action
+        # across two governance lineages.
+        preaction_thread = None
+        external_execution_offer: dict[str, Any] | None = None
+        external_execution_transaction: dict[str, Any] = {}
+        external_execute_coordinator: Any = None
+        deliberation_worthy_action = False
+        build_rehearsal_objective: Any = None
+        build_external_execution_offer: Any = None
+        try:
+            from core.brain.preaction_cortex import (
+                PreActionCortexThread,
+                build_rehearsal_objective,
+                deliberation_worthy,
+            )
+
+            deliberation_worthy_action = deliberation_worthy(domain.value)
+            if deliberation_worthy_action:
+                from core.brain.external_execute_coordinator import (
+                    get_external_execute_coordinator,
+                )
+                from core.brain.llm.latent_cortex.external_execution import (
+                    build_external_execution_offer,
+                )
+
+                external_execute_coordinator = get_external_execute_coordinator()
+                existing_transaction = await asyncio.to_thread(
+                    external_execute_coordinator.lookup,
+                    action_id=action_id,
+                    request_digest=request_digest,
+                )
+                if existing_transaction is not None:
+                    external_execution_offer = dict(
+                        existing_transaction.get("offer") or {}
+                    )
+                    external_execution_transaction = await asyncio.to_thread(
+                        external_execute_coordinator.prepare,
+                        external_execution_offer,
+                    )
+                    replay = _external_transaction_result(
+                        external_execution_transaction,
+                        action_id=action_id,
+                        request_digest=request_digest,
+                        expectation=expectation_contract,
+                    )
+                    if replay is not None:
+                        return await _heal_external_post_action_receipt(
+                            coordinator=external_execute_coordinator,
+                            offer=external_execution_offer,
+                            transaction=external_execution_transaction,
+                            replay=replay,
+                            action_id=action_id,
+                            request_digest=request_digest,
+                            expectation=expectation_contract,
+                        )
+        except ImportError as exc:
+            logger.debug("Pre-action cortex unavailable: %s", exc)
+            deliberation_worthy_action = False
+        except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "action_executor.external_execution",
+                exc,
+                action=(
+                    f"refused {action_name} before authorization because prior "
+                    "external execution state could not be proven"
+                ),
+                severity="degraded",
+                enforce_failure_policy=False,
+            )
+            return {
+                "ok": False,
+                "status": SkillStatus.FAILED_RECOVERABLE.value,
+                "error": (
+                    "external_execution_preflight_failed:"
+                    f"{type(exc).__name__}"
+                ),
+                "action_expectation": expectation_contract.to_dict(),
+                "action_id": action_id,
+                "request_digest": request_digest,
+                "transport_succeeded": False,
+                "effect_verified": False,
+                "retry_safe": False,
+                "manual_reconciliation_required": False,
+                "external_execution_transaction": dict(
+                    external_execution_transaction
+                ),
+            }
+
         will = get_will()
         decision = will.decide(
             content=_safe_action_summary(action_name, params),
@@ -221,24 +312,170 @@ class ActionExecutor:
         # effect, preconditions, failure mode) and a discrepancy-driven
         # reconciliation after observation. Fully defensive: no latent
         # service, busy gate, or kill switch ⇒ receipted skip, same action.
-        preaction_thread = None
         try:
-            from core.brain.preaction_cortex import (
-                PreActionCortexThread,
-                deliberation_worthy,
-            )
+            if deliberation_worthy_action:
+                action_summary = _safe_action_summary(action_name, params)
+                if not external_execution_transaction:
+                    rehearsal_objective = build_rehearsal_objective(
+                        action_summary=action_summary,
+                        expectation_objective=expectation_contract.objective,
+                    )
+                    external_execution_offer = build_external_execution_offer(
+                        action_id=action_id,
+                        domain=domain.value,
+                        action_name=action_name,
+                        request_digest=request_digest,
+                        will_receipt_id=will_receipt_id,
+                        objective=rehearsal_objective,
+                        expectation=expectation_contract.to_dict(),
+                    )
+                    external_execution_transaction = await asyncio.to_thread(
+                        external_execute_coordinator.prepare,
+                        external_execution_offer,
+                    )
 
-            if deliberation_worthy(domain.value):
                 preaction_thread = PreActionCortexThread(
                     domain=domain.value,
                     action_name=action_name,
                     request_digest=request_digest,
+                    external_execution_offer=external_execution_offer,
                 )
-                await preaction_thread.rehearse(
-                    action_summary=_safe_action_summary(action_name, params),
-                    expectation_objective=expectation_contract.objective,
+                if (
+                    external_execution_offer is not None
+                    and external_execution_transaction.get("state") == "DECIDED"
+                ):
+                    preaction_thread.rehearsal = {
+                        "schema": "aura.preaction_cortex.v1",
+                        "phase": "rehearsal",
+                        "action_name": action_name,
+                        "domain": domain.value,
+                        "ran": False,
+                        "skip_reason": "durable_external_execution_decision_reused",
+                    }
+                else:
+                    rehearsal = await preaction_thread.rehearse(
+                        action_summary=action_summary,
+                        expectation_objective=expectation_contract.objective,
+                    )
+                    if external_execution_offer is not None:
+                        if rehearsal.get("ran") is True:
+                            external_execution_transaction = await asyncio.to_thread(
+                                external_execute_coordinator.record_handoff,
+                                offer=external_execution_offer,
+                                handoff=rehearsal.get("external_execution_handoff") or {},
+                                cognitive_action_trace=(
+                                    preaction_thread.external_execution_trace()
+                                ),
+                                readiness=(
+                                    preaction_thread.external_execution_readiness()
+                                ),
+                                model_output=(
+                                    preaction_thread.external_execution_model_output()
+                                ),
+                                action_policy_evidence=(
+                                    preaction_thread.external_action_policy_evidence()
+                                ),
+                                executors=(
+                                    preaction_thread.external_action_executors()
+                                ),
+                                action_policy_receipt=(
+                                    preaction_thread.external_action_policy_receipt()
+                                ),
+                                runtime_operation=(
+                                    preaction_thread.external_runtime_operation()
+                                ),
+                            )
+                        else:
+                            skip_reason = str(
+                                rehearsal.get("skip_reason")
+                                or "rehearsal_unavailable"
+                            )
+                            external_execution_transaction = await asyncio.to_thread(
+                                external_execute_coordinator.record_bypass,
+                                offer=external_execution_offer,
+                                reason=skip_reason,
+                            )
+
+                replay = _external_transaction_result(
+                    external_execution_transaction,
+                    action_id=action_id,
+                    request_digest=request_digest,
+                    expectation=expectation_contract,
+                    preaction_receipt=preaction_thread.to_receipt(),
                 )
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                if replay is not None:
+                    if external_execution_transaction.get("state") == "ABSTAINED":
+                        return await _finalize_approved_no_effect(
+                            result=replay,
+                            will=will,
+                            will_receipt_id=will_receipt_id,
+                            domain=domain,
+                            action_name=action_name,
+                            source=source,
+                            expectation=expectation_contract,
+                            action_id=action_id,
+                            request_digest=request_digest,
+                            rollback_target=rollback_target,
+                            coordinator=external_execute_coordinator,
+                            offer=external_execution_offer,
+                        )
+                    return await _heal_external_post_action_receipt(
+                        coordinator=external_execute_coordinator,
+                        offer=external_execution_offer,
+                        transaction=external_execution_transaction,
+                        replay=replay,
+                        action_id=action_id,
+                        request_digest=request_digest,
+                        expectation=expectation_contract,
+                    )
+        except (ImportError, *_ACTION_EXECUTOR_RECOVERABLE_ERRORS) as exc:
+            if (
+                external_execution_offer is not None
+                or external_execution_transaction
+            ):
+                record_degradation(
+                    "action_executor.external_execution",
+                    exc,
+                    action=(
+                        f"refused {action_name} before effect dispatch because "
+                        "its external execution transaction could not be proven"
+                    ),
+                    severity="degraded",
+                    enforce_failure_policy=False,
+                )
+                failure_result = {
+                    "ok": False,
+                    "status": SkillStatus.FAILED_RECOVERABLE.value,
+                    "error": (
+                        "external_execution_preparation_failed:"
+                        f"{type(exc).__name__}"
+                    ),
+                    "will_receipt_id": will_receipt_id,
+                    "action_expectation": expectation_contract.to_dict(),
+                    "action_id": action_id,
+                    "request_digest": request_digest,
+                    "transport_succeeded": False,
+                    "effect_verified": False,
+                    "retry_safe": not isinstance(exc, ValueError),
+                    "manual_reconciliation_required": False,
+                    "external_execution_transaction": dict(
+                        external_execution_transaction
+                    ),
+                }
+                return await _finalize_approved_no_effect(
+                    result=failure_result,
+                    will=will,
+                    will_receipt_id=will_receipt_id,
+                    domain=domain,
+                    action_name=action_name,
+                    source=source,
+                    expectation=expectation_contract,
+                    action_id=action_id,
+                    request_digest=request_digest,
+                    rollback_target=rollback_target,
+                    coordinator=external_execute_coordinator,
+                    offer=external_execution_offer,
+                )
             logger.debug("Pre-action rehearsal unavailable: %s", exc)
             preaction_thread = None
         body_service = BodyStateService.get()
@@ -254,10 +491,62 @@ class ActionExecutor:
 
         result: dict[str, Any]
         pre_state: dict[str, Any] = {}
+        dispatch_result: dict[str, Any] = {}
+        external_dispatch_attempt_id = ""
+        external_dispatch_heartbeat: asyncio.Task[None] | None = None
         try:
             async with governed_scope(decision):
                 pre_state = await capture_pre_action_state(domain, params)
-                result = await cls._dispatch(
+                if external_execution_offer is not None:
+                    begin_task = asyncio.create_task(
+                        asyncio.to_thread(
+                            external_execute_coordinator.begin_dispatch,
+                            external_execution_offer,
+                            authorization_receipt_id=will_receipt_id,
+                            task_id=_external_dispatch_task_id(),
+                        )
+                    )
+                    try:
+                        external_execution_transaction = await asyncio.shield(
+                            begin_task
+                        )
+                    except asyncio.CancelledError:
+                        external_execution_transaction = await asyncio.shield(
+                            begin_task
+                        )
+                        cancelled_owner = (
+                            external_execution_transaction.get("dispatch_owner")
+                            or {}
+                        )
+                        await _abandon_external_dispatch(
+                            coordinator=external_execute_coordinator,
+                            offer=external_execution_offer,
+                            dispatch_attempt_id=str(
+                                cancelled_owner.get("attempt_id") or ""
+                            ),
+                            effect_may_have_occurred=False,
+                            reason="cancelled_before_effect_dispatch",
+                        )
+                        raise
+                    external_dispatch_attempt_id = str(
+                        (
+                            external_execution_transaction.get("dispatch_owner")
+                            or {}
+                        ).get("attempt_id")
+                        or ""
+                    )
+                    if not external_dispatch_attempt_id:
+                        raise ValueError(
+                            "external execution dispatch intent lacks an owner token"
+                        )
+                    external_dispatch_heartbeat = asyncio.create_task(
+                        _renew_external_dispatch_lease(
+                            coordinator=external_execute_coordinator,
+                            offer=external_execution_offer,
+                            dispatch_attempt_id=external_dispatch_attempt_id,
+                        )
+                    )
+                dispatch_result = await cls._dispatch(
                     domain=domain,
                     action_name=action_name,
                     params=params,
@@ -267,6 +556,7 @@ class ActionExecutor:
                     effect_handler=effect_handler,
                     execution_timeout_s=execution_timeout,
                 )
+                result = dict(dispatch_result)
                 observation = await observe_action_effect(
                     domain,
                     params,
@@ -280,6 +570,19 @@ class ActionExecutor:
                     ),
                 )
                 result.update(observation)
+        except asyncio.CancelledError:
+            if external_dispatch_attempt_id:
+                await _abandon_external_dispatch(
+                    coordinator=external_execute_coordinator,
+                    offer=external_execution_offer,
+                    dispatch_attempt_id=external_dispatch_attempt_id,
+                    effect_may_have_occurred=True,
+                    reason="cancelled_after_dispatch_intent",
+                )
+            await _stop_external_dispatch_heartbeat(
+                external_dispatch_heartbeat
+            )
+            raise
         except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
             record_degradation(
                 "action_executor",
@@ -287,21 +590,29 @@ class ActionExecutor:
                 action=f"recorded failed action transaction for {action_name}",
             )
             logger.error("Error executing action %s: %s", action_name, exc, exc_info=True)
+            transport_may_have_succeeded = dispatch_result.get("ok") is True
             result = {
                 "ok": False,
                 "status": SkillStatus.FAILED_RECOVERABLE.value,
                 "error": str(exc),
                 "effect_verified": False,
+                "transport_succeeded": transport_may_have_succeeded,
                 "verification_evidence": {
                     "observation": {
                         "effect_verified": False,
-                        "reason": "execution_exception",
+                        "reason": (
+                            "verification_exception_after_transport"
+                            if transport_may_have_succeeded
+                            else "execution_exception"
+                        ),
                         "error_type": type(exc).__qualname__,
                     }
                 },
             }
 
-        transport_succeeded = bool(result.get("ok", False))
+        transport_succeeded = bool(
+            result.get("transport_succeeded", result.get("ok", False))
+        )
         result["action_id"] = action_id
         result["request_digest"] = request_digest
         result["transport_succeeded"] = transport_succeeded
@@ -322,6 +633,9 @@ class ActionExecutor:
 
         status = str(result.get("status") or SkillStatus.FAILED_RECOVERABLE.value)
         effect_verified = result.get("effect_verified") is True
+        if transport_succeeded and not effect_verified and not result.get("ok", False):
+            status = SkillStatus.PARTIAL_SUCCESS.value
+            result["status"] = status
         result["retry_safe"] = bool(
             result.get("retry_safe") is True
             and not effect_verified
@@ -380,7 +694,15 @@ class ActionExecutor:
             # unverified effect) and its conclusion competes for Global
             # Workspace broadcast — the loop closes through the mind.
             try:
-                await preaction_thread.reconcile(result)
+                await _await_external_closure(
+                    preaction_thread.reconcile(result),
+                    coordinator=external_execute_coordinator,
+                    offer=external_execution_offer,
+                    dispatch_attempt_id=external_dispatch_attempt_id,
+                    heartbeat=external_dispatch_heartbeat,
+                    result=result,
+                    cancellation_reason="cancelled_during_external_reconciliation",
+                )
                 result["preaction_cortex"] = preaction_thread.to_receipt()
             except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
                 logger.debug("Pre-action reconciliation unavailable: %s", exc)
@@ -395,8 +717,13 @@ class ActionExecutor:
             else _transaction_outcome(status, bool(result.get("ok", False)))
         )
         body_delta = tx_record.body_delta if tx_record is not None else {}
+        post_receipt_id = (
+            _external_post_receipt_id(action_id, request_digest)
+            if external_execution_offer is not None
+            else f"post-{uuid.uuid4()}"
+        )
         post_receipt = PostActionReceipt(
-            receipt_id=f"post-{uuid.uuid4()}",
+            receipt_id=post_receipt_id,
             will_receipt_id=will_receipt_id,
             executor_name=action_name,
             actual_outcome=actual_outcome,
@@ -427,8 +754,116 @@ class ActionExecutor:
             ),
             welfare_transaction_completed=welfare_transaction_completed,
         )
+        if external_execution_offer is not None:
+            result.update(
+                {
+                    "receipt_persisted": False,
+                    "post_action_receipt_pending": True,
+                    "post_action_receipt_attempt_id": post_receipt.receipt_id,
+                    "_post_action_recovery_contract": post_receipt.to_dict(),
+                }
+            )
+        await _await_external_closure(
+            _complete_external_execution_transaction(
+                coordinator=external_execute_coordinator,
+                offer=external_execution_offer,
+                transaction=external_execution_transaction,
+                dispatch_attempt_id=external_dispatch_attempt_id,
+                result=result,
+                action_name=action_name,
+            ),
+            coordinator=external_execute_coordinator,
+            offer=external_execution_offer,
+            dispatch_attempt_id=external_dispatch_attempt_id,
+            heartbeat=external_dispatch_heartbeat,
+            result=result,
+            cancellation_reason="cancelled_during_external_completion",
+        )
+        await _stop_external_dispatch_heartbeat(external_dispatch_heartbeat)
+        result.pop("_post_action_recovery_contract", None)
+        final_transport_succeeded = result.get("transport_succeeded") is True
+        final_status = str(
+            result.get("status")
+            or SkillStatus.FAILED_RECOVERABLE.value
+        )
+        final_effect_verified = result.get("effect_verified") is True
+        final_error_msg = (
+            str(result.get("error") or "")
+            if not result.get("ok", False)
+            else ""
+        )
+        if (
+            final_transport_succeeded != post_receipt.transport_succeeded
+            or final_status != post_receipt.status
+            or final_effect_verified != post_receipt.effect_verified
+            or final_error_msg != post_receipt.error_status
+        ):
+            post_receipt = PostActionReceipt(
+                **{
+                    **post_receipt.to_dict(),
+                    "output_hash": _stable_digest(result),
+                    "status": final_status,
+                    "effect_verified": final_effect_verified,
+                    "error_status": final_error_msg,
+                    "transport_succeeded": final_transport_succeeded,
+                    "retry_safe": bool(result.get("retry_safe", False)),
+                    "manual_reconciliation_required": bool(
+                        result.get(
+                            "manual_reconciliation_required",
+                            False,
+                        )
+                    ),
+                }
+            )
+        transport_succeeded = final_transport_succeeded
+        status = final_status
+        effect_verified = final_effect_verified
+        error_msg = final_error_msg
+        if (
+            external_execute_coordinator is not None
+            and external_execution_offer is not None
+        ):
+            try:
+                await asyncio.to_thread(
+                    external_execute_coordinator.stage_post_action_receipt,
+                    offer=external_execution_offer,
+                    receipt_contract=post_receipt.to_dict(),
+                )
+            except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+                record_degradation(
+                    "action_executor.external_execution",
+                    exc,
+                    action=(
+                        "preserved the terminal effect state while its final "
+                        f"receipt recovery contract could not be staged for {action_name}"
+                    ),
+                    severity="degraded",
+                    enforce_failure_policy=False,
+                )
         try:
-            await get_post_action_receipt_store().record_async(post_receipt)
+            receipt_store = get_post_action_receipt_store()
+            await receipt_store.record_async(post_receipt)
+            if external_execution_offer is not None:
+                persisted_post_receipt = (
+                    _validated_persisted_external_post_receipt(
+                        receipt_store.get_receipt(post_receipt.receipt_id),
+                        action_id=action_id,
+                        request_digest=request_digest,
+                        will_receipt_id=will_receipt_id,
+                        expected_contract=post_receipt.to_dict(),
+                    )
+                )
+            else:
+                persisted_post_receipt = receipt_store.get_receipt(
+                    post_receipt.receipt_id
+                )
+                if (
+                    persisted_post_receipt is None
+                    or persisted_post_receipt.to_dict() != post_receipt.to_dict()
+                ):
+                    raise ValueError(
+                        "persisted post-action receipt content differs"
+                    )
         except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
             record_degradation(
                 "action_executor",
@@ -454,7 +889,31 @@ class ActionExecutor:
             return result
 
         result["post_action_receipt_id"] = post_receipt.receipt_id
+        result["post_action_output_hash"] = post_receipt.output_hash
         result["receipt_persisted"] = True
+        result["post_action_receipt_pending"] = False
+        if external_execute_coordinator is not None and external_execution_offer is not None:
+            try:
+                linked = await asyncio.to_thread(
+                    external_execute_coordinator.link_post_action_receipt,
+                    offer=external_execution_offer,
+                    persisted_receipt=persisted_post_receipt.to_dict(),
+                    receipt_store=receipt_store,
+                )
+                result["external_execution_transaction"] = linked
+                result["external_execution_receipt_linked"] = True
+            except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+                record_degradation(
+                    "action_executor.external_execution",
+                    exc,
+                    action=(
+                        "preserved completed effect and durable post-action "
+                        f"receipt after transaction-link failure for {action_name}"
+                    ),
+                    severity="degraded",
+                    enforce_failure_policy=False,
+                )
+                result["external_execution_receipt_linked"] = False
         return result
 
     @staticmethod
@@ -930,6 +1389,599 @@ def _append_error(existing: Any, new_error: str) -> str:
     if not addition or addition in current:
         return current[:1000]
     return f"{current}; {addition}"[:1000]
+
+
+def _external_transaction_result(
+    transaction: Mapping[str, Any] | None,
+    *,
+    action_id: str,
+    request_digest: str,
+    expectation: ActionExpectation,
+    preaction_receipt: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(transaction, Mapping):
+        return None
+    state = str(transaction.get("state") or "")
+    if state not in {
+        "SUCCEEDED",
+        "FAILED",
+        "FAILED_PRE_DISPATCH",
+        "ABSTAINED",
+        "UNKNOWN_EFFECT",
+    }:
+        return None
+    stored = transaction.get("result")
+    replay_payload = (
+        stored.get("replay_payload")
+        if isinstance(stored, Mapping)
+        else None
+    )
+    result = dict(replay_payload) if isinstance(replay_payload, Mapping) else {}
+    if state == "ABSTAINED":
+        result.update(
+            {
+                "ok": False,
+                "status": SkillStatus.BLOCKED_BY_POLICY.value,
+                "error": "latent_cortex_declined_external_execution",
+                "transport_succeeded": False,
+                "effect_verified": False,
+                "manual_reconciliation_required": False,
+            }
+        )
+    elif state == "UNKNOWN_EFFECT":
+        result.update(
+            {
+                "ok": False,
+                "status": SkillStatus.FAILED_RECOVERABLE.value,
+                "error": "external_execution_effect_unknown_requires_reconciliation",
+                "effect_verified": False,
+                "manual_reconciliation_required": True,
+            }
+        )
+    result.update(
+        {
+            "action_id": action_id,
+            "request_digest": request_digest,
+            "will_receipt_id": str(
+                transaction.get("dispatch_authorization_receipt_id")
+                or (transaction.get("offer") or {}).get("will_receipt_id")
+                or result.get("will_receipt_id")
+                or ""
+            ),
+            "action_expectation": expectation.to_dict(),
+            "external_execution_transaction": dict(transaction),
+            "external_execution_replayed": True,
+            "retry_safe": False,
+        }
+    )
+    if preaction_receipt is not None:
+        result["preaction_cortex"] = dict(preaction_receipt)
+    return result
+
+
+async def _heal_external_post_action_receipt(
+    *,
+    coordinator: Any,
+    offer: Mapping[str, Any],
+    transaction: Mapping[str, Any],
+    replay: dict[str, Any],
+    action_id: str,
+    request_digest: str,
+    expectation: ActionExpectation,
+) -> dict[str, Any]:
+    stored_result = transaction.get("result")
+    authoritative_receipt_id = str(
+        (
+            stored_result.get("post_action_receipt_id")
+            if isinstance(stored_result, Mapping)
+            else ""
+        )
+        or replay.get("post_action_receipt_id")
+        or ""
+    )
+    if authoritative_receipt_id:
+        try:
+            expected_receipt_id = _external_post_receipt_id(
+                action_id,
+                request_digest,
+            )
+            if authoritative_receipt_id != expected_receipt_id:
+                raise ValueError(
+                    "external transaction linked a noncanonical post-action receipt"
+                )
+            transaction_replay = (
+                stored_result.get("replay_payload")
+                if isinstance(stored_result, Mapping)
+                else {}
+            )
+            expected_receipt_sha256 = (
+                transaction_replay.get("post_action_receipt_sha256")
+                if isinstance(transaction_replay, Mapping)
+                else None
+            )
+            receipt = _validated_persisted_external_post_receipt(
+                get_post_action_receipt_store().get_receipt(
+                    authoritative_receipt_id
+                ),
+                action_id=action_id,
+                request_digest=request_digest,
+                will_receipt_id=str(
+                    transaction.get("dispatch_authorization_receipt_id")
+                    or (transaction.get("offer") or {}).get("will_receipt_id")
+                    or ""
+                ),
+                expected_sha256=expected_receipt_sha256,
+            )
+            replay["post_action_receipt_id"] = receipt.receipt_id
+            replay["post_action_output_hash"] = receipt.output_hash
+            replay["receipt_persisted"] = True
+            replay["post_action_receipt_pending"] = False
+            replay.pop("_post_action_recovery_contract", None)
+        except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "action_executor.external_execution",
+                exc,
+                action=(
+                    "refused to claim a linked post-action receipt without "
+                    "matching durable store evidence"
+                ),
+                severity="degraded",
+                enforce_failure_policy=False,
+            )
+            replay["receipt_persisted"] = False
+            replay["post_action_receipt_pending"] = True
+            replay["manual_reconciliation_required"] = True
+            replay["error"] = _append_error(
+                replay.get("error"),
+                f"post_action_receipt_validation_failed:{type(exc).__name__}",
+            )
+        return replay
+
+    contract = replay.get("_post_action_recovery_contract")
+    if not isinstance(contract, Mapping):
+        replay["receipt_persisted"] = False
+        replay["post_action_receipt_pending"] = True
+        replay["manual_reconciliation_required"] = True
+        replay.pop("_post_action_recovery_contract", None)
+        return replay
+    try:
+        receipt = PostActionReceipt(**dict(contract))
+        expected_receipt_id = _external_post_receipt_id(
+            action_id,
+            request_digest,
+        )
+        expected_will_id = str(
+            transaction.get("dispatch_authorization_receipt_id")
+            or (transaction.get("offer") or {}).get("will_receipt_id")
+            or ""
+        )
+        if (
+            receipt.receipt_id != expected_receipt_id
+            or receipt.action_id != action_id
+            or receipt.request_digest != request_digest
+            or receipt.will_receipt_id != expected_will_id
+        ):
+            raise ValueError(
+                "external post-action recovery contract identity differs"
+            )
+        store = get_post_action_receipt_store()
+        existing = store.get_receipt(receipt.receipt_id)
+        if existing is None:
+            await store.record_async(receipt)
+        persisted = _validated_persisted_external_post_receipt(
+            store.get_receipt(receipt.receipt_id),
+            action_id=action_id,
+            request_digest=request_digest,
+            will_receipt_id=expected_will_id,
+            expected_contract=receipt.to_dict(),
+        )
+        linked = await asyncio.to_thread(
+            coordinator.link_post_action_receipt,
+            offer=offer,
+            persisted_receipt=persisted.to_dict(),
+            receipt_store=store,
+        )
+        healed = _external_transaction_result(
+            linked,
+            action_id=action_id,
+            request_digest=request_digest,
+            expectation=expectation,
+        )
+        if healed is None:
+            raise ValueError("external receipt healing lost terminal state")
+        healed["post_action_output_hash"] = receipt.output_hash
+        healed["external_execution_receipt_linked"] = True
+        healed.pop("_post_action_recovery_contract", None)
+        return healed
+    except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "action_executor.external_execution",
+            exc,
+            action=(
+                "preserved terminal effect state while post-action receipt "
+                "self-healing remained pending"
+            ),
+            severity="degraded",
+            enforce_failure_policy=False,
+        )
+        replay["receipt_persisted"] = False
+        replay["post_action_receipt_pending"] = True
+        replay["manual_reconciliation_required"] = True
+        replay["error"] = _append_error(
+            replay.get("error"),
+            f"post_action_receipt_recovery_failed:{type(exc).__name__}",
+        )
+        replay.pop("_post_action_recovery_contract", None)
+        return replay
+
+
+async def _finalize_approved_no_effect(
+    **kwargs: Any,
+) -> dict[str, Any]:
+    result = kwargs["result"]
+    action_name = str(kwargs["action_name"])
+    try:
+        return await _finalize_approved_no_effect_impl(**kwargs)
+    except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "action_executor.external_execution",
+            exc,
+            action=(
+                "surfaced approved no-effect governance finalization failure "
+                f"for {action_name}"
+            ),
+            severity="degraded",
+            enforce_failure_policy=False,
+        )
+        result["ok"] = False
+        result["error"] = _append_error(
+            result.get("error"),
+            f"no_effect_governance_finalization_failed:{type(exc).__name__}",
+        )
+        result["receipt_persisted"] = False
+        result["retry_safe"] = False
+        return result
+
+
+async def _finalize_approved_no_effect_impl(
+    *,
+    result: dict[str, Any],
+    will: Any,
+    will_receipt_id: str,
+    domain: ActionDomain,
+    action_name: str,
+    source: str,
+    expectation: ActionExpectation,
+    action_id: str,
+    request_digest: str,
+    rollback_target: str | None,
+    coordinator: Any,
+    offer: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    body_service = BodyStateService.get()
+    welfare_service = WelfareState.get()
+    transaction = WelfareTransaction.begin(
+        domain=domain.value,
+        action=f"{action_name} ({source})",
+        welfare_before=welfare_service.last_outputs,
+        body_before=body_service.snapshot(),
+        predicted_welfare_delta=None,
+        will_receipt_id=will_receipt_id,
+    )
+    tx_record = transaction.complete(
+        outcome=_transaction_outcome(
+            str(result.get("status") or SkillStatus.FAILED_RECOVERABLE.value),
+            False,
+        ),
+        welfare_after=welfare_service.last_outputs,
+        body_after=body_service.snapshot(),
+        error=str(result.get("error") or ""),
+    )
+    will.record_outcome(will_receipt_id, tx_record)
+    result.update(
+        {
+            "will_receipt_id": will_receipt_id,
+            "welfare_transaction_id": transaction.tx_id,
+            "welfare_transaction_completed": True,
+            "transport_succeeded": False,
+            "effect_verified": False,
+            "manual_reconciliation_required": False,
+        }
+    )
+    receipt_id = (
+        _external_post_receipt_id(action_id, request_digest)
+        if offer is not None
+        else f"post-{uuid.uuid4()}"
+    )
+    receipt = PostActionReceipt(
+        receipt_id=receipt_id,
+        will_receipt_id=will_receipt_id,
+        executor_name=action_name,
+        actual_outcome=tx_record.outcome,
+        output_hash=_stable_digest(result),
+        error_status=str(result.get("error") or ""),
+        welfare_transaction_id=transaction.tx_id,
+        body_delta=tx_record.body_delta,
+        memory_delta={},
+        rollback_target=rollback_target,
+        status=str(result.get("status") or SkillStatus.FAILED_RECOVERABLE.value),
+        effect_verified=False,
+        action_expectation=_bounded_receipt_mapping(expectation.to_dict()),
+        verification_evidence={},
+        action_id=action_id,
+        domain=domain.value,
+        source=str(source or "unknown")[:240],
+        request_digest=request_digest,
+        transport_succeeded=False,
+        retry_safe=bool(result.get("retry_safe", False)),
+        manual_reconciliation_required=False,
+        welfare_transaction_completed=True,
+    )
+    if coordinator is not None and offer is not None:
+        await asyncio.to_thread(
+            coordinator.fail_preparation,
+            offer=offer,
+            result=result,
+        )
+        await asyncio.to_thread(
+            coordinator.stage_post_action_receipt,
+            offer=offer,
+            receipt_contract=receipt.to_dict(),
+        )
+    store = get_post_action_receipt_store()
+    if store.get_receipt(receipt.receipt_id) is None:
+        await store.record_async(receipt)
+    persisted = _validated_persisted_external_post_receipt(
+        store.get_receipt(receipt.receipt_id),
+        action_id=action_id,
+        request_digest=request_digest,
+        will_receipt_id=will_receipt_id,
+        expected_contract=receipt.to_dict(),
+    )
+    result.update(
+        {
+            "post_action_receipt_id": receipt.receipt_id,
+            "post_action_output_hash": receipt.output_hash,
+            "receipt_persisted": True,
+            "post_action_receipt_pending": False,
+        }
+    )
+    if coordinator is not None and offer is not None:
+        linked = await asyncio.to_thread(
+            coordinator.link_post_action_receipt,
+            offer=offer,
+            persisted_receipt=persisted.to_dict(),
+            receipt_store=store,
+        )
+        result["external_execution_transaction"] = linked
+        result["external_execution_receipt_linked"] = True
+    return result
+
+
+def _external_dispatch_task_id() -> str:
+    task = asyncio.current_task()
+    if task is None:
+        return f"task-unknown-{uuid.uuid4().hex}"
+    name = str(task.get_name() or "unnamed")[:96]
+    return f"task-{id(task):x}:{name}"
+
+
+def _external_post_receipt_id(action_id: str, request_digest: str) -> str:
+    identity = f"{action_id}\0{request_digest}".encode()
+    return f"post-external-{hashlib.sha256(identity).hexdigest()[:32]}"
+
+
+def _canonical_mapping_sha256(value: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validated_persisted_external_post_receipt(
+    receipt: PostActionReceipt | None,
+    *,
+    action_id: str,
+    request_digest: str,
+    will_receipt_id: str,
+    expected_contract: Mapping[str, Any] | None = None,
+    expected_sha256: Any = None,
+) -> PostActionReceipt:
+    if receipt is None:
+        raise ValueError("post-action receipt is absent from the durable store")
+    contract = receipt.to_dict()
+    expected_id = _external_post_receipt_id(action_id, request_digest)
+    if (
+        receipt.receipt_id != expected_id
+        or receipt.action_id != action_id
+        or receipt.request_digest != request_digest
+        or receipt.will_receipt_id != will_receipt_id
+    ):
+        raise ValueError("persisted post-action receipt identity differs")
+    if expected_contract is not None and contract != dict(expected_contract):
+        raise ValueError("persisted post-action receipt content differs")
+    actual_sha256 = _canonical_mapping_sha256(contract)
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        if expected_sha256 is not None:
+            raise ValueError("transaction post-action receipt digest is invalid")
+    elif actual_sha256 != expected_sha256:
+        raise ValueError("persisted post-action receipt digest differs")
+    return receipt
+
+
+async def _await_external_closure(
+    operation: Any,
+    *,
+    coordinator: Any,
+    offer: Mapping[str, Any] | None,
+    dispatch_attempt_id: str,
+    heartbeat: asyncio.Task[None] | None,
+    result: Mapping[str, Any],
+    cancellation_reason: str,
+) -> Any:
+    try:
+        return await operation
+    except asyncio.CancelledError:
+        await _abandon_external_dispatch(
+            coordinator=coordinator,
+            offer=offer,
+            dispatch_attempt_id=dispatch_attempt_id,
+            effect_may_have_occurred=True,
+            reason=cancellation_reason,
+            result=result,
+        )
+        await _stop_external_dispatch_heartbeat(heartbeat)
+        raise
+
+
+async def _renew_external_dispatch_lease(
+    *,
+    coordinator: Any,
+    offer: Mapping[str, Any],
+    dispatch_attempt_id: str,
+) -> None:
+    task = asyncio.current_task()
+    while task is not None and not task.cancelled():
+        await asyncio.sleep(20.0)
+        try:
+            await asyncio.to_thread(
+                coordinator.renew_dispatch,
+                offer=offer,
+                dispatch_attempt_id=dispatch_attempt_id,
+            )
+        except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "action_executor.external_execution",
+                exc,
+                action=(
+                    "stopped renewing an external dispatch lease; expiry will "
+                    "force reconciliation rather than duplicate execution"
+                ),
+                severity="degraded",
+                enforce_failure_policy=False,
+            )
+            return
+
+
+async def _stop_external_dispatch_heartbeat(
+    task: asyncio.Task[None] | None,
+) -> None:
+    if task is None:
+        return
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
+async def _abandon_external_dispatch(
+    *,
+    coordinator: Any,
+    offer: Mapping[str, Any] | None,
+    dispatch_attempt_id: str,
+    effect_may_have_occurred: bool,
+    reason: str,
+    result: Mapping[str, Any] | None = None,
+) -> None:
+    if coordinator is None or offer is None or not dispatch_attempt_id:
+        return
+    cleanup = asyncio.create_task(
+        asyncio.to_thread(
+            coordinator.abandon_dispatch,
+            offer=offer,
+            dispatch_attempt_id=dispatch_attempt_id,
+            effect_may_have_occurred=effect_may_have_occurred,
+            reason=reason,
+            result=result,
+        )
+    )
+    try:
+        await asyncio.shield(cleanup)
+    except asyncio.CancelledError:
+        await asyncio.shield(cleanup)
+        raise
+    except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "action_executor.external_execution",
+            exc,
+            action=(
+                "marked the task-scoped dispatch owner abandoned in memory; "
+                "the next lookup will reconcile its durable state"
+            ),
+            severity="degraded",
+            enforce_failure_policy=False,
+        )
+
+
+async def _complete_external_execution_transaction(
+    *,
+    coordinator: Any,
+    offer: Mapping[str, Any] | None,
+    transaction: Mapping[str, Any] | None,
+    dispatch_attempt_id: str,
+    result: dict[str, Any],
+    action_name: str,
+) -> None:
+    if coordinator is None or offer is None:
+        return
+    if not dispatch_attempt_id:
+        result["external_execution_transaction"] = dict(transaction or {})
+        return
+    try:
+        completed = await asyncio.to_thread(
+            coordinator.complete,
+            offer=offer,
+            result=result,
+            dispatch_attempt_id=dispatch_attempt_id,
+        )
+        result["external_execution_transaction"] = completed
+    except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
+        effect_may_have_occurred = (
+            result.get("transport_succeeded") is True
+            or result.get("retry_safe") is not True
+        )
+        record_degradation(
+            "action_executor.external_execution",
+            exc,
+            action=(
+                f"effect lane completed but external execution closure failed "
+                f"for {action_name}"
+            ),
+            severity="degraded",
+            enforce_failure_policy=False,
+        )
+        transport_succeeded = result.get("transport_succeeded") is True
+        result["ok"] = False
+        result["status"] = (
+            SkillStatus.PARTIAL_SUCCESS.value
+            if transport_succeeded
+            else SkillStatus.FAILED_RECOVERABLE.value
+        )
+        result["error"] = _append_error(
+            result.get("error"),
+            f"external_execution_completion_failed:{type(exc).__name__}",
+        )
+        result["manual_reconciliation_required"] = transport_succeeded
+        result["retry_safe"] = False
+        result["external_execution_transaction"] = dict(transaction or {})
+        await _abandon_external_dispatch(
+            coordinator=coordinator,
+            offer=offer,
+            dispatch_attempt_id=dispatch_attempt_id,
+            effect_may_have_occurred=effect_may_have_occurred,
+            reason=(
+                "external_execution_completion_failed:"
+                f"{type(exc).__name__}"
+            ),
+            result=result,
+        )
 
 
 def _stable_digest(value: Any) -> str:

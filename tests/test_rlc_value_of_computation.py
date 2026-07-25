@@ -172,6 +172,17 @@ def test_terminal_rules_distinguish_verified_answer_budget_and_abstention():
     )
     assert (verified["action"], verified["mode"]) == ("answer", "verified_stop")
 
+    execute = policy.choose(
+        _state(step_index=2, can_execute=True, answer_verified=True),
+        executors=(
+            OperationKind.EXECUTE,
+            OperationKind.ANSWER,
+            OperationKind.ABSTAIN,
+        ),
+    )
+    assert (execute["action"], execute["mode"]) == ("execute", "verified_execute")
+    assert validate_action_decision(execute) == execute
+
     budget_answer = policy.choose(
         _state(step_index=2, budget_remaining_fraction=0.01, uncertainty=0.2),
         executors=(OperationKind.ANSWER, OperationKind.ABSTAIN),

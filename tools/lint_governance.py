@@ -164,6 +164,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # The ledger accepts no arbitrary runtime action or user path and
             # writes only from its named internal governance scope.
             "core/brain/llm/latent_cortex/verifier_fusion.py",
+            # External-effect transactions are digest-sealed, path-derived
+            # records under Aura's data directory. The coordinator accepts no
+            # caller-selected file path and writes only from its named scope.
+            "core/brain/external_execute_coordinator.py",
             "core/brain/llm/latent_cortex/persistence.py",
             # Bus bags and cross-process leases are bounded internal evidence
             # stores. Their paths are runtime-derived, never user-selected,

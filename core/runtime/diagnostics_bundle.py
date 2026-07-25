@@ -42,7 +42,7 @@ import os
 import re
 import tarfile
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +72,12 @@ SENSITIVE_VALUE_PATTERNS = [
     re.compile(r"AKIA[0-9A-Z]{16}"),                      # AWS access key id
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),    # PEM
     re.compile(r"eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),  # JWT
+    re.compile(r"\bAuthorization\s*:\s*Bearer\s+\S+", re.IGNORECASE),
+    re.compile(
+        r"\b(?:api[_-]?key|secret|password|passwd|token|credential|auth)"
+        r"\b\s*[:=]\s*[^\s,;]+",
+        re.IGNORECASE,
+    ),
 ]
 
 REDACTED = "[REDACTED]"
@@ -90,7 +96,7 @@ _DIAGNOSTICS_RECOVERABLE_ERRORS = (
 
 def redact_value(value: Any) -> Any:
     """Recursively scrub sensitive fields and high-entropy values."""
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         out: dict[str, Any] = {}
         for k, v in value.items():
             if any(p.search(str(k)) for p in SENSITIVE_KEY_PATTERNS):
@@ -100,6 +106,11 @@ def redact_value(value: Any) -> Any:
         return out
     if isinstance(value, list):
         return [redact_value(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(redact_value(v) for v in value)
+    if isinstance(value, (set, frozenset)):
+        redacted = [redact_value(v) for v in value]
+        return sorted(redacted, key=lambda item: repr(item))
     if isinstance(value, str):
         for pat in SENSITIVE_VALUE_PATTERNS:
             if pat.search(value):

@@ -4833,6 +4833,7 @@ class MLXLocalClient:
         cognitive_context: list | None = None,
         operation_authority: dict[str, Any] | None = None,
         action_policy_evidence: dict[str, Any] | None = None,
+        external_execution_offer: dict[str, Any] | None = None,
         response_contract: str | None = None,
     ) -> dict[str, Any]:
         """Run a Recursive Latent Cortex episode on the RESIDENT worker model.
@@ -4893,6 +4894,26 @@ class MLXLocalClient:
                 )
             except (ImportError, TypeError, ValueError):
                 return {**base, "reason": "invalid_action_policy_evidence"}
+        wire_external_execution_offer: dict[str, Any] | None = None
+        if external_execution_offer is not None:
+            try:
+                from core.brain.llm.latent_cortex.external_execution import (
+                    validate_external_execution_offer,
+                )
+
+                wire_external_execution_offer = validate_external_execution_offer(
+                    external_execution_offer
+                )
+            except (ImportError, TypeError, ValueError):
+                return {**base, "reason": "invalid_external_execution_offer"}
+            if (
+                wire_action_policy_evidence is None
+                or operation_authority is None
+            ):
+                return {
+                    **base,
+                    "reason": "external_execution_authority_tuple_missing",
+                }
         wire_operation_authority: dict[str, Any] | None = None
         if operation_authority is not None:
             try:
@@ -4908,6 +4929,7 @@ class MLXLocalClient:
                     budget=wire_budget,
                     cognitive_context=wire_cognitive_context,
                     action_policy_evidence=wire_action_policy_evidence,
+                    external_execution_offer=wire_external_execution_offer,
                 )
             except (ImportError, TypeError, ValueError):
                 return {**base, "reason": "invalid_runtime_operation_authority"}
@@ -4964,6 +4986,7 @@ class MLXLocalClient:
                 cognitive_context=wire_cognitive_context,
                 operation_authority=wire_operation_authority,
                 action_policy_evidence=wire_action_policy_evidence,
+                external_execution_offer=wire_external_execution_offer,
                 response_contract=response_contract,
                 verifier_guidance=wire_verifier_guidance,
                 facet_reliability=wire_facet_reliability,
@@ -5074,6 +5097,8 @@ class MLXLocalClient:
                 job["operation_authority"] = wire_operation_authority
             if wire_action_policy_evidence is not None:
                 job["action_policy_evidence"] = wire_action_policy_evidence
+            if wire_external_execution_offer is not None:
+                job["external_execution_offer"] = wire_external_execution_offer
             if response_contract is not None:
                 job["response_contract"] = response_contract
 

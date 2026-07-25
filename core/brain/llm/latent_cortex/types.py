@@ -1439,6 +1439,10 @@ class EpisodeReceipt:
     # Source-selective causal writes for SEARCH_MEMORY and RETRIEVE_EVIDENCE.
     # External re-fetch remains a separately governed service operation.
     context_focus_trace: list[dict[str, Any]] = field(default_factory=list)
+    # Parameter-free, digest-bound request for the host ActionExecutor to
+    # perform an already-Will-admitted effect. The worker never owns effect
+    # authority or raw action parameters.
+    external_execution_handoff: dict[str, Any] = field(default_factory=dict)
     # Wording-independent structural support classes reconstructed from the
     # primary action/operator/isolation traces. Different prose never creates
     # another vote; causal structure has to differ across six named facets.
@@ -1664,6 +1668,7 @@ class EpisodeReceipt:
             "cognitive_action_trace": [dict(row) for row in self.cognitive_action_trace],
             "cognitive_operator_trace": [dict(row) for row in self.cognitive_operator_trace],
             "context_focus_trace": [dict(row) for row in self.context_focus_trace],
+            "external_execution_handoff": dict(self.external_execution_handoff),
             "structural_diversity": dict(self.structural_diversity),
             "disagreement_graph": dict(self.disagreement_graph),
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),

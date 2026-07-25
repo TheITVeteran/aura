@@ -2559,6 +2559,10 @@ class LatentCortexService:
         started = time.monotonic()
         reason_kwargs = dict(reason_kwargs)
         reason_kwargs.pop("publish_workspace_conclusion", None)
+        if reason_kwargs.get("external_execution_offer") is not None:
+            return self._record_failure(
+                "external_execution_requires_single_episode"
+            )
         foreground = reason_kwargs.get("foreground_request", True)
         first = await self.deep_reason(
             question,
@@ -2794,6 +2798,7 @@ class LatentCortexService:
         epistemic_state: Any | None = None,
         selective_memory_result: Any | None = None,
         publish_workspace_conclusion: bool = True,
+        external_execution_offer: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run one latent-reasoning episode on the resident model."""
         if not _cortex_enabled():
@@ -2839,6 +2844,18 @@ class LatentCortexService:
             cognitive_context = normalize_cognitive_context(cognitive_context) or None
         except (TypeError, ValueError):
             return self._record_failure("invalid_cognitive_context")
+        try:
+            from core.brain.llm.latent_cortex.external_execution import (
+                validate_external_execution_offer,
+            )
+
+            external_execution_offer = (
+                validate_external_execution_offer(external_execution_offer)
+                if external_execution_offer is not None
+                else None
+            )
+        except (ImportError, TypeError, ValueError):
+            return self._record_failure("invalid_external_execution_offer")
         memory_context_present = any(
             isinstance(entry, dict) and entry.get("context_role") == "memory_observation"
             for entry in (cognitive_context or [])
@@ -2893,15 +2910,35 @@ class LatentCortexService:
             return self._record_failure("invalid_cognitive_economy")
         try:
             from core.brain.llm.mlx_client import get_mlx_client
+            from core.runtime.errors import DependencyUnavailable, ModelUnavailable
 
             client = get_mlx_client()
-        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (
+            ImportError,
+            DependencyUnavailable,
+            ModelUnavailable,
+            OSError,
+            TimeoutError,
+        ) as exc:
             record_degradation(
                 "latent_cortex",
                 exc,
                 action="refused latent episode: resident model client unavailable",
             )
             return self._record_failure(f"client_unavailable:{type(exc).__name__}")
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action=(
+                    "refused latent episode whose resident model client "
+                    "failed an integrity check"
+                ),
+                severity="degraded",
+            )
+            return self._record_failure(
+                f"client_integrity_failure:{type(exc).__name__}"
+            )
         if client is None:
             return self._record_failure("no_resident_model")
         worker_identity: dict[str, Any] = {}
@@ -3004,6 +3041,12 @@ class LatentCortexService:
                 logger.debug("Execution controller unavailable: %s", exc)
                 controller_decision = None
                 action_policy_evidence = None
+        if external_execution_offer is not None and (
+            controller_decision is None or action_policy_evidence is None
+        ):
+            return self._record_failure(
+                "external_execution_controller_unavailable"
+            )
         try:
             from core.brain.llm.latent_cortex.branches import BRANCH_ROLES
             from core.brain.llm.latent_cortex.correlated_support import (
@@ -3222,6 +3265,7 @@ class LatentCortexService:
                 acquire_external_generation_gate_lease,
                 release_external_generation_gate_lease,
             )
+            from core.runtime.errors import DependencyUnavailable
 
             generation_lease_id = await acquire_external_generation_gate_lease(
                 owner=(
@@ -3232,7 +3276,12 @@ class LatentCortexService:
                 timeout_s=timeout_s + 10.0,
                 wait_s=min(5.0, timeout_s),
             )
-        except (ImportError, RuntimeError, TypeError, ValueError, OverflowError) as exc:
+        except (
+            ImportError,
+            DependencyUnavailable,
+            OSError,
+            TimeoutError,
+        ) as exc:
             record_degradation(
                 "latent_cortex",
                 exc,
@@ -3240,6 +3289,19 @@ class LatentCortexService:
                 severity="warning",
             )
             return self._record_failure(f"generation_lease_unavailable:{type(exc).__name__}")
+        except (RuntimeError, TypeError, ValueError, OverflowError) as exc:
+            record_degradation(
+                "latent_cortex",
+                exc,
+                action=(
+                    "refused latent episode whose generation lease path "
+                    "failed an integrity check"
+                ),
+                severity="degraded",
+            )
+            return self._record_failure(
+                f"generation_lease_integrity_failure:{type(exc).__name__}"
+            )
         if generation_lease_id is None:
             return self._record_failure("generation_gate_busy")
 
@@ -3387,6 +3449,7 @@ class LatentCortexService:
                         config=config,
                         budget=budget,
                         action_policy_evidence=action_policy_evidence,
+                        external_execution_offer=external_execution_offer,
                         root=Path(DATA_DIR) / "latent_cortex" / "epistemic_runtime",
                     )
                     operation_authority = dict(operation_lease.authority)
@@ -3455,6 +3518,7 @@ class LatentCortexService:
                     cognitive_context=cognitive_context,
                     operation_authority=operation_authority,
                     action_policy_evidence=action_policy_evidence,
+                    external_execution_offer=external_execution_offer,
                     # Foreground resident episodes select branches and accept
                     # latent-opt proposals by deterministic task-typed checks
                     # (arithmetic recomputation, code syntax, facet coverage,
@@ -3530,7 +3594,7 @@ class LatentCortexService:
                     OperationKind,
                 )
                 from core.brain.llm.latent_cortex.value_of_computation import (
-                    validate_action_trace_row,
+                    validate_action_trace,
                 )
 
                 policy_receipt = result_receipt.get("value_of_computation")
@@ -3569,14 +3633,18 @@ class LatentCortexService:
                     executors = tuple(OperationKind(item) for item in raw_executors)
                 except (TypeError, ValueError) as exc:
                     raise ValueError("worker action executor inventory is invalid") from exc
-                if len(set(executors)) != len(executors) or OperationKind.EXECUTE in executors:
+                execute_advertised = OperationKind.EXECUTE in executors
+                if (
+                    len(set(executors)) != len(executors)
+                    or execute_advertised != (external_execution_offer is not None)
+                ):
                     raise ValueError("worker action executor inventory is invalid")
-                for row in raw_trace:
-                    validated_row = validate_action_trace_row(
-                        row,
-                        evidence_snapshot=action_policy_evidence,
-                        executors=executors,
-                    )
+                validated_trace = validate_action_trace(
+                    raw_trace,
+                    evidence_snapshot=action_policy_evidence,
+                    executors=executors,
+                )
+                for validated_row in validated_trace["rows"]:
                     decision = validated_row["decision"]
                     transition = validated_row["transition"]
                     if (
@@ -3590,10 +3658,24 @@ class LatentCortexService:
                 selected_actions = [row["action"] for row in action_transitions]
                 checked_transitions = sum(int(row["checked"]) for row in action_transitions)
                 if (
-                    policy_receipt.get("selected_actions") != selected_actions
+                    validated_trace["selected_actions"] != selected_actions
+                    or policy_receipt.get("selected_actions") != selected_actions
                     or policy_receipt.get("checked_transitions") != checked_transitions
                 ):
                     raise ValueError("worker action policy summary differs from trace")
+                raw_handoff = result_receipt.get("external_execution_handoff")
+                if external_execution_offer is not None:
+                    from core.brain.llm.latent_cortex.external_execution import (
+                        validate_external_execution_handoff,
+                    )
+
+                    validate_external_execution_handoff(
+                        raw_handoff,
+                        offer=external_execution_offer,
+                        cognitive_action_trace=raw_trace,
+                    )
+                elif raw_handoff not in ({}, None):
+                    raise ValueError("worker emitted unoffered external execution handoff")
                 action_policy_matches = True
             except (ImportError, TypeError, ValueError):
                 action_transitions.clear()
@@ -3704,6 +3786,11 @@ class LatentCortexService:
                 failed["receipt"] = result_receipt
                 self._last_failure_receipt = result_receipt
                 return failed
+        if action_policy_matches and action_policy_evidence is not None:
+            result_receipt["host_action_policy_evidence"] = dict(
+                action_policy_evidence
+            )
+            result["receipt"] = result_receipt
         if epistemic_state is not None:
             epistemic_state_receipt = {
                 "schema": epistemic_state.schema,

@@ -621,6 +621,7 @@ class LatentCortexEngine:
         *,
         has_controls: bool,
         has_verifier: bool,
+        can_execute: bool = False,
     ) -> tuple[OperationKind, ...]:
         executors = {
             OperationKind.BLIND_RESOLVE,
@@ -644,6 +645,8 @@ class LatentCortexEngine:
             )
             if has_verifier:
                 executors.update({OperationKind.FALSIFY, OperationKind.CHECK_ASSUMPTION})
+        if can_execute:
+            executors.add(OperationKind.EXECUTE)
         return tuple(action for action in OperationKind if action in executors)
 
     def _eos_ids(self) -> set[int]:
@@ -1793,6 +1796,7 @@ class LatentCortexEngine:
         ablate_mode: str = "zero",
         cognitive_context: list | None = None,
         action_policy_evidence: dict[str, Any] | None = None,
+        external_execution_offer: dict[str, Any] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
         capture_decode_logprobs: bool = False,
@@ -1832,6 +1836,15 @@ class LatentCortexEngine:
             "snapshot_sha256": policy_evidence["snapshot_sha256"],
             "active": True,
         }
+        normalized_execution_offer = None
+        if external_execution_offer is not None:
+            from core.brain.llm.latent_cortex.external_execution import (
+                validate_external_execution_offer,
+            )
+
+            normalized_execution_offer = validate_external_execution_offer(
+                external_execution_offer
+            )
         tokens = self._encode(prompt, messages, token_ids)
         verification_objective = str(prompt or "")
         if not verification_objective and messages:
@@ -1890,6 +1903,7 @@ class LatentCortexEngine:
                     ablate_mode=ablate_mode,
                     cognitive_context_items=context_items,
                     action_policy_evidence=policy_evidence,
+                    external_execution_offer=normalized_execution_offer,
                     information_encoded_tokens=encoded_tokens,
                     information_verifier=verifier,
                     verification_objective=verification_objective,
@@ -2092,6 +2106,7 @@ class LatentCortexEngine:
         ablate_mode: str = "zero",
         cognitive_context_items: list[dict] | None = None,
         action_policy_evidence: dict[str, Any],
+        external_execution_offer: dict[str, Any] | None = None,
         information_encoded_tokens: bytes,
         information_verifier: Callable[[str], float] | None,
         verification_objective: str = "",
@@ -2477,6 +2492,7 @@ class LatentCortexEngine:
         action_executors = self._action_executors(
             has_controls=bool(action_controls),
             has_verifier=verifier is not None and self.tokenizer is not None,
+            can_execute=external_execution_offer is not None,
         )
         selected_actions: list[OperationKind] = []
         cognitive_operator_trace: list[dict[str, Any]] = []
@@ -2631,7 +2647,10 @@ class LatentCortexEngine:
                     has_evidence=has_evidence,
                     has_verifier=verifier is not None and self.tokenizer is not None,
                     has_savepoint=any(branch.savepoint is not None for branch in ensemble.branches),
-                    can_execute=False,
+                    can_execute=(
+                        external_execution_offer is not None
+                        and OperationKind.EXECUTE not in selected_actions
+                    ),
                     answer_verified=(
                         previous_verifier_score is not None
                         and previous_verifier_score >= 1.0 - 1e-9
@@ -3166,6 +3185,12 @@ class LatentCortexEngine:
                         )
                     )
                     outcome = "branches_compared" if affected_branches else "comparison_unavailable"
+                elif action is OperationKind.EXECUTE:
+                    affected_branches = ensemble.halt_all(
+                        "value_controller_external_execute",
+                        budget=budget,
+                    )
+                    outcome = "external_execute_requested"
                 elif action is OperationKind.BACKTRACK:
                     affected_branches = ensemble.revert_all_to_savepoint()
                     outcome = "state_restored" if affected_branches else "savepoint_unavailable"
@@ -3576,6 +3601,15 @@ class LatentCortexEngine:
                 "selected_actions": [action.value for action in selected_actions],
             }
         )
+        if external_execution_offer is not None:
+            from core.brain.llm.latent_cortex.external_execution import (
+                build_external_execution_handoff,
+            )
+
+            receipt.external_execution_handoff = build_external_execution_handoff(
+                external_execution_offer,
+                receipt.cognitive_action_trace,
+            )
         for branch in ensemble.branches:
             if not branch.halted:
                 final, reverted, _source = ensemble.final_state(

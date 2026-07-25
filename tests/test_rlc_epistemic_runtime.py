@@ -23,6 +23,9 @@ from core.brain.llm.latent_cortex.epistemic_state import (
     ProblemFrame,
     text_sha256,
 )
+from core.brain.llm.latent_cortex.external_execution import (
+    build_external_execution_offer,
+)
 from core.brain.llm.latent_cortex.value_of_computation import (
     ACTION_TRANSITION_SCHEMA,
     CognitiveStateSignal,
@@ -85,6 +88,18 @@ def _budget():
 
 def _action_policy():
     return build_evidence_snapshot(bucket=_decision()["bucket"], cells={})
+
+
+def _external_offer(objective: str = OBJECTIVE) -> dict:
+    return build_external_execution_offer(
+        action_id="rlc-runtime-external",
+        domain="external_action",
+        action_name="compare_recovery_designs",
+        request_digest="sha256:" + "7" * 64,
+        will_receipt_id="will-runtime-external",
+        objective=objective,
+        expectation={"objective": "A safer design is selected"},
+    )
 
 
 def _action_transition(
@@ -410,6 +425,40 @@ def test_authority_rejects_field_and_kind_tampering(tmp_path):
     ):
         with pytest.raises(EpistemicStateError):
             validate_runtime_operation_authority(tampered, **base)
+
+
+def test_authority_binds_external_execution_offer_to_exact_objective(tmp_path):
+    offer = _external_offer()
+    lease = _begin(tmp_path, external_execution_offer=offer)
+    validated = validate_runtime_operation_authority(
+        lease.authority,
+        prompt=OBJECTIVE,
+        messages=None,
+        config=_config(),
+        budget=_budget(),
+        cognitive_context=None,
+        action_policy_evidence=_action_policy(),
+        external_execution_offer=offer,
+    )
+    assert validated["external_execution_offer_sha256"] == offer["offer_sha256"]
+
+    tampered = {**offer, "offer_sha256": "f" * 64}
+    with pytest.raises(EpistemicStateError):
+        validate_runtime_operation_authority(
+            lease.authority,
+            prompt=OBJECTIVE,
+            messages=None,
+            config=_config(),
+            budget=_budget(),
+            cognitive_context=None,
+            action_policy_evidence=_action_policy(),
+            external_execution_offer=tampered,
+        )
+    with pytest.raises(EpistemicStateError, match="objective differs"):
+        _begin(
+            tmp_path / "mismatch",
+            external_execution_offer=_external_offer("A different objective"),
+        )
 
 
 def test_measurement_refuses_mismatched_or_impossible_worker_budget():

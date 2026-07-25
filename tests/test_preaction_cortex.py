@@ -83,7 +83,7 @@ def test_rehearsal_skips_are_receipted(monkeypatch):
         _thread().rehearse(action_summary="x", expectation_objective="y")
     )
     assert receipt["ran"] is False
-    assert receipt["skip_reason"] == "episode_refused:generation_gate_busy"
+    assert receipt["skip_reason"] == "availability_failure:generation_gate_busy"
 
     monkeypatch.setenv("AURA_PREACTION_RLC", "0")
     receipt = asyncio.run(
@@ -166,3 +166,13 @@ def test_full_receipt_shape():
     assert receipt["schema"] == pac.PREACTION_SCHEMA
     assert receipt["action_name"] == "post_webhook"
     assert receipt["rehearsal"] == {} and receipt["reconciliation"] == {}
+
+
+def test_request_digest_preserves_full_scheme_prefixed_identity():
+    digest = "sha256:" + "a" * 64
+    thread = pac.PreActionCortexThread(
+        domain="network_call",
+        action_name="post_webhook",
+        request_digest=digest,
+    )
+    assert thread.request_digest == digest

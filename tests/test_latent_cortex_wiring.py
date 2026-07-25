@@ -105,6 +105,7 @@ def _identity_receipt_for_request(request, **overrides):
             cognitive_context=request.get("cognitive_context"),
             operation_authority=request.get("operation_authority"),
             action_policy_evidence=request.get("action_policy_evidence"),
+            external_execution_offer=request.get("external_execution_offer"),
             response_contract=request.get("response_contract"),
         )
     )
@@ -1111,6 +1112,33 @@ def test_handler_rejects_malformed_response_contract_before_engine(monkeypatch):
     assert constructed is False
 
 
+def test_handler_rejects_external_offer_without_full_authority_tuple(
+    monkeypatch,
+) -> None:
+    from core.brain.llm.latent_cortex.external_execution import (
+        build_external_execution_offer,
+    )
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    offer = build_external_execution_offer(
+        action_id="worker-missing-authority",
+        domain="external_action",
+        action_name="write_note",
+        request_digest="sha256:" + "a" * 64,
+        will_receipt_id="will-worker",
+        objective="Write the admitted note.",
+        expectation={"objective": "note exists"},
+    )
+    body = handle_latent_reason(
+        {"prompt": "reason", "external_execution_offer": offer},
+        model=object(),
+        tokenizer=object(),
+        model_path="/models/test-32b",
+    )
+    assert body["status"] == "error"
+    assert "requires operation authority" in body["message"]
+
+
 def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
     from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
 
@@ -2062,6 +2090,33 @@ async def test_client_latent_reason_rejects_invalid_inputs_before_lane_fence(mon
             foreground_request=False,
         )
     )["reason"] == "invalid_response_contract"
+    assert (
+        await client.latent_reason_async(
+            prompt="q",
+            external_execution_offer={"untrusted": True},
+            foreground_request=False,
+        )
+    )["reason"] == "invalid_external_execution_offer"
+    from core.brain.llm.latent_cortex.external_execution import (
+        build_external_execution_offer,
+    )
+
+    offer = build_external_execution_offer(
+        action_id="client-missing-authority",
+        domain="external_action",
+        action_name="write_note",
+        request_digest="sha256:" + "b" * 64,
+        will_receipt_id="will-client",
+        objective="Write the admitted note.",
+        expectation={"objective": "note exists"},
+    )
+    assert (
+        await client.latent_reason_async(
+            prompt="q",
+            external_execution_offer=offer,
+            foreground_request=False,
+        )
+    )["reason"] == "external_execution_authority_tuple_missing"
     assert fence_calls == []
     assert client._request_lock.locked() is False
 
