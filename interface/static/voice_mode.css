@@ -1,0 +1,430 @@
+/* voice_mode.css — the full-duplex voice surface.
+ *
+ * The transition is the feature. Entering voice mode should feel like the
+ * interface calming down rather than a new window appearing: the chat
+ * recedes and blurs, a single object takes the centre, and everything else
+ * gets out of the way. Leaving reverses it exactly.
+ *
+ * Motion is kept on transform and opacity only, so it stays on the
+ * compositor and never competes with the audio thread for main-thread time.
+ * A stuttering orb during speech reads as the voice itself glitching.
+ *
+ * Icons are drawn from CSS shapes — no emoji anywhere, per the interface's
+ * existing sigil convention.
+ */
+
+:root {
+    --vm-bg: rgba(8, 6, 16, 0.86);
+    --vm-orb-core: rgba(174, 134, 255, 0.95);
+    --vm-orb-edge: rgba(96, 62, 190, 0.28);
+    --vm-accent: #b48cff;
+    --vm-text: rgba(238, 234, 252, 0.94);
+    --vm-dim: rgba(198, 190, 226, 0.56);
+}
+
+/* ── surface ─────────────────────────────────────────────────────────── */
+
+.vm-root {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.vm-root.vm-open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.vm-scrim {
+    position: absolute;
+    inset: 0;
+    background: var(--vm-bg);
+    backdrop-filter: blur(22px) saturate(120%);
+    -webkit-backdrop-filter: blur(22px) saturate(120%);
+}
+
+.vm-stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.6rem;
+    padding: 2rem 1.5rem;
+    width: min(680px, 92vw);
+    /* Rises slightly as it fades in — the same easing the orb uses, so the
+       whole surface reads as one object arriving. */
+    transform: translateY(18px) scale(0.985);
+    transition: transform 380ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.vm-root.vm-open .vm-stage {
+    transform: translateY(0) scale(1);
+}
+
+/* The chat behind it recedes rather than disappearing, so the user keeps
+   their sense of place in the conversation. */
+body.vm-active .chat-container,
+body.vm-active .app-shell {
+    filter: blur(3px) brightness(0.7);
+    transform: scale(0.992);
+    transition: filter 320ms ease, transform 320ms ease;
+}
+
+/* ── status ──────────────────────────────────────────────────────────── */
+
+.vm-status {
+    font-size: 0.72rem;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--vm-dim);
+    min-height: 1em;
+    transition: color 240ms ease;
+}
+
+.vm-root[data-state="thinking"] .vm-status { color: rgba(255, 214, 138, 0.82); }
+.vm-root[data-state="speaking"] .vm-status { color: var(--vm-accent); }
+.vm-root[data-state="error"] .vm-status,
+.vm-root[data-state="disconnected"] .vm-status { color: rgba(255, 138, 138, 0.9); }
+
+/* ── orb ─────────────────────────────────────────────────────────────── */
+
+.vm-orb-wrap {
+    position: relative;
+    width: 220px;
+    height: 220px;
+    display: grid;
+    place-items: center;
+    cursor: default;
+}
+
+.vm-root[data-state="speaking"] .vm-orb-wrap { cursor: pointer; }
+
+.vm-orb-glow {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--vm-orb-core) 0%, var(--vm-orb-edge) 42%, transparent 68%);
+    filter: blur(26px);
+    opacity: 0.3;
+    transition: opacity 90ms linear;
+    will-change: opacity;
+}
+
+.vm-orb {
+    position: relative;
+    width: 128px;
+    height: 128px;
+    border-radius: 50%;
+    background:
+        radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.62), transparent 46%),
+        radial-gradient(circle at 62% 74%, rgba(126, 84, 230, 0.9), transparent 58%),
+        linear-gradient(155deg, rgba(150, 106, 245, 0.95), rgba(72, 44, 148, 0.92));
+    box-shadow:
+        inset 0 0 30px rgba(255, 255, 255, 0.22),
+        0 0 44px rgba(140, 96, 240, 0.42);
+    /* Driven per-frame from the real audio level in voice_mode.js. */
+    transition: transform 80ms cubic-bezier(0.2, 0.8, 0.3, 1);
+    will-change: transform;
+}
+
+.vm-orb-inner {
+    position: absolute;
+    inset: 16%;
+    border-radius: 50%;
+    background: radial-gradient(circle at 44% 38%, rgba(255, 255, 255, 0.34), transparent 60%);
+    animation: vm-drift 9s ease-in-out infinite;
+}
+
+@keyframes vm-drift {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33%      { transform: translate(5%, -4%) scale(1.05); }
+    66%      { transform: translate(-4%, 4%) scale(0.96); }
+}
+
+/* Rings only appear while she is speaking — a visual that means something
+   rather than ambient decoration. */
+.vm-orb-ring {
+    position: absolute;
+    inset: -14%;
+    border-radius: 50%;
+    border: 1px solid rgba(180, 140, 255, 0.34);
+    opacity: 0;
+}
+
+.vm-root[data-state="speaking"] .vm-ring-1 { animation: vm-pulse 2.1s ease-out infinite; }
+.vm-root[data-state="speaking"] .vm-ring-2 { animation: vm-pulse 2.1s ease-out infinite 1.05s; }
+
+@keyframes vm-pulse {
+    0%   { opacity: 0.5; transform: scale(0.92); }
+    100% { opacity: 0;   transform: scale(1.42); }
+}
+
+/* Three dots while she is thinking: the one state where nothing is audible,
+   so it needs its own signal or the interface looks frozen. */
+.vm-listening-dots {
+    position: absolute;
+    bottom: -6px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 200ms ease;
+}
+
+.vm-root[data-state="thinking"] .vm-listening-dots { opacity: 1; }
+
+.vm-listening-dots span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 214, 138, 0.8);
+    animation: vm-bounce 1.25s ease-in-out infinite;
+}
+
+.vm-listening-dots span:nth-child(2) { animation-delay: 0.16s; }
+.vm-listening-dots span:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes vm-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+    40%           { transform: translateY(-6px); opacity: 1; }
+}
+
+/* Backchannels and fillers surface briefly next to the orb, so "mhm" is
+   visible as a listening signal rather than mistaken for her answer. */
+.vm-aside {
+    position: absolute;
+    right: -12px;
+    top: 26%;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(180, 140, 255, 0.16);
+    border: 1px solid rgba(180, 140, 255, 0.3);
+    color: var(--vm-dim);
+    font-size: 0.78rem;
+    white-space: nowrap;
+    animation: vm-aside-life 1.8s ease-out forwards;
+    pointer-events: none;
+}
+
+@keyframes vm-aside-life {
+    0%   { opacity: 0; transform: translateX(-8px) scale(0.9); }
+    18%  { opacity: 1; transform: translateX(0) scale(1); }
+    72%  { opacity: 1; }
+    100% { opacity: 0; transform: translateX(10px); }
+}
+
+/* ── captions ────────────────────────────────────────────────────────── */
+
+.vm-caption {
+    min-height: 4.6rem;
+    width: 100%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    justify-content: center;
+}
+
+.vm-caption-user {
+    color: var(--vm-dim);
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+
+.vm-caption-aura {
+    color: var(--vm-text);
+    font-size: 1.12rem;
+    line-height: 1.5;
+    text-wrap: balance;
+}
+
+/* The unstable tail of a live transcript. Rendered faintly because Whisper
+   may still revise it, and full-weight text that rewrites itself looks like
+   the system is malfunctioning. */
+.vm-tentative {
+    opacity: 0.42;
+    font-style: italic;
+}
+
+/* ── transcript ──────────────────────────────────────────────────────── */
+
+.vm-transcript {
+    width: 100%;
+    max-height: 0;
+    overflow-y: auto;
+    opacity: 0;
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    transition: max-height 320ms ease, opacity 240ms ease;
+}
+
+.vm-root.vm-show-transcript .vm-transcript {
+    max-height: 34vh;
+    opacity: 1;
+}
+
+.vm-line { display: flex; gap: 0.65rem; font-size: 0.88rem; line-height: 1.45; }
+.vm-who  { flex: 0 0 3.1rem; color: var(--vm-dim); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em; padding-top: 0.18em; }
+.vm-text { color: var(--vm-text); }
+.vm-line-user .vm-text { color: var(--vm-dim); }
+
+/* What she said but the user never heard, struck through. This mirrors
+   exactly what her memory now holds after an interruption. */
+.vm-unheard {
+    opacity: 0.34;
+    text-decoration: line-through;
+}
+
+/* ── controls ────────────────────────────────────────────────────────── */
+
+.vm-controls { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
+
+.vm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.95rem;
+    border-radius: 999px;
+    border: 1px solid rgba(180, 160, 240, 0.22);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--vm-text);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background 180ms ease, border-color 180ms ease, transform 120ms ease;
+}
+
+.vm-btn:hover  { background: rgba(255, 255, 255, 0.1); border-color: rgba(180, 160, 240, 0.4); }
+.vm-btn:active { transform: scale(0.96); }
+.vm-btn.vm-active { background: rgba(180, 140, 255, 0.22); border-color: rgba(180, 140, 255, 0.55); }
+.vm-btn-end { border-color: rgba(255, 120, 120, 0.3); }
+.vm-btn-end:hover { background: rgba(255, 90, 90, 0.16); border-color: rgba(255, 120, 120, 0.55); }
+
+/* Stop is only meaningful while she is speaking; hiding it the rest of the
+   time keeps the control row honest about what is available. */
+.vm-btn-stop { opacity: 0.3; pointer-events: none; }
+.vm-root[data-state="speaking"] .vm-btn-stop { opacity: 1; pointer-events: auto; }
+
+/* Drawn icons, no emoji. */
+.vm-ico { width: 13px; height: 13px; display: inline-block; position: relative; }
+
+#vm-mute-ico::before {
+    content: ''; position: absolute; left: 3px; top: 0;
+    width: 7px; height: 9px; border-radius: 4px 4px 4px 4px;
+    background: currentColor;
+}
+#vm-mute-ico::after {
+    content: ''; position: absolute; left: 1px; bottom: 0;
+    width: 11px; height: 5px;
+    border: 1.4px solid currentColor; border-top: none;
+    border-radius: 0 0 6px 6px;
+}
+#vm-mute-ico.vm-ico-muted::before { background: rgba(255, 120, 120, 0.95); }
+
+.vm-ico-stop::before {
+    content: ''; position: absolute; inset: 2px;
+    background: currentColor; border-radius: 2px;
+}
+
+.vm-ico-list::before {
+    content: ''; position: absolute; left: 0; top: 2px;
+    width: 13px; height: 1.5px; background: currentColor;
+    box-shadow: 0 4px 0 currentColor, 0 8px 0 currentColor;
+}
+
+.vm-ico-end::before {
+    content: ''; position: absolute; inset: 1px 0;
+    border: 1.5px solid currentColor; border-radius: 3px;
+    transform: rotate(135deg);
+    border-right-color: transparent; border-bottom-color: transparent;
+}
+
+/* ── voice picker ────────────────────────────────────────────────────── */
+
+.vm-voice-picker {
+    width: 100%;
+    max-height: 0;
+    overflow-y: auto;
+    opacity: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    transition: max-height 300ms ease, opacity 220ms ease;
+}
+
+.vm-root.vm-show-voices .vm-voice-picker {
+    max-height: 30vh;
+    opacity: 1;
+}
+
+.vm-voice-group-label {
+    font-size: 0.64rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--vm-dim);
+    margin-bottom: 0.35rem;
+}
+
+.vm-voice-row { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+
+.vm-voice-chip {
+    padding: 0.32rem 0.62rem;
+    border-radius: 999px;
+    border: 1px solid rgba(180, 160, 240, 0.2);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--vm-text);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease;
+}
+
+.vm-voice-chip:hover { background: rgba(255, 255, 255, 0.1); }
+.vm-voice-chip.vm-active {
+    background: rgba(180, 140, 255, 0.26);
+    border-color: rgba(180, 140, 255, 0.6);
+}
+
+.vm-voice-empty { color: var(--vm-dim); font-size: 0.78rem; }
+
+.vm-ico-wave::before {
+    content: ''; position: absolute; left: 0; top: 4px;
+    width: 2px; height: 5px; background: currentColor; border-radius: 1px;
+    box-shadow:
+        3.5px -2px 0 currentColor, 7px -3px 0 currentColor, 10.5px 0 0 currentColor;
+}
+
+/* ── meta line ───────────────────────────────────────────────────────── */
+
+.vm-meta {
+    font-size: 0.7rem;
+    color: var(--vm-dim);
+    letter-spacing: 0.05em;
+    opacity: 0;
+    transition: opacity 260ms ease;
+    min-height: 1em;
+}
+
+.vm-meta.vm-meta-show { opacity: 0.8; }
+
+/* ── responsive ──────────────────────────────────────────────────────── */
+
+@media (max-width: 560px) {
+    .vm-orb-wrap { width: 170px; height: 170px; }
+    .vm-orb { width: 100px; height: 100px; }
+    .vm-caption-aura { font-size: 1rem; }
+    .vm-btn-label { display: none; }
+    .vm-btn { padding: 0.6rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vm-root, .vm-stage, .vm-orb, .vm-orb-glow { transition-duration: 1ms; }
+    .vm-orb-inner, .vm-orb-ring, .vm-listening-dots span, .vm-aside { animation: none; }
+    .vm-aside { opacity: 1; }
+}

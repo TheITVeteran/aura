@@ -49,10 +49,10 @@ from core.voice.duplex.config import (
 from core.voice.duplex.echo_guard import EchoGuard
 from core.voice.duplex.endpointing import Endpointer
 from core.voice.duplex.fillers import FillerReflex, ThinkingCause
-from core.voice.duplex.style import StyleController
 from core.voice.duplex.mind_bridge import MindBridge, SpokenRecord
 from core.voice.duplex.prosody import ProsodyCompiler, live_speech_profile
 from core.voice.duplex.streaming_asr import StreamingAsr, looks_hallucinated
+from core.voice.duplex.style import StyleController
 from core.voice.duplex.tts_stream import CancellationToken, StreamingTts
 from core.voice.duplex.vad_gate import SpeechEvent, VadGate
 

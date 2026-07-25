@@ -52,7 +52,7 @@ class ProsodySpec:
     # rate does — a considered answer has air around it.
     trailing_pause_ms: float = 0.0
 
-    def scaled(self, *, gain: float | None = None, speed: float | None = None) -> "ProsodySpec":
+    def scaled(self, *, gain: float | None = None, speed: float | None = None) -> ProsodySpec:
         return ProsodySpec(
             voice=self.voice,
             speed=speed if speed is not None else self.speed,

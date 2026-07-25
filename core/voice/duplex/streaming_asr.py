@@ -20,13 +20,13 @@ import logging
 import re
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from core.runtime.errors import record_degradation
-from core.voice.duplex.config import AsrConfig, CAPTURE_RATE
+from core.voice.duplex.config import CAPTURE_RATE, AsrConfig
 
 logger = logging.getLogger("Aura.Voice.Asr")
 
@@ -61,7 +61,9 @@ def _match_key(word: str) -> str:
 
 def _common_prefix_len(a: list[str], b: list[str]) -> int:
     n = 0
-    for x, y in zip(a, b):
+    # strict=False is the point: the two hypotheses are deliberately
+    # different lengths, and the shorter one bounds the agreed prefix.
+    for x, y in zip(a, b, strict=False):
         if _match_key(x) != _match_key(y):
             break
         n += 1

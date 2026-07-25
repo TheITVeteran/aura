@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
-from core.voice.duplex.config import VAD_FRAME_SAMPLES, CAPTURE_RATE, VadConfig
+from core.voice.duplex.config import CAPTURE_RATE, VAD_FRAME_SAMPLES, VadConfig
 
 logger = logging.getLogger("Aura.Voice.Vad")
 

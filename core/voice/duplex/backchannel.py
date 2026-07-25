@@ -29,7 +29,6 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.voice.duplex.config import BackchannelConfig

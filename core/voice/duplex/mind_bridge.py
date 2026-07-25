@@ -32,7 +32,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation

@@ -290,5 +290,5 @@ class DuplexConfig:
     )
 
     @classmethod
-    def load(cls) -> "DuplexConfig":
+    def load(cls) -> DuplexConfig:
         return cls()

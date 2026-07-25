@@ -6805,10 +6805,31 @@ async function toggleVoice(desiredState = null, { quiet = false } = {}) {
     return state.voiceActive === targetState;
 }
 
+/**
+ * Fold a finished voice conversation back into the text thread.
+ *
+ * Called by voice_mode.js on exit. Without this, everything said out loud
+ * vanishes when the surface closes, and the visible history disagrees with
+ * what Aura actually remembers — which then reads as her confabulating.
+ */
+window.auraAppendVoiceTranscript = function (lines) {
+    if (!Array.isArray(lines) || !lines.length) return;
+    for (const line of lines) {
+        if (!line || !line.text) continue;
+        appendMsg(line.who === 'user' ? 'user' : 'aura', line.text);
+    }
+};
+
 const micBtn = $('mic-btn');
 if (micBtn) micBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // Prefer the full-duplex surface; fall back to the legacy half-duplex
+    // path if that bundle failed to load, so the button is never dead.
+    if (window.AuraVoiceMode && typeof window.AuraVoiceMode.toggle === 'function') {
+        window.AuraVoiceMode.toggle();
+        return;
+    }
     toggleVoice();
 });
 
