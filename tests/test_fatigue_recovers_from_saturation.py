@@ -79,3 +79,52 @@ class TestRestRestores:
     def test_recovery_never_drives_fatigue_negative(self, service):
         service._metabolic.fatigue = 0.05
         assert _rest(service, 600.0) == 0.0
+
+
+class TestRecoveryDebtIsPaidDown:
+    """Debt is the same ratchet and the LARGER welfare term (0.4 vs 0.3)."""
+
+    def test_saturated_debt_escapes_a_constant_drip(self, service):
+        service._metabolic.recovery_debt = 1.0
+        drip = service._recovery_decay_rate
+
+        for _ in range(60):  # 60 x 5s of quiet cognition charging debt
+            service._metabolic.recovery_debt = min(
+                1.0, service._metabolic.recovery_debt + drip * 5.0
+            )
+            _rest(service, 5.0)
+
+        assert service._metabolic.recovery_debt < 0.9
+
+    def test_the_pair_together_clears_the_will_defer_threshold(self, service):
+        """The live shape: both saturated, a quiet stretch must drop
+        welfare.recovery_drive under the 0.6 the Will defers above."""
+        service._metabolic.fatigue = 0.996
+        service._metabolic.recovery_debt = 1.0
+
+        _rest(service, 900.0)  # fifteen quiet minutes
+
+        # recovery_drive = debt*0.4 + fatigue*0.3 + distress*0.2 + (1-ri)*0.15;
+        # the two terms this service owns must no longer carry it over 0.6.
+        owned = (
+            service._metabolic.recovery_debt * 0.4
+            + service._metabolic.fatigue * 0.3
+        )
+        assert owned < 0.20, (
+            f"debt+fatigue still contribute {owned:.3f} after fifteen quiet "
+            "minutes; the defer storm would persist"
+        )
+
+    def test_debt_still_accrues_from_real_consequences(self, service):
+        service._metabolic.recovery_debt = 0.0
+        service._last_decay_time = time.monotonic()
+        for i in range(20):
+            service._commit_cost_locked(
+                {"integrity_risk": 0.05}, receipt_id=f"cost-{i}"
+            )
+        assert service._metabolic.recovery_debt > 0.3
+
+    def test_debt_never_goes_negative(self, service):
+        service._metabolic.recovery_debt = 0.02
+        _rest(service, 3000.0)
+        assert service._metabolic.recovery_debt == 0.0

@@ -365,8 +365,16 @@ class BodyStateService:
                     self._metabolic.fatigue
                     - self._fatigue_decay_rate * elapsed * recovery_gain
                 )
+                # Recovery debt is the SAME ratchet and the larger term:
+                # welfare weights it 0.4 against fatigue's 0.3, and the live
+                # 0.881 recovery_drive is only reachable with debt at or near
+                # saturation for the entire idle hour. Paying it down
+                # proportionally too, or fixing fatigue alone would leave the
+                # drive parked against its 0.6 threshold.
+                debt_gain = 0.5 + self._metabolic.recovery_debt
                 self._metabolic.recovery_debt = _clip(
-                    self._metabolic.recovery_debt - self._recovery_decay_rate * elapsed
+                    self._metabolic.recovery_debt
+                    - self._recovery_decay_rate * elapsed * debt_gain
                 )
 
     def snapshot(self) -> BodyHealthSnapshot:
