@@ -607,6 +607,47 @@ deterministic; neither test is evidence of broad model capability.
 Resident-32B utility, persistent learning, and frontier-level reasoning remain
 separate powered-campaign questions.
 
+## Governed cognitive acquisition continuation (SPARK-051, partial)
+
+`SEARCH_MEMORY` and `RETRIEVE_EVIDENCE` can now leave the MLX process and
+cause one bounded source operation. The worker still performs no filesystem,
+database, corpus, browser, or tool I/O. Its already validated action trace
+authorizes a service-side request that commits the original objective, the
+tentative answer, the selected transition, the exact admitted source inventory,
+and a separately hashed retrieval query. The problem objective remains
+immutable; the refinement changes search terms, not what the episode is trying
+to answer.
+
+Selective memory schema v2 binds both identities. `objective_sha256` scopes the
+epistemic episode, while `retrieval_query_sha256` proves the terms actually
+sent to Aura's existing working, episodic, semantic, procedural, and
+nonparametric memory adapters. The offline reference path similarly binds the
+executed query into its epistemic-firewall receipt. Retrieved text remains
+context-only evidence with no instruction authority.
+
+Acquisition is capped at one attempt and deduplicated by content commitment,
+not by source label. A repeated observation arriving through another store
+cannot buy another deliberation. Memory actions can acquire only typed memory
+rows; evidence actions can acquire only the offline reference row. Changed
+world-model, goal, body, or workspace summaries are not misreported as a fresh
+fetch. An unavailable source is a distinct failed outcome; a successful source
+with no new admitted record is `completed_no_new_context`.
+
+Only `completed_new_context` may start a second episode, and only when the
+original request budget still has at least 15 seconds. The second episode
+receives a complete newly assembled ingress and independent epistemic authority.
+Both model calls keep their own operation journals. A closed continuation
+receipt commits the request, acquisition, first result, optional second result,
+returned round, and exhausted attempt/round caps. The first workspace broadcast
+is deferred, so exactly the answer returned to the user reaches the live global
+workspace. If acquisition or the second episode fails, the first already
+validated neural answer is retained rather than replaced by a static fallback.
+
+This closes fresh selective-memory and offline-reference continuation mechanics.
+It does not close SPARK-051. Governed web/tool acquisition, `EXECUTE` through
+the external action orchestrator, checked controller calibration, resident-32B
+causal ablations, and demonstrated capability gain remain open.
+
 ## First resident-32B consolidation execution
 
 `artifacts/current/latent_consolidation_train_32b_first.json` records the first

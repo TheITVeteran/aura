@@ -150,6 +150,15 @@ class _TimedOutLatentService(_LatentService):
         raise TimeoutError("resident latent deadline")
 
 
+class _AcquiringLatentService(_LatentService):
+    async def deep_reason(self, **kwargs):
+        raise AssertionError("live path bypassed the acquisition wrapper")
+
+    async def deep_reason_with_acquisition(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
 def _live_latent_receipt(text: str, objective: str):
     from core.brain.llm.latent_cortex.output_quality import evaluate_latent_output
 
@@ -221,6 +230,49 @@ def _latent_context(objective):
         "live_mind_snapshot_ready": True,
         "live_mind_required_subsystems_ok": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_depth_worthy_live_turn_uses_the_acquisition_wrapper(monkeypatch):
+    objective = (
+        "Compare both failure modes, explain the causal tradeoff, and give one "
+        "coherent implementation decision with its verification plan."
+    )
+    state = AuraState()
+    state.cognition.current_objective = objective
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.DELIBERATE
+    answer = (
+        "The first failure mode loses identity evidence, while the second duplicates "
+        "generation after admission. I recommend the single-owner boundary because it "
+        "prevents a late result from racing the proof ledger and makes every published "
+        "answer attributable to one process; verify it with fault injection by cancelling "
+        "an in-flight owner and asserting no successor publishes its stale result; force "
+        "a timeout and assert the lease is fenced; then restart the worker and confirm "
+        "exactly one new owner, one result, and one cleanup receipt before serving traffic."
+    )
+    latent = _AcquiringLatentService(
+        {
+            "ok": True,
+            "text": answer,
+            "receipt": _live_latent_receipt(answer, objective),
+        }
+    )
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": _Router(), "latent_cortex": latent})
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "user", "content": objective}],
+    )
+
+    result = await phase.execute(state, context=_latent_context(objective))
+
+    assert result.response_modifiers["latent_cortex_succeeded"] is True
+    assert len(latent.calls) == 1
+    assert latent.calls[0]["tenant_id"] == "local"
+    assert latent.calls[0]["user_id"] == "owner"
+    assert latent.calls[0]["session_id"] == "local"
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ import pytest
 
 from core.brain.cognitive_ingress import (
     COGNITIVE_INGRESS_SCHEMA,
+    IngressSignal,
     assemble_cognitive_ingress,
     assemble_cognitive_ingress_async,
 )
@@ -87,6 +88,126 @@ def test_memory_ingress_prefers_explicit_sync_facade_contract(registry):
     assert signal.detail.startswith("memory_facade.search_sync:")
     assert memory.sync_calls == 1
     assert memory.async_calls == 0
+
+
+def test_refined_query_does_not_recall_the_current_turn_as_working_memory(
+    registry,
+):
+    objective = "Compare scheduler lock strategies."
+    orchestrator = SimpleNamespace(
+        state=SimpleNamespace(
+            cognition=SimpleNamespace(
+                working_memory=[
+                    {"id": "current", "role": "user", "content": objective},
+                    {
+                        "id": "prior",
+                        "role": "assistant",
+                        "content": "A prior lease expired safely.",
+                    },
+                ]
+            )
+        )
+    )
+
+    ingress = assemble_cognitive_ingress(
+        orchestrator,
+        objective,
+        retrieval_query="Find evidence about lease expiry after owner death.",
+    )
+
+    memory = next(signal for signal in ingress.signals if signal.source == "memory")
+    texts = [item["text"] for item in memory.context_items]
+    assert all(objective not in text for text in texts)
+    assert any("prior lease expired safely" in text for text in texts)
+
+
+def test_reference_receipt_binds_the_exact_refined_query(monkeypatch, registry):
+    import hashlib
+
+    import core.knowledge.local_corpus as local_corpus
+
+    observed: list[str] = []
+
+    class Corpus:
+        def search(self, query, limit=4):
+            observed.append(query)
+            return []
+
+    monkeypatch.setattr(local_corpus, "get_local_corpus_store", lambda: Corpus())
+    refined = "lease expiry evidence after owner death"
+
+    ingress = assemble_cognitive_ingress(
+        None,
+        "Compare scheduler lock strategies.",
+        retrieval_query=refined,
+    )
+
+    reference = next(signal for signal in ingress.signals if signal.source == "reference")
+    assert observed == [refined]
+    assert reference.firewall["retrieval_query_sha256"] == hashlib.sha256(
+        refined.encode("utf-8")
+    ).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_reference_acquisition_does_not_query_memory(monkeypatch, registry):
+    import core.brain.cognitive_ingress as ingress_mod
+
+    async def unexpected_memory(*args, **kwargs):
+        raise AssertionError("reference acquisition queried memory")
+
+    monkeypatch.setattr(ingress_mod, "_resolve_memory_async", unexpected_memory)
+    monkeypatch.setattr(
+        ingress_mod,
+        "_signal_reference",
+        lambda objective, retrieval_query=None: IngressSignal(
+            source="reference",
+            present=True,
+            context_text="reference evidence",
+        ),
+    )
+
+    ingress = await assemble_cognitive_ingress_async(
+        None,
+        "Compare scheduler lock strategies.",
+        retrieval_query="owner death lease evidence",
+        acquisition_source="reference",
+    )
+
+    memory = next(signal for signal in ingress.signals if signal.source == "memory")
+    reference = next(
+        signal for signal in ingress.signals if signal.source == "reference"
+    )
+    assert memory.present is False
+    assert memory.detail == "not selected for acquisition"
+    assert reference.present is True
+    assert ingress.epistemic_state is None
+    assert ingress.memory_result is None
+
+
+@pytest.mark.asyncio
+async def test_memory_acquisition_does_not_query_reference(monkeypatch, registry):
+    import core.brain.cognitive_ingress as ingress_mod
+
+    def unexpected_reference(*args, **kwargs):
+        raise AssertionError("memory acquisition queried reference")
+
+    monkeypatch.setattr(ingress_mod, "_signal_reference", unexpected_reference)
+
+    ingress = await assemble_cognitive_ingress_async(
+        None,
+        "Compare scheduler lock strategies.",
+        retrieval_query="recall owner death lease outcome",
+        acquisition_source="memory",
+    )
+
+    reference = next(
+        signal for signal in ingress.signals if signal.source == "reference"
+    )
+    assert reference.present is False
+    assert reference.detail == "not selected for acquisition"
+    assert ingress.epistemic_state is not None
+    assert ingress.memory_result is not None
 
 
 def test_retrieval_revalidates_old_failed_conversation_before_slot_admission(

@@ -88,6 +88,33 @@ def test_query_rejects_boolean_timestamp_instead_of_coercing_it():
         _query(issued_at=True)
 
 
+def test_refined_retrieval_query_is_bound_but_does_not_change_problem_identity():
+    observed: list[str] = []
+    query = _query(
+        retrieval_query="lease recovery after owner death",
+        requested_tiers=(MemoryTier.SEMANTIC,),
+    )
+    bridge = _bridge(
+        {
+            MemoryTier.SEMANTIC: (
+                "facts",
+                "v1",
+                lambda text, limit: observed.append(text) or ["bounded lease evidence"],
+            )
+        }
+    )
+
+    result = bridge.retrieve(query)
+
+    assert observed == ["lease recovery after owner death"]
+    assert query.objective == "compare scheduler lock strategies"
+    assert query.objective_sha256 == query.scope.objective_sha256
+    assert query.retrieval_query_sha256 != query.objective_sha256
+    assert result.to_receipt()["query"]["retrieval_query_sha256"] == (
+        query.retrieval_query_sha256
+    )
+
+
 def test_cross_tenant_user_and_session_records_are_refused():
     records = [
         {"content": "wrong tenant", "tenant_id": "tenant-b"},

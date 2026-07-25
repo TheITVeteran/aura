@@ -1680,8 +1680,40 @@ class ResponseGenerationPhase(BasePhase):
                                         "defaults after typed ingress failed"
                                     ),
                                 )
-                            latent_result = await service.deep_reason(
+                            reasoner = getattr(
+                                service,
+                                "deep_reason_with_acquisition",
+                                None,
+                            )
+                            acquisition_kwargs = (
+                                {
+                                    "orchestrator": getattr(
+                                        self,
+                                        "orchestrator",
+                                        None,
+                                    ),
+                                    "tenant_id": str(
+                                        runtime_context.get("tenant_id") or "local"
+                                    ),
+                                    "user_id": str(
+                                        runtime_context.get("user_id")
+                                        or runtime_context.get("owner_id")
+                                        or "owner"
+                                    ),
+                                    "session_id": str(
+                                        runtime_context.get("session_id")
+                                        or runtime_context.get("conversation_id")
+                                        or "local"
+                                    ),
+                                }
+                                if callable(reasoner)
+                                else {}
+                            )
+                            if not callable(reasoner):
+                                reasoner = service.deep_reason
+                            latent_result = await reasoner(
                                 messages=messages,
+                                **acquisition_kwargs,
                                 stakes=ingress_stakes,
                                 uncertainty=ingress_uncertainty,
                                 domain=str(

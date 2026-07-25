@@ -2512,6 +2512,269 @@ class LatentCortexService:
         ) as exc:
             logger.debug("Facet judgment recording skipped: %s", exc)
 
+    @staticmethod
+    async def _broadcast_conclusion(
+        result: dict[str, Any],
+        *,
+        objective: str,
+        stakes: float,
+    ) -> None:
+        """Publish exactly the conclusion returned by a foreground call."""
+
+        receipt = result.get("receipt")
+        if result.get("ok") is not True or not isinstance(receipt, dict):
+            return
+        try:
+            from core.brain.gwt_rlc_coupling import broadcast_episode_conclusion
+
+            receipt["workspace_broadcast"] = await broadcast_episode_conclusion(
+                objective,
+                str(result.get("text") or ""),
+                receipt,
+                stakes=stakes,
+            )
+            result["receipt"] = receipt
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.debug("Workspace broadcast of conclusion skipped: %s", exc)
+
+    async def deep_reason_with_acquisition(
+        self,
+        question: str | None = None,
+        *,
+        messages: list | None = None,
+        orchestrator: Any = None,
+        tenant_id: str = "local",
+        user_id: str = "owner",
+        session_id: str = "local",
+        **reason_kwargs: Any,
+    ) -> dict[str, Any]:
+        """Run one episode plus at most one governed retrieval continuation."""
+
+        started = time.monotonic()
+        reason_kwargs = dict(reason_kwargs)
+        reason_kwargs.pop("publish_workspace_conclusion", None)
+        foreground = reason_kwargs.get("foreground_request", True)
+        first = await self.deep_reason(
+            question,
+            messages=messages,
+            publish_workspace_conclusion=False,
+            **reason_kwargs,
+        )
+        if first.get("ok") is not True:
+            return first
+
+        objective = self._visible_objective(question, messages)
+        first_receipt = first.get("receipt")
+        original_context = reason_kwargs.get("cognitive_context")
+        actual_context = (
+            first_receipt.get("cognitive_slots")
+            if isinstance(first_receipt, dict)
+            and isinstance(first_receipt.get("cognitive_slots"), list)
+            and first_receipt["cognitive_slots"]
+            else original_context
+        )
+        try:
+            from core.brain.llm.latent_cortex.cognitive_acquisition import (
+                build_acquisition_receipt,
+                build_acquisition_request,
+                build_continuation_receipt,
+                validate_acquisition_receipt,
+                validate_continuation_receipt,
+            )
+
+            request = build_acquisition_request(
+                objective=objective,
+                first_text=str(first.get("text") or ""),
+                first_receipt=first_receipt,
+                cognitive_context=actual_context,
+            )
+        except (ImportError, TypeError, ValueError) as exc:
+            record_degradation(
+                "latent_cortex.cognitive_acquisition",
+                exc,
+                action="retained the first proven answer after acquisition request validation failed",
+                severity="warning",
+            )
+            if foreground is True:
+                await self._broadcast_conclusion(
+                    first,
+                    objective=objective,
+                    stakes=float(reason_kwargs.get("stakes", 0.5)),
+                )
+            return first
+        if request is None:
+            if foreground is True:
+                await self._broadcast_conclusion(
+                    first,
+                    objective=objective,
+                    stakes=float(reason_kwargs.get("stakes", 0.5)),
+                )
+            return first
+
+        acquisition_started = time.monotonic()
+        try:
+            from core.brain.cognitive_ingress import (
+                assemble_cognitive_ingress_async,
+                cognitive_context_items,
+            )
+
+            ingress = await assemble_cognitive_ingress_async(
+                self.orchestrator if orchestrator is None else orchestrator,
+                objective,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=session_id,
+                retrieval_query=str(request["retrieval_query"]),
+                acquisition_source=(
+                    "memory"
+                    if request["action"] == "search_memory"
+                    else "reference"
+                ),
+            )
+            acquired_context = cognitive_context_items(ingress) or None
+            acquisition = build_acquisition_receipt(
+                request,
+                acquired_context=acquired_context,
+                ingress_receipt=ingress.to_receipt(),
+                elapsed_s=time.monotonic() - acquisition_started,
+            )
+            validate_acquisition_receipt(acquisition, request=request)
+        except (
+            ImportError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            record_degradation(
+                "latent_cortex.cognitive_acquisition",
+                exc,
+                action="retained the first proven answer after the bounded acquisition failed",
+                severity="warning",
+            )
+            acquisition = build_acquisition_receipt(
+                request,
+                acquired_context=None,
+                ingress_receipt={"status": "failed", "error_type": type(exc).__name__},
+                elapsed_s=min(30.0, time.monotonic() - acquisition_started),
+                error_code=f"acquisition_{type(exc).__name__.lower()}",
+            )
+            continuation = build_continuation_receipt(
+                request,
+                acquisition,
+                first_result=first,
+                second_result=None,
+                returned_round=1,
+                continuation_reason="acquisition_failed",
+            )
+            validate_continuation_receipt(continuation)
+            first_receipt["cognitive_acquisition"] = continuation
+            self._last_receipt = first_receipt
+            if foreground is True:
+                await self._broadcast_conclusion(
+                    first,
+                    objective=objective,
+                    stakes=float(reason_kwargs.get("stakes", 0.5)),
+                )
+            return first
+
+        if acquisition["status"] != "completed_new_context":
+            continuation = build_continuation_receipt(
+                request,
+                acquisition,
+                first_result=first,
+                second_result=None,
+                returned_round=1,
+                continuation_reason="no_new_context",
+            )
+            validate_continuation_receipt(continuation)
+            first_receipt["cognitive_acquisition"] = continuation
+            self._last_receipt = first_receipt
+            if foreground is True:
+                await self._broadcast_conclusion(
+                    first,
+                    objective=objective,
+                    stakes=float(reason_kwargs.get("stakes", 0.5)),
+                )
+            return first
+
+        timeout_s = float(reason_kwargs.get("timeout_s", 300.0))
+        remaining_s = timeout_s - (time.monotonic() - started)
+        if remaining_s < 15.0:
+            continuation = build_continuation_receipt(
+                request,
+                acquisition,
+                first_result=first,
+                second_result=None,
+                returned_round=1,
+                continuation_reason="budget_insufficient",
+            )
+            validate_continuation_receipt(continuation)
+            first_receipt["cognitive_acquisition"] = continuation
+            self._last_receipt = first_receipt
+            if foreground is True:
+                await self._broadcast_conclusion(
+                    first,
+                    objective=objective,
+                    stakes=float(reason_kwargs.get("stakes", 0.5)),
+                )
+            return first
+
+        second_kwargs = dict(reason_kwargs)
+        second_kwargs.update(
+            {
+                "stakes": max(
+                    float(reason_kwargs.get("stakes", 0.5)),
+                    float(ingress.stakes),
+                ),
+                "uncertainty": float(ingress.uncertainty),
+                "timeout_s": remaining_s,
+                "cognitive_context": acquired_context,
+                "epistemic_genesis": ingress.epistemic_genesis,
+                "epistemic_state": ingress.epistemic_state,
+                "selective_memory_result": ingress.memory_result,
+            }
+        )
+        second = await self.deep_reason(
+            question,
+            messages=messages,
+            publish_workspace_conclusion=bool(foreground),
+            **second_kwargs,
+        )
+        returned_round = 2 if second.get("ok") is True else 1
+        returned = second if returned_round == 2 else first
+        continuation = build_continuation_receipt(
+            request,
+            acquisition,
+            first_result=first,
+            second_result=second,
+            returned_round=returned_round,
+            continuation_reason=(
+                "second_episode_succeeded"
+                if returned_round == 2
+                else "second_episode_failed"
+            ),
+        )
+        validate_continuation_receipt(continuation)
+        returned_receipt = returned.get("receipt")
+        if isinstance(returned_receipt, dict):
+            returned_receipt["cognitive_acquisition"] = continuation
+            self._last_receipt = returned_receipt
+        if returned_round == 1 and foreground is True:
+            await self._broadcast_conclusion(
+                first,
+                objective=objective,
+                stakes=float(reason_kwargs.get("stakes", 0.5)),
+            )
+        return returned
+
     # ── The episode ─────────────────────────────────────────────────────
     async def deep_reason(
         self,
@@ -2530,6 +2793,7 @@ class LatentCortexService:
         epistemic_genesis: Any | None = None,
         epistemic_state: Any | None = None,
         selective_memory_result: Any | None = None,
+        publish_workspace_conclusion: bool = True,
     ) -> dict[str, Any]:
         """Run one latent-reasoning episode on the resident model."""
         if not _cortex_enabled():
@@ -2565,6 +2829,8 @@ class LatentCortexService:
             return self._record_failure("invalid_require_full_stack")
         if type(foreground_request) is not bool:
             return self._record_failure("invalid_foreground_request")
+        if type(publish_workspace_conclusion) is not bool:
+            return self._record_failure("invalid_publish_workspace_conclusion")
         try:
             from core.brain.llm.latent_cortex.cognitive_context import (
                 normalize_cognitive_context,
@@ -3586,27 +3852,13 @@ class LatentCortexService:
             # action path consumes it — deliberation revises the broadcast,
             # the broadcast reaches the Will through the normal competition.
             # Lab/background episodes never write into the live mind.
-            if foreground_request:
-                try:
-                    from core.brain.gwt_rlc_coupling import (
-                        broadcast_episode_conclusion,
-                    )
-
-                    result_receipt["workspace_broadcast"] = await broadcast_episode_conclusion(
-                        self._visible_objective(question, messages),
-                        str(result.get("text") or ""),
-                        result_receipt,
-                        stakes=stakes,
-                    )
-                    result["receipt"] = result_receipt
-                except (
-                    ImportError,
-                    AttributeError,
-                    RuntimeError,
-                    TypeError,
-                    ValueError,
-                ) as exc:
-                    logger.debug("Workspace broadcast of conclusion skipped: %s", exc)
+            if foreground_request and publish_workspace_conclusion:
+                await self._broadcast_conclusion(
+                    result,
+                    objective=self._visible_objective(question, messages),
+                    stakes=stakes,
+                )
+                result_receipt = result.get("receipt", result_receipt)
             self._last_receipt = result_receipt
             self._last_failure_receipt = {}
             logger.info(

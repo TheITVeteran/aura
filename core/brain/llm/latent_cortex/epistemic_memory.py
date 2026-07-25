@@ -39,7 +39,7 @@ from core.brain.llm.latent_cortex.epistemic_state import (
     text_sha256,
 )
 
-SELECTIVE_MEMORY_SCHEMA = "aura.rlc.selective_memory.v1"
+SELECTIVE_MEMORY_SCHEMA = "aura.rlc.selective_memory.v2"
 MAX_MEMORY_CONTENT_CHARS = 400
 MAX_MEMORY_RESULTS = 6
 MAX_MEMORY_PER_TIER = 4
@@ -246,6 +246,8 @@ class MemoryQuery:
     query_id: str
     objective: str
     objective_sha256: str
+    retrieval_query: str
+    retrieval_query_sha256: str
     scope: MemoryScope
     requested_tiers: tuple[MemoryTier, ...]
     per_tier_limit: int
@@ -259,6 +261,16 @@ class MemoryQuery:
         object.__setattr__(self, "objective", objective)
         if self.objective_sha256 != text_sha256(objective):
             raise SelectiveMemoryError("objective digest does not match objective")
+        retrieval_query = _text(
+            self.retrieval_query,
+            name="retrieval_query",
+            limit=16_384,
+        )
+        object.__setattr__(self, "retrieval_query", retrieval_query)
+        if self.retrieval_query_sha256 != text_sha256(retrieval_query):
+            raise SelectiveMemoryError(
+                "retrieval query digest does not match retrieval query"
+            )
         if not isinstance(self.scope, MemoryScope):
             raise SelectiveMemoryError("scope must be a MemoryScope")
         if self.scope.objective_sha256 != self.objective_sha256:
@@ -303,15 +315,19 @@ class MemoryQuery:
         total_limit: int = 6,
         source_timeout_s: float = DEFAULT_SOURCE_TIMEOUT_S,
         issued_at: float | None = None,
+        retrieval_query: str | None = None,
     ) -> MemoryQuery:
         objective = str(objective or "").strip()
         objective_sha256 = text_sha256(objective)
+        retrieval_query = str(retrieval_query or objective).strip()
+        retrieval_query_sha256 = text_sha256(retrieval_query)
         issued = time.time() if issued_at is None else issued_at
         query_id = (
             "mq-"
             + canonical_sha256(
                 {
                     "objective_sha256": objective_sha256,
+                    "retrieval_query_sha256": retrieval_query_sha256,
                     "episode_id": episode_id,
                     "issued_at": issued,
                 }
@@ -328,6 +344,8 @@ class MemoryQuery:
             query_id=query_id,
             objective=objective,
             objective_sha256=objective_sha256,
+            retrieval_query=retrieval_query,
+            retrieval_query_sha256=retrieval_query_sha256,
             scope=scope,
             requested_tiers=tuple(requested_tiers),
             per_tier_limit=per_tier_limit,
@@ -340,6 +358,7 @@ class MemoryQuery:
         payload: dict[str, Any] = {
             "query_id": self.query_id,
             "objective_sha256": self.objective_sha256,
+            "retrieval_query_sha256": self.retrieval_query_sha256,
             "scope": self.scope.to_dict(),
             "requested_tiers": [tier.value for tier in self.requested_tiers],
             "per_tier_limit": self.per_tier_limit,
@@ -349,6 +368,7 @@ class MemoryQuery:
         }
         if include_objective:
             payload["objective"] = self.objective
+            payload["retrieval_query"] = self.retrieval_query
         return payload
 
     @property
@@ -671,7 +691,13 @@ class SelectiveMemoryBridge:
             source_version = str(metadata.get("source_version") or spec.source_version).strip()[
                 :128
             ]
-            relevance = _raw_score(item, metadata, rank, query.objective, content)
+            relevance = _raw_score(
+                item,
+                metadata,
+                rank,
+                query.retrieval_query,
+                content,
+            )
             receipt_payload = {
                 "schema": SELECTIVE_MEMORY_SCHEMA,
                 "query_sha256": query.invocation_sha256,
@@ -733,7 +759,7 @@ class SelectiveMemoryBridge:
             )
         started = time.monotonic()
         try:
-            raw = spec.adapter(query.objective, query.per_tier_limit)
+            raw = spec.adapter(query.retrieval_query, query.per_tier_limit)
             if inspect.isawaitable(raw):
                 close = getattr(raw, "close", None)
                 if callable(close):
@@ -790,12 +816,16 @@ class SelectiveMemoryBridge:
         try:
             if inspect.iscoroutinefunction(spec.adapter):
                 raw = await asyncio.wait_for(
-                    spec.adapter(query.objective, query.per_tier_limit),
+                    spec.adapter(query.retrieval_query, query.per_tier_limit),
                     timeout=query.source_timeout_s,
                 )
             else:
                 raw = await asyncio.wait_for(
-                    asyncio.to_thread(spec.adapter, query.objective, query.per_tier_limit),
+                    asyncio.to_thread(
+                        spec.adapter,
+                        query.retrieval_query,
+                        query.per_tier_limit,
+                    ),
                     timeout=query.source_timeout_s,
                 )
                 if inspect.isawaitable(raw):

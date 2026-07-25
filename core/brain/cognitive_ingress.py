@@ -381,7 +381,13 @@ def _reference_source_version(store: Any) -> str:
     return f"local-corpus-v1:{hashlib.sha256(payload).hexdigest()[:32]}"
 
 
-def _working_memory_records(orchestrator: Any, objective: str, limit: int) -> list[dict[str, Any]]:
+def _working_memory_records(
+    orchestrator: Any,
+    retrieval_query: str,
+    limit: int,
+    *,
+    problem_objective: str | None = None,
+) -> list[dict[str, Any]]:
     state = getattr(orchestrator, "state", None)
     cognition = getattr(state, "cognition", None)
     history = getattr(cognition, "working_memory", None)
@@ -394,7 +400,10 @@ def _working_memory_records(orchestrator: Any, objective: str, limit: int) -> li
         content = str(item.get("content") or "").strip()
         # The current user turn is already the immutable problem. Recalling
         # the same text as evidence would double-count the prompt.
-        if not content or content == objective:
+        if not content or content in {
+            str(retrieval_query or ""),
+            str(problem_objective or ""),
+        }:
             continue
         role = str(item.get("role") or "unknown").strip()
         records.append(
@@ -481,7 +490,12 @@ def _memory_adapter_specs(
             tracked(
                 MemoryTier.WORKING,
                 "cognition.working_memory",
-                lambda query, limit: _working_memory_records(orchestrator, query, limit),
+                lambda query, limit: _working_memory_records(
+                    orchestrator,
+                    query,
+                    limit,
+                    problem_objective=objective,
+                ),
             ),
         )
 
@@ -596,6 +610,7 @@ def _new_memory_query(
     tenant_id: str,
     user_id: str,
     session_id: str,
+    retrieval_query: str | None = None,
 ):
     from core.brain.llm.latent_cortex.epistemic_memory import MemoryQuery
 
@@ -605,6 +620,7 @@ def _new_memory_query(
         tenant_id=tenant_id,
         user_id=user_id,
         session_id=session_id,
+        retrieval_query=retrieval_query,
     )
 
 
@@ -738,6 +754,7 @@ def _resolve_memory_sync(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
+    retrieval_query: str | None = None,
 ) -> tuple[IngressSignal, Any, Any, Any]:
     from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
 
@@ -747,6 +764,7 @@ def _resolve_memory_sync(
         tenant_id=tenant_id,
         user_id=user_id,
         session_id=session_id,
+        retrieval_query=retrieval_query,
     )
     result = SelectiveMemoryBridge(specs).retrieve(query)
     return _memory_signal_from_result(objective, result, tracking)
@@ -759,6 +777,7 @@ async def _resolve_memory_async(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
+    retrieval_query: str | None = None,
 ) -> tuple[IngressSignal, Any, Any, Any]:
     from core.brain.llm.latent_cortex.epistemic_memory import SelectiveMemoryBridge
 
@@ -768,12 +787,17 @@ async def _resolve_memory_async(
         tenant_id=tenant_id,
         user_id=user_id,
         session_id=session_id,
+        retrieval_query=retrieval_query,
     )
     result = await SelectiveMemoryBridge(specs).retrieve_async(query)
     return _memory_signal_from_result(objective, result, tracking)
 
 
-def _signal_reference(objective: str) -> IngressSignal:
+def _signal_reference(
+    objective: str,
+    *,
+    retrieval_query: str | None = None,
+) -> IngressSignal:
     """Offline reference corpus: 6.6M-article Wikipedia behind FTS5.
 
     The knowledge organ the integration bet names first — frontier breadth
@@ -796,7 +820,8 @@ def _signal_reference(objective: str) -> IngressSignal:
     if store is None:
         return IngressSignal(source="reference", present=False)
     try:
-        hits = store.search(str(objective or "")[:300], limit=4)
+        query = str(retrieval_query or objective or "")[:1200]
+        hits = store.search(query, limit=4)
     except Exception:  # noqa: BLE001 - organ contract unknown; absent
         return IngressSignal(source="reference", present=False)
     if not hits:
@@ -805,6 +830,13 @@ def _signal_reference(objective: str) -> IngressSignal:
             present=True,
             value=0.0,
             detail="local_corpus: 0 hits",
+            firewall={
+                "retrieval_query_sha256": hashlib.sha256(
+                    query.encode("utf-8")
+                ).hexdigest(),
+                "admitted": [],
+                "refused": [],
+            },
         )
     evidence = [
         EvidenceItem(
@@ -836,6 +868,9 @@ def _signal_reference(objective: str) -> IngressSignal:
         recalled = ""
         caution = "Evidence check: reference admission failed; nothing seeded"
     if recalled:
+        firewall_receipt["retrieval_query_sha256"] = hashlib.sha256(
+            query.encode("utf-8")
+        ).hexdigest()
         receipt_payload = json.dumps(
             firewall_receipt,
             sort_keys=True,
@@ -1259,20 +1294,47 @@ def assemble_cognitive_ingress(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
+    retrieval_query: str | None = None,
+    acquisition_source: str | None = None,
 ) -> CognitiveIngress:
     """Typed allocation inputs for one latent episode, with receipts."""
-    memory_signal, epistemic_genesis, epistemic_state, memory_result = (
-        _resolve_memory_sync(
-        orchestrator,
-        objective,
-        tenant_id=tenant_id,
-        user_id=user_id,
-        session_id=session_id,
+    if acquisition_source not in {None, "memory", "reference"}:
+        raise ValueError("acquisition_source must be memory, reference, or None")
+    if acquisition_source == "reference":
+        memory_signal = IngressSignal(
+            source="memory",
+            present=False,
+            detail="not selected for acquisition",
+        )
+        epistemic_genesis = None
+        epistemic_state = None
+        memory_result = None
+    else:
+        memory_signal, epistemic_genesis, epistemic_state, memory_result = (
+            _resolve_memory_sync(
+                orchestrator,
+                objective,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=session_id,
+                retrieval_query=retrieval_query,
+            )
+        )
+    reference_signal = (
+        IngressSignal(
+            source="reference",
+            present=False,
+            detail="not selected for acquisition",
+        )
+        if acquisition_source == "memory"
+        else _signal_reference(
+            objective,
+            retrieval_query=retrieval_query,
         )
     )
     signals = [
         memory_signal,
-        _signal_reference(objective),
+        reference_signal,
         _signal_body(orchestrator),
         _signal_goals(objective),
         _signal_will(orchestrator),
@@ -1301,20 +1363,40 @@ async def assemble_cognitive_ingress_async(
     tenant_id: str = "local",
     user_id: str = "owner",
     session_id: str = "local",
+    retrieval_query: str | None = None,
+    acquisition_source: str | None = None,
 ) -> CognitiveIngress:
     """Assemble organ ingress with bounded concurrent memory retrieval."""
-    memory_task = asyncio.create_task(
-        _resolve_memory_async(
-            orchestrator,
-            objective,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            session_id=session_id,
+    if acquisition_source not in {None, "memory", "reference"}:
+        raise ValueError("acquisition_source must be memory, reference, or None")
+    memory_task = (
+        None
+        if acquisition_source == "reference"
+        else asyncio.create_task(
+            _resolve_memory_async(
+                orchestrator,
+                objective,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                session_id=session_id,
+                retrieval_query=retrieval_query,
+            )
         )
     )
     other_signals = await asyncio.to_thread(
         lambda: [
-            _signal_reference(objective),
+            (
+                IngressSignal(
+                    source="reference",
+                    present=False,
+                    detail="not selected for acquisition",
+                )
+                if acquisition_source == "memory"
+                else _signal_reference(
+                    objective,
+                    retrieval_query=retrieval_query,
+                )
+            ),
             _signal_body(orchestrator),
             _signal_goals(objective),
             _signal_will(orchestrator),
@@ -1323,7 +1405,19 @@ async def assemble_cognitive_ingress_async(
             _signal_world_model(orchestrator),
         ]
     )
-    memory_signal, epistemic_genesis, epistemic_state, memory_result = await memory_task
+    if memory_task is None:
+        memory_signal = IngressSignal(
+            source="memory",
+            present=False,
+            detail="not selected for acquisition",
+        )
+        epistemic_genesis = None
+        epistemic_state = None
+        memory_result = None
+    else:
+        memory_signal, epistemic_genesis, epistemic_state, memory_result = (
+            await memory_task
+        )
     signals = [memory_signal, *other_signals]
     stakes = _BASE_STAKES + sum(s.stakes_delta for s in signals if s.present)
     uncertainty = _BASE_UNCERTAINTY + sum(s.uncertainty_delta for s in signals if s.present)

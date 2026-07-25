@@ -27734,3 +27734,78 @@ Checkpoint-count completion is approximately 63.5%-96.7%, with a midpoint
 planning estimate of 76.7%. Next: publish CP369, then implement SPARK-051's
 governed fresh-retrieval continuation and external execution protocol. Final
 multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-370: Governed Cognitive Acquisition Continuation
+
+SPARK-051 advances without claiming completion. A validated
+`SEARCH_MEMORY` or `RETRIEVE_EVIDENCE` worker action can now authorize one
+service-side acquisition and, only when a genuinely new admitted observation
+arrives, one second recurrent episode. The MLX worker remains compute-only:
+it performs no filesystem, memory-store, corpus, browser, network, or tool I/O.
+
+The acquisition request commits the immutable problem objective, tentative
+answer, selected action transition, actual worker cognitive-slot inventory,
+bounded refinement query, and one-attempt/one-continuation caps. Selective
+memory schema v2 separates problem identity from retrieval terms:
+`objective_sha256` continues to scope the epistemic episode while
+`retrieval_query_sha256` binds the exact query executed by Aura's existing five
+memory tiers. The offline Wikipedia path binds the same query into its
+epistemic-firewall receipt.
+
+Source boundaries are explicit. Memory actions can acquire only typed memory
+rows; evidence actions can acquire only the offline reference row. A changed
+world-model, goal, body, affect, or workspace summary cannot be counted as a
+fresh fetch. Deduplication uses content commitments rather than source labels,
+so the same observation arriving through another store does not buy more
+compute. Source unavailable, successful-empty, repeated-context, and
+new-context outcomes remain distinct.
+
+The service defers the first episode's workspace broadcast. If the acquisition
+produces new context and at least 15 seconds remain in the original request
+budget, it runs one second episode with a fresh complete typed ingress and its
+own epistemic authority and operation journal. The closed receipt commits both
+episode results, the acquisition, the returned round, and exhausted caps.
+Exactly the neural answer returned to the user reaches the global workspace.
+If the acquisition or second episode fails, the first already validated neural
+answer is retained; no static answer tree replaces Aura's response.
+
+Contract tests cover objective/query separation, exact adapter query use,
+current-turn exclusion, worker-slot commitments, action tampering,
+content-level cross-source deduplication, strict acquisition-source isolation,
+unavailable sources, new-context continuation, repeated-context suppression,
+the one-round cap, final-result commitments, and live response-path dispatch.
+The focused service/worker-ingress/epistemic battery passes 212 tests in 112.12
+seconds. The complete latent/RLC test family passes 1,137 tests in 50.23
+seconds.
+
+Ruff, bytecode compilation, and diff hygiene pass. Governance remains 1,973
+recognized calls in 1,847 buckets with 1,788 inherited migration-debt calls.
+Model-load ownership passes with 47 paths, 60 references, and zero findings.
+Resource-observation ownership scans 2,965 Python files with zero findings.
+The enterprise static ratchet passes at 168 findings, 38 high, zero critical,
+and no baseline regression.
+
+The reconciled dirty-candidate closeout audit passes over 8,035 tracked files,
+including 8,004 text files and 5,005 code files, and binds 4,257,402 text
+lines plus 1,601,134 code lines to generated ledgers. Production readiness,
+architecture mapping, model-load ownership, and resource-observation ownership
+pass. `full_closeout_complete` remains correctly false: 509 code files have
+current full-file semantic receipts and 4,465 remain unreviewed.
+
+SPARK-051 remains open. This checkpoint does not implement governed web/tool
+acquisition, `EXECUTE` through the external action orchestrator, calibrated
+checked controller evidence, resident-32B causal ablations, capability gain,
+frontier reasoning, or long-duration reliability.
+
+One cooperative live-verification checkpoint (`b7bda97d5`) landed after CP369
+and before publication. It proves first-ten-turn recovery while preserving a
+FAIL verdict for prompt-contaminated draft rejection, the approximately
+15-turn resident ceiling, serving latency, and measured math accuracy. Counting
+it and CP370 makes the total checkpoint record 497. The forecast remains
+512-779 total records, leaving approximately 15-282 records after this
+checkpoint. Checkpoint-count completion is approximately 63.8%-97.1%, with a
+midpoint planning estimate of 77.0%. Next: publish CP370, close the
+user-surface validation contamination identified by the live run, then
+implement SPARK-051's governed external `EXECUTE` protocol and checked
+action-calibration campaign. Final multi-hour soaks remain deferred until
+every shorter gate is green.
