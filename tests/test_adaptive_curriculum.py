@@ -176,3 +176,76 @@ def test_bad_reward_is_refused():
         CellStats("f", 1).observe(1.5, degenerate=False)
     with pytest.raises(ValueError, match="families and difficulties"):
         AdaptiveCurriculum.over([], [1])
+
+
+def test_unexplored_cells_are_not_evidence_of_a_frontier():
+    """Ignorance is not reachability.
+
+    ``has_reachable_frontier`` was ``bool(learnable or unexplored)``, so a
+    cell nobody had measured counted as frontier. The trainer halts on ``not
+    has_reachable_frontier``, so while ignorance kept it True the guard could
+    never fire — seven recurrent-GRPO campaigns each burned ~86 minutes at a
+    measured 0.0 pass rate across every explored cell, produced no gradient,
+    and were still told a frontier lay ahead.
+
+    This reproduces that exact shape: four cells measured, all at zero,
+    thirty-two never touched.
+    """
+    curriculum = AdaptiveCurriculum.over(
+        [f"measured{i}" for i in range(4)] + [f"untouched{i}" for i in range(32)],
+        [2],
+    )
+    for _ in range(4):
+        for i in range(4):
+            curriculum.observe(f"measured{i}", 2, 0.0, degenerate=True)
+
+    report = curriculum.report()
+    assert report["frontier_state"] == "exhausted"
+    assert report["has_reachable_frontier"] is False
+    assert len(report["unexplored"]) == 32
+    assert report["frontier_evidence"]["all_explored_at_zero"] is True
+
+
+def test_a_small_all_zero_sample_is_unknown_not_refuted():
+    """Untested is not the same as refuted; exploration must continue."""
+    curriculum = AdaptiveCurriculum.over(["measured", "untouched"], [2])
+    for _ in range(4):
+        curriculum.observe("measured", 2, 0.0, degenerate=True)
+
+    report = curriculum.report()
+    assert report["frontier_state"] == "unknown"
+    assert report["has_reachable_frontier"] is True
+    assert report["frontier_evidence"]["sample_is_representative"] is False
+
+
+def test_nothing_measured_is_unknown_not_exhausted():
+    curriculum = AdaptiveCurriculum.over(["a", "b", "c", "d", "e"], [2])
+    report = curriculum.report()
+    assert report["frontier_state"] == "unknown"
+    assert report["has_reachable_frontier"] is True
+
+
+def test_real_signal_keeps_the_frontier_open():
+    curriculum = AdaptiveCurriculum.over(["good"] + [f"dead{i}" for i in range(4)], [2])
+    for _ in range(4):
+        curriculum.observe("good", 2, 0.3, degenerate=False)
+        for i in range(4):
+            curriculum.observe(f"dead{i}", 2, 0.0, degenerate=True)
+
+    report = curriculum.report()
+    assert report["frontier_state"] == "reachable"
+    assert report["has_reachable_frontier"] is True
+    assert report["learnable"] == ["good@2"]
+
+
+def test_the_three_states_are_distinguishable():
+    """A single boolean collapsed 'found signal', 'have not looked' and
+    'looked and there is none' into one value, which is what hid the wall."""
+    curriculum = AdaptiveCurriculum.over(["a", "b", "c", "d"], [2])
+    assert curriculum.report()["frontier_state"] == "unknown"
+    for _ in range(4):
+        for family in ("a", "b", "c", "d"):
+            curriculum.observe(family, 2, 0.0, degenerate=True)
+    assert curriculum.report()["frontier_state"] == "exhausted"
+    curriculum.observe("a", 2, 0.5, degenerate=False)
+    assert curriculum.report()["frontier_state"] == "reachable"

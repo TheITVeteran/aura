@@ -46,6 +46,10 @@ ADAPTIVE_CURRICULUM_SCHEMA = "aura.adaptive_curriculum.v1"
 # not so low that groups are all-wrong, not so high they are all-correct.
 LEARNABLE_LOW = 0.05
 LEARNABLE_HIGH = 0.95
+# How many cells must carry real observations before a uniformly-zero result
+# is read as evidence about capability rather than as a small sample. Below
+# this the frontier is honestly "unknown" and exploration continues.
+_MIN_EXPLORED_FOR_VERDICT = 4
 
 
 @dataclass
@@ -163,6 +167,43 @@ class AdaptiveCurriculum:
                 saturated.append(label)
             else:
                 hopeless.append(label)
+
+        # REACHABILITY IS A CLAIM ABOUT EVIDENCE, NOT ABOUT IGNORANCE.
+        #
+        # This used to be `bool(learnable or unexplored)`, so a cell nobody
+        # had measured counted as a reachable frontier. That inverts the
+        # meaning of the signal: an unexplored cell is UNKNOWN, not
+        # reachable, and reporting it as frontier is the "absence of a check
+        # reported as a passed check" defect in its purest form.
+        #
+        # It had a cost. The trainer halts on `not has_reachable_frontier`,
+        # so while ignorance kept this True the guard could never fire —
+        # and seven recurrent-GRPO campaigns each burned ~86 minutes at a
+        # measured 0.0 pass rate across every explored cell, producing no
+        # gradient, with the curriculum still reporting a frontier ahead.
+        #
+        # The honest inference: once a representative sample of cells has
+        # been measured and EVERY one of them is at zero, that is evidence
+        # about the model's present capability, not about those particular
+        # cells. The remaining unexplored cells are drawn from the same task
+        # families at the same depths; continuing to sample them is the
+        # theatre the original docstring already promised to avoid.
+        explored = [cell for cell in self.cells.values() if cell.trials >= 2]
+        all_explored_at_zero = bool(explored) and all(
+            cell.pass_rate <= 0.0 for cell in explored
+        )
+        sample_is_representative = len(explored) >= _MIN_EXPLORED_FOR_VERDICT
+        refuted = all_explored_at_zero and sample_is_representative
+
+        if learnable:
+            frontier_state = "reachable"
+        elif refuted:
+            frontier_state = "exhausted"
+        elif unexplored:
+            frontier_state = "unknown"
+        else:
+            frontier_state = "exhausted"
+
         return {
             "schema": ADAPTIVE_CURRICULUM_SCHEMA,
             "cells": len(self.cells),
@@ -170,9 +211,22 @@ class AdaptiveCurriculum:
             "saturated": sorted(saturated),
             "hopeless": sorted(hopeless),
             "unexplored": sorted(unexplored),
-            # A run with no learnable cells left has exhausted its reachable
-            # frontier; continuing to sample would be theatre.
-            "has_reachable_frontier": bool(learnable or unexplored),
+            # True only when there is somewhere left worth sampling. Kept as
+            # the trainer's halt signal; "unknown" still permits exploration,
+            # because untested is not the same as refuted.
+            "has_reachable_frontier": frontier_state in {"reachable", "unknown"},
+            # The three-state answer, so a receipt can distinguish "we found
+            # signal" from "we have not looked" from "we looked and there is
+            # none" — collapsing those into one boolean is what hid the wall.
+            "frontier_state": frontier_state,
+            "frontier_evidence": {
+                "explored_cells": len(explored),
+                "unexplored_cells": len(unexplored),
+                "learnable_cells": len(learnable),
+                "all_explored_at_zero": all_explored_at_zero,
+                "sample_is_representative": sample_is_representative,
+                "min_explored_for_verdict": _MIN_EXPLORED_FOR_VERDICT,
+            },
             "pass_rates": {
                 f"{c.family}@{c.difficulty}": round(c.pass_rate, 4)
                 for c in self.cells.values()
