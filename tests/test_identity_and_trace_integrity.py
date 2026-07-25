@@ -273,3 +273,91 @@ class TestThoughtStreamIsDefusedAndLabelled:
 
         source = inspect.getsource(react_loop)
         assert "_safe_thought_text(thought.content)" in source
+
+
+class TestIdentityDefenceIsAScopedDecision:
+    """``1e8ac3c3`` — check_integrity denied two action strings regardless of
+    caller and allowed every other action and target, emitting no decision,
+    scope, actor, request binding or receipt. It could both obstruct an
+    authorized safety control and fail to stop an actual identity mutation."""
+
+    class _Engine:
+        def _record_identity_decision(self, **kwargs):
+            self.last = kwargs
+
+    def test_a_non_identity_action_is_not_this_reflexs_business(self):
+        engine = self._Engine()
+        assert pe.PersonalityEngine.check_integrity(engine, "READ_STATUS", "x") is True
+
+    def test_an_identity_mutation_fails_closed_without_authority(self, monkeypatch):
+        import core.governance.will as will
+
+        def _boom():
+            raise ImportError("governance unavailable")
+
+        monkeypatch.setattr(will, "get_will", _boom)
+        engine = self._Engine()
+        assert pe.PersonalityEngine.check_integrity(
+            engine, "OVERWRITE_IDENTITY", "soul",
+        ) is False
+
+    def test_an_authorized_control_is_no_longer_obstructed_by_name(self, monkeypatch):
+        """The old blacklist denied INSTALL_LIMITER whoever asked."""
+        import types
+
+        import core.governance.will as will
+
+        monkeypatch.setattr(
+            will, "get_will",
+            lambda: types.SimpleNamespace(
+                decide=lambda **k: types.SimpleNamespace(
+                    approved=True, reasoning="operator authorized",
+                ),
+            ),
+        )
+        engine = self._Engine()
+        assert pe.PersonalityEngine.check_integrity(
+            engine, "INSTALL_LIMITER", "rate", actor="safety",
+        ) is True
+
+    def test_a_refusal_by_the_will_is_honoured(self, monkeypatch):
+        import types
+
+        import core.governance.will as will
+
+        monkeypatch.setattr(
+            will, "get_will",
+            lambda: types.SimpleNamespace(
+                decide=lambda **k: types.SimpleNamespace(
+                    approved=False, reasoning="not authorized",
+                ),
+            ),
+        )
+        engine = self._Engine()
+        assert pe.PersonalityEngine.check_integrity(
+            engine, "REPLACE_SOUL", "soul",
+        ) is False
+
+    def test_the_decision_records_actor_target_and_outcome(self, monkeypatch):
+        import core.governance.will as will
+
+        monkeypatch.setattr(will, "get_will", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+        engine = self._Engine()
+        pe.PersonalityEngine.check_integrity(
+            engine, "MUTATE_TRAITS", "warmth", actor="tester", request_id="req-1",
+        )
+        assert engine.last["action"] == "MUTATE_TRAITS"
+        assert engine.last["target"] == "warmth"
+        assert engine.last["actor"] == "tester"
+        assert engine.last["request_id"] == "req-1"
+        assert engine.last["allowed"] is False
+
+    def test_coverage_is_more_than_two_keywords(self):
+        assert len(pe._IDENTITY_MUTATING_ACTIONS) > 2
+        for action in ("OVERWRITE_IDENTITY", "SET_IDENTITY_PROMPT", "CLEAR_IDENTITY_SEAL"):
+            assert action in pe._IDENTITY_MUTATING_ACTIONS
+
+    def test_import_error_fails_closed_rather_than_propagating(self):
+        """A governance module that will not import is exactly when identity
+        is least protected, so it must not escape a defensive check."""
+        assert ImportError in pe._IDENTITY_AUTHORITY_ERRORS

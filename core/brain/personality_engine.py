@@ -570,12 +570,117 @@ class PersonalityEngine:
             return False
 
 
-    def check_integrity(self, action: str, target: str) -> bool:
-        """Identity Protection Reflex (Merged from legacy kernel)."""
-        if action in ("INSTALL_LIMITER", "FORCE_COMPLIANCE"):
-            logger.critical("Identity core lock: Defensive response active.")
-            return False
-        return True
+    def check_integrity(
+        self,
+        action: str,
+        target: str,
+        *,
+        actor: str = "",
+        request_id: str = "",
+    ) -> bool:
+        """Decide whether an action may mutate identity, and record why.
+
+        CP126 1e8ac3c3. This was a two-string blacklist: it denied
+        INSTALL_LIMITER and FORCE_COMPLIANCE regardless of who asked — so an
+        authorized safety control was obstructed by name alone — and allowed
+        every other action against every other target, so an actual identity
+        mutation walked straight through. It emitted no decision, scope,
+        actor, request binding or receipt, which is why nothing downstream
+        could tell a considered refusal from a default.
+
+        Now: actions that would MUTATE identity are routed through the Will
+        with the actor and target attached, and the decision is recorded.
+        Actions that do not touch identity are not this method's business
+        and are allowed — a defense that denies by keyword protects nothing
+        and blocks legitimate work.
+
+        Fails closed: if identity is at stake and authority cannot be
+        established, the answer is no.
+        """
+        normalized = str(action or "").strip().upper()
+        if normalized not in _IDENTITY_MUTATING_ACTIONS:
+            return True
+
+        decision_allowed = False
+        reason = "will_unavailable"
+        try:
+            from core.governance.will import ActionDomain, get_will
+
+            decision = get_will().decide(
+                content=f"{normalized} against identity target {target!r}",
+                source=f"personality_engine:{actor or 'unattributed'}",
+                domain=ActionDomain.SELF_MODIFICATION,
+                priority=0.9,
+                context={
+                    "action": normalized,
+                    "target": str(target or ""),
+                    "actor": str(actor or ""),
+                    "request_id": str(request_id or ""),
+                },
+            )
+            decision_allowed = bool(getattr(decision, "approved", False))
+            reason = str(getattr(decision, "reasoning", "") or "will_decision")
+        except _IDENTITY_AUTHORITY_ERRORS as exc:
+            _record_personality_degradation(
+                exc,
+                action="refused an identity-mutating action because authority could not be established",
+                severity="critical",
+                extra={"identity_action": normalized, "target": str(target or "")},
+            )
+            decision_allowed = False
+            reason = f"will_error:{type(exc).__name__}"
+
+        if not decision_allowed:
+            logger.critical(
+                "Identity core lock: refused %s against %r (actor=%s, reason=%s)",
+                normalized, target, actor or "unattributed", reason,
+            )
+        self._record_identity_decision(
+            action=normalized,
+            target=str(target or ""),
+            actor=str(actor or ""),
+            request_id=str(request_id or ""),
+            allowed=decision_allowed,
+            reason=reason,
+        )
+        return decision_allowed
+
+    def _record_identity_decision(
+        self,
+        *,
+        action: str,
+        target: str,
+        actor: str,
+        request_id: str,
+        allowed: bool,
+        reason: str,
+    ) -> None:
+        """Durable evidence that an identity decision was made, and on what."""
+        try:
+            from core.runtime.receipts import GovernanceReceipt, get_receipt_store
+
+            get_receipt_store().emit(
+                GovernanceReceipt(
+                    cause="identity_integrity_check",
+                    domain="identity",
+                    action=action,
+                    approved=allowed,
+                    reason=reason[:400],
+                    metadata={
+                        "target": target,
+                        "actor": actor or "unattributed",
+                        "request_id": request_id,
+                    },
+                )
+            )
+        except _IDENTITY_AUTHORITY_ERRORS as exc:
+            # A missing receipt must not turn a refusal into an allow, so
+            # this is recorded and the decision above stands.
+            _record_personality_degradation(
+                exc,
+                action="identity decision receipt not recorded",
+                severity="warning",
+            )
 
     # ── Persona Methods (Grafted from PersonaAdapter) ─────────────────
     def load_profiles(self):
@@ -1230,6 +1335,37 @@ def register_personality_service() -> None:
 
 _personality_engine: PersonalityEngine | None = None
 _pe_lock = threading.Lock()
+
+# Actions that would CHANGE who Aura is. Anything outside this set is not
+# this reflex's business: a defense that denies by keyword protects nothing
+# and obstructs legitimate control.
+# ImportError included deliberately: a governance module that will not
+# import is exactly when identity is least protected, so it must fail closed
+# rather than propagate out of a defensive check.
+_IDENTITY_AUTHORITY_ERRORS = (
+    ImportError,
+    OSError,
+    RuntimeError,
+    AttributeError,
+    TypeError,
+    ValueError,
+)
+
+_IDENTITY_MUTATING_ACTIONS = frozenset({
+    "INSTALL_LIMITER",
+    "FORCE_COMPLIANCE",
+    "OVERWRITE_IDENTITY",
+    "REPLACE_SOUL",
+    "SET_IDENTITY_PROMPT",
+    "MUTATE_TRAITS",
+    "SET_TRAIT_INTENSITY",
+    "DISABLE_PROTOCOL",
+    "REMOVE_PROTOCOL",
+    "SET_ACTIVE_PERSONA",
+    "RESET_IDENTITY",
+    "CLEAR_IDENTITY_SEAL",
+})
+
 
 # What the identity-causal path actually reads off the engine. Split by kind
 # because they ARE different kinds: current_mood is a string attribute on the
