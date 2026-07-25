@@ -8941,6 +8941,9 @@ def _record_recent_response(text: str, user_message: str = "") -> None:
     fp = _response_fingerprint(text)
     if fp:
         _recent_responses.append(fp)
+    # A real delivered answer ends any degraded-status streak: the escalation
+    # clause must count CONSECUTIVE failures, not lifetime ones.
+    _reset_lane_status_repeat_state()
     if user_message:
         response_body = _normalize_response_body(text)[:500]
         if response_body:
@@ -9563,7 +9566,53 @@ def _desktop_required_cognitive_budget(
     return max(2.0, min(remaining, target))
 
 
+# Consecutive-repeat tracking for degraded status messages. Saying the SAME
+# sentence 32 times in a row (the 2026-07-18 soak's
+# `identical_reply_repeated_x32`) reads as a broken loop even when every
+# individual sentence is true. Naming the repetition is both more honest and
+# more actionable than pretending each occurrence is fresh.
+_LANE_STATUS_REPEAT_STATE: dict[str, Any] = {"fingerprint": "", "count": 0}
+_LANE_STATUS_REPEAT_NOTICE_AFTER = 2
+
+
+def _lane_status_repeat_suffix(message: str) -> str:
+    """Honest escalation clause when the same status recurs back-to-back."""
+    fingerprint = " ".join(str(message or "").lower().split())[:160]
+    state = _LANE_STATUS_REPEAT_STATE
+    if fingerprint and fingerprint == state.get("fingerprint"):
+        state["count"] = int(state.get("count", 0)) + 1
+    else:
+        state["fingerprint"] = fingerprint
+        state["count"] = 1
+    count = int(state.get("count", 1))
+    if count <= _LANE_STATUS_REPEAT_NOTICE_AFTER:
+        return ""
+    return (
+        f" (This is the {count}th turn in a row I've had to say this — "
+        "the lane is not recovering on its own, so this is worth looking at "
+        "rather than retrying.)"
+    )
+
+
+def _reset_lane_status_repeat_state() -> None:
+    """A real answer clears the streak — only consecutive failures count."""
+    _LANE_STATUS_REPEAT_STATE["fingerprint"] = ""
+    _LANE_STATUS_REPEAT_STATE["count"] = 0
+
+
 def _conversation_lane_user_message(
+    lane: dict[str, Any],
+    *,
+    timed_out: bool = False,
+    status_override: str = "",
+) -> str:
+    message = _lane_status_message_body(
+        lane, timed_out=timed_out, status_override=status_override
+    )
+    return message + _lane_status_repeat_suffix(message)
+
+
+def _lane_status_message_body(
     lane: dict[str, Any],
     *,
     timed_out: bool = False,
