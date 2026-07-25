@@ -244,6 +244,16 @@ class TtsConfig:
     # the resident 32B is holding.
     workers: int = field(default_factory=lambda: _env_int("AURA_VOICE_TTS_WORKERS", 2))
 
+    # Zero-shot voice cloning from a reference clip (XTTS-v2). Off unless a
+    # clip is configured, because it costs seconds of latency per reply —
+    # see _ClonedVoiceEngine for the trade.
+    clone_reference: str = field(
+        default_factory=lambda: os.environ.get("AURA_VOICE_CLONE_REFERENCE", "")
+    )
+    prefer_clone: bool = field(
+        default_factory=lambda: _env_flag("AURA_VOICE_PREFER_CLONE", False)
+    )
+
 
 @dataclass(slots=True)
 class BargeInConfig:

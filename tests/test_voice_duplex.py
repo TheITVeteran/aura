@@ -368,6 +368,63 @@ def test_real_speech_is_not_discarded(text):
 # ── mind bridge ──────────────────────────────────────────────────────────
 
 
+# ── coqui compatibility shim ─────────────────────────────────────────────
+
+
+def test_shim_restores_the_symbol_coqui_needs():
+    """coqui-TTS imports a helper transformers 5.x removed.
+
+    Pinning transformers back would satisfy the TTS package at the cost of
+    the version mlx-lm and the resident 32B are built against — risking the
+    mind to gain a voice option. The shim reinstates the one symbol instead.
+    """
+    from core.voice.duplex import coqui_compat
+
+    assert coqui_compat.apply() is True
+    import transformers.pytorch_utils as pytorch_utils
+
+    assert hasattr(pytorch_utils, "isin_mps_friendly")
+
+
+def test_shim_is_idempotent_and_does_not_clobber_a_real_symbol():
+    import transformers.pytorch_utils as pytorch_utils
+
+    from core.voice.duplex import coqui_compat
+
+    coqui_compat.apply()
+    sentinel = pytorch_utils.isin_mps_friendly
+    coqui_compat._applied = False  # force a second pass
+    coqui_compat.apply()
+    assert pytorch_utils.isin_mps_friendly is sentinel
+
+
+def test_shim_matches_torch_isin_semantics():
+    import torch
+
+    from core.voice.duplex.coqui_compat import _isin_mps_friendly
+
+    elements = torch.tensor([1, 2, 3, 4, 5])
+    test = torch.tensor([2, 4])
+    assert torch.equal(_isin_mps_friendly(elements, test), torch.isin(elements, test))
+
+
+def test_cloned_voice_refuses_without_licence_acceptance(monkeypatch, tmp_path):
+    """XTTS-v2 is CPML-licensed; accepting on the operator's behalf is not
+    this code's call, so it must fail closed with a reason."""
+    from core.voice.duplex.config import TtsConfig
+    from core.voice.duplex.tts_stream import _ClonedVoiceEngine
+
+    for name in ("AURA_COQUI_CPML_ACCEPTED", "AURA_COQUI_COMMERCIAL_LICENSED", "COQUI_TOS_AGREED"):
+        monkeypatch.delenv(name, raising=False)
+
+    clip = tmp_path / "ref.wav"
+    clip.write_bytes(b"RIFF")
+    config = TtsConfig()
+    config.clone_reference = str(clip)
+
+    assert _ClonedVoiceEngine(config).load() is False
+
+
 def test_responder_failure_returns_none_rather_than_inventing_a_reply():
     async def broken(transcript, *, effective_message, session_id, timeout_s):
         raise RuntimeError("cognition lane down")

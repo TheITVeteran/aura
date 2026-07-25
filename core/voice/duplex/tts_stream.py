@@ -192,6 +192,82 @@ class _PiperEngine:
         return np.concatenate(chunks), self._rate
 
 
+class _ClonedVoiceEngine:
+    """XTTS-v2 zero-shot cloning from a reference clip.
+
+    Opt-in, and off by default, because the trade is real and steep. Kokoro
+    reaches first audio in ~190 ms; XTTS is roughly realtime on this host, so
+    a cloned voice costs one to three seconds of extra latency on every reply.
+    That is the difference between a phone call and a walkie-talkie, which is
+    precisely the quality the rest of this lane exists to protect.
+
+    Enable it when the specific voice matters more than the responsiveness —
+    and note it only speaks as well as the reference clip: 6-20 seconds of
+    clean, single-speaker audio with no music or background noise.
+    """
+
+    name = "xtts_clone"
+
+    def __init__(self, config: TtsConfig) -> None:
+        self._config = config
+        self._tts: Any = None
+        self._lock = threading.Lock()
+        self._rate = 24_000
+        self._available = False
+        self._reference: Path | None = None
+
+    def load(self) -> bool:
+        from core.voice.duplex import coqui_compat
+
+        reference = Path(self._config.clone_reference or "")
+        if not reference.is_file():
+            logger.info("Cloned voice requested but reference clip %s is missing", reference)
+            return False
+
+        if not coqui_compat.license_accepted():
+            # XTTS-v2 is CPML-licensed. Accepting on the operator's behalf is
+            # not this code's call, so fail closed with a clear reason.
+            logger.warning(
+                "Cloned voice disabled: XTTS-v2 is CPML-licensed and no acceptance "
+                "flag is set (COQUI_TOS_AGREED / AURA_COQUI_CPML_ACCEPTED)."
+            )
+            return False
+
+        if not coqui_compat.apply():
+            return False
+
+        try:
+            from TTS.api import TTS  # noqa: N811 — upstream class name
+
+            self._tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+            self._reference = reference
+            self._available = True
+            logger.info("XTTS cloned voice loaded from %s", reference.name)
+            return True
+        except (ImportError, OSError, RuntimeError, ValueError, AttributeError, TypeError) as exc:
+            record_degradation(
+                "voice_duplex.tts",
+                exc,
+                action="cloned voice unavailable; using preset voices",
+                severity="warning",
+            )
+            return False
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    def synthesize(self, text: str, spec: ProsodySpec) -> tuple[np.ndarray, int]:
+        with self._lock:
+            wav = self._tts.tts(
+                text=text,
+                speaker_wav=str(self._reference),
+                language="en",
+                speed=float(spec.speed),
+            )
+        return np.asarray(wav, dtype=np.float32), self._rate
+
+
 def _resample(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """Rate-convert to the lane's output rate.
 
@@ -225,6 +301,7 @@ def _resample(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
 
 @dataclass(slots=True)
 class _EngineState:
+    clone: _ClonedVoiceEngine | None = None
     kokoro: _KokoroEngine | None = None
     piper: _PiperEngine | None = None
     say_available: bool = False
@@ -250,6 +327,13 @@ class StreamingTts:
                 return self.available
             loop = asyncio.get_running_loop()
 
+            # Cloning first only when explicitly preferred: it is the slowest
+            # engine by a wide margin, so it must never be picked by accident.
+            if self._config.prefer_clone and self._config.clone_reference:
+                clone = _ClonedVoiceEngine(self._config)
+                if await loop.run_in_executor(self._pool, clone.load):
+                    self._state.clone = clone
+
             kokoro = _KokoroEngine(self._config)
             if await loop.run_in_executor(self._pool, kokoro.load):
                 self._state.kokoro = kokoro
@@ -269,7 +353,8 @@ class StreamingTts:
     @property
     def available(self) -> bool:
         return bool(
-            self._state.kokoro
+            self._state.clone
+            or self._state.kokoro
             or self._state.piper
             or self._state.say_available
         )
@@ -283,6 +368,8 @@ class StreamingTts:
 
     @property
     def engine_name(self) -> str:
+        if self._state.clone:
+            return "xtts_clone"
         if self._state.kokoro:
             return "kokoro"
         if self._state.piper:
@@ -325,7 +412,7 @@ class StreamingTts:
         started = time.perf_counter()
         loop = asyncio.get_running_loop()
 
-        for engine in (self._state.kokoro, self._state.piper):
+        for engine in (self._state.clone, self._state.kokoro, self._state.piper):
             if engine is None:
                 continue
             try:
