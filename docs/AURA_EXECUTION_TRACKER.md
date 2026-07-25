@@ -27502,3 +27502,85 @@ is approximately 62.1%-94.5%, with a midpoint planning estimate of 75.0%.
 Next: publish CP364 through CP366, then implement SPARK-049's bounded local
 invalidation and repair. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-25-367: Exact-Refutation Local Invalidation and Repair
+
+SPARK-049 closes the first bounded local-repair transaction without granting
+generated criticism authority over an accepted answer. The review first found
+and fixed a false resolution in SPARK-048: two contradictory exact claims that
+both individually pass arithmetic, syntax, or JSON checks no longer count as a
+resolved disagreement. An already executed exact route resolves a plan only
+when its primary evidence includes a refutation.
+
+For each exact refutation, the worker reconstructs the failed atom from the
+primary deterministic route, walks the directed claim graph to invalidate the
+failed node and all descendants, binds the touched transitions, identifies any
+exactly verified ancestor routes, and records the last valid prefix. Every
+atom outside that closure is also committed, so a repair cannot quietly change
+a later independent claim. Duplicate and stale source/route bindings fail
+before generation.
+
+The live engine runs this transaction by default after the existing
+counterfactual, generative, and prefix-stability verifier obligations. It
+admits at most one fresh-context attempt by default, starts with zero KV
+offsets on the same resident checkpoint, imports no solver context, and may
+spend only compute above the protected completion and fallback reserve. The
+private prompt supplies the exact failure evidence, original candidate,
+invalidated IDs, objective, and preserved prefix. Its strict output contract
+allows one `replacement_suffix` and rejects extra keys, duplicate markers,
+trailing material, empty output, incomplete contract termination, or oversized
+content.
+
+A generated repair is admitted only when source reconstruction proves the
+prefix unchanged, every unrelated atom retains its kind, content hash, and
+dependency cues at the same ordinal, the failed verifier class reruns and now
+returns `verified`, no exact refutation remains, and the complete replacement
+decomposition is grade-admissible. The original branch commitments remain
+identical before and after the transaction. The result is an additive,
+content-addressed candidate with no latent-state, branch-selection,
+accepted-answer, or user-visible answer effect; SPARK-050 must separately prove
+confidence-bound replacement.
+
+The service independently reconstructs graph/selector lineage, request
+coverage, invalidation closure, verified ancestors, preserved and unrelated
+atoms, fresh-generation context, replacement decomposition and routes, counts,
+transaction hashes, and authority. Fifteen direct repair contracts cover
+closure, verified ancestors, successful suffix repair, changed prefix,
+unrelated suffix mutation, persistent refutation, honest non-execution, request
+bounds, malformed output, stale upstream evidence, and receipt/authority
+tampering. The focused repair/selector/engine/service battery passes 167 tests;
+the complete 73-file latent/RLC ownership battery passes 1,246 tests on the
+combined tree.
+
+Ruff, bytecode compilation, diff hygiene, governance ownership,
+resource-observation ownership, model-load ownership, and the enterprise
+static ratchet pass. Governance remains 1,973 recognized calls in 1,847
+buckets with 1,788 inherited migration-debt calls. Resource observation scans
+2,962 Python files with zero findings; model-load ownership remains 47 paths,
+60 references, and zero findings. The enterprise gate remains at 168 findings,
+38 high, zero critical, and no baseline regression.
+
+The reconciled dirty-candidate closeout audit also passes. It enumerates 8,027
+tracked files, including 7,996 text files and 4,998 code files, and binds
+4,252,702 text lines plus 1,597,025 code lines to the generated ledgers. Its
+production-readiness contract, architecture dependency map, model-load
+ownership, and resource-observation gates all pass. The audit correctly leaves
+`full_closeout_complete=false`: 4,474 code files remain without current
+full-file semantic receipts, so mechanical enumeration is not represented as
+semantic completion.
+
+This checkpoint proves bounded exact-refutation invalidation and repair
+mechanics. It does not claim that a non-exact diagnostic resolved a dispute,
+that a repaired candidate replaced an answer, resident-32B improvement,
+adapter interaction, broad reasoning gains, frontier capability, or
+long-duration runtime survival.
+
+Four cooperative body/fatigue and resident-heartbeat checkpoints landed after
+CP366 and before this integration (`9c7c944e6`, `a9720fe5b`, `d364153bc`, and
+`d705d8988`). Counting those records and CP367 makes this total checkpoint
+record 489. The forecast remains 512-779 total records, leaving approximately
+23-290 records after this checkpoint. Checkpoint-count completion is
+approximately 62.8%-95.5%, with a midpoint planning estimate of 75.8%. Next:
+publish CP367, then implement
+SPARK-050's confidence-bound answer replacement. Final multi-hour soaks remain
+deferred until every shorter gate is green.

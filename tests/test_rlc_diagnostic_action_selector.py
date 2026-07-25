@@ -173,6 +173,31 @@ def test_exact_arithmetic_route_is_recorded_as_already_executed_resolution():
     }
 
 
+def test_two_individually_valid_exact_claims_do_not_fake_dispute_resolution():
+    candidates = {0: "2 + 2 = 4", 1: "2 + 3 = 5"}
+    objective = "Determine which arithmetic claim answers the objective."
+    decompositions = {
+        str(index): build_atomic_decomposition(text, objective=objective)
+        for index, text in candidates.items()
+    }
+    routes = build_candidate_routes(
+        candidates,
+        objective=objective,
+        candidate_decompositions=decompositions,
+    )
+    receipt = _build(
+        graph=_graph(dispute_kind="claim", decompositions=decompositions),
+        routes=routes,
+    )
+
+    execute = next(
+        row for row in receipt["plans"][0]["candidates"] if row["method"] == "execute"
+    )
+    assert execute["already_executed"] is False
+    assert execute["available"] is False
+    assert receipt["plans"][0]["selected"]["method"] == "specialized_verifier"
+
+
 def test_source_route_selects_real_available_evidence_reinspection():
     candidates = {
         0: "According to source A, the value is 4.",

@@ -206,7 +206,8 @@ def _applicability(
         if row["verifier"] in _EXACT_VERIFIERS
         and row["outcome"] in {"verified", "refuted"}
     ]
-    if method == "execute" and exact:
+    exact_outcomes = {row["outcome"] for row in exact}
+    if method == "execute" and "refuted" in exact_outcomes:
         return 1.0, "deterministic_route_already_executed", True
     routed_methods = {
         _ROUTE_METHOD[row["verifier"]]

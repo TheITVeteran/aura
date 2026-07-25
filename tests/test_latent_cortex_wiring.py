@@ -844,6 +844,9 @@ def test_config_from_job_defaults_are_conservative():
     assert cfg.prefix_stability_samples == 3
     assert cfg.prefix_stability_max_tokens == 128
     assert cfg.prefix_stability_calibrator is None
+    assert cfg.local_repair_enabled is True
+    assert cfg.local_repair_max_attempts == 1
+    assert cfg.local_repair_max_tokens == 128
     assert cfg.uncertainty_head is None
     assert cfg.mistake_locator is None
     assert cfg.contradiction_head is None
@@ -876,6 +879,10 @@ def test_config_from_job_rejects_out_of_band_requests():
         config_from_job({"verifier_accept_non_regression": "true"})
     with pytest.raises(ValueError, match="outside"):
         config_from_job({"prefix_stability_samples": 2})
+    with pytest.raises(ValueError, match="outside"):
+        config_from_job({"local_repair_max_attempts": 9})
+    with pytest.raises(ValueError, match="outside"):
+        config_from_job({"local_repair_max_tokens": 16})
     with pytest.raises(ValueError, match="calibrator config"):
         config_from_job({"prefix_stability_calibrator": {"mode": "learned"}})
     with pytest.raises(ValueError, match="requires head_path"):
@@ -1414,6 +1421,11 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     tampered = copy.deepcopy(body["receipt"])
     tampered["diagnostic_action_selection"]["execution_effect"] = "executed"
     assert "diagnostic_action_selection_unproven" in (
+        LatentCortexService._receipt_contract_errors(tampered, contract_config)
+    )
+    tampered = copy.deepcopy(body["receipt"])
+    tampered["local_repair"]["accepted_answer_effect"] = "replaced"
+    assert "local_repair_unproven" in (
         LatentCortexService._receipt_contract_errors(tampered, contract_config)
     )
     tampered = copy.deepcopy(body["receipt"])

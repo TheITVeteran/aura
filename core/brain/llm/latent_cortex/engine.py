@@ -3677,6 +3677,88 @@ class LatentCortexEngine:
             verifier = None
             winner = select_without_task_verifier()
 
+        # Localize branch disagreements while the exact probe inventory and
+        # action lineage are both available. Repair generation is deferred
+        # until the established verifier mesh has consumed its own budget.
+        if receipt.cognitive_operator_trace:
+            from core.brain.llm.latent_cortex.structural_diversity import (
+                build_structural_diversity_receipt,
+            )
+
+            receipt.structural_diversity = build_structural_diversity_receipt(
+                n_branches=len(ensemble.branches),
+                cognitive_slots=receipt.cognitive_slots,
+                operator_trace=receipt.cognitive_operator_trace,
+                action_trace=receipt.cognitive_action_trace,
+                branch_isolation=ensemble.isolation_receipt(
+                    runner.cache_discipline_receipt()
+                ),
+            )
+            if receipt.structural_diversity.get("certified") is not True:
+                receipt.flag("structural_diversity_unproven")
+            from core.brain.llm.latent_cortex.disagreement_graph import (
+                build_disagreement_graph_receipt,
+                decompose_branch_candidates,
+            )
+
+            candidate_decompositions = (
+                decompose_branch_candidates(
+                    branch_probe_texts,
+                    objective=verification_objective,
+                )
+                if len(branch_probe_texts) == len(ensemble.branches)
+                else {}
+            )
+            receipt.disagreement_graph = build_disagreement_graph_receipt(
+                n_branches=len(ensemble.branches),
+                operator_trace=receipt.cognitive_operator_trace,
+                action_trace=receipt.cognitive_action_trace,
+                structural_diversity=receipt.structural_diversity,
+                candidate_decompositions=candidate_decompositions,
+                blind_review=receipt.blind_review,
+            )
+            from core.brain.llm.latent_cortex.diagnostic_action_selector import (
+                build_candidate_routes,
+                build_diagnostic_action_selector_receipt,
+            )
+
+            candidate_routes = (
+                build_candidate_routes(
+                    branch_probe_texts,
+                    objective=verification_objective,
+                    candidate_decompositions=candidate_decompositions,
+                )
+                if candidate_decompositions
+                else {}
+            )
+            receipt.diagnostic_action_selection = (
+                build_diagnostic_action_selector_receipt(
+                    disagreement_graph=receipt.disagreement_graph,
+                    candidate_routes=candidate_routes,
+                    action_policy_evidence=action_policy_evidence,
+                    value_policy=receipt.value_of_computation,
+                    action_trace=receipt.cognitive_action_trace,
+                )
+            )
+            from core.brain.llm.latent_cortex.local_repair import (
+                build_local_repair_receipt,
+                parse_local_repair_generation,
+                prepare_local_repair_requests,
+            )
+
+            repair_limit = (
+                self.config.local_repair_max_attempts
+                if self.config.local_repair_enabled
+                else 0
+            )
+            prepared_repairs = prepare_local_repair_requests(
+                disagreement_graph=receipt.disagreement_graph,
+                diagnostic_selection=receipt.diagnostic_action_selection,
+                branch_candidates=branch_probe_texts,
+                objective=verification_objective,
+                max_requests=repair_limit,
+            )
+
         # SPARK-044: counterfactual generation is allowed to resolve only a
         # calibrated top task-verifier tie. Every tied candidate receives the
         # same exact arithmetic interventions in a fresh zero-offset context;
@@ -3870,6 +3952,79 @@ class LatentCortexEngine:
                 "selection_effect": "none",
                 "correctness_effect": "none",
             }
+        # SPARK-049 executes only after the prior verifier mesh. The attempt
+        # may spend compute above the protected completion/fallback reserve,
+        # adds a separately verified candidate, and cannot mutate a branch or
+        # replace the accepted answer.
+        if receipt.cognitive_operator_trace:
+            generated_repairs: dict[str, dict[str, Any]] = {}
+            repair_failures: dict[str, str] = {}
+            for repair_request in prepared_repairs:
+                request_id = str(repair_request["request_id"])
+                try:
+                    generated = self._fresh_verifier_generation(
+                        str(repair_request["prompt"]),
+                        budget,
+                        max_tokens=self.config.local_repair_max_tokens,
+                        reserve_layer_apps=safety_reserve,
+                    )
+                    generated_context = generated["context"]
+                    if generated_context.get("termination") != "contract_complete":
+                        raise ValueError("repair generation contract did not complete")
+                    repaired_candidate = parse_local_repair_generation(
+                        generated["text"],
+                        prefix=str(repair_request["prefix"]),
+                    )
+                    from core.brain.llm.latent_cortex.atomic_decomposition import (
+                        build_atomic_decomposition,
+                    )
+
+                    build_atomic_decomposition(
+                        repaired_candidate,
+                        objective=verification_objective,
+                    )
+                    generated_repairs[request_id] = {
+                        "candidate": repaired_candidate,
+                        "generation_context": {
+                            "prompt_sha256": repair_request["prompt_sha256"],
+                            "generated_token_count": generated_context[
+                                "generated_token_count"
+                            ],
+                            "termination": generated_context["termination"],
+                            "initial_cache_offsets": generated_context[
+                                "initial_cache_offsets"
+                            ],
+                            "final_cache_offsets": generated_context[
+                                "final_cache_offsets"
+                            ],
+                            "all_initial_offsets_zero": generated_context[
+                                "all_initial_offsets_zero"
+                            ],
+                            "solver_context_imported": generated_context[
+                                "solver_context_imported"
+                            ],
+                            "parameter_relation": generated_context[
+                                "parameter_relation"
+                            ],
+                        },
+                    }
+                except RuntimeError as exc:
+                    repair_failures[request_id] = (
+                        "budget_unavailable"
+                        if "budget" in str(exc).lower()
+                        else "generation_failed"
+                    )
+                except (ImportError, OSError, OverflowError, TypeError, ValueError):
+                    repair_failures[request_id] = "generation_contract_invalid"
+            receipt.local_repair = build_local_repair_receipt(
+                disagreement_graph=receipt.disagreement_graph,
+                diagnostic_selection=receipt.diagnostic_action_selection,
+                branch_candidates=branch_probe_texts,
+                objective=verification_objective,
+                generated_repairs=generated_repairs,
+                execution_failures=repair_failures,
+                max_requests=repair_limit,
+            )
         receipt.branch_scores = [float(b.score) for b in ensemble.branches]
         receipt.selected_branch = winner.index
         receipt.steps_taken = winner.steps
@@ -4725,63 +4880,6 @@ class LatentCortexEngine:
                 cognitive_action_trace=receipt.cognitive_action_trace,
             )
         if receipt.cognitive_operator_trace:
-            from core.brain.llm.latent_cortex.structural_diversity import (
-                build_structural_diversity_receipt,
-            )
-
-            receipt.structural_diversity = build_structural_diversity_receipt(
-                n_branches=len(ensemble.branches),
-                cognitive_slots=receipt.cognitive_slots,
-                operator_trace=receipt.cognitive_operator_trace,
-                action_trace=receipt.cognitive_action_trace,
-                branch_isolation=receipt.branch_isolation,
-            )
-            if receipt.structural_diversity.get("certified") is not True:
-                receipt.flag("structural_diversity_unproven")
-            from core.brain.llm.latent_cortex.disagreement_graph import (
-                build_disagreement_graph_receipt,
-                decompose_branch_candidates,
-            )
-
-            candidate_decompositions = (
-                decompose_branch_candidates(
-                    branch_probe_texts,
-                    objective=verification_objective,
-                )
-                if len(branch_probe_texts) == len(ensemble.branches)
-                else {}
-            )
-            receipt.disagreement_graph = build_disagreement_graph_receipt(
-                n_branches=len(ensemble.branches),
-                operator_trace=receipt.cognitive_operator_trace,
-                action_trace=receipt.cognitive_action_trace,
-                structural_diversity=receipt.structural_diversity,
-                candidate_decompositions=candidate_decompositions,
-                blind_review=receipt.blind_review,
-            )
-            from core.brain.llm.latent_cortex.diagnostic_action_selector import (
-                build_candidate_routes,
-                build_diagnostic_action_selector_receipt,
-            )
-
-            candidate_routes = (
-                build_candidate_routes(
-                    branch_probe_texts,
-                    objective=verification_objective,
-                    candidate_decompositions=candidate_decompositions,
-                )
-                if candidate_decompositions
-                else {}
-            )
-            receipt.diagnostic_action_selection = (
-                build_diagnostic_action_selector_receipt(
-                    disagreement_graph=receipt.disagreement_graph,
-                    candidate_routes=candidate_routes,
-                    action_policy_evidence=action_policy_evidence,
-                    value_policy=receipt.value_of_computation,
-                    action_trace=receipt.cognitive_action_trace,
-                )
-            )
             from core.brain.llm.latent_cortex.correlated_support import (
                 build_correlated_support_receipt,
             )

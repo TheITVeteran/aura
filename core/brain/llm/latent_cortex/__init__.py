@@ -51,6 +51,13 @@ from core.brain.llm.latent_cortex.latent_tree_search import (
 from core.brain.llm.latent_cortex.latent_tree_search import (
     append_transaction as append_latent_tree_transaction,
 )
+from core.brain.llm.latent_cortex.local_repair import (
+    LOCAL_REPAIR_SCHEMA,
+    build_local_repair_receipt,
+    parse_local_repair_generation,
+    prepare_local_repair_requests,
+    validate_local_repair_receipt,
+)
 from core.brain.llm.latent_cortex.types import (
     BranchConfig,
     ComputeBudget,
@@ -83,6 +90,7 @@ __all__ = [
     "LatentOptConfig",
     "LatentReasoningResult",
     "LatentTreeSearchConfig",
+    "LOCAL_REPAIR_SCHEMA",
     "RecurrenceConfig",
     "RouteOutcome",
     "TransitionKind",
@@ -96,11 +104,14 @@ __all__ = [
     "build_disagreement_graph_receipt",
     "build_empty_virtual_quanta_receipt",
     "build_empty_latent_tree_receipt",
+    "build_local_repair_receipt",
     "decomposition_check",
     "decompose_branch_candidates",
     "append_latent_tree_transaction",
     "run_latent_tree_search",
     "router_check",
+    "parse_local_repair_generation",
+    "prepare_local_repair_requests",
     "validate_latent_tree_receipt",
     "validate_latent_tree_transaction",
     "validate_atomic_decomposition",
@@ -108,6 +119,7 @@ __all__ = [
     "validate_deterministic_router_envelope",
     "validate_diagnostic_action_selector_receipt",
     "validate_disagreement_graph_receipt",
+    "validate_local_repair_receipt",
     "run_virtual_quanta",
     "validate_virtual_quanta_receipt",
 ]

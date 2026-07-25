@@ -1884,9 +1884,48 @@ before those dependencies close is not admissible.
   checkpoint does not claim that an unexecuted recommendation resolved a
   dispute, repaired a branch, improved the resident 32B, or established
   frontier capability.
-- [ ] **SPARK-049 - Local invalidation and repair.** Preserve verified ancestors,
+- [x] **SPARK-049 - Local invalidation and repair.** Preserve verified ancestors,
   invalidate the failed node and descendants, regenerate from the last valid
   state, and prove unrelated correct work is unchanged.
+
+  CP367 adds a default-on, bounded repair transaction after the established
+  verifier mesh and before later latent adaptation. A repair request exists
+  only when a primary exact verifier has actually refuted an atomic claim.
+  Merely running an exact verifier is no longer enough: two individually valid
+  but different arithmetic claims do not fake a resolved disagreement.
+
+  The transaction reconstructs the failed atom from its deterministic route,
+  computes the complete directed descendant closure, binds every invalidated
+  transition, names any exactly verified ancestor routes, and preserves the
+  complete atom prefix before the failure. It also commits every atom outside
+  the invalidation closure, including later independent claims. A fresh,
+  zero-offset same-checkpoint generation receives the private original
+  candidate, exact failure evidence, invalidation set, objective, and last
+  valid prefix. The default policy permits one attempt and cannot spend the
+  completion/fallback reserve.
+
+  Admission requires the prefix to reconstruct exactly, every unrelated atom
+  to retain its kind/content/dependency signature at the same ordinal, the
+  originally failed verifier class to rerun and return `verified`, no other
+  exact refutation to remain, and the replacement decomposition to be
+  complete. A malformed, truncated, stale, still-refuted, overbroad, or
+  budget-denied generation becomes an explicit non-repair. Original branch
+  commitments remain byte-for-byte unchanged; an admitted result adds a
+  separately committed epistemic candidate only. It has no latent-state,
+  branch-selection, accepted-answer, or user-visible answer effect.
+
+  The service independently reconstructs upstream graph/selector binding,
+  failed-node closure, verified ancestors, preserved and unrelated atoms,
+  generation context, exact replacement routes, counts, hashes, and authority.
+  Fifteen direct repair contracts plus selector, engine, worker-config, and
+  service-tamper coverage pass in a 167-test focused battery. The complete
+  73-file latent/RLC ownership battery passes 1,246 tests on the combined tree.
+  Ruff, compilation, diff hygiene, governance ownership, resource-observation
+  ownership, model-load ownership, and the enterprise ratchet pass without a
+  baseline increase. This proves bounded exact-refutation repair mechanics; it
+  does not claim that non-exact recommendations resolved a dispute, that a
+  repair replaced an accepted answer, resident-32B gain, adapter interaction,
+  broad reasoning gain, or frontier capability.
 - [ ] **SPARK-050 - Confidence-bound answer replacement.** Replace an accepted
   answer only when the new lower confidence bound exceeds the old upper bound
   plus a preregistered margin; otherwise retain, qualify, or abstain.

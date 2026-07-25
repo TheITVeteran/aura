@@ -104,6 +104,9 @@ _CONFIG_KEYS = {
     "prefix_stability_top_p",
     "prefix_stability_seed",
     "prefix_stability_calibrator",
+    "local_repair_enabled",
+    "local_repair_max_attempts",
+    "local_repair_max_tokens",
     "verifier_fusion_evidence",
     "jitter_scale",
     "input_context_max_chars",
@@ -292,6 +295,15 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
             raw, "prefix_stability_seed", 104_729, int
         ),
         prefix_stability_calibrator=raw.get("prefix_stability_calibrator"),
+        local_repair_enabled=_typed_value(
+            raw, "local_repair_enabled", True, bool
+        ),
+        local_repair_max_attempts=_typed_value(
+            raw, "local_repair_max_attempts", 1, int
+        ),
+        local_repair_max_tokens=_typed_value(
+            raw, "local_repair_max_tokens", 128, int
+        ),
         verifier_fusion_evidence=raw.get("verifier_fusion_evidence"),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool

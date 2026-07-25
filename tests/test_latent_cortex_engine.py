@@ -119,6 +119,9 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
         "diagnostic_recommendation_only"
     )
     assert r.diagnostic_action_selection["execution_effect"] == "none"
+    assert r.local_repair["request_count"] == 0
+    assert r.local_repair["repair_effect"] == "none"
+    assert r.local_repair["answer_selection_effect"] == "none"
     assert r.correlated_support["raw_support_count"] == 2
     assert r.correlated_support["evidence_state"] == "bootstrap_unmeasured"
     assert r.correlated_support["confidence_multiplier"] <= 1.0
@@ -299,6 +302,7 @@ def test_admitted_fresh_refutation_causally_replaces_provisional_winner(
         config=_config(
             branches=BranchConfig(n_branches=2, exchange_interval=2),
             generative_verifier_max_tokens=64,
+            local_repair_enabled=False,
         ),
     )
     monkeypatch.setattr(
@@ -348,6 +352,85 @@ def test_admitted_fresh_refutation_causally_replaces_provisional_winner(
     assert result.receipt.generative_verifier["selection_effect"] == "winner_replaced"
     assert result.receipt.generative_verifier["vetoed_branch"] == 0
     assert result.receipt.selected_branch == 1
+
+
+def test_exact_refutation_runs_bounded_local_repair_without_replacing_answer(
+    tiny_model,
+    monkeypatch,
+):
+    class ProbeTokenizer:
+        eos_token_id = None
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5]
+
+        @staticmethod
+        def decode(tokens):
+            values = list(tokens)
+            if values == [100]:
+                return "Prelude stays fixed. Therefore 2 + 2 = 5."
+            if values == [101]:
+                return "Prelude stays fixed. Therefore 2 + 2 = 4."
+            return "A complete final answer."
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        ProbeTokenizer(),
+        config=_config(
+            branches=BranchConfig(n_branches=2, exchange_interval=2),
+            generative_verifier_enabled=False,
+            counterfactual_verifier_enabled=False,
+            prefix_stability_enabled=False,
+            local_repair_max_tokens=64,
+        ),
+    )
+    monkeypatch.setattr(
+        engine,
+        "_decode_probe",
+        lambda branch, *_args, **_kwargs: [100 + branch.index],
+    )
+
+    def verifier(text: str) -> float:
+        return 0.9 if "= 4" in text else 0.1
+
+    def fresh(prompt: str, *_args, **_kwargs):
+        assert "PRESERVED_PREFIX:" in prompt
+        return {
+            "text": (
+                'FINAL_ANSWER: {"replacement_suffix":'
+                '"Therefore 2 + 2 = 4."}'
+            ),
+            "context": {
+                "schema": "aura.rlc.fresh_verifier_context.v1",
+                "prompt_token_count": 1,
+                "generated_token_count": 16,
+                "termination": "contract_complete",
+                "initial_cache_offsets": [0] * N_LAYERS,
+                "final_cache_offsets": [16] * N_LAYERS,
+                "all_initial_offsets_zero": True,
+                "solver_context_imported": False,
+                "parameter_relation": "shared_resident_checkpoint",
+            },
+        }
+
+    monkeypatch.setattr(engine, "_fresh_verifier_generation", fresh)
+    result = engine.reason(
+        prompt="Compute 2 + 2 exactly.",
+        verifier=verifier,
+        budget=ComputeBudget(max_layer_apps=500_000, wall_clock_s=30.0),
+    )
+
+    assert result.ok
+    repair = result.receipt.local_repair
+    assert repair["request_count"] == 1
+    assert repair["attempted_count"] == 1
+    assert repair["admitted_count"] == 1
+    assert repair["repair_effect"] == "candidate_pool_addition"
+    assert repair["accepted_answer_effect"] == "none"
+    assert repair["original_branch_commitments_before"] == (
+        repair["original_branch_commitments_after"]
+    )
 
 
 def test_counterfactual_verifier_causally_breaks_only_equal_score_tie(

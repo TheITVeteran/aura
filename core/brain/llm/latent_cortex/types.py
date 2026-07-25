@@ -472,6 +472,12 @@ class CortexConfig:
     prefix_stability_top_p: float = 0.9
     prefix_stability_seed: int = 104_729
     prefix_stability_calibrator: dict[str, Any] | None = None
+    # Exact verifier refutations may trigger one source-private regeneration
+    # from the last unchanged atomic prefix. The result enters only the
+    # candidate pool; answer replacement belongs to the later confidence gate.
+    local_repair_enabled: bool = True
+    local_repair_max_attempts: int = 1
+    local_repair_max_tokens: int = 128
     # Strict experiments accept only a higher task-verifier score. The live
     # product profile may additionally accept an exactly non-regressing score
     # when the candidate also proves descent on the answer-leak-proof proxy.
@@ -959,6 +965,12 @@ class CortexConfig:
                     ContradictionPerturberConfig.from_value(self.contradiction_perturber)
                 except (TypeError, ValueError) as exc:
                     problems.append(str(exc))
+        if type(self.local_repair_enabled) is not bool:
+            problems.append("local_repair_enabled must be boolean")
+        if not integer_in(self.local_repair_max_attempts, 0, 8):
+            problems.append("local_repair_max_attempts outside [0, 8]")
+        if not integer_in(self.local_repair_max_tokens, 32, 512):
+            problems.append("local_repair_max_tokens outside [32, 512]")
         if self.local_exploration is not None:
             if not isinstance(self.local_exploration, dict):
                 problems.append("local_exploration must be a mapping or null")
@@ -1422,6 +1434,10 @@ class EpisodeReceipt:
     # Cheapest available diagnostic selected for each localized disagreement,
     # bound to deterministic routes and measured/declared action costs.
     diagnostic_action_selection: dict[str, Any] = field(default_factory=dict)
+    # Source-private regeneration from an exactly refuted atom. Original
+    # branch commitments remain immutable and the repaired candidate has no
+    # answer-selection authority until SPARK-050.
+    local_repair: dict[str, Any] = field(default_factory=dict)
     correlated_support: dict[str, Any] = field(default_factory=dict)
     # Latent interpretability/safety telemetry (telemetry.LatentTelemetry).
     latent_telemetry: dict[str, Any] = field(default_factory=dict)
@@ -1632,6 +1648,7 @@ class EpisodeReceipt:
             "structural_diversity": dict(self.structural_diversity),
             "disagreement_graph": dict(self.disagreement_graph),
             "diagnostic_action_selection": dict(self.diagnostic_action_selection),
+            "local_repair": dict(self.local_repair),
             "correlated_support": dict(self.correlated_support),
             "latent_telemetry": dict(self.latent_telemetry),
             "probe_cache": dict(self.probe_cache),

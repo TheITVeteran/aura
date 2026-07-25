@@ -1821,6 +1821,20 @@ class LatentCortexService:
             except (ImportError, TypeError, ValueError):
                 errors.append("diagnostic_action_selection_unproven")
             try:
+                from core.brain.llm.latent_cortex.local_repair import (
+                    validate_local_repair_receipt,
+                )
+
+                validate_local_repair_receipt(
+                    receipt.get("local_repair"),
+                    disagreement_graph=receipt.get("disagreement_graph"),
+                    diagnostic_selection=receipt.get(
+                        "diagnostic_action_selection"
+                    ),
+                )
+            except (ImportError, KeyError, TypeError, ValueError):
+                errors.append("local_repair_unproven")
+            try:
                 from core.brain.llm.latent_cortex.correlated_support import (
                     validate_correlated_support_receipt,
                 )
