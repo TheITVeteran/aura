@@ -43,10 +43,12 @@ def gate(monkeypatch):
     g._last_background_memory_shed_at = 0.0
     g._brainstem_client = FakeClient("/models/Qwen2.5-7B-Instruct-4bit")
     g._reflex_client = FakeClient("/models/Qwen2.5-1.5B-Instruct-4bit")
-    # Memory is genuinely tight — the shed is entitled to run.
+    # Tight enough that the shed runs (below the 24+8GB abundance guard), but
+    # not so tight that the cortex itself cannot load (>= its 24GB reserve).
+    # That window is precisely where preserving the ladder is the right call.
     monkeypatch.setattr(
         "core.utils.memory_monitor.get_memory_pressure_snapshot",
-        lambda: type("S", (), {"available_gb": 10.0})(),
+        lambda: type("S", (), {"available_gb": 28.0})(),
         raising=False,
     )
     return g
@@ -124,3 +126,65 @@ class TestLadderDiscovery:
         assert bare._fallback_ladder_paths() == frozenset() or isinstance(
             bare._fallback_ladder_paths(), frozenset
         )
+
+
+class TestTheLadderYieldsWhenItBlocksTheCortex:
+    """Keeping the parachute is right until it is what keeps the engine off.
+
+    Live 2026-07-25: the cortex died six times in one run against
+
+        foreground_warmup_deferred:memory_pressure:75.6%/15.6GB
+        (need <72.0% and >=20.0GB)
+
+    on a 64GB host. Preserving the ladder unconditionally — the previous
+    version of this very fix — kept several GB resident that the 20GB cortex
+    load needed, so the lane the shed exists to protect could never return.
+
+    One turn served by a lower lane costs a turn. A cortex that can never load
+    costs the session.
+    """
+
+    def test_the_ladder_is_shed_when_the_cortex_cannot_load(self, gate, monkeypatch):
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 15.6})(),
+            raising=False,
+        )
+        brainstem = gate._brainstem_client
+
+        _run_shed(
+            gate, {brainstem.model_path: brainstem}, "protected_foreground_shed"
+        )
+
+        assert brainstem.rebooted, (
+            "with 15.6GB free the 20GB cortex cannot load; the ladder is the "
+            "thing to spend"
+        )
+
+    def test_the_ladder_is_kept_when_the_cortex_could_load(self, gate, monkeypatch):
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 40.0})(),
+            raising=False,
+        )
+        brainstem = gate._brainstem_client
+
+        _run_shed(
+            gate, {brainstem.model_path: brainstem}, "protected_foreground_shed"
+        )
+
+        assert not brainstem.rebooted, (
+            "with headroom to spare the fallback stays resident"
+        )
+
+    def test_an_unreadable_probe_keeps_the_ladder(self, gate, monkeypatch):
+        """Shedding on a guess is the failure this branch exists to prevent."""
+        def _boom():
+            raise RuntimeError("probe unavailable")
+
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            _boom,
+            raising=False,
+        )
+        assert gate._memory_blocks_primary_load() is False

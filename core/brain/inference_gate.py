@@ -3301,7 +3301,27 @@ class InferenceGate:
         # latency and contending with the cortex for the single GPU slot.
         #
         # Shedding the parachute to make the plane lighter.
+        # …but not at the cost of the lane it is protecting. Live 2026-07-25:
+        # the cortex died six times in one run against
+        #   foreground_warmup_deferred:memory_pressure:75.6%/15.6GB
+        #   (need <72.0% and >=20.0GB)
+        # on a 64GB host. Preserving the ladder unconditionally kept several GB
+        # resident that the 20GB cortex load needed, so the lane the shed
+        # exists to protect could never come back. Keeping the parachute is
+        # right while the plane is flying; it is not right when the parachute
+        # is what is keeping the engine off.
+        #
+        # So: preserve the ladder on a protected shed UNLESS memory is short
+        # enough that the cortex cannot load at all. Then the ladder is the
+        # thing to spend — one turn served by a lower lane costs a turn; a
+        # cortex that can never load costs the session.
         preserve_ladder = str(reason or "") == "protected_foreground_shed"
+        if preserve_ladder and self._memory_blocks_primary_load():
+            logger.warning(
+                "🪂 InferenceGate: memory is too short for the primary lane to "
+                "load; shedding the fallback ladder so the cortex can come back."
+            )
+            preserve_ladder = False
         ladder_paths = self._fallback_ladder_paths() if preserve_ladder else frozenset()
 
         shed_count = 0
@@ -3344,6 +3364,23 @@ class InferenceGate:
                 shed_count,
                 reason,
             )
+
+    def _memory_blocks_primary_load(self) -> bool:
+        """Whether free memory is below what the primary lane needs to load.
+
+        Fails SAFE: an unreadable memory probe returns False, i.e. keep the
+        ladder. Shedding the fallback on a guess is the failure this whole
+        branch exists to prevent.
+        """
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            available_gb = float(get_memory_pressure_snapshot().available_gb)
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            logger.debug("Primary-load memory probe unavailable: %s", exc)
+            return False
+        cortex_reserve_gb = self._env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0)
+        return available_gb < cortex_reserve_gb
 
     def _fallback_ladder_paths(self) -> frozenset[str]:
         """Model paths that form the escalation ladder below the cortex.
