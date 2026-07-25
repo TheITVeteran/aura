@@ -814,6 +814,67 @@ class ReActResponseParser:
 # ReAct Loop — The Core Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _safe_thought_text(content: Any) -> str:
+    """Defuse a thought before it reaches a public stream.
+
+    Thoughts summarise tool and web observations, so an injected turn
+    boundary can ride this channel into the UI presented as Aura's own
+    reasoning. The prompt path already neutralises forged role markers;
+    the same defusal applies here rather than a second, weaker copy.
+    """
+    text = str(content or "")
+    if not text:
+        return ""
+    try:
+        from core.brain.llm.runtime_wiring import _neutralize_role_markers
+
+        return _neutralize_role_markers(text)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        # Absence of the neutraliser is not a reason to emit raw text.
+        record_degradation("react_loop_thought_defusal", exc)
+        return text.replace("<|", "<").replace("|>", ">")
+
+
+# Terminal reasons that did NOT reach a real answer. An answer produced on
+# one of these paths is a partial synthesis over unverified observations.
+_INCOMPLETE_REASONS = frozenset({"max_steps", "timeout", "llm_error", "error"})
+
+
+def _quoted_observation(trace: "ReActTrace") -> str:
+    """The last observation, clearly attributed and never asserted as fact.
+
+    CP126 546a0fb4. Observations are raw tool and web output. Concatenating
+    one into Aura's own sentence presents unverified — possibly injected —
+    text as her own statement. Quoting it keeps the information available
+    while making its provenance and status explicit.
+    """
+    if not trace.steps:
+        return " No stable observation was available."
+    content = str(trace.steps[-1].observation.content or "").strip()
+    if not content:
+        return " No stable observation was available."
+    return (
+        " Here is the last thing a tool reported, unverified and quoted as-is:\n"
+        f"> {content[:200]}"
+    )
+
+
+def _completeness_flags(trace: "ReActTrace") -> dict[str, Any]:
+    """Public honesty metadata for the final event."""
+    incomplete = trace.terminated_reason in _INCOMPLETE_REASONS
+    return {
+        "complete": not incomplete,
+        "verified": False,
+        "partial": incomplete,
+        "terminated_reason": trace.terminated_reason,
+        "unverified_observations": bool(trace.steps),
+        "partial_reason": (
+            f"stopped on {trace.terminated_reason} before reaching a verified answer"
+            if incomplete else ""
+        ),
+    }
+
+
 class ReActLoop:
     """
     The main reasoning loop.
@@ -982,10 +1043,21 @@ class ReActLoop:
                     if not thought:
                         thought = Thought(content="[reasoning not captured]")
 
+                    # CP126 61c82041. Raw chain-of-thought reaches any
+                    # stream consumer. The neural feed is a deliberate
+                    # transparency surface, so this keeps flowing — but the
+                    # content passes through the SAME role-marker defusal
+                    # the prompt path uses, because a thought summarising a
+                    # web observation can carry an injected turn boundary
+                    # into the UI wearing Aura's voice. The event also
+                    # declares what it is, so nothing downstream can mistake
+                    # internal deliberation for a verified statement.
                     yield {
                         "type": "thought",
-                        "content": thought.content,
+                        "content": _safe_thought_text(thought.content),
                         "step": step_num,
+                        "internal": True,
+                        "verified": False,
                     }
 
                     # Check for final answer or request help
@@ -1044,10 +1116,13 @@ class ReActLoop:
                     )
 
                 else:
-                    # Max steps reached
+                    # Max steps reached. CP126 546a0fb4: this synthesises over
+                    # observations that came from tools and the open web, so
+                    # it is neither complete nor verified — and it used to be
+                    # emitted as an ordinary final answer with nothing saying
+                    # so.
                     trace.terminated_reason = "max_steps"
                     if not trace.final_answer:
-                        # Force a synthesis from what we have
                         synthesis_prompt = (
                             f"Based on your research so far:\n{self._format_trace(trace.steps)}\n\n"
                             f"Provide a final synthesized answer to: {query}"
@@ -1057,15 +1132,20 @@ class ReActLoop:
                             res = await self.brain.think(synthesis_prompt, mode=ThinkingMode.FAST)
                             trace.final_answer = res.content if hasattr(res, 'content') else str(res)
                         except (ImportError, AttributeError, RuntimeError):
-                            trace.final_answer = "I've been thinking hard about this. " + (
-                                trace.steps[-1].observation.content[:200] if trace.steps else ""
-                            )
+                            trace.final_answer = (
+                                "I ran out of reasoning steps before reaching a "
+                                "verified answer."
+                            ) + _quoted_observation(trace)
 
         except TimeoutError:
             trace.terminated_reason = "timeout"
-            trace.final_answer = "That required more reasoning time than I had. Here's what I know so far: " + (
-                trace.steps[-1].observation.content[:200] if trace.steps else "no stable observation was available before timeout."
-            )
+            # The last observation is raw tool or web output. Splicing it into
+            # Aura's own voice both overstates it and carries any injected
+            # text straight to the user, so it is QUOTED as an unverified
+            # observation rather than asserted.
+            trace.final_answer = (
+                "That required more reasoning time than I had."
+            ) + _quoted_observation(trace)
 
         trace.total_steps = len(trace.steps)
         trace.elapsed_ms = (time.time() - start_time) * 1000
@@ -1079,7 +1159,16 @@ class ReActLoop:
         if self.record_episodes:
             await self._record_trace_episode(trace)
 
-        yield {"type": "final", "content": trace.final_answer, "total_steps": trace.total_steps, "trace": trace}
+        # The public final event carries whether this answer is complete and
+        # whether anything verified it. A partial synthesis over unverified
+        # observations must not be indistinguishable from a finished answer.
+        yield {
+            "type": "final",
+            "content": trace.final_answer,
+            "total_steps": trace.total_steps,
+            "trace": trace,
+            **_completeness_flags(trace),
+        }
 
     async def _record_trace_episode(self, trace: "ReActTrace") -> None:
         """Write the completed trace to episodic memory.

@@ -118,6 +118,37 @@ class EmotionalState:
         return self.intensity > threshold
 
 
+# Bump when the sealed state definition changes. A seal written under an
+# older schema is MIGRATED (after authenticating under that older schema),
+# never treated as tampering — a schema upgrade is our change, not an
+# attacker's.
+_IDENTITY_SEAL_SCHEMA = 2
+
+
+def _sealable(value: Any) -> Any:
+    """Canonical, order-stable, float-stable form of an identity value.
+
+    Floats are rounded because identity values are read back through JSON
+    and arithmetic; representation drift in the last bits is not a change
+    to who Aura is, and treating it as one would make the seal cry wolf.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return round(value, 6)
+    if isinstance(value, (int, str)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _sealable(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_sealable(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted(str(item) for item in value)
+    return str(value)
+
+
 class PersonalityEngine:
     """Manages Aura's emotional states, personality traits, and identity integrity.
     
@@ -411,11 +442,43 @@ class PersonalityEngine:
             )
             return False
 
-    def _get_hashable_state(self) -> str:
+    def _get_hashable_state(self, *, schema: int = _IDENTITY_SEAL_SCHEMA) -> str:
+        """The identity state the seal authenticates.
+
+        CP126 24267ddc. Schema 1 hashed the soul version plus the sorted
+        NAMES of traits and protocols — labels only. Every value was
+        outside the seal, so a passing seal said nothing about the identity
+        the engine actually injects and evolves: trait intensities, protocol
+        text, the active persona, interests, opinions, emotional baselines,
+        evolved traits and the identity prompt could all be rewritten and
+        the signature would not move.
+
+        Schema 2 covers the values. Floats are rounded before hashing so
+        ordinary representation drift is not mistaken for tampering.
+        """
+        if schema == 1:
+            # Retained verbatim so an existing seal can still be
+            # authenticated before it is migrated. Never used to seal.
+            state = {
+                "version": getattr(self.soul, 'version', '3.5.5'),
+                "traits": sorted(self.soul.intensities.keys()) if hasattr(self.soul, 'intensities') else [],
+                "protocols": sorted(self.soul.protocols.keys()) if hasattr(self.soul, 'protocols') else []
+            }
+            return json.dumps(state, sort_keys=True)
+
         state = {
-            "version": getattr(self.soul, 'version', '3.5.5'),
-            "traits": sorted(self.soul.intensities.keys()) if hasattr(self.soul, 'intensities') else [],
-            "protocols": sorted(self.soul.protocols.keys()) if hasattr(self.soul, 'protocols') else []
+            "schema": _IDENTITY_SEAL_SCHEMA,
+            "version": getattr(self.soul, "version", "3.5.5"),
+            "traits": _sealable(getattr(self.soul, "intensities", None)),
+            "protocols": _sealable(getattr(self.soul, "protocols", None)),
+            # getattr: the seal is verified during __init__, before every
+            # attribute exists. A half-built engine must still be sealable.
+            "active_persona": str(getattr(self, "active_persona", "") or ""),
+            "interests": _sealable(getattr(self.soul, "interests", None)),
+            "opinions": _sealable(getattr(self.soul, "opinions", None)),
+            "emotional_baselines": _sealable(getattr(self.soul, "emotional_baselines", None)),
+            "evolved_traits": _sealable(getattr(self.soul, "evolved_traits", None)),
+            "identity_prompt": _sealable(getattr(self.soul, "identity_prompt", None)),
         }
         return json.dumps(state, sort_keys=True)
 
@@ -452,7 +515,38 @@ class PersonalityEngine:
             stored_seal = self.seal_file.read_text().strip()
             if hmac.compare_digest(stored_seal, signature):
                 return True
-            
+
+            # SCHEMA MIGRATION, NOT TAMPERING. A seal written under an older
+            # sealed-state definition cannot match the new one, and failing
+            # closed on that would refuse identity verification on the first
+            # boot after this change — an outage caused by our own upgrade.
+            #
+            # The migration is authenticated: the stored seal must verify
+            # against the OLD state definition before it is rewritten under
+            # the new one. A tampered seal authenticates under neither and
+            # still fails closed.
+            for legacy_schema in range(_IDENTITY_SEAL_SCHEMA - 1, 0, -1):
+                try:
+                    legacy_state = self._get_hashable_state(schema=legacy_schema)
+                except _PERSONALITY_RECOVERABLE_ERRORS:
+                    continue
+                legacy_signature = hmac.new(
+                    self.secret_key, legacy_state.encode(), hashlib.sha256,
+                ).hexdigest()
+                if hmac.compare_digest(stored_seal, legacy_signature):
+                    _record_personality_degradation(
+                        PersistenceCorruption(
+                            f"identity seal was written under schema {legacy_schema}; "
+                            f"migrating to schema {_IDENTITY_SEAL_SCHEMA}"
+                        ),
+                        action="resealed identity after authenticating the previous seal",
+                        severity="warning",
+                        extra={"path": str(self.seal_file)},
+                    )
+                    return self._write_identity_seal(
+                        signature, reason=f"schema {legacy_schema} migration",
+                    )
+
             # Enterprise Recovery: In DEV mode, if seal mismatches (e.g. version update),
             # we allow auto-resealing to prevent boot hangs, while logging the event.
             if config.env == "dev":
@@ -1137,6 +1231,23 @@ def register_personality_service() -> None:
 _personality_engine: PersonalityEngine | None = None
 _pe_lock = threading.Lock()
 
+# What the identity-causal path actually reads off the engine. Split by kind
+# because they ARE different kinds: current_mood is a string attribute on the
+# real engine, not a method, and requiring it to be callable would have
+# rejected PersonalityEngine itself — the check is only sound if it describes
+# the real object.
+_PERSONALITY_ENGINE_METHODS = (
+    "get_personality_prompt",
+    "filter_response",
+)
+_PERSONALITY_ENGINE_ATTRIBUTES = (
+    "current_mood",
+)
+_PERSONALITY_ENGINE_INTERFACE = (
+    _PERSONALITY_ENGINE_METHODS + _PERSONALITY_ENGINE_ATTRIBUTES
+)
+
+
 def get_personality_engine() -> PersonalityEngine:
     """Get global personality engine via thread-safe singleton (OPT-04)."""
     global _personality_engine
@@ -1159,7 +1270,36 @@ def get_personality_engine() -> PersonalityEngine:
         logger.debug("Suppressed Exception: %s", _exc)
         registered = None
     if registered is not None:
-        return registered
+        # CP126 b9015f4d. Any non-None object was returned here — no type,
+        # interface or lifecycle check — so a stale or hostile registration
+        # became the identity-causal service without passing the engine's
+        # own constructor checks.
+        #
+        # A strict isinstance would defeat the read-through design the
+        # comment above describes (test stubs must be able to win), so the
+        # bar is the INTERFACE the identity path actually calls. Something
+        # that cannot serve as the personality engine does not get to be it,
+        # and the rejection is recorded rather than silently swallowed.
+        _absent = object()
+        missing = [
+            name for name in _PERSONALITY_ENGINE_METHODS
+            if not callable(getattr(registered, name, None))
+        ] + [
+            name for name in _PERSONALITY_ENGINE_ATTRIBUTES
+            if getattr(registered, name, _absent) is _absent
+        ]
+        if missing:
+            _record_personality_degradation(
+                PersistenceCorruption(
+                    "registered personality_engine is missing "
+                    + ", ".join(missing)
+                ),
+                action="ignored an unusable personality_engine registration",
+                severity="critical",
+                extra={"registered_type": type(registered).__name__},
+            )
+        else:
+            return registered
 
     if _personality_engine is None:
         with _pe_lock:

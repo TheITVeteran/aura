@@ -16,6 +16,24 @@ from types import SimpleNamespace
 from core.container import ServiceContainer
 
 
+def _engine_double(name: str) -> SimpleNamespace:
+    """A double that can plausibly BE the personality engine.
+
+    CP126 b9015f4d: get_personality_engine now refuses a registration that
+    cannot answer the identity-causal interface, because a stale or hostile
+    object must not become the identity service. These tests are about
+    LATCHING, not validity, so the double satisfies the interface — what
+    they assert (read-through, no caching into the module global) is
+    unchanged.
+    """
+    return SimpleNamespace(
+        name=name,
+        get_personality_prompt=lambda *a, **k: "",
+        current_mood=lambda *a, **k: "neutral",
+        filter_response=lambda text, *a, **k: text,
+    )
+
+
 class TestLatchMechanism:
     def test_container_value_is_read_through_not_latched(self):
         """The historical latch defect is FIXED: get_personality_engine reads
@@ -25,7 +43,7 @@ class TestLatchMechanism:
         from core.brain import personality_engine as pe
 
         pe.reset_personality_engine_for_test()
-        double = SimpleNamespace(name="latch-proof-double")
+        double = _engine_double("latch-proof-double")
         ServiceContainer.register_instance("personality_engine", double, required=False)
         try:
             assert pe.get_personality_engine() is double, "registered value wins while present"
@@ -42,7 +60,7 @@ class TestLatchMechanism:
     def test_reset_purges_the_latch(self):
         from core.brain import personality_engine as pe
 
-        double = SimpleNamespace(name="latch-proof-double-2")
+        double = _engine_double("latch-proof-double-2")
         ServiceContainer.register_instance("personality_engine", double, required=False)
         try:
             assert pe.get_personality_engine() is double
