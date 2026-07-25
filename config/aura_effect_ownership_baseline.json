@@ -4225,6 +4225,14 @@
       "scope": "<module>.ModelLaneController._save_locked"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/oom_policy.py",
+      "scope": "<module>._append_shed_log"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -14626,6 +14634,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "fbd9eeb1b1a54a2738294197e2b87c2aee986adff8d1315747b00ebf547365c0",
+  "inventory_sha256": "4f308bd7db167a708bf9fa2764bef407e9c3b8c56f0229787aae4a9ace4344bf",
   "schema_version": 1
 }

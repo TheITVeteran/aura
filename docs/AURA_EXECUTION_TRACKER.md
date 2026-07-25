@@ -26980,3 +26980,35 @@ Checkpoint-count completion is approximately 57.2%-89.9%, with a midpoint
 planning estimate of 69.9%. Next: publish CP358, then implement SPARK-045's
 prefix-stability verifier. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-24-359: OOM Evidence Writes Have an Explicit Owner
+
+The parallel kernel-discipline checkpoint added an append-only OOM shed log
+through `FileWriteGateway` but omitted its ownership-bucket baseline. The
+governance scanner therefore found one new, unexplained effect owner on the
+combined tree. CP359 reviews that call site and adds exactly one bucket:
+`core/runtime/oom_policy.py::_append_shed_log` calling the governed append
+surface once.
+
+The path is bounded to Aura's configured data directory, executes inside
+`local_internal_governed_scope("oom_policy.shed_log")`, identifies
+`oom_policy` as the source, and deliberately cannot block emergency shedding
+if durable evidence persistence fails. No raw file primitive, count increase,
+stale bucket, or unrelated debt is normalized. The refreshed inventory
+contains 1,955 recognized calls in 1,829 buckets; the existing 1,783
+migration-debt calls remain visible rather than being misrepresented as
+closed.
+
+The exact combined integration suite passes 187/187 across the SPARK-044 RLC
+contracts and kernel-discipline tests. Repository Ruff and diff hygiene pass.
+Governance lint returns to exact-baseline green. This checkpoint proves only
+explicit ownership of the new OOM evidence append; it does not certify the
+larger kernel-discipline subsystem, retire historic governance debt, or alter
+the still-open semantic, live, release, and soak gates.
+
+This is total checkpoint record 420. The forecast remains 466-733 total
+records, leaving approximately 46-313 records after this checkpoint.
+Checkpoint-count completion is approximately 57.3%-90.1%, with a midpoint
+planning estimate of 70.1%. Next: publish CP358 and CP359, then implement
+SPARK-045's prefix-stability verifier. Final multi-hour soaks remain deferred
+until every shorter gate is green.
