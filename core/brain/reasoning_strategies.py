@@ -686,6 +686,21 @@ class ReasoningStrategies:
         # Set reasoning_timeout_s = 90.0 to guarantee critique finishes or falls back fast without timing out the outer AGI task.
         critique_kwargs = dict(kwargs)
         critique_kwargs["bypass_critique"] = True
+        # A critique is INTERNAL. It is prose about an answer, not an answer,
+        # and judging it against the user's turn is a category error that kills
+        # the amplifier: the live 2026-07-25 capability run rejected
+        # "The proposed answer is 100% correct." for
+        # off_topic_self_reflection_reply + missing_requested_objective_facets,
+        # against validation_source=inference_gate.visible_user_message. The
+        # critic was doing its job perfectly and the reply gate threw the whole
+        # reasoning pass away for not sounding like a chat reply.
+        #
+        # The critique's OUTPUT still faces the gate when it becomes the
+        # delivered text — that check belongs downstream, on what the person
+        # actually receives.
+        critique_kwargs["clean_user_surface_contract"] = False
+        critique_kwargs["user_surface_validation_prompt"] = ""
+        critique_kwargs["internal_reasoning_stage"] = "critique"
         critique_kwargs["prefer_tier"] = "primary"
         critique_kwargs["deep_handoff"] = False
         critique_kwargs["allow_cloud_fallback"] = True

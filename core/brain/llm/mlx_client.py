@@ -47,6 +47,14 @@ from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
 
 logger = logging.getLogger("LLM.MLX")
+
+# Abort reasons that race a finishing generation: losing that race is the
+# timeout working, not a fault.
+_ABORT_RACE_MARKERS_RE = re.compile(
+    r"generation_timeout|first_token|soft_deadline|deadline_missed|"
+    r"turn_complete|request_finished",
+    re.IGNORECASE,
+)
 _AURA_SOURCE_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -5488,8 +5496,26 @@ class MLXLocalClient:
         if not had_active_request and not had_process:
             return False
         if not had_active_request:
-            # An idle-but-alive worker is being killed on an arbitrary reason
-            # string — legitimate for emergencies, but it must be visible.
+            # The generation this abort was chasing already finished. That is a
+            # race the timeout will always sometimes lose, not damage: the live
+            # 2026-07-25 capability run recorded
+            # force_abort_without_active_request:inference_gate_generation_timeout:Reflex:14.4s
+            # as a degradation AND a MARGINAL fault, and then killed a healthy
+            # idle worker — buying a cold reload for a turn that had already
+            # been answered.
+            #
+            # Nothing to abort is a no-op, and a worker with no work is not a
+            # worker to kill.
+            if _ABORT_RACE_MARKERS_RE.search(str(reason or "")):
+                logger.info(
+                    "🛈 [MLX] Abort for %s arrived after the generation "
+                    "finished (%s); nothing to abort, leaving the worker up.",
+                    os.path.basename(self.model_path),
+                    reason,
+                )
+                return False
+            # Any OTHER reason killing an idle-but-alive worker is an arbitrary
+            # emergency kill and must stay visible.
             _record_mlx_degradation(
                 RuntimeError(f"force_abort_without_active_request:{reason}"),
                 action="force-aborted an idle worker with no pending request",
