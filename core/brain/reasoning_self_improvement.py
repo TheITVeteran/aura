@@ -24,6 +24,7 @@ Boundaries (deliberate, honest):
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 import logging
 import os
 import tempfile
@@ -82,6 +83,30 @@ class ReasoningTrace:
             captured_at=float(data.get("captured_at", time.time()) or time.time()),
             fed=bool(data.get("fed", False)),
         )
+
+
+def _feed_was_accepted(result: Any, *, expected: int) -> tuple[bool, str]:
+    """Whether a training feed positively confirmed it took the traces.
+
+    Marking a trace fed retires it permanently, so this requires a positive
+    statement rather than the absence of an exception (CP126 2aaf46cd).
+    A feed that returns nothing meaningful has not confirmed anything.
+    """
+    if result is None:
+        return False, "feed returned None"
+    if result is False:
+        return False, "feed returned False"
+    if isinstance(result, Mapping):
+        if result.get("ok") is False or result.get("error"):
+            return False, f"feed reported an error: {str(result.get('error'))[:120]}"
+        accepted = result.get("accepted", result.get("count"))
+        if isinstance(accepted, int) and not isinstance(accepted, bool):
+            if accepted < expected:
+                return False, f"feed accepted {accepted} of {expected}"
+        return True, ""
+    # A non-mapping, non-falsey result (including True) is taken as
+    # acceptance: several governed pipes return only a truthy handle.
+    return True, ""
 
 
 class ReasoningSelfImprovement:
@@ -250,6 +275,26 @@ class ReasoningSelfImprovement:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("reasoning_self_improvement_feed", exc)
             return {"status": "feed_failed", "error": f"{type(exc).__name__}: {exc}"}
+
+        # CP126 2aaf46cd. Any result that did not RAISE marked every trace
+        # fed and reported status "fed" — so False, None, an error envelope
+        # or a partial count all retired the traces. A trace marked fed is
+        # never offered again, so a feed that silently did nothing discarded
+        # the work permanently while reporting success.
+        accepted, reason = _feed_was_accepted(result, expected=len(pending))
+        if not accepted:
+            record_degradation(
+                "reasoning_self_improvement_feed",
+                RuntimeError(f"training feed not confirmed: {reason}"),
+                severity="warning",
+                action="left traces unfed after an unconfirmed training feed",
+            )
+            return {
+                "status": "feed_unconfirmed",
+                "reason": reason,
+                "pending": len(pending),
+                "feed_result": result,
+            }
 
         with self._lock:
             for t in self._traces.values():

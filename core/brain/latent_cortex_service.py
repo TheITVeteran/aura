@@ -35,6 +35,11 @@ from core.runtime.structured_input import analyze_prompt_shape
 
 logger = logging.getLogger("Aura.LatentCortexService")
 
+# Explicit flag vocabularies. Anything outside both is a configuration
+# error, not a silent activation (CP126 d9a04e05).
+_TRUTHY_FLAG_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
+_FALSEY_FLAG_VALUES = frozenset({"0", "false", "no", "off", "disabled", ""})
+
 _CONTROLLER_SURFACE_OVERRIDE_KEYS = {
     "decode_max_tokens",
     "decode_temperature",
@@ -53,7 +58,25 @@ def _controller_accepts_overrides(overrides: dict[str, Any] | None) -> bool:
 
 
 def _cortex_enabled() -> bool:
-    return str(os.environ.get("AURA_LATENT_CORTEX", "1")).strip() != "0"
+    # CP126 d9a04e05. This enabled the cortex for every value except the
+    # exact string "0", so "false", "no", "disabled", "off" and any typo all
+    # ACTIVATED resident latent execution — the opposite of what the operator
+    # wrote. A flag that ignores what it was told is worse than no flag.
+    raw = str(os.environ.get("AURA_LATENT_CORTEX", "1")).strip().lower()
+    if raw in _TRUTHY_FLAG_VALUES:
+        return True
+    if raw in _FALSEY_FLAG_VALUES:
+        return False
+    # Neither: the operator meant something we do not understand. Default on
+    # (this subsystem is on by default) but say so, rather than silently
+    # reinterpreting the instruction.
+    record_degradation(
+        "latent_cortex_service",
+        ValueError(f"unrecognised AURA_LATENT_CORTEX value {raw!r}"),
+        severity="warning",
+        action="kept the latent cortex at its default state after an unreadable flag",
+    )
+    return True
 
 
 def _integrity_verdict(receipt: Any, claim: str) -> str:

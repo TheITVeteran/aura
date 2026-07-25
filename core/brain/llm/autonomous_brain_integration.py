@@ -195,13 +195,33 @@ class AutonomousCognitiveEngine:
             or getattr(config.llm, "mlx_brainstem_path", None)
             or get_runtime_model_path(BRAINSTEM_MODEL)
         )
+        # CP126 ba0a6e78. This started False and stayed False when the proof
+        # policy could not be imported or evaluated, and allow_non_primary_tiers
+        # is its negation — so a policy FAILURE registered cloud and
+        # non-primary local endpoints during what may well have been a proof
+        # run. The one condition under which we cannot confirm a proof lane
+        # became the condition under which we widened it.
+        #
+        # Unavailable policy is treated as proof-active: the restrictive
+        # answer. A proof run that wrongly excludes a cloud tier produces a
+        # narrower proof; a non-proof run that wrongly excludes one loses a
+        # fallback. Both are recoverable. A proof silently contaminated by
+        # cloud inference is not.
         primary_proof_lane = False
         try:
             from core.runtime.proof_policy import proof_model_tier, proof_run_active
 
             primary_proof_lane = bool(proof_run_active(origin="llm_tier_initialization") and proof_model_tier() == "primary")
         except BRAIN_RECOVERABLE_ERRORS as exc:
-            logger.debug("Proof tier policy unavailable during LLM tier initialization: %s", exc)
+            primary_proof_lane = True
+            _record_brain_degradation(
+                exc,
+                action=(
+                    "assumed a primary proof lane because the proof policy could "
+                    "not be evaluated; non-primary tiers withheld"
+                ),
+                severity="warning",
+            )
         allow_non_primary_tiers = not primary_proof_lane
 
         if cortex_model_path and PRIMARY_ENDPOINT not in getattr(self.llm_router, "endpoints", {}):

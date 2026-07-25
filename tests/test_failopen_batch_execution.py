@@ -158,3 +158,133 @@ class TestRepairAcceptanceIsPositive:
         source = inspect.getsource(mod)
         assert "reason.lower() not in {" not in source
         assert "_ACCEPTING_STATUSES" in source
+
+
+class TestHonestyFloorNeverManufacturesClaims:
+    """``5b6d3690`` — the synthesis fallback rewrote "AI assistant" into
+    "autonomous intelligence" and "as an assistant" into "as your equal
+    partner". It MANUFACTURED the overclaiming the method exists to prevent,
+    precisely when the honesty layer was unavailable."""
+
+    def _source(self):
+        from core.brain import personality_engine as mod
+
+        return inspect.getsource(mod.PersonalityEngine.filter_response)
+
+    def test_the_overclaim_rewrite_is_gone(self):
+        """The REWRITE, not the words — the comment explaining what was
+        removed necessarily quotes them."""
+        source = self._source()
+        assert '.replace("AI assistant", "autonomous intelligence")' not in source
+        assert '.replace("as an assistant", "as your equal partner")' not in source
+
+    def test_an_unavailable_guard_returns_the_original(self):
+        """Shaped text that never passed the honesty floor is exactly what
+        must not be emitted."""
+        source = self._source()
+        tail = source.split("except (ImportError, AttributeError, RuntimeError, TypeError, ValueError)", 1)[1]
+        assert "return text" in tail
+        assert "return shaped" not in tail
+
+    def test_an_empty_guard_refusal_returns_the_original(self):
+        source = self._source()
+        assert "did not clear the honesty floor" in source
+
+
+class TestProofLaneWithholdsOnPolicyFailure:
+    """``ba0a6e78`` — primary_proof_lane stayed False when the policy could
+    not be evaluated, and allow_non_primary_tiers is its negation, so a
+    policy FAILURE registered cloud and non-primary tiers during a proof
+    run."""
+
+    def test_policy_failure_assumes_a_proof_lane(self):
+        from core.brain.llm import autonomous_brain_integration as mod
+
+        source = inspect.getsource(mod)
+        block = source.split("primary_proof_lane = False", 1)[1][:1200]
+        assert "primary_proof_lane = True" in block
+        assert "non-primary tiers withheld" in block
+
+
+class TestEnableFlagsReadWhatWasWritten:
+    """``d9a04e05`` — every value except the exact string "0" enabled the
+    cortex, so "false", "no", "disabled" and typos all ACTIVATED resident
+    latent execution."""
+
+    def _enabled(self, value, monkeypatch):
+        import core.brain.latent_cortex_service as mod
+
+        monkeypatch.setenv("AURA_LATENT_CORTEX", value)
+        return mod._cortex_enabled()
+
+    @pytest.mark.parametrize("value", ["0", "false", "no", "disabled", "off"])
+    def test_falsey_values_disable(self, value, monkeypatch):
+        assert self._enabled(value, monkeypatch) is False
+
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "on", "enabled"])
+    def test_truthy_values_enable(self, value, monkeypatch):
+        assert self._enabled(value, monkeypatch) is True
+
+    def test_an_unreadable_value_is_reported_not_reinterpreted(self, monkeypatch):
+        from core.brain import latent_cortex_service as mod
+
+        assert self._enabled("banana", monkeypatch) is True
+        source = inspect.getsource(mod)
+        assert "unrecognised AURA_LATENT_CORTEX value" in source
+
+
+class TestTracesRetireOnlyOnAConfirmedFeed:
+    """``2aaf46cd`` — any result that did not raise marked every trace fed. A
+    trace marked fed is never offered again, so a feed that silently did
+    nothing discarded the work permanently while reporting success."""
+
+    def _accepted(self, result, expected=5):
+        from core.brain.reasoning_self_improvement import _feed_was_accepted
+
+        return _feed_was_accepted(result, expected=expected)[0]
+
+    @pytest.mark.parametrize(
+        "result", [None, False, {"error": "boom"}, {"ok": False}, {"accepted": 2}],
+    )
+    def test_unconfirmed_feeds_do_not_retire_traces(self, result):
+        assert self._accepted(result) is False
+
+    @pytest.mark.parametrize("result", [True, {"ok": True, "accepted": 5}, {"status": "queued"}])
+    def test_confirmed_feeds_do(self, result):
+        assert self._accepted(result) is True
+
+    def test_the_caller_reports_unconfirmed(self):
+        from core.brain import reasoning_self_improvement as mod
+
+        source = inspect.getsource(mod.ReasoningSelfImprovement.maybe_improve)
+        assert "feed_unconfirmed" in source
+
+
+class TestRecallOutcomeIsObservable:
+    """``29374cf0`` — every path returned None, so installed, skipped, empty
+    and broken were indistinguishable, and a genuine build error was filed at
+    debug beside routine "nothing to recall".
+
+    Failing open is CORRECT here — recall is an enhancement and generating
+    without it is the right degradation — so the fix is observability, not a
+    hard failure."""
+
+    def test_the_outcome_has_a_reportable_status(self):
+        from core.brain.nonparametric_worker import last_recall_outcome
+
+        outcome = last_recall_outcome()
+        assert "status" in outcome and "detail" in outcome
+
+    def test_every_path_records_which_happened(self):
+        from core.brain import nonparametric_worker as mod
+
+        source = inspect.getsource(mod.maybe_build_foreground)
+        for status in ("disabled", "not_admitted", "unavailable", "empty", "installed", "failed"):
+            assert f'"{status}"' in source, status
+
+    def test_a_real_failure_is_no_longer_debug_noise(self):
+        from core.brain import nonparametric_worker as mod
+
+        source = inspect.getsource(mod.maybe_build_foreground)
+        assert 'severity="warning"' in source
+        assert 'severity="debug"' not in source

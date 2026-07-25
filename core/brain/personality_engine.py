@@ -922,9 +922,19 @@ class PersonalityEngine:
         shaped = text
         try:
             from core.synthesis import cure_personality_leak
-        except (ImportError, AttributeError, RuntimeError):
-            # Basic fallback if the synthesis layer is unavailable.
-            shaped = text.replace("AI assistant", "autonomous intelligence").replace("as an assistant", "as your equal partner")
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            # CP126 5b6d3690. The old fallback rewrote "AI assistant" into
+            # "autonomous intelligence" and "as an assistant" into "as your
+            # equal partner" — it MANUFACTURED the overclaiming this method
+            # exists to prevent, and did so precisely when the synthesis
+            # layer was unavailable. A degraded honesty path must not invent
+            # identity claims; it leaves the text alone.
+            _record_personality_degradation(
+                exc,
+                action="left text unshaped because the synthesis layer was unavailable",
+                severity="warning",
+            )
+            shaped = text
         else:
             shaped = cure_personality_leak(text)
 
@@ -933,11 +943,26 @@ class PersonalityEngine:
 
             guarded = guard_user_facing_output(shaped)
             if isinstance(guarded, str) and guarded.strip():
-                shaped = guarded
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return shaped
-
-        return shaped
+                return guarded
+            # An empty or non-string refusal is the guard declining to pass
+            # this text. Shaped text that did not clear the honesty floor is
+            # exactly what must not be emitted, so fall back to the ORIGINAL.
+            _record_personality_degradation(
+                RuntimeError("user-facing guard returned no usable text"),
+                action="returned the original text because shaping did not clear the honesty floor",
+                severity="warning",
+            )
+            return text
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            # The honesty control is unavailable. Returning `shaped` here
+            # preserved personality-shaped text that never passed it; the
+            # original is the safer artifact.
+            _record_personality_degradation(
+                exc,
+                action="returned unshaped text because the honesty guard was unavailable",
+                severity="critical",
+            )
+            return text
 
     def _apply_random_fluctuations(self):
         """Small random emotional fluctuations (natural variability)"""

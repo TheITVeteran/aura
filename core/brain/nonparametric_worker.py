@@ -98,6 +98,26 @@ def foreground_memory_admitted_for_job(job: Any) -> bool:
     )
 
 
+# Last foreground-recall outcome, so a request can report whether memory was
+# installed, deliberately skipped, empty, or failed to build. Every path
+# returned None before, which made those indistinguishable (CP126 29374cf0).
+_RECALL_OUTCOME: dict[str, Any] = {"status": "not_attempted", "detail": ""}
+
+
+def _set_recall_outcome(status: str, detail: str = "") -> None:
+    _RECALL_OUTCOME["status"] = status
+    _RECALL_OUTCOME["detail"] = detail
+
+
+def last_recall_outcome() -> dict[str, Any]:
+    """What the most recent foreground-recall build actually did.
+
+    status is one of: not_attempted, disabled, not_admitted, unavailable,
+    empty, installed, failed.
+    """
+    return dict(_RECALL_OUTCOME)
+
+
 def maybe_build_foreground(
     model: Any,
     *,
@@ -109,24 +129,48 @@ def maybe_build_foreground(
     so the live path pays nothing (no tap, no processor) unless there is genuinely something
     to recall. Fully fail-open: any error returns None and the worker generates normally.
     """
-    if not foreground_enabled() or not foreground_memory_admitted_for_job(job):
+    if not foreground_enabled():
+        _set_recall_outcome("disabled", "foreground recall is switched off")
+        return None
+    if not foreground_memory_admitted_for_job(job):
+        _set_recall_outcome("not_admitted", "this job did not admit foreground recall")
         return None
     try:
         dim = int(getattr(getattr(model, "args", None), "hidden_size", 0) or 0)
         if dim <= 0:
+            _set_recall_outcome("unavailable", "model exposes no hidden_size")
             return None
         from core.brain.nonparametric_memory import get_nonparametric_memory
         memory = get_nonparametric_memory(dim)
-        if memory is None or len(memory) == 0:
+        if memory is None:
+            _set_recall_outcome("unavailable", "no datastore")
+            return None
+        if len(memory) == 0:
+            _set_recall_outcome("empty", "datastore holds no entries")
             return None
         tap = HiddenStateTap(model)
         proc = make_tapped_nonparametric_processor(tap, memory)
         logger.info("🧠 [WORKER] Foreground non-parametric memory ACTIVE (%d entries, dim=%d).",
                     len(memory), dim)
+        _set_recall_outcome("installed", f"{len(memory)} entries at dim {dim}")
         return tap, proc
     except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
-        record_degradation("nonparametric_foreground_build", exc, severity="debug",
-                           action="foreground non-parametric memory not installed; normal generation")
+        # CP126 29374cf0. Failing open is RIGHT here — recall is an
+        # enhancement, and generating normally without it is the correct
+        # degradation. What was missing is that the caller could not tell
+        # installed from skipped from broken: every path returned None, and
+        # a genuine build error was filed at debug alongside routine
+        # "nothing to recall".
+        #
+        # The outcome is now recorded so a request can say which happened,
+        # and a real failure is a warning rather than debug noise.
+        _set_recall_outcome("failed", f"{type(exc).__name__}: {exc}")
+        record_degradation(
+            "nonparametric_foreground_build",
+            exc,
+            severity="warning",
+            action="foreground non-parametric memory not installed; normal generation",
+        )
         return None
 
 
