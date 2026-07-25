@@ -59,6 +59,16 @@ CONTAMINATION_PATTERNS = {
     "expected_answer": re.compile(r"\bexpected_answer\b"),
 }
 
+# Proof instruments may contain generated task targets, but they are not
+# production inference code.  Exclusion is allowed only together with the
+# import-boundary check below: if runtime code imports one of these modules,
+# the lint fails closed before answer-bearing fixtures can reach generation.
+NON_RUNTIME_PROOF_HARNESSES = {
+    "core/brain/llm/latent_cortex/state_causality.py": (
+        "core.brain.llm.latent_cortex.state_causality"
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -115,7 +125,29 @@ def run_lint(root: Path, scope: str) -> dict:
     files = _iter_production_files(root)
     findings: list[Finding] = []
     for path in files:
+        rel = path.relative_to(root).as_posix()
+        if rel in NON_RUNTIME_PROOF_HARNESSES:
+            continue
         findings.extend(scan_file(path, root))
+        try:
+            source = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        for harness_module in NON_RUNTIME_PROOF_HARNESSES.values():
+            import_pattern = re.compile(
+                rf"(?m)^\s*(?:from\s+{re.escape(harness_module)}\s+import\b"
+                rf"|import\s+{re.escape(harness_module)}\b)"
+            )
+            match = import_pattern.search(source)
+            if match:
+                findings.append(
+                    Finding(
+                        kind="proof_harness_runtime_import",
+                        file=rel,
+                        line=source.count("\n", 0, match.start()) + 1,
+                        detail=match.group(0).strip()[:240],
+                    )
+                )
 
     return {
         "generated_at_unix": time.time(),

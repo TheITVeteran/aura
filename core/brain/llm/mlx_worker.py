@@ -20,6 +20,10 @@ from core.brain.live_mind_contract import (
     append_text_mutation,
     normalize_text_mutations,
 )
+from core.conversation.user_surface_contract import (
+    UserSurfacePromptResolution,
+    resolve_user_surface_prompt,
+)
 from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
 
@@ -35,6 +39,14 @@ def _record_mlx_degradation(
     severity: str = "warning",
 ) -> None:
     record_degradation("mlx_worker", exc, severity=severity, action=action)
+
+
+def _surface_prompt_resolution(job: dict[str, Any]) -> UserSurfacePromptResolution:
+    return resolve_user_surface_prompt(job)
+
+
+def _surface_validation_prompt(job: dict[str, Any]) -> str:
+    return _surface_prompt_resolution(job).prompt
 
 
 _CORRUPT_LANGUAGE_MARKERS = re.compile(
@@ -114,7 +126,7 @@ def _semantic_count_contract_retry_instruction(job: dict[str, Any]) -> str:
             )
 
     topic_requirement = ""
-    validation_prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    validation_prompt = _surface_validation_prompt(job)
     if validation_prompt:
         try:
             from core.conversation.response_reliability import (
@@ -476,12 +488,15 @@ def _surface_generation_control_receipt(
             "health_probe",
             "runtime_fact_status_contract",
             "grounded_runtime_status_contract",
+            "surface_validation_prompt_source",
         ],
         "live_mind_controls_bound": bool(job.get("live_mind_controls_bound", False)),
         "clean_user_surface_contract": bool(job.get("clean_user_surface_contract", False)),
-        "surface_validation_prompt_present": bool(
-            str(job.get("user_surface_validation_prompt") or "").strip()
-        ),
+        "surface_validation_prompt_present": bool(_surface_validation_prompt(job)),
+        "surface_validation_prompt_bound": _surface_prompt_resolution(job).bound,
+        "surface_validation_prompt_binding_valid": _surface_prompt_resolution(job).valid,
+        "surface_validation_prompt_source": _surface_prompt_resolution(job).source,
+        "surface_validation_prompt_sha256": _surface_prompt_resolution(job).sha256,
         "strict_answer_contract": bool(job.get("strict_answer_contract", False)),
         "strict_value_contract": bool(job.get("strict_value_contract", False)),
         "proof_evaluation_contract": bool(job.get("proof_evaluation_contract", False)),
@@ -618,7 +633,8 @@ def _surface_generation_control_receipt(
 def _surface_quality_gate_enabled(job: dict[str, Any]) -> bool:
     if not bool(job.get("clean_user_surface_contract", False)):
         return False
-    if not str(job.get("user_surface_validation_prompt") or "").strip():
+    prompt_resolution = _surface_prompt_resolution(job)
+    if not prompt_resolution.prompt and not prompt_resolution.bound:
         return False
     return not bool(
         job.get("health_probe", False)
@@ -639,7 +655,10 @@ def _surface_quality_failure_reasons(
     """Validate user-visible drafts inside the worker before IPC success."""
     if not _surface_quality_gate_enabled(job):
         return []
-    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    prompt_resolution = _surface_prompt_resolution(job)
+    if prompt_resolution.bound and not prompt_resolution.valid:
+        return [prompt_resolution.error or "surface_validation_prompt_binding_invalid"]
+    prompt = prompt_resolution.prompt
     if not prompt:
         return []
     recent_raw = job.get("user_surface_recent_messages")
@@ -903,7 +922,7 @@ def _repair_live_user_surface_instruction_shape(
     """Apply deterministic explicit-format repairs before spending another decode."""
 
     text = str(response_text or "").strip()
-    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    prompt = _surface_validation_prompt(job)
     if not text or not prompt:
         return text
     try:
@@ -928,7 +947,7 @@ def _exact_reply_token_requirement(
     contract = job.get("requested_output_contract")
     if not isinstance(contract, dict) or not bool(contract.get("exact_reply", False)):
         return 0, 0
-    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    prompt = _surface_validation_prompt(job)
     if not prompt:
         return 0, 0
     try:
@@ -1033,7 +1052,7 @@ _SELF_CONDITION_SIGNAL_INSTRUCTION = (
 def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
     if not bool(job.get("clean_user_surface_contract", False)):
         return False
-    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    prompt = _surface_validation_prompt(job)
     if not prompt:
         return False
     prompt_l = prompt.lower()
@@ -5255,9 +5274,15 @@ def _mlx_worker_loop(
                                         if rejection_reasons:
                                             surface_control_state["surface_quality_gate_passed"] = False
                                             surface_control_state["surface_quality_gate_reasons"] = rejection_reasons[:8]
+                                            validation_resolution = _surface_prompt_resolution(job)
                                             logger.warning(
-                                                "⚠️ [WORKER] Rejected live user-surface draft reasons=%s excerpt=%r",
+                                                "⚠️ [WORKER] Rejected live user-surface draft "
+                                                "reasons=%s validation_source=%s "
+                                                "validation_sha256=%s validation_chars=%d excerpt=%r",
                                                 ",".join(rejection_reasons[:8]) or "unknown",
+                                                validation_resolution.source,
+                                                validation_resolution.sha256[:12],
+                                                len(validation_resolution.prompt),
                                                 str(response_text or "").strip()[:280],
                                             )
                                             if (
@@ -5312,6 +5337,20 @@ def _mlx_worker_loop(
                                             surface_wall_exceeded = _surface_retry_wall_exceeded(
                                                 surface_retry_started, surface_retry_wall_s
                                             )
+                                            binding_failure = any(
+                                                reason.startswith(
+                                                    "surface_validation_prompt_binding"
+                                                )
+                                                or reason
+                                                == "surface_validation_prompt_missing"
+                                                for reason in rejection_reasons
+                                            )
+                                            if binding_failure:
+                                                surface_wall_exceeded = True
+                                                logger.error(
+                                                    "🛑 [WORKER] Surface prompt provenance "
+                                                    "contract failed; refusing futile model retries."
+                                                )
                                             if surface_wall_exceeded and internal_attempt < max_internal_retries:
                                                 logger.warning(
                                                     "🛡️ [WORKER] Surface-gate retry wall (%.0fs) reached after "

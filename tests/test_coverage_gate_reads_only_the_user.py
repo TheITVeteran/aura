@@ -23,10 +23,16 @@ from __future__ import annotations
 
 import pytest
 
+from core.brain.llm.mlx_worker import _surface_quality_failure_reasons
 from core.conversation.response_reliability import (
     _instruction_coverage_reasons,
     _missing_requested_memory_limit_coverage,
+    assess_user_facing_reply,
     visible_user_request,
+)
+from core.conversation.user_surface_contract import (
+    bind_user_surface_prompt,
+    resolve_user_surface_prompt,
 )
 
 pytestmark = pytest.mark.unit
@@ -118,3 +124,72 @@ class TestGenuineRequestsStillChecked:
             + _EVIDENCE
         )
         assert _missing_requested_memory_limit_coverage(user, "Sure.")
+
+
+class TestBoundUserSurfacePrompt:
+    def test_binding_round_trips_with_provenance(self):
+        context = {}
+        binding = bind_user_surface_prompt(
+            context,
+            "How does a refrigerator move heat?",
+            source="test.desktop_ingress",
+        )
+
+        resolved = resolve_user_surface_prompt(context)
+
+        assert resolved.valid
+        assert resolved.bound
+        assert resolved.prompt == "How does a refrigerator move heat?"
+        assert resolved.source == "test.desktop_ingress"
+        assert resolved.sha256 == binding["sha256"]
+
+    def test_later_prompt_substitution_is_detected(self):
+        context = {}
+        bind_user_surface_prompt(
+            context,
+            "How does a refrigerator move heat?",
+            source="test.desktop_ingress",
+        )
+        context["user_surface_validation_prompt"] = (
+            "What do you remember, what are your limits, and are you conscious?"
+        )
+
+        resolved = resolve_user_surface_prompt(context)
+
+        assert not resolved.valid
+        assert resolved.error == "surface_validation_prompt_binding_value_mismatch"
+
+    def test_worker_uses_bound_visible_request_not_effective_objective(self):
+        visible = "How does a refrigerator move heat?"
+        context = {}
+        bind_user_surface_prompt(
+            context,
+            visible,
+            source="test.desktop_ingress",
+        )
+        job = {
+            **context,
+            "clean_user_surface_contract": True,
+            "effective_objective": visible + _EVIDENCE,
+        }
+        reply = (
+            "A refrigerator circulates refrigerant to absorb heat inside, then "
+            "compresses and condenses it so that heat is released outside."
+        )
+
+        assert _surface_quality_failure_reasons(job, reply) == []
+        assert assess_user_facing_reply(visible + _EVIDENCE, reply).ok
+
+    def test_worker_rejects_a_tampered_binding(self):
+        context = {}
+        bind_user_surface_prompt(
+            context,
+            "How does a refrigerator move heat?",
+            source="test.desktop_ingress",
+        )
+        context["user_surface_prompt_binding"]["prompt"] = "substituted"
+        job = {**context, "clean_user_surface_contract": True}
+
+        assert _surface_quality_failure_reasons(job, "A complete answer.") == [
+            "surface_validation_prompt_binding_digest_mismatch"
+        ]

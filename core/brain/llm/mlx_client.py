@@ -7881,6 +7881,11 @@ class MLXLocalClient:
             "user_surface_validation_prompt": str(
                 kwargs.get("user_surface_validation_prompt") or ""
             ),
+            "user_surface_prompt_binding": (
+                dict(kwargs.get("user_surface_prompt_binding") or {})
+                if isinstance(kwargs.get("user_surface_prompt_binding"), dict)
+                else {}
+            ),
             "clean_user_surface_steering_alpha": kwargs.get("clean_user_surface_steering_alpha"),
             "clean_user_surface_recurrent_loops": (
                 kwargs.get("clean_user_surface_recurrent_loops")

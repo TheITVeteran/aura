@@ -27809,3 +27809,79 @@ user-surface validation contamination identified by the live run, then
 implement SPARK-051's governed external `EXECUTE` protocol and checked
 action-calibration campaign. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+## Checkpoint 2026-07-25-371: Bound Visible-Request Validation
+
+The prompt-contamination failure isolated by the final CP370 live campaign is
+closed in code and remains explicitly open for fresh resident-runtime
+confirmation. The active CognitiveEngine response path was
+`UnitaryResponsePhase`, not the older `ResponseGenerationPhase`.
+`UnitaryResponsePhase` discarded the desktop ingress
+`visible_user_message` and `user_surface_validation_prompt` when it called the
+LLM router. `InferenceGate` therefore reconstructed the validation target from
+the effective objective, which contained memory evidence, live-mind contracts,
+identity material, and other internal directives. Correct answers to ordinary
+questions were consequently rejected for requirements the person never made,
+including self-claim evidence, memory-limit coverage, reliability diagnostics,
+and multiple objective facets.
+
+The visible request is now a versioned provenance contract. Desktop chat binds
+the complete current user text, its SHA-256 commitment, and its ingress source
+before CognitiveEngine receives any effective objective. CognitiveEngine,
+both response phases, InferenceGate, HealthRouter, the MLX client, and the MLX
+worker preserve that object independently of generated messages and system
+context. The worker recomputes the digest, rejects version, source, digest, or
+legacy-field disagreement, records source/digest/length in rejection
+telemetry, and does not spend repeated model decodes on an immutable binding
+failure. Legacy non-desktop callers remain compatible and are bound once at
+the earliest generation boundary.
+
+The reply classifier also canonicalizes known injected blocks at its own
+boundary as defense in depth. Genuine user requests about memory limits,
+reliability, selfhood, exact formats, and multiple facets retain their original
+checks; the fix removes requirements sourced from internal scaffolding rather
+than weakening those checks. Tests reproduce the refrigerator and retained-
+memory false rejections, prove ingress-to-worker propagation, tamper the digest
+and legacy field, verify the server binds the visible prompt, and retain
+negative controls for genuine requests.
+
+The focused routing/worker battery passes 405 tests. The complete 26-file
+conversation-reliability family passes 1,267 tests in 119.95 seconds. Ruff,
+bytecode compilation, diff hygiene, and the production proof-integrity lint
+pass. Governance remains at the checked baseline: 1,973 recognized calls in
+1,847 buckets with 1,788 inherited migration-debt calls. Model-load ownership
+passes with 47 paths, 60 references, and zero findings. Resource-observation
+ownership scans 2,966 files with zero findings. The enterprise static ratchet
+passes at 168 findings, 38 high, zero critical, and no baseline regression.
+
+The reconciled dirty-candidate closeout audit passes over 8,036 tracked files,
+including 8,005 text files and 5,006 code files, and binds 4,257,957 text
+lines plus 1,601,596 code lines to generated ledgers. Production readiness,
+architecture mapping, model-load ownership, resource-observation ownership,
+lint, governance, and diff hygiene pass. `full_closeout_complete` remains
+correctly false: 511 code files have current full-file semantic receipts and
+4,464 remain unreviewed.
+
+The broader reliability run also exposed and closed two pre-existing gate
+defects. ErrorIntelligence no longer recognizes Aura traceback frames through
+hard-coded checkout-name substrings; it selects the deepest frame under the
+resolved current source root, including `/private/tmp` worktrees. The proof-
+integrity lint now treats the isolated state-causality experiment as a
+non-runtime harness only while independently failing any production import of
+that harness. Generated causal-test targets cannot be mislabeled as runtime
+answer leakage, and the harness cannot silently enter production inference.
+
+This checkpoint does not claim that the resident 32B rerun has passed. The
+original 30-turn campaign's approximately 15-turn completion ceiling, serving
+latency, retention loss, repetition, and measured math failure remain open.
+The next fresh live campaign must verify the validation source and digest in
+worker receipts and show that ordinary turns no longer receive scaffold-only
+rejection reasons before the live defect is closed.
+
+CP371 makes the total checkpoint record 498. The forecast remains 512-779
+total records, leaving approximately 14-281 records after this checkpoint.
+Checkpoint-count completion is approximately 63.9%-97.3%, with a midpoint
+planning estimate of 77.1%. Next: publish CP371, then implement SPARK-051's
+governed external `EXECUTE` protocol and checked action-calibration campaign
+before the next bounded resident verification. Final multi-hour soaks remain
+deferred until every shorter gate is green.

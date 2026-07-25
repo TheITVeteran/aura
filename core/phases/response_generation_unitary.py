@@ -4108,6 +4108,23 @@ class UnitaryResponsePhase(Phase):
         runtime_context = kwargs.get("context")
         if not isinstance(runtime_context, dict):
             runtime_context = {}
+        from core.conversation.user_surface_contract import (
+            bind_user_surface_prompt,
+            resolve_user_surface_prompt,
+        )
+
+        surface_prompt = resolve_user_surface_prompt(
+            runtime_context,
+            fallback=objective,
+        )
+        if not surface_prompt.bound:
+            bind_user_surface_prompt(
+                runtime_context,
+                surface_prompt.prompt or objective,
+                source="unitary_response.visible_user_message",
+                overwrite=True,
+            )
+            surface_prompt = resolve_user_surface_prompt(runtime_context)
         desktop_cognitive_engine_required = bool(
             runtime_context.get("desktop_cognitive_engine_required", False)
             or runtime_context.get("cognitive_engine_required", False)
@@ -5433,6 +5450,17 @@ class UnitaryResponsePhase(Phase):
                 "timeout": request_timeout,
                 "state": new_state,
             }
+            if is_user_facing:
+                llm_kwargs.update(
+                    {
+                        "visible_user_message": surface_prompt.prompt,
+                        "user_surface_validation_prompt": surface_prompt.prompt,
+                        "user_surface_prompt_binding": dict(
+                            runtime_context.get("user_surface_prompt_binding") or {}
+                        ),
+                        "clean_user_surface_contract": True,
+                    }
+                )
             if desktop_cognitive_engine_required:
                 llm_kwargs.update(
                     {

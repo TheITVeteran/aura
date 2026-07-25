@@ -1682,6 +1682,31 @@ def test_proof_integrity_lint_blocks_runtime_answer_contamination(tmp_path: Path
     assert report["passed"] is False
     assert report["findings"][0]["kind"] == "golden_answer"
 
+    harness = (
+        tmp_path
+        / "core"
+        / "brain"
+        / "llm"
+        / "latent_cortex"
+        / "state_causality.py"
+    )
+    harness.parent.mkdir(parents=True, exist_ok=True)
+    harness.write_text("expected_answer = 'generated experiment target'\n", encoding="utf-8")
+    contaminated.unlink()
+    assert run_lint(tmp_path, "production")["passed"] is True
+
+    runtime_import = tmp_path / "core" / "brain" / "runtime_import.py"
+    runtime_import.write_text(
+        "from core.brain.llm.latent_cortex.state_causality import expected_answer\n",
+        encoding="utf-8",
+    )
+    import_report = run_lint(tmp_path, "production")
+    assert import_report["passed"] is False
+    assert any(
+        finding["kind"] == "proof_harness_runtime_import"
+        for finding in import_report["findings"]
+    )
+
 
 def test_enterprise_baseline_writer_excludes_comparison_failures():
     from tools.aura_enterprise_gate import Finding, GateReport, make_baseline

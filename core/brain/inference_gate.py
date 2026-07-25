@@ -45,6 +45,10 @@ from core.conversation.response_reliability import (
     is_self_process_question,
     requested_output_contract,
 )
+from core.conversation.user_surface_contract import (
+    bind_user_surface_prompt,
+    resolve_user_surface_prompt,
+)
 from core.runtime import resource_psutil as psutil
 from core.runtime.desktop_boot_safety import (
     desktop_resource_guard_enabled,
@@ -5991,6 +5995,19 @@ class InferenceGate:
             explicit_visible_user_prompt
             or self._visible_user_prompt_from_messages(initial_messages, prompt)
         )
+        surface_prompt = resolve_user_surface_prompt(
+            context,
+            fallback=initial_visible_user_prompt,
+        )
+        if not surface_prompt.bound:
+            bind_user_surface_prompt(
+                context,
+                surface_prompt.prompt or initial_visible_user_prompt,
+                source="inference_gate.visible_user_message",
+                overwrite=True,
+            )
+            surface_prompt = resolve_user_surface_prompt(context)
+        initial_visible_user_prompt = surface_prompt.prompt or initial_visible_user_prompt
         output_contract = requested_output_contract(initial_visible_user_prompt)
         output_contract_payload = (
             output_contract.as_dict() if output_contract.constrained else None
@@ -6788,6 +6805,7 @@ class InferenceGate:
             "grounded_runtime_status_contract",
             "clean_user_surface_contract",
             "user_surface_validation_prompt",
+            "user_surface_prompt_binding",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",
             "live_mind_controls_bound",
@@ -8991,6 +9009,7 @@ class InferenceGate:
             "allow_mesh_cognition",
             "clean_user_surface_contract",
             "user_surface_validation_prompt",
+            "user_surface_prompt_binding",
             "clean_user_surface_steering_alpha",
             "clean_user_surface_recurrent_loops",
             "disable_prompt_cache",

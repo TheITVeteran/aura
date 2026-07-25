@@ -20,6 +20,24 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("SelfModification.ErrorIntelligence")
+_SOURCE_ROOT_REALPATH = os.path.realpath(
+    os.path.join(os.path.dirname(__file__), "..", "..")
+)
+
+
+def _deepest_aura_traceback_frame(error: BaseException) -> tuple[str | None, int | None]:
+    for frame in reversed(tb.extract_tb(getattr(error, "__traceback__", None))):
+        try:
+            resolved_frame = os.path.realpath(frame.filename)
+            if (
+                os.path.commonpath((_SOURCE_ROOT_REALPATH, resolved_frame))
+                != _SOURCE_ROOT_REALPATH
+            ):
+                continue
+        except (OSError, RuntimeError, ValueError):
+            continue
+        return resolved_frame, int(frame.lineno)
+    return None, None
 
 
 @dataclass
@@ -116,28 +134,11 @@ class StructuredErrorLogger:
         stack_trace = "".join(
             tb.format_exception(type(error), error, getattr(error, "__traceback__", None))
         )
-        trace_lines = stack_trace.split('\n')
-        
-        # Try to find the actual error location (not in framework code)
-        file_path = None
-        line_number = None
-        # Python tracebacks are ordered outermost to innermost. Repair must
-        # target the deepest Aura frame, not the wrapper that caught it.
-        for line in reversed(trace_lines):
-            if 'File "' in line and (
-                '/aura/' in line
-                or '/Desktop/aura/' in line
-                or '/.aura/live-source/' in line
-            ):
-                # Parse: File "/path/to/file.py", line 123
-                try:
-                    file_part = line.split('File "')[1].split('"')[0]
-                    line_part = line.split('line ')[1].split(',')[0]
-                    file_path = file_part
-                    line_number = int(line_part)
-                    break
-                except (RuntimeError, AttributeError, TypeError, ValueError):
-                    logger.debug("Traceback line parse failed: %s", line)
+        # Tracebacks are ordered outermost to innermost. Resolve paths through
+        # symlinks and choose the deepest frame inside this Aura checkout.
+        # String matching against a few checkout names lost locations in
+        # /private/tmp worktrees and any future installation prefix.
+        file_path, line_number = _deepest_aura_traceback_frame(error)
         # Create error event
         event = ErrorEvent(
             timestamp=time.time(),

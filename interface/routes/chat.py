@@ -7351,6 +7351,14 @@ async def _run_cognitive_engine_chat_turn(
         ),
         "prompt_shape": dict(prompt_shape_payload),
     }
+    from core.conversation.user_surface_contract import bind_user_surface_prompt
+
+    bind_user_surface_prompt(
+        context,
+        visible,
+        source="desktop_chat.visible_user_message",
+        overwrite=True,
+    )
     exact_principal = " ".join(str(principal_id or "").strip().split())[:160]
     if exact_principal:
         context["user_id"] = exact_principal

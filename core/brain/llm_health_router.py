@@ -4066,6 +4066,7 @@ class HealthAwareLLMRouter:
                                 "grounded_runtime_status_contract",
                                 "clean_user_surface_contract",
                                 "user_surface_validation_prompt",
+                                "user_surface_prompt_binding",
                                 "clean_user_surface_steering_alpha",
                                 "clean_user_surface_recurrent_loops",
                                 "live_mind_controls_bound",

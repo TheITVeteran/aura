@@ -1495,10 +1495,19 @@ class CognitiveEngine:
             context = {}
         foreground_turn_objective = str(objective or "")
         _bind_live_mind_generation_contract(context)
-        if not str(context.get("user_surface_validation_prompt") or "").strip():
-            context["user_surface_validation_prompt"] = str(
-                context.get("visible_user_message") or objective or ""
-            ).strip()
+        from core.conversation.user_surface_contract import (
+            bind_user_surface_prompt,
+            resolve_user_surface_prompt,
+        )
+
+        surface_prompt = resolve_user_surface_prompt(context)
+        if not surface_prompt.bound:
+            bind_user_surface_prompt(
+                context,
+                surface_prompt.prompt or objective,
+                source="cognitive_engine.visible_user_message",
+                overwrite=True,
+            )
 
         append_user_message = True
         append_user_message = not bool(

@@ -918,6 +918,9 @@ class ResponseGenerationPhase(BasePhase):
                     clear_prompt_cache=True,
                     clean_user_surface_contract=True,
                     user_surface_validation_prompt=visible_user_message,
+                    user_surface_prompt_binding=dict(
+                        runtime_context.get("user_surface_prompt_binding") or {}
+                    ),
                     temperature=temperature,
                     max_tokens=min(2048, amplifier_token_cap),
                     requested_output_contract=runtime_context.get(
@@ -1895,6 +1898,9 @@ class ResponseGenerationPhase(BasePhase):
                         grounded_runtime_status_contract=runtime_fact_status_contract,
                         clean_user_surface_contract=clean_user_surface_contract,
                         user_surface_validation_prompt=user_surface_validation_prompt,
+                        user_surface_prompt_binding=dict(
+                            runtime_context.get("user_surface_prompt_binding") or {}
+                        ),
                         clean_user_surface_recurrent_loops=int(
                             live_mind_generation_controls.get(
                                 "clean_user_surface_recurrent_loops", 1
@@ -2464,6 +2470,9 @@ class ResponseGenerationPhase(BasePhase):
                     grounded_runtime_status_contract=runtime_fact_status_contract,
                     clean_user_surface_contract=clean_user_surface_contract,
                     user_surface_validation_prompt=user_surface_validation_prompt,
+                    user_surface_prompt_binding=dict(
+                        runtime_context.get("user_surface_prompt_binding") or {}
+                    ),
                     clean_user_surface_recurrent_loops=int(
                         live_mind_generation_controls.get(
                             "clean_user_surface_recurrent_loops", 1

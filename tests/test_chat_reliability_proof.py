@@ -2466,6 +2466,79 @@ async def test_unitary_response_preserves_substantive_soft_reliability_drafts(mo
 
 
 @pytest.mark.asyncio
+async def test_unitary_response_propagates_ingress_bound_visible_prompt(monkeypatch):
+    from core.conversation.user_surface_contract import bind_user_surface_prompt
+    from core.phases.response_generation_unitary import UnitaryResponsePhase
+    from core.state.aura_state import AuraState
+
+    visible = "How does a refrigerator move heat?"
+    objective = (
+        f"{visible}\n\n[LIVE DESKTOP FULL-MIND CONTRACT]\n"
+        "- Discuss memory limits, reliability diagnostics, objective facets, "
+        "and evidence boundaries for selfhood.\n"
+        "[END LIVE DESKTOP FULL-MIND CONTRACT]"
+    )
+    reply = (
+        "A refrigerator circulates refrigerant to absorb heat inside, then "
+        "compresses and condenses it so that heat is released outside."
+    )
+
+    class DummyKernel:
+        organs = {}
+
+    class DummyLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def think(self, *_args, **kwargs):
+            self.calls.append(kwargs)
+            return reply
+
+    dummy_llm = DummyLLM()
+    phase = UnitaryResponsePhase(DummyKernel())
+    state = AuraState.default()
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_objective = objective
+    context = {
+        "desktop_cognitive_engine_required": True,
+        "cognitive_engine_required": True,
+    }
+    binding = bind_user_surface_prompt(
+        context,
+        visible,
+        source="desktop_chat.visible_user_message",
+    )
+
+    original_get = phase.__class__.__dict__["execute"].__globals__["ServiceContainer"].get
+
+    def fake_get(name, default=None):
+        if name == "llm_router":
+            return dummy_llm
+        return original_get(name, default=default)
+
+    monkeypatch.setattr(
+        phase.__class__.__dict__["execute"].__globals__["ServiceContainer"],
+        "get",
+        staticmethod(fake_get),
+    )
+    monkeypatch.setenv("AURA_REASONING_AMPLIFIER_V2", "0")
+
+    await phase.execute(
+        state,
+        objective=objective,
+        priority=True,
+        context=context,
+    )
+
+    assert dummy_llm.calls
+    first_call = dummy_llm.calls[0]
+    assert first_call["user_surface_validation_prompt"] == visible
+    assert first_call["visible_user_message"] == visible
+    assert first_call["user_surface_prompt_binding"] == binding
+    assert "FULL-MIND CONTRACT" not in first_call["user_surface_validation_prompt"]
+
+
+@pytest.mark.asyncio
 async def test_unitary_response_preserves_real_first_draft_over_tiny_dialogue_retry(monkeypatch):
     from core.phases.response_generation_unitary import UnitaryResponsePhase
     from core.state.aura_state import AuraState

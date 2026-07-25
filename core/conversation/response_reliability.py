@@ -5170,6 +5170,10 @@ def assess_user_facing_reply(
     recent_user_messages: Iterable[str] | None = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
+    # Defense in depth: callers should propagate the ingress-bound visible
+    # request, but reliability classifiers must never interpret appended
+    # memory/system/contract scaffolding as instructions from the person.
+    user_message = visible_user_request(user_message)
     recent_messages = [str(message or "") for message in (recent_user_messages or ())]
     raw = str(reply_text or "").strip()
 

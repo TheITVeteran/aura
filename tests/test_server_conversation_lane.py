@@ -10300,6 +10300,7 @@ async def test_chat_restart_recovers_completed_exchange_from_ui_session(
 
 @pytest.mark.asyncio
 async def test_desktop_required_runtime_status_invokes_engine_then_grounds(monkeypatch):
+    from core.conversation.user_surface_contract import resolve_user_surface_prompt
     from interface.routes import chat as chat_routes
 
     calls = []
@@ -10340,6 +10341,11 @@ async def test_desktop_required_runtime_status_invokes_engine_then_grounds(monke
     assert len(calls) == 1
     assert calls[0]["context"]["runtime_fact_status_contract"] is True
     assert calls[0]["context"]["cognitive_engine_required"] is True
+    surface_prompt = resolve_user_surface_prompt(calls[0]["context"])
+    assert surface_prompt.bound is True
+    assert surface_prompt.valid is True
+    assert surface_prompt.prompt == user_message
+    assert surface_prompt.source == "desktop_chat.visible_user_message"
     assert reply
     assert "Cortex (32B)" in reply
     assert "active foreground lane" in reply
