@@ -2265,8 +2265,54 @@ _LIMIT_COVERAGE_REPLY_RE = re.compile(
 )
 
 
+# Injected scaffolding a live turn carries alongside the person's words:
+# retained-memory evidence blocks, the identity anchor, replayed transcript.
+# Instruction-coverage detectors must never read these as things the USER
+# asked for. Live 2026-07-25: a plant turn — "Small thing to remember for
+# later in this chat: my friend's dog is named Biscuit. Brief acknowledgment
+# is fine." — arrived at the gate with an 8,000-character evidence block
+# appended, whose own rule text ("say the memory is not verified") and
+# replayed prior turns ("I can't work through that…") put "remember" within
+# 260 characters of "can't". The dual memory/limit detector fired, the facet
+# detector demanded coverage of facets nobody requested, and a correct brief
+# acknowledgement was rejected as an unanswered turn.
+_INJECTED_PROMPT_BLOCK_MARKERS = (
+    "[retained memory evidence]",
+    "scope=retained_memory_evidence",
+    "## intrinsic identity anchor",
+    "intrinsic identity anchor",
+    "source=recent_completed_transcript",
+    "source=durable_memory_search",
+    "[conversation context]",
+    "[working memory]",
+    "[evidence]",
+)
+
+
+def visible_user_request(user_message: Any) -> str:
+    """Return only the part of a turn the PERSON wrote.
+
+    Everything from the first injected-scaffold marker onward is runtime
+    context, not a request. Judging a reply against it asks the reply to
+    answer the prompt builder.
+    """
+    text = str(user_message or "")
+    if not text:
+        return ""
+    lowered = text.lower()
+    cut = len(text)
+    for marker in _INJECTED_PROMPT_BLOCK_MARKERS:
+        found = lowered.find(marker)
+        if found != -1:
+            cut = min(cut, found)
+    trimmed = text[:cut].strip()
+    # A turn that is ONLY scaffolding has no user request to judge; returning
+    # the original would re-introduce exactly the bug this function prevents.
+    return trimmed
+
+
 def _missing_requested_memory_limit_coverage(user_message: Any, reply_text: Any) -> bool:
-    user = str(user_message or "")
+    user = visible_user_request(user_message)
     if not user or not _MEMORY_LIMIT_DUAL_REQUEST_RE.search(user):
         return False
     reply = str(reply_text or "")
@@ -2279,7 +2325,7 @@ def _missing_requested_memory_limit_coverage(user_message: Any, reply_text: Any)
 
 
 def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
-    user = str(user_message or "")
+    user = visible_user_request(user_message)
     reply = str(reply_text or "").strip()
     if not user or not reply:
         return []
