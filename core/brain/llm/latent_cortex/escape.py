@@ -49,7 +49,14 @@ class EscapeConfig:
     # stalled inside an attractor.
     stall_patience: int = 3
     # Total escape attempts per branch across all rungs.
-    max_attempts: int = 3
+    #
+    # CP126 e0e64fb2. This defaulted to 3 against a four-rung ladder, so
+    # matched_perturbation — documented as the last resort — could never run
+    # under the default configuration. The advertised ladder was not the
+    # ladder available. Defaulting to the rung count makes the documented
+    # behaviour the actual behaviour; a caller that wants the ladder
+    # truncated can still say so explicitly.
+    max_attempts: int = len(ESCAPE_RUNGS)
     # Post-escape steps the branch gets to beat its pre-escape best.
     probation_steps: int = 2
     # Matched-magnitude scale for the last-resort perturbation rung.

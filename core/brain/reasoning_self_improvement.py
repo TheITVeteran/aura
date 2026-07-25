@@ -217,13 +217,30 @@ class ReasoningSelfImprovement:
             return {"status": "insufficient_traces", "pending": len(pending), "need": int(min_traces)}
 
         # Never compete with an in-flight LoRA run.
+        #
+        # CP126 237ae4c2. This used to record a degradation and CONTINUE
+        # feeding when the governor was missing or its check raised — so
+        # governance infrastructure being absent or broken EXPANDED training
+        # authority instead of restraining it. Not knowing whether a LoRA
+        # run is active is not permission to start another; it is precisely
+        # the state in which to wait.
         try:
             from core.adaptation.online_lora_governor import get_online_lora_governor
 
             if get_online_lora_governor().active_lora_processes():
                 return {"status": "blocked_existing_training", "pending": len(pending)}
         except (ImportError, RuntimeError, AttributeError) as exc:
-            record_degradation("reasoning_self_improvement_governor", exc)
+            record_degradation(
+                "reasoning_self_improvement_governor",
+                exc,
+                severity="warning",
+                action="refused to feed self-training while LoRA activity was unobservable",
+            )
+            return {
+                "status": "blocked_governor_unavailable",
+                "pending": len(pending),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
         fed_fn = feed_fn or self._default_feed
         try:
