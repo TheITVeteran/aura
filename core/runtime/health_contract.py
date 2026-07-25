@@ -1118,6 +1118,42 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["pressure_error"] = repr(exc)
     try:
+        from core.fsw.assertions import assertions_report
+        from core.fsw.command_dispatch import command_report
+        from core.fsw.health_checker import health_checker_report
+        from core.fsw.rate_groups import rate_group_report
+        from core.fsw.restart_protection import restart_report
+        from core.fsw.telemetry_dictionary import telemetry_report
+
+        telemetry = telemetry_report()
+        pings = health_checker_report()
+        block["flight_software"] = {
+            "telemetry": {
+                "channels": telemetry["channels"],
+                "violations": telemetry["violations"],
+                "recent_events": telemetry["recent_events"],
+            },
+            "restart_protection": restart_report()["core_sets"],
+            "rate_groups": {
+                k: rate_group_report()[k] for k in ("slipping", "total_cycles", "total_slips")
+            },
+            "assertions": {
+                "clean": assertions_report()["clean"],
+                "distinct_sites": assertions_report()["distinct_sites"],
+            },
+            "health_pings": {
+                "unresponsive": pings["unresponsive"],
+                "slow": pings["slow"],
+                "critical_unresponsive": pings["critical_unresponsive"],
+            },
+            "commands": {
+                "declared": command_report()["commands"],
+                "dispatched": command_report()["dispatched"],
+            },
+        }
+    except Exception as exc:  # pragma: no cover
+        block["flight_software_error"] = repr(exc)
+    try:
         from core.observability.histograms import histograms_report
         from core.observability.trace_events import tracer_report
         from core.runtime.field_trials import field_trials_report

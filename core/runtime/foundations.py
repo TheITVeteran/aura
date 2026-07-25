@@ -822,6 +822,369 @@ async def _activate_observability(*, foreground_only: bool) -> ActivationResult:
     )
 
 
+def _declare_standard_telemetry() -> tuple[list[str], list[str]]:
+    """The channel and event dictionary for the runtime's own state.
+
+    Ids are the contract: anything reading Aura's telemetry can rely on
+    channel 0x0101 meaning available-memory fraction forever. Limits are
+    declared here so a crossing is a transition the system announces,
+    rather than a threshold somebody remembered to check at a read site.
+    """
+    from core.fsw.telemetry_dictionary import ChannelType, EventSeverity, channel, event
+
+    channels = (
+        dict(
+            identifier=0x0101,
+            name="memory.available_fraction",
+            unit="fraction",
+            description="host memory available as a fraction of total",
+            owner="core/runtime/foundations.py",
+            group="resources",
+            yellow_low=0.20,
+            red_low=0.10,
+            stale_after_s=60.0,
+        ),
+        dict(
+            identifier=0x0102,
+            name="pressure.memory_full",
+            unit="fraction",
+            description="PSI memory full-pressure over 10s",
+            owner="core/runtime/pressure_stall.py",
+            group="resources",
+            yellow_high=0.20,
+            red_high=0.50,
+        ),
+        dict(
+            identifier=0x0103,
+            name="pressure.inference_full",
+            unit="fraction",
+            description="PSI inference full-pressure over 10s",
+            owner="core/runtime/pressure_stall.py",
+            group="resources",
+            yellow_high=0.30,
+            red_high=0.70,
+        ),
+        dict(
+            identifier=0x0104,
+            name="memory.rss_bytes",
+            unit="bytes",
+            description="runtime process resident set size",
+            owner="core/runtime/memory_infra.py",
+            group="resources",
+        ),
+        dict(
+            identifier=0x0201,
+            name="runtime.taint_flags",
+            type=ChannelType.INT,
+            unit="count",
+            description="number of taint flags set on this process",
+            owner="core/runtime/taint.py",
+            group="integrity",
+            yellow_high=1,
+            red_high=3,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0202,
+            name="runtime.lockdep_splats",
+            type=ChannelType.INT,
+            unit="count",
+            description="distinct lock-order violations observed",
+            owner="core/runtime/lockdep.py",
+            group="integrity",
+            yellow_high=1,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0203,
+            name="runtime.assertion_failures",
+            type=ChannelType.INT,
+            unit="count",
+            description="distinct assertion sites that have failed",
+            owner="core/fsw/assertions.py",
+            group="integrity",
+            yellow_high=1,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0204,
+            name="runtime.sanitizer_findings",
+            type=ChannelType.INT,
+            unit="count",
+            description="distinct sanitizer findings",
+            owner="core/runtime/sanitizers.py",
+            group="integrity",
+            yellow_high=1,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0301,
+            name="scheduler.core_sets_used",
+            type=ChannelType.INT,
+            unit="count",
+            description="restart-protection core sets in use",
+            owner="core/fsw/restart_protection.py",
+            group="scheduling",
+            yellow_high=18,
+            red_high=23,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0302,
+            name="scheduler.consecutive_slips",
+            type=ChannelType.INT,
+            unit="count",
+            description="worst consecutive cycle slips across rate groups",
+            owner="core/fsw/rate_groups.py",
+            group="scheduling",
+            yellow_high=1,
+            red_high=5,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0401,
+            name="controllers.queue_depth",
+            type=ChannelType.INT,
+            unit="count",
+            description="total reconcile queue depth across controllers",
+            owner="core/runtime/reconcile.py",
+            group="orchestration",
+            yellow_high=32,
+            red_high=256,
+            stale_after_s=300.0,
+        ),
+        dict(
+            identifier=0x0402,
+            name="health.unresponsive_components",
+            type=ChannelType.INT,
+            unit="count",
+            description="components that stopped answering health pings",
+            owner="core/fsw/health_checker.py",
+            group="orchestration",
+            yellow_high=1,
+            red_high=2,
+            stale_after_s=300.0,
+        ),
+    )
+    events = (
+        dict(
+            identifier=0x1001,
+            name="channel_limit_transition",
+            severity=EventSeverity.WARNING_LO,
+            format_string="{channel} went {previous} -> {state} at {value}{unit}",
+            description="a telemetry channel crossed a declared limit",
+            owner="core/fsw/telemetry_dictionary.py",
+        ),
+        dict(
+            identifier=0x1002,
+            name="program_alarm",
+            severity=EventSeverity.WARNING_HI,
+            format_string="ALARM {code}: {detail} (shed {shed}, kept {kept})",
+            description="overload response: work was shed to protect the essential loop",
+            owner="core/fsw/restart_protection.py",
+        ),
+        dict(
+            identifier=0x1003,
+            name="rate_group_slip",
+            severity=EventSeverity.WARNING_LO,
+            format_string=(
+                "rate group {group} took {duration_ms}ms of a {period_ms}ms period "
+                "({slowest} at {slowest_ms}ms), {consecutive} in a row"
+            ),
+            description="a rate group did not finish within its period",
+            owner="core/fsw/rate_groups.py",
+        ),
+        dict(
+            identifier=0x1004,
+            name="assertion_failed",
+            severity=EventSeverity.WARNING_HI,
+            format_string="assertion '{condition}' failed at {site} in {function} -> {response}",
+            description="a declared invariant was violated",
+            owner="core/fsw/assertions.py",
+        ),
+        dict(
+            identifier=0x1005,
+            name="component_unresponsive",
+            severity=EventSeverity.WARNING_HI,
+            format_string="{component} missed {misses} health pings (critical={critical})",
+            description="a component stopped answering active liveness pings",
+            owner="core/fsw/health_checker.py",
+        ),
+        dict(
+            identifier=0x1006,
+            name="component_recovered",
+            severity=EventSeverity.ACTIVITY_HI,
+            format_string="{component} is answering again after {unresponsive_for_s}s",
+            description="a previously unresponsive component answered",
+            owner="core/fsw/health_checker.py",
+        ),
+        dict(
+            identifier=0x1007,
+            name="command_dispatched",
+            severity=EventSeverity.ACTIVITY_HI,
+            format_string="command {command} (0x{opcode:02x}) ok={ok} in {duration_ms}ms {error}",
+            description="a dictionary command was dispatched",
+            owner="core/fsw/command_dispatch.py",
+        ),
+    )
+    declared_channels: list[str] = []
+    for spec in channels:
+        try:
+            channel(**spec)  # type: ignore[arg-type]
+            declared_channels.append(str(spec["name"]))
+        except ValueError as exc:
+            logger.warning("channel declaration failed: %s", exc)
+    declared_events: list[str] = []
+    for spec in events:
+        try:
+            event(**spec)  # type: ignore[arg-type]
+            declared_events.append(str(spec["name"]))
+        except ValueError as exc:
+            logger.warning("event declaration failed: %s", exc)
+    return declared_channels, declared_events
+
+
+def _sample_standard_telemetry() -> None:
+    """Write the declared channels from the reports that already exist.
+
+    Runs on the 1Hz rate group. Cheap reads; the value is that a limit
+    crossing becomes an announced transition instead of a number nobody
+    compared to anything.
+    """
+    from core.fsw.telemetry_dictionary import write
+
+    try:
+        from core.runtime.resource_observation import get_resource_observer
+
+        memory = get_resource_observer().memory()
+        if memory.available and memory.total_bytes > 0:
+            write("memory.available_fraction", memory.available_bytes / memory.total_bytes)
+            write("memory.rss_bytes", int(memory.process_rss_bytes or 0))
+    except Exception:
+        logger.debug("memory telemetry sample failed", exc_info=True)
+    try:
+        from core.runtime.pressure_stall import Resource, pressure
+
+        write("pressure.memory_full", pressure(Resource.MEMORY))
+        write("pressure.inference_full", pressure(Resource.INFERENCE))
+    except Exception:
+        logger.debug("pressure telemetry sample failed", exc_info=True)
+    try:
+        from core.fsw.assertions import assertions_report
+        from core.runtime.lockdep import lockdep_report
+        from core.runtime.sanitizers import sanitizer_report
+        from core.runtime.taint import taint_flags
+
+        write("runtime.taint_flags", len(taint_flags()))
+        write("runtime.lockdep_splats", len(lockdep_report()["splats"]))
+        write("runtime.assertion_failures", assertions_report()["distinct_sites"])
+        write("runtime.sanitizer_findings", sanitizer_report()["distinct_findings"])
+    except Exception:
+        logger.debug("integrity telemetry sample failed", exc_info=True)
+    try:
+        from core.fsw.rate_groups import rate_group_report
+        from core.fsw.restart_protection import restart_report
+
+        write("scheduler.core_sets_used", restart_report()["core_sets"]["used"])
+        groups = rate_group_report()["groups"]
+        write(
+            "scheduler.consecutive_slips",
+            max((g["consecutive_slips"] for g in groups), default=0),
+        )
+    except Exception:
+        logger.debug("scheduler telemetry sample failed", exc_info=True)
+    try:
+        from core.fsw.health_checker import health_checker_report
+        from core.runtime.reconcile import reconcile_report
+
+        write("controllers.queue_depth", reconcile_report()["total_queue_depth"])
+        write(
+            "health.unresponsive_components",
+            len(health_checker_report()["unresponsive"]),
+        )
+    except Exception:
+        logger.debug("orchestration telemetry sample failed", exc_info=True)
+
+
+async def _activate_flight_software(*, foreground_only: bool) -> ActivationResult:
+    """Wave 6 — telemetry dictionary, rate groups, restart protection, commands."""
+    from core.fsw.command_dispatch import install_runtime_commands
+    from core.fsw.health_checker import get_health_checker, install_runtime_pings
+    from core.fsw.rate_groups import rate_group
+    from core.fsw.restart_protection import install_standard_groups
+    from core.fsw.telemetry_dictionary import telemetry_report
+
+    channels, events = _declare_standard_telemetry()
+    groups = install_standard_groups()
+    commands = install_runtime_commands()
+    pings = install_runtime_pings()
+
+    started_groups: list[str] = []
+    if not foreground_only:
+        # One 1Hz group carrying the periodic work these disciplines need,
+        # in declared order under one measured budget — rather than five
+        # independent sleep loops that slip together with no ordering.
+        one_hz = rate_group("1hz", 1.0)
+        one_hz.add("telemetry_sample", _sample_standard_telemetry, budget_fraction=0.20, order=10)
+        one_hz.add(
+            "diagnostics",
+            lambda: _safe_diagnostics_update(),
+            budget_fraction=0.20,
+            order=20,
+        )
+        five_s = rate_group("5s", 5.0)
+        five_s.add(
+            "health_pings",
+            get_health_checker().run_round,
+            budget_fraction=0.40,
+            order=10,
+        )
+        await one_hz.start()
+        await five_s.start()
+        started_groups = ["1hz", "5s"]
+        try:
+            from core.fsw.rate_groups import get_scheduler
+            from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+            get_shutdown_coordinator().register(
+                get_scheduler().stop_all,
+                phase="task_supervisor",
+                name="rate_groups",
+                timeout=5.0,
+            )
+        except Exception:
+            logger.debug("rate group shutdown registration skipped", exc_info=True)
+
+    # One sample immediately so the dictionary is not empty at first read.
+    _sample_standard_telemetry()
+
+    return ActivationResult(
+        name="flight_software",
+        ok=True,
+        detail=(
+            f"{len(channels)} telemetry channels and {len(events)} event types declared, "
+            f"{len(groups)} restart groups, {len(commands)} commands, "
+            f"{len(pings)} active health pings, "
+            f"rate groups: {', '.join(started_groups) or 'not started (foreground)'}; "
+            f"{len(telemetry_report()['violations'])} channel(s) out of limits"
+        ),
+        data={
+            "channels": channels,
+            "events": events,
+            "restart_groups": groups,
+            "commands": commands,
+            "health_pings": pings,
+            "rate_groups": started_groups,
+        },
+    )
+
+
+def _safe_diagnostics_update() -> None:
+    from core.health.diagnostics_aggregator import get_aggregator
+
+    get_aggregator().update_all()
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
@@ -830,6 +1193,7 @@ _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("orchestration", _activate_orchestration),
     ("middleware", _activate_middleware),
     ("observability", _activate_observability),
+    ("flight_software", _activate_flight_software),
 ]
 
 

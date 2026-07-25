@@ -873,6 +873,212 @@ def _layering_baseline_current() -> Iterator[Violation]:
         )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Flight-software discipline
+# ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "telemetry.limits_are_coherent",
+    scope="flight_software",
+    owner=_OWNER,
+    description="no channel declares limits that can never be reached",
+)
+def _telemetry_limits_coherent() -> Iterator[Violation]:
+    from core.fsw.telemetry_dictionary import Limits, get_telemetry
+
+    for entry in get_telemetry().dictionary()["channels"]:
+        limits = Limits(**entry["limits"])
+        for problem in limits.coherent():
+            yield Violation(
+                subject=entry["name"],
+                message=f"channel {entry['name']!r}: {problem}",
+                remedy="a limit that can never be reached is a limit nobody checked",
+            )
+
+
+@invariant(
+    "telemetry.channels_are_not_silent",
+    scope="flight_software",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="every declared channel has produced at least one sample",
+)
+def _channels_not_silent() -> Iterator[Violation]:
+    from core.fsw.telemetry_dictionary import telemetry_report
+
+    for name in telemetry_report()["silent_channels"]:
+        yield Violation(
+            subject=name,
+            message=(
+                f"channel {name!r} is declared but has never been written; a "
+                "dictionary entry with no data is a promise nothing keeps"
+            ),
+            remedy="write it from wherever the value already exists, or retire it",
+        )
+
+
+@invariant(
+    "telemetry.no_channel_is_red",
+    scope="flight_software",
+    owner=_OWNER,
+    description="no telemetry channel is in a red limit state",
+)
+def _no_red_channels() -> Iterator[Violation]:
+    from core.fsw.telemetry_dictionary import telemetry_report
+
+    for entry in telemetry_report()["violations"]:
+        if not str(entry["state"]).startswith("red"):
+            continue
+        yield Violation(
+            subject=entry["channel"],
+            message=(
+                f"{entry['channel']} is {entry['state']} at {entry['value']}"
+                f"{entry['unit']} and has been for {entry['for_s']:.0f}s"
+            ),
+            remedy=f"owner: {entry['owner']}",
+        )
+
+
+@invariant(
+    "restart.essential_work_is_declared",
+    scope="flight_software",
+    owner=_OWNER,
+    description="the essential set is non-empty and includes the tick loop",
+)
+def _essential_declared() -> Iterator[Violation]:
+    from core.fsw.restart_protection import restart_report
+
+    report = restart_report()
+    if not report["groups"]:
+        return
+    essential = set(report["essential"])
+    if not essential:
+        yield Violation(
+            subject="restart_protection",
+            message=(
+                "no work is declared ESSENTIAL, so an overload would shed "
+                "everything including the loop that keeps the mind running"
+            ),
+            remedy="declare the tick loop, the Will, and health as ESSENTIAL",
+        )
+        return
+    for required in ("kernel_tick", "unified_will", "health_surface"):
+        if required not in essential:
+            yield Violation(
+                subject=required,
+                message=f"{required!r} is not declared ESSENTIAL and could be shed",
+                remedy="add it to install_standard_groups()",
+            )
+
+
+@invariant(
+    "restart.core_sets_are_not_exhausted",
+    scope="flight_software",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="the core-set pool has headroom",
+)
+def _core_sets_available() -> Iterator[Violation]:
+    from core.fsw.restart_protection import restart_report
+
+    pool = restart_report()["core_sets"]
+    if pool["total"] and pool["available"] <= 0:
+        yield Violation(
+            subject="core_sets",
+            message=(
+                f"all {pool['total']} core sets are in use; the next significant "
+                "work item triggers the overload response"
+            ),
+            remedy="shed background work, or raise the pool if the ceiling is wrong",
+        )
+
+
+@invariant(
+    "rate_groups.are_not_slipping",
+    scope="flight_software",
+    owner=_OWNER,
+    description="no rate group has slipped several cycles in a row",
+)
+def _rate_groups_not_slipping() -> Iterator[Violation]:
+    from core.fsw.rate_groups import rate_group_report
+
+    for group in rate_group_report()["groups"]:
+        if group["consecutive_slips"] < 3:
+            continue
+        yield Violation(
+            subject=group["name"],
+            message=(
+                f"rate group {group['name']!r} has slipped {group['consecutive_slips']} "
+                f"cycles in a row (period {group['period_ms']}ms, p50 {group['p50_ms']}ms); "
+                f"over budget: {group['over_budget'] or 'nothing individually'}"
+            ),
+            remedy="cut a member's budget, lower the rate, or shed the work",
+        )
+
+
+@invariant(
+    "assertions.none_have_failed",
+    scope="flight_software",
+    owner=_OWNER,
+    description="no declared invariant has been violated",
+)
+def _no_assertion_failures() -> Iterator[Violation]:
+    from core.fsw.assertions import assertions_report
+
+    for record in assertions_report()["records"]:
+        yield Violation(
+            subject=f"{record['file']}:{record['line']}",
+            message=(
+                f"{record['condition']} in {record['function']} "
+                f"({record['count']}×, args={record['args']})"
+            ),
+            remedy="a violated invariant means the state is not what the code believes",
+        )
+
+
+@invariant(
+    "health.no_critical_component_is_unresponsive",
+    scope="flight_software",
+    owner=_OWNER,
+    description="every component declared critical is answering pings",
+)
+def _critical_components_answering() -> Iterator[Violation]:
+    from core.fsw.health_checker import health_checker_report
+
+    report = health_checker_report()
+    for name in report["critical_unresponsive"]:
+        yield Violation(
+            subject=name,
+            message=(
+                f"critical component {name!r} stopped answering health pings — it is "
+                "wedged, which is a different fact from being quiet"
+            ),
+            remedy="restart or repair it; a passive health surface cannot see this",
+        )
+
+
+@invariant(
+    "commands.declared_commands_have_handlers",
+    scope="flight_software",
+    owner=_OWNER,
+    description="no command is declared without something to run it",
+)
+def _commands_have_handlers() -> Iterator[Violation]:
+    from core.fsw.command_dispatch import get_dispatcher
+
+    for entry in get_dispatcher().dictionary()["commands"]:
+        if not entry["has_handler"]:
+            yield Violation(
+                subject=entry["name"],
+                message=(
+                    f"command {entry['name']!r} (opcode 0x{entry['opcode']:02x}) is in "
+                    "the dictionary but has no handler; a plan containing it validates "
+                    "and then fails at execution"
+                ),
+                remedy="attach a handler, or remove it from the dictionary",
+            )
+
+
 def register_runtime_invariants() -> int:
     """Import-time registration is the real work; this returns the count."""
     from core.verify.invariants import get_registry
