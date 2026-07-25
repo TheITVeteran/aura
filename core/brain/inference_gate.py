@@ -3260,9 +3260,28 @@ class InferenceGate:
         if not client_registry:
             return
 
+        # A shed that protects the foreground must not unload the lane that
+        # will actually serve the foreground. On a protected turn the cortex is
+        # frequently mid-load — that load is WHY free memory dipped under the
+        # threshold — and the Brainstem/Reflex ladder is the only thing that can
+        # answer meanwhile. The 2026-07-25 probe shed the ladder five times and
+        # reloaded models 55 times across 30 turns, each reload paying full load
+        # latency and contending with the cortex for the single GPU slot.
+        #
+        # Shedding the parachute to make the plane lighter.
+        preserve_ladder = str(reason or "") == "protected_foreground_shed"
+        ladder_paths = self._fallback_ladder_paths() if preserve_ladder else frozenset()
+
         shed_count = 0
         for client_path, client in list(client_registry.items()):
             if client is None or client is self._mlx_client:
+                continue
+            if client_path in ladder_paths:
+                logger.info(
+                    "🛡️ InferenceGate: keeping %s resident — it is this "
+                    "protected turn's fallback lane.",
+                    os.path.basename(client_path),
+                )
                 continue
             try:
                 if not hasattr(client, "is_alive") or not client.is_alive():
@@ -3293,6 +3312,34 @@ class InferenceGate:
                 shed_count,
                 reason,
             )
+
+    def _fallback_ladder_paths(self) -> frozenset[str]:
+        """Model paths that form the escalation ladder below the cortex.
+
+        These answer a foreground turn when the primary lane is warming, so a
+        foreground-protection shed must leave them alone.
+        """
+        paths: set[str] = set()
+        for attr in (
+            "_brainstem_client",
+            "_reflex_client",
+            "_fallback_client",
+            "_secondary_client",
+            "_tertiary_client",
+        ):
+            client = getattr(self, attr, None)
+            path = getattr(client, "model_path", None) or getattr(client, "_model_path", None)
+            if path:
+                paths.add(str(path))
+        for env_name in (
+            "AURA_MLX_BRAINSTEM_MODEL",
+            "AURA_MLX_REFLEX_MODEL",
+            "AURA_MLX_FALLBACK_MODEL",
+        ):
+            value = os.environ.get(env_name)
+            if value:
+                paths.add(str(value))
+        return frozenset(paths)
 
     @staticmethod
     def _foreground_owner_active() -> bool:
