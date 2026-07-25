@@ -732,6 +732,7 @@ class ExecutiveCore:
                 epistemic["contested"] > 0
                 and intent.source != IntentSource.USER
                 and intent.priority < 0.9
+                and self._intent_touches_contested_topic(intent, epistemic)
             ):
                 # Surface contested topic to the research pipeline rather than
                 # silently dropping the work. Best-effort: never block on this.
@@ -908,6 +909,7 @@ class ExecutiveCore:
                 epistemic["contested"] > 0
                 and intent.source != IntentSource.USER
                 and intent.priority < 0.9
+                and self._intent_touches_contested_topic(intent, epistemic)
             ):
                 self._surface_research_trigger(intent, epistemic)
                 return self._defer(intent, f"epistemic_reconciliation_required:{epistemic['contested']}")
@@ -1250,11 +1252,56 @@ class ExecutiveCore:
                 "contested": int(
                     summary.get("fresh_contested", summary.get("contested", 0)) or 0
                 ),
+                "contested_keys": list(summary.get("fresh_contested_keys") or []),
                 "trusted": int(summary.get("trusted", 0) or 0),
                 "coherence_score": float(summary.get("coherence_score", 1.0) or 1.0),
             }
         except (ImportError, AttributeError, RuntimeError):
-            return {"contested": 0, "trusted": 0, "coherence_score": 1.0}
+            return {"contested": 0, "contested_keys": [], "trusted": 0, "coherence_score": 1.0}
+
+    @staticmethod
+    def _intent_touches_contested_topic(
+        intent: Intent, epistemic: Dict[str, Any]
+    ) -> bool:
+        """Whether this write is actually ABOUT something contested.
+
+        A contest is evidence that one subject is unsettled. It is not evidence
+        that everything is. The live 2026-07-25 hour deferred 71 autonomous
+        knowledge writes on ``epistemic_reconciliation_required:2`` — two
+        contested claims blocking every unrelated fact and concept she learned.
+        The freshness window fixed contests that never aged out; it did not
+        make the gate about relevance.
+
+        Fails CLOSED: with contests present but no keys to compare against,
+        the old global behaviour stands.
+        """
+        keys = [str(k).strip().lower() for k in epistemic.get("contested_keys") or []]
+        keys = [k for k in keys if k]
+        if not keys:
+            return True
+
+        haystack = " ".join(
+            str(part).lower()
+            for part in (
+                intent.goal,
+                intent.payload.get("topic", ""),
+                intent.payload.get("key", ""),
+                intent.payload.get("namespace", ""),
+                intent.payload.get("content", ""),
+                intent.payload.get("summary", ""),
+            )
+            if part
+        )
+        if not haystack.strip():
+            return True  # nothing to judge relevance by — stay conservative
+
+        for key in keys:
+            namespace, _, subject = key.partition(":")
+            for token in (key, subject, namespace):
+                token = token.strip()
+                if len(token) >= 4 and token in haystack:
+                    return True
+        return False
 
     def _surface_research_trigger(self, intent: Intent, epistemic: Dict[str, Any]) -> None:
         """Best-effort: surface a deferred autonomous belief-update as a

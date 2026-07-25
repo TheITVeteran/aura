@@ -286,6 +286,18 @@ class BeliefAuthority:
             "active": len(active),
             "contested": len(contested),
             "fresh_contested": len(fresh_contested),
+            # WHICH beliefs are contested, not just how many. A count can only
+            # gate globally: two contested claims about anything blocked every
+            # autonomous knowledge write about everything for a whole live hour
+            # (2026-07-25: 71 blocked writes at contested=2). Relevance needs
+            # the keys.
+            "fresh_contested_keys": sorted(
+                {
+                    f"{record.namespace}:{record.key}"
+                    for record in fresh_contested
+                    if record.key
+                }
+            )[:32],
             "coherence_score": round(coherence, 4),
         }
 
