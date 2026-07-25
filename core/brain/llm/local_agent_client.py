@@ -67,6 +67,25 @@ def _emit_agent_event(title: str, content: str, *, level: str = "info") -> bool:
         return False
 
 
+# The largest tool observation that may enter conversation history. A single
+# unbounded result can overflow the context in one turn, and pruning that
+# runs only on the NEXT turn arrives too late to prevent it.
+_MAX_OBSERVATION_CHARS = 4000
+
+
+def _bounded_observation(result: Any) -> str:
+    """Bound a tool result before it enters history, declaring truncation."""
+    text = str(result if result is not None else "")
+    if len(text) <= _MAX_OBSERVATION_CHARS:
+        return text
+    kept = text[:_MAX_OBSERVATION_CHARS]
+    dropped = len(text) - _MAX_OBSERVATION_CHARS
+    return (
+        f"{kept}\n[observation truncated: {dropped} more characters were "
+        "produced and are not shown]"
+    )
+
+
 class LocalAgentClient(LocalBrain):
     """ReAct-style tool loop on top of Aura's internal model lane."""
 
@@ -208,7 +227,16 @@ class LocalAgentClient(LocalBrain):
             'FORMAT: JSON {"tool": "...", "args": {...}} OR plain text.\n'
         )
 
+        # Cleared when the loop detector cannot run; the remaining budget is
+        # then cut to one turn, because unguarded recursion is the failure
+        # this budget exists to bound.
+        loop_detection_available = True
         for turn in range(max_turns):
+            if not loop_detection_available and turn > 0:
+                logger.warning(
+                    "Agent loop stopping early: loop detection unavailable."
+                )
+                break
             # 1. Generate Response
             _emit_agent_event(
                 f"Titan-Agent (Turn {turn + 1})",
@@ -279,14 +307,22 @@ class LocalAgentClient(LocalBrain):
                         "confidence": 0.0,
                         "reasoning": ["Circuit breaker tripped due to repetitive generation."],
                     }
-            except ImportError:
-                logger.debug("Circuit breaker module not found. Skipping check.")
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                # CP126 6d2e65cb. A broken loop detector let the loop
+                # continue unchanged — so the safety dependency's failure
+                # permitted exactly the recursive behaviour it exists to
+                # stop. Without detection the remaining turns are unguarded,
+                # so the loop drops into a bounded one-turn mode rather than
+                # running its full budget blind.
                 _record_agent_degradation(
                     exc,
                     stage="loop_circuit_breaker",
-                    action="continued agent turn after loop circuit breaker check failed",
+                    action=(
+                        "loop detection unavailable; restricted the agent loop "
+                        "to a single remaining turn"
+                    ),
                 )
+                loop_detection_available = False
             # ------------------------------------
 
             # 2. Check for Tool Call (JSON detection)
@@ -307,7 +343,34 @@ class LocalAgentClient(LocalBrain):
 
                 # ACTUAL EXECUTION
                 if not self.adapter:
-                    result_str = f"[Error: No execution adapter configured for {tool_name}]"
+                    # CP126 a6763356. This fabricated an error STRING and fed
+                    # it back to the model as though a tool had run. The
+                    # model then routinely produced a confident final answer
+                    # resting on an execution that never happened — the
+                    # worst shape of failure available here, because the
+                    # output is indistinguishable from a real result.
+                    #
+                    # A tool-required operation with no executor fails; it
+                    # does not become narration.
+                    _record_agent_degradation(
+                        RuntimeError(f"no execution adapter for tool {tool_name!r}"),
+                        stage="tool_execution",
+                        action="failed the tool-required operation instead of fabricating an observation",
+                        severity="degraded",
+                        extra={"tool_name": str(tool_name)},
+                    )
+                    return {
+                        "content": (
+                            f"I could not run {tool_name} because no execution "
+                            "adapter is configured, so I have no result to report."
+                        ),
+                        "confidence": 0.0,
+                        "reasoning": [
+                            f"tool {tool_name} was required but no executor exists",
+                        ],
+                        "error": "no_executor",
+                        "tool_name": str(tool_name),
+                    }
                 else:
                     try:
                         result_str = await self.adapter.execute_tool(tool_name, tool_args)
@@ -330,7 +393,15 @@ class LocalAgentClient(LocalBrain):
                     level="success" if "error" not in str(result_str).lower() else "warning",
                 )
 
-                history += f"\nAURA: {response_text}\nSYSTEM: {result_str}\n"
+                # CP126 6a8225f5. result_str was interpolated wholesale, so
+                # one large tool result caused immediate context growth and
+                # overflow, with pruning only attempted next turn. Bounded
+                # here, at the point of entry, with the truncation declared
+                # so the model is not misled about what it received.
+                history += (
+                    f"\nAURA: {response_text}\nSYSTEM: "
+                    f"{_bounded_observation(result_str)}\n"
+                )
 
                 # Turn Safety: If this was the last allowed turn and model called a tool,
                 # we must stop here and return the state.

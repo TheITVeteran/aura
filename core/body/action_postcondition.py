@@ -32,9 +32,16 @@ class ActionPostconditionVerifier:
         if channel == "file" and receipt.get("action") == "write":
             side_effects.append(f"modified_file:{receipt.get('path')}")
         elif channel == "terminal":
-            exit_code = receipt.get("exit_code", 0)
-            if exit_code != 0:
-                side_effects.append(f"process_failed_with_code:{exit_code}")
+            # CP126 4bf25067. A missing exit_code defaulted to 0 — success —
+            # so a terminal receipt that never reported how the process
+            # ended suppressed its own failure evidence. Absent is not zero;
+            # it is unknown, and unknown must not read as success.
+            if "exit_code" not in receipt:
+                side_effects.append("process_exit_code_unreported")
+            else:
+                exit_code = receipt.get("exit_code")
+                if exit_code != 0:
+                    side_effects.append(f"process_failed_with_code:{exit_code}")
 
         verification = {
             "channel": channel,

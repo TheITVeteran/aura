@@ -76,6 +76,31 @@ _REAL_FAILURE_GOAL = (
 )
 
 
+# Statuses that positively mean the repair goal was created. Anything
+# outside this set — including new statuses nobody has classified yet — is
+# NOT acceptance, so an unrecognised result leaves the defect in the backlog
+# instead of silently retiring it (CP126 52feb1d1).
+_ACCEPTING_STATUSES = frozenset({
+    "created",
+    "accepted",
+    "queued",
+    "scheduled",
+    "succeeded",
+    "success",
+    "ok",
+    # A shadow plan that exists and is awaiting approval WAS created — that
+    # is this subsystem's designed success path (see
+    # test_enqueue_creates_approval_gated_shadow_plans), not a defect. The
+    # finding listed these as suspect; the design says otherwise, and the
+    # tests pin it. What the fix actually removes is acceptance-by-default
+    # for statuses nobody has classified.
+    "planned",
+    "waiting_for_approval",
+    "awaiting_approval",
+    "pending_approval",
+})
+
+
 @dataclass
 class SelfRepairBacklog:
     """Parses defect registers into approval-gated repair goals."""
@@ -401,14 +426,22 @@ class SelfRepairBacklog:
                 )
                 reason = str(getattr(result, "status", "planned") or "planned")
                 succeeded = getattr(result, "succeeded", None)
-                accepted_item = bool(succeeded) if succeeded is not None else reason.lower() not in {
-                    "blocked",
-                    "denied",
-                    "disabled",
-                    "error",
-                    "failed",
-                    "rejected",
-                }
+                # CP126 52feb1d1. With `succeeded` absent, acceptance was
+                # "any status not in a short denylist" — so unknown,
+                # planned, waiting, or an unexpected object repr all counted
+                # as accepted, were marked created, and were persisted as
+                # SEEN. A defect recorded as handled is a defect nobody
+                # looks at again, so a permissive default here quietly
+                # retires real work.
+                #
+                # Acceptance now needs a positive statement: either
+                # succeeded is truthy, or the status is one this code
+                # recognises as success. Everything else, including
+                # anything new, is not accepted and stays in the backlog.
+                if succeeded is not None:
+                    accepted_item = bool(succeeded)
+                else:
+                    accepted_item = reason.strip().lower() in _ACCEPTING_STATUSES
                 created = accepted_item
                 if accepted_item:
                     accepted.append(item)

@@ -473,10 +473,28 @@ class MLXVisionClient:
             resp = self._pending_requests.pop(req_id)
         if resp is None:  # pragma: no cover - loop exits only after response assignment
             raise RuntimeError("Vision worker returned no response payload")
-        if resp.get("status") == "error":
+        # CP126 7031837e. Anything not carrying status=error was treated as
+        # success and stringified — so a missing status, a null response, a
+        # mapping, or any malformed IPC payload became confident vision
+        # "output". A cross-process reply must satisfy a schema before it is
+        # believed, because the failure mode is fabricated perception.
+        if not isinstance(resp, dict):
+            raise RuntimeError(
+                f"Vision worker returned a non-mapping response: {type(resp).__name__}"
+            )
+        status = resp.get("status")
+        if status == "error":
             raise RuntimeError(f"Vision model error: {resp.get('message')}")
-
-        return str(resp.get("response", ""))
+        if status not in ("ok", "success", None):
+            raise RuntimeError(f"Vision worker returned unknown status: {status!r}")
+        payload = resp.get("response")
+        if payload is None:
+            raise RuntimeError("Vision worker response carried no 'response' field")
+        if not isinstance(payload, str):
+            raise RuntimeError(
+                f"Vision worker response must be text, got {type(payload).__name__}"
+            )
+        return payload
 
     async def see_async(
         self,
