@@ -333,3 +333,79 @@ class TestARefusalCostsNothing:
                 )
             )
         assert service._metabolic.fatigue == pytest.approx(0.02)
+
+
+class TestHomeostaticSetPoint:
+    """A fixed decay constant can only be right for one workload.
+
+    Measured live 2026-07-25 with the charge ledger: every charge was a
+    legitimate Will-authorised cost, they arrived faster than 0.01/s could
+    repay, and fatigue sat at 0.96 with recovery_debt at 0.9999 — 0.69 of the
+    welfare recovery drive before distress, on a runtime with nothing wrong.
+    Three retunes of the constant preceded this; none of them could have
+    worked, because the workload is a variable and the constant is not.
+
+    Recovery now tracks the observed charge rate, so any steady workload
+    settles near the set-point and a SURGE above her own recent normal still
+    signals. That is what makes the number mean something.
+    """
+
+    def _work(self, service, *, per_second: float, seconds: float, step: float = 1.0):
+        """Charge at a steady rate for a while, decaying between charges."""
+        for _ in range(int(seconds / step)):
+            service._commit_cost_locked(
+                {"fatigue": per_second * step, "integrity_risk": per_second * step},
+                receipt_id=f"will-{time.time_ns()}",
+            )
+            _rest(service, step)
+
+    def test_a_heavy_steady_workload_settles_not_saturates(self, service):
+        """The live rate: ~0.02 per action, several actions a second."""
+        self._work(service, per_second=0.05, seconds=600)
+        assert service._metabolic.fatigue < 0.75, (
+            f"fatigue pinned at {service._metabolic.fatigue:.3f} under a steady "
+            "load — a saturated signal cannot report anything"
+        )
+        assert service._metabolic.recovery_debt < 0.75
+
+    def test_the_welfare_drive_stays_under_the_defer_threshold(self, service):
+        """The whole point: her own work must not be deferred while working."""
+        self._work(service, per_second=0.05, seconds=600)
+        owned = (
+            service._metabolic.recovery_debt * 0.4
+            + service._metabolic.fatigue * 0.3
+        )
+        assert owned < 0.5, (
+            f"debt+fatigue contribute {owned:.3f}; with any distress at all "
+            "that clears the Will's 0.6 defer threshold and the storm returns"
+        )
+
+    def test_a_light_workload_stays_low(self, service):
+        self._work(service, per_second=0.002, seconds=300)
+        assert service._metabolic.fatigue < 0.3
+
+    def test_a_surge_above_her_own_normal_still_registers(self, service):
+        """Adaptation must not become numbness."""
+        self._work(service, per_second=0.01, seconds=600)   # establish normal
+        settled = service._metabolic.fatigue
+        for _ in range(30):                                  # sudden burst
+            service._commit_cost_locked(
+                {"fatigue": 0.05}, receipt_id=f"burst-{time.time_ns()}"
+            )
+        assert service._metabolic.fatigue > settled, (
+            "a burst well above the established rate must still tire her"
+        )
+
+    def test_quiet_after_work_still_recovers_fully(self, service):
+        self._work(service, per_second=0.05, seconds=300)
+        _rest(service, 1800.0)
+        assert service._metabolic.fatigue < 0.05
+        assert service._metabolic.recovery_debt < 0.05
+
+    def test_the_rate_estimate_forgets(self, service):
+        self._work(service, per_second=0.05, seconds=120)
+        assert service._fatigue_charge_rate > 0.0
+        _rest(service, 3000.0)
+        assert service._fatigue_charge_rate < 1e-4, (
+            "an estimate that never forgets makes past work permanent"
+        )

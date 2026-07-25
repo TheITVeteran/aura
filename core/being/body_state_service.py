@@ -204,6 +204,8 @@ class BodyStateService:
         # surface: bounded, per-source, and reported in the snapshot, so the
         # question is one grep instead of an afternoon.
         self._fatigue_charges: dict[str, float] = {}
+        self._fatigue_charge_rate = 0.0   # EMA, units/second
+        self._debt_charge_rate = 0.0
         self._fatigue_saturation_reported = False
         self._debt_charges: dict[str, float] = {}
         self._last_decay_time = time.monotonic()
@@ -373,12 +375,14 @@ class BodyStateService:
                 applied["fatigue"] = actual
                 if actual > 0:
                     self._note_charge(self._fatigue_charges, receipt_id, actual)
+                    self._observe_charge("fatigue", actual)
             elif dim == "integrity_risk":
                 self._metabolic.recovery_debt = _clip(
                     self._metabolic.recovery_debt + actual
                 )
                 if actual > 0:
                     self._note_charge(self._debt_charges, receipt_id, actual)
+                    self._observe_charge("debt", actual)
                 applied["integrity_risk"] = actual
             elif dim == "recovery":
                 self._metabolic.recovery_debt = _clip(
@@ -410,6 +414,41 @@ class BodyStateService:
             )
             self._metabolic.relief_accumulated += relief
             self._metabolic.last_relief_time = time.time()
+
+    # Where a steady workload should settle. Low enough that ordinary activity
+    # leaves headroom to signal with, high enough that it is not zero.
+    _FATIGUE_SETPOINT = 0.30
+    _DEBT_SETPOINT = 0.25
+    # How fast the rate estimate forgets. ~5 minutes, so a burst is visible as a
+    # burst and a sustained change becomes the new normal.
+    _CHARGE_RATE_HALF_LIFE_S = 300.0
+
+    def _observe_charge(self, kind: str, amount: float) -> None:
+        """Fold one charge into the rate estimate (called under the lock)."""
+        attr = "_fatigue_charge_rate" if kind == "fatigue" else "_debt_charge_rate"
+        # A charge is an impulse; convert to a rate contribution over the
+        # half-life window so the EMA is in units/second.
+        setattr(
+            self,
+            attr,
+            getattr(self, attr, 0.0) + float(amount) / self._CHARGE_RATE_HALF_LIFE_S,
+        )
+
+    def _decay_charge_rates(self, elapsed: float) -> None:
+        """Let the rate estimates forget at the half-life."""
+        if elapsed <= 0:
+            return
+        keep = 0.5 ** (elapsed / self._CHARGE_RATE_HALF_LIFE_S)
+        self._fatigue_charge_rate *= keep
+        self._debt_charge_rate *= keep
+
+    def _effective_fatigue_decay(self) -> float:
+        needed = self._fatigue_charge_rate / (self._FATIGUE_SETPOINT + 0.5)
+        return max(self._fatigue_decay_rate, needed)
+
+    def _effective_debt_decay(self) -> float:
+        needed = self._debt_charge_rate / (self._DEBT_SETPOINT + 0.5)
+        return max(self._recovery_decay_rate, needed)
 
     _CHARGE_LEDGER_CAP = 32
 
@@ -476,10 +515,31 @@ class BodyStateService:
                 # deep fatigue always escapes while ordinary dynamics are
                 # untouched. Rest that never restores is not fatigue, it is a
                 # ratchet.
+                # Homeostasis needs a SET-POINT, not a constant. A fixed decay
+                # rate can only be right for one workload; every other workload
+                # either pins the signal at the rail or leaves it at zero, and
+                # a signal stuck at either end carries no information.
+                #
+                # Measured 2026-07-25 with the charge ledger: every charge was
+                # a legitimate Will-authorised cost (0.0135-0.0294 each), and
+                # they arrived faster than 0.01/s could repay, so fatigue sat
+                # at 0.96 and recovery_debt at 0.9999 — 0.4 + 0.29 of the
+                # welfare recovery drive before distress was even counted, on a
+                # runtime with nothing wrong. Three earlier retunes moved the
+                # constant and none of them could have worked.
+                #
+                # Recovery now tracks the observed charge rate so any steady
+                # workload settles near _FATIGUE_SETPOINT. Equilibrium for
+                # d(f)/dt = charge - decay*(0.5 + f) is f* = charge/decay - 0.5,
+                # so decay = charge/(setpoint + 0.5) lands it. The EMA lags
+                # deliberately: a SURGE above her own recent normal still
+                # drives fatigue up, which is the only thing the signal was
+                # ever supposed to mean.
+                self._decay_charge_rates(elapsed)
                 recovery_gain = 0.5 + self._metabolic.fatigue
                 self._metabolic.fatigue = _clip(
                     self._metabolic.fatigue
-                    - self._fatigue_decay_rate * elapsed * recovery_gain
+                    - self._effective_fatigue_decay() * elapsed * recovery_gain
                 )
                 # Recovery debt is the SAME ratchet and the larger term:
                 # welfare weights it 0.4 against fatigue's 0.3, and the live
@@ -490,7 +550,7 @@ class BodyStateService:
                 debt_gain = 0.5 + self._metabolic.recovery_debt
                 self._metabolic.recovery_debt = _clip(
                     self._metabolic.recovery_debt
-                    - self._recovery_decay_rate * elapsed * debt_gain
+                    - self._effective_debt_decay() * elapsed * debt_gain
                 )
 
     def snapshot(self) -> BodyHealthSnapshot:
