@@ -2432,6 +2432,37 @@ class ModelLaneController:
             reason=reason,
         )
 
+    @staticmethod
+    def _owner_holder_is_alive(owner: dict, *, owner_id: str) -> bool:
+        """Whether the process that registered this owner still exists.
+
+        Owner ids carry their holder pid (``mlx:<pid>:<model path>``). A dead
+        holder cannot release its own claim, so without this a crashed worker
+        keeps the lane fenced for the life of the runtime. Unknown or
+        unparseable holders are treated as ALIVE — reaping on a guess would be
+        the mirror of the bug it fixes.
+        """
+        pid = owner.get("holder_pid") or owner.get("pid")
+        if pid is None:
+            parts = str(owner_id).split(":")
+            for part in parts[1:2]:
+                if part.isdigit():
+                    pid = part
+                    break
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            return True
+        if pid_int <= 0:
+            return True
+        try:
+            os.kill(pid_int, 0)
+        except ProcessLookupError:
+            return False
+        except (PermissionError, OSError):
+            return True
+        return True
+
     def release_owner_sync(
         self,
         owner_id: str,
@@ -2444,9 +2475,40 @@ class ModelLaneController:
             state = self._load_locked()
             owner = state["owners"].get(str(owner_id))
             if not isinstance(owner, dict):
-                return False
+                # A MISSING owner is a settled release, not a failure. Returning
+                # False for it made the caller unable to tell "already gone"
+                # from "someone else owns it now", and mlx_client fences the
+                # lane on False — so a clean release left admission blocked:
+                #   durable_owner_release_not_confirmed:mlx:<pid>:<model>
+                #   -> lane left FENCED ... admission stays blocked until it is
+                # Live 2026-07-25, repeating, with no path back to service.
+                self._append_event(
+                    state,
+                    "owner_release_noop",
+                    at=now,
+                    owner_id=str(owner_id),
+                    reason=f"already_released:{reason}",
+                )
+                self._save_locked(state)
+                return True
             current_token = int(owner.get("fencing_token") or 0)
             if fencing_token is not None and current_token != int(fencing_token):
+                # A token mismatch is a REAL conflict — a newer owner holds the
+                # lane — unless the registered holder is provably dead, in
+                # which case it is a corpse holding the door shut. Reap it the
+                # way admission leases are reaped for dead holders.
+                if not self._owner_holder_is_alive(owner, owner_id=str(owner_id)):
+                    state["owners"].pop(str(owner_id), None)
+                    self._append_event(
+                        state,
+                        "owner_reaped",
+                        at=now,
+                        owner_id=str(owner_id),
+                        fencing_token=current_token,
+                        reason=f"holder_died:{reason}",
+                    )
+                    self._save_locked(state)
+                    return True
                 return False
             state["owners"].pop(str(owner_id), None)
             self._append_event(
