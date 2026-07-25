@@ -223,7 +223,7 @@ class SemanticMemory:
                     texts = [m["text"] for m in self.metadata if m.get("text")]
                 if texts:
                     logger.info("Re-indexing %d existing memories...", len(texts))
-                    embeddings = encoder.encode(texts)
+                    embeddings = encoder.encode(texts, show_progress_bar=False)
                     _faiss.normalize_L2(embeddings)
                     index.add(embeddings.astype("float32"))
                     _faiss.write_index(index, self.index_path)
@@ -297,7 +297,7 @@ class SemanticMemory:
                     if self.is_vector_ready and encoder and index:
                         import faiss as _faiss
 
-                        vector = encoder.encode([text.strip()])
+                        vector = encoder.encode([text.strip()], show_progress_bar=False)
                         _faiss.normalize_L2(vector)
                         index.add(vector.astype("float32"))
                         _faiss.write_index(index, self.index_path)
@@ -327,7 +327,7 @@ class SemanticMemory:
                 with self._vector_lock:
                     if encoder is not self.encoder or index is not self.index:
                         raise RuntimeError("semantic_vector_owner_changed_before_search")
-                    query_vector = encoder.encode([query])
+                    query_vector = encoder.encode([query], show_progress_bar=False)
                     _faiss.normalize_L2(query_vector)
                     distances, indices = index.search(
                         query_vector.astype("float32"),

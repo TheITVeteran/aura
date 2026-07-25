@@ -288,7 +288,12 @@ class EmbeddingEngine:
             self._initialize_locked()
 
             if self._model:
-                return self._model.encode(text, normalize_embeddings=True)
+                # show_progress_bar=False: a daemon's log is not a terminal.
+                # These tqdm bars were 3,377 of 4,650 lines (73%) of one live
+                # hour's stdout, which is how a real signal becomes unfindable.
+                return self._model.encode(
+                    text, normalize_embeddings=True, show_progress_bar=False
+                )
 
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
@@ -303,6 +308,7 @@ class EmbeddingEngine:
                     texts,
                     normalize_embeddings=True,
                     batch_size=32,
+                    show_progress_bar=False,
                 )
 
         return np.vstack([self.embed(t) for t in texts])
