@@ -345,8 +345,25 @@ class BodyStateService:
             self._last_decay_time = now
 
             if elapsed > 0 and elapsed < 3600:  # sanity bound
+                # Recovery scales with how tired she is. A FLAT rate can be
+                # exactly cancelled by ordinary idle-loop costs, and then
+                # fatigue never leaves saturation: the 2026-07-25 idle window
+                # sat at 0.996 for the whole run with nothing failing, which
+                # held welfare.recovery_drive above the Will's defer
+                # threshold and produced a standing
+                # welfare_recovery_required_before_action storm — her own
+                # belief updates, memory writes and initiative all deferred
+                # during a completely quiet hour. That is the same class the
+                # 0.002→0.01 retune addressed; a constant only postpones it.
+                # Proportional rest cannot be cancelled by a constant drip:
+                # at fatigue 1.0 recovery runs 1.5x, at 0.1 it runs 0.6x, so
+                # deep fatigue always escapes while ordinary dynamics are
+                # untouched. Rest that never restores is not fatigue, it is a
+                # ratchet.
+                recovery_gain = 0.5 + self._metabolic.fatigue
                 self._metabolic.fatigue = _clip(
-                    self._metabolic.fatigue - self._fatigue_decay_rate * elapsed
+                    self._metabolic.fatigue
+                    - self._fatigue_decay_rate * elapsed * recovery_gain
                 )
                 self._metabolic.recovery_debt = _clip(
                     self._metabolic.recovery_debt - self._recovery_decay_rate * elapsed
