@@ -73,6 +73,22 @@ def _background_learning_allowed(orchestrator=None) -> bool:
 CURIOSITY_THRESHOLD = 0.45    # minimum curiosity to trigger exploration (lowered from 0.65)
 MIN_INTERVAL_SECS   = 45.0    # minimum seconds between explorations
 MAX_QUEUE_SIZE      = 10      # max pending explorations
+_RECENT_QUESTION_MEMORY = 40  # how far back to check before re-asking
+
+# Strings callers substitute when they have nothing real to offer. They read
+# like topics and are not — exploring one produces a question about nothing.
+_PLACEHOLDER_TOPICS = frozenset(
+    {
+        "something new",
+        "current interests",
+        "general",
+        "unknown",
+        "none",
+        "n/a",
+        "anything",
+        "stuff",
+    }
+)
 
 
 @dataclass
@@ -116,11 +132,26 @@ class CuriosityExplorer:
         if len(self._queue) >= MAX_QUEUE_SIZE:
             return
 
-        # Generate exploration item from gaps or active topic
-        topic = active_topic or "current interests"
+        # Generate exploration item from gaps or active topic. A placeholder
+        # is not a topic: searching the web for "What do I not know about
+        # something new?" is what the live 2026-07-25 idle hour actually did,
+        # nine times, and the findings were unrelated OS release notes. If the
+        # caller has no real subject, curiosity has nothing to work on.
+        topic = str(active_topic or "").strip()
+        if not topic or topic.lower() in _PLACEHOLDER_TOPICS:
+            logger.debug(
+                "CuriosityExplorer: no real topic (%r); not exploring a placeholder.",
+                active_topic,
+            )
+            return
         gaps = knowledge_gaps or [f"What do I not know about {topic}?"]
 
         for gap in gaps[:2]:
+            # Asking the identical question again cannot teach her anything
+            # new — that is a stuck loop wearing curiosity's clothes.
+            if self._already_asked(gap):
+                logger.debug("CuriosityExplorer: already explored %r; skipping.", gap[:60])
+                continue
             item = ExplorationItem(
                 topic=topic,
                 question=gap,
@@ -129,6 +160,17 @@ class CuriosityExplorer:
             )
             self._queue.append(item)
             logger.debug("CuriosityExplorer queued: %s", gap[:60])
+
+    def _already_asked(self, question: str) -> bool:
+        key = " ".join(str(question or "").lower().split())
+        if not key:
+            return True
+        if any(key == " ".join(str(i.question).lower().split()) for i in self._queue):
+            return True
+        return any(
+            key == " ".join(str(f.get("question", "")).lower().split())
+            for f in self._findings[-_RECENT_QUESTION_MEMORY:]
+        )
 
     async def run_exploration(self, orchestrator=None) -> List[ExplorationItem]:
         """Execute the top pending exploration item. Non-blocking."""

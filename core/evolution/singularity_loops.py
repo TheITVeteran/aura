@@ -581,9 +581,23 @@ class SingularityLoops:
                     if current and current.cognition.current_objective:
                         topic = current.cognition.current_objective[:60]
 
+                if not topic:
+                    # No objective means there is nothing to be curious ABOUT.
+                    # The old fallback substituted the literal string "something
+                    # new", which became the question "What do I not know about
+                    # something new?" — web-searched nine times in one idle hour
+                    # on 2026-07-25, returning Windows release notes she then
+                    # tried to file as learning. Feeling curious with no object
+                    # is boredom, not a research question.
+                    logger.debug(
+                        "🧬 Affect→Exploration: curiosity %.2f with no active "
+                        "objective; not inventing a topic.", curiosity_level,
+                    )
+                    return
+
                 curiosity_engine.tick(
                     curiosity=curiosity_level,
-                    active_topic=topic or "something new",
+                    active_topic=topic,
                 )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             self._record_loop_failure(
