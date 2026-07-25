@@ -10,6 +10,7 @@ import logging
 import math
 import multiprocessing as mp
 import os
+import pathlib
 import queue
 import re
 import stat
@@ -357,9 +358,46 @@ def _model_load_min_available_gb(model_path: str) -> float:
         default = 52.0 if 0.0 < total_gb < 96.0 else 34.0
         return _env_float("AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB", default)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
+        # Derive the requirement from the model actually on disk rather than a
+        # constant that happens to be wrong for it. Measured 2026-07-25: the
+        # resident 32B is 17.2GB on disk and the flat 24.0 gate refused it on a
+        # host sitting at 20.4GB available — a 6.8GB margin over true need, and
+        # the cortex starved through six deaths in one run because of it.
+        #
+        # weights x 1.20 + 1GB covers KV cache and activations for a normal
+        # context with room to spare. The flat default remains the CEILING, so
+        # this can only ever relax toward the real footprint, never tighten
+        # past a deliberate operator setting — and it floors at 16GB so a
+        # mis-sized or unreadable model directory cannot wave a load through.
         default = 24.0 if total_gb >= 60.0 else 22.0
+        measured = _measured_model_footprint_gb(model_path)
+        if measured is not None:
+            derived = measured * 1.20 + 1.0
+            default = max(16.0, min(default, derived))
         return _env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", default)
     return _env_float("AURA_MLX_LOAD_MIN_AVAILABLE_GB", 8.0)
+
+
+def _measured_model_footprint_gb(model_path: Any) -> float | None:
+    """Total size of the model directory in GB, or None if unreadable.
+
+    Returns None on anything surprising — a missing directory, a permission
+    error, an implausible size — so the caller keeps its conservative default.
+    """
+    text = str(model_path or "").strip()
+    if not text:
+        return None          # Path("") is the CWD, which is a real directory
+    try:
+        root = pathlib.Path(text)
+        if not root.is_dir():
+            return None
+        total = sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+    gb = total / float(1024**3)
+    if not (1.0 < gb < 200.0):
+        return None
+    return gb
 
 
 def _env_projected_footprint_gb(name: str) -> float | None:
