@@ -17218,8 +17218,9 @@ async def api_chat_regenerate(
             return JSONResponse(
                 {
                     "response": (
-                        "I could not produce a reliable full-mind reply for that regenerate turn, "
-                        "so I failed closed instead of sending an ungrounded answer."
+                        "I couldn't put together a better version of that answer just "
+                        "now — my main reasoning path isn't available this moment. The "
+                        "reply you already have still stands; try again shortly."
                     ),
                     "status": "desktop_cognitive_engine_unavailable",
                     "reason": "desktop_cognitive_engine_required_no_reply",
@@ -17313,8 +17314,9 @@ async def api_chat_regenerate(
                 return JSONResponse(
                     {
                         "response": (
-                            "I could not verify the complete regenerated reply, so I "
-                            "failed closed instead of displaying partial text."
+                            "I couldn't finish rewriting that answer, and half of a "
+                            "reply is worse than none. The version you have still "
+                            "stands — try again in a moment."
                         ),
                         "status": "regenerate_full_mind_contract_not_proven",
                         "reason": "regenerate_full_mind_contract_not_proven",
@@ -18375,9 +18377,15 @@ async def api_chat(
                     "rejected_reply_len": len(str(rejected_reply or "")),
                 }
             )
+            # Plain speech. "full-mind", "failed closed" and "ungrounded" are
+            # words for the engineering log, not for the person waiting — the
+            # 2026-07-25 endurance probe served this exact sentence on the
+            # retention turns and it reads like a subsystem talking about
+            # itself. Say what happened and what they can do.
             failure_reply = (
-                "I could not produce a reliable full-mind desktop reply for that turn, "
-                "so I failed closed instead of sending an ungrounded answer."
+                "I couldn't get to an answer I'd stand behind on that one, and I "
+                "won't send you a thinner one and pass it off as the real thing. "
+                "Ask me again in a moment and I should have it."
             )
             if pending_exchange_id:
                 await _complete_logged_exchange(
@@ -19900,8 +19908,9 @@ async def api_chat(
                 }
             )
             failure_reply = (
-                "I could not produce a reliable full-mind reply for that turn, "
-                "so I failed closed instead of sending an ungrounded answer."
+                "I couldn't get to an answer I'd stand behind on that one, and I "
+                "won't send you a thinner one and pass it off as the real thing. "
+                "Ask me again in a moment and I should have it."
             )
             logger.error("%s Surface=%s", failure_reply, request_surface or "unknown")
             if pending_exchange_id:
@@ -20950,8 +20959,9 @@ async def api_chat(
                 or "unknown",
             )
             fail_closed_reply = (
-                "The requested output contract could not be verified for this turn, "
-                "so no unverified answer was delivered."
+                "I couldn't confirm that my answer matched the exact form you asked "
+                "for, so I'd rather not send it than send something that only looks "
+                "right. Ask again and I'll have another go."
             )
             _append_turn_text_mutation(
                 _live_turn_trace,
@@ -20996,8 +21006,9 @@ async def api_chat(
                 final_live_turn_contract.get("response_path") or "",
             )
             fail_closed_reply = (
-                "I could not prove the full live mind path for that turn, "
-                "so I failed closed instead of sending an ungrounded answer."
+                "I couldn't get my full attention onto that one, and I'd rather "
+                "tell you that than answer from half of it. Try me again in a "
+                "moment."
             )
             _append_turn_text_mutation(
                 _live_turn_trace,
@@ -21092,8 +21103,9 @@ async def api_chat(
                 }
             )
             timeout_reply = (
-                "I could not produce a reliable full-mind reply before the live turn timed out, "
-                "so I failed closed instead of sending an ungrounded answer."
+                "That one took me longer than I'm willing to keep you waiting for, "
+                "and I won't send a rushed answer instead. Ask again and I should "
+                "be quicker."
             )
             if pending_exchange_id:
                 await _complete_logged_exchange(

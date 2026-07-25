@@ -4541,7 +4541,7 @@ async def test_api_chat_desktop_cold_lane_timeout_is_not_reported_as_failed_reas
     assert payload["response_confidence"] == "not_generated"
     assert payload["live_turn_contract"]["engine_think_invoked"] is False
     assert payload["live_turn_contract"]["full_mind_path"] is False
-    assert "failed closed instead of sending an ungrounded answer" not in payload["response"]
+    assert "stand behind" not in payload["response"]
     assert "boot delay" in payload["response"]
     assert calls == ["warmup"]
 
@@ -5461,7 +5461,11 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
     payload = json.loads(response.body)
     assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert kernel_calls == []
-    assert b"failed closed instead of sending an ungrounded answer" in response.body
+    # The refusal is pinned by its contract fields, not by one sentence: the
+    # wording is user-facing prose and was deliberately rewritten out of
+    # engineering vocabulary. tests/test_failure_replies_speak_plainly.py owns
+    # the wording; this test owns the behaviour.
+    assert b"stand behind" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
     assert payload["live_turn_contract"]["final_requested_output_contract_required"] is True
     assert payload["live_turn_contract"]["final_requested_output_contract_evaluated"] is False
@@ -5662,7 +5666,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
     assert payload["response_confidence"] == "failed"
-    assert "failed closed instead of sending an ungrounded answer" in payload["response"]
+    assert "stand behind" in payload["response"]
     assert "reply-quality gate" not in payload["response"]
     assert "second foreground generation" not in payload["response"]
     assert kernel_calls == []
@@ -5782,7 +5786,7 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
     assert payload["live_turn_contract"]["authentic_cognitive_reply"] is False
     assert payload["live_turn_contract"]["bounded_contract_used"] is True
     assert payload["live_turn_contract"]["model_native_output"] is False
-    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "stand behind" not in lowered
     assert "planning" in lowered
     assert "memory" in lowered
     assert "tool" in lowered
@@ -5908,7 +5912,7 @@ async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(
     assert payload["response_confidence"] == "high"
     assert payload["live_turn_contract"]["full_mind_path"] is True
     assert payload["live_turn_contract"]["bounded_contract_used"] is False
-    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "stand behind" not in lowered
     assert "resident bridge truth" in lowered
     assert "desktop ui" in lowered
     assert "/api/chat" in lowered
@@ -6029,7 +6033,7 @@ async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(mon
     assert payload["response_confidence"] == "high"
     assert payload["live_turn_contract"]["full_mind_path"] is True
     assert payload["live_turn_contract"]["bounded_contract_used"] is False
-    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "stand behind" not in lowered
     assert "local governed cognitive-agent runtime" in lowered
     assert "persistent memory" in lowered
     assert "cannot guarantee perfect tomorrow recall" in lowered
@@ -6158,7 +6162,7 @@ async def test_api_chat_desktop_capability_no_reply_fails_closed_without_invento
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["response_confidence"] == "failed"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert "failed closed instead of sending an ungrounded answer" in lowered
+    assert "stand behind" in lowered
     assert "computer_use" not in payload["response"]
     assert "web_search" not in payload["response"]
     assert "legacy fallback" not in lowered
