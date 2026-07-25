@@ -2476,6 +2476,12 @@ class InferenceGate:
         # the cold budget for a genuine cold boot; take the tighter of the
         # two so a recovering turn falls to the fast fallback while Cortex
         # re-warms in the background (its warmup task is shielded).
+        # A lane that was EVER ready gets the short recovery cap, and that
+        # short wait is a DESIGNED handoff: the warmup task is shielded, the
+        # cortex keeps loading in the background, and this turn falls to the
+        # ready fallback. Timing out on it is the mechanism working, not a
+        # stuck load — see _warmup_timeout_is_designed_handoff below.
+        recovery_handoff = float(lane.get("last_ready_at", 0.0) or 0.0) > 0.0
         timeout = min(timeout, self._foreground_warmup_timeout(lane, timeout))
         lane_state = str(lane.get("state", "") or "").lower()
         lane_reason = str(lane.get("last_failure_reason", "") or "")
@@ -2541,14 +2547,32 @@ class InferenceGate:
             else:
                 await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
         except TimeoutError:
-            # A foreground warmup that keeps timing out is the cortex failing to
-            # load in time — the same GPU-thrash signal as a stuck-load kill, but
-            # with no force-kill to observe (the worker just stays "warming").
-            # Feed it into the warmup backoff so repeated stalls defer cortex
-            # warmup and free the single GPU slot for the resident fallback that
-            # is actually serving the turn. Without this the cortex load and the
+            # A foreground warmup that overruns its COLD budget is the cortex
+            # failing to load in time — the same GPU-thrash signal as a
+            # stuck-load kill, but with no force-kill to observe (the worker
+            # just stays "warming"). Feed that into the warmup backoff so
+            # repeated stalls defer cortex warmup and free the single GPU slot
+            # for the resident fallback. Without it the cortex load and the
             # fallback cold-load fight over one GPU slot and neither wins.
-            self._note_cortex_stuck_kill()
+            #
+            # The RECOVERY cap is the opposite case and must not be counted.
+            # It is a deliberate 15s handoff — wait briefly, let this turn use
+            # the ready fallback, leave the shielded warmup running — and
+            # counting it as damage is what broke the 2026-07-25 endurance
+            # probe: 62 load attempts, none allowed to finish, because every
+            # designed handoff incremented the stuck-load counter until the
+            # backoff deferred warmup by 240s and the cortex could never
+            # complete a load. 173 of 200 turns went unanswered on a lane that
+            # was never given the chance to finish warming. A deferral is not
+            # damage; the same category error, one layer down.
+            if not recovery_handoff:
+                self._note_cortex_stuck_kill()
+            else:
+                logger.info(
+                    "🧠 Foreground recovery handoff after %.0fs — cortex keeps "
+                    "warming in the background, this turn uses the ready lane.",
+                    timeout,
+                )
             if hasattr(self._mlx_client, "note_lane_recovering"):
                 self._mlx_client.note_lane_recovering("foreground_warmup_timeout")
             raise
@@ -6227,14 +6251,36 @@ class InferenceGate:
                 inline_deferral = self._cortex_warmup_deferral_reason("foreground")
                 if inline_deferral:
                     self._log_cortex_warmup_deferral(inline_deferral, context="foreground")
-                    if strict_primary_proof_lane or protected_foreground_lane:
+                    if strict_primary_proof_lane:
+                        # A proof or benchmark names the primary model in its
+                        # contract: a lower lane's answer would misreport its
+                        # own provenance, so refusing is the honest outcome.
                         logger.warning(
-                            "🧠 Cortex inline recovery was deferred, but this turn requires the primary lane; refusing lower-lane fallback."
+                            "🧠 Cortex inline recovery was deferred and this turn's "
+                            "contract names the primary lane; refusing lower-lane fallback."
                         )
                         return None
-                    logger.warning(
-                        "🧠 Cortex inline recovery skipped by RAM admission; routing foreground turn to Brainstem."
-                    )
+                    # protected_foreground_lane is a PRIORITY marker — "a real
+                    # person is waiting" — not a provenance requirement. Treating
+                    # it as one inverted its purpose: the 2026-07-25 endurance
+                    # probe served "I couldn't put together an answer I'd stand
+                    # behind" on 173 of 200 turns while the fallback workers sat
+                    # resident and ready, because every protected user turn hit
+                    # this branch during a cortex warmup backoff. Protecting
+                    # someone is not a reason to hand them nothing.
+                    if protected_foreground_lane:
+                        logger.warning(
+                            "🧠 Cortex inline recovery deferred (%s) on a protected "
+                            "foreground turn; serving from Brainstem rather than "
+                            "returning nothing to a waiting person.",
+                            inline_deferral,
+                        )
+                        context["served_from_fallback_lane"] = True
+                        context["fallback_lane_reason"] = str(inline_deferral)
+                    else:
+                        logger.warning(
+                            "🧠 Cortex inline recovery skipped by RAM admission; routing foreground turn to Brainstem."
+                        )
                     requested_tier = "tertiary"
                 else:
                     logger.warning(
