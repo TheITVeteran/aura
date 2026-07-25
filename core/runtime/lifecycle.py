@@ -236,7 +236,7 @@ class ManagedOrgan:
                 ok = await asyncio.wait_for(
                     self._run_hook(transition), timeout=self.transition_timeout_s
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 detail = f"transition timed out after {self.transition_timeout_s:.0f}s"
                 ok = False
             except asyncio.CancelledError:

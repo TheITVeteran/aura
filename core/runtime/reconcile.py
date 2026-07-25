@@ -84,12 +84,12 @@ class Result:
     requeue_after_s: float = 0.0
 
     @classmethod
-    def done(cls) -> "Result":
+    def done(cls) -> Result:
         """Converged. Nothing to do until something changes."""
         return cls()
 
     @classmethod
-    def again(cls, after_s: float = 0.0) -> "Result":
+    def again(cls, after_s: float = 0.0) -> Result:
         """Progress made, not finished. Look again after the delay."""
         return cls(requeue=True, requeue_after_s=max(0.0, after_s))
 

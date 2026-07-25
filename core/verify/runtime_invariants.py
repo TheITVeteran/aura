@@ -722,6 +722,157 @@ def _nothing_stale() -> Iterator[Violation]:
         )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Observability, experimentation, and security posture
+# ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "histograms.are_owned",
+    scope="observability",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="every declared histogram names an owner and describes itself",
+)
+def _histograms_owned() -> Iterator[Violation]:
+    from core.observability.histograms import histograms_report
+
+    report = histograms_report()
+    for entry in report["expired"]:
+        yield Violation(
+            subject=entry["name"],
+            message=(
+                f"histogram {entry['name']!r} has recorded nothing in "
+                f"{entry['age_days']:.0f} days (expiry {entry['expiry_days']}) — "
+                "either nobody reads it or nothing feeds it"
+            ),
+            remedy="retire it, or find out why the code path stopped running",
+        )
+
+
+@invariant(
+    "histograms.are_not_clipping",
+    scope="observability",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="no histogram is losing more than 1% of samples to overflow",
+)
+def _histograms_not_clipping() -> Iterator[Violation]:
+    from core.observability.histograms import histograms_report
+
+    report = histograms_report()
+    for name in report["clipping"]:
+        entry = report["histograms"][name]
+        yield Violation(
+            subject=name,
+            message=(
+                f"{name!r} sent {entry['overflow']} of {entry['count']} samples to "
+                "the overflow bucket; its top percentiles are floors, not values"
+            ),
+            remedy="raise the histogram's maximum to cover the real tail",
+        )
+
+
+@invariant(
+    "memory.attribution_is_meaningful",
+    scope="observability",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="a reasonable share of process memory is attributed to a component",
+)
+def _memory_attributed() -> Iterator[Violation]:
+    from core.runtime.memory_infra import memory_infra_report
+
+    report = memory_infra_report()
+    latest = report.get("latest")
+    if not latest or not latest.get("process_rss_mb"):
+        return
+    fraction = float(latest.get("attributed_fraction") or 0.0)
+    if fraction < 0.05 and len(report["providers"]) > 3:
+        yield Violation(
+            subject="memory_infra",
+            message=(
+                f"only {fraction * 100:.1f}% of {latest['process_rss_mb']:.0f}MB RSS is "
+                f"attributed to a component ({latest['unattributed_mb']:.0f}MB "
+                "unaccounted) — a growth diff cannot name a culprit it has no "
+                "provider for"
+            ),
+            remedy="register providers for the large holders: model weights, caches, indexes",
+        )
+
+
+@invariant(
+    "trials.have_hypotheses_and_expire",
+    scope="observability",
+    owner=_OWNER,
+    description="no field trial has outlived its expiry without a conclusion",
+)
+def _trials_expire() -> Iterator[Violation]:
+    from core.runtime.field_trials import field_trials_report
+
+    report = field_trials_report()
+    for name in report["expired"]:
+        entry = report["trials"][name]
+        yield Violation(
+            subject=name,
+            message=(
+                f"trial {name!r} has run {entry['age_days']:.0f} days past its "
+                f"{entry['expires_days']}-day expiry with no conclusion; it is now a "
+                "config flag with extra steps, keeping a dead arm alive in the code"
+            ),
+            remedy="conclude it and delete the losing arm, or re-declare with a new expiry",
+        )
+
+
+@invariant(
+    "security.rule_of_two_holds",
+    scope="observability",
+    owner=_OWNER,
+    description="no handler takes untrusted input, can act, and runs unsandboxed",
+)
+def _rule_of_two_holds() -> Iterator[Violation]:
+    from core.security.rule_of_two import get_rule_of_two_registry
+
+    for handler in get_rule_of_two_registry().violations():
+        yield Violation(
+            subject=handler.name,
+            message=(
+                f"{handler.name!r} handles untrusted input, can execute or act, and "
+                f"runs in-process. Carried as accepted risk: "
+                f"{handler.accepted_risk or '(nobody accepted it)'}"
+            ),
+            remedy="; or ".join(handler.remedies()),
+        )
+
+
+@invariant(
+    "layering.baseline_only_shrinks",
+    scope="observability",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="the grandfathered layering baseline contains no fixed entries",
+)
+def _layering_baseline_current() -> Iterator[Violation]:
+    import json
+    from pathlib import Path
+
+    from core.config import config
+
+    baseline_path = Path(config.paths.project_root) / "config" / "layering_baseline.json"
+    if not baseline_path.exists():
+        return
+    try:
+        payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    count = int(payload.get("count", 0) or 0)
+    if count and count != len(payload.get("grandfathered", [])):
+        yield Violation(
+            subject="config/layering_baseline.json",
+            message="the baseline's count does not match its entries",
+            remedy="regenerate with tools/check_layering.py --baseline",
+        )
+
+
 def register_runtime_invariants() -> int:
     """Import-time registration is the real work; this returns the count."""
     from core.verify.invariants import get_registry

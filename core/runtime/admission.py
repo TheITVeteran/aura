@@ -77,7 +77,7 @@ class AdmissionRequest:
     context: dict[str, Any] = field(default_factory=dict)
     old_obj: Any = None
 
-    def with_object(self, obj: Any) -> "AdmissionRequest":
+    def with_object(self, obj: Any) -> AdmissionRequest:
         return replace(self, obj=obj)
 
     def to_dict(self) -> dict[str, Any]:
@@ -98,11 +98,11 @@ class AdmissionResponse:
     warnings: tuple[str, ...] = ()
 
     @classmethod
-    def allow(cls, *warnings: str) -> "AdmissionResponse":
+    def allow(cls, *warnings: str) -> AdmissionResponse:
         return cls(allowed=True, warnings=tuple(warnings))
 
     @classmethod
-    def deny(cls, reason: str) -> "AdmissionResponse":
+    def deny(cls, reason: str) -> AdmissionResponse:
         return cls(allowed=False, reason=reason)
 
 

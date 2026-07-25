@@ -103,11 +103,11 @@ class SetResult:
     reason: str = ""
 
     @classmethod
-    def ok(cls) -> "SetResult":
+    def ok(cls) -> SetResult:
         return cls(successful=True)
 
     @classmethod
-    def reject(cls, reason: str) -> "SetResult":
+    def reject(cls, reason: str) -> SetResult:
         return cls(successful=False, reason=reason)
 
 

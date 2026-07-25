@@ -30,6 +30,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -69,12 +70,19 @@ def _fsync_file(fd: int) -> None:
     from core.runtime.pressure_stall import Resource, stall
 
     assert_no_locks_held("fsync")
+    started = time.perf_counter()
     with stall(Resource.IO):
         try:
             os.fsync(fd)
         except (AttributeError, OSError):
             # Best-effort on platforms where fsync is unavailable.
             pass  # no-op: intentional
+    try:
+        from core.observability.histograms import record
+
+        record("Aura.Fsync.DurationMs", (time.perf_counter() - started) * 1000.0)
+    except Exception:  # noqa: BLE001 — telemetry never blocks durability
+        pass  # no-op: the write already happened
 
 
 def _fsync_dir(directory: Path) -> None:

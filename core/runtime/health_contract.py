@@ -1118,6 +1118,34 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover
         block["pressure_error"] = repr(exc)
     try:
+        from core.observability.histograms import histograms_report
+        from core.observability.trace_events import tracer_report
+        from core.runtime.field_trials import field_trials_report
+        from core.runtime.memory_infra import memory_infra_report
+        from core.security.rule_of_two import rule_of_two_report
+
+        histograms = histograms_report()
+        memory = memory_infra_report()
+        posture = rule_of_two_report()
+        block["observability"] = {
+            "histograms": {
+                "count": histograms["count"],
+                "clipping": histograms["clipping"],
+                "expired": [e["name"] for e in histograms["expired"]],
+            },
+            "trace": {
+                k: tracer_report()[k] for k in ("enabled", "buffered", "dropped", "span_s")
+            },
+            "memory_attribution": memory["leak_report"],
+            "field_trials": field_trials_report()["active_groups"],
+            "security_posture": {
+                "violations": posture["violations"],
+                "at_the_limit": posture["at_the_limit"],
+            },
+        }
+    except Exception as exc:  # pragma: no cover
+        block["observability_error"] = repr(exc)
+    try:
         from core.bus.qos import qos_report
         from core.health.diagnostics_aggregator import diagnostics_report
         from core.observability.bus_recorder import bus_recorder_report

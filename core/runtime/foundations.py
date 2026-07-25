@@ -156,6 +156,44 @@ class MemorySentinel:
             logger.debug("memory sentinel sample failed", exc_info=True)
             return None
 
+    def _record_observability(self, available_fraction: float) -> None:
+        """Feed the histograms, the trace counters, and memory attribution.
+
+        The memory dump on every tick is what turns the open ~242MB/h soak
+        question into an answerable one: two dumps and a diff name the
+        component that grew, which neither RSS nor allocation-site
+        profiling can do.
+        """
+        try:
+            from core.observability.histograms import record
+            from core.observability.trace_events import trace_counter
+            from core.runtime.pressure_stall import Resource, pressure
+
+            memory_pressure = pressure(Resource.MEMORY)
+            record("Aura.Memory.AvailableFraction", available_fraction)
+            record("Aura.Pressure.MemoryFull", memory_pressure * 100.0)
+            trace_counter(
+                "memory",
+                {
+                    "available_fraction": available_fraction,
+                    "psi_memory_full": memory_pressure,
+                    "psi_inference_full": pressure(Resource.INFERENCE),
+                },
+                category="resource",
+            )
+        except Exception:
+            logger.debug("observability sampling failed", exc_info=True)
+        try:
+            from core.runtime.memory_infra import DetailLevel, get_memory_infra
+
+            get_memory_infra().dump(
+                DetailLevel.LIGHT
+                if available_fraction <= SOFT_PRESSURE_AVAILABLE_FRACTION
+                else DetailLevel.BACKGROUND
+            )
+        except Exception:
+            logger.debug("memory dump failed", exc_info=True)
+
     def _evaluate(self) -> None:
         from core.runtime.oom_policy import get_oom_policy
 
@@ -195,6 +233,7 @@ class MemorySentinel:
         available, total = sample
         fraction = available / float(total)
         self.samples += 1
+        self._record_observability(fraction)
 
         if fraction > SOFT_PRESSURE_AVAILABLE_FRACTION:
             self._end_memory_stall()
@@ -734,6 +773,55 @@ def _declare_standard_topics() -> list[str]:
     return sorted(topics)
 
 
+async def _activate_observability(*, foreground_only: bool) -> ActivationResult:
+    """Wave 5 — histograms, traces, memory attribution, trials, Rule of Two."""
+    from core.observability.histograms import install_standard_histograms
+    from core.observability.trace_events import get_tracer, install_pass_tracing
+    from core.runtime.memory_infra import DetailLevel, get_memory_infra, install_runtime_providers
+    from core.security.rule_of_two import install_known_handlers, rule_of_two_report
+
+    histograms = install_standard_histograms()
+    tracing = install_pass_tracing()
+    get_tracer().name_thread("runtime.main")
+
+    providers = install_runtime_providers()
+    # Take the first dump immediately: a leak report needs two points, and
+    # the earlier one has to exist before the growth starts.
+    baseline_dump = get_memory_infra().dump(DetailLevel.BACKGROUND)
+
+    handlers = install_known_handlers()
+    posture = rule_of_two_report()
+
+    return ActivationResult(
+        name="observability",
+        ok=not posture["violations"],
+        detail=(
+            f"{len(histograms)} histograms declared, pass tracing "
+            f"{'armed' if tracing else 'already armed'}, "
+            f"{len(providers)} memory providers "
+            f"({baseline_dump.attributed_bytes / 1e6:.0f}MB attributed of "
+            f"{baseline_dump.process_rss_bytes / 1e6:.0f}MB RSS), "
+            f"{len(handlers)} security postures declared"
+            + (
+                f", {len(posture['violations'])} RULE-OF-TWO VIOLATION(S)"
+                if posture["violations"]
+                else ""
+            )
+        ),
+        data={
+            "histograms": histograms,
+            "pass_tracing": tracing,
+            "memory_providers": providers,
+            "baseline_dump": baseline_dump.to_dict()["attributed_fraction"],
+            "rule_of_two": {
+                "declared": handlers,
+                "violations": posture["violations"],
+                "at_the_limit": posture["at_the_limit"],
+            },
+        },
+    )
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
@@ -741,6 +829,7 @@ _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("verification", _activate_verification),
     ("orchestration", _activate_orchestration),
     ("middleware", _activate_middleware),
+    ("observability", _activate_observability),
 ]
 
 

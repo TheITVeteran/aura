@@ -1,0 +1,33 @@
+# core/observability — instrumentation, below everything it observes.
+#
+# Observability that depends on what it observes cannot report on it while
+# it is broken, which is the only time the report matters. A tracer that
+# imports the cognitive engine cannot trace the cognitive engine's failure
+# to import.
+
+description = "Instrumentation: may not depend on the subsystems it observes."
+
+include_rules = [
+    "+core.config",
+    "+core.container",
+    "+core.service_names",
+    "+core.exceptions",
+    "+core.event_bus",
+    "+core.governance_context",
+    "+core.runtime",
+    "+core.observability",
+    "+core.utils",
+    "+core.health",
+    "+core.pipeline",
+
+    "-core.brain",
+    "-core.cognition",
+    "-core.cognitive",
+    "-core.agency",
+    "-core.autonomy",
+    "-core.goals",
+    "-core.learning",
+    "-core.self_improvement",
+    "-core.self_modification",
+    "-interface",
+]

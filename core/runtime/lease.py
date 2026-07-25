@@ -79,7 +79,7 @@ class Identity:
     started_at: float
 
     @classmethod
-    def current(cls, holder: str | None = None) -> "Identity":
+    def current(cls, holder: str | None = None) -> Identity:
         return cls(
             holder=holder or f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}",
             pid=os.getpid(),
@@ -88,7 +88,7 @@ class Identity:
             started_at=time.time(),
         )
 
-    def same_process(self, other: "Identity") -> bool:
+    def same_process(self, other: Identity) -> bool:
         return self.pid == other.pid and self.boot_id == other.boot_id
 
     def to_dict(self) -> dict[str, Any]:
@@ -139,7 +139,7 @@ class LeaseRecord:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "LeaseRecord":
+    def from_dict(cls, payload: dict[str, Any]) -> LeaseRecord:
         identity = payload.get("identity") or {}
         return cls(
             name=str(payload.get("name", "")),
@@ -277,7 +277,10 @@ class LeaderElector:
     async def _write(self, record: LeaseRecord) -> bool:
         """Async lane: the fsync happens on a worker thread, never on the loop."""
         from core.governance_context import local_internal_governed_scope
-        from core.runtime.atomic_writer import async_atomic_write_text, async_ensure_private_directory
+        from core.runtime.atomic_writer import (
+            async_atomic_write_text,
+            async_ensure_private_directory,
+        )
 
         path = _lease_path(self.name)
         try:
@@ -437,7 +440,7 @@ class LeaderElector:
                 await self._check_renew_deadline()
             try:
                 await asyncio.wait_for(self._stopping.wait(), timeout=self.retry_period_s)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def stop(self, *, release: bool = True) -> None:

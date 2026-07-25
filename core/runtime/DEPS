@@ -1,0 +1,59 @@
+# core/runtime — the foundation layer.
+#
+# Everything above depends on this; it depends on nothing above. That
+# sentence has been in the architecture docs for a long time and nothing
+# enforced it, so this file does. See tools/check_layering.py.
+#
+# Why these specific bans: an import from a cognitive or agentic module
+# into the runtime foundation makes the foundation un-bootable without the
+# thing it is supposed to be able to run WITHOUT. That is how a health
+# surface ends up unable to report on a mind that failed to start.
+#
+# Existing violations are grandfathered in config/layering_baseline.json,
+# which may only shrink.
+
+description = "Runtime foundation: may not depend on cognition or agency."
+
+include_rules = [
+    # Foundation peers — always fine.
+    "+core.config",
+    "+core.container",
+    "+core.service_names",
+    "+core.exceptions",
+    "+core.schemas",
+    "+core.event_bus",
+    "+core.governance_context",
+    "+core.runtime",
+    "+core.observability",
+    "+core.verify",
+    "+core.utils",
+    "+core.health",
+    "+core.bus",
+    "+core.pipeline",
+    "+core.security",
+
+    # Upward dependencies: forbidden. The foundation must be able to come
+    # up, report, and shed load with none of these present.
+    "-core.brain",
+    "-core.cognition",
+    "-core.cognitive",
+    "-core.consciousness",
+    "-core.reasoning",
+    "-core.agency",
+    "-core.autonomy",
+    "-core.goals",
+    "-core.creativity",
+    "-core.curiosity_engine",
+    "-core.evolution",
+    "-core.learning",
+    "-core.morphogenesis",
+    "-core.play",
+    "-core.research_core",
+    "-core.self_improvement",
+    "-core.self_modification",
+    "-core.social",
+    "-core.sovereignty",
+    "-core.swarm",
+    "-core.worlds",
+    "-interface",
+]
