@@ -409,3 +409,41 @@ class TestHomeostaticSetPoint:
         assert service._fatigue_charge_rate < 1e-4, (
             "an estimate that never forgets makes past work permanent"
         )
+
+
+class TestDebtClearsInAQuietMinute:
+    """Debt was the term that kept the defer storm alive after fatigue settled.
+
+    Measured on the live code 2026-07-25: 667 seconds to clear from saturation
+    once charges stop. Debt carries welfare weight 0.4 against fatigue's 0.3
+    and had a base decay rate ten times slower, so a quiet runtime spent
+    eleven minutes deferring its own belief updates and memory writes for work
+    it had already finished paying for.
+    """
+
+    def test_saturated_debt_clears_in_about_two_quiet_minutes(self, service):
+        service._metabolic.recovery_debt = 1.0
+        _rest(service, 150.0)
+        assert service._metabolic.recovery_debt < 0.05
+
+    def test_the_welfare_terms_fall_under_the_threshold_quickly(self, service):
+        service._metabolic.recovery_debt = 1.0
+        service._metabolic.fatigue = 1.0
+        _rest(service, 90.0)
+        owned = (
+            service._metabolic.recovery_debt * 0.4
+            + service._metabolic.fatigue * 0.3
+        )
+        assert owned < 0.2, (
+            f"after ninety quiet seconds the terms still contribute {owned:.3f}"
+        )
+
+    def test_debt_still_accrues_faster_than_it_clears(self, service):
+        """Recovery must not outrun genuine integrity risk."""
+        service._metabolic.recovery_debt = 0.0
+        service._last_decay_time = time.monotonic()
+        for i in range(10):
+            service._commit_cost_locked(
+                {"integrity_risk": 0.05}, receipt_id=f"risk-{i}"
+            )
+        assert service._metabolic.recovery_debt > 0.4

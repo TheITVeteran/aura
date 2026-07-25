@@ -194,7 +194,18 @@ class BodyStateService:
         # the ~0.0025/s gross accrual while still building under genuine
         # sustained load. The old 0.002/s could not overcome normal drift.
         self._fatigue_decay_rate = 0.01     # per second when idle
-        self._recovery_decay_rate = 0.001   # recovery debt decays slowly
+        # Debt carries the LARGER welfare weight (0.4 against fatigue's 0.3)
+        # and had a base rate ten times slower, so it was the term that kept
+        # recovery_drive over the Will's threshold long after fatigue had
+        # settled. Measured 2026-07-25 on the live code: 667 seconds to clear
+        # from saturation once charges stop — eleven minutes of a quiet runtime
+        # deferring its own belief updates and memory writes for work it had
+        # already finished paying for.
+        #
+        # 0.005/s clears a saturated debt in ~2 minutes of quiet with the
+        # proportional gain, which is commensurate with fatigue and still far
+        # slower than it accrues, so genuine integrity risk still accumulates.
+        self._recovery_decay_rate = 0.005
         # Who is charging fatigue, and how much. Proportional recovery drains
         # a saturated fatigue in about seventy seconds of quiet, which is
         # provable in isolation — and the 2026-07-25 live runtime still sat at
