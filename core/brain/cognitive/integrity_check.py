@@ -185,7 +185,18 @@ class IntegrityGuard:
         if belief.get("status") == "quarantined":
             return
 
-        # [Phase 17.4] Protected Enclaves check
+        # [Phase 17.4] Protected Enclaves check.
+        #
+        # CP126 da6520fc. An unavailable immune system skipped protection and
+        # let the belief decay — the enclave exists to prevent exactly that —
+        # and operational or schema failures from get_immune_system /
+        # is_protected were not caught here at all, so one malformed belief
+        # could terminate the whole sweep.
+        #
+        # Both are now handled the same way: if protection cannot be
+        # established, this belief is left alone. Skipping one decay is
+        # harmless; decaying a protected belief is not, and neither is
+        # aborting the sweep for every belief after it.
         try:
             from core.adaptation.immune_system import get_immune_system
             immune_sys = get_immune_system()
@@ -193,11 +204,35 @@ class IntegrityGuard:
                 is_protected = immune_sys.is_protected(belief.get("metadata", {}) or belief)
                 if is_protected:
                     return
-        except ImportError:
-            logger.debug("IntegrityGuard: Immune system not installed, skipping enclave check.")
-            
-        last_reinforced = belief.get("last_reinforced", belief.get("created_at", 0))
-        if not last_reinforced or last_reinforced < cutoff:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+            record_degradation(
+                "integrity_guard",
+                exc,
+                severity="warning",
+                action="left a belief undecayed because enclave protection could not be checked",
+            )
+            return
+
+        # CP126 fb224bd0. A belief with neither last_reinforced nor
+        # created_at fell back to 0, which is 1970 — so unknown provenance
+        # was decayed as though it were confirmed ancient. Those are
+        # different claims, and only one of them is evidence.
+        last_reinforced = belief.get("last_reinforced", belief.get("created_at", None))
+        if last_reinforced is None:
+            report.skipped_unknown_age = getattr(report, "skipped_unknown_age", 0) + 1
+            return
+        try:
+            last_reinforced = float(last_reinforced)
+        except (TypeError, ValueError):
+            report.skipped_unknown_age = getattr(report, "skipped_unknown_age", 0) + 1
+            return
+        if last_reinforced <= 0.0:
+            # An explicit 0 is the same claim as an absent field: nobody
+            # recorded when this belief was last touched. 1970 is not
+            # evidence of staleness.
+            report.skipped_unknown_age = getattr(report, "skipped_unknown_age", 0) + 1
+            return
+        if last_reinforced < cutoff:
             belief_id = belief.get("id", "unknown")
             old_conf = belief.get("confidence", 1.0)
             new_conf = max(0.0, old_conf - 0.05)

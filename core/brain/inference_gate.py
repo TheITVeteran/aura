@@ -3003,8 +3003,23 @@ class InferenceGate:
             if not InferenceGate._origin_is_user_facing(current_origin):
                 return False
             return not bool(getattr(orch, "_current_task_is_autonomous", False))
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            return False
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # CP126 e193508b. A probe FAILURE returned False, meaning "no
+            # foreground turn is running" — so background warmup, worker
+            # recycling and load shedding were free to proceed on top of a
+            # real user generation whenever shared status was unavailable.
+            # That is the interruption this probe exists to prevent, granted
+            # by the probe's own failure.
+            #
+            # Unknown is treated as OCCUPIED: at worst a background task
+            # waits for the next cycle, which costs nothing a user sees.
+            record_degradation(
+                "inference_gate",
+                exc,
+                severity="warning",
+                action="assumed a foreground turn is active after an unreadable orchestrator probe",
+            )
+            return True
 
     @staticmethod
     def _foreground_quiet_window_active() -> bool:
@@ -3227,8 +3242,16 @@ class InferenceGate:
             from core.brain.llm.mlx_client import _foreground_owner_active
 
             return bool(_foreground_owner_active())
-        except _INFERENCE_RECOVERABLE_ERRORS:
-            return False
+        except _INFERENCE_RECOVERABLE_ERRORS as exc:
+            # Same reasoning as the orchestrator probe above: an unreadable
+            # ownership state must not read as "the lane is free".
+            record_degradation(
+                "inference_gate",
+                exc,
+                severity="warning",
+                action="assumed foreground MLX ownership after an unreadable probe",
+            )
+            return True
 
     @classmethod
     def _default_timeout_for_request(

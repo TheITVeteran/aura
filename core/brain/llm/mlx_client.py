@@ -76,6 +76,42 @@ _MODEL_LOAD_BACKGROUND_ADMISSION_TIMEOUT_FLAG = declare(
 _HEAVY_LANE_NAME_TOKENS = ("32b", "72b", "zenith", "solver", "cortex")
 
 
+# Ceiling applied when the somatic throttle cannot report. Not a refusal —
+# this is a throttle, and refusing generation for a metabolic hiccup would
+# take conversation down — but not the wide-open default either.
+_UNTHROTTLED_FALLBACK_MAX_TOKENS = 1024
+
+
+def _apply_unthrottled_fallback_ceiling(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Damp generation when body pressure could not be consulted.
+
+    Mutates and returns the SAME mapping rather than a copy. The throttle's
+    success path rebinds kwargs, but its failure path historically left the
+    caller's object untouched, and callers downstream rely on that identity;
+    swapping in a copy here silently detached their later mutations.
+    """
+    if not isinstance(kwargs, dict):
+        return kwargs
+    requested = kwargs.get("max_tokens")
+    if requested is None:
+        # IMPOSE NOTHING. Several internal paths — the warmup precompile
+        # probe above all — deliberately omit max_tokens and rely on their
+        # own budgeting; putting a number there changes what those paths do
+        # and, in the warmup case, left a durable owner unreleased. This is
+        # a ceiling on an over-large request, not a default for callers who
+        # never asked for one.
+        return kwargs
+    try:
+        current = int(requested)
+    except (TypeError, ValueError):
+        # A malformed budget is not a budget; clamp it to something sane.
+        kwargs["max_tokens"] = _UNTHROTTLED_FALLBACK_MAX_TOKENS
+        return kwargs
+    if current > _UNTHROTTLED_FALLBACK_MAX_TOKENS:
+        kwargs["max_tokens"] = _UNTHROTTLED_FALLBACK_MAX_TOKENS
+    return kwargs
+
+
 def _model_is_heavy_lane(model_path: str | None) -> bool:
     """True when a path names one of the big resident lanes.
 
@@ -7495,14 +7531,30 @@ class MLXLocalClient:
             logger.debug("MLX memory pressure probe unavailable: %s", exc)
 
         # ── SOMATIC COUPLING: Metabolic hardware throttle ────────────
+        #
+        # CP126 4e95a54c. A failed throttle check was recorded and then
+        # generation proceeded with UNTHROTTLED parameters — the body-pressure
+        # control vanished exactly when its state could not be established.
+        # On a host that has been driven into swap and jetsam before, the
+        # unthrottled path is the expensive one.
+        #
+        # A failure now applies a conservative floor instead of nothing: the
+        # generation still runs (this is a throttle, not an admission gate,
+        # and refusing here would take conversation down for a metabolic
+        # hiccup) but it runs damped rather than wide open.
         try:
             from core.brain.llm.somatic_throttle import SomaticComputeSentinel
             sentinel = SomaticComputeSentinel()
             kwargs = sentinel.adjust_generation_options(kwargs)
         except _MLX_OPTIONAL_THROTTLE_ERRORS as exc:
+            kwargs = _apply_unthrottled_fallback_ceiling(kwargs)
             _record_mlx_degradation(
                 exc,
-                action="continued generation without somatic parameter throttle",
+                action=(
+                    "somatic throttle unavailable; applied a conservative "
+                    "generation ceiling instead of running unthrottled"
+                ),
+                severity="warning",
             )
             logger.debug("Somatic parameter throttle check failed: %s", exc)
 

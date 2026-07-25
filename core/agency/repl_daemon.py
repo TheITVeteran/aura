@@ -101,7 +101,19 @@ def write_frame(stream: BinaryIO, payload: dict[str, Any], *, max_bytes: int) ->
     stream.flush()
 
 
-def _apply_resource_limits() -> None:
+def _apply_resource_limits() -> list[str]:
+    """Install sandbox rlimits, reporting which ones did NOT take.
+
+    CP126 6c13255a. Every getrlimit/setrlimit failure was swallowed with
+    `continue`, and the worker then announced ready and executed code
+    regardless. The parent had no way to know whether CPU, file-size,
+    descriptor or address-space limits were actually in force — so an
+    unsandboxed worker was indistinguishable from a sandboxed one, which
+    defeats the point of having limits at all.
+
+    Returns the names of the limits that could not be applied.
+    """
+    unapplied: list[str] = []
     limits = (
         (resource.RLIMIT_CPU, 12, 12),
         (resource.RLIMIT_FSIZE, 2 * 1024 * 1024, 2 * 1024 * 1024),
@@ -109,6 +121,13 @@ def _apply_resource_limits() -> None:
     )
     if hasattr(resource, "RLIMIT_AS"):
         limits += ((resource.RLIMIT_AS, 2 * 1024**3, 2 * 1024**3),)
+    names = {
+        resource.RLIMIT_CPU: "cpu",
+        resource.RLIMIT_FSIZE: "file_size",
+        resource.RLIMIT_NOFILE: "open_files",
+    }
+    if hasattr(resource, "RLIMIT_AS"):
+        names[resource.RLIMIT_AS] = "address_space"
     for kind, soft, hard in limits:
         try:
             current_soft, current_hard = resource.getrlimit(kind)
@@ -116,7 +135,8 @@ def _apply_resource_limits() -> None:
             bounded_soft = min(soft, bounded_hard)
             resource.setrlimit(kind, (bounded_soft, bounded_hard))
         except (OSError, ValueError):
-            continue
+            unapplied.append(names.get(kind, str(kind)))
+    return unapplied
 
 
 def _validate_request(payload: dict[str, Any]) -> tuple[str, str, str]:
@@ -168,13 +188,17 @@ def main() -> None:
     site_packages = os.environ.pop("AURA_SANDBOX_SITE_PACKAGES", "").strip()
     if site_packages:
         sys.path.insert(0, site_packages)
-    _apply_resource_limits()
+    unapplied_limits = _apply_resource_limits()
     write_frame(
         output_stream,
         {
             "version": PROTOCOL_VERSION,
             "kind": "ready",
             "worker_pid": os.getpid(),
+            # The parent decides what to do about a partially-sandboxed
+            # worker; it cannot decide anything if we do not tell it.
+            "sandbox_limits_applied": not unapplied_limits,
+            "unapplied_limits": unapplied_limits,
         },
         max_bytes=MAX_RESPONSE_BYTES,
     )

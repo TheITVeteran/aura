@@ -2526,9 +2526,26 @@ class AdaptiveImmuneSystem:
         matches = self._component_monitor_matches(subsystem)
         for component in matches:
             try:
-                return float(max(0.0, min(1.0, autopoiesis.get_component_health(component))))
+                raw = float(autopoiesis.get_component_health(component))
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 continue
+            # CP126 adbedaea. min/max propagate NaN silently — max(0.0, nan)
+            # is nan — so a non-finite health reading passed straight through
+            # into comparisons and persisted fitness, where every comparison
+            # against it is False and the value looks benign forever.
+            # Unknown health is None, which callers already handle; it is not
+            # a number.
+            if not math.isfinite(raw):
+                record_degradation(
+                    "adaptive_immunity",
+                    ValueError(
+                        f"non-finite health for component {component!r}: {raw!r}"
+                    ),
+                    severity="warning",
+                    action="treated a non-finite component health reading as unknown",
+                )
+                continue
+            return max(0.0, min(1.0, raw))
         return None
 
     def _estimate_recurrence_pressure(self, subsystem: str, error_signature: str) -> float:

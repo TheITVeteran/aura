@@ -288,3 +288,146 @@ class TestRecallOutcomeIsObservable:
         source = inspect.getsource(mod.maybe_build_foreground)
         assert 'severity="warning"' in source
         assert 'severity="debug"' not in source
+
+
+class TestUnknownAgeIsNotStaleness:
+    """``fb224bd0`` / ``da6520fc`` — a belief with neither last_reinforced nor
+    created_at fell back to timestamp 0 (1970) and was decayed, conflating
+    unknown provenance with confirmed staleness; and an unavailable immune
+    system skipped enclave protection entirely, while its operational errors
+    could terminate the whole sweep."""
+
+    def _source(self):
+        from core.brain.cognitive import integrity_check as mod
+
+        return inspect.getsource(mod.IntegrityGuard._decay_stale_single)
+
+    def test_a_missing_timestamp_is_skipped_not_decayed(self):
+        source = self._source()
+        assert "skipped_unknown_age" in source
+        assert 'belief.get("created_at", 0)' not in source
+
+    def test_an_explicit_zero_is_also_unknown(self):
+        source = self._source()
+        assert "last_reinforced <= 0.0" in source
+
+    def test_enclave_failure_protects_rather_than_decays(self):
+        source = self._source()
+        assert "enclave protection could not be checked" in source
+        # Every failure mode, not just ImportError.
+        assert "except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError)" in source
+
+    def test_one_bad_belief_cannot_end_the_sweep(self):
+        """Errors are handled per-belief rather than escaping the loop."""
+        source = self._source()
+        assert source.count("return") >= 3
+
+
+class TestSomaticFallbackDamps:
+    """``4e95a54c`` — a failed throttle check was recorded and generation
+    proceeded with UNTHROTTLED parameters, so a body-pressure control
+    vanished when its state could not be established."""
+
+    def test_a_caller_who_set_no_budget_is_left_alone(self):
+        """This is a ceiling on an over-large request, not a default.
+
+        Internal paths — the warmup precompile probe above all —
+        deliberately omit max_tokens and do their own budgeting. Imposing a
+        number changed what those paths did and left a durable owner
+        unreleased, which test_warmup_precompile_rejects_empty_readiness_probe
+        caught.
+        """
+        from core.brain.llm.mlx_client import _apply_unthrottled_fallback_ceiling
+
+        assert "max_tokens" not in _apply_unthrottled_fallback_ceiling({})
+
+    def test_an_oversized_request_is_capped(self):
+        from core.brain.llm.mlx_client import (
+            _UNTHROTTLED_FALLBACK_MAX_TOKENS,
+            _apply_unthrottled_fallback_ceiling,
+        )
+
+        capped = _apply_unthrottled_fallback_ceiling({"max_tokens": 100_000})
+        assert capped["max_tokens"] == _UNTHROTTLED_FALLBACK_MAX_TOKENS
+
+    def test_a_modest_request_is_left_alone(self):
+        from core.brain.llm.mlx_client import _apply_unthrottled_fallback_ceiling
+
+        assert _apply_unthrottled_fallback_ceiling({"max_tokens": 256})["max_tokens"] == 256
+
+    def test_a_malformed_value_is_capped(self):
+        from core.brain.llm.mlx_client import (
+            _UNTHROTTLED_FALLBACK_MAX_TOKENS,
+            _apply_unthrottled_fallback_ceiling,
+        )
+
+        capped = _apply_unthrottled_fallback_ceiling({"max_tokens": "lots"})
+        assert capped["max_tokens"] == _UNTHROTTLED_FALLBACK_MAX_TOKENS
+
+    def test_it_is_a_throttle_not_a_refusal(self):
+        """Refusing generation for a metabolic hiccup would take
+        conversation down; damping does not."""
+        from core.brain.llm import mlx_client as mod
+
+        source = inspect.getsource(mod)
+        assert "applied a conservative" in source
+
+
+class TestSandboxLimitsAreReported:
+    """``6c13255a`` — every rlimit failure was swallowed and the worker
+    announced ready anyway, so an unsandboxed worker was indistinguishable
+    from a sandboxed one."""
+
+    def test_unapplied_limits_are_returned(self):
+        from core.agency import repl_daemon as mod
+
+        source = inspect.getsource(mod._apply_resource_limits)
+        assert "unapplied" in source
+        assert "return unapplied" in source
+
+    def test_the_ready_frame_declares_sandbox_state(self):
+        from core.agency import repl_daemon as mod
+
+        source = inspect.getsource(mod.main)
+        assert "sandbox_limits_applied" in source
+        assert "unapplied_limits" in source
+
+
+class TestUnreadableOwnershipMeansOccupied:
+    """``e193508b`` — probe failures returned False ("no foreground turn"),
+    so background warmup, recycling and shedding proceeded on top of real
+    user generations whenever shared status was unavailable."""
+
+    def test_both_probes_assume_occupied_on_error(self):
+        from core.brain import inference_gate as mod
+
+        for name in ("_foreground_user_turn_active", "_foreground_owner_active"):
+            source = inspect.getsource(getattr(mod.InferenceGate, name))
+            tail = source.split("except _INFERENCE_RECOVERABLE_ERRORS", 1)[1]
+            assert "return True" in tail, name
+            assert "return False" not in tail, name
+
+    def test_an_absent_orchestrator_is_still_not_occupied(self):
+        """Nothing registered is a different claim from a failed probe."""
+        from core.brain import inference_gate as mod
+
+        source = inspect.getsource(mod.InferenceGate._foreground_user_turn_active)
+        assert "if not orch:\n                return False" in source
+
+
+class TestNonFiniteHealthIsUnknown:
+    """``adbedaea`` — min/max propagate NaN silently, so a non-finite health
+    reading passed into comparisons and persisted fitness."""
+
+    def test_non_finite_readings_are_refused(self):
+        from core.adaptation import adaptive_immunity as mod
+
+        source = inspect.getsource(mod.AdaptiveImmuneSystem._read_component_health)
+        assert "math.isfinite(raw)" in source
+        assert "non-finite component health" in source
+
+    def test_the_clamp_no_longer_wraps_the_raw_call(self):
+        from core.adaptation import adaptive_immunity as mod
+
+        source = inspect.getsource(mod.AdaptiveImmuneSystem._read_component_health)
+        assert "min(1.0, autopoiesis.get_component_health(" not in source
