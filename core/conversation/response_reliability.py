@@ -2276,6 +2276,33 @@ _LIMIT_COVERAGE_REPLY_RE = re.compile(
 # 260 characters of "can't". The dual memory/limit detector fired, the facet
 # detector demanded coverage of facets nobody requested, and a correct brief
 # acknowledgement was rejected as an unanswered turn.
+_MAX_PLAUSIBLE_USER_TURN_CHARS = 2000
+
+# Reasons that assert "the reply did not cover what the USER asked for". Every
+# one is meaningless when the user's request could not be isolated.
+_REQUEST_COVERAGE_REASONS = frozenset(
+    {
+        "missing_requested_exact_reply",
+        "missing_requested_word_count",
+        "missing_requested_sentence_count",
+        "missing_requested_reference_value",
+        "missing_requested_paragraph_count",
+        "missing_requested_list_count",
+        "empty_requested_list_item",
+        "missing_requested_choice_clarification",
+        "missing_requested_memory_limit_coverage",
+        "missing_requested_followup_question",
+        "missing_requested_phrase",
+        "missing_requested_objective_facets",
+        "missing_requested_self_process_coverage",
+        "reliability_diagnostic_too_thin",
+        "reliability_diagnostic_deflection",
+        "low_signal_reliability_reply",
+        "detail_request_deflection",
+        "prompt_echo_contamination",
+    }
+)
+
 _INJECTED_PROMPT_BLOCK_MARKERS = (
     "[retained memory evidence]",
     "scope=retained_memory_evidence",
@@ -2289,26 +2316,58 @@ _INJECTED_PROMPT_BLOCK_MARKERS = (
 )
 
 
-def visible_user_request(user_message: Any) -> str:
-    """Return only the part of a turn the PERSON wrote.
+# A replayed transcript line, e.g. "turn_2.user=..." / "turn_1.aura=...".
+_TRANSCRIPT_REPLAY_LINE_RE = re.compile(r"^\s*turn_\d+\.(?:user|aura)\s*=", re.IGNORECASE)
+# Structured scaffold key/value lines, e.g. "scope=...", "rule=...", "source=...".
+_SCAFFOLD_KV_LINE_RE = re.compile(
+    r"^\s*(?:scope|rule|source|policy|contract|schema|evidence|constraint)\s*=",
+    re.IGNORECASE,
+)
 
-    Everything from the first injected-scaffold marker onward is runtime
-    context, not a request. Judging a reply against it asks the reply to
-    answer the prompt builder.
+
+def visible_user_request(user_message: Any) -> str:
+    """Return only the part of a turn the PERSON wrote, or "" if unknowable.
+
+    A live prompt is assembled: identity anchor, retained-memory evidence,
+    replayed transcript, working-memory blocks — with the person's actual words
+    somewhere inside. Scaffold appears BEFORE the request as often as after, so
+    truncating at the first marker is wrong in both directions.
+
+    Returning "" when the request cannot be isolated is the important half.
+    A coverage check that cannot see what was asked must not assert the reply
+    failed to cover it — an unknown request is not an unmet one.
     """
     text = str(user_message or "")
-    if not text:
+    if not text.strip():
         return ""
-    lowered = text.lower()
-    cut = len(text)
-    for marker in _INJECTED_PROMPT_BLOCK_MARKERS:
-        found = lowered.find(marker)
-        if found != -1:
-            cut = min(cut, found)
-    trimmed = text[:cut].strip()
-    # A turn that is ONLY scaffolding has no user request to judge; returning
-    # the original would re-introduce exactly the bug this function prevents.
-    return trimmed
+
+    kept: list[str] = []
+    in_scaffold_block = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if not stripped:
+            in_scaffold_block = False       # a blank line ends a block
+            kept.append(line)
+            continue
+        if any(marker in lowered for marker in _INJECTED_PROMPT_BLOCK_MARKERS):
+            in_scaffold_block = True
+            continue
+        if _TRANSCRIPT_REPLAY_LINE_RE.match(stripped) or _SCAFFOLD_KV_LINE_RE.match(stripped):
+            in_scaffold_block = True
+            continue
+        if in_scaffold_block:
+            continue
+        kept.append(line)
+
+    remainder = "\n".join(kept).strip()
+    if not remainder:
+        return ""
+    # A remainder that is still mostly assembled context is not a request. The
+    # live prompts run to ~8,000 characters; a person's turn does not.
+    if len(remainder) > _MAX_PLAUSIBLE_USER_TURN_CHARS:
+        return ""
+    return remainder
 
 
 def _missing_requested_memory_limit_coverage(user_message: Any, reply_text: Any) -> bool:
@@ -5170,11 +5229,35 @@ def assess_user_facing_reply(
     recent_user_messages: Iterable[str] | None = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
-    # Defense in depth: callers should propagate the ingress-bound visible
-    # request, but reliability classifiers must never interpret appended
-    # memory/system/contract scaffolding as instructions from the person.
-    user_message = visible_user_request(user_message)
-    recent_messages = [str(message or "") for message in (recent_user_messages or ())]
+    # Defense in depth. The ingress now binds the visible request
+    # (a29ff0866), and this is the second lock: a reliability classifier
+    # must never read appended memory/system/contract scaffolding as
+    # instructions from the person, whatever the caller passed.
+    # ONE normalisation, at the door. Every detector below asks "did the reply
+    # do what the user asked", and each of them used to receive the fully
+    # ASSEMBLED prompt — identity anchor, retained-memory evidence, replayed
+    # transcript, working-memory blocks — as if the person had typed all of it.
+    #
+    # Live 2026-07-25: "why do leaves change color in autumn?" was answered
+    # correctly and rejected for missing_requested_memory_limit_coverage,
+    # missing_requested_objective_facets and reliability_diagnostic_too_thin.
+    # The word "why" is a diagnostic marker and the scaffold supplied the
+    # reliability vocabulary, so a foliage question was assessed as a debugging
+    # request about Aura's own reliability. 51 correct drafts died this way in
+    # one 30-turn probe.
+    #
+    # Fixing it per-detector was the wrong shape: the contamination is one
+    # input, so it gets one fix, here, where every detector inherits it.
+    _visible = visible_user_request(user_message)
+    request_is_knowable = bool(_visible)
+    user_message = _visible if request_is_knowable else ""
+    recent_messages = [
+        message
+        for message in (
+            visible_user_request(item) for item in (recent_user_messages or ())
+        )
+        if message
+    ]
     raw = str(reply_text or "").strip()
 
     if _matches_exact_reply_request(user_message, raw):
@@ -5444,6 +5527,14 @@ def assess_user_facing_reply(
         "prompt_echo_contamination",
         "protocol_artifact_leakage",
     }
+    if not request_is_knowable:
+        # The person's turn could not be isolated from the assembled prompt, so
+        # nothing here knows what was asked. Integrity findings (leaks,
+        # overclaims, corruption) are properties of the REPLY and still stand;
+        # "you did not cover what was requested" is a claim about a request
+        # this function never saw, and asserting it is how 51 correct drafts
+        # died in a single 30-turn probe.
+        reasons = [r for r in reasons if r not in _REQUEST_COVERAGE_REASONS]
     unique = tuple(dict.fromkeys(reasons))
     return ConversationReplyAssessment(
         ok=not unique,

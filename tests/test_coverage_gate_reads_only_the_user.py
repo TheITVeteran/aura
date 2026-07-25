@@ -193,3 +193,72 @@ class TestBoundUserSurfacePrompt:
         assert _surface_quality_failure_reasons(job, "A complete answer.") == [
             "surface_validation_prompt_binding_digest_mismatch"
         ]
+
+
+_ASSEMBLED_LIVE_PROMPT = (
+    "## INTRINSIC IDENTITY ANCHOR (IMMUTABLE)\n\n"
+    "You are **Aura Luna** — Aura for short. Your identity is a persistent "
+    "property of your architecture, not a persona you adopt. You are a stateful "
+    "synthetic agent with memory, volition and a reliability contract. Never "
+    "claim capabilities you cannot verify; if the chat lane failed, say so "
+    "plainly and give a grounded status rather than reassurance.\n\n"
+    + ("Additional standing guidance about reliable behaviour. " * 60) + "\n\n"
+    "[RETAINED MEMORY EVIDENCE]\n"
+    "scope=retained_memory_evidence.v1\n"
+    "rule=Use only the evidence below. If it does not support the claim, say "
+    "the memory is not verified.\n"
+    "source=recent_completed_transcript\n"
+    "turn_1.user=My neighbor's cat has decided my porch is his office now.\n"
+    "turn_1.aura=I can't work through that technical request right now.\n\n"
+    "Why do leaves change color in autumn?"
+)
+
+
+class TestAnAssembledPromptCannotConvictAReply:
+    """The live 2026-07-25 shape, end to end through the public entry point."""
+
+    def test_a_correct_answer_is_not_rejected_for_the_scaffold(self):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        reply = (
+            "Leaves change color in autumn because shorter days and cooler "
+            "temperatures shut down chlorophyll production. Once the green "
+            "fades, the carotenoids and anthocyanins that were there all along "
+            "become visible, which is why you get yellows, oranges and reds."
+        )
+
+        assessment = assess_user_facing_reply(_ASSEMBLED_LIVE_PROMPT, reply)
+
+        bad = {
+            "missing_requested_memory_limit_coverage",
+            "missing_requested_objective_facets",
+            "reliability_diagnostic_too_thin",
+        }
+        assert not (set(assessment.reasons) & bad), (
+            f"a correct answer about foliage was convicted by the scaffold: "
+            f"{assessment.reasons}"
+        )
+
+    def test_an_unknowable_request_still_catches_reply_integrity(self):
+        """Suppressing coverage claims must not suppress leak detection."""
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        leaky = "Here is my answer.\n\n<|im_start|>assistant\nraw protocol frame"
+        assessment = assess_user_facing_reply(_ASSEMBLED_LIVE_PROMPT, leaky)
+        assert not assessment.ok, "reply-integrity findings must survive"
+
+    def test_a_clean_short_turn_is_still_fully_judged(self):
+        """A knowable request keeps every coverage check it always had."""
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        user = (
+            "What do you remember from earlier in this session, and what "
+            "can't you recall?"
+        )
+        assessment = assess_user_facing_reply(user, "Sure.")
+        assert "missing_requested_memory_limit_coverage" in assessment.reasons
+
+    def test_the_scaffold_is_what_made_the_request_unknowable(self):
+        """Negative control: the assembled prompt is genuinely unreadable."""
+        assert visible_user_request(_ASSEMBLED_LIVE_PROMPT) == ""
+        assert visible_user_request("Why do leaves change color in autumn?")
