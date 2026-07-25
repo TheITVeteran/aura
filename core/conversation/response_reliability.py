@@ -7,6 +7,8 @@ as a successful answer that later systems have to explain away.
 from __future__ import annotations
 
 import logging
+import ast
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -2323,6 +2325,100 @@ _SCAFFOLD_KV_LINE_RE = re.compile(
     r"^\s*(?:scope|rule|source|policy|contract|schema|evidence|constraint)\s*=",
     re.IGNORECASE,
 )
+
+
+# Arithmetic a reply can be CHECKED against. The 2026-07-25 probe asked
+# "What is 144 / 6 + 7? Just the number." and was answered "Will do. Searched
+# web for 'simple cognitive tasks aging'. Dementia affects simple cognitive
+# tasks first…" — retrieved memory served as the answer. Nothing caught it:
+# the topicality check needs topic anchors, and a bare sum has almost none, so
+# a short computable question was unjudgeable by every gate in the path.
+#
+# It does not have to be. An arithmetic question has one right answer and the
+# runtime can do the arithmetic itself, which turns "sounds plausible" into
+# "is correct" for the whole class — including the hijack, which contains no
+# number at all.
+_ARITHMETIC_QUESTION_RE = re.compile(
+    r"(?:what(?:'s| is)|calculate|compute|how much is|solve)\s*:?\s*"
+    r"([0-9][0-9\s\.\+\-\*/x×÷\(\)]{2,60})",
+    re.IGNORECASE,
+)
+_ARITHMETIC_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _evaluate_arithmetic(expression: str) -> float | None:
+    """Evaluate a simple arithmetic expression, or None if it is not one."""
+    cleaned = (
+        str(expression or "")
+        .replace("x", "*").replace("X", "*")
+        .replace("×", "*").replace("÷", "/")
+        .strip().rstrip("?.=").strip()
+    )
+    if not cleaned or not re.fullmatch(r"[0-9\s\.\+\-\*/\(\)]+", cleaned):
+        return None
+    if not any(op in cleaned for op in "+-*/"):
+        return None
+    try:
+        tree = ast.parse(cleaned, mode="eval")
+    except (SyntaxError, ValueError):
+        return None
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
+            return float(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
+            value = _eval(node.operand)
+            return value if isinstance(node.op, ast.UAdd) else -value
+        if isinstance(node, ast.BinOp):
+            left, right = _eval(node.left), _eval(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                if right == 0:
+                    raise ZeroDivisionError
+                return left / right
+        raise ValueError("unsupported expression")
+
+    try:
+        result = _eval(tree.body)
+    except (ArithmeticError, ValueError, TypeError, RecursionError):
+        return None
+    if not math.isfinite(result):
+        return None
+    return float(result)
+
+
+def requested_arithmetic_result(user_message: Any) -> float | None:
+    """The single correct answer to a computable arithmetic question, if any."""
+    match = _ARITHMETIC_QUESTION_RE.search(str(user_message or ""))
+    if not match:
+        return None
+    return _evaluate_arithmetic(match.group(1))
+
+
+def _arithmetic_answer_missing(user_message: Any, reply_text: Any) -> bool:
+    """Whether a checkable arithmetic answer is absent or wrong.
+
+    Fails OPEN: if the question is not computable here, this says nothing.
+    """
+    expected = requested_arithmetic_result(user_message)
+    if expected is None:
+        return False
+    reply = str(reply_text or "")
+    if not reply.strip():
+        return True
+    for token in _ARITHMETIC_NUMBER_RE.findall(reply.replace(",", "")):
+        try:
+            value = float(token)
+        except ValueError:
+            continue
+        if abs(value - expected) <= max(1e-6, abs(expected) * 1e-9):
+            return False
+    return True
 
 
 def visible_user_request(user_message: Any) -> str:
@@ -5248,6 +5344,7 @@ def assess_user_facing_reply(
     #
     # Fixing it per-detector was the wrong shape: the contamination is one
     # input, so it gets one fix, here, where every detector inherits it.
+    _original_user_message = user_message
     _visible = visible_user_request(user_message)
     request_is_knowable = bool(_visible)
     user_message = _visible if request_is_knowable else ""
@@ -5329,6 +5426,12 @@ def assess_user_facing_reply(
         reasons.append("corrupted_social_fragment")
     if is_confusion_repair_turn(user_message) and _unexpected_short_foreign_name(user_message, raw):
         reasons.append("foreign_name_intrusion")
+    # Arithmetic is checkable, so check it. This is the only reason in the
+    # coverage family that survives an unknowable request — it does not need to
+    # know what was asked in general, only that a computable sum was asked and
+    # the number is absent or wrong.
+    if _arithmetic_answer_missing(user_message or _original_user_message, raw):
+        reasons.append("arithmetic_answer_missing")
     if _has_low_signal_acknowledgement_placeholder(user_message, raw):
         reasons.append("low_signal_acknowledgement_placeholder")
     if _has_ungrounded_self_cause_claim(user_message, raw):
@@ -5491,6 +5594,9 @@ def assess_user_facing_reply(
         "prompt_echo_contamination",
         "protocol_artifact_leakage",
         "generic_memory_pin_acknowledgement",
+        # A wrong or absent number served as an arithmetic answer is not a
+        # style nit — it is a false statement with a checkable truth value.
+        "arithmetic_answer_missing",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
@@ -5526,6 +5632,7 @@ def assess_user_facing_reply(
         "missing_requested_objective_facets",
         "prompt_echo_contamination",
         "protocol_artifact_leakage",
+        "arithmetic_answer_missing",
     }
     if not request_is_knowable:
         # The person's turn could not be isolated from the assembled prompt, so
