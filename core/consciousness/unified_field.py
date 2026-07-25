@@ -269,6 +269,16 @@ class UnifiedField:
         self._SATURATION_ABS: float = 0.90          # mean |F| above this = saturated rail
         self._saturation_recoveries: int = 0
         self._last_saturation_log_at: float = 0.0
+        # A rescue that has to fire on every tick is not a rescue, it is a
+        # standing condition. The live 2026-07-25 boot logged rescue #4,212
+        # with mean|F| still 0.906 — the anti-degeneracy kick was pulling the
+        # field off the rails and the dynamics were putting it straight back,
+        # every tick, for the whole run, while the coalesced log made it look
+        # like occasional housekeeping. Count consecutive firings and say so
+        # once, so a pinned field is a finding rather than a treadmill.
+        self._consecutive_saturation_ticks: int = 0
+        self._saturation_escalated: bool = False
+        self._SATURATION_PERSISTENT_TICKS: int = 200
         self._RECOVERY_LOG_INTERVAL_S: float = 60.0
 
         # Phase coupling
@@ -816,7 +826,42 @@ class UnifiedField:
         # the block above never catches it. Detect it directly via mean rail
         # proximity and inject anti-degeneracy chaos scaled by spectral collapse.
         mean_abs = float(np.mean(np.abs(self.F)))
+        if mean_abs <= self._SATURATION_ABS:
+            if self._saturation_escalated:
+                logger.info(
+                    "UnifiedField saturation cleared after %d consecutive tick(s) "
+                    "(mean|F|=%.3f).",
+                    self._consecutive_saturation_ticks, mean_abs,
+                )
+            self._consecutive_saturation_ticks = 0
+            self._saturation_escalated = False
         if mean_abs > self._SATURATION_ABS:
+            self._consecutive_saturation_ticks += 1
+            if (
+                self._consecutive_saturation_ticks >= self._SATURATION_PERSISTENT_TICKS
+                and not self._saturation_escalated
+            ):
+                self._saturation_escalated = True
+                record_degradation(
+                    "unified_field",
+                    RuntimeError(
+                        "field saturated on "
+                        f"{self._consecutive_saturation_ticks} consecutive ticks; "
+                        f"mean|F|={mean_abs:.3f} spectral_entropy="
+                        f"{self._spectral_entropy:.3f}"
+                    ),
+                    severity="warning",
+                    action=(
+                        "kept injecting anti-degeneracy noise into a field the "
+                        "dynamics re-saturate every tick; the rescue is not "
+                        "restoring the field and its state carries little information"
+                    ),
+                    extra={
+                        "consecutive_ticks": self._consecutive_saturation_ticks,
+                        "mean_abs": round(mean_abs, 4),
+                        "spectral_entropy": round(float(self._spectral_entropy), 4),
+                    },
+                )
             scale = self._anti_degeneracy_scale()
             self.F *= 0.7  # pull off the rails toward the interior
             kick = self._rng.standard_normal(self.cfg.dim).astype(np.float32) * 0.05 * scale
