@@ -3589,6 +3589,14 @@
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
+      "path": "core/fsw/assertions.py",
+      "scope": "<module>._persist"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
       "path": "core/governance/constitutional_amendment.py",
       "scope": "<module>.AmendmentCourt.record"
     },
@@ -14738,6 +14746,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6ec9dbfac5009ff2170e8744e2efe975012d51afc9f5ad79f80c94c56c5a21f8",
+  "inventory_sha256": "c539e0c9a8fa22947fbddf5b1fc019d451bcc8c2486a1b18cd1c461b75d15aa7",
   "schema_version": 1
 }

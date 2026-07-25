@@ -191,7 +191,25 @@ class ManagedOrgan:
         return True
 
     async def on_error(self) -> bool:
-        """Recover from errorprocessing. False finalizes the organ."""
+        """Attempt recovery from the error state. False finalizes the organ.
+
+        The default records the error transition and declines to recover:
+        a base class cannot know how to repair a subclass's state, and
+        guessing is how a half-repaired organ gets presented as healthy.
+        An organ that CAN recover overrides this.
+        """
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            f"lifecycle.{self.name}",
+            RuntimeError(self.last_error or "organ entered the error state"),
+            severity="warning",
+            action=(
+                "declined the default recovery; the organ finalizes. Override "
+                "on_error() if this organ knows how to repair itself"
+            ),
+            enforce_failure_policy=False,
+        )
         return False
 
     # ── state ─────────────────────────────────────────────────────────

@@ -38,7 +38,6 @@ that is already written and load-bearing gets bisect and timing by asking
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable
@@ -260,8 +259,8 @@ class PassInstrumentation:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._ordinal = 0
-        self._bisect_limit: int | None = _env_int("AURA_PASS_BISECT_LIMIT")
-        self._trace = _env_bool("AURA_PASS_TRACE")
+        self._bisect_limit: int | None = _declared_bisect_limit()
+        self._trace = _declared_trace()
         self._records: list[PassRecord] = []
         self._before_hooks: list[Callable[[str, int], bool]] = []
         self._after_hooks: list[Callable[[PassRecord], None]] = []
@@ -408,18 +407,41 @@ class PassInstrumentation:
             self.skips = 0
 
 
-def _env_int(name: str) -> int | None:
-    raw = os.environ.get(name)
-    if raw is None or not raw.strip():
-        return None
-    try:
-        return int(raw)
-    except ValueError:
-        return None
+def _declared_bisect_limit() -> int | None:
+    """The bisect limit, read through the flag registry.
+
+    Declared rather than read raw so the knob shows up in `flag_report()`
+    alongside every other one — a knob nobody can enumerate is a knob
+    nobody can retire. ``-1`` means off, matching "no limit".
+    """
+    from core.runtime.flags import FlagKind, declare
+
+    flag = declare(
+        "AURA_PASS_BISECT_LIMIT",
+        kind=FlagKind.INT,
+        default=-1,
+        description=(
+            "Run only cognitive passes with ordinal <= this value; -1 disables. "
+            "Binary-search it to find which pass caused a regression."
+        ),
+        owner="core/pipeline/pass_manager.py",
+    )
+    value = int(flag.value())
+    return None if value < 0 else value
 
 
-def _env_bool(name: str) -> bool:
-    return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+def _declared_trace() -> bool:
+    from core.runtime.flags import FlagKind, declare
+
+    return bool(
+        declare(
+            "AURA_PASS_TRACE",
+            kind=FlagKind.BOOL,
+            default=False,
+            description="Log every cognitive pass as it runs or is skipped.",
+            owner="core/pipeline/pass_manager.py",
+        ).value()
+    )
 
 
 _INSTRUMENTATION = PassInstrumentation()

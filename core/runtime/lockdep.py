@@ -80,6 +80,12 @@ LOOP_BLOCKING_HOLD_S = 0.05
 #: signature, so this bounds pathological churn, not real findings.
 MAX_SPLATS = 256
 
+#: How long an async lock acquisition may take before it is reported as a
+#: splat and the wait gives up. Generous — a legitimate critical section
+#: is milliseconds — but finite, because an unbounded acquire is exactly
+#: the wedge this module exists to find.
+ACQUIRE_BUDGET_S = 30.0
+
 
 class LockRank(IntEnum):
     """Optional declared nesting levels, mirroring lockdep's subclasses.
@@ -560,11 +566,18 @@ class CheckedLock:
 class CheckedAsyncLock:
     """Drop-in for ``asyncio.Lock`` with validation."""
 
-    __slots__ = ("_lock", "_name", "_rank")
+    __slots__ = ("_budget_s", "_lock", "_name", "_rank")
 
-    def __init__(self, name: str, *, rank: LockRank = LockRank.UNRANKED):
+    def __init__(
+        self,
+        name: str,
+        *,
+        rank: LockRank = LockRank.UNRANKED,
+        budget_s: float = ACQUIRE_BUDGET_S,
+    ):
         self._name = name
         self._rank = rank
+        self._budget_s = budget_s
         self._lock = asyncio.Lock()
         _VALIDATOR.register(name, rank)
 
@@ -572,21 +585,46 @@ class CheckedAsyncLock:
     def name(self) -> str:
         return self._name
 
-    async def acquire(self) -> bool:
+    async def _acquire_within_budget(self) -> bool:
+        """Acquire, bounded. Exceeding the budget IS the deadlock report.
+
+        An unbounded ``await lock.acquire()`` is the wedge this module
+        exists to find, so it would be incoherent for lockdep's own lock
+        to contain one. A lock that cannot be taken within the budget is
+        reported as a splat — with the holders named — and the timeout
+        propagates rather than becoming an invisible stall.
+        """
         _VALIDATOR.on_acquire(self._name, rank=self._rank, is_async=True, reentrant=False)
         try:
-            await self._lock.acquire()
+            await asyncio.wait_for(self._lock.acquire(), timeout=self._budget_s)
+        except TimeoutError:
+            _VALIDATOR.on_release(self._name, is_async=True)
+            held = _VALIDATOR.held_names()
+            _VALIDATOR.report_external(
+                kind="acquire_timeout",
+                signature=f"acquire_timeout:{self._name}",
+                message=(
+                    f"async lock {self._name!r} could not be acquired within "
+                    f"{self._budget_s:.0f}s. Either a holder is wedged, or this is "
+                    f"the deadlock the order graph predicted. Held here: {held or 'nothing'}"
+                ),
+                held=held,
+            )
+            raise
         except BaseException:  # noqa: BLE001 — release bookkeeping precedes propagation
             _VALIDATOR.on_release(self._name, is_async=True)
             raise
         return True
+
+    async def acquire(self) -> bool:
+        return await self._acquire_within_budget()
 
     def release(self) -> None:
         self._lock.release()
         _VALIDATOR.on_release(self._name, is_async=True)
 
     async def __aenter__(self) -> CheckedAsyncLock:
-        await self.acquire()
+        await self._acquire_within_budget()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:

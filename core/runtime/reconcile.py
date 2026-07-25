@@ -62,6 +62,14 @@ MAX_DELAY_S = 300.0
 #: trust that they saw every event.
 DEFAULT_RESYNC_S = 600.0
 
+#: How long an idle consumer waits before waking to re-check whether it
+#: should still be running. Every blocking wait in this module is bounded
+#: by it: a consumer that can only be woken by a producer cannot notice
+#: shutdown, and a lost wakeup becomes a permanent stall rather than one
+#: extra poll. This is the pattern that would have caught the mind_tick
+#: wedge hours earlier.
+IDLE_POLL_S = 1.0
+
 
 @dataclass(frozen=True)
 class Request:
@@ -260,7 +268,14 @@ class RateLimitingQueue:
                     drained = True
                     continue
                 self._wakeup.clear()
-            await self._wakeup.wait()
+            # Timed rather than indefinite: a consumer that can only be
+            # woken by a producer cannot notice that shutdown was
+            # requested while it was asleep, and a lost wakeup becomes a
+            # permanent stall instead of one extra poll interval.
+            try:
+                await asyncio.wait_for(self._wakeup.wait(), timeout=IDLE_POLL_S)
+            except TimeoutError:
+                continue
         return None
 
     def done(self, request: Request) -> None:
@@ -347,7 +362,13 @@ class Controller:
             queue = await bus.subscribe(topic)
             try:
                 while self._running:
-                    event = await queue.get()
+                    # Bounded so `self._running` is re-checked on a known
+                    # cadence: a listener blocked forever on a quiet topic
+                    # outlives the controller it belongs to.
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=IDLE_POLL_S)
+                    except TimeoutError:
+                        continue
                     try:
                         payload = event[1] if isinstance(event, tuple) else event
                         key = key_of(payload)
@@ -398,7 +419,10 @@ class Controller:
 
     async def _worker(self, index: int) -> None:
         while self._running:
-            request = await self.queue.get()
+            try:
+                request = await asyncio.wait_for(self.queue.get(), timeout=IDLE_POLL_S)
+            except TimeoutError:
+                continue
             if request is None:
                 return
             started = time.perf_counter()

@@ -28,6 +28,7 @@ make lint         # ruff, three passes (surface E9, critical F-codes, curated fi
 make smoke        # ~100 contract tests, <10s — run after every change
 make test         # FULL offline suite (~7,400 tests) in 6 bounded process chunks
 make governance-lint  security  enterprise-gate  # scrutiny gates
+make layering     # DEPS include-rule gate; baseline in config/ only shrinks
 ```
 
 - Full suite: `tools/run_test_chunks.py --chunks 6 --marker "not live and not network and not external"`.
@@ -61,6 +62,35 @@ make governance-lint  security  enterprise-gate  # scrutiny gates
   degradation when the condition is persistent/total.
 - ServiceContainer keys are the spine (`core/service_names.py`); health
   contract lives in `core/runtime/health_contract.py`.
+- **Locks:** use `checked_lock` / `checked_async_lock`
+  (`core/runtime/lockdep.py`) rather than raw `threading.Lock` /
+  `asyncio.Lock`. Lockdep finds ABBA deadlocks without the deadlock
+  happening, and it only sees locks it wraps. Adopt an existing lock with
+  `instrument(name)`.
+- **Layering:** `core/runtime` and `core/observability` carry `DEPS` files
+  and may not import cognition or agency. `make layering` is the gate; the
+  grandfathered baseline (`config/layering_baseline.json`) only shrinks.
+- **New invariants** go next to what they protect, via
+  `@invariant(name, scope=..., owner=...)` in `core/verify/`. A check that
+  raises counts as a violation.
+- **New telemetry** is a declared channel with an id, a unit, and limits
+  (`core/fsw/telemetry_dictionary.py`). Ids are a contract; never reuse one.
+- **Claims about Aura** must be registered with the test that validates
+  them (`core/organism/model_validation.py`). A claim with no test cannot
+  be registered.
+
+## Debugging entry points worth knowing
+
+- `AURA_PASS_BISECT_LIMIT=N` runs only the first N cognitive phases —
+  binary-search N to find which phase ruined an answer. `AURA_PASS_TRACE=1`
+  announces each one.
+- `runtime_health_report()["integrity"]` carries taint, lockdep splats,
+  PSI, the OOM shed order, sanitizer findings, the last verifier report,
+  telemetry limit violations, and unsupported claims.
+- `get_bus_recorder().dump()` writes the event-bus ring for replay;
+  `get_tracer().write()` writes a Perfetto-loadable trace;
+  `get_memory_infra().diff(a, b).narrative()` names what grew.
+- Full map: [docs/ENGINEERING_ADOPTION.md](docs/ENGINEERING_ADOPTION.md).
 
 ## Session mechanics for this repo
 

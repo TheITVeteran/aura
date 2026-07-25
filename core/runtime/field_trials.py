@@ -106,7 +106,22 @@ def _entropy_source() -> str:
     otherwise. Never random per process — a trial that reassigns every
     restart produces a mixture, and a mixture measures nothing.
     """
-    override = os.environ.get("AURA_FIELD_TRIAL_ENTROPY")
+    from core.runtime.flags import FlagKind, declare
+
+    override = str(
+        declare(
+            "AURA_FIELD_TRIAL_ENTROPY",
+            kind=FlagKind.STRING,
+            default="",
+            description=(
+                "Overrides the per-installation entropy that makes trial "
+                "assignment sticky. Set it to pin a specific arm, or to give two "
+                "machines the same assignment."
+            ),
+            owner="core/runtime/field_trials.py",
+        ).value()
+        or ""
+    ).strip()
     if override:
         return override
     try:

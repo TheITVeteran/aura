@@ -53,6 +53,7 @@ architecture alone.
 14. [Null hypothesis defeat: empirical evidence](#14-null-hypothesis-defeat)
 15. [The reasoning, self-model, and resilience layer (June–July 2026)](#15-the-reasoning-self-model-and-resilience-layer)
 16. [The triad fusions: kernel-checked proof, economic knowledge, declared runtime](#16-the-triad-fusions-kernel-checked-proof-economic-knowledge-declared-runtime)
+17. [The engineering spine: ten adoptions](#17-the-engineering-spine-ten-adoptions)
 
 ---
 
@@ -2162,3 +2163,99 @@ backward chaining composing deduction truth values along implication
 chains; every `atomspace.derived` event now carries each derivation's best
 supporting chain, so downstream organs receive provenance, not bare
 conclusions.
+
+---
+
+## 17. The engineering spine: ten adoptions
+
+**Files**: `core/runtime/foundations.py` (boot entry), `core/verify/`,
+`core/fsw/`, `core/pipeline/pass_manager.py`, `core/bus/qos.py`,
+`core/observability/{histograms,trace_events,bus_recorder}.py`,
+`core/runtime/{taint,lockdep,pressure_stall,oom_policy,sanitizers,reconcile,admission,quota,eviction,lease,lifecycle,parameters,memory_infra,field_trials}.py`,
+`core/security/rule_of_two.py`, `core/knowledge/metta.py`,
+`core/organism/model_validation.py`, `tools/check_layering.py`.
+
+The full map, with the reasoning for each adoption, is
+[docs/ENGINEERING_ADOPTION.md](docs/ENGINEERING_ADOPTION.md). The short
+version: seven waves of clean-room adoption from the Linux kernel, LLVM,
+Kubernetes, ROS 2, Chromium, F Prime / Apollo / OpenMCT, and OpenCog
+Hyperon / OpenWorm. All on by default, all wired into the existing spine,
+activated once from `aura_main`.
+
+### What changed structurally
+
+**The health verdict gained a memory.** `evaluate_health()` answers "is the
+runtime working now", which is the right question and not the only one. A
+process that survived a lock-order violation, shed an organ, or
+hot-swapped code is working now *and* is not the process its green verdict
+describes. The taint register (Linux) is that memory; the health contract's
+`integrity` block carries it, along with lockdep splats, PSI, the OOM shed
+order, sanitizer findings, the last verifier report, telemetry limit
+violations, rate-group slips, and any unsupported self-claim.
+
+**Assumptions became invariants.** Thirty-plus structural facts that were
+true by convention — every alias resolves, the dependency graph is a DAG,
+the spine is OOM-immune, declared lock ranks match observed order, every
+Guaranteed organ is protected from eviction, every declared command has a
+handler — are now checked by `core/verify/`, scoped so `-verify-each` after
+a mutation is affordable. A check that raises is itself a violation.
+
+**Latent deadlocks are found without deadlocking.** Lockdep watches
+acquisition *order* across the process lifetime and reports the moment two
+paths establish opposing edges, even if they never race. Four hazards, all
+live: order inversion, sync-lock-held-across-await, self-deadlock, and
+loop-blocking holds. Every `fsync` in the runtime passes through
+`assert_no_locks_held()`.
+
+**Pressure is measured as lost work, not utilization.** PSI splits `some`
+(somebody waited) from `full` (nothing progressed) across cpu, memory, io,
+inference, bus, and lock.
+
+**Shedding is graded and decided in advance.** QoS classes come from
+declared requests-vs-limits; eviction reclaims before it evicts, honours
+disruption budgets, and derives `oom_score_adj` so the OOM policy sheds in
+the same order rather than contradicting it. When nothing sheddable
+remains, the runtime requests a controlled restart rather than waiting to
+be SIGKILLed.
+
+**Exclusivity is enforced across processes.** A lease with a renew
+deadline strictly shorter than its duration means the old holder gives up
+*before* a challenger can acquire — the property that makes the
+duplicate-runtime cascade structurally impossible rather than merely
+unlikely. A live foreign holder taints the runtime.
+
+**Reconciliation is level-triggered.** Controllers read current state and
+step toward desired; the event is only a hint that now is a good time to
+look. Missing an event costs latency, never correctness.
+
+**The cognitive pipeline is bisectable.** The kernel tick loop consults
+the pass instrumentation before each phase, so `AURA_PASS_BISECT_LIMIT`
+turns "which of ~30 phases ruined this answer" into about five runs.
+
+**Periodic work runs at its declared rate.** Rate groups tick on a fixed
+schedule, measure overrun, and name the member that ate the budget.
+Sustained slipping escalates to the Apollo-derived overload response:
+announce with a code, shed bottom-up, keep the essential loop.
+
+**Every value has an id, a unit, and limits.** The telemetry dictionary
+makes a limit crossing a transition rather than a repeated alarm, and a
+silent channel read STALE rather than nominal. The report is
+OpenMCT-shaped.
+
+**Claims carry their tests.** Six statements Aura makes about its own
+runtime are bound to validation tests over live telemetry, scored against
+observations that name their source. A claim without a test cannot be
+registered — the machine-checked counterpart to CLAIMS_SUPPORTED.md.
+
+**Rules became data.** MeTTa-style equality rewriting over the AtomSpace
+means a derivation can be added, attributed, truth-valued, and retracted
+at runtime instead of compiled in; evaluation is non-deterministic because
+"what follows from this" usually has more than one answer.
+
+### Evidence boundary
+
+These are engineering disciplines, not capability claims. They make
+failures visible, attributable, and survivable; they do not make Aura more
+capable at any task. Where a discipline asserts something about the
+runtime, that assertion is registered as a claim with a test attached, and
+the suite reports which claims are currently unsupported.

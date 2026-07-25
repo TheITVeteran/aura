@@ -61,6 +61,13 @@ class Durability(IntEnum):
     TRANSIENT_LOCAL = 1
 
 
+#: How long a stream with no declared deadline waits before waking to
+#: re-check whether it should still be running. A subscriber that can only
+#: be woken by a publisher cannot notice its own shutdown, and on a quiet
+#: topic that is indistinguishable from a wedge.
+STREAM_POLL_S = 1.0
+
+
 class History(StrEnum):
     KEEP_LAST = "keep_last"
     KEEP_ALL = "keep_all"
@@ -345,9 +352,20 @@ class QosBus:
         for sample in history:
             yield sample.data
         stream_closed = asyncio.Event()
+        # The wait is bounded by the subscriber's own declared deadline
+        # where it has one, and by a poll interval otherwise. A stream
+        # that blocks forever cannot notice that its deadline has already
+        # been missed — which is precisely the absence this profile
+        # exists to make visible — and cannot be shut down while quiet.
+        budget = profile.deadline_s if profile.deadline_s > 0 else STREAM_POLL_S
         try:
             while not stream_closed.is_set():
-                event = await queue.get()
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=budget)
+                except TimeoutError:
+                    if profile.deadline_s > 0:
+                        self._fire_deadline(topic, budget)
+                    continue
                 yield event[1] if isinstance(event, tuple) else event
         finally:
             stream_closed.set()
