@@ -283,3 +283,55 @@ def test_the_scan_still_requires_a_backpressure_word():
     assert 'severity in ("degraded", "critical")' in src, (
         "only degraded/critical are demoted; nothing is silently upgraded"
     )
+
+
+class TestDegradedButHandled:
+    """The action line is the caller's account of what it DID about the error.
+
+    Live 2026-07-25, on the complete fix set, still opening incidents:
+
+        [DEGRADATION] inference_gate (degraded): TimeoutError: <no message>
+        -> skipped cold primary attempt or fell back after foreground warmup
+        NEW INCIDENT INC-1785017592-0002 [degraded]
+
+    Nothing about that was deferred, so no backpressure marker could catch it.
+    It failed, and then it recovered — the turn was served by the next lane
+    down, exactly as the ladder is designed to do. An incident for a handled
+    fallback trains an operator to ignore incidents.
+    """
+
+    def _markers(self):
+        import inspect
+
+        from core.runtime.errors import record_degradation
+
+        return inspect.getsource(record_degradation)
+
+    def test_the_live_action_is_recognised_as_handled(self):
+        src = self._markers()
+        assert "_HANDLED_FALLBACK_MARKERS" in src
+        assert '"fell back"' in src, "the live action line says 'fell back'"
+
+    def test_only_degraded_is_demoted_never_critical(self):
+        src = self._markers()
+        block = src[src.index("_HANDLED_FALLBACK_MARKERS = (") :]
+        demotion = block[block.index('elif severity == "degraded"') :][:400]
+        assert '"critical"' not in demotion, (
+            "a caller that says critical must reach the operator however "
+            "gracefully the failure was handled"
+        )
+
+    def test_only_timeout_class_errors_are_demoted(self):
+        """Graceful handling does not make a cause benign.
+
+        The existing corrupted-database regression — a ValueError handled with
+        "fell back to empty recall" — is what caught the first, looser version
+        of this rule. A timeout that was handled is the one shape where the
+        error itself carries no finding.
+        """
+        src = self._markers()
+        block = src[src.index("_HANDLED_FALLBACK_MARKERS = (") :]
+        demotion = block[block.index('elif (') :][:400]
+        assert "_is_timeout" in demotion, (
+            "a corrupted database handled by falling back is still damage"
+        )

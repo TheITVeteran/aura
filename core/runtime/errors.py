@@ -499,6 +499,34 @@ def record_degradation(
         "spawn_gate_timeout",
         "crash_loop_backoff",
     )
+    # Actions that record the system SUCCESSFULLY CONTINUING. The action line
+    # is the caller's own account of what it did about the error, and "I fell
+    # back and served the turn" is the resilience ladder working, not damage.
+    #
+    # Live 2026-07-25: a bare TimeoutError with the action "skipped cold
+    # primary attempt or fell back after foreground warmup failure" opened a
+    # degraded INCIDENT — for a turn that was served by the next lane down,
+    # exactly as designed. The backpressure markers could not catch it because
+    # nothing about it was deferred; it failed, and then it recovered.
+    #
+    # Restricted to TIMEOUT-class errors, and to degraded only. Graceful
+    # handling does not make a cause benign: 'fell back to empty recall'
+    # after 'database file is corrupted' is still damage, and the existing
+    # regression for exactly that case is what caught the first, looser
+    # version of this rule. A timeout that was handled is the one shape
+    # where the error itself carries no finding.
+    _HANDLED_FALLBACK_MARKERS = (
+        "fell back",
+        "fall back",
+        "fell through",
+        "downgraded",
+        "routed around",
+        "continued without",
+        "continued with",
+        "skipped cold",
+        "served from",
+        "recovered",
+    )
     _error_text = str(error)
     _action_text = str(action or "")
     # A bare asyncio TimeoutError carries NO message, so classifying on the
@@ -514,6 +542,17 @@ def record_degradation(
         for marker in _BACKPRESSURE_MARKERS
     )
     if _is_admission_backpressure and severity in ("degraded", "critical"):
+        severity = "warning"
+    elif (
+        severity == "degraded"
+        and _is_timeout
+        and any(
+            marker in _action_text.lower() for marker in _HANDLED_FALLBACK_MARKERS
+        )
+    ):
+        # Degraded-but-handled. Still recorded, still visible, but it is not an
+        # incident-worthy failure when the caller's own action says it carried
+        # on and served.
         severity = "warning"
 
     failure_policy_violation = False
