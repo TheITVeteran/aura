@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -94,6 +95,56 @@ _KERNEL_OPTIONAL_PERCEPTION_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+def _pass_instrumentation():
+    """The process-wide pass instrumentation (core/pipeline/pass_manager.py).
+
+    Imported lazily so the kernel keeps no import-time dependency on the
+    pass machinery, and so a broken instrumentation module degrades to a
+    no-op rather than taking the tick loop with it.
+    """
+    try:
+        from core.pipeline.pass_manager import get_instrumentation
+
+        return get_instrumentation()
+    except Exception:  # noqa: BLE001 — degrade to a no-op, never to a broken tick
+        logger.debug("pass instrumentation unavailable", exc_info=True)
+        return _NullInstrumentation()
+
+
+class _NullInstrumentation:
+    """Fallback so the tick loop's contract holds even with no instrumentation."""
+
+    @staticmethod
+    def should_run(name: str) -> tuple[bool, int, str]:
+        return True, 0, ""
+
+
+def _record_pass(
+    name: str,
+    ordinal: int,
+    duration_s: float,
+    *,
+    skipped: bool,
+    reason: str = "",
+    error: str = "",
+) -> None:
+    try:
+        from core.pipeline.pass_manager import PassRecord, get_instrumentation
+
+        get_instrumentation().after_pass(
+            PassRecord(
+                name=name,
+                ordinal=ordinal,
+                duration_s=duration_s,
+                skipped=skipped,
+                reason=reason,
+                error=error,
+            )
+        )
+    except Exception:  # noqa: BLE001 — instrumentation never breaks a tick
+        logger.debug("pass record failed for %s", name, exc_info=True)
 
 
 def _record_kernel_degradation(
@@ -1164,6 +1215,20 @@ class AuraKernel:
                 if volition < 1 and isinstance(phase, SelfReviewPhase):
                     continue
 
+                # [PASS INSTRUMENTATION] The one seam every phase announces
+                # itself through. It carries pass timing, and it carries
+                # `-opt-bisect-limit`: when a turn comes out wrong, binary-
+                # searching the limit finds which of ~30 phases did it in a
+                # handful of runs instead of an afternoon of guessing.
+                # See core/pipeline/pass_manager.py.
+                _pass_run, _pass_ordinal, _pass_reason = _pass_instrumentation().should_run(
+                    f"kernel_tick/{phase_name}"
+                )
+                if not _pass_run:
+                    _record_pass(phase_name, _pass_ordinal, 0.0, skipped=True, reason=_pass_reason)
+                    continue
+                _pass_started = time.perf_counter()
+
                 # Strict Lineage: Each phase execution derives a new state version.
                 # Use asyncio.shield() so that if the outer task is cancelled the
                 # inner phase coroutine is NOT cancelled — preventing CancelledError
@@ -1270,6 +1335,17 @@ class AuraKernel:
                     )
                     # Don't let a single phase crash the entire tick — skip and continue
                     continue
+                finally:
+                    # Runs on the success path and on every early exit, so a
+                    # phase that times out is still timed. Skipped phases are
+                    # recorded above and never reach here.
+                    _record_pass(
+                        phase_name,
+                        _pass_ordinal,
+                        time.perf_counter() - _pass_started,
+                        skipped=False,
+                        error=repr(sys.exc_info()[1]) if sys.exc_info()[1] is not None else "",
+                    )
 
                 if self.state is None:
                     raise RuntimeError(f"Phase {phase_name} returned None state")

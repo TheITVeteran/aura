@@ -407,10 +407,48 @@ async def _activate_kernel_discipline(*, foreground_only: bool) -> ActivationRes
     )
 
 
+async def _activate_verification(*, foreground_only: bool) -> ActivationResult:
+    """Wave 2 — structural verifier, pass instrumentation, sanitizers."""
+    # Importing registers the standing invariants; the module is a
+    # declaration site, not a service.
+    from core.pipeline.pass_manager import get_instrumentation, install_default_instrumentation
+    from core.verify import runtime_invariants  # noqa: F401 — import registers
+    from core.verify.invariants import get_registry, verify
+
+    instrumentation = install_default_instrumentation()
+
+    # The first verification runs over the runtime as boot left it. This is
+    # the moment a structural regression is cheapest to see: before any
+    # traffic, with the boot path still on the stack.
+    report = verify()
+    declared = len(get_registry().specs())
+
+    return ActivationResult(
+        name="verification",
+        ok=report.ok,
+        detail=(
+            f"{declared} invariants declared, {report.summary()}; "
+            f"pass instrumentation {'armed' if instrumentation['installed'] else 'already armed'}"
+            + (
+                f", opt-bisect limit={get_instrumentation().bisect_limit()}"
+                if get_instrumentation().bisect_limit() is not None
+                else ""
+            )
+        ),
+        data={
+            "invariants_declared": declared,
+            "scopes": get_registry().scopes(),
+            "boot_verification": report.to_dict(),
+            "pass_instrumentation": instrumentation,
+        },
+    )
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("kernel_discipline", _activate_kernel_discipline),
+    ("verification", _activate_verification),
 ]
 
 

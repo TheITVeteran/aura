@@ -1118,6 +1118,29 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # pragma: no cover
         block["pressure_error"] = repr(exc)
     try:
+        from core.runtime.sanitizers import sanitizer_report
+
+        block["sanitizers"] = sanitizer_report()
+    except Exception as exc:  # pragma: no cover
+        block["sanitizers_error"] = repr(exc)
+    try:
+        from core.verify.invariants import last_report
+
+        block["verifier"] = last_report()
+    except Exception as exc:  # pragma: no cover
+        block["verifier_error"] = repr(exc)
+    try:
+        from core.pipeline.pass_manager import pass_manager_report
+
+        passes = pass_manager_report()
+        block["passes"] = {
+            "bisect_limit": passes["bisect_limit"],
+            "skips": passes["skips"],
+            "hottest": passes["hottest"],
+        }
+    except Exception as exc:  # pragma: no cover
+        block["passes_error"] = repr(exc)
+    try:
         from core.runtime.oom_policy import oom_report
 
         oom = oom_report()
