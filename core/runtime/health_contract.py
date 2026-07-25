@@ -1118,6 +1118,19 @@ def _runtime_integrity_block() -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["pressure_error"] = repr(exc)
     try:
+        from core.knowledge.metta import metta_report
+        from core.organism.model_validation import get_suite, validation_report
+
+        validation = validation_report()
+        block["self_model"] = {
+            "claims": len(validation["claims"]),
+            "tests": len(validation["tests"]),
+            "unsupported_claims": [c["statement"] for c in get_suite().unsupported_claims()],
+            "metta": {k: metta_report()[k] for k in ("rules", "reductions", "truncations")},
+        }
+    except Exception as exc:  # pragma: no cover
+        block["self_model_error"] = repr(exc)
+    try:
         from core.fsw.assertions import assertions_report
         from core.fsw.command_dispatch import command_report
         from core.fsw.health_checker import health_checker_report

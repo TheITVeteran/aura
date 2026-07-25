@@ -1185,6 +1185,46 @@ def _safe_diagnostics_update() -> None:
     get_aggregator().update_all()
 
 
+async def _activate_cognition(*, foreground_only: bool) -> ActivationResult:
+    """Wave 7 — MeTTa rewriting and the self-validation suite."""
+    from core.container import ServiceContainer
+    from core.knowledge.metta import get_metta, install_runtime_rules, metta_report
+    from core.organism.model_validation import (
+        get_suite,
+        install_runtime_validation,
+        run_validation,
+    )
+
+    rules = install_runtime_rules()
+    ServiceContainer.register_instance("metta", get_metta(), required=False)
+
+    validation = install_runtime_validation()
+    ServiceContainer.register_instance("validation_suite", get_suite(), required=False)
+    # Run the suite once at boot. A claim that is only checked when
+    # somebody remembers to check it is a claim nobody is checking.
+    outcome = run_validation()
+
+    return ActivationResult(
+        name="cognition",
+        ok=outcome["failed"] == 0 and outcome["errored"] == 0,
+        detail=(
+            f"{len(rules)} MeTTa rules over {metta_report()['grounded_ops'].__len__()} "
+            f"grounded ops; {validation['claims']} claims bound to "
+            f"{len(validation['tests'])} validation tests — "
+            f"{outcome['passed']} passed, {outcome['failed']} failed, "
+            f"{outcome['errored']} errored"
+        ),
+        data={
+            "metta_rules": rules,
+            "validation": validation,
+            "suite_outcome": {
+                k: outcome[k] for k in ("passed", "failed", "errored", "applicable")
+            },
+            "unsupported_claims": [c["statement"] for c in get_suite().unsupported_claims()],
+        },
+    )
+
+
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
@@ -1194,6 +1234,7 @@ _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("middleware", _activate_middleware),
     ("observability", _activate_observability),
     ("flight_software", _activate_flight_software),
+    ("cognition", _activate_cognition),
 ]
 
 

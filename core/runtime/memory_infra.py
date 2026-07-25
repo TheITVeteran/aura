@@ -455,11 +455,91 @@ def install_runtime_providers() -> list[str]:
             detail={"estimated": True},
         )
 
+    def atomspace(_level: DetailLevel) -> AllocatorDump:
+        from core.knowledge.atomspace import get_atomspace
+
+        space = get_atomspace()
+        count = len(space)
+        return AllocatorDump(
+            name="knowledge.atomspace",
+            # An atom plus its truth value, attention value, and index
+            # entries. Estimated, and labelled as such — a wrong-by-2x
+            # number that tracks growth beats no number at all.
+            size_bytes=count * 512,
+            object_count=count,
+            detail={"estimated": True},
+        )
+
+    def telemetry_history(_level: DetailLevel) -> AllocatorDump:
+        from core.fsw.telemetry_dictionary import get_telemetry
+
+        report = get_telemetry().report()
+        samples = sum(count for _name, count in report["busiest"])
+        return AllocatorDump(
+            name="fsw.telemetry_history",
+            size_bytes=(report["channels"] * 256) + (samples * 64),
+            object_count=report["channels"],
+            detail={"estimated": True, "events_emitted": report["events_emitted"]},
+        )
+
+    def diagnostic_logs(_level: DetailLevel) -> AllocatorDump:
+        """The append-only forensic records: sanitizer, assertion, lockdep."""
+        from core.fsw.assertions import assertions_report
+        from core.runtime.lockdep import lockdep_report
+        from core.runtime.sanitizers import sanitizer_report
+
+        entries = (
+            assertions_report()["distinct_sites"]
+            + sanitizer_report()["distinct_findings"]
+            + len(lockdep_report()["splats"])
+            + len(lockdep_report()["order_edges"])
+        )
+        return AllocatorDump(
+            name="runtime.diagnostic_logs",
+            size_bytes=entries * 2048,
+            object_count=entries,
+            detail={"estimated": True},
+        )
+
+    def controller_queues(_level: DetailLevel) -> AllocatorDump:
+        from core.runtime.reconcile import reconcile_report
+
+        report = reconcile_report()
+        depth = int(report["total_queue_depth"])
+        return AllocatorDump(
+            name="runtime.controller_queues",
+            size_bytes=depth * 512,
+            object_count=depth,
+            detail={"estimated": True, "controllers": report["count"]},
+        )
+
+    def pass_records(_level: DetailLevel) -> AllocatorDump:
+        from core.pipeline.pass_manager import get_instrumentation
+
+        records = len(get_instrumentation().records())
+        return AllocatorDump(
+            name="pipeline.pass_records",
+            size_bytes=records * 512,
+            object_count=records,
+            detail={"estimated": True},
+        )
+
     register_provider("observability.bus_ring", bus_ring, owner="core/observability/bus_recorder.py")
     register_provider("observability.trace_ring", trace_ring, owner="core/observability/trace_events.py")
     register_provider(
         "observability.histograms", histogram_registry, owner="core/observability/histograms.py"
     )
+    register_provider("knowledge.atomspace", atomspace, owner="core/knowledge/atomspace.py")
+    register_provider(
+        "fsw.telemetry_history", telemetry_history, owner="core/fsw/telemetry_dictionary.py"
+    )
+    register_provider(
+        "runtime.diagnostic_logs", diagnostic_logs, owner="core/runtime/sanitizers.py"
+    )
+    register_provider(
+        "runtime.controller_queues", controller_queues, owner="core/runtime/reconcile.py"
+    )
+    register_provider("pipeline.pass_records", pass_records, owner="core/pipeline/pass_manager.py")
     return _INFRA.providers()
 
 

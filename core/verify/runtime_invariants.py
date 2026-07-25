@@ -1079,6 +1079,75 @@ def _commands_have_handlers() -> Iterator[Violation]:
             )
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Cognition: rewriting and self-validation
+# ══════════════════════════════════════════════════════════════════════
+
+@invariant(
+    "claims.every_claim_has_a_passing_test",
+    scope="cognition",
+    owner=_OWNER,
+    description="no registered claim about the runtime is currently unsupported",
+)
+def _claims_supported() -> Iterator[Violation]:
+    from core.organism.model_validation import get_suite
+
+    for entry in get_suite().unsupported_claims():
+        yield Violation(
+            subject=entry["test"],
+            message=(
+                f"{entry['statement']} — {entry.get('reason', 'not run')} "
+                f"({entry.get('outcome', 'unrun')})"
+            ),
+            remedy=f"fix the behaviour, or withdraw the claim from {entry['asserted_in']}",
+        )
+
+
+@invariant(
+    "claims.tests_are_claimed",
+    scope="cognition",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="every validation test backs a stated claim",
+)
+def _tests_are_claimed() -> Iterator[Violation]:
+    from core.organism.model_validation import validation_report
+
+    for name in validation_report()["tests_without_claims"]:
+        yield Violation(
+            subject=name,
+            message=(
+                f"test {name!r} checks something nobody has claimed; either it is "
+                "protecting an unstated promise or it is dead weight"
+            ),
+            remedy="state the claim it supports, or delete it",
+        )
+
+
+@invariant(
+    "metta.rules_terminate",
+    scope="cognition",
+    severity=Severity.WARNING,
+    owner=_OWNER,
+    description="reductions are not routinely hitting their bounds",
+)
+def _metta_terminates() -> Iterator[Violation]:
+    from core.knowledge.metta import metta_report
+
+    report = metta_report()
+    reductions = report["reductions"]
+    truncations = report["truncations"]
+    if reductions >= 10 and truncations / reductions > 0.25:
+        yield Violation(
+            subject="metta",
+            message=(
+                f"{truncations} of {reductions} reductions hit a bound; the rule set "
+                "is producing derivations that do not terminate within budget"
+            ),
+            remedy="find the non-terminating rule pair; unbounded rewriting hangs the runtime",
+        )
+
+
 def register_runtime_invariants() -> int:
     """Import-time registration is the real work; this returns the count."""
     from core.verify.invariants import get_registry
