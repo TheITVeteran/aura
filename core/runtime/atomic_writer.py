@@ -60,11 +60,21 @@ class AtomicWriteError(RuntimeError):
 
 
 def _fsync_file(fd: int) -> None:
-    try:
-        os.fsync(fd)
-    except (AttributeError, OSError):
-        # Best-effort on platforms where fsync is unavailable.
-        pass  # no-op: intentional
+    # Every durable write in the runtime funnels through here, which makes
+    # it the one place worth instrumenting: fsync is the blocking call that
+    # froze the live event loop for 20 minutes, and it is IO stall by
+    # definition. PSI accounts the wait; lockdep reports (once per call
+    # site) if we are about to block while holding a lock.
+    from core.runtime.lockdep import assert_no_locks_held
+    from core.runtime.pressure_stall import Resource, stall
+
+    assert_no_locks_held("fsync")
+    with stall(Resource.IO):
+        try:
+            os.fsync(fd)
+        except (AttributeError, OSError):
+            # Best-effort on platforms where fsync is unavailable.
+            pass  # no-op: intentional
 
 
 def _fsync_dir(directory: Path) -> None:

@@ -934,6 +934,22 @@ async def _boot_runtime_orchestrator(
     await bootstrap_aura(orchestrator)
     _mark_runtime_boot_phase("resilient_ignition_tail")
 
+    # ── Engineering foundations ───────────────────────────────────────
+    # Taint register, lockdep, PSI, OOM policy, structural verifier, pass
+    # manager, reconcilers, lifecycles, telemetry dictionary, rate groups.
+    # Armed as early as the container allows so the validators cover the
+    # rest of boot, not just steady state. Never fatal — see
+    # core/runtime/foundations.py for why.
+    from core.runtime.foundations import activate_foundations
+
+    foundations = await activate_foundations(foreground_only=_foreground_only_runtime())
+    if not foundations.get("ok", False):
+        logger.warning(
+            "⚠️ Engineering foundations partially unavailable: %s",
+            ", ".join(foundations.get("failed", [])),
+        )
+    _mark_runtime_boot_phase("engineering_foundations")
+
     # The desktop speech contract consumes already-live organs through a
     # non-instantiating registry bridge. Materialize and behaviorally probe its
     # required organs here, under the root lifecycle owner, before background

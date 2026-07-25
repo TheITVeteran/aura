@@ -1076,6 +1076,63 @@ def evaluate_health() -> HealthVerdict:
     )
 
 
+def _runtime_integrity_block() -> dict[str, Any]:
+    """Memory the health verdict does not otherwise have.
+
+    ``evaluate_health()`` answers "is the runtime working *now*", which is
+    the right question but not the only one. A process that survived a
+    lock-order violation, shed an organ under memory pressure, or hot-swapped
+    code is working now *and* is no longer the process its green verdict
+    describes. The kernel prints its taint on every oops for exactly this
+    reason; this block is that line. It never flips the verdict — it
+    attaches the caveat the verdict cannot express on its own.
+    """
+    block: dict[str, Any] = {}
+    try:
+        from core.runtime.taint import credibility_caveat, taint_compact, taint_report
+
+        block["taint"] = taint_report()
+        block["taint_compact"] = taint_compact()
+        caveat = credibility_caveat()
+        if caveat:
+            block["credibility_caveat"] = caveat
+    except Exception as exc:  # pragma: no cover — integrity reporting is additive
+        block["taint_error"] = repr(exc)
+    try:
+        from core.runtime.lockdep import lockdep_report
+
+        lock_report = lockdep_report()
+        block["lockdep"] = {
+            "clean": lock_report["clean"],
+            "acquires_checked": lock_report["acquires_checked"],
+            "splats": lock_report["splats"],
+        }
+    except Exception as exc:  # pragma: no cover
+        block["lockdep_error"] = repr(exc)
+    try:
+        from core.runtime.pressure_stall import psi_narrative, psi_report, saturated_resources
+
+        block["pressure"] = psi_report()
+        block["pressure_saturated"] = saturated_resources()
+        block["pressure_narrative"] = psi_narrative()
+    except Exception as exc:  # pragma: no cover
+        block["pressure_error"] = repr(exc)
+    try:
+        from core.runtime.oom_policy import oom_report
+
+        oom = oom_report()
+        block["oom"] = {
+            "next_victim": oom["next_victim"],
+            "sheddable_organs": oom["sheddable_organs"],
+            "immune_organs": oom["immune_organs"],
+            "recent_sheds": oom["recent_sheds"][-3:],
+            "restart_requested": oom["restart_requested"],
+        }
+    except Exception as exc:  # pragma: no cover
+        block["oom_error"] = repr(exc)
+    return block
+
+
 def runtime_health_report() -> dict[str, Any]:
     """Return Aura's canonical runtime health contract report."""
     report = evaluate_health().to_report()
@@ -1091,6 +1148,7 @@ def runtime_health_report() -> dict[str, Any]:
             "error": repr(exc),
         }
     report["shutdown"] = shutdown
+    report["integrity"] = _runtime_integrity_block()
     request = shutdown.get("request") if isinstance(shutdown, dict) else None
     if isinstance(request, dict) and request.get("requested") is True:
         report["pre_shutdown_status"] = report.get("status")
