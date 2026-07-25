@@ -30,6 +30,7 @@ quietly rewrite the record of how trustworthy its own checkers are.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -312,6 +313,35 @@ class VerifierFoundry:
             time.sleep(0.005)
         with self._pending_writes_lock:
             return self._pending_writes <= 0
+
+    async def flush_ledger_async(self, timeout: float = 5.0) -> bool:
+        """Await the ledger drain without blocking the event loop.
+
+        CP126 750942aa. flush_ledger polls with time.sleep, so an async
+        caller stalls every other task on the loop for up to `timeout`
+        seconds — the failure mode that once froze this runtime for twenty
+        minutes on an on-loop fsync. Async callers must use this.
+        """
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while time.monotonic() < deadline:
+            with self._pending_writes_lock:
+                if self._pending_writes <= 0:
+                    return True
+            # asyncio.sleep yields the loop; time.sleep holds it.
+            await asyncio.sleep(0.005)
+        with self._pending_writes_lock:
+            return self._pending_writes <= 0
+
+    async def verify_ledger_async(self) -> tuple[bool, list[dict[str, Any]]]:
+        """Verify the ledger off the event loop.
+
+        CP126 750942aa. verify_ledger reads and parses the ENTIRE event
+        file synchronously, so its cost scales with the whole ledger; on the
+        loop that is an unbounded stall. The drain is awaited here and the
+        parse runs in a worker thread.
+        """
+        await self.flush_ledger_async()
+        return await asyncio.to_thread(self._verify_ledger_locked)
 
     def close(self) -> None:
         with self._lock:
@@ -736,7 +766,13 @@ class VerifierFoundry:
         return False
 
     def verify_ledger(self) -> tuple[bool, list[dict[str, Any]]]:
+        """Synchronous verification. Async callers must use
+        verify_ledger_async — this reads and parses the whole ledger."""
         self.flush_ledger()
+        return self._verify_ledger_locked()
+
+    def _verify_ledger_locked(self) -> tuple[bool, list[dict[str, Any]]]:
+        """The parse itself, with no flushing, so it can run in a thread."""
         bodies: dict[str, dict[str, Any]] = {}
         problems: list[dict[str, Any]] = []
         if self.events_path.exists():

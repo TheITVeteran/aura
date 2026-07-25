@@ -169,3 +169,89 @@ class TestRollbackReportsWhatItAchieved:
     def test_residual_drift_is_surfaced(self):
         source = self._source()
         assert '"residual_drift"' in source
+
+
+class TestCacheKeysCarryTheirContext:
+    """``2e31dd71`` — the key was task_type plus the objective, so the same
+    words asked under a different interpreter, model or verifier hit the SAME
+    entry, replaying a stale or cross-context answer as verified truth."""
+
+    def test_the_same_question_in_a_different_context_is_a_different_key(self, monkeypatch):
+        from core.brain import reasoning_solved_cache as rsc
+
+        monkeypatch.setenv("AURA_ACTIVE_MODEL_ID", "model-a")
+        key_a = rsc._problem_key("what is 6 times 7", "math")
+        monkeypatch.setenv("AURA_ACTIVE_MODEL_ID", "model-b")
+        key_b = rsc._problem_key("what is 6 times 7", "math")
+        assert key_a != key_b
+
+    def test_the_same_context_is_stable(self, monkeypatch):
+        from core.brain import reasoning_solved_cache as rsc
+
+        monkeypatch.setenv("AURA_ACTIVE_MODEL_ID", "model-a")
+        assert rsc._problem_key("q", "math") == rsc._problem_key("q", "math")
+
+    def test_the_fingerprint_includes_the_interpreter(self):
+        import sys
+
+        from core.brain import reasoning_solved_cache as rsc
+
+        source = inspect.getsource(rsc._context_fingerprint)
+        assert "sys.version_info" in source
+        assert isinstance(rsc._context_fingerprint(), str)
+        assert sys.version_info.major  # the input actually exists
+
+    def test_the_key_schema_can_invalidate_everything(self):
+        from core.brain import reasoning_solved_cache as rsc
+
+        assert rsc._CACHE_KEY_SCHEMA >= 2
+
+    def test_different_task_types_do_not_collide(self):
+        from core.brain import reasoning_solved_cache as rsc
+
+        assert rsc._problem_key("q", "math") != rsc._problem_key("q", "code")
+
+
+class TestLedgerVerificationDoesNotBlockTheLoop:
+    """``750942aa`` — flush_ledger polls with time.sleep and verify_ledger
+    parses the entire event file synchronously; on the event loop that is an
+    unbounded stall, the failure mode that once froze this runtime."""
+
+    def test_async_variants_exist(self):
+        from core.brain.verifiers.foundry import VerifierFoundry
+
+        assert callable(getattr(VerifierFoundry, "flush_ledger_async", None))
+        assert callable(getattr(VerifierFoundry, "verify_ledger_async", None))
+
+    def test_the_async_flush_yields_the_loop(self):
+        from core.brain.verifiers.foundry import VerifierFoundry
+
+        source = inspect.getsource(VerifierFoundry.flush_ledger_async)
+        # Body only: the docstring necessarily names time.sleep while
+        # explaining what it replaced.
+        body = source.split('"""', 2)[-1]
+        assert "await asyncio.sleep" in body
+        # The CALL is what would block; the word may appear in a comment
+        # contrasting the two.
+        assert "time.sleep(" not in body
+
+    def test_the_async_verify_offloads_the_parse(self):
+        from core.brain.verifiers.foundry import VerifierFoundry
+
+        source = inspect.getsource(VerifierFoundry.verify_ledger_async)
+        assert "asyncio.to_thread" in source
+        assert "await self.flush_ledger_async()" in source
+
+    def test_the_parse_is_separable_from_the_flush(self):
+        """The thread-offloadable half must not itself flush."""
+        from core.brain.verifiers.foundry import VerifierFoundry
+
+        source = inspect.getsource(VerifierFoundry._verify_ledger_locked)
+        assert "flush_ledger" not in source
+
+    def test_the_sync_path_still_works(self):
+        from core.brain.verifiers.foundry import VerifierFoundry
+
+        source = inspect.getsource(VerifierFoundry.verify_ledger)
+        assert "self.flush_ledger()" in source
+        assert "self._verify_ledger_locked()" in source

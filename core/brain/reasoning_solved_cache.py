@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import tempfile
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -41,7 +42,17 @@ logger = logging.getLogger("Aura.ReasoningSolvedCache")
 
 # Source-independent, verifier-clean task types are safe to memoize. Anything that
 # depends on the live source tree or the changing world is excluded by default.
+# CP126 2e31dd71 also flagged `code` as wrongly source-independent. It is
+# kept, but ONLY because the key now carries a context fingerprint: a code
+# answer derived under one interpreter no longer answers the same question
+# asked under another. Repository questions are a different matter and are
+# classified as repo_audit (not cacheable) before they ever reach here.
 DEFAULT_CACHEABLE_TASK_TYPES: frozenset[str] = frozenset({"math", "code", "logic"})
+
+# Bump to invalidate every existing key when the key definition changes.
+# Old entries simply stop being found, which is the correct outcome: they
+# answered a question posed under a definition we no longer use.
+_CACHE_KEY_SCHEMA = 2
 
 _DEFAULT_MAX_ENTRIES = 2000
 _DEFAULT_TTL_S = 14 * 24 * 3600.0  # two weeks
@@ -58,8 +69,34 @@ def _normalize_objective(objective: str) -> str:
     return _WS_RE.sub(" ", str(objective or "").strip().lower())
 
 
+def _context_fingerprint() -> str:
+    """The environment an answer was derived in, and is only valid within.
+
+    CP126 2e31dd71. The key was task_type plus the normalized objective, so
+    the same words asked under a different interpreter, a different model or
+    a changed verifier hit the SAME entry — replaying a stale or
+    cross-context answer as verified truth. "What is the result of this
+    code" does not have a context-free answer.
+
+    Cheap and stable inputs only: this runs on every lookup, so it must not
+    do I/O or import heavy modules.
+    """
+    parts = [
+        f"py{sys.version_info.major}.{sys.version_info.minor}",
+        f"schema{_CACHE_KEY_SCHEMA}",
+    ]
+    # Model identity, when the runtime has published one. Absent is a valid
+    # answer and simply yields a distinct fingerprint from present.
+    parts.append("model=" + str(os.environ.get("AURA_ACTIVE_MODEL_ID", "") or "-"))
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
+
+
 def _problem_key(objective: str, task_type: str) -> str:
-    payload = f"{str(task_type or '').strip().lower()}\n{_normalize_objective(objective)}"
+    payload = (
+        f"{str(task_type or '').strip().lower()}\n"
+        f"{_context_fingerprint()}\n"
+        f"{_normalize_objective(objective)}"
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
