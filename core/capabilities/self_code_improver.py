@@ -222,6 +222,97 @@ def latest_enactment_for(target_file: str) -> dict[str, Any] | None:
     return None
 
 
+# Capabilities a self-improvement may not INTRODUCE. Present in the original
+# means the function already had it and this is not the place to litigate
+# that; newly added means a bug fix quietly grew the blast radius.
+_DANGEROUS_CALLS = (
+    "eval", "exec", "compile", "__import__", "system", "popen",
+    "spawn", "fork", "remove", "unlink", "rmtree", "chmod", "chown",
+)
+_DANGEROUS_MODULES = ("subprocess", "shutil", "ctypes", "socket", "pickle", "marshal")
+
+# Below this, the example list is a gesture rather than evidence. Real source
+# mutation needs more than one or two cases someone happened to think of.
+_MIN_CHECKS_FOR_ENACTMENT = 3
+
+
+def _referenced_names(source: str) -> set[str]:
+    """Call and attribute names a snippet reaches for, best-effort."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            module = getattr(node, "module", "") or ""
+            names.add(module.split(".")[0])
+            for alias in node.names:
+                names.add(alias.name.split(".")[0])
+    return names
+
+
+def _promotion_blockers(
+    *,
+    original_src: str,
+    candidate_src: str,
+    file_before: str,
+    func_name: str,
+    checks: list[dict[str, Any]],
+) -> list[str]:
+    """Every reason this candidate must NOT be written to real source.
+
+    Empty means the deterministic pre-mutation gates all pass. It does not
+    mean the change is good — that is what the caller's suite decides — only
+    that writing it will not break the file or widen what the code can do.
+    """
+    blockers: list[str] = []
+
+    if len(checks) < _MIN_CHECKS_FOR_ENACTMENT:
+        blockers.append(
+            f"insufficient_evidence: {len(checks)} check(s), "
+            f"{_MIN_CHECKS_FOR_ENACTMENT} required to mutate real source"
+        )
+
+    # The candidate must be syntactically valid on its own...
+    try:
+        ast.parse(candidate_src)
+    except SyntaxError as exc:
+        blockers.append(f"candidate_does_not_parse: {exc}")
+        return blockers
+
+    # ...and the FILE must still compile once the replacement lands. A
+    # function that parses alone can still land badly indented or duplicated.
+    try:
+        merged = _replace_function(file_before, func_name, candidate_src)
+        compile(merged, "<self_code_candidate>", "exec")
+    except (SyntaxError, ValueError, TypeError) as exc:
+        blockers.append(f"file_does_not_compile_after_replacement: {exc}")
+        return blockers
+
+    # The function must survive the round trip: if it cannot be extracted
+    # again, rollback cannot find it either.
+    extracted = _extract_function_source(merged, func_name)
+    if not extracted:
+        blockers.append("function_not_extractable_after_replacement")
+
+    # No NEW dangerous capability relative to the original.
+    before = _referenced_names(original_src)
+    after = _referenced_names(candidate_src)
+    introduced = sorted(
+        name for name in (after - before)
+        if name in _DANGEROUS_CALLS or name in _DANGEROUS_MODULES
+    )
+    if introduced:
+        blockers.append("introduces_dangerous_capability: " + ", ".join(introduced))
+
+    return blockers
+
+
 async def rollback_enactment(
     record_id: str = "",
     *,
@@ -231,8 +322,23 @@ async def rollback_enactment(
     """Undo an enacted improvement with promotion-grade rigor.
 
     Refuses when the file has drifted since the enactment (someone else's
-    edits would be destroyed) unless ``force``. Verifies the restored
-    function matches the ledger pre-image byte-for-byte.
+    edits would be destroyed) unless ``force``.
+
+    CP126 8f695a21. The docstring used to promise a byte-for-byte pre-image
+    restore, and the code delivered something weaker: it replaced only the
+    named function and then compared STRIPPED function text, never
+    consulting the full ``file_sha_before`` the ledger already stores. Under
+    ``force`` that meant unrelated drift and whitespace changes survived
+    while the result was reported as a successful symmetric rollback.
+
+    Two outcomes are now distinguished, because they are genuinely
+    different things:
+
+    ``rolled_back_exact``          the whole file matches file_sha_before —
+                                   a true byte-for-byte restoration
+    ``rolled_back_function_only``  the function was restored but the file
+                                   differs (drift preserved under force);
+                                   honest, and NOT a complete undo
     """
     record = _load_enactment(record_id) if record_id else latest_enactment_for(target_file)
     if not record:
@@ -264,24 +370,37 @@ async def rollback_enactment(
         rollback_target=str(record["id"]),
     )
 
-    # Symmetric verification: the restored function must equal the pre-image.
-    extracted = _extract_function_source(
-        await asyncio.to_thread(path.read_text, encoding="utf-8"),
-        str(record["func_name"]),
+    # Verification against BOTH the function pre-image and the whole-file
+    # pre-image the ledger recorded.
+    final_text = await asyncio.to_thread(path.read_text, encoding="utf-8")
+    extracted = _extract_function_source(final_text, str(record["func_name"]))
+    # Exact, not stripped: whitespace is part of source, and calling a
+    # stripped comparison "byte-for-byte" was the misreport.
+    function_exact = bool(
+        extracted and extracted[0] == str(record["original_function_source"])
     )
-    restored_ok = bool(
-        extracted and extracted[0].strip() == str(record["original_function_source"]).strip()
+    function_ok = function_exact or bool(
+        extracted
+        and extracted[0].strip() == str(record["original_function_source"]).strip()
     )
+    file_exact = _sha(final_text) == str(record.get("file_sha_before") or "")
+    restored_ok = function_ok
     transaction_complete = _self_code_write_completed(action)
     outcome = {
         "ok": restored_ok and transaction_complete,
         "status": (
-            "rolled_back"
+            ("rolled_back_exact" if file_exact else "rolled_back_function_only")
             if restored_ok and transaction_complete
             else "rollback_effect_verified_receipt_failed"
             if restored_ok and action.get("effect_verified") is True
             else "rollback_verification_failed"
         ),
+        # The evidence behind the status, so a caller can tell a complete
+        # undo from a function-scoped one without reading the source.
+        "file_pre_image_restored": file_exact,
+        "function_pre_image_exact": function_exact,
+        "function_pre_image_equivalent": function_ok,
+        "residual_drift": bool(restored_ok and not file_exact),
         "record_id": record["id"],
         "target_file": str(path),
         "func_name": record["func_name"],
@@ -569,6 +688,35 @@ async def improve_function(
     result.status = "verified_improvement"
 
     if enact:
+        # CP126 1cdbdb14. Passing a caller-supplied example list was the ONLY
+        # gate before mutating real source. Examples prove a function returns
+        # the right values for the cases someone thought of; they say nothing
+        # about whether the file still imports, whether the change smuggled
+        # in a new execution or filesystem capability, or whether the
+        # evidence was more than a token gesture.
+        #
+        # These are the gates that can be enforced here, cheaply and
+        # deterministically, before the write. A full held-out suite,
+        # property testing and canary evaluation remain the caller's job
+        # AFTER enactment — that division is real, but it is not a reason to
+        # write source that does not compile.
+        blockers = _promotion_blockers(
+            original_src=original_src,
+            candidate_src=improved_src,
+            file_before=src,
+            func_name=func_name,
+            checks=checks,
+        )
+        if blockers:
+            result.status = "promotion_blocked"
+            result.error = "; ".join(blockers)
+            result.lesson_retained = await _retain(
+                func_name, goal, "BLOCKED", result.error[:400],
+            )
+            logger.warning(
+                "Self-code promotion BLOCKED for %s: %s", func_name, result.error,
+            )
+            return result
         try:
             new_src = _replace_function(src, func_name, improved_src)
             # Write-ahead rollback record FIRST: the pre-image is durable

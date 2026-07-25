@@ -92,7 +92,15 @@ class TestSymmetricRollback:
         assert 'case["a"] + case["b"]' in target.read_text(encoding="utf-8")
 
         outcome = asyncio.run(sci.rollback_enactment(record_id))
-        assert outcome["ok"] is True and outcome["status"] == "rolled_back"
+        # CP126 8f695a21: the status now distinguishes a true whole-file
+        # restoration from a function-scoped one. With no drift this must be
+        # the exact case, verified against the ledger's file_sha_before —
+        # the hash that was stored and never consulted.
+        assert outcome["ok"] is True
+        assert outcome["status"] == "rolled_back_exact"
+        assert outcome["file_pre_image_restored"] is True
+        assert outcome["function_pre_image_exact"] is True
+        assert outcome["residual_drift"] is False
         assert outcome["effect_verified"] is True
         assert outcome["receipt_persisted"] is True
         assert outcome["post_action_receipt_id"]
@@ -160,7 +168,10 @@ def test_enactment_receipt_failure_triggers_symmetric_compensation(
         return {"ok": True, "status": "rolled_back"}
 
     def _verify(source, _func_name, _checks):
-        return (1, []) if 'case["a"] + case["b"]' in source else (0, [])
+        # "the corrected source passes every check" — expressed in terms of
+        # the check count rather than a hardcoded 1, so the stub stays
+        # faithful as the fixture's evidence grows.
+        return (len(_checks), []) if 'case["a"] + case["b"]' in source else (0, [])
 
     monkeypatch.setattr(sci, "_research", _research)
     monkeypatch.setattr(sci, "_generate", _generate)
@@ -175,7 +186,15 @@ def test_enactment_receipt_failure_triggers_symmetric_compensation(
             target_file=str(target),
             func_name="add_numbers",
             goal="fix addition",
-            checks=[{"args": [{"a": 2, "b": 3}], "expected": 5}],
+            # CP126 1cdbdb14: real source mutation now requires more than a
+            # token example list. This test is about the COMPENSATION path,
+            # not the promotion criteria, so it supplies enough evidence to
+            # reach enactment rather than weakening the gate.
+            checks=[
+                {"args": [{"a": 2, "b": 3}], "expected": 5},
+                {"args": [{"a": 0, "b": 0}], "expected": 0},
+                {"args": [{"a": -1, "b": 1}], "expected": 0},
+            ],
             max_iters=1,
             enact=True,
         )
