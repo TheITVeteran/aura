@@ -128,3 +128,46 @@ class TestRecoveryDebtIsPaidDown:
         service._metabolic.recovery_debt = 0.02
         _rest(service, 3000.0)
         assert service._metabolic.recovery_debt == 0.0
+
+
+class TestChargeAttribution:
+    """Recovery is provable in isolation; the live value stayed pinned anyway.
+
+    The 2026-07-25 verification run held ``body_fatigue`` at 0.99 through a
+    silent idle window with ``body_cost_applied: {}`` on every Will receipt —
+    something charges fatigue that the Will never quoted, and no surface in the
+    system could name it. That is the actual open question, so it gets a
+    measurement rather than another guess.
+    """
+
+    def test_a_charge_is_attributed_to_its_caller(self, service):
+        service._commit_cost_locked({"fatigue": 0.05}, receipt_id="mind_tick:abc123")
+        assert service.charge_attribution()["fatigue"] == {"mind_tick": 0.05}
+
+    def test_charges_from_one_source_accumulate(self, service):
+        for i in range(4):
+            service._commit_cost_locked({"fatigue": 0.01}, receipt_id=f"will:{i}")
+        assert service.charge_attribution()["fatigue"]["will"] == pytest.approx(0.04)
+
+    def test_debt_charges_are_tracked_separately(self, service):
+        service._commit_cost_locked(
+            {"integrity_risk": 0.03}, receipt_id="repair_loop:x"
+        )
+        attribution = service.charge_attribution()
+        assert attribution["recovery_debt"] == {"repair_loop": 0.03}
+        assert attribution["fatigue"] == {}
+
+    def test_an_unlabelled_charge_is_still_counted(self, service):
+        service._commit_cost_locked({"fatigue": 0.02}, receipt_id="")
+        assert "unattributed" in service.charge_attribution()["fatigue"]
+
+    def test_the_heaviest_sources_survive_the_cap(self, service):
+        service._commit_cost_locked({"fatigue": 0.9}, receipt_id="heavy:1")
+        for i in range(service._CHARGE_LEDGER_CAP * 3):
+            service._commit_cost_locked({"fatigue": 0.001}, receipt_id=f"light{i}:x")
+        assert len(service._fatigue_charges) <= service._CHARGE_LEDGER_CAP
+        assert "heavy" in service.charge_attribution()["fatigue"]
+
+    def test_relief_is_not_recorded_as_a_charge(self, service):
+        service._commit_cost_locked({"fatigue": -0.05}, receipt_id="stabilization:1")
+        assert service.charge_attribution()["fatigue"] == {}

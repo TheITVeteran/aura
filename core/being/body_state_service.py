@@ -165,6 +165,17 @@ class BodyStateService:
         # sustained load. The old 0.002/s could not overcome normal drift.
         self._fatigue_decay_rate = 0.01     # per second when idle
         self._recovery_decay_rate = 0.001   # recovery debt decays slowly
+        # Who is charging fatigue, and how much. Proportional recovery drains
+        # a saturated fatigue in about seventy seconds of quiet, which is
+        # provable in isolation — and the 2026-07-25 live runtime still sat at
+        # 0.99 through a silent idle window with body_cost_applied empty on
+        # every Will receipt. Something charges it that the Will never quoted,
+        # and no surface in the system could name it. This ledger is that
+        # surface: bounded, per-source, and reported in the snapshot, so the
+        # question is one grep instead of an afternoon.
+        self._fatigue_charges: dict[str, float] = {}
+        self._fatigue_saturation_reported = False
+        self._debt_charges: dict[str, float] = {}
         self._last_decay_time = time.monotonic()
 
     @classmethod
@@ -301,10 +312,14 @@ class BodyStateService:
             elif dim == "fatigue":
                 self._metabolic.fatigue = _clip(self._metabolic.fatigue + actual)
                 applied["fatigue"] = actual
+                if actual > 0:
+                    self._note_charge(self._fatigue_charges, receipt_id, actual)
             elif dim == "integrity_risk":
                 self._metabolic.recovery_debt = _clip(
                     self._metabolic.recovery_debt + actual
                 )
+                if actual > 0:
+                    self._note_charge(self._debt_charges, receipt_id, actual)
                 applied["integrity_risk"] = actual
             elif dim == "recovery":
                 self._metabolic.recovery_debt = _clip(
@@ -336,6 +351,48 @@ class BodyStateService:
             )
             self._metabolic.relief_accumulated += relief
             self._metabolic.last_relief_time = time.time()
+
+    _CHARGE_LEDGER_CAP = 32
+
+    @staticmethod
+    def _charge_source(receipt_id: str) -> str:
+        """Reduce a receipt to the caller family that issued it."""
+        text = str(receipt_id or "unattributed").strip() or "unattributed"
+        head = text.split(":", 1)[0]
+        return head[:48] or "unattributed"
+
+    def _note_charge(
+        self, ledger: dict[str, float], receipt_id: str, amount: float
+    ) -> None:
+        source = self._charge_source(receipt_id)
+        if source not in ledger and len(ledger) >= self._CHARGE_LEDGER_CAP:
+            # Keep the heaviest charges; an attribution surface must not be
+            # the thing that grows without bound.
+            smallest = min(ledger, key=ledger.get)
+            if ledger[smallest] >= amount:
+                return
+            ledger.pop(smallest, None)
+        ledger[source] = ledger.get(source, 0.0) + float(amount)
+
+    def charge_attribution(self) -> dict[str, dict[str, float]]:
+        """Cumulative fatigue and recovery-debt charges, by caller family."""
+        with self._metabolic_lock:
+            return {
+                "fatigue": dict(
+                    sorted(
+                        self._fatigue_charges.items(),
+                        key=lambda kv: kv[1],
+                        reverse=True,
+                    )[:8]
+                ),
+                "recovery_debt": dict(
+                    sorted(
+                        self._debt_charges.items(),
+                        key=lambda kv: kv[1],
+                        reverse=True,
+                    )[:8]
+                ),
+            }
 
     def _apply_natural_decay(self) -> None:
         """Fatigue and recovery debt decay over time."""
@@ -403,6 +460,22 @@ class BodyStateService:
         operational_health = _clip(
             1.0 - total_pressure * 0.5 - error_rate * 0.3 - self._metabolic.fatigue * 0.2
         )
+
+        # Saturated fatigue is only diagnosable with its charge history. Say it
+        # once per saturated stretch — enough to name the source in a live log,
+        # never enough to become its own storm.
+        if self._metabolic.fatigue >= 0.95:
+            if not self._fatigue_saturation_reported:
+                self._fatigue_saturation_reported = True
+                logger.warning(
+                    "Body fatigue saturated at %.4f (recovery_debt %.4f). "
+                    "Charges so far by source: %s",
+                    self._metabolic.fatigue,
+                    self._metabolic.recovery_debt,
+                    self.charge_attribution(),
+                )
+        elif self._metabolic.fatigue < 0.80:
+            self._fatigue_saturation_reported = False
 
         snap = BodyHealthSnapshot(
             cpu_pressure=body.cpu_pressure,
