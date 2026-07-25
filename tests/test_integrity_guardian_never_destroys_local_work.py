@@ -140,3 +140,51 @@ class TestEndToEndVerifyBehaviour:
         assert any(MONITORED in str(alert) for alert in alerts), (
             "an unexplained mismatch must still reach the operator"
         )
+
+
+class TestStaleBaselineIsNotTamper:
+    """A manifest older than the checkout is not evidence of tampering.
+
+    The 2026-07-25 boot 'restored' 86 files whose bytes already equalled the
+    HEAD blob — an ordinary pull/commit had advanced the tree past the
+    manifest. Rewriting identical bytes is a pointless governed write, and
+    reporting them as '9 files tampered' cries wolf on the security channel.
+    """
+
+    def test_file_matching_head_is_rebaselined_not_rewritten(self, monkeypatch, tmp_path):
+        from core.security import integrity_guardian as ig_mod
+
+        monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
+        target = tmp_path / "core" / "runtime" / "health_contract.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        head_blob = "print('current head content')\n"
+        target.write_text(head_blob, encoding="utf-8")
+
+        instance = ig_mod.IntegrityGuardian()
+        instance._manifest = {"core/runtime/health_contract.py": "hash-from-an-older-revision"}
+        monkeypatch.setattr(instance, "_is_monitored_path", lambda _p: True)
+
+        writes: list[str] = []
+        monkeypatch.setattr(
+            instance,
+            "_backup_current_file_before_restore",
+            lambda p: writes.append(p) or None,
+        )
+
+        class _Result:
+            returncode = 0
+            stdout = head_blob
+            stderr = ""
+
+        class _Gateway:
+            def run(self, *args, **kwargs):
+                return _Result()
+
+        monkeypatch.setattr(ig_mod, "get_subprocess_gateway", lambda: _Gateway())
+
+        assert instance._restore_file_via_git("core/runtime/health_contract.py") is True
+        assert writes == [], "identical content must not be backed up or rewritten"
+        assert instance._manifest["core/runtime/health_contract.py"] != (
+            "hash-from-an-older-revision"
+        ), "the stale baseline must be adopted, not left to re-fire every boot"
+        assert target.read_text(encoding="utf-8") == head_blob

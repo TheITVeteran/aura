@@ -491,6 +491,32 @@ class IntegrityGuardian:
                     source="security.integrity_guardian.read_head_blob",
                 )
             if result.returncode == 0:
+                # A file that ALREADY equals the HEAD blob was never
+                # tampered with — the manifest is simply older than the
+                # checkout (any pull/commit does this). Rewriting identical
+                # bytes is a pointless governed write that also cries wolf:
+                # the 2026-07-25 boot "restored" 86 such files and reported
+                # them as tampered. Adopt the current content as the
+                # baseline instead.
+                target = _BASE_DIR / normalized
+                try:
+                    if target.is_file() and target.read_text(
+                        encoding="utf-8", errors="replace"
+                    ) == result.stdout:
+                        self._manifest[normalized] = self._hash_file(target)
+                        logger.debug(
+                            "IntegrityGuardian: %s already matches HEAD; "
+                            "re-baselined a stale manifest entry instead of "
+                            "rewriting it.",
+                            normalized,
+                        )
+                        return True
+                except OSError as exc:
+                    logger.debug(
+                        "IntegrityGuardian: HEAD comparison unavailable for %s: %s",
+                        normalized,
+                        exc,
+                    )
                 backup = self._backup_current_file_before_restore(normalized)
                 with local_internal_governed_scope(
                     "security.integrity_guardian.restore",
@@ -560,6 +586,13 @@ class IntegrityGuardian:
                         actual = self._hash_file(full)
                         if actual == expected_hash:
                             logger.info("IntegrityGuardian: successfully auto-healed tampered file: %s", path)
+                            continue
+                        if self._manifest.get(path) == actual:
+                            # The restore path proved the file matches HEAD
+                            # and re-baselined it: the manifest was stale,
+                            # nothing was tampered with. Alerting here is
+                            # what produced "9 files tampered" after an
+                            # ordinary pull.
                             continue
                 tampered.append(path)
 
