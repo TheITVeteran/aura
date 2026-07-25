@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -82,13 +83,20 @@ class NightlyLoRATrainer:
             logger.info("🌙 Nightly LoRA: Not enough data for meaningful update.")
             return 
         
-        # Write to JSONL for training
+        # Write to JSONL for training. This is internal maintenance work and
+        # needs a governed scope: without one the live runtime refuses it as a
+        # governance violation, which is exactly what happened on 2026-07-25 —
+        # the nightly training data was collected, then discarded at the write,
+        # and the raised GovernanceViolationError became a degradation and a
+        # MARGINAL fault that fed the cortisol crisis blocking other work.
         output_file = self.training_data_path / f"training_{datetime.now().date()}.jsonl"
-        await get_file_write_gateway().write_text_async(
-            output_file,
-            "".join(json.dumps(ex) + "\n" for ex in examples),
-            source="adaptation.nightly_lora.training_data",
-        )
+        payload = "".join(json.dumps(ex) + "\n" for ex in examples)
+        with local_internal_governed_scope("adaptation.nightly_lora"):
+            await get_file_write_gateway().write_text_async(
+                output_file,
+                payload,
+                source="adaptation.nightly_lora.training_data",
+            )
         
         logger.info("🌙 Nightly LoRA: Generated %s training examples.", len(examples))
         # Trigger LoRA training

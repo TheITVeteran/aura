@@ -175,8 +175,22 @@ class TerminalMonitor:
         if BLACKLIST_PATH.exists():
             try:
                 raw = json.loads(BLACKLIST_PATH.read_text())
+                # _save_blacklist writes through atomic_write_json, which wraps
+                # the list in a {schema, schema_name, schema_version, payload}
+                # envelope. This reader never unwrapped it, so every boot raised
+                # "blacklist payload is not a list" — a degradation, an incident
+                # and a MARGINAL fault on a healthy runtime, every single start.
+                # It also corrupted itself: an earlier reader iterated the dict,
+                # so the envelope's own KEYS ended up saved as blacklist
+                # entries. Unwrap, and drop those four keys if they are present.
+                if isinstance(raw, dict) and "payload" in raw:
+                    raw = raw.get("payload")
                 if not isinstance(raw, (list, set, tuple)):
                     raise ValueError("blacklist payload is not a list")
+                raw = [
+                    item for item in raw
+                    if item not in {"payload", "schema", "schema_name", "schema_version"}
+                ]
                 # Bound cardinality and item size so a corrupt/hostile file
                 # cannot exhaust memory at startup.
                 items = [str(item)[:200] for item in raw][:_MAX_BLACKLIST_ENTRIES]
