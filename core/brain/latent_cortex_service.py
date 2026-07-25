@@ -142,6 +142,13 @@ def _controller_outcome(
     return best_score, checked, passed, reason
 
 
+# What to assume when the body cannot be read. 0.0 means "maximum headroom"
+# on this scale, so unknown must never map to it. High enough to damp heavy
+# allocation, low enough that a body which never reports does not freeze the
+# service outright.
+_UNKNOWN_BODY_PRESSURE = 0.6
+
+
 class LatentCortexService:
     """Budget allocation + IPC routing for latent-reasoning episodes."""
 
@@ -171,14 +178,37 @@ class LatentCortexService:
         return min(1.0, max(0.0, number))
 
     def _body_pressure(self) -> float:
-        """Total real+anticipatory body pressure in [0, 1]; 0 when unknown."""
+        """Total real+anticipatory body pressure in [0, 1].
+
+        CP126 9bc8e55e. Unknown used to mean 0.0 — which in this scale is
+        "fully healthy, maximum headroom". So an absent, incompatible,
+        stale or failing body was rewarded with UNDAMPED compute, silently,
+        with no degradation receipt. The signal disappeared in exactly the
+        state where it was most needed.
+
+        Unknown now means conservatively pressured: enough to damp heavy
+        allocation, not so much that a body which never reports freezes the
+        service. The failure is recorded, so a persistent unknown is visible
+        rather than indistinguishable from a calm body.
+        """
         try:
             from core.being.aura_now import BodyState
 
             state = getattr(self.orchestrator, "state", None)
             return float(BodyState.from_aura_state(state).total_pressure())
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return 0.0
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            if not getattr(self, "_body_pressure_unknown_reported", False):
+                self._body_pressure_unknown_reported = True
+                record_degradation(
+                    "latent_cortex_service",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "body pressure unobservable; damping allocation at "
+                        f"{_UNKNOWN_BODY_PRESSURE} instead of assuming full headroom"
+                    ),
+                )
+            return _UNKNOWN_BODY_PRESSURE
 
     def allocate(
         self,
@@ -200,7 +230,8 @@ class LatentCortexService:
         try:
             pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
         except ValueError:
-            pressure = 0.0
+            # Same reasoning: an invalid reading is not evidence of headroom.
+            pressure = _UNKNOWN_BODY_PRESSURE
         if (
             isinstance(model_parameter_count, bool)
             or not isinstance(model_parameter_count, int)

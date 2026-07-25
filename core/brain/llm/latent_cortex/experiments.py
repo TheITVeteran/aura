@@ -362,14 +362,25 @@ def _coerce_role_outcome(value: Any) -> tuple[bool, int, float]:
     if isinstance(divergence, bool) or not isinstance(divergence, (int, float)):
         raise ValueError("role solver divergence must be a real number")
     divergence_value = float(divergence)
-    # NaN must be refused, not merely infinities. `isinf(nan)` is False and
-    # `isfinite(nan)` is False, so the earlier form let NaN straight through
-    # — and NaN is the most damaging value here: it propagates silently
-    # through every downstream mean, and every comparison against it is
-    # False, so a poisoned divergence looks like a small one forever. If a
-    # runner cannot measure divergence it must say so structurally, not by
-    # emitting a float that quietly disables the statistics.
-    if not math.isfinite(divergence_value) or divergence_value < 0.0:
+    # NaN is DELIBERATELY admitted here: it is this contract's documented
+    # sentinel for "the episode had no exchange telemetry", and every
+    # downstream consumer filters it explicitly with math.isfinite before
+    # aggregating (see the divergence claims in run_role_lesion). So NaN
+    # never reaches a mean and never poisons one.
+    #
+    # A previous pass in this campaign tightened this to reject NaN, on the
+    # general principle that NaN propagates silently through statistics.
+    # That principle is right in the abstract and wrong here, and
+    # test_run_role_lesion_conjectures_without_telemetry caught it: the
+    # sentinel is handled, so refusing it removed the only way a runner
+    # could say "I could not measure this" and broke conjecture-without-
+    # telemetry entirely.
+    #
+    # Infinities and negatives stay refused — neither is a distance, and
+    # neither has a downstream filter.
+    if math.isinf(divergence_value) or (
+        math.isfinite(divergence_value) and divergence_value < 0.0
+    ):
         raise ValueError(
             "role solver divergence must be non-negative (or NaN for no telemetry)"
         )

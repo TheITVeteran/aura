@@ -70,8 +70,22 @@ async def _job_nonparametric_ingest() -> dict[str, Any]:
 
         if get_memory_pressure_snapshot().refuse_heavy_local_generation:
             return {"status": "skipped_memory_pressure"}
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        # CP126 60e56c67. A bare pass here sent the job on to resident-model
+        # ingestion. The signal exists to refuse heavy local generation, and
+        # it was treated as optional in exactly the state where its
+        # availability was uncertain — background maintenance is never worth
+        # an unmeasured allocation against a 32B resident.
+        record_degradation(
+            "reasoning_background",
+            exc,
+            severity="warning",
+            action="skipped nonparametric ingestion because memory pressure was unobservable",
+        )
+        return {
+            "status": "skipped_memory_pressure_unobservable",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
     try:
         from core.brain.llm.mlx_client import get_mlx_client
 

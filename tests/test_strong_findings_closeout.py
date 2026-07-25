@@ -252,7 +252,12 @@ class TestSolverOutcomesAreStrict:
         [
             ("yes", 3, 0.5),          # non-empty string was a success
             (True, -1, 0.5),          # negative cost reached reports
-            (True, 3, float("nan")),  # NaN poisons every downstream mean
+            # NOTE: NaN is NOT here. It is this contract's documented
+            # sentinel for "no exchange telemetry", every consumer filters
+            # it with math.isfinite before aggregating, and refusing it
+            # broke conjecture-without-telemetry. Rejecting NaN reflexively
+            # was this campaign's error, caught by
+            # test_run_role_lesion_conjectures_without_telemetry.
             (True, 3, float("inf")),
             (True, 3, -1.0),          # a distance cannot be negative
             (True, 3, "x"),
