@@ -376,6 +376,7 @@ class ReallocateFlowActuator(BaseActuator):
             amount = _finite_float(params["amount"], minimum=1e-9)
             if amount is None:
                 return ActuatorResult(False, "Parameter validation failed", {})
+            requested = amount
 
             source = model.get_entity(source_id)
             target = model.get_entity(target_id)
@@ -399,6 +400,15 @@ class ReallocateFlowActuator(BaseActuator):
                     )
                 amount = transferable  # Clip transfer
 
+            # Report what the world actually did, not what was asked of it.
+            # The world clips a transfer against live capacity and constraints,
+            # so the requested amount is a hope; the measured delta is the
+            # fact. Claiming the requested figure made a no-op transfer read as
+            # a success, which is how the same remedy can be re-issued forever
+            # against a bottleneck it never relieved.
+            source_load_before = float(source.load)
+            target_load_before = float(target.load)
+
             model.simulate(
                 1.0,
                 actions=[
@@ -411,16 +421,36 @@ class ReallocateFlowActuator(BaseActuator):
                 ],
             )
 
+            moved = source_load_before - float(source.load)
+            received = float(target.load) - target_load_before
+            if moved <= 0.0:
+                return ActuatorResult(
+                    False,
+                    f"Transfer from '{source_id}' to '{target_id}' moved nothing "
+                    f"(requested {amount}); the world did not accept it.",
+                    {},
+                )
+
             logger.info(
                 "Executed Actuator: reallocate_flow transferred %s from %s to %s",
-                amount,
+                moved,
                 source_id,
                 target_id,
             )
+            message = (
+                f"Flow of {moved} successfully reallocated from '{source_id}' "
+                f"to '{target_id}'."
+            )
+            if moved + 1e-9 < requested:
+                message += f" (clipped from the requested {requested})"
             return ActuatorResult(
                 success=True,
-                message=f"Flow of {amount} successfully reallocated from '{source_id}' to '{target_id}'.",
-                updates={source_id: {"load": source.load}, target_id: {"load": target.load}},
+                message=message,
+                updates={
+                    source_id: {"load": source.load},
+                    target_id: {"load": target.load},
+                    "_measured": {"moved": moved, "received": received, "requested": requested},
+                },
             )
 
         except (ImportError, AttributeError, KeyError, RuntimeError, TypeError, ValueError) as exc:

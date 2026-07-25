@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from core.actuators.actuator_registry import ActuatorResult, get_actuator_registry
+from core.runtime.errors import record_degradation
 from core.sensors.sensor_registry import get_sensor_registry
 
 logger = logging.getLogger("Aura.ImmuneHeuristicExecutor")
@@ -52,6 +53,52 @@ class ImmuneHeuristicExecutor:
             "immune_maintenance",
         }
     )
+
+    # A remedy that keeps failing is a finding, not background noise. The live
+    # 2026-07-25 idle window fired reallocate_flow 247 times with identical
+    # parameters; 192 of those failed and produced no log line at all, because
+    # the failure only ever landed in a returned dict nobody read. An immune
+    # system that cannot tell "I treated it" from "I tried and it did nothing"
+    # is not an immune system.
+    _REPEAT_FAILURE_ESCALATION = 5
+    _FAILURE_LEDGER_CAP = 64
+    _failure_streaks: dict[str, int] = {}
+
+    @classmethod
+    def _note_action_outcome(
+        cls, actuator_name: str, params: dict[str, Any], result: ActuatorResult
+    ) -> None:
+        """Make a failing immune action visible, and escalate a stuck one."""
+
+        key = f"{actuator_name}:{sorted(params.items(), key=lambda kv: kv[0])}"
+        if result.success:
+            cls._failure_streaks.pop(key, None)
+            return
+
+        streak = cls._failure_streaks.get(key, 0) + 1
+        if len(cls._failure_streaks) >= cls._FAILURE_LEDGER_CAP and key not in cls._failure_streaks:
+            cls._failure_streaks.clear()
+        cls._failure_streaks[key] = streak
+
+        if streak == 1:
+            logger.warning(
+                "Immune action '%s' did not take effect: %s",
+                actuator_name, result.message,
+            )
+        elif streak == cls._REPEAT_FAILURE_ESCALATION:
+            record_degradation(
+                "immune_executor",
+                RuntimeError(
+                    f"immune action {actuator_name} failed {streak} times with "
+                    f"identical parameters: {result.message}"
+                ),
+                severity="warning",
+                action=(
+                    "kept re-issuing an immune remedy that never took effect; "
+                    "the underlying condition is not being relieved"
+                ),
+                extra={"actuator": actuator_name, "streak": streak},
+            )
 
     def evaluate_condition(self, condition: dict[str, Any], sensors_data: dict[str, float]) -> bool:
         """Evaluates a single condition against current sensor values safely."""
@@ -434,6 +481,7 @@ class ImmuneHeuristicExecutor:
             )
 
             # Trigger dynamic synthesis if actuator is missing
+            self._note_action_outcome(actuator_name, resolved_params, res)
             if not res.success and ("not found" in res.message or "not registered" in res.message):
                 self._schedule_missing_actuator_synthesis(actuator_name, sensors_data)
 
@@ -534,6 +582,7 @@ class ImmuneHeuristicExecutor:
                     ),
                 },
             )
+            self._note_action_outcome(actuator_name, resolved_params, result)
             if not result.success and (
                 "not found" in result.message or "not registered" in result.message
             ):
