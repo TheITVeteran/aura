@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
@@ -158,9 +159,28 @@ class FallbackLLMClient(LLMProvider):
         logger.error("All LLM providers in fallback chain failed for %s.", operation)
         raise error
 
-    def _validate_json_result(self, result: Any, provider_name: str) -> dict[str, Any]:
+    def _validate_json_result(self, result: Any, provider_name: str, schema: Any = None) -> dict[str, Any]:
         if not isinstance(result, dict):
             raise TypeError(f"{provider_name} returned {type(result).__name__}, expected dict")
+        # Enforce the schema's required keys instead of accepting any dict — a
+        # provider that returns {} or an off-contract object was previously
+        # recorded as a successful JSON generation.
+        if isinstance(schema, dict):
+            required = schema.get("required")
+            if isinstance(required, list):
+                missing = [str(k) for k in required if k not in result]
+                if missing:
+                    raise ValueError(f"{provider_name} JSON missing required keys: {missing}")
+        return result
+
+    @staticmethod
+    def _validate_text_result(result: Any, provider_name: str) -> str:
+        """A text result must be a nonempty string — empty/non-string output
+        was previously recorded as a successful generation."""
+        if not isinstance(result, str):
+            raise TypeError(f"{provider_name} returned {type(result).__name__}, expected str")
+        if not result.strip():
+            raise ValueError(f"{provider_name} returned empty text")
         return result
 
     def generate_text(self, prompt: str, system_prompt: str | None = None, model: str | None = None) -> str:
@@ -173,7 +193,9 @@ class FallbackLLMClient(LLMProvider):
             if not self._check_health_sync(provider, operation):
                 continue
             try:
-                result = provider.generate_text(prompt, system_prompt, model)
+                result = self._validate_text_result(
+                    provider.generate_text(prompt, system_prompt, model), provider_name
+                )
                 self._remember(
                     ProviderAttempt(operation, provider_name, "succeeded", "Generated text with provider")
                 )
@@ -211,6 +233,7 @@ class FallbackLLMClient(LLMProvider):
                 result = self._validate_json_result(
                     provider.generate_json(prompt, schema, system_prompt, model),
                     provider_name,
+                    schema,
                 )
                 self._remember(ProviderAttempt(operation, provider_name, "succeeded", "Generated JSON"))
                 return result
@@ -244,8 +267,16 @@ class FallbackLLMClient(LLMProvider):
             if not await self._check_health_async(provider, operation):
                 continue
             try:
-                if hasattr(provider, "generate_text_async"):
-                    result = await provider.generate_text_async(prompt, system_prompt, model, **kwargs)
+                async_fn = getattr(provider, "generate_text_async", None)
+                # hasattr alone is not proof of a usable async method — require
+                # it to be callable AND to return an awaitable, otherwise fall
+                # back to the sync path instead of awaiting a non-awaitable.
+                if callable(async_fn):
+                    maybe = async_fn(prompt, system_prompt, model, **kwargs)
+                    if inspect.isawaitable(maybe):
+                        result = await maybe
+                    else:
+                        result = maybe
                 else:
                     result = await asyncio.to_thread(
                         provider.generate_text,
@@ -254,6 +285,7 @@ class FallbackLLMClient(LLMProvider):
                         model,
                         **kwargs,
                     )
+                result = self._validate_text_result(result, provider_name)
                 self._remember(
                     ProviderAttempt(operation, provider_name, "succeeded", "Generated text with provider")
                 )
@@ -329,6 +361,11 @@ class FallbackLLMClient(LLMProvider):
             stream = provider.generate_stream(prompt, system_prompt, model, **kwargs)
             if hasattr(stream, "__aiter__"):
                 return [chunk async for chunk in stream]
+            # A sync generate_stream that returns a STRING must be treated as a
+            # single chunk — list(str) previously exploded it into individual
+            # characters and reported the char list as a successful stream.
+            if isinstance(stream, (str, bytes)):
+                return [stream]
             return list(stream)
         if hasattr(provider, "generate_text_async"):
             return [await provider.generate_text_async(prompt, system_prompt, model, **kwargs)]
@@ -359,6 +396,11 @@ class FallbackLLMClient(LLMProvider):
                 continue
             try:
                 chunks = await self._buffer_provider_stream(provider, prompt, system_prompt, model, **kwargs)
+                # An empty stream (no chunks, or only empty ones) is NOT a
+                # successful generation — try the next lane instead of returning
+                # a silent empty result marked succeeded.
+                if not any(str(c).strip() for c in chunks if c is not None):
+                    raise ValueError(f"{provider_name} produced an empty stream")
                 self._remember(
                     ProviderAttempt(
                         operation,
