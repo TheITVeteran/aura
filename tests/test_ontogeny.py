@@ -686,3 +686,71 @@ class TestOrganEndToEnd:
         assert verdict.choice == "approved"
         assert verdict.decider == "incumbent"
         core.stop()
+
+
+# ── Causal on day one: novelty reaches the allocator ────────────────────────
+
+
+class TestNoveltyIsCausal:
+    """The organ changes what Aura does before any head has earned authority.
+
+    Novelty is a measurement of her own state distribution, not a model's
+    prediction, so it needs no earned trust — only a bounded effect.
+    """
+
+    def _service(self):
+        from core.brain.latent_cortex_service import LatentCortexService
+
+        service = LatentCortexService.__new__(LatentCortexService)
+        service._body_pressure = lambda: 0.1
+        return service
+
+    def _allocate(self, service, novelty: float | None):
+        from core.brain.latent_cortex_service import LatentCortexService
+        from core.ontogeny.service import get_ontogeny
+        from core.ontogeny.state import StateReading
+
+        core = get_ontogeny()
+        previous = core._last_reading
+        if novelty is not None:
+            core._last_reading = StateReading(
+                hidden=np.zeros(4), novelty=novelty, displacement=0.0, steps=1, era=1
+            )
+        try:
+            return LatentCortexService.allocate(service, stakes=0.5, uncertainty=0.3)
+        finally:
+            core._last_reading = previous
+
+    def test_an_ordinary_moment_is_left_exactly_as_measured(self):
+        """A signal that moves every allocation has stopped saying anything."""
+        _, budget = self._allocate(self._service(), 0.5)
+        assert budget["effective_uncertainty"] == pytest.approx(0.3)
+
+    def test_an_unprecedented_moment_buys_more_thought(self):
+        service = self._service()
+        ordinary, _ = self._allocate(service, 0.5)
+        unprecedented, budget = self._allocate(service, 1.0)
+        assert budget["effective_uncertainty"] > 0.3
+        assert unprecedented["max_steps"] > ordinary["max_steps"]
+
+    def test_the_effect_is_bounded(self):
+        """Unfamiliarity earns a little more thought, never a blank cheque."""
+        from core.brain.latent_cortex_service import LatentCortexService
+
+        _, budget = self._allocate(self._service(), 1.0)
+        assert budget["effective_uncertainty"] <= 0.3 + LatentCortexService._NOVELTY_EFFORT_WEIGHT
+
+    def test_a_missing_organ_leaves_allocation_untouched(self, monkeypatch):
+        """A broken organ costs Aura the signal, never the allocation."""
+        from core.brain.latent_cortex_service import LatentCortexService
+
+        def down():
+            raise RuntimeError("organ down")
+
+        monkeypatch.setattr("core.ontogeny.service.get_ontogeny", down)
+        config, budget = LatentCortexService.allocate(
+            self._service(), stakes=0.5, uncertainty=0.3
+        )
+        assert budget["novelty"] is None
+        assert budget["effective_uncertainty"] == pytest.approx(0.3)
+        assert config["max_steps"] >= 2

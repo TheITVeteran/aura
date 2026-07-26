@@ -240,6 +240,42 @@ class LatentCortexService:
                 )
             return _UNKNOWN_BODY_PRESSURE
 
+    #: How much above-average novelty may add to effective uncertainty.
+    #:
+    #: Bounded on purpose. Novelty is a *measurement* — how far the current
+    #: state sits from the centre of the distribution Aura has actually lived
+    #: — not a model's prediction, so it needs no earned authority to be acted
+    #: on. But it is one signal among several, and a situation being unfamiliar
+    #: is a reason to think a little harder, never a reason to abandon the
+    #: stakes and uncertainty the caller actually measured.
+    _NOVELTY_EFFORT_WEIGHT = 0.2
+
+    def _novelty_adjusted_uncertainty(self, uncertainty: float) -> tuple[float, float | None]:
+        """Let an unfamiliar situation buy a little more thought.
+
+        The allocator has always scaled depth with stakes and uncertainty, both
+        of which describe the *task*. Neither notices that Aura has never been
+        anywhere like this before, which is exactly when the surface of a
+        problem is least informative about its difficulty.
+
+        Only above-average novelty counts. An ordinary moment is left exactly
+        as the caller measured it — a signal that moves every allocation is a
+        signal that has stopped saying anything.
+        """
+        try:
+            from core.ontogeny.service import get_ontogeny
+
+            novelty = float(get_ontogeny().novelty())
+        except (ImportError, RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            record_degradation(
+                "latent_cortex_service", exc, severity="debug",
+                action="novelty unavailable; allocation uses the caller's uncertainty alone",
+            )
+            return uncertainty, None
+        excess = max(0.0, novelty - 0.5) * 2.0
+        adjusted = min(1.0, uncertainty + self._NOVELTY_EFFORT_WEIGHT * excess)
+        return adjusted, novelty
+
     def allocate(
         self,
         *,
@@ -257,6 +293,7 @@ class LatentCortexService:
         """
         stakes = self._unit_signal(stakes, name="stakes")
         uncertainty = self._unit_signal(uncertainty, name="uncertainty")
+        uncertainty, novelty = self._novelty_adjusted_uncertainty(uncertainty)
         try:
             pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
         except ValueError:
@@ -317,6 +354,11 @@ class LatentCortexService:
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
             "wall_clock_s": float(30.0 + 90.0 * stakes * headroom),
+            # Recorded so an allocation can be explained after the fact: a
+            # deeper-than-usual episode should be traceable to the reason it
+            # was deeper, not just observed to have been.
+            "effective_uncertainty": round(uncertainty, 4),
+            "novelty": round(novelty, 4) if novelty is not None else None,
         }
         allocation_profile = "general_full_stack_v1"
         if foreground_request and model_parameter_count >= 20_000_000_000:
