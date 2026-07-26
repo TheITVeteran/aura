@@ -1452,6 +1452,7 @@ def test_style_constraint_does_not_trigger_assistant_mode_recovery():
 
 
 def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace_defer():
+    from core.agency.capability_token import get_token_store
     from core.being.runtime import BeingRuntime
 
     runtime = BeingRuntime.__new__(BeingRuntime)
@@ -1466,8 +1467,25 @@ def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace
         prediction=SimpleNamespace(controllability=0.1, free_energy=1.0),
         workspace=SimpleNamespace(ignition_strength=0.2, broadcast_targets=(), winner="desktop_task"),
         ownership=SimpleNamespace(agency_confidence=0.8),
+        memory_context=SimpleNamespace(memory_conflict=0.0),
+        self_model=SimpleNamespace(
+            continuity_risk=0.0,
+            identity_stability=1.0,
+            commitments=(),
+        ),
+        will=SimpleNamespace(confidence=0.8, refusal_pressure=0.0),
+        world=SimpleNamespace(uncertainty=0.1),
         state_hash="state-test",
         tick=42,
+    )
+    capability = get_token_store().issue(
+        origin="desktop-ui",
+        scope="foreground_desktop_action",
+        ttl_seconds=60.0,
+        domain="tool_execution",
+        requested_action="foreground_desktop_action",
+        approver="owner",
+        parent_receipt="test-soft-workspace-defer",
     )
 
     policy = runtime.action_policy(
@@ -1480,6 +1498,7 @@ def test_aura_now_allows_verified_foreground_desktop_action_under_soft_workspace
             "user_explicitly_authorized": True,
             "user_visible_desktop_action": True,
             "verification_required": True,
+            "capability_token": capability.token,
         },
     )
 
@@ -1858,6 +1877,8 @@ async def test_api_chat_continues_to_kernel_when_lane_warmup_times_out(monkeypat
     # response_reliability now classifies it as a fluent, ungrounded reflex and
     # the endurance probe flags it (REFLEX_CANNED_RE).
     assert "right here with you" not in payload["response"].lower()
+    assert "following what you said" in payload["response"].lower()
+    assert "mind feels" not in payload["response"].lower()
 
 
 @pytest.mark.asyncio
@@ -12376,8 +12397,13 @@ async def test_stabilize_user_facing_reply_clarifies_confusion_callout(monkeypat
     # confusion_repair), and locked that in test_feedback_audit_fixes.py
     # ::test_confusion_override_uses_degraded_live_composer_not_scripted_apology.
     # The contract is now grounded self-report, not a canned phrase.
-    assert "synthetic fallback" in result
-    assert "anchor" in result
+    lowered = result.lower()
+    assert "synthetic fallback" not in lowered
+    assert "grounded anchor" not in lowered
+    assert "answer path" not in lowered
+    assert "understood you to be asking about" in lowered
+    assert "ask me again" in lowered
+    assert "confused" in lowered
     assert "I lost the thread on that answer" not in result
 
 
@@ -12460,8 +12486,12 @@ async def test_stabilize_user_facing_reply_blocks_semantic_glitch(monkeypatch):
     # The glitch must be blocked and replaced by grounded self-report rather
     # than one of the retired canned openers (35cea49fa removed the scripted
     # fallback in favour of the degraded-live composer).
-    assert "synthetic fallback" in result
-    assert "anchor" in result
+    lowered = result.lower()
+    assert "synthetic fallback" not in lowered
+    assert "grounded anchor" not in lowered
+    assert "answer path" not in lowered
+    assert "understood you to be asking about this exact turn" in lowered
+    assert "ask me again" in lowered
     assert "Heidi" not in result
 
 
@@ -13895,6 +13925,7 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
     THIS click indefinitely. Welfare's graded brakes convert to receipted
     constraints for an explicit owner action carrying the full desktop
     execution contract; strain still shapes budgets via the economy."""
+    from core.agency.capability_token import get_token_store
     from core.being.runtime import BeingRuntime
 
     runtime = BeingRuntime.__new__(BeingRuntime)
@@ -13923,8 +13954,25 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
             winner="body_pressure",
         ),
         ownership=SimpleNamespace(agency_confidence=0.82),
+        memory_context=SimpleNamespace(memory_conflict=0.0),
+        self_model=SimpleNamespace(
+            continuity_risk=0.0,
+            identity_stability=1.0,
+            commitments=(),
+        ),
+        will=SimpleNamespace(confidence=0.8, refusal_pressure=0.0),
+        world=SimpleNamespace(uncertainty=0.1),
         state_hash="state-welfare-test",
         tick=55711,
+    )
+    capability = get_token_store().issue(
+        origin="desktop-ui",
+        scope="foreground_desktop_action",
+        ttl_seconds=60.0,
+        domain="tool_execution",
+        requested_action="foreground_desktop_action",
+        approver="owner",
+        parent_receipt="test-welfare-recovery-defer",
     )
 
     contract = {
@@ -13933,6 +13981,7 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
         "user_explicitly_authorized": True,
         "user_visible_desktop_action": True,
         "verification_required": True,
+        "capability_token": capability.token,
     }
     policy = runtime.action_policy(
         now, domain="tool_execution", priority=0.9, context=contract
@@ -13960,6 +14009,15 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
     )
     assert "welfare_recovery_required_before_action" in generic_mutation["defers"]
 
+    state_mutation_capability = get_token_store().issue(
+        origin="desktop-ui",
+        scope="foreground_desktop_action",
+        ttl_seconds=60.0,
+        domain="state_mutation",
+        requested_action="foreground_desktop_action",
+        approver="owner",
+        parent_receipt="test-welfare-state-mutation-defer",
+    )
     desktop_mutation = runtime.action_policy(
         now,
         domain="state_mutation",
@@ -13969,6 +14027,7 @@ def test_aura_now_welfare_recovery_yields_to_explicit_owner_desktop_action():
             "local_desktop_action": True,
             "desktop_task_owned_by": "chat.desktop_objective",
             "route": "chat.desktop_objective",
+            "capability_token": state_mutation_capability.token,
         },
     )
     assert desktop_mutation["defers"] == []

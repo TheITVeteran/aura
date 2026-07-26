@@ -150,6 +150,7 @@ _STAGES = (
             "fast_weight_rejected_steps",
             "fast_weight_canaries",
             "fast_weight_verifier",
+            "fast_weight_learning",
         ),
         ("latent_opt_applied", "fast_weights_applied"),
     ),

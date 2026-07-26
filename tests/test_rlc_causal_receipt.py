@@ -53,6 +53,11 @@ def _complete_worker_receipt(*, private_marker: str = "PRIVATE-THOUGHT-DO-NOT-LE
         "budget": {"spent_layer_apps": 128, "max_layer_apps": 1024},
         "latent_opt_applied": False,
         "fast_weights_applied": False,
+        "fast_weight_learning": {
+            "schema": "aura.rlc.fast_weight_learning.v1",
+            "disposition": "not_admitted_high_confidence_evidence_absent",
+            "receipt_sha256": "8" * 64,
+        },
         "halting_reason": "converged",
         "halting": {"receipt_sha256": "5" * 64},
         "terminal_disposition": {
@@ -130,6 +135,25 @@ def test_optional_evidence_stage_distinguishes_absent_from_observed():
     observed = build_causal_receipt(worker)
     node = observed["nodes"][STAGES.index("tool_memory_and_external_evidence")]
     assert node["status"] == "observed"
+
+
+def test_causal_envelope_commits_query_scoped_fast_weight_contract():
+    worker = _complete_worker_receipt()
+    receipt = build_causal_receipt(worker)
+    adaptation = receipt["nodes"][STAGES.index("temporary_and_durable_adaptation")]
+    assert "fast_weight_learning" in {
+        row["field"] for row in adaptation["source_commitments"]
+    }
+
+    worker["fast_weight_learning"]["disposition"] = (
+        "accepted_causal_improvement"
+    )
+    with pytest.raises(ValueError, match="independently reconstructed"):
+        validate_causal_receipt(
+            receipt,
+            worker_receipt=worker,
+            require_complete=True,
+        )
 
 
 def test_public_envelope_never_copies_private_reasoning_or_tool_values():

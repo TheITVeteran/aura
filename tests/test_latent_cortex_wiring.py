@@ -262,6 +262,60 @@ def _terminal_disposition_fields(
     }
 
 
+def _attach_nonadmitted_fast_weight_receipt(
+    receipt: dict,
+    *,
+    text: str,
+    tokens: list[int],
+) -> None:
+    from core.brain.llm.latent_cortex.fast_weight_learning import (
+        empty_learning_state,
+        finalize_fast_weight_learning_receipt,
+        token_sequence_sha256,
+        unavailable_admission,
+    )
+
+    receipt.update(
+        {
+            "fast_weights_applied": False,
+            "fast_weights_erased": None,
+            "fast_weights_layers": 0,
+            "fast_weight_optimization_attempts": 0,
+            "fast_weight_optimized_steps": 0,
+            "fast_weight_rejected_steps": 0,
+            "fast_weight_budget_exhausted": False,
+            "fast_weight_optimizer": "",
+            "fast_weight_loss_trail": [],
+            "fast_weight_gradient_norm_trail": [],
+            "fast_weight_accepted_step_sizes": [],
+            "fast_weight_line_search_backtracks": 0,
+        }
+    )
+    admission = unavailable_admission(
+        source_sha256=hashlib.sha256(b"").hexdigest(),
+        objective_sha256=hashlib.sha256(b"").hexdigest(),
+        reason="candidate_evaluation_unavailable",
+    )
+    state = empty_learning_state(
+        episode_id=str(receipt["episode_id"]),
+        input_tokens_sha256=str(receipt["input_tokens_sha256"]),
+        selected_branch=int(receipt["selected_branch"]),
+        winner_state_sha256=hashlib.sha256(
+            f"{receipt['episode_id']}:winner".encode()
+        ).hexdigest(),
+        admission=admission,
+    )
+    state["final_answer"] = {
+        "decoded_under_adaptation": False,
+        "tokens_sha256": token_sequence_sha256(tokens),
+        "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "token_count": len(tokens),
+    }
+    receipt["fast_weight_learning"] = (
+        finalize_fast_weight_learning_receipt(state)
+    )
+
+
 def _branch_isolation_fields(config, *, exchanges=0):
     count = config["n_branches"]
     required = config["isolation_steps"]
@@ -3212,6 +3266,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             receipt.update(
                 _terminal_disposition_fields(receipt, text=text, tokens=tokens)
             )
+            _attach_nonadmitted_fast_weight_receipt(
+                receipt,
+                text=text,
+                tokens=tokens,
+            )
             from core.brain.llm.latent_cortex.causal_receipt import (
                 build_causal_receipt,
             )
@@ -4576,22 +4635,50 @@ def _full_success_stub_client(captured):
                     "latent_opt_steps": 2,
                     "latent_opt_rejected": 0,
                     "latent_opt_budget_exhausted": False,
-                    "fast_weights_applied": True,
-                    "fast_weights_erased": True,
-                    "fast_weights_layers": 2,
-                    "fast_weight_optimization_attempts": 2,
-                    "fast_weight_optimized_steps": 2,
+                    "fast_weights_applied": False,
+                    "fast_weights_erased": None,
+                    "fast_weights_layers": 0,
+                    "fast_weight_optimization_attempts": 0,
+                    "fast_weight_optimized_steps": 0,
                     "fast_weight_rejected_steps": 0,
                     "fast_weight_budget_exhausted": False,
-                    "fast_weight_optimizer": ("rms_normalized_sgd_backtracking_v1"),
-                    "fast_weight_loss_trail": [2.0, 1.5, 1.0],
-                    "fast_weight_gradient_norm_trail": [3.0, 2.0],
-                    "fast_weight_accepted_step_sizes": [0.005, 0.0025],
-                    "fast_weight_line_search_backtracks": 1,
+                    "fast_weight_optimizer": "",
+                    "fast_weight_loss_trail": [],
+                    "fast_weight_gradient_norm_trail": [],
+                    "fast_weight_accepted_step_sizes": [],
+                    "fast_weight_line_search_backtracks": 0,
                     "honest_flags": [],
             }
             receipt.update(
                 _terminal_disposition_fields(receipt, text=text, tokens=tokens)
+            )
+            from core.brain.llm.latent_cortex.fast_weight_learning import (
+                empty_learning_state,
+                finalize_fast_weight_learning_receipt,
+                token_sequence_sha256,
+                unavailable_admission,
+            )
+
+            admission = unavailable_admission(
+                source_sha256=hashlib.sha256(b"").hexdigest(),
+                objective_sha256=hashlib.sha256(b"").hexdigest(),
+                reason="candidate_evaluation_unavailable",
+            )
+            learning_state = empty_learning_state(
+                episode_id="ep-gwt",
+                input_tokens_sha256=receipt["input_tokens_sha256"],
+                selected_branch=int(receipt["selected_branch"]),
+                winner_state_sha256=hashlib.sha256(b"gwt-winner").hexdigest(),
+                admission=admission,
+            )
+            learning_state["final_answer"] = {
+                "decoded_under_adaptation": False,
+                "tokens_sha256": token_sequence_sha256(tokens),
+                "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "token_count": len(tokens),
+            }
+            receipt["fast_weight_learning"] = (
+                finalize_fast_weight_learning_receipt(learning_state)
             )
             from core.brain.llm.latent_cortex.causal_receipt import (
                 build_causal_receipt,

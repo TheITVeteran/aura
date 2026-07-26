@@ -29134,3 +29134,66 @@ SPARK-055 query-scoped fast-weight learning. SPARK-051 remains separately open
 for answer-channel remediation, admitted resident training, and powered
 equal-compute reasoning/frontier evidence. Final multi-hour soaks remain
 deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-26-391: Query-Scoped Fast-Weight Learning
+
+SPARK-055 is complete. A latent episode now derives temporary-learning
+authority from a deterministic same-query base-function probe and exact local
+verification. Only verified atomic evidence enters the private bounded target;
+refuted, unsupported, unknown, oversized, unavailable, or unverifiable
+material cannot attach model wrappers or spend optimizer compute.
+
+The mutable resident model is protected by an exclusive process-local query
+lease with owner/model commitments and conflict accounting. Attachment must
+pass an immediate full-stack identity probe before optimization. Bounded
+optimizer evidence, structural and behavioral canaries, matched uncached
+pre/post query probes, unchanged winner-state identity, a changed token
+sequence, and strict verifier improvement are all required before the adapted
+function may generate the answer. Any absent step, equality, regression,
+verifier or budget failure, canary failure, state drift, wrapper loss, or lease
+loss erases the update before decode. Accepted output is bound while the
+adapted function remains active, after which exact detach, erase, and lease
+release are independently reconstructed.
+
+The public proof contract exposes commitments rather than evidence text,
+latent state, or chain-of-thought. Its validator rejects malformed or
+self-consistently rehashed lease, boolean, optimizer, token-change, score,
+disposition, output, and cleanup claims. Focused tests cover exact admission,
+refutation, unsupported dependencies, concurrency, attach failure,
+cancellation, canary erasure/rescaling, state-lineage changes, causal
+non-improvement, output binding, and exact cleanup.
+
+The final broad latent/RLC/frontier/conversation family gate passes 1715/1715
+with two intentional deselections. The stricter post-review focused matrix
+passes 514/514 and the final proof-contract edge slice passes 14/14. Strict
+Ruff, bytecode compilation, and diff hygiene pass.
+
+The all-line closeout tool mechanically enumerated 8,138 text files, 5,110 code
+files, and 1,686,533 code lines, but its aggregate verdict remains FAIL rather
+than being laundered into this checkpoint: the pre-commit worktree is
+intentionally dirty, its checkout-local `.venv` lacks Ruff, and governance
+lint reports three baseline drifts in untouched
+`core/agi/hierarchical_planner.py` and
+`core/brain/causal_world_model.py`. The same source passes Ruff with the
+known-good resident environment. The enterprise ratchet has no finding in the
+CP391 files and retains the inherited repository excesses
+`placeholder_stub_mock` 15 > 13 and actual high/critical findings 40 > 39;
+neither baseline is raised.
+
+The broad gate also quantified a separate production defect rather than hiding
+it: action-calibration protocol v3 embeds each complete prior journal prefix,
+which makes the 256-cell certificate fixture serialize and replay
+quadratically. The exact certificate remains correct, but compact,
+versioned, independently replayable journal witnesses are now an explicit
+SPARK-068 requirement.
+
+Counting CP391 makes the total checkpoint record 633. The 640-920 forecast
+remains, leaving approximately 7-287 records. Checkpoint-count completion is
+approximately 68.8%-98.9%, with a midpoint planning estimate of 81.2%.
+
+SPARK-055 proves causal query-scoped temporary-learning mechanics, not a
+reasoning or frontier gain. Next is SPARK-056 runtime integrity proof
+production. SPARK-051 remains separately open for answer-channel remediation,
+admitted resident training, and powered equal-compute reasoning/frontier
+evidence. Final multi-hour soaks remain deferred until all shorter gates are
+green.

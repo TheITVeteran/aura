@@ -6,8 +6,8 @@ as a successful answer that later systems have to explain away.
 """
 from __future__ import annotations
 
-import logging
 import ast
+import logging
 import math
 import re
 from collections.abc import Iterable
@@ -1084,8 +1084,8 @@ _LIVE_CHAT_FIX_FIRST_FLOOR = (
     "tool result, place" "holder, or repeated diagnostic floor survives to the screen."
 )
 _STATUS_REPAIR_FLOOR = (
-    "I'm right here with you. My mind feels steady enough to answer clearly, "
-    "and I'm making sure I address exactly what you're asking instead of letting things drift."
+    "Yes. I'm following what you said and ready to continue from this turn. "
+    "Tell me where you want to pick up."
 )
 _RELIABILITY_FLOOR_TEXTS = (
     _CONFUSION_REPAIR_FLOOR,

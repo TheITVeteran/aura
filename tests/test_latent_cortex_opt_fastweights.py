@@ -33,6 +33,7 @@ from core.brain.llm.latent_cortex.latent_opt import (  # noqa: E402
     build_proxy_loss,
     prompt_token_distribution,
 )
+from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     ComputeBudget,
     FastWeightsConfig,
@@ -474,6 +475,46 @@ def test_fast_weight_attach_is_transactional(tiny_model, monkeypatch):
         )
     assert not fw.handles
     assert [layer.self_attn.o_proj for layer in tiny_model.model.layers] == originals
+    assert fw.lifecycle.lease_released is True
+
+
+def test_model_level_lease_rejects_concurrent_episode_and_recovers(tiny_model):
+    first = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, target="o_proj")
+    )
+    second = EpisodicFastWeights(
+        FastWeightsConfig(enabled=True, rank=2, target="o_proj")
+    )
+    first.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=0.4,
+        episode_id="ep-lease-owner",
+    )
+    try:
+        with pytest.raises(RuntimeError, match="model lease already held"):
+            second.attach(
+                tiny_model.model,
+                (P_END, C_START),
+                seed_stat=0.4,
+                episode_id="ep-lease-contender",
+            )
+        assert second.lifecycle.lease_conflicts == 1
+        assert first.lease_receipt()["acquired"] is True
+        assert first.lease_receipt()["released"] is False
+    finally:
+        first.detach()
+    assert first.lease_receipt()["released"] is True
+
+    assert second.attach(
+        tiny_model.model,
+        (P_END, C_START),
+        seed_stat=0.4,
+        episode_id="ep-lease-after-release",
+    ) == C_START - P_END
+    second.detach()
+    assert second.lifecycle.lease_conflicts == 0
+    assert second.lease_receipt()["released"] is True
 
 
 def test_fast_weights_optimize_changes_function_then_erase_restores(tiny_model):
@@ -715,7 +756,39 @@ class _ProbeTokenizer:
         return [ord(c) % 128 for c in text][:16]
 
     def decode(self, ids):
-        return " ".join(str(i) for i in ids)
+        rendered = " ".join(str(i) for i in ids)
+        return f"2 + 2 = 4. Probe tokens {rendered}."
+
+
+class _TrustedScriptedVerifier(EpisodeTaskVerifier):
+    def __init__(self, score_fn):
+        super().__init__("")
+        self._score_fn = score_fn
+
+    def __call__(self, text: str) -> float:
+        control = _decoy_control_score(text)
+        if control is not None:
+            return control
+        self.evaluate(text)
+        return float(self._score_fn(text))
+
+
+def _patch_matched_fast_weight_probe(monkeypatch):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    def deterministic_probe(self, *_args, **_kwargs):
+        target = self.model.model.layers[self.prelude_end].self_attn.o_proj
+        if isinstance(target, EpisodicDeltaLinear):
+            nonzero = bool(mx.any(mx.abs(target.V) > 0.0))
+            if nonzero:
+                return [2]
+        return [1]
+
+    monkeypatch.setattr(
+        LatentCortexEngine,
+        "_decode_probe",
+        deterministic_probe,
+    )
 
 
 def _decoy_control_score(text: str) -> float | None:
@@ -778,6 +851,8 @@ def _force_accepted_step(monkeypatch, bump: float = 1e-3):
         self.lifecycle.optimization_attempts += 1
         self.lifecycle.optimized_steps += 1
         self.lifecycle.loss_trail.extend([1.0, 0.5])
+        self.lifecycle.gradient_global_norm_trail.append(0.25)
+        self.lifecycle.accepted_step_sizes.append(0.01)
 
     monkeypatch.setattr(EpisodicFastWeights, "optimize", patched)
 
@@ -786,14 +861,14 @@ def test_fast_weight_verifier_erases_on_regression(monkeypatch):
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 
     _force_accepted_step(monkeypatch)
+    _patch_matched_fast_weight_probe(monkeypatch)
     calls = {"n": 0}
 
-    def declining_verifier(text: str) -> float:
-        control = _decoy_control_score(text)
-        if control is not None:
-            return control
+    def declining_score(_text: str) -> float:
         calls["n"] += 1
         return 1.0 / (calls["n"] + 1)  # every later probe scores strictly worse
+
+    declining_verifier = _TrustedScriptedVerifier(declining_score)
 
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
@@ -806,7 +881,7 @@ def test_fast_weight_verifier_erases_on_regression(monkeypatch):
     assert result.ok
     arbitration = result.receipt.fast_weight_verifier
     assert arbitration["evaluated"] is True
-    assert arbitration["decision"] == "erased"
+    assert arbitration["decision"] == "erased_non_improvement"
     assert arbitration["post_score"] < arbitration["pre_score"]
     assert "fast_weight_verifier_erased" in result.receipt.honest_flags
     assert result.receipt.fast_weights_erased is True
@@ -817,14 +892,14 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 
     _force_accepted_step(monkeypatch)
+    _patch_matched_fast_weight_probe(monkeypatch)
     calls = {"n": 0}
 
-    def improving_verifier(text: str) -> float:
-        control = _decoy_control_score(text)
-        if control is not None:
-            return control
+    def improving_score(_text: str) -> float:
         calls["n"] += 1
         return calls["n"] / (calls["n"] + 1)  # bounded, strictly improving
+
+    improving_verifier = _TrustedScriptedVerifier(improving_score)
 
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
@@ -837,11 +912,44 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     assert result.ok
     arbitration = result.receipt.fast_weight_verifier
     assert arbitration["evaluated"] is True
-    assert arbitration["decision"] == "accepted"
+    assert arbitration["decision"] == "accepted_causal_improvement"
     assert arbitration["post_score"] > arbitration["pre_score"]
     assert "fast_weight_verifier_erased" not in result.receipt.honest_flags
     # Cleanup still proves erasure at episode end — acceptance is scoped.
     assert result.receipt.fast_weights_erased is True
+
+
+def test_post_verifier_state_change_removes_fast_weight_decode_authority(
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+
+    _force_accepted_step(monkeypatch)
+    _patch_matched_fast_weight_probe(monkeypatch)
+    calls = {"n": 0}
+
+    def improving_score(_text: str) -> float:
+        calls["n"] += 1
+        return calls["n"] / (calls["n"] + 1)
+
+    engine = LatentCortexEngine(
+        _fresh_model(),
+        _ProbeTokenizer(),
+        config=_fw_engine_config(),
+    )
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=_TrustedScriptedVerifier(improving_score),
+        ablate_slot=0,
+    )
+
+    assert result.ok
+    learning = result.receipt.fast_weight_learning
+    assert learning["causal_probe"]["strict_improvement"] is True
+    assert learning["disposition"] == "rejected_state_lineage_changed"
+    assert learning["final_answer"]["decoded_under_adaptation"] is False
+    assert "fast_weight_state_lineage_changed" in result.receipt.honest_flags
 
 
 def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
@@ -850,12 +958,12 @@ def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
     def rejecting_optimize(self, loss_fn, **kwargs):
         self.lifecycle.optimization_attempts += 1
         self.lifecycle.rejected_steps += 1  # V stays zero: exact identity
+        self.lifecycle.loss_trail.append(1.0)
+        self.lifecycle.gradient_global_norm_trail.append(0.25)
 
     monkeypatch.setattr(EpisodicFastWeights, "optimize", rejecting_optimize)
 
-    def stable_verifier(text: str) -> float:
-        control = _decoy_control_score(text)
-        return 0.5 if control is None else control
+    stable_verifier = _TrustedScriptedVerifier(lambda _text: 0.5)
 
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
@@ -868,7 +976,10 @@ def test_fast_weight_verifier_skips_identity_delta(monkeypatch):
     assert result.ok
     arbitration = result.receipt.fast_weight_verifier
     assert arbitration["evaluated"] is False
-    assert arbitration["decision"] == "identity_no_check"
+    assert arbitration["decision"] == "erased_no_accepted_step"
+    assert result.receipt.fast_weight_learning["disposition"] == (
+        "rejected_no_accepted_step"
+    )
 
 
 def test_fast_weight_verifier_absent_without_verifier(monkeypatch):
@@ -881,6 +992,10 @@ def test_fast_weight_verifier_absent_without_verifier(monkeypatch):
     result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
     assert result.ok
     assert result.receipt.fast_weight_verifier == {}
+    assert result.receipt.fast_weights_applied is False
+    assert result.receipt.fast_weight_learning["disposition"] == (
+        "not_admitted_high_confidence_evidence_absent"
+    )
 
 
 # ── Retrieval-to-fast-weight compilation ────────────────────────────────

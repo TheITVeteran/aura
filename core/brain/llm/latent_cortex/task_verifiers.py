@@ -347,6 +347,36 @@ class EpisodeTaskVerifier:
     def __call__(self, text: str) -> float:
         return float(self.evaluate(text)["score"])
 
+    def fast_weight_learning_evidence(
+        self,
+        candidate: str,
+        *,
+        evaluation_index: int,
+        tokenizer: Any,
+    ) -> tuple[dict[str, Any], list[int]]:
+        """Return the exact-evidence subset eligible for temporary learning.
+
+        This is intentionally narrower than the composite verifier score.
+        Facet cues, lexical grounding, and self-consistency may rank branches,
+        but only machine-checked atomic routes may become a gradient target.
+        """
+
+        if type(evaluation_index) is not int or not 0 <= evaluation_index < len(
+            self.evaluations
+        ):
+            raise ValueError("fast-weight evidence evaluation index is invalid")
+        from core.brain.llm.latent_cortex.fast_weight_learning import (
+            build_fast_weight_admission,
+        )
+
+        return build_fast_weight_admission(
+            self.evaluations[evaluation_index],
+            candidate=candidate,
+            objective=self.objective,
+            evaluation_index=evaluation_index,
+            tokenizer=tokenizer,
+        )
+
     def to_receipt(
         self,
         *,

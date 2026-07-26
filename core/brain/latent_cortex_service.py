@@ -375,6 +375,7 @@ class LatentCortexService:
         model_parameter_count: int = 0,
         foreground_request: bool = False,
         timeout_s: float | None = None,
+        requested_decode_tokens: int | None = None,
     ) -> tuple[dict, dict]:
         """(config, budget) for one episode: the Will's thought allocation.
 
@@ -404,6 +405,11 @@ class LatentCortexService:
             raise ValueError("foreground_request must be a boolean")
         if not isinstance(objective, str):
             raise ValueError("objective must be text")
+        if requested_decode_tokens is not None and (
+            type(requested_decode_tokens) is not int
+            or requested_decode_tokens <= 0
+        ):
+            raise ValueError("requested_decode_tokens must be a positive integer")
         owner_timeout_s: float | None = None
         if timeout_s is not None:
             try:
@@ -530,6 +536,11 @@ class LatentCortexService:
                     max(105.0, budget["wall_clock_s"]),
                     max(15.0, owner_timeout_s - 8.0),
                 )
+        if requested_decode_tokens is not None:
+            # Answer-surface overrides are part of the allocation request, not
+            # a post-hoc mutation. The adaptive plan must commit the same floor
+            # that its learned-controller and worker stages will enforce.
+            config["decode_max_tokens"] = requested_decode_tokens
         from core.brain.llm.latent_cortex.adaptive_compute import (
             apply_adaptive_compute_plan,
             build_adaptive_compute_plan,
@@ -2502,64 +2513,210 @@ class LatentCortexService:
                 ):
                     errors.append("latent_optimization_verifier_receipt_invalid")
         if config.get("fast_weights") is True:
-            if receipt.get("fast_weights_applied") is not True:
-                errors.append("fast_weights_not_applied")
-            erase_verdict = _integrity_verdict(receipt, "fast_weights_erased")
-            if erase_verdict == "refuted":
-                # The canary did not return to baseline: an adaptation is
-                # still resident. This is the case that must never be
-                # confused with "we did not look".
-                errors.append("fast_weight_erase_refuted")
-            elif erase_verdict == "unproven" and receipt.get("fast_weights_erased") is not True:
-                errors.append("fast_weight_erase_unproven")
-            if not positive_int(receipt, "fast_weights_layers"):
-                errors.append("fast_weights_no_layers")
-            if not positive_int(receipt, "fast_weight_optimization_attempts"):
-                errors.append("fast_weight_optimization_not_attempted")
-            if not positive_int(receipt, "fast_weight_optimized_steps"):
-                errors.append("fast_weight_optimization_no_accepted_steps")
-            if not nonnegative_int(receipt, "fast_weight_rejected_steps"):
-                errors.append("fast_weight_rejection_count_invalid")
-            elif (
-                positive_int(receipt, "fast_weight_optimization_attempts")
-                and positive_int(receipt, "fast_weight_optimized_steps")
-                and (
-                    receipt["fast_weight_optimization_attempts"]
-                    != receipt["fast_weight_optimized_steps"]
-                    + receipt["fast_weight_rejected_steps"]
+            learning: dict[str, Any] | None = None
+            try:
+                from core.brain.llm.latent_cortex.fast_weight_learning import (
+                    token_sequence_sha256,
+                    validate_fast_weight_learning_receipt,
                 )
-            ):
-                errors.append("fast_weight_optimization_accounting_mismatch")
-            if receipt.get("fast_weight_budget_exhausted") is not False:
-                errors.append("fast_weight_optimization_budget_exhausted")
-            loss_trail = receipt.get("fast_weight_loss_trail")
-            gradient_trail = receipt.get("fast_weight_gradient_norm_trail")
-            step_sizes = receipt.get("fast_weight_accepted_step_sizes")
-            if receipt.get("fast_weight_optimizer") != ("rms_normalized_sgd_backtracking_v1"):
-                errors.append("fast_weight_optimizer_unproven")
-            if (
-                not finite_number_list(loss_trail)
-                or len(loss_trail) != receipt.get("fast_weight_optimized_steps", 0) + 1
-                or any(
-                    later >= earlier
-                    for earlier, later in zip(loss_trail, loss_trail[1:], strict=False)
+
+                learning = validate_fast_weight_learning_receipt(
+                    receipt.get("fast_weight_learning"),
+                    expected_episode_id=str(receipt.get("episode_id") or ""),
+                    expected_input_tokens_sha256=str(
+                        receipt.get("input_tokens_sha256") or ""
+                    ),
                 )
-            ):
-                errors.append("fast_weight_loss_descent_unproven")
-            if (
-                not finite_number_list(gradient_trail)
-                or len(gradient_trail) != receipt.get("fast_weight_optimization_attempts", 0)
-                or any(float(value) <= 0.0 for value in gradient_trail)
-            ):
-                errors.append("fast_weight_gradient_evidence_invalid")
-            if (
-                not finite_number_list(step_sizes)
-                or len(step_sizes) != receipt.get("fast_weight_optimized_steps", 0)
-                or any(float(value) <= 0.0 for value in step_sizes)
-            ):
-                errors.append("fast_weight_step_evidence_invalid")
-            if not nonnegative_int(receipt, "fast_weight_line_search_backtracks"):
-                errors.append("fast_weight_line_search_evidence_invalid")
+                if not isinstance(output_tokens, list) or not isinstance(
+                    output_text,
+                    str,
+                ):
+                    raise ValueError("fast-weight output binding is unavailable")
+                final_binding = learning["final_answer"]
+                if (
+                    final_binding["tokens_sha256"]
+                    != token_sequence_sha256(output_tokens)
+                    or final_binding["text_sha256"]
+                    != hashlib.sha256(output_text.encode("utf-8")).hexdigest()
+                    or final_binding["token_count"] != len(output_tokens)
+                ):
+                    raise ValueError("fast-weight final answer binding differs")
+            except (ImportError, TypeError, ValueError):
+                errors.append("fast_weight_learning_receipt_unproven")
+            # Preserve low-level diagnostics even when the unified envelope
+            # is missing or malformed. A bad outer proof must not hide the
+            # concrete optimizer defect that made it bad.
+            if learning is None and receipt.get("fast_weights_applied") is True:
+                loss_trail = receipt.get("fast_weight_loss_trail")
+                gradient_trail = receipt.get(
+                    "fast_weight_gradient_norm_trail"
+                )
+                step_sizes = receipt.get("fast_weight_accepted_step_sizes")
+                accepted_steps = int(
+                    receipt.get("fast_weight_optimized_steps") or 0
+                )
+                if accepted_steps <= 0:
+                    errors.append(
+                        "fast_weight_optimization_no_accepted_steps"
+                    )
+                if receipt.get("fast_weight_optimizer") != (
+                    "rms_normalized_sgd_backtracking_v1"
+                ):
+                    errors.append("fast_weight_optimizer_unproven")
+                if (
+                    not finite_number_list(loss_trail)
+                    or len(loss_trail) != accepted_steps + 1
+                    or any(
+                        later >= earlier
+                        for earlier, later in zip(
+                            loss_trail,
+                            loss_trail[1:],
+                            strict=False,
+                        )
+                    )
+                ):
+                    errors.append("fast_weight_loss_descent_unproven")
+                if (
+                    not finite_number_list(gradient_trail)
+                    or len(gradient_trail)
+                    != receipt.get("fast_weight_optimization_attempts", 0)
+                    or any(float(value) <= 0.0 for value in gradient_trail)
+                ):
+                    errors.append("fast_weight_gradient_evidence_invalid")
+                if (
+                    not finite_number_list(step_sizes)
+                    or len(step_sizes) != accepted_steps
+                    or any(float(value) <= 0.0 for value in step_sizes)
+                ):
+                    errors.append("fast_weight_step_evidence_invalid")
+                if not nonnegative_int(
+                    receipt,
+                    "fast_weight_line_search_backtracks",
+                ):
+                    errors.append("fast_weight_line_search_evidence_invalid")
+            if learning is not None:
+                disposition = learning["disposition"]
+                not_admitted = (
+                    disposition
+                    == "not_admitted_high_confidence_evidence_absent"
+                )
+                if not_admitted:
+                    if (
+                        receipt.get("fast_weights_applied") is not False
+                        or receipt.get("fast_weights_layers") != 0
+                        or receipt.get("fast_weight_optimization_attempts") != 0
+                        or receipt.get("fast_weight_optimized_steps") != 0
+                        or receipt.get("fast_weight_rejected_steps") != 0
+                    ):
+                        errors.append("fast_weight_ineligible_episode_mutated_model")
+                else:
+                    if receipt.get("fast_weights_applied") is not True:
+                        errors.append("fast_weights_not_applied")
+                    erase_verdict = _integrity_verdict(
+                        receipt,
+                        "fast_weights_erased",
+                    )
+                    if erase_verdict == "refuted":
+                        errors.append("fast_weight_erase_refuted")
+                    elif (
+                        erase_verdict == "unproven"
+                        and receipt.get("fast_weights_erased") is not True
+                    ):
+                        errors.append("fast_weight_erase_unproven")
+                    if not positive_int(receipt, "fast_weights_layers"):
+                        errors.append("fast_weights_no_layers")
+                    if not positive_int(
+                        receipt,
+                        "fast_weight_optimization_attempts",
+                    ):
+                        errors.append("fast_weight_optimization_not_attempted")
+                    if not nonnegative_int(
+                        receipt,
+                        "fast_weight_optimized_steps",
+                    ):
+                        errors.append("fast_weight_accepted_count_invalid")
+                    if not nonnegative_int(
+                        receipt,
+                        "fast_weight_rejected_steps",
+                    ):
+                        errors.append("fast_weight_rejection_count_invalid")
+                    elif (
+                        positive_int(
+                            receipt,
+                            "fast_weight_optimization_attempts",
+                        )
+                        and nonnegative_int(
+                            receipt,
+                            "fast_weight_optimized_steps",
+                        )
+                        and receipt["fast_weight_optimization_attempts"]
+                        != receipt["fast_weight_optimized_steps"]
+                        + receipt["fast_weight_rejected_steps"]
+                    ):
+                        errors.append(
+                            "fast_weight_optimization_accounting_mismatch"
+                        )
+                    if receipt.get("fast_weight_budget_exhausted") is not False:
+                        errors.append(
+                            "fast_weight_optimization_budget_exhausted"
+                        )
+                    loss_trail = receipt.get("fast_weight_loss_trail")
+                    gradient_trail = receipt.get(
+                        "fast_weight_gradient_norm_trail"
+                    )
+                    step_sizes = receipt.get(
+                        "fast_weight_accepted_step_sizes"
+                    )
+                    if receipt.get("fast_weight_optimizer") != (
+                        "rms_normalized_sgd_backtracking_v1"
+                    ):
+                        errors.append("fast_weight_optimizer_unproven")
+                    accepted_steps = int(
+                        receipt.get("fast_weight_optimized_steps") or 0
+                    )
+                    if (
+                        not finite_number_list(loss_trail)
+                        or (
+                            accepted_steps > 0
+                            and len(loss_trail) != accepted_steps + 1
+                        )
+                        or any(
+                            later >= earlier
+                            for earlier, later in zip(
+                                loss_trail,
+                                loss_trail[1:],
+                                strict=False,
+                            )
+                        )
+                    ):
+                        errors.append("fast_weight_loss_descent_unproven")
+                    if (
+                        not finite_number_list(gradient_trail)
+                        or len(gradient_trail)
+                        != receipt.get("fast_weight_optimization_attempts", 0)
+                        or any(float(value) <= 0.0 for value in gradient_trail)
+                    ):
+                        errors.append("fast_weight_gradient_evidence_invalid")
+                    if (
+                        not finite_number_list(step_sizes)
+                        or len(step_sizes) != accepted_steps
+                        or any(float(value) <= 0.0 for value in step_sizes)
+                    ):
+                        errors.append("fast_weight_step_evidence_invalid")
+                    if not nonnegative_int(
+                        receipt,
+                        "fast_weight_line_search_backtracks",
+                    ):
+                        errors.append(
+                            "fast_weight_line_search_evidence_invalid"
+                        )
+                    if (
+                        disposition == "accepted_causal_improvement"
+                        and accepted_steps <= 0
+                    ):
+                        errors.append(
+                            "fast_weight_causal_improvement_without_step"
+                        )
         return errors
 
     @staticmethod
@@ -3297,6 +3454,18 @@ class LatentCortexService:
             model_parameter_count = 0
         try:
             visible_objective = self._visible_objective(question, messages)
+            requested_decode_tokens = None
+            if (
+                config_overrides is not None
+                and _controller_accepts_overrides(config_overrides)
+                and "decode_max_tokens" in config_overrides
+            ):
+                requested_decode_tokens = config_overrides["decode_max_tokens"]
+                if (
+                    type(requested_decode_tokens) is not int
+                    or requested_decode_tokens <= 0
+                ):
+                    return self._record_failure("invalid_decode_token_override")
             config, budget = self.allocate(
                 stakes=stakes,
                 uncertainty=uncertainty,
@@ -3304,6 +3473,7 @@ class LatentCortexService:
                 model_parameter_count=max(0, model_parameter_count),
                 foreground_request=foreground_request,
                 timeout_s=timeout_s,
+                requested_decode_tokens=requested_decode_tokens,
             )
         except (TypeError, ValueError, OverflowError):
             return self._record_failure("invalid_cognitive_economy")
@@ -4418,6 +4588,7 @@ class LatentCortexService:
                     "fast_weight_gradient_norm_trail",
                     "fast_weight_accepted_step_sizes",
                     "fast_weight_line_search_backtracks",
+                    "fast_weight_learning",
                     "verifier_probe_max_tokens",
                     "latent_opt_verifier",
                     "last_stage",
@@ -4471,6 +4642,7 @@ class LatentCortexService:
                     "fast_weight_optimization_attempts",
                     "fast_weight_optimized_steps",
                     "fast_weight_budget_exhausted",
+                    "fast_weight_learning",
                     "fast_weights_erased",
                     "decode_requested_tokens",
                     "decode_generated_tokens",

@@ -32,6 +32,7 @@ _MAX_LEDGER_ROWS = 5_000
 _CRITIC_SOURCE_FILES = (
     "core/brain/llm/latent_cortex/atomic_decomposition.py",
     "core/brain/llm/latent_cortex/deterministic_verifier_router.py",
+    "core/brain/llm/latent_cortex/fast_weight_learning.py",
     "core/brain/llm/latent_cortex/task_verifiers.py",
     "core/brain/llm/latent_cortex/output_quality.py",
     "core/brain/llm/latent_cortex/response_contracts.py",
@@ -42,6 +43,7 @@ _ALLOWED_INTERNAL_IMPORTS = {
     "core.brain.frontier_evidence_v5",
     "core.brain.llm.latent_cortex.atomic_decomposition",
     "core.brain.llm.latent_cortex.deterministic_verifier_router",
+    "core.brain.llm.latent_cortex.fast_weight_learning",
     "core.brain.llm.latent_cortex.frontier_tasks",
     "core.brain.llm.latent_cortex.output_quality",
     "core.brain.llm.latent_cortex.response_contracts",

@@ -264,7 +264,7 @@ def test_powered_shared_blind_spots_causally_revoke_worker_verifier(monkeypatch)
             return LatentReasoningResult(
                 ok=True,
                 text="bounded",
-                receipt=EpisodeReceipt(),
+                receipt=EpisodeReceipt(episode_id="critic-revocation"),
             )
 
     class StubTokenizer:

@@ -37,6 +37,13 @@ from core.brain.llm.latent_cortex.capability_canaries import (
 )
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.escape import EscapeConfig
+from core.brain.llm.latent_cortex.fast_weight_learning import (
+    empty_learning_state,
+    finalize_fast_weight_learning_receipt,
+    token_sequence_sha256,
+    unavailable_admission,
+    validate_fast_weight_admission,
+)
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights
 from core.brain.llm.latent_cortex.governance import CheckpointInvariant
 from core.brain.llm.latent_cortex.latent_opt import LatentOptimizer, build_proxy_loss
@@ -2546,6 +2553,11 @@ class LatentCortexEngine:
             len(bridge_tokens) + terminal_instruction_reserve
         ) * self.n_layers
         fast_weight_probe_cost = 8 * self.n_layers if self.config.fast_weights.enabled else 0
+        fast_weight_verifier_probe_cost = (
+            self._verifier_probe_layer_apps(bridge_tokens)
+            if self.config.fast_weights.enabled and self.tokenizer is not None
+            else 0
+        )
         canaries: CapabilityCanaries | None = None
         canary_pass_cost = 0
         canary_reserve = 0
@@ -2561,13 +2573,29 @@ class LatentCortexEngine:
             canary_reserve = canary_pass_cost * (
                 1 + max(0, self.config.fast_weights.canary_rescale_attempts)
             )
-        completion_reserve = persist_cost + bridge_cost + decode_cost + fast_weight_probe_cost
+        completion_reserve = (
+            persist_cost
+            + bridge_cost
+            + decode_cost
+            + fast_weight_probe_cost
+            + fast_weight_verifier_probe_cost
+        )
         fallback_reserve = prefill_cost + decode_cost
         safety_reserve = completion_reserve + fallback_reserve + canary_reserve
         branch_seed_cost = (
             self.config.branches.n_branches * self.config.workspace.n_slots * self.prelude_end
         )
-        fast_weight_baseline_cost = fast_weight_probe_cost + canary_pass_cost
+        # Baseline, measured identity immediately after attach, and the
+        # same-query pre-adaptation verifier probe are all mandatory before
+        # temporary learning may start. The completion reserve separately
+        # protects the matched post-adaptation probe and cleanup proof.
+        fast_weight_attach_identity_cost = (
+            2 * fast_weight_probe_cost + canary_pass_cost
+        )
+        fast_weight_baseline_cost = (
+            fast_weight_attach_identity_cost
+            + fast_weight_verifier_probe_cost
+        )
         minimum_admission = (
             prefill_cost + branch_seed_cost + safety_reserve + fast_weight_baseline_cost
         )
@@ -5386,40 +5414,100 @@ class LatentCortexEngine:
         # ── Episode fast weights (attach → optimize → decode under ΔW) ──
         fast_weights: EpisodicFastWeights | None = None
         fw_baseline = None
+        fast_weight_learning_state: dict[str, Any] | None = None
+        fast_weight_target_tokens: list[int] = []
+        fw_verifier_pre_tokens: list[int] = []
+        fw_verifier_pre_text = ""
+        fw_verifier_pre: float | None = None
+        fast_weight_decode_active = False
         canary_baseline: dict[str, float] | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
-            fast_weights = EpisodicFastWeights(self.config.fast_weights)
-            if self._episode_probe_cache is not None:
-                # Every ΔW lifecycle transition changes the model function;
-                # memoized probes must die at each boundary.
-                fast_weights.on_function_change = self._episode_probe_cache.invalidate
-            if fast_weight_baseline_cost + safety_reserve > budget.remaining_layer_apps:
-                raise RuntimeError("compute budget cannot admit fast-weight baseline probe")
-            fw_baseline = self._fw_probe(budget)
-            if canaries is not None:
-                canary_baseline = canaries.measure(
-                    lambda probe_tokens: self._canary_logits(probe_tokens, budget)
-                )
-            # Verified pre-adaptation reference. Reuse the latent-opt score
-            # when it exists (same latent state, zero extra compute);
-            # otherwise decode one probe on base weights, budget admitting.
-            fw_verifier_pre: float | None = None
+            winner_state_sha256 = tensor_sha256(winner.z)
+            objective_sha256 = hashlib.sha256(
+                verification_objective.encode("utf-8")
+            ).hexdigest()
+            admission = unavailable_admission(
+                source_sha256=hashlib.sha256(b"").hexdigest(),
+                objective_sha256=objective_sha256,
+                reason="verifier_unavailable",
+            )
+            evidence_provider = getattr(
+                information_verifier,
+                "fast_weight_learning_evidence",
+                None,
+            )
             if verifier is not None and self.tokenizer is not None:
-                if math.isfinite(latent_opt_verifier_score):
-                    fw_verifier_pre = float(latent_opt_verifier_score)
-                else:
-                    probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
-                    if probe_cost + safety_reserve <= budget.remaining_layer_apps:
-                        probe = self._decode_probe(
-                            winner,
-                            cache,
-                            runner,
-                            budget,
-                            bridge_tokens=bridge_tokens,
+                probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
+                if probe_cost + safety_reserve > budget.remaining_layer_apps:
+                    raise RuntimeError(
+                        "compute budget cannot admit fast-weight evidence probe"
+                    )
+                evaluation_index = len(
+                    getattr(information_verifier, "evaluations", ())
+                )
+                fw_verifier_pre_tokens = self._decode_probe(
+                    winner,
+                    cache,
+                    runner,
+                    budget,
+                    bridge_tokens=bridge_tokens,
+                    use_cache=False,
+                    force_exact_tokens=True,
+                )
+                fw_verifier_pre_text = self.tokenizer.decode(
+                    fw_verifier_pre_tokens
+                )
+                fw_verifier_pre = float(verifier(fw_verifier_pre_text))
+                source_sha256 = hashlib.sha256(
+                    fw_verifier_pre_text.encode("utf-8")
+                ).hexdigest()
+                if callable(evidence_provider):
+                    try:
+                        admission, fast_weight_target_tokens = evidence_provider(
+                            fw_verifier_pre_text,
+                            evaluation_index=evaluation_index,
+                            tokenizer=self.tokenizer,
                         )
-                        pre = float(verifier(self.tokenizer.decode(probe)))
-                        if math.isfinite(pre):
-                            fw_verifier_pre = pre
+                        admission = validate_fast_weight_admission(
+                            admission,
+                            expected_source_sha256=source_sha256,
+                            expected_objective_sha256=objective_sha256,
+                        )
+                        if (
+                            admission["target_token_count"]
+                            != len(fast_weight_target_tokens)
+                            or admission["target_tokens_sha256"]
+                            != token_sequence_sha256(
+                                fast_weight_target_tokens
+                            )
+                        ):
+                            raise ValueError(
+                                "fast-weight private target differs from its admission commitment"
+                            )
+                    except _LATENT_PHASE_ERRORS as exc:
+                        receipt.flag(
+                            "fast_weight_evidence_rejected:"
+                            f"{type(exc).__name__}"
+                        )
+                        admission = unavailable_admission(
+                            source_sha256=source_sha256,
+                            objective_sha256=objective_sha256,
+                            reason="candidate_evaluation_unavailable",
+                        )
+                        fast_weight_target_tokens = []
+                else:
+                    admission = unavailable_admission(
+                        source_sha256=source_sha256,
+                        objective_sha256=objective_sha256,
+                        reason="verifier_provider_untrusted",
+                    )
+            fast_weight_learning_state = empty_learning_state(
+                episode_id=receipt.episode_id,
+                input_tokens_sha256=receipt.input_tokens_sha256,
+                selected_branch=winner.index,
+                winner_state_sha256=winner_state_sha256,
+                admission=admission,
+            )
             stage_started = self._stage_checkpoint(
                 receipt=receipt,
                 budget=budget,
@@ -5428,37 +5516,101 @@ class LatentCortexEngine:
                 episode_started=episode_started,
                 progress=progress,
                 cancel_check=cancel_check,
+                admitted=bool(admission["admitted"]),
+                admission_reason=str(admission["reason"]),
             )
-            seed_stat = float(mx.mean(per_position_rms(winner.z)))
-            # Retrieval-to-fast-weight compilation: the refined states of
-            # retrieval-seeded slots (memory, world model — already
-            # epistemically admitted) span the leading columns of U, so the
-            # episode's temporary synapses start FROM retrieved knowledge
-            # instead of generic noise. Identity-at-attach and erase proof
-            # are untouched (V stays zero).
-            retrieval_seed_vectors = None
-            retrieval_indices = [
-                int(row["slot"])
-                for row in receipt.cognitive_slots
-                if row.get("source") in _RETRIEVAL_SLOT_SOURCES
-                or str(row.get("source") or "").startswith("memory.")
-            ]
-            if retrieval_indices:
-                retrieval_seed_vectors = winner.z[0, retrieval_indices, :]
-            wrapped = fast_weights.attach(
-                self.model.model,
-                (self.prelude_end, self.coda_start),
-                seed_stat=seed_stat,
-                episode_id=receipt.episode_id,
-                seed_vectors=retrieval_seed_vectors,
-            )
-            if fast_weights.lifecycle.retrieval_seeded_columns > 0:
-                receipt.flag(
-                    "fast_weight_retrieval_compiled:"
-                    f"{fast_weights.lifecycle.retrieval_seeded_columns}"
+            if admission["admitted"]:
+                vocab_size = int(self.model.model.embed_tokens.weight.shape[0])
+                if any(
+                    not 0 <= token < vocab_size
+                    for token in fast_weight_target_tokens
+                ):
+                    raise RuntimeError(
+                        "fast-weight evidence target contains an out-of-vocabulary token"
+                    )
+                if (
+                    fast_weight_attach_identity_cost + safety_reserve
+                    > budget.remaining_layer_apps
+                ):
+                    raise RuntimeError(
+                        "compute budget cannot admit fast-weight identity probes"
+                    )
+                fast_weights = EpisodicFastWeights(self.config.fast_weights)
+                if self._episode_probe_cache is not None:
+                    fast_weights.on_function_change = (
+                        self._episode_probe_cache.invalidate
+                    )
+                fw_baseline = self._fw_probe(budget)
+                if canaries is not None:
+                    canary_baseline = canaries.measure(
+                        lambda probe_tokens: self._canary_logits(
+                            probe_tokens,
+                            budget,
+                        )
+                    )
+                seed_stat = float(mx.mean(per_position_rms(winner.z)))
+                retrieval_seed_vectors = None
+                retrieval_indices = [
+                    int(row["slot"])
+                    for row in receipt.cognitive_slots
+                    if row.get("source") in _RETRIEVAL_SLOT_SOURCES
+                    or str(row.get("source") or "").startswith("memory.")
+                ]
+                if retrieval_indices:
+                    retrieval_seed_vectors = winner.z[0, retrieval_indices, :]
+                wrapped = fast_weights.attach(
+                    self.model.model,
+                    (self.prelude_end, self.coda_start),
+                    seed_stat=seed_stat,
+                    episode_id=receipt.episode_id,
+                    seed_vectors=retrieval_seed_vectors,
                 )
-            receipt.fast_weights_applied = True
-            receipt.fast_weights_layers = wrapped
+                receipt.fast_weights_applied = True
+                receipt.fast_weights_layers = wrapped
+                try:
+                    fast_weight_learning_state["lease"] = (
+                        fast_weights.lease_receipt()
+                    )
+                    attach_probe = self._fw_probe(budget)
+                    pre_probe_sha256 = tensor_sha256(fw_baseline)
+                    post_probe_sha256 = tensor_sha256(attach_probe)
+                    state_after_attach_sha256 = tensor_sha256(winner.z)
+                    fast_weight_learning_state["attach_identity"] = {
+                        "measured": True,
+                        "pre_probe_sha256": pre_probe_sha256,
+                        "post_probe_sha256": post_probe_sha256,
+                        "exact": pre_probe_sha256 == post_probe_sha256,
+                        "winner_state_before_sha256": winner_state_sha256,
+                        "winner_state_after_sha256": (
+                            state_after_attach_sha256
+                        ),
+                    }
+                    if (
+                        pre_probe_sha256 != post_probe_sha256
+                        or state_after_attach_sha256 != winner_state_sha256
+                    ):
+                        raise RuntimeError(
+                            "fast-weight attachment failed measured identity"
+                        )
+                except BaseException:  # noqa: BLE001 - mutation cleanup must survive cancellation
+                    self._finalize_fast_weights(
+                        fast_weights,
+                        fw_baseline,
+                        receipt,
+                        budget,
+                        learning_state=fast_weight_learning_state,
+                    )
+                    raise
+                if fast_weights.lifecycle.retrieval_seeded_columns > 0:
+                    receipt.flag(
+                        "fast_weight_retrieval_compiled:"
+                        f"{fast_weights.lifecycle.retrieval_seeded_columns}"
+                    )
+            else:
+                receipt.flag(
+                    "fast_weight_not_admitted:"
+                    f"{admission['reason']}"
+                )
 
         try:
             if fast_weights is not None:
@@ -5472,8 +5624,15 @@ class LatentCortexEngine:
                     cancel_check=cancel_check,
                     wrapped_layers=receipt.fast_weights_layers,
                 )
+                # The temporary synapses optimize only toward the exact
+                # evidence atoms admitted above. Prompt reconstruction remains
+                # the latent-state optimizer's objective; using it here would
+                # let unverified query text become a learning target.
                 loss_fn = build_proxy_loss(
-                    self.model, winner.anchor, tokens, self.config.latent_opt
+                    self.model,
+                    winner.anchor,
+                    fast_weight_target_tokens,
+                    self.config.latent_opt,
                 )
 
                 def fw_loss():
@@ -5490,6 +5649,24 @@ class LatentCortexEngine:
                     layers_per_forward=(self.coda_start - self.prelude_end),
                     reserve_layer_apps=safety_reserve,
                 )
+                lifecycle = fast_weights.lifecycle
+                fast_weight_learning_state["optimization"] = {
+                    "optimizer": lifecycle.optimizer,
+                    "attempts": lifecycle.optimization_attempts,
+                    "accepted_steps": lifecycle.optimized_steps,
+                    "rejected_steps": lifecycle.rejected_steps,
+                    "budget_exhausted": lifecycle.budget_exhausted,
+                    "loss_trail": list(lifecycle.loss_trail),
+                    "gradient_norm_trail": list(
+                        lifecycle.gradient_global_norm_trail
+                    ),
+                    "accepted_step_sizes": list(
+                        lifecycle.accepted_step_sizes
+                    ),
+                    "line_search_backtracks": (
+                        lifecycle.line_search_backtracks
+                    ),
+                }
                 stage_started = self._stage_checkpoint(
                     receipt=receipt,
                     budget=budget,
@@ -5520,6 +5697,17 @@ class LatentCortexEngine:
                         cancel_check=cancel_check,
                         decision=canary_decision,
                     )
+                    fast_weight_learning_state["controls"] = {
+                        "decision": canary_decision,
+                        "capability_canaries": dict(
+                            receipt.fast_weight_canaries
+                        ),
+                    }
+                else:
+                    fast_weight_learning_state["controls"] = {
+                        "decision": "accepted",
+                        "capability_canaries": {},
+                    }
                 if verifier is not None and self.tokenizer is not None:
                     verifier_decision = self._enforce_fast_weight_verifier(
                         verifier,
@@ -5531,6 +5719,9 @@ class LatentCortexEngine:
                         bridge_tokens,
                         receipt,
                         pre_score=fw_verifier_pre,
+                        pre_tokens=fw_verifier_pre_tokens,
+                        pre_text=fw_verifier_pre_text,
+                        learning_state=fast_weight_learning_state,
                         safety_reserve=safety_reserve,
                     )
                     stage_started = self._stage_checkpoint(
@@ -5543,6 +5734,19 @@ class LatentCortexEngine:
                         cancel_check=cancel_check,
                         decision=verifier_decision,
                     )
+                else:
+                    fast_weights.canary_erase()
+                    fast_weight_learning_state["disposition"] = (
+                        "rejected_verifier_unavailable"
+                    )
+
+                fast_weight_decode_active = bool(
+                    fast_weight_learning_state["disposition"]
+                    == "accepted_causal_improvement"
+                    and fast_weights.handles
+                    and fast_weights.lifecycle.lease_acquired
+                    and not fast_weights.lifecycle.lease_released
+                )
 
             # Experiment-3 instrumentation: destroy one refined thought slot
             # just before persistence, so its causal contribution and
@@ -5551,6 +5755,27 @@ class LatentCortexEngine:
                 winner.workspace.ablate(int(ablate_slot), mode=ablate_mode)
                 winner.z = winner.workspace.z
                 receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
+
+            # The matched causal probe is valid only for the exact winner
+            # state it measured. Any later experimental mutation, unexpected
+            # lease release, or wrapper loss removes authority to decode under
+            # the adaptation; continue on the clean base function instead.
+            if fast_weight_decode_active and fast_weights is not None:
+                lineage_intact = (
+                    tensor_sha256(winner.z)
+                    == fast_weight_learning_state["winner_state_sha256"]
+                    and bool(fast_weights.handles)
+                    and fast_weights.lifecycle.lease_acquired
+                    and not fast_weights.lifecycle.lease_released
+                )
+                if not lineage_intact:
+                    if fast_weights.handles:
+                        fast_weights.canary_erase()
+                    fast_weight_learning_state["disposition"] = (
+                        "rejected_state_lineage_changed"
+                    )
+                    fast_weight_decode_active = False
+                    receipt.flag("fast_weight_state_lineage_changed")
 
             # ── Commit the winner + decode the answer ────────────────────
             if terminal_instruction_tokens:
@@ -5831,7 +6056,33 @@ class LatentCortexEngine:
             )
         finally:
             if fast_weights is not None:
-                self._finalize_fast_weights(fast_weights, fw_baseline, receipt, budget)
+                self._finalize_fast_weights(
+                    fast_weights,
+                    fw_baseline,
+                    receipt,
+                    budget,
+                    learning_state=fast_weight_learning_state,
+                )
+
+        if fast_weight_learning_state is not None:
+            final_text = (
+                self.tokenizer.decode(out_tokens)
+                if self.tokenizer is not None
+                else ""
+            )
+            fast_weight_learning_state["final_answer"] = {
+                "decoded_under_adaptation": fast_weight_decode_active,
+                "tokens_sha256": token_sequence_sha256(out_tokens),
+                "text_sha256": hashlib.sha256(
+                    final_text.encode("utf-8")
+                ).hexdigest(),
+                "token_count": len(out_tokens),
+            }
+            receipt.fast_weight_learning = (
+                finalize_fast_weight_learning_receipt(
+                    fast_weight_learning_state
+                )
+            )
 
         if fast_weights is not None and receipt.fast_weights_erased is not True:
             raise _FastWeightCleanupError("fast-weight cleanup proof did not pass")
@@ -5914,6 +6165,8 @@ class LatentCortexEngine:
         baseline,
         receipt: EpisodeReceipt,
         budget: ComputeBudget,
+        *,
+        learning_state: dict[str, Any] | None = None,
     ) -> None:
         """Best-effort cleanup that never masks the episode's first failure."""
         try:
@@ -5957,6 +6210,33 @@ class LatentCortexEngine:
         receipt.fast_weight_gradient_norm_trail = list(lifecycle.gradient_global_norm_trail)
         receipt.fast_weight_accepted_step_sizes = list(lifecycle.accepted_step_sizes)
         receipt.fast_weight_line_search_backtracks = lifecycle.line_search_backtracks
+        if learning_state is not None:
+            learning_state["lease"] = fast_weights.lease_receipt()
+            learning_state["optimization"] = {
+                "optimizer": lifecycle.optimizer,
+                "attempts": lifecycle.optimization_attempts,
+                "accepted_steps": lifecycle.optimized_steps,
+                "rejected_steps": lifecycle.rejected_steps,
+                "budget_exhausted": lifecycle.budget_exhausted,
+                "loss_trail": list(lifecycle.loss_trail),
+                "gradient_norm_trail": list(
+                    lifecycle.gradient_global_norm_trail
+                ),
+                "accepted_step_sizes": list(
+                    lifecycle.accepted_step_sizes
+                ),
+                "line_search_backtracks": lifecycle.line_search_backtracks,
+            }
+            learning_state["cleanup"] = {
+                "required": True,
+                "detached": lifecycle.erased,
+                "erase_proven": lifecycle.erase_proven,
+                "lease_released": lifecycle.lease_released,
+                "conflicts": (
+                    lifecycle.detach_conflicts
+                    + lifecycle.lease_conflicts
+                ),
+            }
         if lifecycle.budget_exhausted:
             receipt.flag("fast_weight_budget_exhausted")
         if lifecycle.optimized_steps <= 0:
@@ -6279,18 +6559,18 @@ class LatentCortexEngine:
         receipt: EpisodeReceipt,
         *,
         pre_score: float | None,
+        pre_tokens: list[int],
+        pre_text: str,
+        learning_state: dict[str, Any],
         safety_reserve: int,
     ) -> str:
         """Give the task verifier the last word over the adapted function.
 
         Decode one probe under active ΔW and compare its verified score
         against the verified score of the SAME latent state before
-        adaptation. A regression erases ΔW — the episode continues on base
-        weights with its refined latent state intact. Identity ΔW (no
-        accepted step) and canary-erased ΔW are never re-measured; a
-        missing pre-adaptation reference or an unaffordable probe keeps ΔW
-        (the canaries already guarded protected behavior) but is receipted
-        so the consumer knows arbitration did not run.
+        adaptation. Only a changed token sequence with a strict verified
+        improvement survives to final decode. Equality, missing evidence,
+        budget pressure, or regression erases ΔW before the answer path.
         """
         lifecycle = fast_weights.lifecycle
         if lifecycle.canary_erased or not fast_weights.handles:
@@ -6298,37 +6578,82 @@ class LatentCortexEngine:
                 "evaluated": False,
                 "decision": "already_erased",
             }
+            learning_state["disposition"] = "rejected_capability_regression"
             return "already_erased"
         if lifecycle.optimized_steps <= 0:
+            fast_weights.canary_erase()
             receipt.fast_weight_verifier = {
                 "evaluated": False,
-                "decision": "identity_no_check",
+                "decision": "erased_no_accepted_step",
             }
-            return "identity_no_check"
+            learning_state["disposition"] = "rejected_no_accepted_step"
+            return "erased_no_accepted_step"
         if pre_score is None or not math.isfinite(pre_score):
+            fast_weights.canary_erase()
             receipt.fast_weight_verifier = {
                 "evaluated": False,
-                "decision": "no_reference",
+                "decision": "erased_no_reference",
             }
             receipt.flag("fast_weight_verifier_no_reference")
-            return "no_reference"
+            learning_state["disposition"] = "rejected_verifier_unavailable"
+            return "erased_no_reference"
         probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
         if probe_cost + safety_reserve > budget.remaining_layer_apps:
+            fast_weights.canary_erase()
             receipt.fast_weight_verifier = {
                 "evaluated": False,
-                "decision": "skipped_budget",
+                "decision": "erased_budget_unavailable",
                 "pre_score": round(float(pre_score), 6),
             }
             receipt.flag("fast_weight_verifier_skipped_budget")
-            return "skipped_budget"
+            learning_state["disposition"] = "rejected_verifier_unavailable"
+            return "erased_budget_unavailable"
+        winner_state_before_sha256 = tensor_sha256(winner.z)
         probe = self._decode_probe(
             winner,
             cache,
             runner,
             budget,
             bridge_tokens=bridge_tokens,
+            use_cache=False,
+            force_exact_tokens=True,
         )
-        post_score = float(verifier(self.tokenizer.decode(probe)))
+        post_text = self.tokenizer.decode(probe)
+        post_score = float(verifier(post_text))
+        winner_state_after_sha256 = tensor_sha256(winner.z)
+        pre_tokens_sha256 = token_sequence_sha256(pre_tokens)
+        post_tokens_sha256 = token_sequence_sha256(probe)
+        token_sequence_changed = pre_tokens_sha256 != post_tokens_sha256
+        strict_improvement = bool(
+            math.isfinite(post_score)
+            and post_score > float(pre_score) + 1e-6
+            and token_sequence_changed
+            and winner_state_before_sha256
+            == winner_state_after_sha256
+            == learning_state["winner_state_sha256"]
+        )
+        learning_state["causal_probe"] = {
+            "evaluated": True,
+            "pre_tokens_sha256": pre_tokens_sha256,
+            "post_tokens_sha256": post_tokens_sha256,
+            "pre_text_sha256": hashlib.sha256(
+                pre_text.encode("utf-8")
+            ).hexdigest(),
+            "post_text_sha256": hashlib.sha256(
+                post_text.encode("utf-8")
+            ).hexdigest(),
+            # The proof contract reconstructs the strict >1e-6 comparison.
+            # Preserve the exact finite values used by that decision; display
+            # telemetry may round independently below.
+            "pre_score": float(pre_score),
+            "post_score": (
+                float(post_score) if math.isfinite(post_score) else None
+            ),
+            "token_sequence_changed": token_sequence_changed,
+            "strict_improvement": strict_improvement,
+            "winner_state_before_sha256": winner_state_before_sha256,
+            "winner_state_after_sha256": winner_state_after_sha256,
+        }
         if not math.isfinite(post_score):
             fast_weights.canary_erase()
             receipt.fast_weight_verifier = {
@@ -6337,24 +6662,42 @@ class LatentCortexEngine:
                 "pre_score": round(float(pre_score), 6),
             }
             receipt.flag("fast_weight_verifier_erased")
+            learning_state["disposition"] = "rejected_non_improvement"
             return "erased_nonfinite_score"
-        if post_score < float(pre_score) - 1e-6:
+        if not strict_improvement:
             fast_weights.canary_erase()
-            decision = "erased"
+            decision = (
+                "erased_no_causal_effect"
+                if not token_sequence_changed
+                else "erased_non_improvement"
+            )
             receipt.flag("fast_weight_verifier_erased")
+            learning_state["disposition"] = (
+                "rejected_no_causal_effect"
+                if not token_sequence_changed
+                else "rejected_non_improvement"
+            )
             logger.info(
-                "Fast-weight verifier erased ΔW: verified score regressed "
-                "%.4f → %.4f under the adapted function",
+                "Fast-weight verifier erased ΔW: no strict causal gain "
+                "(score %.4f → %.4f, tokens_changed=%s)",
                 float(pre_score),
                 post_score,
+                token_sequence_changed,
             )
         else:
-            decision = "accepted"
+            decision = "accepted_causal_improvement"
+            learning_state["disposition"] = "accepted_causal_improvement"
         receipt.fast_weight_verifier = {
             "evaluated": True,
             "decision": decision,
             "pre_score": round(float(pre_score), 6),
             "post_score": round(post_score, 6),
+            "pre_tokens_sha256": pre_tokens_sha256,
+            "post_tokens_sha256": post_tokens_sha256,
+            "token_sequence_changed": token_sequence_changed,
+            "winner_state_unchanged": (
+                winner_state_before_sha256 == winner_state_after_sha256
+            ),
         }
         return decision
 

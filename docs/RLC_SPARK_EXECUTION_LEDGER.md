@@ -136,10 +136,10 @@ baseline below is exhaustive over SPARK-001 through SPARK-072:
 - `ACCEPTED`: SPARK-001, SPARK-005, SPARK-006, SPARK-007, SPARK-008, SPARK-009,
   SPARK-010, SPARK-011, SPARK-012, SPARK-014, SPARK-015, SPARK-016,
   SPARK-017, SPARK-018, SPARK-019, SPARK-020, SPARK-021, SPARK-022,
-  SPARK-023, SPARK-024, SPARK-025, SPARK-026.
+  SPARK-023, SPARK-024, SPARK-025, SPARK-026, SPARK-055.
 - `PARTIAL`: SPARK-003,
   SPARK-027, SPARK-035, SPARK-039, SPARK-040, SPARK-041,
-  SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054, SPARK-055,
+  SPARK-042, SPARK-051, SPARK-052, SPARK-053, SPARK-054,
   SPARK-056, SPARK-058, SPARK-060, SPARK-062, SPARK-063, SPARK-065, SPARK-066,
   SPARK-067.
 - `MISSING`: SPARK-002,
@@ -2584,10 +2584,41 @@ before those dependencies close is not admissible.
 
 ## G. Temporary and permanent learning
 
-- [ ] **SPARK-055 - Query-scoped fast-weight learning.** Optimize bounded
+- [x] **SPARK-055 - Query-scoped fast-weight learning.** Optimize bounded
   temporary weights from high-confidence evidence, prove identity at attach,
   constrain magnitude/behavior, isolate concurrent requests, and make the
   adapted function causal to the answer.
+
+  **CP391 implementation and evidence:** The temporary-learning path now starts
+  from a deterministic same-query base-function probe. Only machine-checked
+  atomic evidence routes are eligible for the private bounded target; refuted,
+  unsupported, unknown, oversized, unavailable, or unverifiable evidence
+  cannot attach a wrapper or spend an optimizer step. Public receipts commit
+  exact source/objective/evidence/target identities without publishing evidence
+  text or latent state.
+
+  Every mutable model object has an exclusive process-local query lease with
+  owner/model commitments and conflict accounting. Attachment must pass an
+  immediate full-stack pre/post identity probe before optimization. The
+  optimizer is bounded and receipted, capability and structural canaries can
+  rescale or erase it, and a matched uncached deterministic post-probe must
+  change the output token sequence and strictly improve the same verifier on
+  the unchanged winner state. Equality, regression, no accepted step, missing
+  verifier evidence, budget pressure, state drift, lease loss, or canary
+  failure detaches the wrappers before final decode. An accepted answer is
+  generated while the exclusive lease and adapted function remain active, then
+  binds its exact output identity before exact erase and lease release.
+
+  The independent service reconstructs admission, lifecycle, optimizer,
+  controls, causal probe, output, and cleanup semantics; self-consistently
+  rehashed token-change, score, disposition, boolean, count, and optimizer
+  evidence lies are rejected. Concurrent-manager, attach-failure,
+  cancellation, canary, state-lineage, output-binding, and exact-erasure tests
+  cover the negative paths. The final broad latent/RLC/conversation family gate,
+  focused post-hardening matrix, strict Ruff, bytecode compilation, closeout
+  gates, and enterprise ratchet are recorded in the matching execution-tracker
+  checkpoint. This closes query-scoped causal mechanics, not a resident
+  reasoning or frontier-performance gain.
 - [ ] **SPARK-056 - Runtime integrity proof producer.** Measure pre/post fixed
   parameter canaries, adapted-layer identity, exact erase, caches, tokenizer,
   adapters, quantization, and worker identity; make certification consume the
@@ -2640,7 +2671,11 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-068 - Production reliability and observability.** Bound latency,
   memory, event-loop work, cancellation, concurrency, worker recovery, health,
   degradation taxonomy, privacy, audit logs, and UI presentation; fix root
-  causes rather than suppress warnings or emit canned fallback prose.
+  causes rather than suppress warnings or emit canned fallback prose. Replace
+  the action-calibration protocol-v3 complete-prefix envelopes with a versioned
+  compact append-only proof (for example, checkpointed Merkle/MMR inclusion
+  witnesses) that preserves independent replay and external signatures without
+  quadratic JSON serialization, memory growth, or verification time.
 
 ## I. Training admission and scientific proof
 

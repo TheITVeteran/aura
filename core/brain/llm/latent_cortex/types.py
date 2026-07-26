@@ -1360,6 +1360,11 @@ class EpisodeReceipt:
     # the adaptation on regression — the verifier, not the proxy, has the
     # last word over fast weights too. Empty when arbitration did not run.
     fast_weight_verifier: dict[str, Any] = field(default_factory=dict)
+    # Complete SPARK-055 contract: exact evidence admission, exclusive model
+    # lease, measured identity-at-attach, matched causal probe, answer binding,
+    # and exact cleanup. Public commitments only; no latent values or evidence
+    # text are copied into the receipt.
+    fast_weight_learning: dict[str, Any] = field(default_factory=dict)
     # Decode completeness. Contract-required tasks separately receipt whether
     # generated text actually satisfied the terminal answer contract.
     decode_requested_tokens: int = 0
@@ -1647,6 +1652,7 @@ class EpisodeReceipt:
             "fast_weight_line_search_backtracks": (self.fast_weight_line_search_backtracks),
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
+            "fast_weight_learning": dict(self.fast_weight_learning),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,

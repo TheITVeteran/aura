@@ -28,6 +28,7 @@ from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noq
 from core.brain.llm.latent_cortex.governance import parameter_fingerprint  # noqa: E402
 from core.brain.llm.latent_cortex.recurrence import WindowRunner  # noqa: E402
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, StageOp  # noqa: E402
+from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
     ComputeBudget,
@@ -40,6 +41,22 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
 
 N_LAYERS = 8
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23, 2, 88]
+
+
+class _ExactEvidenceTokenizer:
+    eos_token_id = 0
+
+    def encode(self, text, add_special_tokens=False):
+        del add_special_tokens
+        return [ord(character) % 128 for character in text][:64]
+
+    def decode(self, ids):
+        rendered = ",".join(str(int(item)) for item in ids)
+        return f"2 + 2 = 4. Probe tokens {rendered}."
+
+
+def _exact_evidence_verifier() -> EpisodeTaskVerifier:
+    return EpisodeTaskVerifier("")
 
 
 def _model():
@@ -890,6 +907,7 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     before = parameter_fingerprint(model)
     engine = LatentCortexEngine(
         model,
+        _ExactEvidenceTokenizer(),
         config=_config(
             fast_weights=FastWeightsConfig(
                 enabled=True, rank=2, target="o_proj", opt_steps=2, lr=0.02
@@ -897,7 +915,10 @@ def test_fast_weight_episode_proves_erase_and_invariant():
             latent_opt=LatentOptConfig(enabled=False),
         ),
     )
-    result = engine.reason(token_ids=PROMPT_TOKENS)
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
     assert result.ok
     r = result.receipt
     assert r.fast_weights_applied and r.fast_weights_layers == 4
@@ -910,7 +931,60 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     assert len(r.fast_weight_accepted_step_sizes) == r.fast_weight_optimized_steps
     assert r.fast_weights_erased is True
     assert r.params_unchanged is True
+    assert r.fast_weight_learning["attach_identity"]["measured"] is True
+    assert r.fast_weight_learning["attach_identity"]["exact"] is True
+    assert r.fast_weight_learning["lease"]["released"] is True
+    assert r.fast_weight_learning["cleanup"] == {
+        "required": True,
+        "detached": True,
+        "erase_proven": True,
+        "lease_released": True,
+        "conflicts": 0,
+    }
     assert parameter_fingerprint(model) == before, "episode must leave W0 untouched"
+
+
+def test_attach_identity_probe_failure_cleans_and_releases_lease(monkeypatch):
+    model = _model()
+    originals = [layer.self_attn.o_proj for layer in model.model.layers]
+    engine = LatentCortexEngine(
+        model,
+        _ExactEvidenceTokenizer(),
+        config=_config(
+            fast_weights=FastWeightsConfig(enabled=True, target="o_proj"),
+        ),
+    )
+    original_probe = engine._fw_probe
+    calls = {"ordinary": 0}
+
+    def fail_identity_probe(budget, *, cleanup=False):
+        if not cleanup:
+            calls["ordinary"] += 1
+            if calls["ordinary"] == 2:
+                raise RuntimeError("injected attach identity probe failure")
+        return original_probe(budget, cleanup=cleanup)
+
+    monkeypatch.setattr(engine, "_fw_probe", fail_identity_probe)
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
+
+    assert result.ok
+    assert result.receipt.fast_weights_applied is True
+    assert result.receipt.fast_weights_erased is True
+    assert "fallback_vanilla:RuntimeError" in result.receipt.honest_flags
+    assert [layer.self_attn.o_proj for layer in model.model.layers] == originals
+
+    contender = EpisodicFastWeights(FastWeightsConfig(enabled=True))
+    contender.attach(
+        model.model,
+        (2, 6),
+        seed_stat=0.5,
+        episode_id="identity-probe-recovery",
+    )
+    contender.detach()
+    assert contender.lease_receipt()["released"] is True
 
 
 def test_fast_weight_optimization_failure_cleans_before_vanilla_fallback(monkeypatch):
@@ -924,11 +998,15 @@ def test_fast_weight_optimization_failure_cleans_before_vanilla_fallback(monkeyp
     monkeypatch.setattr(EpisodicFastWeights, "optimize", fail_optimization)
     engine = LatentCortexEngine(
         model,
+        _ExactEvidenceTokenizer(),
         config=_config(
             fast_weights=FastWeightsConfig(enabled=True, target="o_proj", opt_steps=2),
         ),
     )
-    result = engine.reason(token_ids=PROMPT_TOKENS)
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
 
     assert result.ok, "a proven-clean model may serve the honest vanilla fallback"
     assert result.receipt.fast_weights_applied is True
@@ -950,9 +1028,13 @@ def test_unproven_fast_weight_cleanup_refuses_fallback(monkeypatch):
     monkeypatch.setattr(EpisodicFastWeights, "prove_erase", fail_proof)
     engine = LatentCortexEngine(
         model,
+        _ExactEvidenceTokenizer(),
         config=_config(fast_weights=FastWeightsConfig(enabled=True, target="o_proj")),
     )
-    result = engine.reason(token_ids=PROMPT_TOKENS)
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
 
     assert not result.ok
     assert result.reason == "fast_weight_cleanup_unproven"
@@ -970,9 +1052,13 @@ def test_fast_weight_snapshot_memory_failure_still_detaches(monkeypatch):
     monkeypatch.setattr(EpisodicFastWeights, "snapshot_for_export", fail_snapshot)
     engine = LatentCortexEngine(
         model,
+        _ExactEvidenceTokenizer(),
         config=_config(fast_weights=FastWeightsConfig(enabled=True, target="o_proj")),
     )
-    result = engine.reason(token_ids=PROMPT_TOKENS)
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        verifier=_exact_evidence_verifier(),
+    )
 
     assert result.ok
     assert result.receipt.fast_weights_erased is True

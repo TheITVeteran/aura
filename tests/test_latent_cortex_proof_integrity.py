@@ -68,9 +68,10 @@ class TestFastWeightProofDoesNotCrossEpisodes:
         # checks, so a stale erase_proven=True could vouch for weights it
         # never saw.
         for field in (
-            "self.lifecycle.erase_proven = None",
-            "self.lifecycle.exported = False",
-            "self.lifecycle.erased = False",
+            # Replacing the complete lifecycle is stronger than clearing a
+            # hand-picked subset: optimizer trails, lease identity, conflict
+            # counts, export state, and erase evidence all reset together.
+            "self.lifecycle = FastWeightsLifecycle()",
             "self._exported_handles = []",
         ):
             assert field in source, field

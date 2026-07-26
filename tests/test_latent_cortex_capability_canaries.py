@@ -25,6 +25,7 @@ from core.brain.llm.latent_cortex.capability_canaries import (  # noqa: E402
 )
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
+from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier  # noqa: E402
 from core.brain.llm.latent_cortex.types import (  # noqa: E402
     BranchConfig,
     ComputeBudget,
@@ -37,6 +38,26 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
 
 N_LAYERS = 8
 PROMPT_TOKENS = [5, 9, 17, 3, 42, 7, 11, 23, 2, 88]
+
+
+class _ExactEvidenceTokenizer:
+    eos_token_id = 0
+
+    def encode(self, text, add_special_tokens=False):
+        del add_special_tokens
+        return [ord(character) % 128 for character in text][:64]
+
+    def decode(self, ids):
+        rendered = ",".join(str(int(item)) for item in ids)
+        return f"2 + 2 = 4. Probe tokens {rendered}."
+
+
+def _run(engine: LatentCortexEngine):
+    return engine.reason(
+        token_ids=PROMPT_TOKENS,
+        budget=ComputeBudget(),
+        verifier=EpisodeTaskVerifier(""),
+    )
 
 
 @pytest.fixture(scope="module")
@@ -150,8 +171,12 @@ def test_compare_flags_only_drops_beyond_threshold():
 
 
 def test_clean_fast_weight_episode_passes_canaries(tiny_model):
-    engine = LatentCortexEngine(tiny_model, config=_config())
-    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=_config(),
+    )
+    result = _run(engine)
     receipt = result.receipt
     assert receipt.fast_weights_applied is True
     assert receipt.fast_weights_erased is True
@@ -189,8 +214,12 @@ def test_destructive_delta_is_erased_before_decode(tiny_model, monkeypatch):
             export_candidates=True,
         )
     )
-    engine = LatentCortexEngine(tiny_model, config=config)
-    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=config,
+    )
+    result = _run(engine)
     receipt = result.receipt
 
     assert receipt.fast_weight_canaries["decision"] == "erased"
@@ -226,8 +255,12 @@ def test_rescale_ladder_recovers_marginal_delta(tiny_model, monkeypatch):
     import core.brain.llm.latent_cortex.engine as engine_mod
 
     monkeypatch.setattr(engine_mod, "compare_canaries", marginal_compare)
-    engine = LatentCortexEngine(tiny_model, config=_config())
-    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=_config(),
+    )
+    result = _run(engine)
     receipt = result.receipt
     if receipt.fast_weight_canaries.get("evaluated"):
         assert receipt.fast_weight_canaries["decision"] in {"rescaled", "accepted"}
@@ -243,8 +276,12 @@ def test_canaries_disabled_skips_measurement_and_cost(tiny_model):
             enabled=True, target="o_proj", opt_steps=2, canary_enabled=False
         )
     )
-    engine = LatentCortexEngine(tiny_model, config=config)
-    result = engine.reason(token_ids=PROMPT_TOKENS, budget=ComputeBudget())
+    engine = LatentCortexEngine(
+        tiny_model,
+        _ExactEvidenceTokenizer(),
+        config=config,
+    )
+    result = _run(engine)
     assert result.receipt.fast_weight_canaries == {}
     assert result.receipt.fast_weights_erased is True
 

@@ -29,7 +29,9 @@ import io
 import json
 import logging
 import math
+import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +41,9 @@ from core.brain.llm.latent_cortex.types import ComputeBudget, FastWeightsConfig
 
 logger = logging.getLogger("Aura.LatentCortex.FastWeights")
 FAST_WEIGHT_OPTIMIZER = "rms_normalized_sgd_backtracking_v1"
+
+_MODEL_LEASE_LOCK = threading.Lock()
+_MODEL_LEASES: dict[int, tuple[Any, str]] = {}
 
 _TARGET_ATTRS = {
     "o_proj": ("self_attn", "o_proj"),
@@ -187,6 +192,11 @@ class FastWeightsLifecycle:
     erased: bool = False
     erase_proven: bool | None = None
     exported: bool = False
+    lease_owner_sha256: str = ""
+    lease_model_sha256: str = ""
+    lease_acquired: bool = False
+    lease_released: bool = False
+    lease_conflicts: int = 0
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -214,6 +224,11 @@ class FastWeightsLifecycle:
             "erased": self.erased,
             "erase_proven": self.erase_proven,
             "exported": self.exported,
+            "lease_owner_sha256": self.lease_owner_sha256,
+            "lease_model_sha256": self.lease_model_sha256,
+            "lease_acquired": self.lease_acquired,
+            "lease_released": self.lease_released,
+            "lease_conflicts": self.lease_conflicts,
         }
 
 
@@ -225,6 +240,8 @@ class EpisodicFastWeights:
         self.handles: list[FastWeightHandle] = []
         self.lifecycle = FastWeightsLifecycle()
         self.last_export_receipt: dict[str, Any] | None = None
+        self._lease_model: Any | None = None
+        self._lease_owner = ""
         # Anything caching model OUTPUTS (probe memoization) registers here:
         # attach/rescale/detach change the model function, so every such
         # transition must flush downstream caches or they become lies.
@@ -240,6 +257,69 @@ class EpisodicFastWeights:
             logger.warning("Fast-weight function-change listener failed (%s)", reason)
 
     # ── Attach / detach ─────────────────────────────────────────────────
+    def _acquire_model_lease(self, inner_model: Any, episode_id: str) -> None:
+        """Acquire the process-local exclusive mutation lease for one model.
+
+        The MLX request lane normally serializes resident generations, but
+        fast-weight safety cannot depend on a caller remembering that outer
+        convention. This registry owns the actual mutable model object and
+        refuses wrapper composition across independent episode managers.
+        """
+
+        owner = f"{episode_id}:{uuid.uuid4().hex}"
+        model_key = id(inner_model)
+        with _MODEL_LEASE_LOCK:
+            current = _MODEL_LEASES.get(model_key)
+            if current is not None:
+                current_model, _current_owner = current
+                if current_model is inner_model:
+                    self.lifecycle.lease_conflicts += 1
+                    raise RuntimeError("fast-weight model lease already held by another episode")
+                # Defensive id-reuse cleanup. A live strong reference makes
+                # this branch practically unreachable, but the identity check
+                # keeps the registry correct by construction.
+                _MODEL_LEASES.pop(model_key, None)
+            _MODEL_LEASES[model_key] = (inner_model, owner)
+        self._lease_model = inner_model
+        self._lease_owner = owner
+        self.lifecycle.lease_owner_sha256 = hashlib.sha256(owner.encode("utf-8")).hexdigest()
+        model_identity = (
+            f"{type(inner_model).__module__}.{type(inner_model).__qualname__}:"
+            f"{model_key}"
+        )
+        self.lifecycle.lease_model_sha256 = hashlib.sha256(
+            model_identity.encode("utf-8")
+        ).hexdigest()
+        self.lifecycle.lease_acquired = True
+        self.lifecycle.lease_released = False
+
+    def _release_model_lease(self) -> None:
+        model = self._lease_model
+        owner = self._lease_owner
+        if model is None or not owner:
+            return
+        released = False
+        with _MODEL_LEASE_LOCK:
+            current = _MODEL_LEASES.get(id(model))
+            if current is not None and current[0] is model and current[1] == owner:
+                _MODEL_LEASES.pop(id(model), None)
+                released = True
+            else:
+                self.lifecycle.lease_conflicts += 1
+        self.lifecycle.lease_released = released
+        self._lease_model = None
+        self._lease_owner = ""
+
+    def lease_receipt(self) -> dict[str, Any]:
+        return {
+            "schema": "aura.rlc.fast_weight_model_lease.v1",
+            "owner_sha256": self.lifecycle.lease_owner_sha256,
+            "model_sha256": self.lifecycle.lease_model_sha256,
+            "acquired": self.lifecycle.lease_acquired,
+            "released": self.lifecycle.lease_released,
+            "conflicts": self.lifecycle.lease_conflicts,
+        }
+
     def attach(
         self,
         inner_model,
@@ -260,13 +340,9 @@ class EpisodicFastWeights:
         # exported handle snapshots. A stale erase_proven=True would then
         # vouch for weights it never saw — the proof would survive the thing
         # it was proving. Nothing about the prior episode may outlive it.
-        self.lifecycle.erase_proven = None
-        self.lifecycle.exported = False
-        self.lifecycle.erased = False
-        self.lifecycle.detach_conflicts = 0
-        self.lifecycle.canary_rescales = 0
-        self.lifecycle.canary_erased = False
+        self.lifecycle = FastWeightsLifecycle()
         self._exported_handles = []
+        self._acquire_model_lease(inner_model, episode_id)
         parent_attr, leaf_attr = _TARGET_ATTRS[self.config.target]
         start, end = layer_range
         candidates = list(range(start, end))[: max(1, self.config.max_wrapped_layers)]
@@ -301,6 +377,9 @@ class EpisodicFastWeights:
                 # middle must not leave earlier layers wrapped, including when
                 # control exits through a non-Exception base error.
                 self.detach()
+        if not self.handles:
+            self.detach()
+            raise RuntimeError("fast-weight attachment selected no model layers")
         self.lifecycle.attached_at = time.time()
         self.lifecycle.layers = [h.layer_index for h in self.handles]
         self.lifecycle.target = self.config.target
@@ -335,6 +414,8 @@ class EpisodicFastWeights:
         self.handles = list(reversed(remaining))
         self.lifecycle.detach_conflicts += conflicts
         self.lifecycle.erased = not self.handles
+        if not self.handles:
+            self._release_model_lease()
         if restored:
             self._notify_function_change("fast_weights_detached")
         return restored
