@@ -123,3 +123,45 @@ class TestItFailsOpen:
         assert not _arithmetic_answer_missing(
             "What happened in 1969?", "Apollo 11 landed on the Moon."
         )
+
+
+class TestComputableWordForms:
+    """The bare-expression pattern caught 2 of the 8 math questions the live
+    probe actually asks. These are the other computable ones; the remaining two
+    — a rate/catch-up problem and pages-per-day — need reasoning and are
+    deliberately not claimed.
+    """
+
+    @pytest.mark.parametrize(
+        ("question", "expected"),
+        [
+            ("What is 15% of 240? Just the number.", 36.0),
+            ("what's 7.5% of 200", 15.0),
+            ("What is 2 to the 10th power? Just the number.", 1024.0),
+            ("what is 3 to the 4 power", 81.0),
+            ("A rectangle is 9 by 7. What is its area? Just the number.", 63.0),
+            ("A rectangle is 2.5 x 4. What is its area?", 10.0),
+        ],
+    )
+    def test_the_live_word_forms_are_computed(self, question, expected):
+        assert requested_arithmetic_result(question) == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "If I read 40 pages a day, how many days for a 520-page book?",
+            "A train leaves at 60 mph. Two hours later a second train leaves "
+            "at 90 mph. How many hours until it catches the first?",
+        ],
+    )
+    def test_genuine_reasoning_is_not_claimed(self, question):
+        assert requested_arithmetic_result(question) is None, (
+            "a verifier that guesses at reasoning problems is worse than none"
+        )
+
+    def test_a_runaway_exponent_is_refused(self):
+        assert requested_arithmetic_result("what is 9 to the 999 power") is None
+
+    def test_a_wrong_percentage_answer_is_caught(self):
+        assert _arithmetic_answer_missing("What is 15% of 240?", "It's 40.")
+        assert not _arithmetic_answer_missing("What is 15% of 240?", "36")

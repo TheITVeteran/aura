@@ -2408,9 +2408,59 @@ def _evaluate_arithmetic(expression: str) -> float | None:
     return float(result)
 
 
+# Word forms with exactly one mechanical answer. The bare-expression pattern
+# covered 2 of the 8 math questions the 2026-07-25 probe actually asks; these
+# two forms are the other computable ones. Everything left — rates, catch-up,
+# pages-per-day — needs reasoning and is deliberately NOT claimed here.
+_PERCENT_OF_RE = re.compile(
+    r"what(?:'s| is)\s+([0-9]+(?:\.[0-9]+)?)\s*%\s+of\s+([0-9]+(?:\.[0-9]+)?)",
+    re.IGNORECASE,
+)
+_POWER_RE = re.compile(
+    r"what(?:'s| is)\s+([0-9]+)\s+to\s+the\s+([0-9]+)(?:st|nd|rd|th)?\s+power",
+    re.IGNORECASE,
+)
+_RECTANGLE_AREA_RE = re.compile(
+    r"rectangle\s+is\s+([0-9]+(?:\.[0-9]+)?)\s*(?:by|x|\*)\s*([0-9]+(?:\.[0-9]+)?)"
+    r"(?s:.){0,60}?\barea\b",
+    re.IGNORECASE,
+)
+
+
 def requested_arithmetic_result(user_message: Any) -> float | None:
     """The single correct answer to a computable arithmetic question, if any."""
-    match = _ARITHMETIC_QUESTION_RE.search(str(user_message or ""))
+    text = str(user_message or "")
+
+    match = _PERCENT_OF_RE.search(text)
+    if match:
+        try:
+            return float(match.group(1)) / 100.0 * float(match.group(2))
+        except (ArithmeticError, ValueError):
+            return None
+
+    match = _POWER_RE.search(text)
+    if match:
+        try:
+            base, exponent = int(match.group(1)), int(match.group(2))
+        except ValueError:
+            return None
+        # Bounded: a runaway exponent must not become the check's own problem.
+        if not (0 <= exponent <= 64) or abs(base) > 10_000:
+            return None
+        try:
+            value = float(base**exponent)
+        except (ArithmeticError, OverflowError):
+            return None
+        return value if math.isfinite(value) else None
+
+    match = _RECTANGLE_AREA_RE.search(text)
+    if match:
+        try:
+            return float(match.group(1)) * float(match.group(2))
+        except (ArithmeticError, ValueError):
+            return None
+
+    match = _ARITHMETIC_QUESTION_RE.search(text)
     if not match:
         return None
     return _evaluate_arithmetic(match.group(1))
