@@ -350,13 +350,22 @@ class SelfOptimizer:
 
 # Integration Singleton
 _optimizer_instance = None
+# Serialize first-access construction so concurrent callers cannot build two
+# SelfOptimizer instances (each with its own event-bus binding and training
+# owner) racing against the same adapter path.
+import threading as _threading
+_optimizer_lock = _threading.Lock()
 
 def get_self_optimizer() -> SelfOptimizer:
     global _optimizer_instance
-    if _optimizer_instance is None:
+    if _optimizer_instance is not None:
+        return _optimizer_instance
+    with _optimizer_lock:
+        if _optimizer_instance is not None:
+            return _optimizer_instance
         from core.brain.llm.model_registry import BASE_DIR, get_adapter_path, get_model_path
         from core.event_bus import get_event_bus
-        
+
         base_path = get_model_path()
         dataset = BASE_DIR / "data" / "synthetic_training" / "lora_dataset.jsonl"
         adapter = get_adapter_path() / "adapters.safetensors"
