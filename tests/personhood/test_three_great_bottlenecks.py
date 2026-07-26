@@ -65,9 +65,12 @@ def test_sandbox_operator_execution_and_affect_grounding():
     initial_self_pres = hv.get("Self_Preservation")
     initial_obedience = hv.get("Obedience")
 
-    # 1. Test Successful execution
+    # 1. Test Successful execution.
+    #    CP126 0f681b67: affect only moves for a VERIFIED outcome, so the
+    #    postcondition is supplied. Without it an exit code alone is not
+    #    evidence that the tool did its job, and nothing is grounded.
     success_code = "print('HELLO AURA WORLD')"
-    res = operator.execute_synthesized_tool(success_code)
+    res = operator.execute_synthesized_tool(success_code, expected_output="HELLO AURA WORLD")
     
     assert res["success"] is True
     assert "HELLO AURA WORLD" in res["stdout"]
@@ -83,7 +86,9 @@ def test_sandbox_operator_execution_and_affect_grounding():
     #    raise to produce a genuine non-zero-exit failure that is kept for
     #    analysis (a refusal would not run and would move no affect).
     failing_code = "raise ValueError('CRITICAL FAULT')"
-    res_fail = operator.execute_synthesized_tool(failing_code)
+    res_fail = operator.execute_synthesized_tool(
+        failing_code, expected_output="NEVER APPEARS"
+    )
 
     assert res_fail["success"] is False
     assert "CRITICAL FAULT" in res_fail["stderr"]

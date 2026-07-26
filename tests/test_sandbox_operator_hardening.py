@@ -28,14 +28,46 @@ class _FakeResult:
         self.stderr = stderr
 
 
+class _FakeProcess:
+    """Minimal Popen stand-in matching what the operator uses."""
+
+    def __init__(self, result, timeout_exc=None):
+        self._result = result
+        self._timeout_exc = timeout_exc
+        self.pid = 424242
+        self.returncode = None
+        self._communicated = False
+
+    def communicate(self, timeout=None):
+        if self._timeout_exc is not None and not self._communicated:
+            self._communicated = True
+            raise self._timeout_exc
+        self.returncode = self._result.returncode
+        return self._result.stdout, self._result.stderr
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self.returncode = self._result.returncode
+        return self.returncode
+
+
 class _FakeGateway:
-    def __init__(self, result=None):
+    def __init__(self, result=None, timeout_exc=None):
         self.runs: list[list[str]] = []
         self.result = result or _FakeResult(0, "hello\n", "")
+        self.timeout_exc = timeout_exc
 
     def run(self, cmd, **kwargs):
         self.runs.append(list(cmd))
         return self.result
+
+    def spawn(self, cmd, **kwargs):
+        # CP126 84fc4f9d: the operator now spawns into its own process group
+        # so a timeout can reap descendants; the stub follows that contract.
+        self.runs.append(list(cmd))
+        return _FakeProcess(self.result, self.timeout_exc)
 
 
 class _FakeHeart:
@@ -147,11 +179,28 @@ def test_evidence_is_sanitized_and_bounded():
 
 
 def test_failure_grounds_sanitized_evidence(op):
+    """Grounding needs a checked postcondition (CP126 0f681b67).
+
+    This previously passed no expected_output, so it asserted that a non-zero
+    EXIT CODE alone moved affect — the defect itself. The sanitization property
+    it exists to protect is unchanged; it is now exercised through a verified
+    outcome.
+    """
     op._gw.result = _FakeResult(1, "", "boom\x00danger")
-    op.execute_synthesized_tool("print('x')")
+    op.execute_synthesized_tool("print('x')", expected_output="never-appears")
     assert op._heart.failures
     _code, evidence = op._heart.failures[0]
     assert "\x00" not in evidence
+
+
+def test_an_exit_code_alone_does_not_ground_affect(op):
+    """CP126 0f681b67: no postcondition means no evidence of task outcome."""
+    op._gw.result = _FakeResult(1, "", "boom")
+    result = op.execute_synthesized_tool("print('x')")
+
+    assert op._heart.failures == []
+    assert result["outcome_verified"] is False
+    assert result["affect_grounded"] is False
 
 
 # ── fb9c3ae3: exit-zero is not success without the expected output ─────────
