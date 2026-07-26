@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote_plus, urlparse
@@ -24,6 +25,174 @@ from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
 
 logger = logging.getLogger("Aura.WebAssetHandler")
+# ── Image admission limits ──────────────────────────────────────────────
+#
+# CP126 (critical): "MIME rejection is fail-open and magic-byte checks do
+# not validate an image." Both halves were true. A non-image Content-Type
+# only logged a warning and processing continued ("Try anyway — some
+# servers don't set correct type"), and the validator accepted a few
+# leading bytes with no structural decode, so a hostile or malformed file
+# was persisted as a valid image.
+#
+# What a magic-byte prefix cannot detect, and now is checked:
+#   * polyglots — a file that is a valid JPEG header AND valid HTML, JS or
+#     a shell script, which is how "just an image" becomes executable
+#     content once something downstream opens it by extension
+#   * decompression bombs — a few KB of PNG that decodes to gigapixels
+#   * truncated or corrupt bodies that decode into garbage
+#   * animation frame floods
+#   * arbitrary payloads appended after a well-formed image
+_MAX_IMAGE_PIXELS = 50_000_000          # ~50MP; a 100MB RGBA bitmap decoded
+_MAX_IMAGE_FRAMES = 512                 # animated GIF/WEBP frame ceiling
+_MAX_TRAILING_BYTES = 4096              # slack for legitimate metadata trailers
+_ALLOWED_IMAGE_FORMATS = frozenset({"jpeg", "png", "webp", "gif", "bmp"})
+# Content-Type values that map to a format we accept. A server may be
+# sloppy about which image type it names, but it may not name a non-image.
+_ALLOWED_IMAGE_MIME_PREFIX = "image/"
+
+
+@dataclass(frozen=True)
+class ImageAdmission:
+    """The verdict on one candidate image, and how much was actually proven.
+
+    ``structurally_verified`` is the field that keeps this honest. Pillow is
+    an optional dependency; when it is absent no structural decode happened,
+    and saying so is not the same as saying the image passed. A caller that
+    needs a real guarantee reads this rather than ``ok``.
+    """
+
+    ok: bool
+    fmt: str = "unknown"
+    reason: str = ""
+    structurally_verified: bool = False
+    width: int = 0
+    height: int = 0
+    frames: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "valid": self.ok,
+            "format": self.fmt,
+            "reason": self.reason,
+            "structurally_verified": self.structurally_verified,
+            "width": self.width,
+            "height": self.height,
+            "frames": self.frames,
+        }
+
+
+def _container_end_offset(data: bytes, fmt: str) -> int:
+    """Where this image container legitimately ends, or -1 if unknown.
+
+    A decoder answers "are the pixels valid", which is not the same question
+    as "is this file ONLY an image". Pillow decodes a well-formed PNG with a
+    shell script stapled to the end without complaint — that is the polyglot,
+    and it is only visible by comparing the container's own declared extent
+    against the file length.
+    """
+    try:
+        if fmt == "png":
+            # IEND chunk type, plus its 4-byte CRC.
+            marker = data.rfind(b"IEND")
+            return marker + 8 if marker >= 0 else -1
+        if fmt == "jpeg":
+            marker = data.rfind(b"\xff\xd9")  # EOI
+            return marker + 2 if marker >= 0 else -1
+        if fmt == "gif":
+            marker = data.rfind(b"\x3b")  # trailer
+            return marker + 1 if marker >= 0 else -1
+        if fmt in {"webp", "bmp"}:
+            # Both declare their own total size in the header.
+            offset, base = (4, 8) if fmt == "webp" else (2, 0)
+            declared = int.from_bytes(data[offset:offset + 4], "little")
+            return declared + base if declared > 0 else -1
+    except (IndexError, ValueError):
+        return -1
+    return -1
+
+
+def _structural_image_check(data: bytes, declared_fmt: str) -> ImageAdmission:
+    """Decode the image for real and hold it to the admission limits."""
+    try:
+        import io
+
+        from PIL import Image
+    except ImportError:
+        # No decoder available. Report the magic-byte result as exactly what
+        # it is — unproven — rather than promoting it to verified.
+        return ImageAdmission(
+            ok=True,
+            fmt=declared_fmt,
+            reason="pillow_unavailable_structure_unverified",
+            structurally_verified=False,
+        )
+
+    # Pillow's own bomb guard. Set below our ceiling so it fires first and
+    # raises rather than merely warning.
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = _MAX_IMAGE_PIXELS
+    try:
+        # verify() checks structural integrity but leaves the file unusable
+        # afterwards, so the image is opened twice on purpose.
+        with Image.open(io.BytesIO(data)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(data)) as image:
+            fmt = str(image.format or "").lower()
+            width, height = int(image.width), int(image.height)
+            frames = int(getattr(image, "n_frames", 1) or 1)
+            # Force a real decode; verify() alone accepts bodies that fail
+            # when the pixels are actually read.
+            image.load()
+    except Exception as exc:  # Pillow raises a wide, version-dependent set
+        return ImageAdmission(
+            ok=False,
+            fmt=declared_fmt,
+            reason=f"structural_decode_failed:{type(exc).__name__}",
+            structurally_verified=True,
+        )
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
+
+    if fmt not in _ALLOWED_IMAGE_FORMATS:
+        return ImageAdmission(
+            False, fmt, f"format_not_allowed:{fmt}", True, width, height, frames,
+        )
+    if fmt != declared_fmt:
+        # The magic bytes and the decoder disagree about what this is. That
+        # is the signature of a crafted container, not a sloppy server.
+        return ImageAdmission(
+            False, fmt, f"format_mismatch:magic={declared_fmt},decoded={fmt}",
+            True, width, height, frames,
+        )
+    if width <= 0 or height <= 0:
+        return ImageAdmission(False, fmt, "empty_dimensions", True, width, height, frames)
+    if width * height > _MAX_IMAGE_PIXELS:
+        return ImageAdmission(
+            False, fmt, f"pixel_count_exceeds_limit:{width * height}",
+            True, width, height, frames,
+        )
+    if frames > _MAX_IMAGE_FRAMES:
+        return ImageAdmission(
+            False, fmt, f"frame_count_exceeds_limit:{frames}", True, width, height, frames,
+        )
+
+    # Polyglot check. A decodable image says nothing about what was appended
+    # after it; only the container's declared extent does.
+    container_end = _container_end_offset(data, fmt)
+    if container_end > 0:
+        trailing = len(data) - container_end
+        if trailing > _MAX_TRAILING_BYTES:
+            return ImageAdmission(
+                False,
+                fmt,
+                f"trailing_data_after_image:{trailing}",
+                True,
+                width,
+                height,
+                frames,
+            )
+    return ImageAdmission(True, fmt, "", True, width, height, frames)
+
 
 
 class WebAssetHandler:
@@ -179,12 +348,30 @@ class WebAssetHandler:
             if not response.get("ok"):
                 raise RuntimeError(str(response.get("error") or response.get("status_code")))
 
-            # Check content type
+            # Content-Type must claim an image. The previous behaviour
+            # logged a warning and continued ("Try anyway — some servers
+            # don't set correct type"), which meant a server returning
+            # text/html or application/javascript had its body persisted
+            # under an image filename. Tolerating a server that names the
+            # WRONG image type is reasonable; tolerating one that names a
+            # non-image is how a download becomes an execution primitive.
             headers = response.get("headers", {})
-            content_type = str(headers.get("Content-Type", ""))
-            if not content_type.startswith("image/"):
-                logger.warning("Not an image: %s (type=%s)", url[:60], content_type)
-                # Try anyway — some servers don't set correct type
+            content_type = str(headers.get("Content-Type", "")).strip().lower()
+            declared_mime = content_type.split(";", 1)[0].strip()
+            if declared_mime and not declared_mime.startswith(_ALLOWED_IMAGE_MIME_PREFIX):
+                logger.warning(
+                    "Refusing non-image Content-Type from %s (type=%s)",
+                    url[:60],
+                    declared_mime,
+                )
+                record_degradation(
+                    "web_asset.download",
+                    ValueError(f"non_image_content_type:{declared_mime}"),
+                    severity="warning",
+                    action="refused the download instead of saving it as an image",
+                    enforce_failure_policy=False,
+                )
+                return ""
 
             # Read data with size limit
             data = bytes(response.get("content", b""))
@@ -196,11 +383,35 @@ class WebAssetHandler:
                 logger.warning("Image too small: %s (%d bytes)", url[:60], len(data))
                 return ""
 
-            # Validate image header
+            # Magic bytes first (cheap), then a real decode under the
+            # admission limits. The prefix check alone accepts polyglots,
+            # bombs and truncated bodies.
             is_valid, fmt = self._validate_image_header(data)
             if not is_valid:
                 logger.warning("Invalid image data from %s", url[:60])
                 return ""
+
+            admission = _structural_image_check(data, fmt)
+            if not admission.ok:
+                logger.warning(
+                    "Refusing image from %s: %s", url[:60], admission.reason,
+                )
+                record_degradation(
+                    "web_asset.download",
+                    ValueError(f"image_admission_refused:{admission.reason}"),
+                    severity="warning",
+                    action="refused to persist a file that did not decode as a valid image",
+                    enforce_failure_policy=False,
+                )
+                return ""
+            if not admission.structurally_verified:
+                # Honest about what was NOT checked, rather than silent.
+                logger.info(
+                    "Image from %s passed magic-byte checks only (%s)",
+                    url[:60],
+                    admission.reason,
+                )
+            fmt = admission.fmt or fmt
 
             # Determine filename
             if not filename:
@@ -213,8 +424,14 @@ class WebAssetHandler:
                     ext = {"jpeg": ".jpg", "png": ".png", "webp": ".webp", "gif": ".gif"}.get(fmt, ".jpg")
                     filename = f"image_{hashlib.sha256(data).hexdigest()[:12]}{ext}"
 
-            # Sanitize filename
+            # Sanitize the filename. It can come straight from the URL
+            # path, so it is attacker-influenced: strip separators and
+            # control characters, then refuse anything that still resolves
+            # somewhere other than the save directory.
             filename = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)[:200]
+            filename = filename.strip().lstrip(".") or "image"
+            if filename in {".", ".."} or os.sep in filename:
+                filename = f"image_{hashlib.sha256(data).hexdigest()[:12]}.{fmt}"
 
             # Save
             file_path = save_path / filename
@@ -243,52 +460,68 @@ class WebAssetHandler:
             return ""
 
     async def validate_image(self, path: str) -> Dict[str, Any]:
-        """Validate an image file."""
+        """Validate an image file, structurally — not just its first bytes."""
+        import asyncio
+
         p = Path(path)
         if not p.exists():
             return {"valid": False, "error": "File not found"}
-
-        data = p.read_bytes()
-        is_valid, fmt = self._validate_image_header(data)
-
-        result: Dict[str, Any] = {
-            "valid": is_valid,
-            "format": fmt,
-            "size_bytes": len(data),
-            "path": str(p),
-        }
-
-        # Try to get dimensions
         try:
-            from PIL import Image
-            img = Image.open(str(p))
-            result["width"] = img.width
-            result["height"] = img.height
-            result["mode"] = img.mode
-        except ImportError:
-            result["dimensions_available"] = False
-        except (OSError, RuntimeError, ValueError) as exc:
-            record_degradation("web_asset.validate_image_dimensions", exc)
-            result["dimensions_available"] = False
+            size_bytes = p.stat().st_size
+        except OSError as exc:
+            return {"valid": False, "error": f"stat_failed:{type(exc).__name__}"}
+        if size_bytes > self.MAX_FILE_SIZE:
+            return {
+                "valid": False,
+                "error": f"file_exceeds_max_size:{size_bytes}",
+                "size_bytes": size_bytes,
+                "path": str(p),
+            }
 
+        # Reading and decoding are both blocking and unbounded in CPU; a
+        # 50MB read plus a full decode on the event loop is a loop stall.
+        data = await asyncio.to_thread(p.read_bytes)
+        is_valid, fmt = self._validate_image_header(data)
+        if not is_valid:
+            return {
+                "valid": False,
+                "error": "magic_bytes_not_an_image",
+                "format": fmt,
+                "size_bytes": size_bytes,
+                "path": str(p),
+                "structurally_verified": False,
+            }
+
+        admission = await asyncio.to_thread(_structural_image_check, data, fmt)
+        result: Dict[str, Any] = admission.to_dict()
+        result.update(size_bytes=size_bytes, path=str(p))
+        if not admission.ok:
+            result["error"] = admission.reason
         return result
 
     @staticmethod
     def _validate_image_header(data: bytes) -> tuple[bool, str]:
-        """Check image magic bytes."""
-        if len(data) < 8:
+        """Check image magic bytes — a cheap prefilter, not a validation.
+
+        This answers "could this plausibly be an image", and nothing more.
+        Anything persisted must also clear ``_structural_image_check``.
+
+        The WEBP rule previously appeared twice: once correctly as
+        ``RIFF`` + ``WEBP`` at offset 8, and once as a bare ``data[8:12] ==
+        b"WEBP"`` that matched FIRST. Any file at all whose ninth through
+        twelfth bytes spelled WEBP was therefore admitted as an image
+        regardless of what the rest of it was.
+        """
+        if len(data) < 12:
             return False, "unknown"
-        if data[:2] == b"\xff\xd8":
+        if data[:3] == b"\xff\xd8\xff":
             return True, "jpeg"
         if data[:8] == b"\x89PNG\r\n\x1a\n":
             return True, "png"
-        if data[8:12] == b"WEBP":
-            return True, "webp"
-        if data[:4] == b"GIF8":
-            return True, "gif"
         if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
             return True, "webp"
-        # BMP
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return True, "gif"
         if data[:2] == b"BM":
             return True, "bmp"
         return False, "unknown"

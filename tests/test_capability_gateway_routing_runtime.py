@@ -4,6 +4,8 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import base64
+
 import pytest
 
 from core.capabilities.browser_controller import BrowserController
@@ -105,7 +107,16 @@ async def test_browser_search_fetch_uses_network_gateway(monkeypatch) -> None:
 async def test_web_asset_download_uses_network_and_file_gateways(monkeypatch, tmp_path) -> None:
     from core.capabilities import web_asset_handler as module
 
-    png = b"\x89PNG\r\n\x1a\n" + (b"0" * 256)
+    # A genuine 1x1 PNG, not a magic-byte stub. The old fixture was
+    # b"\x89PNG\r\n\x1a\n" + 256 zero bytes, which is not a decodable image
+    # — it only passed while download_image validated nothing but the
+    # prefix. This test is about gateway ROUTING, so it needs a payload
+    # that survives admission for the reason a real download would.
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAP0lEQVR4"
+        "nO2WOQoAQAgDRxC2kPz/uz5isRtIL0iOKeCROzUTOFR7AF8UXYRBi1WB"
+        "bToODk4mUkUEL0TH/LhgAbhlNp+Pd29NAAAAAElFTkSuQmCC"
+    )
     network = FakeNetworkGateway(png)
     writer = FakeFileWriteGateway()
     monkeypatch.setattr(module, "get_network_gateway", lambda: network)
