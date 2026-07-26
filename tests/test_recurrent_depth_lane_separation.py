@@ -1,0 +1,92 @@
+"""The interactive lane and the training lane resolve depth independently.
+
+2026-07-26: the live interactive 32B lane defaulted to 2 recurrent loops. This
+pins that turning that default off does NOT reach the training or RLC lanes,
+and that flipping the env turns it back on when a trained checkpoint lands.
+"""
+
+import pytest
+
+import core.brain.llm.recurrent_depth as rd
+from core.brain.llm.recurrent_depth import _get_lane_defaults, resolve_loops_for_model
+
+pytestmark = pytest.mark.unit
+
+
+class _Inner:
+    def __init__(self, layers: int) -> None:
+        self.layers = [object()] * layers
+
+
+class _Model:
+    def __init__(self, layers: int) -> None:
+        self.model = _Inner(layers)
+
+
+def _clear(monkeypatch):
+    for name in (
+        "AURA_RECURRENT_LOOPS",
+        "AURA_RECURRENT_LOOPS_72B",
+        "AURA_RECURRENT_LOOPS_32B",
+        "AURA_RECURRENT_LOOPS_14B",
+        "AURA_RECURRENT_LOOPS_SMALL",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_the_interactive_32b_lane_defaults_to_the_identity_pass(monkeypatch):
+    _clear(monkeypatch)
+    assert resolve_loops_for_model(_Model(64)) == 1
+    assert _get_lane_defaults(64)[0] == 1
+
+
+def test_the_training_lane_still_gets_two_loops(monkeypatch):
+    """scripts/train_with_recurrent_depth.py sets AURA_RECURRENT_LOOPS=2
+    before calling apply_for_model, and that override is read FIRST — ahead
+    of any profile default. Training is unaffected by the interactive default.
+    """
+    _clear(monkeypatch)
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS", "2")
+    assert resolve_loops_for_model(_Model(64)) == 2
+
+
+def test_the_training_script_still_requests_depth():
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "scripts" / "train_with_recurrent_depth.py"
+    text = source.read_text(encoding="utf-8")
+    assert 'setdefault("AURA_RECURRENT_LOOPS", "2")' in text, (
+        "the training lane must keep asking for depth explicitly rather than "
+        "inheriting the interactive default"
+    )
+
+
+def test_depth_returns_the_moment_a_trained_checkpoint_earns_it(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "2")
+    assert resolve_loops_for_model(_Model(64)) == 2
+
+
+def test_the_parent_health_mirror_agrees_with_the_worker(monkeypatch):
+    """Both sides must resolve the same number, or the lane reports a
+    readiness blocker for running the pass that is actually correct."""
+    from core.brain.llm.mlx_client import _expected_recurrent_loops_from_model_path
+
+    _clear(monkeypatch)
+    path = "/models/Aura-32B-crsm-closeout"
+    assert _expected_recurrent_loops_from_model_path(path) == resolve_loops_for_model(
+        _Model(64)
+    )
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "2")
+    assert _expected_recurrent_loops_from_model_path(path) == resolve_loops_for_model(
+        _Model(64)
+    )
+
+
+def test_the_latent_cortex_does_not_depend_on_the_patch_default():
+    """The RLC borrows cache discipline helpers, not the profile table."""
+    import core.brain.llm.latent_cortex.recurrence as rlc
+
+    for helper in ("_snapshot_recurrent_caches", "_restore_recurrent_caches"):
+        assert hasattr(rd, helper)
+        assert getattr(rlc, helper) is getattr(rd, helper)

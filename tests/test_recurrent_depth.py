@@ -47,8 +47,15 @@ def test_snapshot_fails_loud_on_unsupported_cache():
 
 def test_lane_defaults_cover_real_model_sizes():
     """Qwen2.5-32B has 64 layers; Qwen2.5-72B has 80. Both must land in
-    the intended runtime envelopes for interactive use."""
-    assert _get_lane_defaults(64)[0] >= 2, "32B (64 layers) must map to a looped lane"
+    the intended runtime envelopes for interactive use.
+
+    Every interactive lane defaults to the identity pass. Looping layers the
+    weights were not trained to loop is not more thinking — measured live
+    2026-07-26, it returned "Do product of multiple exponent term simplify
+    reflexion" to an ordinary question. Depth is opt-in per lane via
+    AURA_RECURRENT_LOOPS_* until a trained checkpoint beats the identity pass.
+    """
+    assert _get_lane_defaults(64)[0] == 1, "32B (64 layers) must default to the identity pass"
     assert _get_lane_defaults(80)[0] == 1, "72B (80 layers) should default to a single pass for live solver turns"
     # And the small-model lanes must be standard-pass (no unnecessary cost).
     assert _get_lane_defaults(28)[0] == 1, "14B (28-40 layers) should be standard"
@@ -107,7 +114,9 @@ def test_recurrent_depth_rejects_unsafe_fraction_override(monkeypatch):
 
     monkeypatch.setenv("AURA_RECURRENT_PRELUDE", "0.95")
     monkeypatch.delenv("AURA_RECURRENT_LOOPS", raising=False)
-    monkeypatch.delenv("AURA_RECURRENT_LOOPS_32B", raising=False)
+    # The fraction is only consulted once depth is actually requested; the
+    # 32B lane now defaults to the identity pass, so ask for depth explicitly.
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "2")
 
     with pytest.raises(RuntimeError, match="AURA_RECURRENT_PRELUDE"):
         rd.apply_for_model(_Model())

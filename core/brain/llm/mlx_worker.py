@@ -405,6 +405,7 @@ def _apply_surface_generation_controls(
             state["recurrent_runtime_loops_applied"] = loops
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             state["apply_errors"].append(f"recurrent_clamp:{type(exc).__name__}")
+            state["recurrent_clamp_failed"] = True
             _record_mlx_degradation(
                 exc,
                 action="recorded recurrent-depth clamp failure for fail-closed surface admission",
@@ -412,6 +413,25 @@ def _apply_surface_generation_controls(
             )
             logger.warning("Surface recurrent-depth clamp failed: %s", exc)
 
+    # What a user-visible decode ACTUALLY ran with. Every diagnosis of a bad
+    # reply on 2026-07-26 stalled here: the receipt carried these numbers but
+    # nothing put them where a live log would show them, so "the clamp is
+    # applied" and "the clamp silently no-opped" looked identical from outside.
+    if bool(job.get("clean_user_surface_contract", False)):
+        logger.info(
+            "🎚️ [WORKER] Surface decode: steering α=%s (engine α=%s), "
+            "recurrent loops=%s (was %s, depth_present=%s)%s",
+            state.get("surface_alpha_applied"),
+            getattr(engine, "_alpha", None),
+            state.get("recurrent_runtime_loops_applied"),
+            state.get("recurrent_runtime_loops_before"),
+            state.get("recurrent_inner") is not None,
+            (
+                " APPLY_ERRORS=" + ",".join(state.get("apply_errors") or [])
+                if state.get("apply_errors")
+                else ""
+            ),
+        )
     return state
 
 

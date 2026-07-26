@@ -328,7 +328,13 @@ def _expected_recurrent_loops_from_model_path(model_path: str) -> int:
     if any(token in lowered for token in ("72b", "solver")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_72B", 1)
     if any(token in lowered for token in ("32b", "cortex", "zenith")):
-        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_32B", 2)
+        # Mirrors MODEL_PROFILE_DEFAULTS in core/brain/llm/recurrent_depth.py,
+        # which carries the measurement this default rests on. Both were 2, so
+        # the parent ALSO marked the lane required=True at 2 loops — meaning a
+        # correct identity pass would have been reported as a readiness
+        # blocker. Depth stays opt-in on both sides until a trained recurrent
+        # checkpoint beats the identity pass.
+        return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_32B", 1)
     if any(token in lowered for token in ("14b", "24b", "40b")):
         return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_14B", 1)
     return _read_recurrent_loop_env("AURA_RECURRENT_LOOPS_SMALL", 1)
