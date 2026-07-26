@@ -434,6 +434,126 @@ class TestRetrievalIsWiredForReal:
             reset_for_test()
 
 
+class TestEffortGradingPathIsWired:
+    """The gap that made cognition.effort inert: registered and recording, but
+    permanently unpromotable because nothing ever reported a verifier grade.
+
+    These pin the contract at the reporting site rather than the resolver: an
+    independently graded episode reaches note_grade, an ungraded one does not.
+    """
+
+    @staticmethod
+    def _report(verifier_guidance, episode_id="ep-effort-1"):
+        """Run the service's grading step over one episode's receipt."""
+        from core.brain.latent_cortex_service import _controller_outcome
+        from core.ontogeny.control_points import get_effort_resolver
+
+        score, checked, _passed, _reason = _controller_outcome(verifier_guidance)
+        if episode_id and checked:
+            get_effort_resolver().note_grade(episode_id, verified_score=score)
+        return checked
+
+    def test_an_independently_graded_episode_reaches_the_resolver(self):
+        from core.ontogeny.control_points import get_effort_resolver, reset_for_test
+
+        reset_for_test()
+        try:
+            checked = self._report(
+                {"best_score": 0.82, "outcome_checked": True, "outcome_passed": True}
+            )
+            assert checked is True
+            assert get_effort_resolver().report()["pending_grades"] == 1
+        finally:
+            reset_for_test()
+
+    def test_an_ungraded_episode_reports_nothing_and_stays_unobserved(self):
+        """No verifier grade must leave the decision UNOBSERVED — not taught
+        from latency, convergence, or the answer's own confidence."""
+        from core.ontogeny.control_points import get_effort_resolver, reset_for_test
+
+        reset_for_test()
+        try:
+            # A high candidate-local score with NO independent grade.
+            checked = self._report(
+                {
+                    "best_score": 0.97,
+                    "outcome_checked": False,
+                    "outcome_reason": "task_ground_truth_unavailable",
+                }
+            )
+            assert checked is False
+            assert get_effort_resolver().report()["pending_grades"] == 0
+        finally:
+            reset_for_test()
+
+    def test_a_verified_failure_is_still_a_grade(self):
+        """A verifier saying the answer was wrong teaches that the effort was
+        insufficient; it is evidence, not an absence of evidence."""
+        from core.ontogeny.control_points import get_effort_resolver, reset_for_test
+        from core.ontogeny.experience import OutcomeKind
+
+        reset_for_test()
+        try:
+            episode = _episode("cognition.effort", "lean")
+            assert self._report(
+                {"best_score": 0.11, "outcome_checked": True, "outcome_passed": False},
+                episode_id=episode.episode_id,
+            ) is True
+            outcome = get_effort_resolver().resolve(episode)
+            assert outcome is not None
+            assert outcome.kind is OutcomeKind.FAILURE
+        finally:
+            reset_for_test()
+
+    def test_the_service_grades_effort_outside_the_controller_branch(self):
+        """The effort choice is made on every episode, so it must be graded on
+        every episode a verifier graded — not only the execution-controller
+        ones. Structural: the note_grade call must not sit under any
+        `controller_decision`-gated branch."""
+        import ast
+        import inspect
+        import textwrap
+
+        from core.brain import latent_cortex_service
+
+        src = textwrap.dedent(
+            inspect.getsource(latent_cortex_service.LatentCortexService.deep_reason)
+        )
+        tree = ast.parse(src)
+
+        def _mentions_controller_decision(node) -> bool:
+            return any(
+                isinstance(n, ast.Name) and n.id == "controller_decision"
+                for n in ast.walk(node)
+            )
+
+        def _find(node, guarded: bool) -> list[bool]:
+            found = []
+            for child in ast.iter_child_nodes(node):
+                if (
+                    isinstance(child, ast.Attribute)
+                    and child.attr == "note_grade"
+                ):
+                    found.append(guarded)
+                child_guarded = guarded or (
+                    isinstance(child, ast.If) and _mentions_controller_decision(child.test)
+                )
+                # An If's own test is not inside the branch body.
+                if isinstance(child, ast.If):
+                    for stmt in [*child.body, *child.orelse]:
+                        found.extend(_find(stmt, child_guarded))
+                    found.extend(_find(child.test, guarded))
+                else:
+                    found.extend(_find(child, child_guarded))
+            return found
+
+        guards = _find(tree, False)
+        assert guards, "no note_grade call found in deep_reason — grading path is missing"
+        assert not any(guards), (
+            "effort grading must not be nested inside a controller_decision-gated branch"
+        )
+
+
 class TestHedgeDetectionIsLocal:
     """Two false passes the naive check produced, both worth a test."""
 

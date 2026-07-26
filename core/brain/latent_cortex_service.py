@@ -3975,6 +3975,37 @@ class LatentCortexService:
             self._failure_streak = 0
             self._last_refusal = ""
             self._last_success_at = time.time()
+            # The grading path for cognition.effort. Until this existed the
+            # control point was registered, recording, and permanently
+            # unpromotable: nothing ever called note_grade(), so every effort
+            # decision resolved UNOBSERVED. It reports the SAME independently
+            # graded outcome the bandit is allowed to learn from — a verifier's
+            # judgement of the answer — and nothing else. If no verifier graded
+            # this episode (outcome_checked is False), nothing is reported and
+            # the decision stays honestly UNOBSERVED rather than being taught
+            # from latency, convergence, or the answer's own confidence.
+            #
+            # Deliberately outside the controller branch below: the effort
+            # choice is made on every episode, so it is graded on every episode
+            # a verifier actually graded, not only on the ones that also took
+            # the execution-controller path.
+            effort_episode_id = str(budget.get("ontogeny_episode") or "")
+            if effort_episode_id:
+                try:
+                    effort_score, effort_checked, _passed, _reason = _controller_outcome(
+                        result_receipt.get("verifier_guidance")
+                    )
+                    if effort_checked:
+                        from core.ontogeny.control_points import get_effort_resolver
+
+                        get_effort_resolver().note_grade(
+                            effort_episode_id, verified_score=effort_score
+                        )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "latent_cortex_service", exc, severity="debug",
+                        action="effort decision left ungraded for this episode",
+                    )
             # Controller learning accepts only an independently graded task
             # outcome. Candidate-local arithmetic, syntax, facet, and
             # grounding scores still steer this episode, but cannot become a
