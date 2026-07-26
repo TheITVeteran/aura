@@ -35,6 +35,11 @@ from core.runtime.structured_input import analyze_prompt_shape
 
 logger = logging.getLogger("Aura.LatentCortexService")
 
+#: Depth multipliers for the ontogeny effort choice, mirrored here so the
+#: allocation path costs no import. Kept in step with
+#: ``core.ontogeny.control_points.EFFORT_MULTIPLIER``, which is the contract.
+_EFFORT_MULTIPLIER = {"lean": 0.75, "standard": 1.0, "deep": 1.3}
+
 # Explicit flag vocabularies. Anything outside both is a configuration
 # error, not a silent activation (CP126 d9a04e05).
 _TRUTHY_FLAG_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
@@ -276,6 +281,55 @@ class LatentCortexService:
         adjusted = min(1.0, uncertainty + self._NOVELTY_EFFORT_WEIGHT * excess)
         return adjusted, novelty
 
+    def _effort_choice(
+        self, *, stakes: float, uncertainty: float, novelty: float | None,
+        foreground: bool, model_parameter_count: int,
+    ) -> tuple[str, str | None]:
+        """Ask the organ how hard to think. Returns (effort, episode_id).
+
+        Unlike novelty — which is a measurement and needs no permission — this
+        is a learned *choice*, so it goes through the full ladder and returns
+        the incumbent's "standard" until a head has earned otherwise. It is
+        also the control point that is hardest to grade honestly: whether a
+        depth was right is only answerable once a verifier has graded the
+        answer, which happens elsewhere and often not at all. The resolver
+        refuses every proxy for that, so this may sit unpromoted indefinitely.
+        That is the design working, not the design failing.
+        """
+        try:
+            import math as _math
+
+            from core.ontogeny.control_points import COGNITION_EFFORT
+            from core.ontogeny.service import get_ontogeny
+
+            angle = 2.0 * _math.pi * (time.localtime().tm_hour / 24.0)
+            verdict = get_ontogeny().consider(
+                COGNITION_EFFORT,
+                {
+                    "stakes": float(stakes),
+                    "uncertainty": float(uncertainty),
+                    "novelty": float(novelty if novelty is not None else 0.5),
+                    "body_pressure": float(self._body_pressure()),
+                    "foreground": 1.0 if foreground else 0.0,
+                    "resident_scale": 1.0 if model_parameter_count >= 20_000_000_000 else 0.0,
+                    "hour_of_day_sin": _math.sin(angle),
+                    "hour_of_day_cos": _math.cos(angle),
+                },
+                incumbent_choice="standard",
+                seed=f"effort:{stakes:.3f}:{uncertainty:.3f}:{time.time():.3f}",
+                # High-stakes thinking is never explored with. The exploration
+                # slice buys evidence with latency, not with the quality of an
+                # answer somebody is waiting on.
+                stakes=max(float(stakes), 0.75 if foreground else 0.0),
+            )
+            return verdict.choice, verdict.episode_id
+        except (ImportError, RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            record_degradation(
+                "latent_cortex_service", exc, severity="debug",
+                action="effort left at the allocator's own depth",
+            )
+            return "standard", None
+
     def allocate(
         self,
         *,
@@ -294,6 +348,10 @@ class LatentCortexService:
         stakes = self._unit_signal(stakes, name="stakes")
         uncertainty = self._unit_signal(uncertainty, name="uncertainty")
         uncertainty, novelty = self._novelty_adjusted_uncertainty(uncertainty)
+        effort, effort_episode = self._effort_choice(
+            stakes=stakes, uncertainty=uncertainty, novelty=novelty,
+            foreground=foreground_request, model_parameter_count=model_parameter_count,
+        )
         try:
             pressure = self._unit_signal(self._body_pressure(), name="body_pressure")
         except ValueError:
@@ -309,7 +367,11 @@ class LatentCortexService:
             raise ValueError("foreground_request must be a boolean")
         headroom = 1.0 - 0.7 * pressure
 
-        max_steps = max(2, min(16, round((4 + 10 * uncertainty) * headroom)))
+        # The organ's effort choice scales depth inside the same hard bounds
+        # the allocator has always enforced. It may tune how hard she thinks;
+        # it may not remove the floor or raise the ceiling.
+        effort_scale = _EFFORT_MULTIPLIER.get(effort, 1.0)
+        max_steps = max(2, min(16, round((4 + 10 * uncertainty) * headroom * effort_scale)))
         n_branches = 1 if stakes < 0.3 else (3 if stakes > 0.75 and headroom > 0.6 else 2)
         intensity = max(stakes, uncertainty)
         latent_opt_steps = max(1, min(4, round((1 + 3 * intensity) * headroom)))
@@ -359,6 +421,8 @@ class LatentCortexService:
             # was deeper, not just observed to have been.
             "effective_uncertainty": round(uncertainty, 4),
             "novelty": round(novelty, 4) if novelty is not None else None,
+            "effort": effort,
+            "ontogeny_episode": effort_episode,
         }
         allocation_profile = "general_full_stack_v1"
         if foreground_request and model_parameter_count >= 20_000_000_000:

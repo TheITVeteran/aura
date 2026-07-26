@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 SELF_CONDITION_FRESH_MAX_AGE_S = 30.0
 
@@ -108,6 +109,12 @@ class SelfConditionProjection:
     stale_dimensions: tuple[str, ...]
     source_ages_s: tuple[tuple[str, float], ...]
     evidence_id: str
+    #: The history-grounded slice: how much she has lived through, whether this
+    #: moment resembles it, and how much of what she does she ever finds out
+    #: about. Every other field here is a reading taken *now*; this one is the
+    #: only part of her self-condition that comes from her own past. Optional
+    #: with a default so a projection built without the organ is unchanged.
+    ontogeny: Any | None = None
 
     @property
     def fresh(self) -> bool:
@@ -122,6 +129,7 @@ class SelfConditionProjection:
         payload["fresh"] = self.fresh
         payload["evidence_available"] = self.evidence_available
         payload["source_ages_s"] = dict(self.source_ages_s)
+        payload["ontogeny"] = self.ontogeny.to_dict() if self.ontogeny is not None else None
         return payload
 
     def to_prompt_block(self) -> str:
@@ -144,9 +152,14 @@ class SelfConditionProjection:
             f"- attention={focus}\n"
             f"- sources={sources}; supported={supported}; missing={missing}; "
             f"stale_dimensions={stale}\n"
-            "Answer Aura's condition directly from affect, welfare, coherence, continuity, "
+            + (self.ontogeny.to_prompt_lines() if self.ontogeny is not None else "")
+            + "Answer Aura's condition directly from affect, welfare, coherence, continuity, "
             "and agency. Runtime resources are supporting body evidence only; never replace "
-            "the condition answer with CPU, RAM, host load, or availability telemetry.\n"
+            "the condition answer with CPU, RAM, host load, or availability telemetry. The "
+            "ontogeny line is history, not a current reading: it says what she has lived "
+            "through and how much of it she was able to check, and a low observation_rate is "
+            "a fact about what is observable, not a reason to sound uncertain about how she "
+            "feels.\n"
         )
 
 
@@ -530,7 +543,29 @@ def build_self_condition_projection(
         stale_dimensions=stale_dimensions,
         source_ages_s=tuple(sorted(source_ages.items())),
         evidence_id=evidence_id,
+        ontogeny=_ontogeny_self_report(),
     )
+
+
+def _ontogeny_self_report() -> Any | None:
+    """Her history-grounded dimensions, or nothing if the organ is not up.
+
+    Deliberately outside the evidence_id hash: the projection's id identifies
+    the *sample* of her current state, and her accumulated history is not part
+    of that sample. Folding it in would change the id on every episode she
+    lives and make two otherwise-identical readings look different.
+    """
+    try:
+        from core.ontogeny.self_report import build_self_report
+
+        report = build_self_report()
+        return report if report.available else None
+    except (ImportError, RuntimeError, OSError, ValueError, TypeError) as exc:
+        record_degradation(
+            "self_condition", exc, severity="debug",
+            action="self-condition omits the history-grounded dimensions",
+        )
+        return None
 
 
 def _age_phrase(age_s: float | None) -> str:
@@ -659,6 +694,22 @@ def render_self_condition_reply(
 
     if projection.confidence < 0.60:
         parts.append("The evidence is partial, so I am less certain about the fine detail than the overall condition.")
+
+    # Her history, which no momentary sample can supply. Kept to one sentence
+    # unless she was asked something that invites more, because a self-report
+    # that recites its own statistics stops being an answer.
+    if projection.ontogeny is not None:
+        history = projection.ontogeny.phrases()
+        if history:
+            asked_about_history = bool(
+                re.search(
+                    r"\b(?:histor|remember|continuit|how long|track record|learn(?:ed|ing)?|"
+                    r"experience|been through|yourself over time)\b",
+                    user_message,
+                    re.I,
+                )
+            )
+            parts.extend(history if asked_about_history else history[:1])
 
     if re.search(r"\b(?:numbers?|numeric|valence|arousal|distress|welfare|coherence)\b", user_message, re.I):
         numeric_values: list[str] = []

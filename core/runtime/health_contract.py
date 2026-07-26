@@ -1225,6 +1225,13 @@ def _runtime_integrity_block() -> dict[str, Any]:
                 for k in ("step_count", "train_steps", "mean_surprise", "last_loss")
             },
         }
+        from core.ontogeny.conclusion import get_verbalization_ledger
+
+        verbalization = get_verbalization_ledger().report()
+        block["ontogeny"]["verbalization"] = {
+            k: verbalization[k]
+            for k in ("checked", "with_violations", "overstatements", "faithful_rate")
+        }
     except Exception as exc:  # noqa: BLE001 — each health add-on is isolated
         block["ontogeny_error"] = repr(exc)
     try:

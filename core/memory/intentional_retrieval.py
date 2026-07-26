@@ -231,6 +231,7 @@ class IntentionalRetriever:
     def retrieve(self, intent: RetrievalIntent) -> RetrievalResult:
         """Execute a plan across registered stores; merge + rank; fault-isolated per store."""
         plan = self.plan(intent)
+        breadth_episode = self._choose_breadth(intent, plan)
         query = intent.effective_query()
         hits: list[MemoryHit] = []
         queried: list[str] = []
@@ -253,8 +254,81 @@ class IntentionalRetriever:
                 missing.append(store)
 
         merged = self._merge(hits, intent.limit)
+        self._grade_breadth(breadth_episode, merged)
         return RetrievalResult(hits=merged, plan=plan, stores_queried=queried,
                                stores_missing=missing)
+
+    # ── ontogeny: how wide to cast the net ────────────────────────────────
+
+    def _choose_breadth(self, intent: RetrievalIntent, plan: RetrievalPlan) -> str | None:
+        """Let the organ pick a breadth, and reshape the plan to match.
+
+        Retrieval breadth is an unusually good control point: the decision is
+        discrete, the consequence is visible in the same breath, and being
+        wrong costs a little latency rather than anything that has to be
+        unwound. The incumbent is whatever the hand-written weighting already
+        chose — "balanced" — and the organ starts by agreeing with it.
+        """
+        try:
+            from core.ontogeny.control_points import (
+                BREADTH_THRESHOLD_DELTA,
+                MEMORY_RETRIEVAL,
+                novelty_now,
+                retrieval_features,
+            )
+            from core.ontogeny.service import get_ontogeny
+
+            verdict = get_ontogeny().consider(
+                MEMORY_RETRIEVAL,
+                retrieval_features(
+                    limit=intent.limit, kind=intent.kind,
+                    risk_sensitive=intent.risk_sensitive,
+                    need_failures=intent.need_failures, need_tools=intent.need_tools,
+                    time_horizon=intent.time_horizon, query=intent.effective_query(),
+                    stores_available=len(self._adapters), novelty=novelty_now(),
+                ),
+                incumbent_choice="balanced",
+                seed=f"{intent.kind}:{intent.effective_query()[:64]}:{intent.limit}",
+                # Risk-sensitive retrieval is above the exploration ceiling: a
+                # thin recall on an irreversible action is not a cheap mistake.
+                stakes=0.9 if intent.risk_sensitive else 0.35,
+                context={"kind": intent.kind},
+            )
+        except (ImportError, RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            record_degradation("intentional_retrieval", exc, severity="debug",
+                               action="retrieval breadth left to the incumbent plan")
+            return None
+
+        delta = BREADTH_THRESHOLD_DELTA.get(verdict.choice, 0.0)
+        if delta:
+            threshold = max(0.05, min(0.9, self._threshold + delta))
+            reweighted = {s: w for s, w in plan.weights.items() if w >= threshold}
+            # Never empty the plan: a breadth choice may narrow retrieval, not
+            # abolish it. The highest-weighted store always survives.
+            if not reweighted and plan.weights:
+                best = max(plan.weights.items(), key=lambda kv: kv[1])
+                reweighted = {best[0]: best[1]}
+            if reweighted:
+                plan.weights = dict(
+                    sorted(reweighted.items(), key=lambda kv: kv[1], reverse=True)
+                )
+                plan.allocations = self._allocate(plan.weights, intent.limit)
+                plan.rationale.append(f"ontogeny breadth={verdict.choice}")
+        return verdict.episode_id
+
+    @staticmethod
+    def _grade_breadth(episode_id: str | None, merged: list[MemoryHit]) -> None:
+        """Report what came back. Immediate, at the call site, no proxy."""
+        if not episode_id:
+            return
+        try:
+            from core.ontogeny.control_points import get_retrieval_resolver
+
+            best = max((float(getattr(h, "score", 0.0)) for h in merged), default=0.0)
+            get_retrieval_resolver().note_result(episode_id, hits=len(merged), best_score=best)
+        except (ImportError, RuntimeError, ValueError, TypeError, AttributeError) as exc:
+            record_degradation("intentional_retrieval", exc, severity="debug",
+                               action="retrieval outcome not reported to ontogeny")
 
     @staticmethod
     def _normalize(raw: Iterable[Any], store: str, weight: float) -> list[MemoryHit]:

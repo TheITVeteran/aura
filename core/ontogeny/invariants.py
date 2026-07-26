@@ -157,6 +157,39 @@ def _unobserved_has_no_utility() -> Iterator[Violation]:
         )
 
 
+@invariant(
+    "ontogeny.verbalization_preserves_accepted_claims",
+    scope="ontogeny",
+    owner="core/ontogeny/conclusion.py",
+    description="speaking a conclusion may not assert more than the conclusion accepted",
+)
+def _verbalization_preserves_claims() -> Iterator[Violation]:
+    """The quiet failure: a hedge dropped between deciding and speaking.
+
+    Omissions are reported by the checker but tolerated here — a response that
+    leaves something out is incomplete, not dishonest. An *overstatement* is
+    different in kind: it says something she never accepted, in her own voice,
+    and nothing downstream can tell that it was never a finding.
+    """
+    try:
+        from core.ontogeny.conclusion import get_verbalization_ledger
+
+        overstatements = get_verbalization_ledger().recent_overstatements()
+    except (ImportError, RuntimeError, ValueError, TypeError):
+        return
+    for entry in overstatements:
+        offending = [v for v in entry["violations"] if v["kind"] == "overstated"]
+        yield Violation(
+            subject=f"conclusion/{entry['conclusion_id']}",
+            message=(
+                f"{len(offending)} claim(s) stated more firmly than accepted: "
+                + "; ".join(v["subject"] for v in offending[:2])
+            ),
+            remedy="keep the hedge on tentative and speculative claims, or raise the "
+                   "claim's confidence in the conclusion where the evidence supports it",
+        )
+
+
 def install() -> list[str]:
     """Import-time registration is enough; this names them for the boot report."""
     return [
@@ -164,6 +197,7 @@ def install() -> list[str]:
         "ontogeny.authority_implies_observation",
         "ontogeny.authority_implies_exploration",
         "ontogeny.unobserved_carries_no_utility",
+        "ontogeny.verbalization_preserves_accepted_claims",
     ]
 
 
