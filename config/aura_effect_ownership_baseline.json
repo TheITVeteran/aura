@@ -6681,7 +6681,15 @@
       "scope": "<module>.TensionEngine._save"
     },
     {
-      "callee": "PERSIST_PATH.parent.mkdir",
+      "callee": "self._persist_path.rename",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/agi/hierarchical_planner.py",
+      "scope": "<module>.HierarchicalPlanner._quarantine"
+    },
+    {
+      "callee": "self._persist_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -7263,6 +7271,14 @@
       "count": 1,
       "path": "core/autonomy/self_modification.py",
       "scope": "<module>.AutonomousSelfModification.classify_target"
+    },
+    {
+      "callee": "self.data_path.rename",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/causal_world_model.py",
+      "scope": "<module>.CausalWorldModel._quarantine"
     },
     {
       "callee": "self.data_path.parent.mkdir",
@@ -13734,6 +13750,14 @@
       "category": "subprocess_gateway",
       "count": 1,
       "path": "core/actuators/git_pkg_actuators.py",
+      "scope": "<module>.PackageInstallActuator._installed_version"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/actuators/git_pkg_actuators.py",
       "scope": "<module>.PackageInstallActuator.execute"
     },
     {
@@ -13745,7 +13769,7 @@
       "scope": "<module>.ProcessSupervisorActuator._handle_spawn"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
       "canonical_owner": false,
       "category": "subprocess_gateway",
       "count": 1,
@@ -15002,6 +15026,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "2467984fb79cc27341ec0cbc62f3febe64daf21ab8c2a264b8c6537a36e41ea8",
+  "inventory_sha256": "b5b012d6c3d8ab67cdf43bd6940b16fb188747cf74a9bac82a3ee31ed6b5a90e",
   "schema_version": 1
 }

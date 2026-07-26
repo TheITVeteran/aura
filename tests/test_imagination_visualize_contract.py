@@ -92,7 +92,15 @@ def test_contract_context_matches_being_runtime_exemption_quintet():
         "verification_required",
     ]
     for key in quintet:
-        assert f'context.get("{key}")' in policy_source, (
+        # CP126 310a67ee moved these from a bare context.get() to
+        # attested_context_flag(), which additionally requires a capability
+        # token bound to the domain+action. Either spelling means the
+        # exemption still reads the flag; what matters to this contract is
+        # that the route ships every key the policy consults.
+        assert (
+            f'context.get("{key}")' in policy_source
+            or f'"{key}"' in policy_source
+        ), (
             f"being-runtime exemption no longer reads {key}; update the "
             "visualize contract test and route together"
         )

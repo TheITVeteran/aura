@@ -445,7 +445,7 @@ class AuthorityGateway:
                 or str(payload.get("provenance_source") or "").strip().lower() in {"user", "user_explicit"}
             )
         )
-        return {
+        context: dict[str, Any] = {
             "memory_type": memory_type_l,
             "memory_source": source_l,
             "memory_metadata": payload,
@@ -455,6 +455,81 @@ class AuthorityGateway:
             "high_risk_memory_write": high_risk,
             "objective": str(payload.get("objective") or payload.get("message") or content or "")[:400],
         }
+        # CP126 310a67ee made these flags require a capability token bound to
+        # domain+action, because a caller-supplied boolean is not authority.
+        # That was right, and nothing was ever issuing the token — so
+        # BeingRuntime logged "carried no capability token; ignoring it" on
+        # EVERY turn and every continuity write fell back to defer.
+        #
+        # Live 2026-07-26, once per exchange, all afternoon:
+        #   Context flag 'conversation_continuity' for
+        #   memory_write/continuity_memory_write carried no capability token
+        #
+        # The gateway is the approver: it has already established from evidence
+        # that this is a user-facing, non-high-risk interaction commit. That
+        # judgement is exactly what the token is supposed to attest, so the
+        # gateway mints one, short-lived and scoped to this write. The flag
+        # still cannot be self-granted by a caller — only the gateway can issue.
+        if continuity_write or explicit_observational_write:
+            token = cls._issue_continuity_capability(memory_type_l, source_l)
+            if token:
+                context["capability_token"] = token
+        return context
+
+    #: A continuity token covers one write, not a session.
+    CONTINUITY_TOKEN_TTL_S = 30.0
+
+    @classmethod
+    def _issue_gateway_capability(
+        cls,
+        *,
+        domain: str,
+        action: str,
+        scope: str,
+        unattested_action: str,
+    ) -> str:
+        """Mint a short-lived token attesting a gateway-approved decision."""
+        try:
+            from core.agency.capability_token import get_token_store
+
+            token = get_token_store().issue(
+                origin="authority_gateway",
+                scope=scope[:120],
+                ttl_seconds=cls.CONTINUITY_TOKEN_TTL_S,
+                domain=domain,
+                requested_action=action,
+                approver="authority_gateway",
+                parent_receipt="",
+            )
+            return str(getattr(token, "token", "") or "")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "authority_gateway",
+                exc,
+                severity="warning",
+                action=unattested_action,
+            )
+            return ""
+
+    @classmethod
+    def _issue_continuity_capability(cls, memory_type: str, source: str) -> str:
+        """Mint the token that backs a gateway-approved continuity write."""
+        return cls._issue_gateway_capability(
+            domain="memory_write",
+            action="continuity_memory_write",
+            scope=f"memory_write:{memory_type}:{source}",
+            unattested_action="continuity memory write proceeds unattested (falls back to defer)",
+        )
+
+    @classmethod
+    def _issue_state_continuity_capability(cls, origin: str, cause: str) -> str:
+        """Mint the token that backs a gateway-approved foreground state commit."""
+        return cls._issue_gateway_capability(
+            domain="state_mutation",
+            action="foreground_continuity_state",
+            scope=f"state_mutation:{origin}:{cause}",
+            unattested_action="foreground state commit proceeds unattested (falls back to defer)",
+        )
 
     @classmethod
     def _memory_preflight_domain(cls, memory_type: str, metadata: dict[str, Any] | None) -> str:
@@ -517,8 +592,8 @@ class AuthorityGateway:
             return IntentSource.USER
         return direct_source
 
-    @staticmethod
-    def _state_mutation_context(origin: str, cause: str) -> dict[str, Any]:
+    @classmethod
+    def _state_mutation_context(cls, origin: str, cause: str) -> dict[str, Any]:
         origin_l = str(origin or "").strip().lower().replace("-", "_")
         cause_l = str(cause or "").strip().lower()
         user_facing = _coerce_intent_source(origin_l) == IntentSource.USER
@@ -544,6 +619,19 @@ class AuthorityGateway:
                 or shutdown_checkpoint
             ),
         }
+        # Same defect as the continuity memory write above: BeingRuntime
+        # requires this flag to be backed by a capability token bound to
+        # state_mutation/foreground_continuity_state, and nothing ever issued
+        # one. Live 2026-07-26, once per exchange:
+        #   [VAULT-PROC] WARNING: Context flag 'foreground_continuity_state'
+        #   for state_mutation/foreground_continuity_state carried no
+        #   capability token; ignoring it.
+        # so foreground conversation state fell back to defer under pressure —
+        # exactly the outcome the flag exists to prevent.
+        if foreground_continuity:
+            token = cls._issue_state_continuity_capability(origin_l, cause_l)
+            if token:
+                context["capability_token"] = token
         try:
             from core.governance.recovery_authority import (
                 build_internal_recovery_context,

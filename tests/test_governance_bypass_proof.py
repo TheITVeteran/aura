@@ -312,7 +312,28 @@ def test_being_runtime_constrains_foreground_state_commit_instead_of_deferring()
         report_boundary=ReportBoundary(),
     )
 
+    from core.executive.authority_gateway import AuthorityGateway
+
+    # Built the way the runtime builds it. CP126 310a67ee requires this flag to
+    # be backed by a capability token bound to this domain+action, so a context
+    # assembled by hand proves nothing about the live path — the gateway is the
+    # approver and the only thing that may issue the token.
+    context = AuthorityGateway._state_mutation_context("chat_api", "cognitive_cycle")
+    assert context["foreground_continuity_state"] is True
+    assert context.get("capability_token"), "gateway must attest its own approval"
+
     policy = BeingRuntime().action_policy(
+        now,
+        domain="state_mutation",
+        priority=0.5,
+        context=context,
+    )
+
+    assert policy["outcome"] == "constrain"
+    assert "foreground_state_commit_constrained:not_deferred" in policy["constraints"]
+
+    # And the hardening still holds: the same flag, self-granted, is ignored.
+    unattested = BeingRuntime().action_policy(
         now,
         domain="state_mutation",
         priority=0.5,
@@ -322,9 +343,7 @@ def test_being_runtime_constrains_foreground_state_commit_instead_of_deferring()
             "state_cause": "cognitive_cycle",
         },
     )
-
-    assert policy["outcome"] == "constrain"
-    assert "foreground_state_commit_constrained:not_deferred" in policy["constraints"]
+    assert unattested["outcome"] == "defer"
 
 
 def test_initiative_blocked_without_will_approval_sync(refusing_will):
