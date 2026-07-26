@@ -189,6 +189,95 @@ class LatentCortexService:
         self._last_allocation: dict[str, Any] = {}
         logger.info("🧠 LatentCortexService initialized (Recursive Latent Cortex)")
 
+    @staticmethod
+    async def _capture_verified_replay(
+        *,
+        receipt: dict[str, Any],
+        private_evidence: Any,
+        objective: str,
+        output_text: Any,
+        output_tokens: Any,
+        output_quality: Any,
+    ) -> dict[str, Any]:
+        """Persist a proven local correction without blocking the event loop."""
+
+        replacement = receipt.get("answer_replacement")
+        if not (
+            isinstance(replacement, dict)
+            and replacement.get("decision") == "replace"
+        ):
+            return {
+                "schema": "aura.rlc.verified_replay_host.v1",
+                "status": "not_applicable",
+                "reason": "no_applied_verified_local_repair",
+                "learning_effect": "none",
+            }
+        if (
+            not isinstance(private_evidence, dict)
+            or not isinstance(output_text, str)
+            or not isinstance(output_tokens, list)
+            or not isinstance(output_quality, dict)
+        ):
+            return {
+                "schema": "aura.rlc.verified_replay_host.v1",
+                "status": "not_persisted",
+                "reason": "verified_repair_private_evidence_unavailable",
+                "learning_effect": "none",
+            }
+        try:
+            from core.brain.llm.latent_cortex.verified_replay_buffer import (
+                persist_runtime_verified_replay,
+                validate_verified_replay_receipt,
+            )
+
+            stored = await asyncio.to_thread(
+                persist_runtime_verified_replay,
+                receipt=receipt,
+                private_evidence=private_evidence,
+                objective=objective,
+                output_text=output_text,
+                output_tokens=output_tokens,
+                output_quality=output_quality,
+            )
+            stored = validate_verified_replay_receipt(stored)
+        except (
+            ImportError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            record_degradation(
+                "latent_cortex.verified_replay",
+                exc,
+                action=(
+                    "returned the verified answer but did not grant learning "
+                    "authority or persist an unverifiable repair trace"
+                ),
+                severity="warning",
+            )
+            return {
+                "schema": "aura.rlc.verified_replay_host.v1",
+                "status": "not_persisted",
+                "reason": f"{type(exc).__name__}",
+                "learning_effect": "none",
+            }
+        return {
+            "schema": "aura.rlc.verified_replay_host.v1",
+            "status": stored["status"],
+            "reason": "",
+            "learning_effect": "encrypted_verified_experience_retained",
+            "experience_sha256": stored["experience_sha256"],
+            "entry_sha256": stored["entry_sha256"],
+            "sequence": stored["sequence"],
+            "store_revision": stored["store_revision"],
+            "store_sha256": stored["store_sha256"],
+            "entry_count": stored["entry_count"],
+            "retired_count": stored["retired_count"],
+            "receipt_sha256": stored["receipt_sha256"],
+        }
+
     # ── Cognitive economy ───────────────────────────────────────────────
     @staticmethod
     def _unit_signal(value: Any, *, name: str) -> float:
@@ -4481,6 +4570,15 @@ class LatentCortexService:
                 failed["receipt"] = result_receipt
                 self._last_failure_receipt = result_receipt
                 return failed
+            result_receipt["verified_replay"] = await self._capture_verified_replay(
+                receipt=result_receipt,
+                private_evidence=private_answer_replacement,
+                objective=visible_objective,
+                output_text=result.get("text"),
+                output_tokens=result.get("tokens"),
+                output_quality=quality_receipt,
+            )
+            result["receipt"] = result_receipt
             self._ok_episodes += 1
             self._failure_streak = 0
             self._last_refusal = ""

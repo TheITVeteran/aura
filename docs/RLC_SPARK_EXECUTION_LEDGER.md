@@ -2741,10 +2741,89 @@ before those dependencies close is not admissible.
   remediation, admitted resident training, and powered equal-compute
   reasoning/frontier evidence. Final multi-hour soaks remain deferred until all
   shorter gates are green.
-- [ ] **SPARK-058 - Verified replay buffer.** Store initial failure, earliest
+- [x] **SPARK-058 - Verified replay buffer.** Store initial failure, earliest
   causal error, discriminating test, corrected transition, verified solution,
   error class, escape strategy, provenance, and privacy/governance disposition;
   reject unverifiable traces.
+
+  **CP394 implementation and evidence:** A repair becomes replay evidence only
+  after the worker's disagreement graph, diagnostic selection, local-repair
+  transaction, and confidence-bound answer replacement reconstruct on the
+  host; the replacement must be the selected branch's actually returned
+  output, pass the same deterministic verifier that refuted the original
+  atom, dominate the real final decode, and pass the parent product-quality
+  gate. The extractor rejects any earlier exact refutation on that branch, so
+  its "earliest causal error" field is measured rather than inferred from
+  request order.
+
+  The encrypted private training object contains the task objective, complete
+  initial failed candidate and failed atom, earliest invalidation frontier,
+  original and corrected same-verifier routes, preserved prefix, corrected
+  suffix and atom, exact returned solution and token binding, error class,
+  escape strategy, checkpoint/worker/episode/source provenance, and an
+  explicit privacy/governance disposition. It is therefore reusable by later
+  training work rather than being only an audit receipt. It grants no training
+  authority yet: records remain quarantined for the independent transfer and
+  contamination gates owned by SPARK-059 and SPARK-063.
+
+  BlackHole AES-256-GCM encrypts every private payload before persistence.
+  Public state contains only hashes, sizes, sequence metadata, retention
+  policy, and authenticated ciphertext. Encryption or key-provenance absence
+  fails before a file is created. Export and remote sync are denied. Durable
+  storage is canonical JSON, atomic through the governed latent-cortex
+  persistence owner, owner-private, no-follow, inode-stable on read, bounded
+  by both entry count and bytes, deduplicated, and hash chained. Retirement
+  preserves the last removed entry and a cumulative retirement commitment.
+  Invalid JSON, schema drift, public or private tampering, loose permissions,
+  symlinks, truncation, ciphertext authentication failure, chain breaks, or a
+  mismatched persistence receipt refuse overwrite instead of silently
+  resetting the learning history.
+
+  The live service invokes extraction and persistence through
+  `asyncio.to_thread`, then attaches a host receipt that distinguishes stored,
+  duplicate, not-applicable, and not-persisted outcomes. Optional learning
+  storage cannot block the event loop or turn an already verified answer into
+  a user-facing failure, but it also cannot fail silently or acquire learning
+  authority on failure.
+
+  Validation passes 53/53 focused replay, local-repair, answer-replacement, and
+  persistence tests and 219/219 affected engine, service-wiring, and
+  output-quality tests across the implementation campaign. On the final
+  rebased tree, the combined bounded latent/RLC and canonical file-read gateway
+  suite passes 1348/1348 with two intentional deselections. The
+  known quadratic action-calibration and campaign-journal stress files remain
+  separately assigned to SPARK-068 rather than being hidden inside this
+  result. Strict Ruff, bytecode compilation, and diff hygiene pass.
+
+  The all-line closeout audit mechanically enumerates 8,192 tracked files,
+  including 8,160 text files, 5,133 code files, and 1,698,770 code lines.
+  Production readiness, architecture dependency mapping, model-load ownership,
+  resource-observation ownership, and diff hygiene pass. The audit found one
+  new CP394 direct-read ownership violation; CP394 now delegates it to the
+  canonical stable file-read gateway, whose focused contracts pass. The
+  candidate is intentionally not represented as whole-repository closeout:
+  it is dirty before checkpointing, the checkout-local `.venv` lacks Ruff,
+  five inherited governance drifts and two stale baseline buckets remain, and
+  current semantic evidence covers 520/5,133 code files, leaving 4,582
+  unreviewed, 1,142 stale reviews, and 27 orphan reviews. The independent
+  20-criterion rubric passes 19/20 and withholds closure at the repository
+  security-scan criterion.
+
+  The enterprise ratchet remains non-green, but clean `origin/main` and the
+  CP394 candidate produce exactly identical counts: nine inherited baseline
+  regressions, including `placeholder_stub_mock` 20 > 13 and 46 actual
+  high/critical findings > 39. CP394 adds no enterprise finding and raises no
+  baseline.
+
+  Counting CP394 makes the total checkpoint record 636. The 640-920 forecast
+  remains, leaving approximately 4-284 records. Checkpoint-count completion is
+  approximately 69.1%-99.4%, with a midpoint planning estimate of 81.5%.
+  SPARK-058 proves confidential, durable, causally grounded replay capture; it
+  does not prove that replay training transfers, improves the resident 32B, or
+  reaches frontier performance. Next is SPARK-059's structured SFT and tool
+  traces. SPARK-051 remains open for answer-channel remediation, admitted
+  resident training, and powered equal-compute reasoning/frontier evidence.
+  Final multi-hour soaks remain deferred until all shorter gates are green.
 - [ ] **SPARK-059 - Structured SFT and tool traces.** Train logical forms,
   programs, proof steps, tool calls, tool-result interpretation, and local
   repair from executable, held-out, contamination-audited data.

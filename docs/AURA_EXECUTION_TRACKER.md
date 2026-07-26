@@ -29321,3 +29321,79 @@ SPARK-058's verified replay buffer. SPARK-051 remains separately open for
 answer-channel remediation, admitted resident training, and powered
 equal-compute reasoning/frontier evidence. Final multi-hour soaks remain
 deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-26-394: Encrypted Verified Replay
+
+SPARK-058 is complete. The live RLC service now retains a learning experience
+only when a local repair survives the complete causal answer path: worker
+disagreement and diagnostic receipts reconstruct, the original selected-branch
+atom is exactly refuted, the corrected transition passes the same deterministic
+verifier, the confidence interval dominates the actual final decode, the
+corrected text is the output actually returned, and the host product-quality
+gate passes. The extractor independently rejects any earlier exact refutation
+on the selected branch rather than calling request order an "earliest" error.
+
+The private replay object contains the encrypted task objective, initial failed
+candidate and atom, earliest causal frontier, discriminating before/after
+verifier routes, preserved prefix, corrected suffix and atom, exact verified
+solution and tokens, error class, escape strategy, checkpoint and worker
+identity commitments, source receipt lineage, and privacy/governance
+disposition. This is a usable future training object, not a metrics counter.
+It remains explicitly ineligible for training until the independent transfer,
+contamination, and held-out gates in SPARK-059 and SPARK-063 admit it.
+
+Every private byte is protected through the runtime BlackHole AES-256-GCM
+service before persistence. The public ledger contains commitments,
+authenticated ciphertext, and bounded metadata only; export and remote sync
+are denied. Missing encryption fails before file creation. The ledger uses
+canonical JSON, owner-private no-follow reads with stable inode checks, governed
+atomic replacement and readback, entry and byte ceilings, deduplication,
+sequence and hash-chain validation, and retirement tail/accumulator
+commitments. Corruption, loose permissions, symlinks, truncation, invalid
+schema, resealed public metadata, ciphertext authentication failure, or a
+mismatched durable-write receipt refuses overwrite.
+
+Persistence executes off the event loop. A host receipt discloses stored,
+duplicate, not-applicable, or not-persisted state. Failure to retain optional
+learning evidence does not discard an already verified answer, but it cannot
+silently become learning authority.
+
+Validation passes 53/53 focused replay, repair, replacement, and persistence
+tests and 219/219 affected engine, service-wiring, and output-quality tests
+across the implementation campaign. After rebasing onto the four concurrent
+`origin/main` checkpoints, the final combined bounded latent/RLC and canonical
+file-read gateway suite passes 1348/1348 with two intentional deselections.
+The known quadratic action-calibration and campaign-journal stress files remain
+explicit SPARK-068 work and are not represented as green. Strict Ruff,
+bytecode compilation, and diff hygiene pass.
+
+The all-line closeout audit mechanically enumerates 8,192 tracked files,
+including 8,160 text files, 5,133 code files, and 1,698,770 code lines.
+Production readiness, architecture dependency mapping, model-load ownership,
+resource-observation ownership, and diff hygiene pass. The audit exposed one
+new CP394 direct-read ownership violation; CP394 now delegates that operation
+to the canonical stable file-read gateway, and the focused gateway contracts
+pass after the correction. Whole-repository closeout remains correctly red:
+the candidate is dirty before its checkpoint, the checkout-local `.venv` lacks
+Ruff, five inherited governance drifts and two stale baseline buckets remain,
+and current semantic evidence covers only 520/5,133 code files, leaving 4,582
+unreviewed, 1,142 stale reviews, and 27 orphan reviews. The independent
+20-criterion rubric passes 19/20 and correctly withholds closure at its
+repository security-scan criterion.
+
+The enterprise ratchet remains non-green. A clean `origin/main` scan and the
+CP394 candidate are exactly count-identical: nine inherited baseline
+regressions, including `placeholder_stub_mock` 20 > 13 and 46 actual
+high/critical findings > 39. No baseline was raised and CP394 adds no finding.
+
+Counting CP394 makes the total checkpoint record 636. The 640-920 forecast
+remains, leaving approximately 4-284 records. Checkpoint-count completion is
+approximately 69.1%-99.4%, with a midpoint planning estimate of 81.5%.
+
+SPARK-058 proves confidential, durable, causally grounded replay capture. It
+does not yet prove replay transfer, resident-32B reasoning gains, frontier
+performance, or a `WOW Signal`. Next is SPARK-059's structured SFT and tool
+traces. SPARK-051 remains separately open for answer-channel remediation,
+admitted resident training, and powered equal-compute reasoning/frontier
+evidence. Final multi-hour soaks remain deferred until all shorter gates are
+green.

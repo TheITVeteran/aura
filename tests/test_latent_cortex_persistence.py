@@ -27,6 +27,22 @@ def test_lab_report_uses_private_transactional_persistence(tmp_path):
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_verified_replay_uses_private_transactional_persistence(tmp_path):
+    path = tmp_path / "private" / "verified-replay.json"
+    payload = b'{"encrypted":true}'
+
+    receipt = get_latent_cortex_persistence().save_verified_replay_buffer(
+        path,
+        payload,
+    )
+
+    assert path.read_bytes() == payload
+    assert receipt.paths == (str(path),)
+    assert receipt.transaction_id
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
 def test_canonical_persistence_rejects_tampered_gateway_receipt(tmp_path, monkeypatch):
     path = tmp_path / "report.json"
     payload = b'{"ok":true}'

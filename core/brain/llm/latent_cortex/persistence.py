@@ -126,6 +126,18 @@ class LatentCortexPersistence:
             source="latent_cortex_action_intervention_replay",
         )
 
+    def save_verified_replay_buffer(
+        self,
+        path: Path,
+        payload: bytes,
+    ) -> FileWriteBatchReceipt:
+        """Atomically replace the encrypted verified-repair ledger."""
+
+        return self._commit(
+            (FileWriteBatchEntry(path, payload),),
+            source="latent_cortex_verified_replay",
+        )
+
     def save_frontier_verification(
         self,
         path: Path,
