@@ -56,8 +56,23 @@ RELOAD_SCOPES: Dict[str, List[str]] = {
     ],
     "llm": [
         "core.brain.llm.context_assembler",
-        "core.brain.llm.inference_gate",
+        # LIVE DEFECT, 2026-07-26: this read "core.brain.llm.inference_gate",
+        # which is not a module and never has been — the gate lives at
+        # core.brain.inference_gate. Nothing errored, because an unmatched
+        # prefix simply matched nothing, and the UI still reported "Hot-reload
+        # complete — N modules refreshed. All changes are live." The prefix
+        # audit below now makes a typo like this impossible to serve as
+        # success.
+        "core.brain.inference_gate",
         "core.brain.llm.model_registry",
+    ],
+    # The layer that decides what a reply is allowed to be. Pure logic,
+    # instantiated or imported per turn, and previously reachable by no scope
+    # at all — so a fix to reply reliability could never be hot-loaded.
+    "conversation": [
+        "core.conversation.",
+        "core.brain.epistemic_firewall",
+        "core.brain.cognitive_ingress",
     ],
     "affect": [
         "core.affect.",
@@ -92,6 +107,7 @@ LIVE_SAFE_ALL_SCOPES: tuple[str, ...] = (
     "skills",
     "consciousness",
     "llm",
+    "conversation",
     "affect",
     "memory",
     "identity",
@@ -141,11 +157,15 @@ class ReloadResult:
     reloaded: List[str] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
     failed: List[Dict[str, str]] = field(default_factory=list)
+    # Declared prefixes that matched no loaded module. A scope entry that
+    # names a module which does not exist is a configuration defect, and it
+    # used to be indistinguishable from a clean reload.
+    unmatched_prefixes: List[str] = field(default_factory=list)
     duration_ms: float = 0.0
 
     @property
     def ok(self) -> bool:
-        return len(self.failed) == 0
+        return len(self.failed) == 0 and not self.unmatched_prefixes
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -156,6 +176,7 @@ class ReloadResult:
             "failed_count": len(self.failed),
             "reloaded": self.reloaded,
             "failed": self.failed,
+            "unmatched_prefixes": self.unmatched_prefixes,
             "duration_ms": round(self.duration_ms, 1),
         }
 
@@ -191,6 +212,35 @@ class HotReloader:
             if module_name == prefix.rstrip(".") or module_name.startswith(prefix):
                 return True
         return False
+
+    def _unmatched_prefixes(self, scopes: tuple[str, ...] | List[str]) -> List[str]:
+        """Declared prefixes that name a module which does not exist.
+
+        A scope entry pointing at a non-module reloads nothing and, until this
+        existed, reported the same "ok" as a scope that reloaded correctly.
+        Live 2026-07-26: the llm scope had pointed at
+        "core.brain.llm.inference_gate" — off by one package, the gate lives at
+        core.brain.inference_gate — and the desktop said "All changes are live"
+        every time it was pressed.
+
+        A prefix that resolves but simply is not imported yet is NOT a defect;
+        lazily imported subsystems are normal. Only unresolvable names count.
+        """
+        import importlib.util
+
+        unmatched: List[str] = []
+        for scope in scopes:
+            for prefix in RELOAD_SCOPES.get(scope, []):
+                target = prefix.rstrip(".")
+                if target in sys.modules:
+                    continue
+                try:
+                    resolvable = importlib.util.find_spec(target) is not None
+                except (ImportError, AttributeError, ValueError):
+                    resolvable = False
+                if not resolvable:
+                    unmatched.append(f"{scope}:{prefix}")
+        return unmatched
 
     def _collect_modules_for_scope(self, scope: str) -> List[str]:
         """Find all currently-loaded modules matching the given scope."""
@@ -235,8 +285,18 @@ class HotReloader:
 
         if scope == "all":
             modules = self._collect_live_safe_all_modules()
+            result.unmatched_prefixes = self._unmatched_prefixes(LIVE_SAFE_ALL_SCOPES)
         else:
             modules = self._collect_modules_for_scope(scope)
+            result.unmatched_prefixes = self._unmatched_prefixes((scope,))
+        if result.unmatched_prefixes:
+            logger.error(
+                "♻️ HotReload[%s]: %d declared prefix(es) matched no loaded "
+                "module and reloaded nothing: %s",
+                scope,
+                len(result.unmatched_prefixes),
+                ", ".join(result.unmatched_prefixes),
+            )
 
         if not modules:
             result.duration_ms = (time.monotonic() - start) * 1000

@@ -6589,7 +6589,20 @@ if (updateBtn) updateBtn.addEventListener('click', async (e) => {
             const data = await res.json();
             const reloaded = data.reloaded_count || 0;
             const scope = data.scope || 'all';
-            appendMsg('aura', `✅ Hot-reload complete — ${reloaded} modules refreshed (scope: ${scope}). All changes are live.`);
+            const unmatched = data.unmatched_prefixes || [];
+            const failed = data.failed_count || 0;
+            // "All changes are live" was said unconditionally, including when
+            // a scope pointed at a module that does not exist and therefore
+            // reloaded nothing. Say what actually happened instead.
+            let msg = `♻️ Hot-reload: ${reloaded} module${reloaded === 1 ? '' : 's'} refreshed (scope: ${scope}).`;
+            if (failed) msg += ` ${failed} failed to reload.`;
+            if (unmatched.length) {
+                msg += ` ${unmatched.length} declared scope entr${unmatched.length === 1 ? 'y' : 'ies'} matched no module and reloaded nothing: ${unmatched.slice(0, 4).join(', ')}.`;
+            }
+            msg += (failed || unmatched.length)
+                ? ' Not every change is live — restart to pick up the rest.'
+                : ' Modules held by a running instance (routes, the inference gate, loaded models) still need a restart.';
+            appendMsg('aura', msg);
         } else {
             const text = await res.text();
             appendMsg('aura', `⚠️ Hot-reload returned ${res.status}: ${text.slice(0, 200)}`);
