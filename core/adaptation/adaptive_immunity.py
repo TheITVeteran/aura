@@ -628,6 +628,12 @@ def _mutate_behavioral_rule(
                         "source_id": "Port_East",
                         "target_id": "Port_West",
                         "amount": f"$port_east_load * {rng.uniform(0.1, 0.4):.2f}",
+                        # Relieving part of a bottleneck is still relief, so
+                        # this lane accepts a clipped transfer explicitly
+                        # (CP126 e2148790) — the receipt reports what actually
+                        # moved, which is what the 2026-07-25 idle-window
+                        # incident needed the executor to see.
+                        "allow_partial": True,
                     },
                 }
             ],

@@ -319,7 +319,20 @@ class ActuatorSynthesizer:
         if not causal_res.success:
             logger.error("Actuator validation (causal) failed: %s", causal_res.error)
             return None
-        return dict(sandbox_res.details or {})
+        details = dict(sandbox_res.details or {})
+        # CP126 f80cc444: the registry cannot tell validated code from asserted
+        # code unless the validator says so, bound to the exact source bytes it
+        # actually checked. This is that statement.
+        details["_validation_receipt"] = {
+            "passed": True,
+            "validator": "ActuatorCodeValidator",
+            "stages": ["ast", "sandbox", "causal"],
+            "source_digest": hashlib.sha256(
+                source_code.encode("utf-8", "replace")
+            ).hexdigest(),
+            "validated_at": time.time(),
+        }
+        return details
 
     def _register_validated_actuator(
         self,
@@ -339,16 +352,27 @@ class ActuatorSynthesizer:
                 )
                 return None
 
+            schema = metadata.get("param_schema") or metadata.get("parameters")
             instance = SandboxedSynthesizedActuator(
                 name=actuator_name,
                 description=str(metadata.get("description") or "Sandboxed synthesized actuator"),
                 source_code=source_code,
                 trust_score=0.3,
+                param_schema=schema if isinstance(schema, dict) else None,
             )
 
-            # Register in live ActuatorRegistry (trust starts at 0.3 for synthesized)
+            # Register in live ActuatorRegistry (trust starts at 0.3 for
+            # synthesized). The validator receipt is what earns that 0.3;
+            # without it the registry floors trust to 0.0 and the actuator is
+            # refused at execution.
             registry = get_actuator_registry()
-            registry.register_synthesized(instance, source_code, trust_score=0.3)
+            registry.register_synthesized(
+                instance,
+                source_code,
+                trust_score=0.3,
+                validation_receipt=metadata.get("_validation_receipt"),
+                registered_by="actuator_synthesis",
+            )
 
             return instance
         except (AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:

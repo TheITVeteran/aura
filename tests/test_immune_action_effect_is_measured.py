@@ -81,7 +81,28 @@ class TestMeasuredEffect:
         assert world.entities["B"].load == pytest.approx(384.0)
 
     def test_a_clipped_transfer_reports_what_actually_moved(self, patch_world):
-        """Requested 384, the target could only take 100 — say 100, not 384."""
+        """Requested 384, the target could only take 100 — say 100, not 384.
+
+        CP126 e2148790 added the acknowledgement: a caller that has not said it
+        will accept a partial effect no longer gets one silently. The immune
+        lane opts in (relieving part of a bottleneck is still relief), and this
+        contract — report the MEASURED delta, not the request — is unchanged.
+        """
+        world = FakeWorld({"A": FakeNode(1000, 1000), "B": FakeNode(900, 1000)})
+        patch_world(world)
+
+        result = ReallocateFlowActuator().execute(
+            {"source_id": "A", "target_id": "B", "amount": 384.0, "allow_partial": True}
+        )
+
+        assert result.success
+        assert result.updates["_measured"]["moved"] == pytest.approx(100.0)
+        assert "clipped" in result.message
+        assert "384" not in result.message.split("clipped")[0]
+
+    def test_a_clip_without_acknowledgement_is_refused(self, patch_world):
+        """CP126 e2148790: substituting a smaller amount and calling it success
+        let a caller believe the transfer it asked for happened."""
         world = FakeWorld({"A": FakeNode(1000, 1000), "B": FakeNode(900, 1000)})
         patch_world(world)
 
@@ -89,10 +110,21 @@ class TestMeasuredEffect:
             {"source_id": "A", "target_id": "B", "amount": 384.0}
         )
 
-        assert result.success
-        assert result.updates["_measured"]["moved"] == pytest.approx(100.0)
-        assert "clipped" in result.message
-        assert "384" not in result.message.split("clipped")[0]
+        assert not result.success
+        assert "allow_partial=True" in result.message
+        assert result.updates["_partial_available"] == pytest.approx(100.0)
+        assert world.entities["B"].load == pytest.approx(900.0)
+
+    def test_the_immune_lane_opts_in_to_partial_relief(self):
+        """The generated remedy must carry the acknowledgement, or every
+        bottleneck at capacity becomes an unexecutable rule."""
+        import inspect
+
+        from core.adaptation import adaptive_immunity
+
+        source = inspect.getsource(adaptive_immunity)
+        block = source.split('"actuator": "reallocate_flow"', 1)[1].split("},", 1)[0]
+        assert '"allow_partial": True' in block
 
     def test_a_transfer_that_moves_nothing_is_a_failure(self, patch_world):
         """The old code called this a success and claimed the full amount."""
