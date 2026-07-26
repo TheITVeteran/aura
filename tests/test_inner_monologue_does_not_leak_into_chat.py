@@ -257,3 +257,61 @@ class TestBodyPressureActuallyReads:
 
         value = float(BodyState.from_aura_state(None).total_pressure)
         assert 0.0 <= value <= 1.0
+
+
+class TestASessionIsAConversationNotAMachine:
+    """LIVE DEFECT, 2026-07-25. The fallback chat session id was the client
+    IP, with the comment "client host is good enough for single-user local
+    Aura". It was not.
+
+    Every desktop conversation ever held collapsed into ONE session — 881
+    turns filed under "127.0.0.1", mixing Bryan's real chats with Codex's
+    automated live-route probes and latency samples — and each new chat
+    replayed that soup as its own prior thread.
+
+    That is what produced the confabulations. Asked "Hey, bud. Are you with
+    me?", Aura answered "Sitting with you on the drive. They're still
+    outside?" and then "Well, the cops. You called them?" — a scene that
+    appears nowhere in her stored memory except those two replies. She was
+    not recalling anything; she was continuing unrelated fragments the replay
+    had put in front of her and inventing a situation that made them cohere.
+    """
+
+    def _sid(self, host, now):
+        from interface.routes.chat import _conversation_session_id
+
+        return _conversation_session_id(host, now=now)
+
+    def test_a_continuing_turn_keeps_the_same_conversation(self):
+        assert self._sid("h", 1000.0) == self._sid("h", 1060.0)
+
+    def test_an_idle_gap_starts_a_new_conversation(self):
+        from interface.routes.chat import _CONVERSATION_IDLE_GAP_S as gap
+
+        first = self._sid("h2", 1000.0)
+        later = self._sid("h2", 1000.0 + gap + 1.0)
+        assert first != later
+
+    def test_different_clients_never_share_a_conversation(self):
+        assert self._sid("a", 1000.0) != self._sid("b", 1000.0)
+
+    def test_the_session_id_is_never_a_bare_host(self):
+        """The exact shape that collapsed 881 turns into one thread."""
+        assert self._sid("127.0.0.1", 1000.0) != "127.0.0.1"
+
+    def test_a_restart_is_a_new_conversation(self):
+        """A boot id is mixed in, so history from a previous runtime cannot
+        replay as the current thread."""
+        from interface.routes import chat as mod
+
+        assert mod._CONVERSATION_BOOT_ID
+        assert mod._CONVERSATION_BOOT_ID in self._sid("h", 1000.0)
+
+    def test_the_host_only_fallback_is_gone(self):
+        import inspect
+
+        from interface.routes import chat as mod
+
+        source = inspect.getsource(mod)
+        assert "client host is good enough for single-user local Aura" not in source
+        assert "_conversation_session_id(_host)" in source

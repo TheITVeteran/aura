@@ -10502,6 +10502,46 @@ def _unwrap_state(candidate: Any) -> Any | None:
     return None
 
 
+# A conversation is not a host. LIVE DEFECT, 2026-07-25.
+#
+# The fallback session id was the client IP, with the comment "client host is
+# good enough for single-user local Aura". It was not. Every desktop
+# conversation ever held collapsed into one session — 881 turns under
+# "127.0.0.1", mixing Bryan's chats with Codex's automated live-route probes
+# and latency samples — and each new chat replayed that soup as its own prior
+# thread.
+#
+# That is what produced the confabulations. Asked "Hey, bud. Are you with
+# me?" Aura answered "Sitting with you on the drive. They're still outside?"
+# and then "Well, the cops. You called them?" — a scene that appears nowhere
+# in her memory except those two replies. She was not recalling anything. She
+# was continuing whatever unrelated fragments the replay had put in front of
+# her, and inventing a situation that made them cohere.
+#
+# A session must therefore identify a CONVERSATION. Two boundaries do that
+# without new plumbing:
+#   * the runtime boot — a restart is unambiguously a new conversation;
+#   * an idle gap — coming back hours later is a new conversation, and the
+#     previous thread should be recalled deliberately by memory, not replayed
+#     as though it never ended.
+_CONVERSATION_IDLE_GAP_S = 1800.0
+_CONVERSATION_BOOT_ID = uuid.uuid4().hex[:8]
+_conversation_epochs: dict[str, tuple[str, float]] = {}
+_conversation_epoch_lock = threading.Lock()
+
+
+def _conversation_session_id(host: str, *, now: float | None = None) -> str:
+    """A session id that names one conversation, not one machine."""
+    at = time.time() if now is None else float(now)
+    key = str(host or "default")
+    with _conversation_epoch_lock:
+        epoch, last_seen = _conversation_epochs.get(key, ("", 0.0))
+        if not epoch or (at - last_seen) > _CONVERSATION_IDLE_GAP_S:
+            epoch = uuid.uuid4().hex[:8]
+        _conversation_epochs[key] = (epoch, at)
+    return f"{key}:{_CONVERSATION_BOOT_ID}:{epoch}"
+
+
 def _resolve_live_aura_state() -> Any | None:
     """Best-effort access to the active runtime state for UI reflexes."""
     state = _unwrap_state(ServiceContainer.get("aura_state", default=None))
@@ -17671,11 +17711,11 @@ async def api_chat(
         elif body.session_id:
             _chat_session_id = body.session_id
         else:
-            # Session id: client host is good enough for single-user local Aura.
             try:
-                _chat_session_id = (request.client.host if request.client else "default") or "default"
+                _host = (request.client.host if request.client else "default") or "default"
             except _CHAT_RECOVERABLE_ERRORS:
-                _chat_session_id = "default"
+                _host = "default"
+            _chat_session_id = _conversation_session_id(_host)
 
         if conversation_only_surface:
             scoped_reply = _paired_device_information_scope_reply(
