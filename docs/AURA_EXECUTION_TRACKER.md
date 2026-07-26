@@ -28884,3 +28884,38 @@ SPARK-052 implementation begins after the resident campaign is launched or
 reconciled so the long-running model work and bounded initiative march can
 proceed concurrently. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-26-385: Disjoint Resident Preflight Curriculum
+
+The first fresh resident-32B answer-channel preflight after CP384 terminated
+honestly before loading the model. Its independently generated finite-domain
+train and holdout batteries shared a prompt, so `disjoint_task_split` rejected
+the campaign instead of allowing contaminated evaluation. The detached receipt
+records return code 1 after 14.66 seconds, verified process containment, and an
+empty process group; the traceback and failed status remain checked-in evidence
+rather than being overwritten by a retry.
+
+The answer-channel generator now gives every partition an explicit domain in
+its deterministic seed commitment. More importantly, holdout generation is
+constructed under exclusion sets containing every training prompt and task
+identity, rather than hoping two independent pseudorandom samples do not
+collide. Generation remains bounded and fails closed if the finite task domain
+cannot satisfy the requested split. The regression uses the exact CP385
+preflight families, depths, cardinalities, and failing seed `2026072413`.
+
+The focused answer-channel curriculum, GRPO trainer contract, and resident
+preregistration suite passes 44/44. Ruff, bytecode compilation, and diff hygiene
+pass. This checkpoint establishes dataset split integrity only. It does not
+claim that the resident 32B loaded, trained, improved reasoning, reached a
+frontier level, or earned the `WOW Signal` name.
+
+Counting CP385 makes the total checkpoint record 627. The 640-920 forecast
+remains, leaving approximately 13-293 records. Checkpoint-count completion is
+approximately 68.2%-98.0%, with a midpoint planning estimate of 80.4%.
+
+Next, generate a new source-bound CP386 contract, launch its detached
+answer-channel preflight, and begin SPARK-052 while the resident lane runs.
+SPARK-051 remains open for actual resident-32B training, preregistered
+equal-compute reasoning/frontier evidence, independent verification, and live
+selection/lesion/restoration evidence. Final multi-hour soaks remain deferred
+until every shorter gate is green.

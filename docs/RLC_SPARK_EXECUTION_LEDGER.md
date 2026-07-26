@@ -2445,6 +2445,19 @@ before those dependencies close is not admissible.
   lesion, and restoration evidence. No gain or `WOW Signal` is claimed. This is
   total checkpoint record 626; the 640-920 forecast leaves approximately
   14-294 records, or 68.0%-97.8% checkpoint-count completion (80.3% midpoint).
+
+  CP385 attempted the first fresh resident-32B answer-channel preflight after
+  the mechanical gate. The detached process was contained and terminal, but
+  failed before model load because independently generated finite-domain train
+  and holdout batteries shared a prompt. That failure is retained as evidence.
+  The curriculum now seeds explicit train/holdout partitions and constructs
+  holdout under an exclusion set containing every committed training prompt
+  and task identity. The exact failing preflight dimensions and seed are a
+  regression test. The focused curriculum, trainer, and preregistration matrix
+  passes 44/44. This is total checkpoint record 627; the 640-920 forecast
+  leaves approximately 13-293 records, or 68.2%-98.0% checkpoint-count
+  completion (80.4% midpoint). A new source-bound campaign contract and
+  detached preflight must still run before any training or gain claim.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

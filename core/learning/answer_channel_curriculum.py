@@ -190,13 +190,62 @@ TASK_GENERATORS = MappingProxyType(
 def _sample_seed(
     *,
     root_seed: int,
+    partition: str,
     family: str,
     depth: int,
     cell: int,
     attempt: int,
 ) -> int:
-    material = f"{ANSWER_CHANNEL_VERSION}:{root_seed}:{family}:{depth}:{cell}:{attempt}"
+    if not partition or not partition.isascii():
+        raise ValueError("answer-channel partition is invalid")
+    material = (
+        f"{ANSWER_CHANNEL_VERSION}:{root_seed}:{partition}:"
+        f"{family}:{depth}:{cell}:{attempt}"
+    )
     return int.from_bytes(hashlib.sha256(material.encode("ascii")).digest()[:16])
+
+
+def _task_battery(
+    families: Sequence[str],
+    depths: Sequence[int],
+    per_cell: int,
+    *,
+    seed: int,
+    partition: str,
+    excluded_prompts: set[str] | None = None,
+    excluded_task_ids: set[str] | None = None,
+) -> list[AnswerChannelTask]:
+    if not families or any(family not in TASK_GENERATORS for family in families):
+        raise ValueError("answer-channel families are invalid")
+    if not depths or any(type(depth) is not int for depth in depths):
+        raise ValueError("answer-channel depths are invalid")
+    if type(per_cell) is not int or per_cell <= 0:
+        raise ValueError("answer-channel per_cell is invalid")
+    tasks: list[AnswerChannelTask] = []
+    prompts = set(excluded_prompts or ())
+    task_ids = set(excluded_task_ids or ())
+    for family in families:
+        generator = TASK_GENERATORS[family]
+        for depth in depths:
+            for cell in range(per_cell):
+                for attempt in range(1_024):
+                    sample_seed = _sample_seed(
+                        root_seed=seed,
+                        partition=partition,
+                        family=family,
+                        depth=depth,
+                        cell=cell,
+                        attempt=attempt,
+                    )
+                    task = generator(depth, sample_seed)
+                    if task.prompt not in prompts and task.task_id not in task_ids:
+                        break
+                else:  # pragma: no cover
+                    raise RuntimeError("answer-channel generator exhausted")
+                prompts.add(task.prompt)
+                task_ids.add(task.task_id)
+                tasks.append(task)
+    return tasks
 
 
 def task_battery(
@@ -206,34 +255,13 @@ def task_battery(
     *,
     seed: int,
 ) -> list[AnswerChannelTask]:
-    if not families or any(family not in TASK_GENERATORS for family in families):
-        raise ValueError("answer-channel families are invalid")
-    if not depths or any(type(depth) is not int for depth in depths):
-        raise ValueError("answer-channel depths are invalid")
-    if type(per_cell) is not int or per_cell <= 0:
-        raise ValueError("answer-channel per_cell is invalid")
-    tasks: list[AnswerChannelTask] = []
-    prompts: set[str] = set()
-    for family in families:
-        generator = TASK_GENERATORS[family]
-        for depth in depths:
-            for cell in range(per_cell):
-                for attempt in range(1_024):
-                    sample_seed = _sample_seed(
-                        root_seed=seed,
-                        family=family,
-                        depth=depth,
-                        cell=cell,
-                        attempt=attempt,
-                    )
-                    task = generator(depth, sample_seed)
-                    if task.prompt not in prompts:
-                        break
-                else:  # pragma: no cover
-                    raise RuntimeError("answer-channel generator exhausted")
-                prompts.add(task.prompt)
-                tasks.append(task)
-    return tasks
+    return _task_battery(
+        families,
+        depths,
+        per_cell,
+        seed=seed,
+        partition="battery",
+    )
 
 
 def disjoint_task_split(
@@ -244,8 +272,22 @@ def disjoint_task_split(
     holdout_per_cell: int,
     seed: int,
 ) -> tuple[list[AnswerChannelTask], list[AnswerChannelTask]]:
-    train = task_battery(families, depths, train_per_cell, seed=seed)
-    holdout = task_battery(families, depths, holdout_per_cell, seed=seed + 17_117)
+    train = _task_battery(
+        families,
+        depths,
+        train_per_cell,
+        seed=seed,
+        partition="train",
+    )
+    holdout = _task_battery(
+        families,
+        depths,
+        holdout_per_cell,
+        seed=seed,
+        partition="holdout",
+        excluded_prompts={task.prompt for task in train},
+        excluded_task_ids={task.task_id for task in train},
+    )
     if {task.prompt for task in train} & {task.prompt for task in holdout}:
         raise RuntimeError("answer-channel train and holdout prompts overlap")
     if {task.task_id for task in train} & {task.task_id for task in holdout}:

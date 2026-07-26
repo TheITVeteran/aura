@@ -56,6 +56,25 @@ def test_answer_channel_split_is_disjoint():
     )
 
 
+def test_answer_channel_split_matches_resident_preflight_dimensions():
+    train, holdout = disjoint_task_split(
+        families=("json_copy", "typed_boolean", "key_selection"),
+        depths=(1, 2),
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=2026072413,
+    )
+
+    assert len(train) == 12
+    assert len(holdout) == 6
+    assert {task.task_id for task in train}.isdisjoint(
+        {task.task_id for task in holdout}
+    )
+    assert {task.prompt for task in train}.isdisjoint(
+        {task.prompt for task in holdout}
+    )
+
+
 def test_trainer_can_bind_answer_channel_task_source():
     train, holdout, source = _build_task_split(
         task_source="answer_channel_curriculum",
