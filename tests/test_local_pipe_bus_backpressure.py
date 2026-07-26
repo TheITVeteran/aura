@@ -466,3 +466,102 @@ def test_actor_bus_reports_transport_health():
             await ActorBus.reset_singleton()
 
     asyncio.run(scenario())
+
+
+def test_reader_survives_malformed_response_frame_and_keeps_running():
+    """CP126 malformed-frame: a response envelope with no payload used to pop the
+    pending future and then raise KeyError, escaping the read loop's EOF/pipe/
+    OSError handlers and leaving _is_running True with requests unresolved."""
+
+    async def scenario():
+        # A response frame missing "payload", then a well-formed message that
+        # proves the reader kept going after the bad frame.
+        bad_frame = {"response_to": "request-1", "trace_id": "trace-1"}
+        good_frame = {"type": "work", "payload": {"value": 7}, "trace_id": "trace-2"}
+        read_conn = _ScriptedReadConnection([json.dumps(bad_frame), json.dumps(good_frame)])
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+        bus._dispatch_queue = asyncio.Queue(maxsize=8)
+
+        seen = []
+        bus.register_handler("work", lambda payload, _trace=None: seen.append(payload))
+
+        try:
+            # Terminates on EOF after both frames; must not die on the bad one.
+            await asyncio.wait_for(bus._read_loop(), timeout=2.0)
+
+            # The good frame that FOLLOWED the malformed one was dispatched.
+            assert bus._dispatch_queue.qsize() == 1
+            _handler, queued = bus._dispatch_queue.get_nowait()
+            assert queued["payload"] == {"value": 7}
+        finally:
+            bus._shutdown_executor()
+
+    asyncio.run(scenario())
+
+
+def test_reader_drops_frame_with_unhashable_type_without_dying():
+    """CP126 malformed-frame: a forged non-hashable "type" raised TypeError out of
+    the `msg_type in self._handlers` membership test and killed the reader."""
+
+    async def scenario():
+        forged = {"type": ["not", "hashable"], "payload": {"v": 1}}
+        good_frame = {"type": "work", "payload": {"value": 9}}
+        read_conn = _ScriptedReadConnection([json.dumps(forged), json.dumps(good_frame)])
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=True)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+        bus._dispatch_queue = asyncio.Queue(maxsize=8)
+        bus.register_handler("work", lambda *_args: None)
+
+        try:
+            await asyncio.wait_for(bus._read_loop(), timeout=2.0)
+
+            assert bus._dispatch_queue.qsize() == 1
+            _handler, queued = bus._dispatch_queue.get_nowait()
+            assert queued["payload"] == {"value": 9}
+        finally:
+            bus._shutdown_executor()
+
+    asyncio.run(scenario())
+
+
+def test_handler_fault_outside_known_errors_does_not_kill_dispatcher():
+    """CP126 handler-backpressure: exceptions outside _BUS_HANDLER_ERRORS escaped
+    both handler and dispatcher boundaries and terminated the worker."""
+
+    async def scenario():
+        # A fault type deliberately outside _BUS_HANDLER_ERRORS.
+        class _ExoticFault(Exception):
+            pass
+
+        read_conn = _FakeConnection()
+        write_conn = _FakeConnection()
+        bus = LocalPipeBus(read_conn=read_conn, write_conn=write_conn, start_reader=False)
+        bus._is_running = True
+        bus._loop = asyncio.get_running_loop()
+
+        def _exploding_handler(_payload, _trace=None):
+            raise _ExoticFault("handler blew up in an unexpected way")
+
+        try:
+            # Must return normally (fault contained), not propagate.
+            await bus._handle_message(_exploding_handler, {"type": "work", "payload": {}})
+
+            # And a request-shaped message gets a typed failure receipt back.
+            await bus._handle_message(
+                _exploding_handler,
+                {"type": "work", "payload": {}, "is_request": True, "request_id": "r-1"},
+            )
+            assert len(write_conn.sent) == 1
+            resp = json.loads(write_conn.sent[0])
+            assert resp["response_to"] == "r-1"
+            assert resp["failed"] is True
+            assert "handler blew up" in resp["payload"]["error"]
+        finally:
+            bus._shutdown_executor()
+
+    asyncio.run(scenario())

@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -48,6 +48,14 @@ class LocalPipeBus:
     _SHM_OFFLOAD_THRESHOLD_BYTES = 8 * 1024
     _SHM_SEGMENT_RETENTION_SECONDS = 20.0
     _DEFAULT_MAX_PENDING_REQUESTS = 64
+    # Generous safety-net deadline for a single async handler so a
+    # non-terminating coroutine cannot block every later response and control
+    # message forever. Deliberately large (env-overridable) — it exists to catch
+    # a hung coroutine, not to bound legitimately slow work.
+    try:
+        _HANDLER_EXEC_TIMEOUT_S = float(os.getenv("AURA_BUS_HANDLER_TIMEOUT_S", "300") or 300)
+    except (TypeError, ValueError):
+        _HANDLER_EXEC_TIMEOUT_S = 300.0
 
     @staticmethod
     def _is_connection_pair(connection: Any) -> bool:
@@ -784,89 +792,21 @@ class LocalPipeBus:
                 if not msg or not isinstance(msg, dict):
                     continue
 
-                if self._activity_callback:
-                    try:
-                        self._activity_callback()
-                    except (RuntimeError, AttributeError, TypeError, ValueError) as callback_err:
-                        record_degradation('local_pipe_bus', callback_err)
-                        logger.debug("LocalPipeBus activity callback failed: %s", callback_err)
-                
-                # SHM De-referencing
-                payload = msg.get("payload")
-                if isinstance(payload, dict) and "__shm__" in payload:
-                    shm_name = payload["__shm__"]
-                    try:
-                        shm = SharedMemoryTransport(shm_name)
-                        await asyncio.wait_for(shm.attach(), timeout=2.0)
-                        msg["payload"] = await shm.read()
-                        # Detach but don't unlink yet (let owner clean up or use a policy)
-                        # Actually, for a single read, we should detach.
-                        shm.close()
-                        logger.debug("📥 Resolved SHM payload: %s", shm_name)
-                    except (RuntimeError, TimeoutError, AttributeError) as e:
-                        record_degradation('local_pipe_bus', e)
-                        logger.error("❌ Failed to resolve SHM payload %s: %s", shm_name, e)
-                        if msg.get("is_request") and "request_id" in msg:
-                            err_resp = {
-                                "response_to": msg["request_id"],
-                                "payload": {"ok": False, "error": "shm_resolution_failed"},
-                                "trace_id": msg.get("trace_id"),
-                            }
-                            raw_resp = json.dumps(err_resp)
-                            try:
-                                await self._write_raw_message(
-                                    raw_resp,
-                                    timeout_s=self._response_write_timeout_s(),
-                                    context="response:shm_resolution_failed",
-                                )
-                            except _BUS_HANDLER_ERRORS as send_exc:
-                                self._mark_transport_degraded(
-                                    send_exc,
-                                    "failed to send SHM-resolution error response",
-                                )
-                        continue
-
-                # Check if it's a response to a pending request
-                if "response_to" in msg:
-                    req_id = msg["response_to"]
-                    future = self._pending_requests.pop(req_id, None)
-                    if future and not future.done():
-                        future.set_result(msg["payload"])
+                # Reader resilience: a malformed envelope's field/hash operations
+                # must not escape into the transport-level handlers below and
+                # kill the reader while _is_running stays True (which would hang
+                # every request until timeout). Drop the bad frame; keep looping.
+                try:
+                    await self._process_message(msg)
+                except (KeyError, TypeError, ValueError, AttributeError,
+                        IndexError, LookupError) as frame_err:
+                    record_degradation('local_pipe_bus', frame_err)
+                    logger.error(
+                        "🛑 Dropped malformed bus frame (type=%r): %s",
+                        msg.get("type") if isinstance(msg, dict) else None,
+                        frame_err,
+                    )
                     continue
-
-                # Normal message or request
-                msg_type = msg.get("type")
-                if msg_type in self._handlers:
-                    handler = self._handlers[msg_type]
-                    if self._dispatch_queue is None:
-                        self._dispatch_queue = asyncio.Queue(maxsize=256)
-                    try:
-                        await asyncio.wait_for(
-                            self._dispatch_queue.put((handler, msg)),
-                            timeout=1.0,
-                        )
-                    except TimeoutError:
-                        logger.warning("📡 Bus dispatch queue saturated. Dropping %s.", msg_type)
-                        if msg.get("is_request") and "request_id" in msg:
-                            err_resp = {
-                                "response_to": msg["request_id"],
-                                "payload": {"ok": False, "error": "dispatch_queue_saturated"},
-                                "trace_id": msg.get("trace_id"),
-                            }
-                            raw_resp = json.dumps(err_resp)
-                            try:
-                                await self._write_raw_message(
-                                    raw_resp,
-                                    timeout_s=self._response_write_timeout_s(),
-                                    context="response:dispatch_queue_saturated",
-                                )
-                            except _BUS_HANDLER_ERRORS as send_exc:
-                                self._mark_transport_degraded(
-                                    send_exc,
-                                    "failed to send dispatch-saturation error response",
-                                )
-                else:
-                    logger.debug("❓ Unhandled bus message type: %s", msg_type)
 
             except EOFError:
                 logger.info("🔌 Bus connection closed by peer.")
@@ -897,8 +837,106 @@ class LocalPipeBus:
                     )
                 except (ImportError, AttributeError, RuntimeError) as _heal_e:
                     logger.debug("Deep repair scheduling failed: %s", _heal_e)
-                    
+
                 await asyncio.sleep(1.0)
+
+    async def _process_message(self, msg: dict) -> None:
+        """Interpret one inbound envelope (SHM deref, response routing, dispatch).
+
+        Extracted from _read_loop so a malformed frame's field/hash operations
+        are contained by the caller's reader-resilience guard instead of killing
+        the read loop. Field access is defensive (``.get`` and a hashable-type
+        check) so a forged/partial envelope raises a caught, drop-the-frame
+        error rather than an unbounded one.
+        """
+        if self._activity_callback:
+            try:
+                self._activity_callback()
+            except (RuntimeError, AttributeError, TypeError, ValueError) as callback_err:
+                record_degradation('local_pipe_bus', callback_err)
+                logger.debug("LocalPipeBus activity callback failed: %s", callback_err)
+
+        # SHM De-referencing
+        payload = msg.get("payload")
+        if isinstance(payload, dict) and "__shm__" in payload:
+            shm_name = payload["__shm__"]
+            try:
+                shm = SharedMemoryTransport(shm_name)
+                await asyncio.wait_for(shm.attach(), timeout=2.0)
+                msg["payload"] = await shm.read()
+                # Detach but don't unlink yet (let owner clean up or use a policy).
+                shm.close()
+                logger.debug("📥 Resolved SHM payload: %s", shm_name)
+            except (RuntimeError, TimeoutError, AttributeError) as e:
+                record_degradation('local_pipe_bus', e)
+                logger.error("❌ Failed to resolve SHM payload %s: %s", shm_name, e)
+                if msg.get("is_request") and "request_id" in msg:
+                    err_resp = {
+                        "response_to": msg["request_id"],
+                        "payload": {"ok": False, "error": "shm_resolution_failed"},
+                        "trace_id": msg.get("trace_id"),
+                    }
+                    raw_resp = json.dumps(err_resp)
+                    try:
+                        await self._write_raw_message(
+                            raw_resp,
+                            timeout_s=self._response_write_timeout_s(),
+                            context="response:shm_resolution_failed",
+                        )
+                    except _BUS_HANDLER_ERRORS as send_exc:
+                        self._mark_transport_degraded(
+                            send_exc,
+                            "failed to send SHM-resolution error response",
+                        )
+                return
+
+        # Check if it's a response to a pending request. Use .get so a response
+        # envelope missing its payload cannot raise KeyError after the future
+        # has already been popped (which would leave the request unresolved).
+        if "response_to" in msg:
+            req_id = msg.get("response_to")
+            future = self._pending_requests.pop(req_id, None)
+            if future and not future.done():
+                future.set_result(msg.get("payload"))
+            return
+
+        # Normal message or request. A forged non-hashable type must not raise
+        # from the dict membership test.
+        msg_type = msg.get("type")
+        if not isinstance(msg_type, Hashable):
+            logger.debug("❓ Dropped bus message with non-hashable type: %r", type(msg_type))
+            return
+        if msg_type in self._handlers:
+            handler = self._handlers[msg_type]
+            if self._dispatch_queue is None:
+                self._dispatch_queue = asyncio.Queue(maxsize=256)
+            try:
+                await asyncio.wait_for(
+                    self._dispatch_queue.put((handler, msg)),
+                    timeout=1.0,
+                )
+            except TimeoutError:
+                logger.warning("📡 Bus dispatch queue saturated. Dropping %s.", msg_type)
+                if msg.get("is_request") and "request_id" in msg:
+                    err_resp = {
+                        "response_to": msg["request_id"],
+                        "payload": {"ok": False, "error": "dispatch_queue_saturated"},
+                        "trace_id": msg.get("trace_id"),
+                    }
+                    raw_resp = json.dumps(err_resp)
+                    try:
+                        await self._write_raw_message(
+                            raw_resp,
+                            timeout_s=self._response_write_timeout_s(),
+                            context="response:dispatch_queue_saturated",
+                        )
+                    except _BUS_HANDLER_ERRORS as send_exc:
+                        self._mark_transport_degraded(
+                            send_exc,
+                            "failed to send dispatch-saturation error response",
+                        )
+        else:
+            logger.debug("❓ Unhandled bus message type: %s", msg_type)
 
     async def _dispatch_loop(self):
         """Process inbound messages in arrival order with bounded backpressure."""
@@ -914,7 +952,7 @@ class LocalPipeBus:
                     self._dispatch_queue.task_done()
             except asyncio.CancelledError:
                 break
-            except _BUS_HANDLER_ERRORS as e:
+            except Exception as e:  # noqa: BLE001 — dispatcher must outlive any fault
                 record_degradation('local_pipe_bus', e)
                 logger.error("❌ Error in Bus dispatch loop: %s", e)
                 
@@ -947,11 +985,19 @@ class LocalPipeBus:
         try:
             result = handler(msg.get("payload"), msg.get("trace_id"))
             if asyncio.iscoroutine(result):
-                result = await result
-        except _BUS_HANDLER_ERRORS as e:
+                # Bounded so a non-terminating coroutine handler cannot wedge the
+                # single dispatcher and starve every later response.
+                result = await asyncio.wait_for(result, timeout=self._HANDLER_EXEC_TIMEOUT_S)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            # Isolation boundary: a handler is effectively untrusted code. ANY
+            # fault it raises (including types outside _BUS_HANDLER_ERRORS, which
+            # previously escaped the dispatcher and terminated the worker) is
+            # contained here and, for requests, returned as a typed failure.
             record_degradation('local_pipe_bus', e)
             logger.error("❌ Bus handler error (%s): %s", msg.get("type"), e)
-            
+
             # Component Hardening: Active Self-Repair Invocation
             try:
                 from core.runtime.self_healing import get_healer
@@ -962,7 +1008,7 @@ class LocalPipeBus:
                 )
             except (ImportError, AttributeError, RuntimeError) as _heal_e:
                 logger.debug("Deep repair scheduling failed: %s", _heal_e)
-                
+
             if msg.get("is_request") and "request_id" in msg:
                 err_resp = {
                     "response_to": msg["request_id"],
