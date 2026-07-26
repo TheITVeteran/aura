@@ -15,13 +15,14 @@ CP126 1b5e9bae / 9bffa715 / 1c45593a / 838b9e38 / 5abe6e13 / 846edf27.
 from __future__ import annotations
 
 import logging
-import math
 import time
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from typing import Any, Callable, Mapping, Sequence
 
-from .schemas import ActionCandidate, Observation, clamp, stable_hash
+from core.runtime.numeric_safety import validated_unit as _shared_unit
+
+from .schemas import ActionCandidate, Observation, stable_hash
 
 logger = logging.getLogger("Aura.TieredAction")
 
@@ -112,17 +113,11 @@ def _validated_unit(name: str, value: Any) -> tuple[float, str]:
     CP126 9bffa715: comparisons ran on the raw value while ``clamp`` was only
     applied inside the decision id, so NaN made every ``>=`` threshold false
     and the decision fell through to REFLEX — the cheapest tier — precisely
-    when the risk signal was broken.
+    when the risk signal was broken. The shared primitive lives in
+    core/runtime/numeric_safety.py; this is the whole class of defect.
     """
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 1.0, f"{name} was not numeric ({value!r}); treated as maximum"
-    if math.isnan(number) or math.isinf(number):
-        return 1.0, f"{name} was non-finite ({number}); treated as maximum"
-    if number < 0.0 or number > 1.0:
-        return clamp(number), f"{name} was out of range ({number}); clamped"
-    return number, ""
+    scalar = _shared_unit(value, name=name, cautious_high=True)
+    return float(scalar), scalar.fault
 
 
 def _coerce_candidates(

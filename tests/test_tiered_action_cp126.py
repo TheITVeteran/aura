@@ -91,7 +91,7 @@ def test_unusable_risk_escalates_instead_of_reaching_reflex(bad):
     assert decision.input_faults
     assert decision.inputs["risk"] == 1.0
     if isinstance(bad, float) and math.isnan(bad):
-        assert "non-finite" in decision.input_faults[0]
+        assert "NaN" in decision.input_faults[0]
 
 
 def test_unusable_uncertainty_escalates():
@@ -108,7 +108,7 @@ def test_out_of_range_inputs_are_clamped_and_reported():
         _obs(), [ActionCandidate("a", "act", tags=("safe",))], risk=-5.0, uncertainty=0.1
     )
     assert decision.inputs["risk"] == 0.0
-    assert any("out of range" in fault for fault in decision.input_faults)
+    assert any("below range" in fault for fault in decision.input_faults)
 
 
 # --- 1c45593a: the System 2 requirement must actually withhold the action ----

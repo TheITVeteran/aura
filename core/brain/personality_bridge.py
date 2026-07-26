@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.numeric_safety import validated_scalar
 from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AffectVector
 
@@ -59,18 +60,14 @@ _FALLBACK_APPLY_LOCK = threading.RLock()
 
 
 def _finite(value: Any, low: float, high: float, default: float) -> tuple[float, str]:
-    """A usable number inside [low, high], plus a fault note if repaired."""
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default, f"non-numeric ({value!r})"
-    if math.isnan(number) or math.isinf(number):
-        return default, f"non-finite ({number})"
-    if number < low:
-        return low, f"below range ({number})"
-    if number > high:
-        return high, f"above range ({number})"
-    return number, ""
+    """A usable number inside [low, high], plus a fault note if repaired.
+
+    CP126 89fa9c28. Delegates to the shared primitive in
+    core/runtime/numeric_safety.py — this is the same defect class as the
+    tiered-action risk inputs and the lesion-study probes.
+    """
+    scalar = validated_scalar(value, name="value", low=low, high=high, default=default)
+    return float(scalar), scalar.fault
 
 
 def _bound(name: str, value: float) -> float:
