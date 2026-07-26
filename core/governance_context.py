@@ -42,6 +42,7 @@ import contextvars
 import functools
 import logging
 import os
+import threading as _threading
 import time
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -68,12 +69,16 @@ class GovernanceToken:
     domain: str
     source: str
     timestamp: float = field(default_factory=time.time)
+    # Monotonic issue time — expiry is measured against this so a wall-clock
+    # rollback cannot extend (or a wall-clock jump prematurely revoke) a
+    # token's authority window.
+    mono_timestamp: float = field(default_factory=time.monotonic)
     constraints: list = field(default_factory=list)
     ttl: float = 30.0  # tokens expire after 30 seconds
 
     @property
     def expired(self) -> bool:
-        return (time.time() - self.timestamp) > self.ttl
+        return (time.monotonic() - self.mono_timestamp) > self.ttl
 
     @property
     def valid(self) -> bool:
@@ -432,16 +437,18 @@ def _is_coroutine_function(fn):
 
 _violations: list = []
 _MAX_VIOLATIONS = 200
+_violations_lock = _threading.Lock()
 
 
 def _record_violation(operation: str) -> None:
     """Record a governance violation for audit."""
-    _violations.append({
-        "operation": operation,
-        "timestamp": time.time(),
-    })
-    if len(_violations) > _MAX_VIOLATIONS:
-        _violations.pop(0)
+    with _violations_lock:
+        _violations.append({
+            "operation": operation,
+            "timestamp": time.time(),
+        })
+        if len(_violations) > _MAX_VIOLATIONS:
+            _violations.pop(0)
 
     # Publish to event bus
     try:
@@ -457,7 +464,8 @@ def _record_violation(operation: str) -> None:
 
 def get_violations(n: int = 20) -> list:
     """Return recent governance violations."""
-    return list(_violations[-n:])
+    with _violations_lock:
+        return list(_violations[-n:])
 
 
 def get_governance_status() -> dict:
