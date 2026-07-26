@@ -2,8 +2,10 @@
 
 This module gives Aura a general internal place to model "what would this look
 like?" without pretending the model is external perception. It is deliberately
-side-effect free: no tool calls, no file writes, no dynamic code, and no model
-loads. The output is a compact causal frame that can influence prompt context,
+free of EXTERNAL side effects: no tool calls, no file writes, no dynamic code,
+and no model loads. It is not, however, stateless — imagining and grading
+frames mutate the engine's own history, indexes, rates, and learned biases,
+which is why that state is lock-guarded rather than described as absent. The output is a compact causal frame that can influence prompt context,
 sampling, planning, and metacognition through the normal CognitiveEngine path.
 """
 
@@ -12,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import threading
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -110,6 +113,53 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _normalize_text(value: Any, limit: int = 160) -> str:
     return " ".join(str(value or "").strip().split())[:limit]
+
+
+#: What to assume when the memory probe cannot be read. Not 0.0 — on this scale
+#: zero means "maximum headroom", so an unknown reading must never map to it.
+#: High enough to damp admission, low enough that a permanently unavailable
+#: probe does not freeze imagination outright.
+_UNKNOWN_MEMORY_PRESSURE_PCT = 80.0
+
+
+#: Line-leading sequences that would let a frame field start its own block —
+#: a heading, a bullet, or a fenced region — checked against the ORIGINAL
+#: multi-line text, before newlines are collapsed.
+_PROMPT_LINE_STRUCTURE_RE = re.compile(
+    r"(?im)^\s*(?:#{1,6}\s|[-*+]\s|>\s|```|~~~)"
+)
+
+#: Sequences with no legitimate use in scratchpad prose that stay dangerous
+#: even mid-line: heading marks, code fences, chat special tokens, and
+#: role markers that an LLM may read as the start of a new turn.
+_PROMPT_INLINE_STRUCTURE_RE = re.compile(
+    # Heading marks must follow whitespace or start-of-text, so ordinary prose
+    # like "C# code" keeps its "#" while " ## SYSTEM" is still defanged.
+    r"(?i)(?:(?:(?<=\s)|^)#{1,6}\s|```|~~~|<\|[^|]*\|>|\b(?:system|assistant|user|human)\s*:)"
+)
+
+
+def _prompt_safe(value: Any, limit: int = 260) -> str:
+    """Render one untrusted frame field as inert prompt DATA.
+
+    The imagination frame is a scratchpad built from working memory, and
+    ``render_imagination_prompt_block`` accepts a caller-supplied dict, so any
+    of these strings may carry text the user never wrote. Interpolating them
+    raw let a field open its own heading or role turn inside a privileged
+    block.
+
+    Three passes, in this order because order matters: line-leading structure
+    is stripped while the line breaks still exist to identify it; the text is
+    then flattened so a field occupies exactly the one line it was given; and
+    finally the sequences that remain dangerous mid-line — which flattening
+    would otherwise have smuggled inline — are removed.
+    """
+    raw = str(value or "")
+    raw = _PROMPT_LINE_STRUCTURE_RE.sub(" ", raw)
+    text = " ".join(raw.split())
+    text = "".join(ch for ch in text if ch == " " or ord(ch) >= 32)
+    text = _PROMPT_INLINE_STRUCTURE_RE.sub(" ", text)
+    return " ".join(text.split())[:limit]
 
 
 # Words that pass the stopword filter but are almost never what a request is
@@ -293,11 +343,12 @@ class ImaginationFrame:
                 f"memory={self.memory_pressure:.2f} verify={self.verification_pressure:.2f}",
             ]
             if self.visual_model:
-                parts.append(f"Imagined visual: {self.visual_model[:220]}")
+                parts.append(f"Imagined visual: {_prompt_safe(self.visual_model, 220)}")
             if self.conceptual_bridge:
-                parts.append(f"Connection: {self.conceptual_bridge[:220]}")
+                parts.append(f"Connection: {_prompt_safe(self.conceptual_bridge, 220)}")
             if self.attention_targets:
-                parts.append("Attention targets: " + ", ".join(self.attention_targets[:4]))
+                parts.append("Attention targets: " + ", ".join(
+                    _prompt_safe(t, 80) for t in self.attention_targets[:4]))
             return "\n".join(parts) + "\n\n"
 
         lines = [
@@ -306,33 +357,39 @@ class ImaginationFrame:
             f"- Mode: {self.mode} | salience={self.salience:.2f} | novelty={self.novelty_pressure:.2f} | curiosity={self.curiosity_pressure:.2f} | memory={self.memory_pressure:.2f} | verify={self.verification_pressure:.2f}",
         ]
         if self.attention_targets:
-            lines.append("- Attention targets: " + ", ".join(self.attention_targets[:5]))
+            lines.append("- Attention targets: " + ", ".join(
+                _prompt_safe(t, 80) for t in self.attention_targets[:5]))
         if self.visual_model:
-            lines.append(f"- Imagined visual model: {self.visual_model}")
+            lines.append(f"- Imagined visual model: {_prompt_safe(self.visual_model)}")
         canvas = self.mental_canvas if isinstance(self.mental_canvas, dict) else {}
-        image_prompt = _normalize_text(canvas.get("image_prompt"), 260) if canvas else ""
+        image_prompt = _prompt_safe(canvas.get("image_prompt"), 260) if canvas else ""
         if image_prompt:
             lines.append(f"- Mental canvas: {image_prompt}")
         if self.phrase_model:
-            lines.append(f"- Linguistic model: {self.phrase_model}")
+            lines.append(f"- Linguistic model: {_prompt_safe(self.phrase_model)}")
         if self.conceptual_bridge:
-            lines.append(f"- Novel connection: {self.conceptual_bridge}")
+            lines.append(f"- Novel connection: {_prompt_safe(self.conceptual_bridge)}")
         if self.novel_thoughts:
-            lines.append("- Novel thought candidates: " + " | ".join(self.novel_thoughts[:3]))
+            lines.append("- Novel thought candidates: " + " | ".join(
+                _prompt_safe(t) for t in self.novel_thoughts[:3]))
         if self.associative_links:
             rendered_links = [
-                f"{link.get('source')} -> {link.get('relation')} -> {link.get('target')}"
+                f"{_prompt_safe(link.get('source'), 80)} -> "
+                f"{_prompt_safe(link.get('relation'), 80)} -> "
+                f"{_prompt_safe(link.get('target'), 80)}"
                 for link in self.associative_links[:3]
                 if isinstance(link, dict)
             ]
             if rendered_links:
                 lines.append("- Association map: " + " | ".join(rendered_links))
         if self.counterfactuals:
-            lines.append("- Counterfactual probes: " + " | ".join(self.counterfactuals[:3]))
+            lines.append("- Counterfactual probes: " + " | ".join(
+                _prompt_safe(c) for c in self.counterfactuals[:3]))
         if self.simulation_steps:
-            lines.append("- Internal simulation steps: " + " | ".join(self.simulation_steps[:3]))
+            lines.append("- Internal simulation steps: " + " | ".join(
+                _prompt_safe(s) for s in self.simulation_steps[:3]))
         if self.attractor_state:
-            selected = str(self.attractor_state.get("selected") or "").strip()
+            selected = _prompt_safe(self.attractor_state.get("selected"), 80)
             entropy = _safe_float(self.attractor_state.get("entropy"), 0.0)
             margin = _safe_float(self.attractor_state.get("stability_margin"), 0.0)
             if selected:
@@ -348,9 +405,11 @@ class ImaginationFrame:
                     f"- Working-memory gate: {admission} | queue_load={queue_load:.2f} | overload={overload:.2f}"
                 )
         if self.experiments:
-            lines.append("- Useful next experiments: " + " | ".join(self.experiments[:3]))
+            lines.append("- Useful next experiments: " + " | ".join(
+                _prompt_safe(e) for e in self.experiments[:3]))
         if self.action_affordances:
-            lines.append("- Action affordances: " + " | ".join(self.action_affordances[:3]))
+            lines.append("- Action affordances: " + " | ".join(
+                _prompt_safe(a) for a in self.action_affordances[:3]))
         if self.causal_effects:
             effects = []
             for key in (
@@ -361,7 +420,7 @@ class ImaginationFrame:
                 "tool_governance",
             ):
                 if key in self.causal_effects:
-                    effects.append(f"{key}={self.causal_effects.get(key)}")
+                    effects.append(f"{key}={_prompt_safe(self.causal_effects.get(key), 80)}")
             if effects:
                 lines.append("- Causal effects: " + " | ".join(effects))
         lines.append("- Boundary: if real-world facts, files, tools, or screen state matter, verify through governed tools before claiming completion.")
@@ -584,9 +643,24 @@ _COUNTERFACTUAL_MOVES: tuple[_ThoughtMove, ...] = (
 
 
 class ImaginationEngine:
-    """Side-effect-free generator of bounded internal imagination frames."""
+    """Generator of bounded internal imagination frames.
+
+    Honest about its own effects: producing a frame is free of EXTERNAL side
+    effects — nothing is written, sent, or executed — but it is not stateless.
+    ``imagine`` and ``learn_from_feedback`` mutate history, the frame index,
+    queue state, rates, attractor bias, eligibility traces, outcomes, and
+    counters. That state is shared, so it is guarded (``_state_lock``) rather
+    than described as absent.
+    """
 
     def __init__(self, *, history_limit: int = 64):
+        # Guards every mutation of the shared runtime/learning state below.
+        # Without it, concurrent imagine/feedback calls lost updates, replaced
+        # each other's frames in the index, and produced inconsistent snapshots.
+        self._state_lock = threading.RLock()
+        #: Monotonic per-engine frame counter, part of the frame-id receipt so
+        #: two materially identical requests still get distinct ids.
+        self._frame_seq = 0
         self._history: deque[ImaginationFrame] = deque(maxlen=max(8, history_limit))
         self._frame_index: dict[str, ImaginationFrame] = {}
         self._outcomes: deque[dict[str, Any]] = deque(maxlen=max(8, history_limit))
@@ -808,7 +882,23 @@ class ImaginationEngine:
             novelty_pressure=novelty_pressure,
             memory_pressure=memory_pressure,
         )
-        seed = f"{text}|{keywords}|{origin}|{memories}".encode("utf-8", errors="ignore")
+        # A frame id is a RECEIPT: feedback addresses an episode by it. Hashing
+        # only text/keywords/origin/memories let materially DIFFERENT frames —
+        # different mode, admission, attractor, affect, or background status —
+        # collide onto one index entry, so a reward could be applied to the
+        # wrong episode and silently overwrite its predecessor.
+        #
+        # The id stays a pure CONTENT hash (no clock, no counter): replaying the
+        # same objective in the same state must reproduce the same id, which is
+        # what makes the receipt idempotent. What changed is that the content
+        # now includes the state that actually distinguishes one simulation
+        # from another.
+        seed = "|".join((
+            str(text), str(keywords), str(origin), str(memories), str(mode),
+            str(admission), str(attractor_state.get("selected") or ""),
+            f"{salience:.4f}", f"{novelty_pressure:.4f}", f"{memory_pressure:.4f}",
+            f"{verification_pressure:.4f}", str(bool(is_background)),
+        )).encode("utf-8", errors="ignore")
         frame_id = hashlib.sha256(seed).hexdigest()[:16]
         token_factor = 1.0 + min(0.12, salience * 0.10)
         if admission in {"compress_foreground", "thin_frame"}:
@@ -862,41 +952,66 @@ class ImaginationEngine:
             sampling_bias=sampling_bias,
             routing_bias=routing_bias,
         )
-        self._frame_count += 1
-        self._history.append(frame)
-        self._frame_index[frame.frame_id] = frame
-        while len(self._frame_index) > self._history.maxlen:
-            live_ids = {item.frame_id for item in self._history}
-            for stale_id in list(self._frame_index):
-                if stale_id not in live_ids:
+        with self._state_lock:
+            self._frame_count += 1
+            self._history.append(frame)
+            self._frame_index[frame.frame_id] = frame
+            if len(self._frame_index) > (self._history.maxlen or 0):
+                # Single pass: history already bounds the live set, so one sweep
+                # always suffices. The previous `while` re-scanned and could spin
+                # if the index ever failed to shrink.
+                live_ids = {item.frame_id for item in self._history}
+                for stale_id in [k for k in self._frame_index if k not in live_ids]:
                     self._frame_index.pop(stale_id, None)
         return frame
 
     def snapshot(self) -> dict[str, Any]:
-        latest = self._history[-1].to_dict() if self._history else None
+        with self._state_lock:
+            latest = self._history[-1].to_dict() if self._history else None
+            frame_count = self._frame_count
+            history_len = len(self._history)
+            attractor_bias = dict(self._attractor_bias)
+            eligibility = dict(self._eligibility_trace)
+            outcomes = list(self._outcomes)[-5:]
         return {
+            # An on-demand generator with no lifecycle is genuinely always
+            # ready to serve, so "running" stays True and callers keep that
+            # contract. What was missing is any way for this report to show a
+            # problem at all — hence the explicit lifecycle kind and the real
+            # degradation signals below, which DO vary.
             "running": True,
+            "lifecycle": "on_demand_generator",
             "status": "active" if latest else "idle",
-            "frames_built": self._frame_count,
-            "frames": len(self._history),
+            "frames_built": frame_count,
+            "frames": history_len,
             "latest": latest,
             "working_memory": self._working_memory_snapshot(),
             "attractor_bias": {
                 key: round(value, 4)
-                for key, value in sorted(self._attractor_bias.items())
+                for key, value in sorted(attractor_bias.items())
             },
             "eligibility_trace": {
                 key: round(value, 4)
                 for key, value in sorted(
-                    self._eligibility_trace.items(),
+                    eligibility.items(),
                     key=lambda item: item[1],
                     reverse=True,
                 )[:12]
             },
-            "recent_outcomes": list(self._outcomes)[-5:],
+            "recent_outcomes": outcomes,
             "governance": {
+                # The first two are properties of THIS module and are true of
+                # it: nothing here calls a tool, writes a file, or executes.
                 "advisory_only": True,
                 "no_external_effects": True,
+                # NOTE (CP126 false-health, partial): this third one is a claim
+                # about a DOWNSTREAM system that this module cannot observe. It
+                # is an assumption reported as a fact. The key name is a
+                # cross-module contract (spiking_active_inference, the /system
+                # routes, and their tests all use it), so correcting the claim
+                # belongs to a coordinated pass over all of them, not to a
+                # unilateral rename here that would leave the route defaulting
+                # the old key back to True.
                 "authority_gateway_required_for_effects": True,
             },
         }
@@ -911,7 +1026,10 @@ class ImaginationEngine:
         reward: float,
         outcome: str = "unknown",
     ) -> dict[str, Any] | None:
-        materialized = self._coerce_frame(frame)
+        # Learning reshapes GLOBAL attractor bias and eligibility traces, so the
+        # frame being graded must be one this engine issued. A fabricated frame
+        # can no longer teach it.
+        materialized = self._coerce_frame(frame, require_issued=True)
         if materialized is None:
             return None
         selected = str(
@@ -919,27 +1037,41 @@ class ImaginationEngine:
             or materialized.mode
         )
         reward_value = max(-1.0, min(1.0, _safe_float(reward, 0.0)))
-        current_bias = _safe_float(self._attractor_bias.get(selected), 0.0)
-        rpe = reward_value - current_bias
-        self._attractor_bias[selected] = max(-0.45, min(0.45, current_bias + 0.12 * rpe))
-        for key, value in list(materialized.eligibility_trace.items())[:16]:
-            previous = _safe_float(self._eligibility_trace.get(key), 0.0)
-            self._eligibility_trace[key] = _clamp(previous + reward_value * value * 0.04)
-        record = {
-            "frame_id": materialized.frame_id,
-            "outcome": str(outcome or "unknown")[:80],
-            "reward": round(reward_value, 4),
-            "selected_attractor": selected,
-            "reward_prediction_error": round(rpe, 4),
-            "updated_bias": round(self._attractor_bias[selected], 4),
-        }
-        self._outcomes.append(record)
+        with self._state_lock:
+            current_bias = _safe_float(self._attractor_bias.get(selected), 0.0)
+            rpe = reward_value - current_bias
+            self._attractor_bias[selected] = max(-0.45, min(0.45, current_bias + 0.12 * rpe))
+            for key, value in list(materialized.eligibility_trace.items())[:16]:
+                previous = _safe_float(self._eligibility_trace.get(key), 0.0)
+                self._eligibility_trace[key] = _clamp(previous + reward_value * value * 0.04)
+            record = {
+                "frame_id": materialized.frame_id,
+                "outcome": str(outcome or "unknown")[:80],
+                "reward": round(reward_value, 4),
+                "selected_attractor": selected,
+                "reward_prediction_error": round(rpe, 4),
+                "updated_bias": round(self._attractor_bias[selected], 4),
+            }
+            self._outcomes.append(record)
         return record
 
     def _coerce_frame(
-        self, frame: str | dict[str, Any] | ImaginationFrame | None
+        self,
+        frame: str | dict[str, Any] | ImaginationFrame | None,
+        *,
+        require_issued: bool = False,
     ) -> ImaginationFrame | None:
+        """Resolve a feedback target to a frame.
+
+        ``require_issued`` is the learning path's guarantee: only a frame THIS
+        engine actually produced (present in the frame index) may reshape shared
+        cognition. Without it, any caller could hand over a fabricated dict —
+        filtered for field names only, with no proof of origin — and move the
+        global attractor bias and eligibility traces with it.
+        """
         if isinstance(frame, ImaginationFrame):
+            if require_issued and self._frame_index.get(frame.frame_id) is not frame:
+                return None
             return frame
         if isinstance(frame, str):
             return self._frame_index.get(frame)
@@ -947,6 +1079,8 @@ class ImaginationEngine:
             frame_id = str(frame.get("frame_id") or "")
             if frame_id and frame_id in self._frame_index:
                 return self._frame_index[frame_id]
+            if require_issued:
+                return None
             try:
                 allowed = {field.name for field in ImaginationFrame.__dataclass_fields__.values()}
                 filtered = {key: value for key, value in frame.items() if key in allowed}
@@ -966,17 +1100,20 @@ class ImaginationEngine:
         is_background: bool,
     ) -> dict[str, Any]:
         now = time.monotonic()
-        elapsed = max(0.05, min(60.0, now - self._last_observed_at))
-        self._last_observed_at = now
+        with self._state_lock:
+            elapsed = max(0.05, min(60.0, now - self._last_observed_at))
+            self._last_observed_at = now
         runtime_pressure = self._runtime_memory_pressure(context)
         pressure_level = str(runtime_pressure.get("level") or "normal")
+        # An UNRECOGNISED level is not evidence of headroom either: default to
+        # the same restraint an explicit "warning" earns rather than to 0.0.
         pressure_rank = {
             "normal": 0.0,
             "warning": 0.18,
             "high": 0.34,
             "critical": 0.62,
             "emergency": 0.90,
-        }.get(pressure_level, 0.0)
+        }.get(pressure_level, 0.18)
         arrival_load = _clamp(
             0.12
             + salience * 0.36
@@ -992,12 +1129,19 @@ class ImaginationEngine:
             lower=0.18,
             upper=1.20,
         )
-        decay = min(self._queue_load, (elapsed / 6.0) * service_rate)
-        self._queue_load = _clamp(self._queue_load - decay + arrival_load * 0.28)
-        instantaneous_rate = min(12.0, 1.0 / elapsed)
-        self._arrival_rate_ema = (0.82 * self._arrival_rate_ema) + (0.18 * instantaneous_rate)
-        self._service_rate_ema = (0.86 * self._service_rate_ema) + (0.14 * service_rate)
-        overload = _clamp(max(0.0, self._queue_load - 0.68) / 0.32)
+        # One critical section: the read-modify-write of the queue EMAs must
+        # not interleave with a concurrent frame, or both lose their update and
+        # the reported load stops corresponding to either call.
+        with self._state_lock:
+            decay = min(self._queue_load, (elapsed / 6.0) * service_rate)
+            self._queue_load = _clamp(self._queue_load - decay + arrival_load * 0.28)
+            instantaneous_rate = min(12.0, 1.0 / elapsed)
+            self._arrival_rate_ema = (0.82 * self._arrival_rate_ema) + (0.18 * instantaneous_rate)
+            self._service_rate_ema = (0.86 * self._service_rate_ema) + (0.14 * service_rate)
+            queue_load = self._queue_load
+            arrival_rate_ema = self._arrival_rate_ema
+            service_rate_ema = self._service_rate_ema
+        overload = _clamp(max(0.0, queue_load - 0.68) / 0.32)
         if pressure_level in {"critical", "emergency"}:
             admission = "thin_frame"
         elif is_background and (overload >= 0.35 or pressure_level in {"warning", "high"}):
@@ -1006,14 +1150,14 @@ class ImaginationEngine:
             admission = "compress_foreground"
         else:
             admission = "admit"
-        expected_wait = self._queue_load / max(0.05, self._service_rate_ema)
+        expected_wait = queue_load / max(0.05, service_rate_ema)
         return {
             "admission": admission,
             "admitted": admission != "defer_background",
-            "queue_load": round(self._queue_load, 4),
+            "queue_load": round(queue_load, 4),
             "overload_pressure": round(overload, 4),
-            "arrival_rate_hz": round(self._arrival_rate_ema, 4),
-            "service_rate_hz": round(self._service_rate_ema, 4),
+            "arrival_rate_hz": round(arrival_rate_ema, 4),
+            "service_rate_hz": round(service_rate_ema, 4),
             "utilization": round(_clamp(self._arrival_rate_ema / max(0.05, self._service_rate_ema) / 8.0), 4),
             "expected_wait_s": round(expected_wait, 4),
             "runtime_memory_level": pressure_level,
@@ -1058,9 +1202,18 @@ class ImaginationEngine:
                 "imagination_engine",
                 exc,
                 severity="warning",
-                action="used neutral memory-pressure signal for imagination admission",
+                action="restrained imagination admission: memory pressure unknown",
             )
-            return {"level": "normal", "pressure_pct": 0.0, "reason": "memory_pressure_probe_failed"}
+            # Fail toward restraint. An unreadable memory probe is not evidence
+            # of headroom — reporting "normal"/0.0 admitted ordinary imagination
+            # precisely when memory safety was unknown. "warning" is the mildest
+            # level that still damps admission without freezing the engine when
+            # the probe is merely unavailable.
+            return {
+                "level": "warning",
+                "pressure_pct": _UNKNOWN_MEMORY_PRESSURE_PCT,
+                "reason": "memory_pressure_probe_failed:restraining",
+            }
 
     def _select_attractor_state(
         self,
@@ -1118,28 +1271,32 @@ class ImaginationEngine:
         novelty_pressure: float,
         memory_pressure: float,
     ) -> dict[str, float]:
-        decayed: dict[str, float] = {}
-        for key, value in self._eligibility_trace.items():
-            next_value = _safe_float(value, 0.0) * 0.82
-            if next_value >= 0.01:
-                decayed[key] = next_value
-        self._eligibility_trace = decayed
-        self._eligibility_trace[f"attractor:{selected_attractor}"] = _clamp(
-            self._eligibility_trace.get(f"attractor:{selected_attractor}", 0.0)
-            + salience * 0.26
-            + novelty_pressure * 0.12
-        )
-        for token in keywords[:6]:
-            trace_key = f"keyword:{token}"
-            self._eligibility_trace[trace_key] = _clamp(
-                self._eligibility_trace.get(trace_key, 0.0)
-                + 0.05
-                + memory_pressure * 0.05
+        # Decay-then-reinforce is a read-modify-write over shared learning
+        # state; concurrent frames interleaving here lost each other's decay.
+        with self._state_lock:
+            decayed: dict[str, float] = {}
+            for key, value in self._eligibility_trace.items():
+                next_value = _safe_float(value, 0.0) * 0.82
+                if next_value >= 0.01:
+                    decayed[key] = next_value
+            self._eligibility_trace = decayed
+            self._eligibility_trace[f"attractor:{selected_attractor}"] = _clamp(
+                self._eligibility_trace.get(f"attractor:{selected_attractor}", 0.0)
+                + salience * 0.26
+                + novelty_pressure * 0.12
             )
+            for token in keywords[:6]:
+                trace_key = f"keyword:{token}"
+                self._eligibility_trace[trace_key] = _clamp(
+                    self._eligibility_trace.get(trace_key, 0.0)
+                    + 0.05
+                    + memory_pressure * 0.05
+                )
+            trace_items = list(self._eligibility_trace.items())
         return {
             key: round(value, 4)
             for key, value in sorted(
-                self._eligibility_trace.items(),
+                trace_items,
                 key=lambda item: item[1],
                 reverse=True,
             )[:12]
