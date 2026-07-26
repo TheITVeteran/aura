@@ -608,7 +608,7 @@ class MorphogeneticRuntime:
                 signal_id, event = await asyncio.wait_for(
                     self._immunity_queue.get(), timeout=5.0
                 )
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 continue
             self._immunity_inflight_id = signal_id
             self._immunity_inflight_started_at = time.time()
@@ -616,7 +616,22 @@ class MorphogeneticRuntime:
                 from core.adaptation.adaptive_immunity import get_adaptive_immune_system
 
                 immune = get_adaptive_immune_system()
-                result = immune.observe_event(event)
+                # observe_event is not always cheap and it is not always async.
+                # Its synchronous path reaches Will.decide ->
+                # _check_memory_relevance -> memory_facade.search_sync ->
+                # rag._semantic_scores -> vector_memory_engine.embed, which is a
+                # CPU-bound SentenceTransformer/BERT forward pass. Called
+                # directly here it ran ON the event loop.
+                #
+                # Live 2026-07-26: 31 "HIGH EVENT LOOP LAG" events on one boot,
+                # the worst 11.9s, all at context=idle — and the loop-stall dump
+                # named this exact chain. A loop stalled for seconds cannot
+                # drive the cortex warmup handshake either, so the runtime sat
+                # in `warming` while nothing was actually wrong with the model.
+                #
+                # A background immunity observation has no business on the loop:
+                # hand the synchronous path to a worker thread and await that.
+                result = await asyncio.to_thread(immune.observe_event, event)
                 if inspect.isawaitable(result):
                     await result
                 self._immunity_processed += 1
