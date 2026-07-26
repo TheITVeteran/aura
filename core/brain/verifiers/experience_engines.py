@@ -27,6 +27,8 @@ engines are born UNADMITTED and must earn their domains' way in.
 """
 from __future__ import annotations
 
+import asyncio
+import math
 import re
 import statistics
 import threading
@@ -43,6 +45,43 @@ _PREDICTION_HINT_RE = re.compile(
     r"by (?:tomorrow|tonight|next|end of)|within \d+)\b",
     re.IGNORECASE,
 )
+
+# A prediction horizon must be a finite, positive, sanely-bounded window; a
+# malformed or unbounded value would produce a resolution time that never
+# arrives (or arrives instantly).
+_MAX_HORIZON_S = 365.0 * 24 * 3600.0
+
+
+def _finite(value: Any, default: float, *, lo: float | None = None,
+            hi: float | None = None) -> float:
+    """Coerce to a finite float, rejecting NaN/inf, then optionally clamp."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
+
+
+def _wilson_bounds(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Two-sided Wilson score interval for a binomial success rate.
+
+    Gives a defensible confidence band instead of trusting a raw fraction over
+    a handful of samples; the bounds — not the point estimate — are what the
+    outcome verifier gates on.
+    """
+    if n <= 0:
+        return (0.0, 1.0)
+    phat = successes / n
+    denom = 1.0 + z * z / n
+    center = (phat + z * z / (2 * n)) / denom
+    margin = (z * math.sqrt((phat * (1.0 - phat) + z * z / (4 * n)) / n)) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
 
 
 class PredictionResolutionVerifier:
@@ -82,8 +121,13 @@ class PredictionResolutionVerifier:
             return VerificationResult(domain="prediction", ok=True, checked=False,
                                       engine=self.name)
         ctx = dict(context or {})
-        confidence = max(0.0, min(1.0, float(ctx.get("confidence", 0.6))))
-        horizon_s = float(ctx.get("horizon_s", 24 * 3600.0))
+        # Finite, bounded contracts: a non-finite confidence or a
+        # non-positive/unbounded horizon must not reach the ledger as a
+        # malformed resolution window.
+        confidence = _finite(ctx.get("confidence", 0.6), 0.6, lo=0.0, hi=1.0)
+        horizon_s = _finite(ctx.get("horizon_s", 24 * 3600.0), 24 * 3600.0)
+        if horizon_s <= 0.0 or horizon_s > _MAX_HORIZON_S:
+            horizon_s = min(_MAX_HORIZON_S, 24 * 3600.0)
         receipt_id = ""
         ledger = self._resolve_ledger()
         if ledger is not None:
@@ -164,6 +208,12 @@ class OutcomeLedgerVerifier:
     domains = ("planning", "plan", "action")
 
     _MIN_HISTORY = 5
+    # A family is hard-failed only when we are statistically CONFIDENT it is
+    # unreliable: the 95% upper confidence bound on its success rate sits below
+    # a coin-flip. This is what stops a repeatedly-failing (e.g. 0-success)
+    # family from silently pricing a plan through as a passing verdict, while
+    # still refusing to disprove families that are merely uncertain.
+    _FAIL_CEILING = 0.5
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -182,12 +232,18 @@ class OutcomeLedgerVerifier:
             cell["n"] += 1
             cell["successes"] += 1 if success else 0
 
-    def family_stats(self, family: str) -> tuple[int, float]:
+    def _family_ns(self, family: str) -> tuple[int, int]:
         with self._lock:
             cell = self._families.get(str(family or "").strip().lower())
-        if not cell or cell["n"] == 0:
+        if not cell:
+            return 0, 0
+        return int(cell["n"]), int(cell["successes"])
+
+    def family_stats(self, family: str) -> tuple[int, float]:
+        n, s = self._family_ns(family)
+        if n == 0:
             return 0, 0.5
-        return cell["n"], cell["successes"] / cell["n"]
+        return n, s / n
 
     async def verify(self, candidate: str, *,
                      context: dict[str, Any] | None = None) -> VerificationResult:
@@ -196,20 +252,33 @@ class OutcomeLedgerVerifier:
         if not family:
             return VerificationResult(domain="planning", ok=True, checked=False,
                                       engine=self.name)
-        n, rate = self.family_stats(family)
+        n, s = self._family_ns(family)
         if n < self._MIN_HISTORY:
             return VerificationResult(
                 domain="planning", ok=True, checked=False, engine=self.name,
                 evidence=[f"family {family!r}: only {n} outcomes on record"],
             )
+        rate = s / n
+        lo, hi = _wilson_bounds(s, n)
+        # Priors price plans; they do not disprove them — EXCEPT when the
+        # evidence is confident that the family fails (upper CI bound below a
+        # coin-flip). Then the plan is hard-failed rather than passed at a low
+        # score.
+        ok = hi >= self._FAIL_CEILING
+        issues = ([] if ok else
+                  [f"family {family!r} unreliable: 95% CI upper {hi:.2f} < {self._FAIL_CEILING:.2f}"])
         return VerificationResult(
             domain="planning",
-            ok=True,   # empirical priors price plans; they do not disprove them
+            ok=ok,
             checked=True,
             score=round(max(0.05, min(0.98, rate)), 4),
             engine=self.name,
-            evidence=[f"family {family!r}: {rate:.0%} success over {n} real outcomes"],
-            detail={"family": family, "n": n, "success_rate": round(rate, 4)},
+            issues=issues,
+            evidence=[f"family {family!r}: {rate:.0%} success over {n} real outcomes "
+                      f"(95% CI [{lo:.0%}, {hi:.0%}])"],
+            detail={"family": family, "n": n, "successes": s,
+                    "success_rate": round(rate, 4),
+                    "ci95_low": round(lo, 4), "ci95_high": round(hi, 4)},
         )
 
 
@@ -233,6 +302,20 @@ class RubricEnsembleVerifier:
     name = "rubric"
     domains = ("writing", "quality", "open_ended", "explanation")
 
+    # Runtime bounds so a slow/blocking scorer cannot stall the event loop:
+    # each sample is offloaded to a thread with a per-call timeout, and the
+    # whole ensemble shares an aggregate deadline.
+    _CALL_TIMEOUT_S = 8.0
+    _TOTAL_BUDGET_S = 20.0
+    # Catastrophic collapse of any SAFETY-critical item hard-fails the verdict —
+    # not just internal_consistency. A hallucinated (low groundedness) or
+    # nonresponsive (low addresses_the_ask) answer must not hard-pass.
+    _HARD_FLOORS = {
+        "internal_consistency": _CONSISTENCY_HARD_FLOOR,
+        "groundedness": 0.2,
+        "addresses_the_ask": 0.2,
+    }
+
     def __init__(self, *, scorer: Callable[[str, str], float] | None = None,
                  ensemble_k: int = 3,
                  rubric: tuple[tuple[str, str], ...] = _DEFAULT_RUBRIC) -> None:
@@ -243,6 +326,28 @@ class RubricEnsembleVerifier:
     def handles(self, task_type: str) -> bool:
         return task_type in self.domains
 
+    def _build_rubric(self, ctx: dict[str, Any]) -> list[tuple[str, str]]:
+        """Assemble the rubric with de-duplicated keys; caller-supplied custom
+        items cannot silently overwrite a base item's score."""
+        rubric: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for key, question in list(self._rubric):
+            k = str(key)
+            if k in seen:
+                continue
+            seen.add(k)
+            rubric.append((k, str(question)))
+        for extra in list(ctx.get("rubric_items", []))[:4]:
+            q = str(extra).strip()[:200]
+            if not q:
+                continue
+            k = f"custom_{len(rubric)}"
+            while k in seen:
+                k += "_x"
+            seen.add(k)
+            rubric.append((k, q))
+        return rubric
+
     async def verify(self, candidate: str, *,
                      context: dict[str, Any] | None = None) -> VerificationResult:
         text = str(candidate or "").strip()
@@ -250,32 +355,80 @@ class RubricEnsembleVerifier:
             return VerificationResult(domain="quality", ok=True, checked=False,
                                       engine=self.name)
         ctx = dict(context or {})
-        rubric = list(self._rubric)
-        for extra in list(ctx.get("rubric_items", []))[:4]:
-            rubric.append((f"custom_{len(rubric)}", str(extra)[:200]))
+        rubric = self._build_rubric(ctx)
+        if not rubric:   # empty/duplicate-only rubric — no basis to score
+            return VerificationResult(domain="quality", ok=True, checked=False,
+                                      engine=self.name, issues=["empty rubric"])
 
+        # Task grounding: hand the scorer the user's actual ask so items like
+        # addresses_the_ask can compare the candidate against it instead of
+        # scoring the answer in a vacuum.
+        objective = str(ctx.get("objective") or ctx.get("question")
+                        or ctx.get("ask") or "").strip()[:1200]
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._TOTAL_BUDGET_S
         item_scores: dict[str, float] = {}
         issues: list[str] = []
+        timed_out = False
         for key, question in rubric:
+            prompt_q = question
+            if objective:
+                prompt_q = (f"{question}\n\n[User's ask — judge the answer "
+                            f"against THIS]:\n{objective}")
             samples: list[float] = []
             for _ in range(self._k):
+                remaining = deadline - loop.time()
+                if remaining <= 0.0:
+                    timed_out = True
+                    break
                 try:
-                    samples.append(max(0.0, min(1.0, float(self._scorer(text, question)))))
+                    raw = await asyncio.wait_for(
+                        asyncio.to_thread(self._scorer, text, prompt_q),
+                        timeout=min(self._CALL_TIMEOUT_S, remaining),
+                    )
+                except asyncio.TimeoutError as exc:
+                    timed_out = True
+                    record_degradation("rubric_verifier", exc, severity="debug",
+                                       action="rubric sample timed out")
+                    continue
                 except (RuntimeError, TypeError, ValueError) as exc:
                     record_degradation("rubric_verifier", exc, severity="debug",
                                        action="dropped one rubric sample")
-            if not samples:
-                return VerificationResult(domain="quality", ok=True, checked=False,
-                                          engine=self.name)
-            item_scores[key] = statistics.median(samples)
-            if item_scores[key] < 0.4:
-                issues.append(f"rubric weak: {key} ({item_scores[key]:.2f})")
+                    continue
+                try:
+                    v = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                # Reject NaN/inf so a poisoned sample cannot propagate through
+                # the median, averaging, and the final verdict score.
+                if not math.isfinite(v):
+                    continue
+                samples.append(max(0.0, min(1.0, v)))
+            if samples:
+                item_scores[key] = statistics.median(samples)
+                if item_scores[key] < 0.4:
+                    issues.append(f"rubric weak: {key} ({item_scores[key]:.2f})")
+            if timed_out and loop.time() >= deadline:
+                break
 
-        consistency = item_scores.get("internal_consistency", 1.0)
-        ok = consistency >= _CONSISTENCY_HARD_FLOOR
-        if not ok:
-            issues.append(f"rubric hard-fail: internal_consistency {consistency:.2f}")
+        if not item_scores:
+            return VerificationResult(
+                domain="quality", ok=True, checked=False, engine=self.name,
+                issues=["rubric scoring produced no finite samples", *issues])
+
+        ok = True
+        for item, floor in self._HARD_FLOORS.items():
+            val = item_scores.get(item)
+            if val is not None and val < floor:
+                ok = False
+                issues.append(f"rubric hard-fail: {item} {val:.2f} < {floor:.2f}")
         score = sum(item_scores.values()) / len(item_scores)
+        evidence = f"rubric ensemble (k={self._k}) over {len(item_scores)} items"
+        if objective:
+            evidence += f"; grounded in ask ({len(objective)} chars)"
+        if timed_out:
+            evidence += " [partial: budget exceeded]"
         return VerificationResult(
             domain="quality",
             ok=ok,
@@ -283,6 +436,7 @@ class RubricEnsembleVerifier:
             score=round(max(0.05, min(0.98, score)), 4),
             engine=self.name,
             issues=issues,
-            evidence=[f"rubric ensemble (k={self._k}) over {len(item_scores)} items"],
-            detail={"item_scores": {k: round(v, 3) for k, v in item_scores.items()}},
+            evidence=[evidence],
+            detail={"item_scores": {k: round(v, 3) for k, v in item_scores.items()},
+                    "hard_floors": dict(self._HARD_FLOORS), "partial": timed_out},
         )
