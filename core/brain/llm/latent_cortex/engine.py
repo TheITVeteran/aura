@@ -2167,6 +2167,7 @@ class LatentCortexEngine:
                     cognitive_context_items=context_items,
                     action_policy_evidence=policy_evidence,
                     action_intervention=normalized_action_intervention,
+                    action_intervention_consumption=action_intervention_consumption,
                     action_intervention_execution_claim=(action_intervention_execution_claim),
                     external_execution_offer=normalized_execution_offer,
                     information_encoded_tokens=encoded_tokens,
@@ -2377,6 +2378,7 @@ class LatentCortexEngine:
         cognitive_context_items: list[dict] | None = None,
         action_policy_evidence: dict[str, Any],
         action_intervention: dict[str, Any] | None = None,
+        action_intervention_consumption: dict[str, Any] | None = None,
         action_intervention_execution_claim: dict[str, Any] | None = None,
         external_execution_offer: dict[str, Any] | None = None,
         information_encoded_tokens: bytes,
@@ -4073,12 +4075,14 @@ class LatentCortexEngine:
             if intervention_pending or not intervention_runtime:
                 raise ValueError("action intervention was not consumed by the recurrent schedule")
             from core.brain.llm.latent_cortex.action_intervention import (
-                build_action_intervention_receipt,
+                build_action_intervention_receipt_authority,
             )
 
             receipt.value_of_computation["calibration_intervention"] = (
-                build_action_intervention_receipt(
-                    intervention=action_intervention,
+                build_action_intervention_receipt_authority(
+                    authority_payload=action_intervention["authority_payload"],
+                    intervention_sha256=action_intervention["intervention_sha256"],
+                    consumption_event=action_intervention_consumption,
                     execution_claim=action_intervention_execution_claim,
                     pre_state_components=intervention_runtime["pre_state_components"],
                     post_state_components=intervention_runtime["post_state_components"],

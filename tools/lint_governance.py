@@ -120,6 +120,12 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/runtime/atomic_writer.py",
             "core/brain/llm/latent_cortex/campaign_journal.py",
+            # Private paired-action snapshots require no-follow opens,
+            # owner/mode/link checks, directory fsync, key-first destruction,
+            # and staged crash recovery that the general writer deliberately
+            # does not expose. This owner accepts only its fixed internal
+            # namespace and schema-bound campaign state, never caller paths.
+            "core/brain/llm/latent_cortex/action_state_capture.py",
             # Detached campaign evidence is an immutable, no-follow verifier
             # and staged import is the sole transactional owner of its bounded
             # private arm artifacts. Neither accepts arbitrary user paths.
@@ -169,6 +175,14 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # caller-selected file path and writes only from its named scope.
             "core/brain/external_execute_coordinator.py",
             "core/brain/llm/latent_cortex/persistence.py",
+            # Ontogeny owns only its schema-bound experience, reservoir,
+            # learned-head, and authority records under the configured Aura
+            # data root (or an explicitly injected test store). Every write
+            # remains inside a named state-mutation governance scope.
+            "core/ontogeny/authority.py",
+            "core/ontogeny/experience.py",
+            "core/ontogeny/service.py",
+            "core/ontogeny/state.py",
             # Singleton owns one fixed boot-refusal marker under Aura's private
             # run directory. It accepts no caller-selected path or payload and
             # publishes/clears only that bounded launcher coordination record.

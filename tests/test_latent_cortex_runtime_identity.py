@@ -4,6 +4,9 @@ import hashlib
 from types import SimpleNamespace
 
 from core.brain.llm.latent_cortex import runtime_identity
+from core.brain.llm.latent_cortex.worker_capture_identity import (
+    build_worker_capture_identity,
+)
 
 
 def _source_identity():
@@ -19,6 +22,10 @@ def _source_identity():
 
 
 def _worker_identity():
+    capture_identity = build_worker_capture_identity(
+        worker_boot_id="d" * 32,
+        worker_pid=1234,
+    )
     return {
         "schema": runtime_identity.WORKER_IDENTITY_SCHEMA,
         "worker_boot_id": "d" * 32,
@@ -30,6 +37,7 @@ def _worker_identity():
         "worker_source_sha256": "e" * 64,
         "worker_affective_steering_active": True,
         "worker_affective_steering_alpha": 0.30,
+        "worker_action_capture_identity": capture_identity.public_identity,
     }
 
 
@@ -44,6 +52,23 @@ def test_worker_identity_rejects_every_mismatch():
     assert "worker_model_parameter_count_mismatch" in errors
     assert "invalid_worker_source_sha256" in errors
     assert "worker_source_sha256_mismatch" in errors
+
+
+def test_v2_worker_identity_requires_same_boot_capture_identity():
+    missing = _worker_identity()
+    missing.pop("worker_action_capture_identity")
+    mismatched = _worker_identity()
+    mismatched["worker_action_capture_identity"] = build_worker_capture_identity(
+        worker_boot_id="c" * 32,
+        worker_pid=1234,
+    ).public_identity
+
+    assert "invalid_worker_action_capture_identity" in (
+        runtime_identity.worker_identity_errors(missing)
+    )
+    assert "worker_action_capture_identity_mismatch" in (
+        runtime_identity.worker_identity_errors(mismatched)
+    )
 
 
 def test_model_parameter_count_uses_native_nested_parameter_tree():
@@ -232,12 +257,10 @@ def test_signed_app_runtime_identity_binds_executable_and_manifest(
     assert receipt["identity_bound"] is True
     assert receipt["installed_app_required"] is True
     assert receipt["installed_app_verified"] is True
-    assert receipt["app_executable_sha256"] == hashlib.sha256(
-        executable.read_bytes()
-    ).hexdigest()
-    assert receipt["launch_manifest_sha256"] == hashlib.sha256(
-        manifest_path.read_bytes()
-    ).hexdigest()
+    assert receipt["app_executable_sha256"] == hashlib.sha256(executable.read_bytes()).hexdigest()
+    assert (
+        receipt["launch_manifest_sha256"] == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    )
 
 
 def test_signed_app_identity_fails_closed_when_bundle_hash_cannot_be_read(monkeypatch):

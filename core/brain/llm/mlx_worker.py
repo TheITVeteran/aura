@@ -3661,6 +3661,14 @@ def _mlx_worker_loop(
     )
     logger = logging.getLogger("MLXWorker")
     worker_boot_id = uuid.uuid4().hex
+    from core.brain.llm.latent_cortex.worker_capture_identity import (
+        build_worker_capture_identity,
+    )
+
+    worker_capture_signing_identity = build_worker_capture_identity(
+        worker_boot_id=worker_boot_id,
+        worker_pid=os.getpid(),
+    )
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)
     except (OSError, ValueError) as exc:
@@ -3835,6 +3843,9 @@ def _mlx_worker_loop(
             model_path=model_path,
             worker_boot_id=worker_boot_id,
             worker_source_path=Path(__file__),
+            worker_action_capture_identity=(
+                worker_capture_signing_identity.public_identity
+            ),
         )
         draft_model = _load_speculative_draft(model_path, tokenizer)
 
@@ -6414,6 +6425,9 @@ def _mlx_worker_loop(
                                     tokenizer=tokenizer,
                                     model_path=model_path,
                                     worker_identity=worker_identity,
+                                    worker_capture_signing_identity=(
+                                        worker_capture_signing_identity
+                                    ),
                                     surface_control_state=surface_control_state,
                                     cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
                                         cancel_seq,

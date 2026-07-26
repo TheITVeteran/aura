@@ -342,6 +342,7 @@ def handle_latent_reason(
     tokenizer: Any,
     model_path: str,
     worker_identity: dict[str, Any] | None = None,
+    worker_capture_signing_identity: Any | None = None,
     surface_control_state: dict[str, Any] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     progress: Callable[[dict], None] | None = None,
@@ -518,12 +519,24 @@ def handle_latent_reason(
             }
     if worker_identity is None:
         from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
+        from core.brain.llm.latent_cortex.worker_capture_identity import (
+            build_worker_capture_identity,
+        )
 
+        if worker_capture_signing_identity is None:
+            worker_capture_signing_identity = build_worker_capture_identity(
+                worker_boot_id=uuid.uuid4().hex,
+            )
         worker_identity = build_worker_identity(
             model,
             model_path=model_path,
-            worker_boot_id=uuid.uuid4().hex,
+            worker_boot_id=worker_capture_signing_identity.public_identity[
+                "worker_boot_id"
+            ],
             worker_source_path=Path(__file__).resolve().parents[1] / "mlx_worker.py",
+            worker_action_capture_identity=(
+                worker_capture_signing_identity.public_identity
+            ),
         )
     engine = LatentCortexEngine(
         model,

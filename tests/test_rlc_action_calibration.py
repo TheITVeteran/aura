@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.brain.llm.latent_cortex.action_calibration import (
+    ACTION_CALIBRATION_INTERVENTION_EVIDENCE_SCHEMA,
     ACTION_CALIBRATION_RESULT_SCHEMA,
     ACTION_CALIBRATION_VERIFICATION_SCHEMA,
     ACTION_RESOURCE_DIMENSIONS,
@@ -20,6 +21,7 @@ from core.brain.llm.latent_cortex.action_calibration import (
     MIN_PAIR_COUNT,
     TREATMENT_ARM,
     ActionCalibrationError,
+    _validate_action_intervention_evidence,
     action_calibration_contamination_payload,
     action_calibration_final_verifier_payload,
     action_calibration_issuer_payload,
@@ -28,13 +30,24 @@ from core.brain.llm.latent_cortex.action_calibration import (
     action_calibration_starting_state_payload,
     action_calibration_verifier_payload,
     build_action_calibration_candidate,
+    build_action_calibration_design,
     build_action_calibration_plan,
     certified_evidence_snapshot,
     finalize_action_calibration_certificate,
     verify_action_calibration_certificate,
 )
+from core.brain.llm.latent_cortex.action_intervention import (
+    ACTION_INTERVENTION_REPLAY_SCHEMA,
+    ACTION_INTERVENTION_SCHEMA,
+    INTERVENTION_CONSUMED,
+    INTERVENTION_EXECUTION_CLAIMED,
+    action_intervention_authority_payload,
+    action_intervention_campaign_journal_sha256,
+    build_action_intervention_receipt_authority,
+)
 from core.brain.llm.latent_cortex.campaign_journal import (
     CampaignJournal,
+    CampaignJournalError,
     canonical_json_bytes,
 )
 from core.brain.llm.latent_cortex.campaign_trust import (
@@ -141,7 +154,7 @@ def _trust_fixture():
         "revoked_key_ids": [],
         "issued_at_unix": 800,
         "not_before_unix": 900,
-        "expires_at_unix": 2_000,
+        "expires_at_unix": 4_000_000_000,
         "roles": roles,
     }
     signed = canonical_json_bytes(body)
@@ -255,6 +268,7 @@ def _starting_state_receipts(
     policy,
     role_keys,
     execution_config: dict,
+    campaign_design_sha256: str,
 ) -> dict[str, dict]:
     receipts: dict[str, dict] = {}
     for action, action_tasks in tasks.items():
@@ -288,6 +302,7 @@ def _starting_state_receipts(
                     f"{task.task_id}:{CALIBRATION_BUCKET}".encode()
                 ).hexdigest(),
                 state_component_sha256=component_hashes,
+                campaign_design_sha256=campaign_design_sha256,
             )
             receipts[task.task_id] = {
                 **payload,
@@ -309,11 +324,28 @@ def _plan(policy, role_keys, *, task_count: int = 8):
         "answer_blind_nonce_count": EXPECTED_ACTION_COUNT * task_count,
         "generation_seed_count": EXPECTED_ACTION_COUNT * task_count,
     }
+    campaign_trust = {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": policy.policy_sha256,
+    }
+    campaign_design = build_action_calibration_design(
+        CAMPAIGN_NAME,
+        tasks,
+        model_identity=MODEL_IDENTITY,
+        execution_config=execution_config,
+        calibration_bucket=CALIBRATION_BUCKET,
+        campaign_trust=campaign_trust,
+        claim_eligible=True,
+    )
     starting_state_receipts = _starting_state_receipts(
         tasks,
         policy=policy,
         role_keys=role_keys,
         execution_config=execution_config,
+        campaign_design_sha256=campaign_design[
+            "campaign_design_sha256"
+        ],
     )
     plan = build_action_calibration_plan(
         CAMPAIGN_NAME,
@@ -321,15 +353,190 @@ def _plan(policy, role_keys, *, task_count: int = 8):
         model_identity=MODEL_IDENTITY,
         execution_config=execution_config,
         calibration_bucket=CALIBRATION_BUCKET,
+        campaign_design=campaign_design,
         starting_state_receipts=starting_state_receipts,
-        campaign_trust={
-            "prelaunch_verified": True,
-            "externally_custodied": True,
-            "policy_sha256": policy.policy_sha256,
-        },
+        campaign_trust=campaign_trust,
         claim_eligible=True,
     )
     return plan, tasks
+
+
+def _intervention_evidence(
+    *,
+    plan,
+    policy,
+    role_keys,
+    issuer_attestation,
+    journal: CampaignJournal,
+    journal_path: Path,
+    replay_rows: list[dict],
+    cell_id: str,
+    attempt_id: str,
+) -> dict:
+    definition = plan.cell_definition(cell_id)
+    journal_prefix = [
+        json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()
+    ]
+    components = {
+        name: definition["starting_state"][name]
+        for name in (
+            "latent_slots_sha256",
+            "branch_state_sha256",
+            "kv_cache_sha256",
+            "evidence_state_sha256",
+            "memory_state_sha256",
+            "public_action_state_sha256",
+            "durable_state_sha256",
+            "rng_state_sha256",
+        )
+    }
+    authority = action_intervention_authority_payload(
+        campaign_name=plan.campaign_name,
+        campaign_plan_sha256=plan.plan_sha256,
+        campaign_protocol_sha256=policy.document["protocol_sha256"],
+        policy_sha256=policy.policy_sha256,
+        policy_revision=policy.document["policy_revision"],
+        cell_id=cell_id,
+        definition_sha256=hashlib.sha256(canonical_json_bytes(definition)).hexdigest(),
+        pair_id=definition["pair_id"],
+        task_id=definition["task_id"],
+        task_payload_sha256=definition["task_payload_sha256"],
+        starting_state_sha256=definition["starting_state_sha256"],
+        starting_state_components=components,
+        expected_pre_state_sha256=hashlib.sha256(
+            canonical_json_bytes({name: components[name] for name in sorted(components)})
+        ).hexdigest(),
+        expected_pre_kv_sha256=components["kv_cache_sha256"],
+        action=definition["action"],
+        arm=definition["arm"],
+        execution_ordinal=definition["execution_ordinal"],
+        attempt_number=1,
+        attempt_id=attempt_id,
+        campaign_journal_path_sha256=action_intervention_campaign_journal_sha256(journal_path),
+        journal_head_sha256=journal_prefix[-1]["event_sha256"],
+        journal_event_count=len(journal_prefix),
+        request_payload_sha256=hashlib.sha256(f"{cell_id}:request".encode()).hexdigest(),
+        engine_request_sha256=hashlib.sha256(f"{cell_id}:engine-request".encode()).hexdigest(),
+        task_prompt_sha256=hashlib.sha256(
+            next(
+                row["prompt"]
+                for row in plan.to_dict()["metadata"]["task_manifest"]["tasks"]
+                if row["task_id"] == definition["task_id"]
+            ).encode()
+        ).hexdigest(),
+    )
+    intervention_body = {
+        "schema": ACTION_INTERVENTION_SCHEMA,
+        "authority_payload": authority,
+        "campaign_plan": plan.to_dict(),
+        "campaign_journal_prefix": journal_prefix,
+        "policy_document": dict(policy.document),
+        "task_issuer_attestation": dict(issuer_attestation),
+        "runner_attestation": build_role_attestation(
+            policy,
+            role=CAMPAIGN_RUNNER,
+            payload=authority,
+            signed_at_unix=1_075,
+            private_key=role_keys[CAMPAIGN_RUNNER],
+        ),
+    }
+    intervention = {
+        **intervention_body,
+        "intervention_sha256": hashlib.sha256(canonical_json_bytes(intervention_body)).hexdigest(),
+    }
+    campaign_claim_event_sha256 = journal.claim_action_intervention(
+        cell_id,
+        attempt_id,
+        intervention_sha256=intervention["intervention_sha256"],
+        request_payload_sha256=authority["request_payload_sha256"],
+        expected_journal_head_sha256=authority["journal_head_sha256"],
+        expected_journal_event_count=authority["journal_event_count"],
+    )
+    consumption_body = {
+        "schema": ACTION_INTERVENTION_REPLAY_SCHEMA,
+        "sequence": len(replay_rows),
+        "previous_event_sha256": (replay_rows[-1]["event_sha256"] if replay_rows else None),
+        "event": INTERVENTION_CONSUMED,
+        "intervention_sha256": intervention["intervention_sha256"],
+        "attempt_id": attempt_id,
+        "request_payload_sha256": authority["request_payload_sha256"],
+        "consumption_event_sha256": None,
+        "campaign_claim_event_sha256": campaign_claim_event_sha256,
+        "recorded_at_unix": 1_080,
+    }
+    consumption = {
+        **consumption_body,
+        "event_sha256": hashlib.sha256(canonical_json_bytes(consumption_body)).hexdigest(),
+    }
+    replay_rows.append(consumption)
+    claim_body = {
+        "schema": ACTION_INTERVENTION_REPLAY_SCHEMA,
+        "sequence": len(replay_rows),
+        "previous_event_sha256": replay_rows[-1]["event_sha256"],
+        "event": INTERVENTION_EXECUTION_CLAIMED,
+        "intervention_sha256": intervention["intervention_sha256"],
+        "attempt_id": attempt_id,
+        "request_payload_sha256": authority["request_payload_sha256"],
+        "consumption_event_sha256": consumption["event_sha256"],
+        "campaign_claim_event_sha256": campaign_claim_event_sha256,
+        "recorded_at_unix": 1_081,
+    }
+    execution_claim = {
+        **claim_body,
+        "event_sha256": hashlib.sha256(canonical_json_bytes(claim_body)).hexdigest(),
+    }
+    replay_rows.append(execution_claim)
+    treatment = definition["arm"] == TREATMENT_ARM
+    decision_sha256 = (
+        hashlib.sha256(f"{cell_id}:decision".encode()).hexdigest() if treatment else ""
+    )
+    cognitive_action_trace = (
+        [
+            {
+                "decision": {
+                    "action": definition["action"],
+                    "mode": "campaign_forced",
+                    "decision_sha256": decision_sha256,
+                }
+            }
+        ]
+        if treatment
+        else []
+    )
+    post_components = dict(components)
+    post_components["public_action_state_sha256"] = hashlib.sha256(
+        f"{cell_id}:post-public-action-state".encode()
+    ).hexdigest()
+    receipt = build_action_intervention_receipt_authority(
+        authority_payload=authority,
+        intervention_sha256=intervention["intervention_sha256"],
+        consumption_event=consumption,
+        execution_claim=execution_claim,
+        pre_state_components=components,
+        post_state_components=post_components,
+        pre_state_sha256=hashlib.sha256(
+            canonical_json_bytes({name: components[name] for name in sorted(components)})
+        ).hexdigest(),
+        pre_kv_sha256=components["kv_cache_sha256"],
+        post_state_sha256=hashlib.sha256(
+            canonical_json_bytes({name: post_components[name] for name in sorted(post_components)})
+        ).hexdigest(),
+        post_kv_sha256=post_components["kv_cache_sha256"],
+        decision_sha256=decision_sha256,
+        cognitive_action_trace=cognitive_action_trace,
+    )
+    body = {
+        "schema": ACTION_CALIBRATION_INTERVENTION_EVIDENCE_SCHEMA,
+        "authority_payload": authority,
+        "runner_attestation": intervention["runner_attestation"],
+        "intervention_sha256": intervention["intervention_sha256"],
+        "worker_receipt": receipt,
+        "cognitive_action_trace": cognitive_action_trace,
+    }
+    return {
+        **body,
+        "evidence_sha256": hashlib.sha256(canonical_json_bytes(body)).hexdigest(),
+    }
 
 
 def _result_core(
@@ -337,9 +544,11 @@ def _result_core(
     cell_id: str,
     attempt_id: str,
     task: FrontierTask,
+    intervention_evidence: dict,
 ) -> dict:
     definition = plan.cell_definition(cell_id)
     treatment = definition["arm"] == TREATMENT_ARM
+    intervention_receipt = intervention_evidence["worker_receipt"]
     text = _answer(task, correct=treatment)
     telemetry_body = {
         "schema": "aura.rlc.action_calibration.host_telemetry.v1",
@@ -365,6 +574,7 @@ def _result_core(
         "attempt_id": attempt_id,
         "starting_state_sha256": definition["starting_state_sha256"],
         "starting_state": definition["starting_state"],
+        "action_intervention_evidence": intervention_evidence,
         "action_execution": {
             "selection_mode": ("campaign_forced" if treatment else "matched_no_action_control"),
             "selected_action": definition["action"] if treatment else None,
@@ -376,8 +586,8 @@ def _result_core(
             "intervention_ordinal": 0,
             "selected_action_occurrences": 1 if treatment else 0,
             "action_excluded_at_intervention": not treatment,
-            "pre_state_sha256": definition["starting_state_sha256"],
-            "post_state_sha256": hashlib.sha256(f"{cell_id}:post".encode()).hexdigest(),
+            "pre_state_sha256": intervention_receipt["pre_state_sha256"],
+            "post_state_sha256": intervention_receipt["post_state_sha256"],
         },
         "text": text,
         "output_sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -404,7 +614,6 @@ def _complete_campaign(
     tmp_path: Path,
     *,
     task_count: int = 8,
-    claim_interventions: bool = False,
 ):
     policy, role_keys, root = _trust_fixture()
     plan, tasks_by_action = _plan(
@@ -418,51 +627,82 @@ def _complete_campaign(
     attempts: dict[str, str] = {}
     results: dict[str, dict] = {}
     journal_path = tmp_path / "action-calibration.jsonl"
-    with CampaignJournal(journal_path, plan) as journal:
-        for cell_id in plan.cell_ids:
-            definition = plan.cell_definition(cell_id)
-            attempt_id = journal.start_cell(cell_id)
-            if claim_interventions:
-                snapshot = journal.resume()
-                journal.claim_action_intervention(
+    root_path = tmp_path / "action-calibration-root.pem"
+    policy_path = tmp_path / "action-calibration-policy.json"
+    root_path.write_bytes(_public_pem(root))
+    policy_path.write_bytes(canonical_json_bytes(policy.document))
+    issuer_payload = action_calibration_issuer_payload(plan)
+    issuer_attestation = build_role_attestation(
+        policy,
+        role=TASK_ISSUER,
+        payload=issuer_payload,
+        signed_at_unix=1_000,
+        private_key=role_keys[TASK_ISSUER],
+    )
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv(
+            "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+            str(root_path),
+        )
+        monkeypatch.setenv(
+            "AURA_RLC_ACTION_CALIBRATION_POLICY",
+            str(policy_path),
+        )
+        monkeypatch.setenv(
+            "AURA_RLC_ACTION_CALIBRATION_REPLAY_LEDGER",
+            str(tmp_path / "action-calibration-replay.jsonl"),
+        )
+        monkeypatch.setenv(
+            "AURA_RLC_ACTION_CALIBRATION_JOURNAL",
+            str(journal_path),
+        )
+        replay_rows: list[dict] = []
+        with CampaignJournal(journal_path, plan) as journal:
+            for cell_id in plan.cell_ids:
+                definition = plan.cell_definition(cell_id)
+                attempt_id = journal.start_cell(cell_id)
+                intervention_evidence = _intervention_evidence(
+                    plan=plan,
+                    policy=policy,
+                    role_keys=role_keys,
+                    issuer_attestation=issuer_attestation,
+                    journal=journal,
+                    journal_path=journal_path,
+                    replay_rows=replay_rows,
+                    cell_id=cell_id,
+                    attempt_id=attempt_id,
+                )
+                core = _result_core(
+                    plan,
                     cell_id,
                     attempt_id,
-                    intervention_sha256=hashlib.sha256(
-                        f"{cell_id}:intervention".encode()
-                    ).hexdigest(),
-                    request_payload_sha256=hashlib.sha256(
-                        f"{cell_id}:request".encode()
-                    ).hexdigest(),
-                    expected_journal_head_sha256=snapshot.journal_head_sha256,
-                    expected_journal_event_count=2 + len(attempts) * 3,
+                    tasks[definition["task_id"]],
+                    intervention_evidence,
                 )
-            core = _result_core(
-                plan,
-                cell_id,
-                attempt_id,
-                tasks[definition["task_id"]],
-            )
-            runner_payload = action_calibration_runner_payload(
-                plan=plan,
-                cell_id=cell_id,
-                attempt_id=attempt_id,
-                result_core=core,
-            )
-            result = {
-                **core,
-                "runner_attestation": build_role_attestation(
-                    policy,
-                    role=CAMPAIGN_RUNNER,
-                    payload=runner_payload,
-                    signed_at_unix=1_100,
-                    private_key=role_keys[CAMPAIGN_RUNNER],
-                ),
-            }
-            journal.record_arm_result(cell_id, attempt_id, result)
-            attempts[cell_id] = attempt_id
-            results[cell_id] = result
-
-        sealed_head = journal.resume().journal_head_sha256
+                runner_payload = action_calibration_runner_payload(
+                    plan=plan,
+                    cell_id=cell_id,
+                    attempt_id=attempt_id,
+                    result_core=core,
+                )
+                result = {
+                    **core,
+                    "runner_attestation": build_role_attestation(
+                        policy,
+                        role=CAMPAIGN_RUNNER,
+                        payload=runner_payload,
+                        signed_at_unix=1_100,
+                        private_key=role_keys[CAMPAIGN_RUNNER],
+                    ),
+                }
+                journal.record_arm_result(cell_id, attempt_id, result)
+                attempts[cell_id] = attempt_id
+                results[cell_id] = result
+            pre_seal_snapshot = journal.resume()
+        replay_path = tmp_path / "action-calibration-replay.jsonl"
+        replay_path.write_bytes(b"".join(canonical_json_bytes(row) + b"\n" for row in replay_rows))
+        sealed_head = pre_seal_snapshot.journal_head_sha256
+        pre_seal_event_count = len(journal_path.read_text(encoding="utf-8").splitlines())
         output_seal = action_calibration_output_seal_payload(
             plan,
             result_sha256_by_cell={
@@ -470,8 +710,7 @@ def _complete_campaign(
                 for cell_id, result in results.items()
             },
             journal_head_sha256=sealed_head,
-            journal_event_count=1
-            + len(plan.cell_ids) * (3 if claim_interventions else 2),
+            journal_event_count=pre_seal_event_count,
         )
         output_seal_attestation = build_role_attestation(
             policy,
@@ -481,55 +720,55 @@ def _complete_campaign(
             private_key=role_keys[CAMPAIGN_RUNNER],
         )
 
-        for cell_id in plan.cell_ids:
-            definition = plan.cell_definition(cell_id)
-            result = results[cell_id]
-            task = tasks[definition["task_id"]]
-            score = task.score(result["text"]).to_dict()
-            result_sha256 = hashlib.sha256(canonical_json_bytes(result)).hexdigest()
-            verifier_payload = action_calibration_verifier_payload(
-                plan=plan,
-                cell_id=cell_id,
-                result_sha256=result_sha256,
-                score_receipt=score,
-                answer_commitment_sha256=task.public.answer_commitment_sha256,
-            )
-            verification = {
-                "schema": ACTION_CALIBRATION_VERIFICATION_SCHEMA,
-                "correct": score["correct"],
-                "score_receipt": score,
-                "answer_commitment_sha256": (task.public.answer_commitment_sha256),
-                "result_sha256": result_sha256,
-                "verifier_attestation": build_role_attestation(
-                    policy,
-                    role=EVIDENCE_VERIFIER,
-                    payload=verifier_payload,
-                    signed_at_unix=1_300,
-                    private_key=role_keys[EVIDENCE_VERIFIER],
-                ),
-            }
-            journal.record_verified(
-                cell_id,
-                attempts[cell_id],
-                verification,
-            )
-            journal.commit_cell(
-                cell_id,
-                attempts[cell_id],
-                {
+        with CampaignJournal(journal_path, plan) as journal:
+            for cell_id in plan.cell_ids:
+                definition = plan.cell_definition(cell_id)
+                result = results[cell_id]
+                task = tasks[definition["task_id"]]
+                score = task.score(result["text"]).to_dict()
+                result_sha256 = hashlib.sha256(canonical_json_bytes(result)).hexdigest()
+                verifier_payload = action_calibration_verifier_payload(
+                    plan=plan,
+                    cell_id=cell_id,
+                    result_sha256=result_sha256,
+                    score_receipt=score,
+                    answer_commitment_sha256=task.public.answer_commitment_sha256,
+                )
+                verification = {
+                    "schema": ACTION_CALIBRATION_VERIFICATION_SCHEMA,
+                    "correct": score["correct"],
+                    "score_receipt": score,
+                    "answer_commitment_sha256": (task.public.answer_commitment_sha256),
                     "result_sha256": result_sha256,
-                    "verification_sha256": hashlib.sha256(
-                        canonical_json_bytes(verification)
-                    ).hexdigest(),
-                },
-            )
-        records = journal.committed_records()
-        manifest = journal.finalize(tmp_path / "manifest.json")
+                    "verifier_attestation": build_role_attestation(
+                        policy,
+                        role=EVIDENCE_VERIFIER,
+                        payload=verifier_payload,
+                        signed_at_unix=1_300,
+                        private_key=role_keys[EVIDENCE_VERIFIER],
+                    ),
+                }
+                journal.record_verified(
+                    cell_id,
+                    attempts[cell_id],
+                    verification,
+                )
+                journal.commit_cell(
+                    cell_id,
+                    attempts[cell_id],
+                    {
+                        "result_sha256": result_sha256,
+                        "verification_sha256": hashlib.sha256(
+                            canonical_json_bytes(verification)
+                        ).hexdigest(),
+                    },
+                )
+            records = journal.committed_records()
+            manifest = journal.finalize(tmp_path / "manifest.json")
     journal_transcript = [
         json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()
     ]
 
-    issuer_payload = action_calibration_issuer_payload(plan)
     contamination_payload = action_calibration_contamination_payload(
         plan,
         corpus_snapshot_sha256="7" * 64,
@@ -542,13 +781,7 @@ def _complete_campaign(
         campaign_manifest=manifest,
         campaign_journal=journal_transcript,
         policy=policy,
-        issuer_attestation=build_role_attestation(
-            policy,
-            role=TASK_ISSUER,
-            payload=issuer_payload,
-            signed_at_unix=1_000,
-            private_key=role_keys[TASK_ISSUER],
-        ),
+        issuer_attestation=issuer_attestation,
         contamination_attestation=build_role_attestation(
             policy,
             role=CONTAMINATION_AUDITOR,
@@ -578,6 +811,11 @@ def _complete_campaign(
     return policy, root, plan, candidate, certificate
 
 
+@pytest.fixture(scope="module")
+def completed_action_campaign(tmp_path_factory):
+    return _complete_campaign(tmp_path_factory.mktemp("completed-action-campaign"))
+
+
 def test_plan_freezes_exact_global_coverage_and_counterbalances_each_action():
     policy, role_keys, _root = _trust_fixture()
     plan, _tasks = _plan(policy, role_keys)
@@ -593,6 +831,10 @@ def test_plan_freezes_exact_global_coverage_and_counterbalances_each_action():
         == "external_issuer_stratified_random_without_replacement_v1"
     )
     assert len(metadata["sampling_frame"]["task_sampling_identities"]) == MIN_PAIR_COUNT
+    assert (
+        metadata["campaign_design"]["campaign_design_sha256"]
+        == metadata["campaign_design_sha256"]
+    )
     for action in OperationKind:
         rows = [row for row in metadata["assignments"] if row["action"] == action.value]
         assert len(rows) == 8
@@ -604,11 +846,77 @@ def test_plan_freezes_exact_global_coverage_and_counterbalances_each_action():
                 for cell_id in plan.cell_ids
                 if plan.cell_definition(cell_id)["pair_id"] == row["pair_id"]
             )
-            assert (
-                cell["starting_state"]["capture_mode"]
-                == "externally_captured_runtime_state_v1"
-            )
+            assert cell["starting_state"]["capture_mode"] == "externally_captured_runtime_state_v1"
             assert cell["starting_state"]["calibration_bucket"] == CALIBRATION_BUCKET
+            assert (
+                cell["starting_state"]["campaign_design_sha256"]
+                == metadata["campaign_design_sha256"]
+            )
+
+
+def test_final_plan_rejects_rehashed_or_substituted_campaign_design():
+    policy, role_keys, _root = _trust_fixture()
+    plan, tasks = _plan(policy, role_keys)
+    metadata = plan.to_dict()["metadata"]
+    starting_states = {
+        definition["task_id"]: definition["starting_state"]
+        for cell_id in plan.cell_ids
+        for definition in (plan.cell_definition(cell_id),)
+    }
+    attacked = copy.deepcopy(metadata["campaign_design"])
+    attacked["assignments"][0]["arm_order"].reverse()
+    attacked_body = {
+        name: item
+        for name, item in attacked.items()
+        if name != "campaign_design_sha256"
+    }
+    attacked["campaign_design_sha256"] = hashlib.sha256(
+        canonical_json_bytes(attacked_body)
+    ).hexdigest()
+
+    with pytest.raises(ActionCalibrationError, match="design_mismatch"):
+        build_action_calibration_plan(
+            CAMPAIGN_NAME,
+            tasks,
+            model_identity=MODEL_IDENTITY,
+            execution_config=metadata["execution_config"],
+            calibration_bucket=CALIBRATION_BUCKET,
+            campaign_design=attacked,
+            starting_state_receipts=starting_states,
+            campaign_trust=metadata["campaign_trust"],
+            claim_eligible=True,
+        )
+
+
+def test_claim_grade_journal_rejects_unclaimed_result_and_out_of_order_start(
+    tmp_path,
+):
+    policy, role_keys, _root = _trust_fixture()
+    plan, _tasks = _plan(policy, role_keys)
+    first, second = plan.cell_ids[:2]
+    with CampaignJournal(tmp_path / "strict-action-campaign.jsonl", plan) as journal:
+        with pytest.raises(CampaignJournalError, match="journal_execution_order_drift"):
+            journal.start_cell(second)
+        attempt_id = journal.start_cell(first)
+        with pytest.raises(
+            CampaignJournalError,
+            match="action_intervention_claim_required",
+        ):
+            journal.record_arm_result(first, attempt_id, {"summary_only": True})
+        head = journal.resume().journal_head_sha256
+        journal.claim_action_intervention(
+            first,
+            attempt_id,
+            intervention_sha256="1" * 64,
+            request_payload_sha256="2" * 64,
+            expected_journal_head_sha256=head,
+            expected_journal_event_count=2,
+        )
+        journal.record_arm_result(first, attempt_id, {"evidence": "pending_verification"})
+        # The next acquisition starts only after the prior worker result is
+        # durable. Verification remains deferred until every output is sealed,
+        # preserving the hidden-answer protocol.
+        assert journal.start_cell(second)
 
 
 def test_plan_rejects_task_reuse_and_missing_action():
@@ -762,11 +1070,28 @@ def test_plan_rejects_reblinded_duplicates_and_unbalanced_sampling_frame():
 def test_plan_rejects_state_capture_for_a_different_bucket():
     policy, role_keys, _root = _trust_fixture()
     tasks = _tasks_by_action()
+    campaign_trust = {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": policy.policy_sha256,
+    }
+    campaign_design = build_action_calibration_design(
+        CAMPAIGN_NAME,
+        tasks,
+        model_identity=MODEL_IDENTITY,
+        execution_config=EXECUTION_CONFIG,
+        calibration_bucket=CALIBRATION_BUCKET,
+        campaign_trust=campaign_trust,
+        claim_eligible=True,
+    )
     receipts = _starting_state_receipts(
         tasks,
         policy=policy,
         role_keys=role_keys,
         execution_config=EXECUTION_CONFIG,
+        campaign_design_sha256=campaign_design[
+            "campaign_design_sha256"
+        ],
     )
     first_task_id = next(iter(receipts))
     receipts[first_task_id]["calibration_bucket"] = "different|bucket"
@@ -780,18 +1105,18 @@ def test_plan_rejects_state_capture_for_a_different_bucket():
             model_identity=MODEL_IDENTITY,
             execution_config=EXECUTION_CONFIG,
             calibration_bucket=CALIBRATION_BUCKET,
+            campaign_design=campaign_design,
             starting_state_receipts=receipts,
-            campaign_trust={
-                "prelaunch_verified": True,
-                "externally_custodied": True,
-                "policy_sha256": policy.policy_sha256,
-            },
+            campaign_trust=campaign_trust,
             claim_eligible=True,
         )
 
 
-def test_full_external_campaign_verifies_but_eight_is_not_promoted(tmp_path):
-    policy, _root, plan, candidate, certificate = _complete_campaign(tmp_path)
+def test_full_external_campaign_verifies_but_eight_is_not_promoted(
+    tmp_path,
+    completed_action_campaign,
+):
+    policy, _root, plan, candidate, certificate = completed_action_campaign
 
     assert (
         verify_action_calibration_certificate(
@@ -824,11 +1149,10 @@ def test_full_external_campaign_verifies_but_eight_is_not_promoted(tmp_path):
     assert plan.plan_sha256 == candidate["plan_sha256"]
 
 
-def test_final_certificate_replays_claimed_intervention_transitions(tmp_path):
-    policy, _root, plan, candidate, certificate = _complete_campaign(
-        tmp_path,
-        claim_interventions=True,
-    )
+def test_final_certificate_replays_claimed_intervention_transitions(
+    completed_action_campaign,
+):
+    policy, _root, plan, candidate, certificate = completed_action_campaign
 
     claims = [
         event
@@ -838,11 +1162,77 @@ def test_final_certificate_replays_claimed_intervention_transitions(tmp_path):
     assert len(claims) == len(plan.cell_ids)
     assert verify_action_calibration_certificate(certificate, policy=policy) == certificate
 
+    cell_id = plan.cell_ids[0]
+    claim_event = next(
+        event
+        for event in candidate["campaign_journal"]
+        if event["cell_id"] == cell_id and event["event"] == "ACTION_INTERVENTION_CLAIMED"
+    )
+    result_event = next(
+        event
+        for event in candidate["campaign_journal"]
+        if event["cell_id"] == cell_id and event["event"] == "ARM_RESULT"
+    )
+    claim = {
+        "claim": claim_event["payload"],
+        "claim_event_sha256": claim_event["event_sha256"],
+    }
+    evidence = result_event["payload"]["result"]["action_intervention_evidence"]
+    common = {
+        "plan": plan,
+        "policy": policy,
+        "cell_id": cell_id,
+        "attempt_id": result_event["attempt_id"],
+        "action_intervention_claim": claim,
+        "campaign_journal": candidate["campaign_journal"],
+        "issuer_attestation": candidate["issuer_attestation"],
+    }
+    assert (
+        _validate_action_intervention_evidence(evidence, **common)["evidence_sha256"]
+        == evidence["evidence_sha256"]
+    )
+    with pytest.raises(
+        ActionCalibrationError,
+        match="action_calibration_intervention_evidence_invalid",
+    ):
+        _validate_action_intervention_evidence(None, **common)
+
+    attacked = copy.deepcopy(evidence)
+    attacked["worker_receipt"]["execution_claim"]["attempt_id"] = "forged-attempt"
+    attacked_body = {name: value for name, value in attacked.items() if name != "evidence_sha256"}
+    attacked["evidence_sha256"] = hashlib.sha256(canonical_json_bytes(attacked_body)).hexdigest()
+    with pytest.raises(
+        ActionCalibrationError,
+        match="action_calibration_intervention_evidence_invalid",
+    ):
+        _validate_action_intervention_evidence(attacked, **common)
+
+    mismatched_claim = copy.deepcopy(claim)
+    mismatched_claim["claim"]["intervention_sha256"] = "0" * 64
+    with pytest.raises(
+        ActionCalibrationError,
+        match="action_calibration_intervention_envelope_mismatch",
+    ):
+        _validate_action_intervention_evidence(
+            evidence,
+            **{**common, "action_intervention_claim": mismatched_claim},
+        )
+
+    attacked = copy.deepcopy(evidence)
+    attacked["intervention_sha256"] = "f" * 64
+    attacked_body = {name: value for name, value in attacked.items() if name != "evidence_sha256"}
+    attacked["evidence_sha256"] = hashlib.sha256(canonical_json_bytes(attacked_body)).hexdigest()
+    with pytest.raises(
+        ActionCalibrationError,
+        match="action_calibration_intervention_envelope_mismatch",
+    ):
+        _validate_action_intervention_evidence(attacked, **common)
+
 
 def test_certificate_rejects_statistic_and_final_attestation_tampering(
-    tmp_path,
+    completed_action_campaign,
 ):
-    policy, _root, _plan, _candidate, certificate = _complete_campaign(tmp_path)
+    policy, _root, _plan, _candidate, certificate = completed_action_campaign
 
     attacked = copy.deepcopy(certificate)
     attacked["candidate"]["cells"]["formalize"]["gain_lcb"] = 1.0
@@ -855,8 +1245,10 @@ def test_certificate_rejects_statistic_and_final_attestation_tampering(
         verify_action_calibration_certificate(attacked, policy=policy)
 
 
-def test_detached_verifier_reconstructs_outcomes_from_journal(tmp_path):
-    policy, _root, _plan, candidate, _certificate = _complete_campaign(tmp_path)
+def test_detached_verifier_reconstructs_outcomes_from_journal(
+    completed_action_campaign,
+):
+    policy, _root, _plan, candidate, _certificate = completed_action_campaign
     attacked = copy.deepcopy(candidate)
     for observation in attacked["observations"]:
         observation["treatment_success"] = not observation["treatment_success"]
@@ -873,9 +1265,9 @@ def test_detached_verifier_reconstructs_outcomes_from_journal(tmp_path):
 
 
 def test_candidate_rejects_resource_cap_and_output_seal_shape_tampering(
-    tmp_path,
+    completed_action_campaign,
 ):
-    policy, _root, _plan, candidate, _certificate = _complete_campaign(tmp_path)
+    policy, _root, _plan, candidate, _certificate = completed_action_campaign
 
     attacked = copy.deepcopy(candidate)
     attacked["observations"][0]["treatment_action_resources"]["host_scalar_ops"] = (
@@ -928,8 +1320,9 @@ def test_twenty_unique_pairs_promote_each_certified_action(tmp_path):
 def test_independent_cli_kernel_and_runtime_loader_use_external_root(
     tmp_path,
     monkeypatch,
+    completed_action_campaign,
 ):
-    policy, root, _plan, _candidate, certificate = _complete_campaign(tmp_path)
+    policy, root, _plan, _candidate, certificate = completed_action_campaign
     certificate_path = tmp_path / "certificate.json"
     policy_path = tmp_path / "policy.json"
     root_path = tmp_path / "trust-root.pem"

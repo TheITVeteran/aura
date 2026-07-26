@@ -259,7 +259,18 @@ class ExperienceSpine:
 
     def __init__(self, db_path: str | Path | None = None, *, autoflush: bool = True) -> None:
         self._db_path = Path(db_path) if db_path else _default_db_path()
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope(
+            "ontogeny_experience",
+            domain="state_mutation",
+            receipt_prefix="ontogeny-experience",
+        ):
+            get_file_write_gateway().ensure_directory(
+                self._db_path.parent,
+                source="ontogeny_experience",
+            )
         self._store_kind = _classify_store(self._db_path)
         self._lock = checked_lock("ontogeny.spine", rank=LockRank.LEAF, reentrant=True)
         self._queue: deque[Episode] = deque()

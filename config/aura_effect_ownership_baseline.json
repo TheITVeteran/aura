@@ -3313,6 +3313,14 @@
       "scope": "<module>.SandboxedFileBroker.write_file"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/capabilities/web_asset_handler.py",
+      "scope": "<module>.WebAssetHandler.download_image"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -3959,6 +3967,78 @@
       "count": 1,
       "path": "core/observability/unified_action_log.py",
       "scope": "<module>.UnifiedActionLog.record"
+    },
+    {
+      "callee": "<file_write_gateway>.append_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/authority.py",
+      "scope": "<module>.AuthorityLedger._receipt"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/authority.py",
+      "scope": "<module>.AuthorityLedger._receipt"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/authority.py",
+      "scope": "<module>.AuthorityLedger._save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/authority.py",
+      "scope": "<module>.AuthorityLedger._save"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/experience.py",
+      "scope": "<module>.ExperienceSpine.__init__"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/service.py",
+      "scope": "<module>.OntogenyCore._save_head"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/service.py",
+      "scope": "<module>.OntogenyCore._save_head"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/state.py",
+      "scope": "<module>.OntogeneticState.save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_bytes",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/ontogeny/state.py",
+      "scope": "<module>.OntogeneticState.save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -7241,6 +7321,142 @@
       "scope": "<module>.DailyRateLimiter._save_state"
     },
     {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
+    },
+    {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
+    },
+    {
+      "callee": "temporary.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
+    },
+    {
+      "callee": "path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._cleanup_temporary_files"
+    },
+    {
+      "callee": "chunks_root.rmdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "component_dir.rmdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "key_path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "metadata.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "snapshot_dir.rmdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "target.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._ensure_directory"
+    },
+    {
+      "callee": "path.mkdir",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._ensure_directory"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._fsync_directory"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._read_owned"
+    },
+    {
+      "callee": "operation_path.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 3,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._recover_operation"
+    },
+    {
+      "callee": "unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore.restore_and_apply"
+    },
+    {
       "callee": "self.path.parent.mkdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -7799,14 +8015,6 @@
       "count": 1,
       "path": "core/capabilities/self_taught_builder.py",
       "scope": "<module>.build_app_verified"
-    },
-    {
-      "callee": "<pathlib.Path>.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/web_asset_handler.py",
-      "scope": "<module>.WebAssetHandler.download_image"
     },
     {
       "callee": "self.base_data_dir.mkdir",
@@ -14802,6 +15010,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3d1db35696cc7ed995e8ef3bfcf407f7ed0d7c6571faf00fc04f0179567fce6b",
+  "inventory_sha256": "2a91ff86c4e97dbb6736c26f17198dfcf5c18291f93f4f368689cd56f6d4d3a2",
   "schema_version": 1
 }

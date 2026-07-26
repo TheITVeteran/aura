@@ -72,6 +72,7 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 )
 
 ACTION_CALIBRATION_PROTOCOL_SCHEMA: Final = "aura.rlc.action_calibration.protocol.v1"
+ACTION_CALIBRATION_DESIGN_SCHEMA: Final = "aura.rlc.action_calibration.design.v1"
 ACTION_CALIBRATION_RESULT_SCHEMA: Final = "aura.rlc.action_calibration.arm_result.v1"
 ACTION_CALIBRATION_VERIFICATION_SCHEMA: Final = "aura.rlc.action_calibration.verification.v1"
 ACTION_CALIBRATION_CERTIFICATE_SCHEMA: Final = "aura.rlc.action_calibration.certificate.v1"
@@ -92,12 +93,11 @@ ACTION_CALIBRATION_FINAL_VERIFIER_SCHEMA: Final = (
 ACTION_CALIBRATION_WORKER_ADMISSION_SCHEMA: Final = (
     "aura.rlc.action_calibration.worker_admission.v1"
 )
-ACTION_CALIBRATION_STATE_CAPTURE_SCHEMA: Final = (
-    "aura.rlc.action_calibration.state_capture.v1"
+ACTION_CALIBRATION_STATE_CAPTURE_SCHEMA: Final = "aura.rlc.action_calibration.state_capture.v1"
+ACTION_CALIBRATION_INTERVENTION_EVIDENCE_SCHEMA: Final = (
+    "aura.rlc.action_calibration.intervention_evidence.v1"
 )
-ACTION_CALIBRATION_SAMPLING_FRAME_SCHEMA: Final = (
-    "aura.rlc.action_calibration.sampling_frame.v1"
-)
+ACTION_CALIBRATION_SAMPLING_FRAME_SCHEMA: Final = "aura.rlc.action_calibration.sampling_frame.v1"
 
 TREATMENT_ARM: Final = "forced_action"
 CONTROL_ARM: Final = "matched_no_action"
@@ -249,6 +249,137 @@ def _task_sampling_stratum(task: PublicTaskRecord) -> str:
     )
 
 
+def build_action_calibration_design(
+    campaign_name: str,
+    tasks_by_action: Mapping[
+        OperationKind | str,
+        Sequence[FrontierTask | PublicTaskRecord],
+    ],
+    *,
+    model_identity: Mapping[str, Any],
+    execution_config: Mapping[str, Any],
+    calibration_bucket: str,
+    campaign_trust: Mapping[str, Any] | None,
+    claim_eligible: bool,
+) -> dict[str, Any]:
+    """Freeze the answer-blind campaign design before state capture.
+
+    The final campaign plan contains capture receipts, so it cannot be the
+    authority used to request those captures. This design is the acyclic
+    preregistration root: it fixes every task, assignment, arm order, runtime,
+    and trust input that exists before capture, while containing no private
+    answer material or captured resident state.
+    """
+
+    if (
+        not isinstance(campaign_name, str)
+        or not campaign_name
+        or campaign_name != campaign_name.strip()
+        or type(claim_eligible) is not bool
+        or not isinstance(calibration_bucket, str)
+        or not calibration_bucket
+        or calibration_bucket != calibration_bucket.strip()
+        or len(calibration_bucket) > 160
+        or not isinstance(model_identity, Mapping)
+        or not model_identity
+        or not isinstance(execution_config, Mapping)
+        or not execution_config
+        or (
+            campaign_trust is not None
+            and not isinstance(campaign_trust, Mapping)
+        )
+    ):
+        _fail("action_calibration_design_invalid")
+    actions: dict[OperationKind, tuple[FrontierTask | PublicTaskRecord, ...]] = {}
+    for raw_action, raw_tasks in tasks_by_action.items():
+        action = _operation(raw_action)
+        if (
+            action in actions
+            or isinstance(raw_tasks, (str, bytes))
+            or not isinstance(raw_tasks, Sequence)
+        ):
+            _fail("action_calibration_design_invalid")
+        actions[action] = tuple(raw_tasks)
+    if set(actions) != set(OperationKind):
+        _fail("action_calibration_action_coverage_invalid")
+
+    all_tasks: list[FrontierTask | PublicTaskRecord] = []
+    assignments: list[dict[str, Any]] = []
+    seen_task_ids: set[str] = set()
+    seen_sampling_identities: set[str] = set()
+    for action in sorted(actions, key=lambda item: item.value):
+        raw_tasks = actions[action]
+        if len(raw_tasks) < MIN_UNIQUE_TASKS_PER_ACTION:
+            _fail("action_calibration_action_underpowered")
+        public, _manifest = _task_manifest(raw_tasks)
+        ordered = tuple(sorted(public, key=lambda task: task.task_id))
+        if len({task.domain for task in ordered}) < 2:
+            _fail("action_calibration_action_domain_coverage_invalid")
+        treatment_first_offset = (
+            int(
+                hashlib.sha256(
+                    f"{campaign_name}:{action.value}:counterbalance".encode()
+                ).hexdigest(),
+                16,
+            )
+            % 2
+        )
+        for task_ordinal, task in enumerate(ordered):
+            sampling_identity = _task_sampling_identity(task)
+            if (
+                task.task_id in seen_task_ids
+                or sampling_identity in seen_sampling_identities
+            ):
+                _fail("action_calibration_underlying_task_reused")
+            seen_task_ids.add(task.task_id)
+            seen_sampling_identities.add(sampling_identity)
+            treatment_first = (task_ordinal + treatment_first_offset) % 2 == 0
+            arm_order = (
+                CALIBRATION_ARMS
+                if treatment_first
+                else tuple(reversed(CALIBRATION_ARMS))
+            )
+            assignments.append(
+                {
+                    "action": action.value,
+                    "arm_order": list(arm_order),
+                    "pair_id": _pair_id(action, task),
+                    "task_id": task.task_id,
+                    "task_payload_sha256": task.task_payload_sha256,
+                    "task_sampling_identity_sha256": sampling_identity,
+                    "task_sampling_stratum_sha256": _task_sampling_stratum(task),
+                }
+            )
+        all_tasks.extend(raw_tasks)
+
+    _all_public, manifest = _task_manifest(tuple(all_tasks))
+    public_tasks = tuple(
+        sorted(
+            (
+                task.public if isinstance(task, FrontierTask) else task
+                for task in all_tasks
+            ),
+            key=lambda task: task.task_id,
+        )
+    )
+    commitment = build_task_commitment(build_public_task_manifest(public_tasks)).to_dict()
+    body = {
+        "schema": ACTION_CALIBRATION_DESIGN_SCHEMA,
+        "protocol_schema": ACTION_CALIBRATION_PROTOCOL_SCHEMA,
+        "campaign_name": campaign_name,
+        "claim_eligible": claim_eligible,
+        "calibration_bucket": calibration_bucket,
+        "model_identity": dict(model_identity),
+        "execution_config": dict(execution_config),
+        "campaign_trust": None if campaign_trust is None else dict(campaign_trust),
+        "task_manifest": manifest,
+        "task_commitment": commitment,
+        "assignments": assignments,
+        "assignment_sha256": _sha256(assignments),
+    }
+    return {**body, "campaign_design_sha256": _sha256(body)}
+
+
 def action_calibration_starting_state_payload(
     *,
     campaign_name: str,
@@ -262,6 +393,7 @@ def action_calibration_starting_state_payload(
     bucket_classifier_sha256: str,
     bucket_evidence_sha256: str,
     state_component_sha256: Mapping[str, str],
+    campaign_design_sha256: str,
 ) -> dict[str, Any]:
     component_names = {
         "latent_slots_sha256",
@@ -287,6 +419,7 @@ def action_calibration_starting_state_payload(
         or not isinstance(state_component_sha256, Mapping)
         or set(state_component_sha256) != component_names
         or any(not _is_sha256(state_component_sha256[name]) for name in component_names)
+        or not _is_sha256(campaign_design_sha256)
     ):
         _fail("action_calibration_state_capture_invalid")
     body = {
@@ -295,6 +428,7 @@ def action_calibration_starting_state_payload(
         "capture_id": capture_id,
         "captured_at_unix": captured_at_unix,
         "campaign_name": campaign_name,
+        "campaign_design_sha256": campaign_design_sha256,
         "action": action.value,
         "task_id": task.task_id,
         "task_sampling_identity_sha256": _task_sampling_identity(task),
@@ -318,6 +452,7 @@ def _validate_starting_state_receipt(
     model_identity: Mapping[str, Any],
     execution_config: Mapping[str, Any],
     calibration_bucket: str,
+    campaign_design_sha256: str,
     policy: VerifiedCampaignTrustPolicy | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
@@ -330,6 +465,7 @@ def _validate_starting_state_receipt(
         "capture_id",
         "captured_at_unix",
         "campaign_name",
+        "campaign_design_sha256",
         "action",
         "task_id",
         "task_sampling_identity_sha256",
@@ -356,6 +492,8 @@ def _validate_starting_state_receipt(
         or raw_payload.get("schema") != ACTION_CALIBRATION_STATE_CAPTURE_SCHEMA
         or raw_payload.get("capture_mode") != "externally_captured_runtime_state_v1"
         or raw_payload.get("campaign_name") != campaign_name
+        or raw_payload.get("campaign_design_sha256")
+        != campaign_design_sha256
         or raw_payload.get("action") != action.value
         or raw_payload.get("task_id") != task.task_id
         or raw_payload.get("task_sampling_identity_sha256") != _task_sampling_identity(task)
@@ -386,6 +524,7 @@ def _validate_starting_state_receipt(
                 "rng_state_sha256",
             )
         },
+        campaign_design_sha256=campaign_design_sha256,
     )
     if not _strict_equal(raw_payload, expected):
         _fail("action_calibration_state_capture_invalid")
@@ -491,6 +630,7 @@ def build_action_calibration_plan(
     model_identity: Mapping[str, Any],
     execution_config: Mapping[str, Any],
     calibration_bucket: str,
+    campaign_design: Mapping[str, Any] | None = None,
     starting_state_receipts: Mapping[str, Mapping[str, Any]] | None = None,
     campaign_trust: Mapping[str, Any] | None = None,
     claim_eligible: bool = False,
@@ -581,10 +721,10 @@ def build_action_calibration_plan(
         _fail("action_calibration_blinding_invalid")
     if execution_config.get("answer_reveal_protocol") != "sealed_outputs_then_issuer_reveal_v1":
         _fail("action_calibration_blinding_invalid")
-    if (
-        execution_config.get("task_assignment_policy")
-        != "external_issuer_stratified_random_without_replacement_v1"
-        or not _is_sha256(execution_config.get("task_assignment_seed_sha256"))
+    if execution_config.get(
+        "task_assignment_policy"
+    ) != "external_issuer_stratified_random_without_replacement_v1" or not _is_sha256(
+        execution_config.get("task_assignment_seed_sha256")
     ):
         _fail("action_calibration_sampling_frame_invalid")
     if claim_eligible:
@@ -650,6 +790,18 @@ def build_action_calibration_plan(
         or not _is_sha256(trust.get("policy_sha256"))
     ):
         _fail("action_calibration_external_trust_required")
+    expected_design = build_action_calibration_design(
+        campaign_name,
+        tasks_by_action,
+        model_identity=model_identity,
+        execution_config=execution_config,
+        calibration_bucket=calibration_bucket,
+        campaign_trust=trust,
+        claim_eligible=claim_eligible,
+    )
+    if not _strict_equal(campaign_design, expected_design):
+        _fail("action_calibration_design_mismatch")
+    campaign_design_sha256 = expected_design["campaign_design_sha256"]
     if (
         not isinstance(starting_state_receipts, Mapping)
         or set(starting_state_receipts) != seen_task_ids
@@ -682,6 +834,7 @@ def build_action_calibration_plan(
                 model_identity=model_identity,
                 execution_config=execution_config,
                 calibration_bucket=calibration_bucket,
+                campaign_design_sha256=campaign_design_sha256,
             )
             treatment_first = (task_ordinal + treatment_first_offset) % 2 == 0
             arm_order = CALIBRATION_ARMS if treatment_first else tuple(reversed(CALIBRATION_ARMS))
@@ -729,6 +882,8 @@ def build_action_calibration_plan(
     }
     metadata = {
         "schema": ACTION_CALIBRATION_PROTOCOL_SCHEMA,
+        "action_intervention_required": True,
+        "strict_execution_order": claim_eligible,
         "claim_eligible": claim_eligible,
         "claim_scope": (
             "checkpoint-bound value-of-computation calibration"
@@ -749,6 +904,8 @@ def build_action_calibration_plan(
         "model_identity": dict(model_identity),
         "execution_config": dict(execution_config),
         "campaign_trust": trust,
+        "campaign_design": expected_design,
+        "campaign_design_sha256": campaign_design_sha256,
     }
     plan = CampaignPlan.build(campaign_name, cells, metadata=metadata)
     _validate_plan_sampling_frame(plan)
@@ -874,6 +1031,16 @@ def _metadata(plan: CampaignPlan) -> dict[str, Any]:
     if (
         not isinstance(metadata, dict)
         or metadata.get("schema") != ACTION_CALIBRATION_PROTOCOL_SCHEMA
+        or metadata.get("action_intervention_required") is not True
+        or type(metadata.get("strict_execution_order")) is not bool
+        or not isinstance(metadata.get("campaign_design"), dict)
+        or not _is_sha256(metadata.get("campaign_design_sha256"))
+        or metadata["campaign_design"].get("campaign_design_sha256")
+        != metadata["campaign_design_sha256"]
+        or (
+            metadata.get("claim_eligible") is True
+            and metadata.get("strict_execution_order") is not True
+        )
     ):
         _fail("action_calibration_plan_metadata_invalid")
     return metadata
@@ -952,7 +1119,11 @@ def _validate_journal_transcript(
     manifest: Mapping[str, Any],
     output_seal: Mapping[str, Any],
     supplied_records: Sequence[Mapping[str, Any]] | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
     event_fields = {
         "schema",
         "sequence",
@@ -974,6 +1145,7 @@ def _validate_journal_transcript(
     state: dict[str, dict[str, Any]] = {}
     previous_event_sha256 = "0" * 64
     seal_head_sha256: str | None = None
+    next_execution_ordinal = 0
     seal_event_count = output_seal.get("journal_event_count")
     if type(seal_event_count) is not int:
         _fail("action_calibration_journal_transcript_invalid")
@@ -1022,12 +1194,18 @@ def _validate_journal_transcript(
                 _fail("action_calibration_journal_attempt_invalid")
             cell_state = state.get(cell_id)
             if event_name == STARTED:
-                if cell_state is not None or not _strict_equal(payload, {"attempt_number": 1}):
+                definition = plan.cell_definition(cell_id)
+                if (
+                    cell_state is not None
+                    or not _strict_equal(payload, {"attempt_number": 1})
+                    or definition.get("execution_ordinal") != next_execution_ordinal
+                ):
                     _fail("action_calibration_journal_transition_invalid")
                 state[cell_id] = {
                     "state": STARTED,
                     "attempt_id": attempt_id,
                 }
+                next_execution_ordinal += 1
             elif event_name == ACTION_INTERVENTION_CLAIMED:
                 claim_fields = {
                     "intervention_sha256",
@@ -1041,8 +1219,7 @@ def _validate_journal_transcript(
                     or set(payload) != claim_fields
                     or not _is_sha256(payload.get("intervention_sha256"))
                     or not _is_sha256(payload.get("request_payload_sha256"))
-                    or payload.get("signed_journal_head_sha256")
-                    != event["previous_event_sha256"]
+                    or payload.get("signed_journal_head_sha256") != event["previous_event_sha256"]
                     or payload.get("signed_journal_event_count") != sequence
                 ):
                     _fail("action_calibration_journal_transition_invalid")
@@ -1056,7 +1233,7 @@ def _validate_journal_transcript(
             elif event_name == ARM_RESULT:
                 if (
                     cell_state is None
-                    or cell_state["state"] not in {STARTED, ACTION_INTERVENTION_CLAIMED}
+                    or cell_state["state"] != ACTION_INTERVENTION_CLAIMED
                     or set(payload) != {"result"}
                     or not isinstance(payload.get("result"), Mapping)
                 ):
@@ -1119,6 +1296,7 @@ def _validate_journal_transcript(
         _fail("action_calibration_journal_final_state_invalid")
     manifest_cells = {row["cell_id"]: row for row in manifest["cells"]}
     records: dict[str, dict[str, Any]] = {}
+    intervention_claims: dict[str, dict[str, Any]] = {}
     for cell_id in plan.cell_ids:
         cell = state[cell_id]
         if (
@@ -1147,6 +1325,10 @@ def _validate_journal_transcript(
             "verification": cell["verification"],
             "commit": cell["commit"],
         }
+        intervention_claims[cell_id] = {
+            "claim": cell["action_intervention_claim"],
+            "claim_event_sha256": cell["action_intervention_claim_event_sha256"],
+        }
     if supplied_records is not None:
         supplied: dict[str, Mapping[str, Any]] = {}
         for record in supplied_records:
@@ -1159,7 +1341,7 @@ def _validate_journal_transcript(
             supplied[cast(str, record["cell_id"])] = record
         if not _strict_equal(supplied, records):
             _fail("action_calibration_journal_records_mismatch")
-    return transcript, records
+    return transcript, records, intervention_claims
 
 
 def _rational(value: Rational) -> dict[str, int]:
@@ -1248,6 +1430,163 @@ def _evidence_cells(
     return cells
 
 
+def _validate_action_intervention_evidence(
+    value: Any,
+    *,
+    plan: CampaignPlan,
+    policy: VerifiedCampaignTrustPolicy,
+    cell_id: str,
+    attempt_id: str,
+    action_intervention_claim: Mapping[str, Any],
+    campaign_journal: Sequence[Mapping[str, Any]],
+    issuer_attestation: Mapping[str, Any],
+) -> dict[str, Any]:
+    evidence_fields = {
+        "schema",
+        "authority_payload",
+        "runner_attestation",
+        "intervention_sha256",
+        "worker_receipt",
+        "cognitive_action_trace",
+        "evidence_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != evidence_fields:
+        _fail("action_calibration_intervention_evidence_invalid")
+    body = {name: value[name] for name in evidence_fields - {"evidence_sha256"}}
+    if value.get("schema") != ACTION_CALIBRATION_INTERVENTION_EVIDENCE_SCHEMA or value.get(
+        "evidence_sha256"
+    ) != _sha256(body):
+        _fail("action_calibration_intervention_evidence_invalid")
+    definition = plan.cell_definition(cell_id)
+    metadata = _metadata(plan)
+    authority = value.get("authority_payload")
+    claim = action_intervention_claim.get("claim")
+    claim_event_sha256 = action_intervention_claim.get("claim_event_sha256")
+    trace = value.get("cognitive_action_trace")
+    if (
+        not isinstance(authority, Mapping)
+        or not isinstance(claim, Mapping)
+        or not _is_sha256(claim_event_sha256)
+        or not isinstance(trace, Sequence)
+        or isinstance(trace, (str, bytes))
+    ):
+        _fail("action_calibration_intervention_evidence_invalid")
+    try:
+        from core.brain.llm.latent_cortex.action_intervention import (
+            ACTION_INTERVENTION_SCHEMA,
+            action_intervention_authority_payload,
+            validate_action_intervention_receipt_authority,
+        )
+
+        starting_state = cast(Mapping[str, Any], definition["starting_state"])
+        component_names = (
+            "latent_slots_sha256",
+            "branch_state_sha256",
+            "kv_cache_sha256",
+            "evidence_state_sha256",
+            "memory_state_sha256",
+            "public_action_state_sha256",
+            "durable_state_sha256",
+            "rng_state_sha256",
+        )
+        components = {name: starting_state[name] for name in component_names}
+        task_rows = cast(Mapping[str, Any], metadata["task_manifest"])["tasks"]
+        task = next(
+            row
+            for row in task_rows
+            if isinstance(row, Mapping) and row.get("task_id") == definition["task_id"]
+        )
+        normalized_authority = action_intervention_authority_payload(
+            campaign_name=plan.campaign_name,
+            campaign_plan_sha256=plan.plan_sha256,
+            campaign_protocol_sha256=policy.document["protocol_sha256"],
+            policy_sha256=policy.policy_sha256,
+            policy_revision=policy.document["policy_revision"],
+            cell_id=cell_id,
+            definition_sha256=_sha256(definition),
+            pair_id=definition["pair_id"],
+            task_id=definition["task_id"],
+            task_payload_sha256=definition["task_payload_sha256"],
+            starting_state_sha256=definition["starting_state_sha256"],
+            starting_state_components=components,
+            expected_pre_state_sha256=_sha256(
+                {name: components[name] for name in sorted(components)}
+            ),
+            expected_pre_kv_sha256=components["kv_cache_sha256"],
+            action=definition["action"],
+            arm=definition["arm"],
+            execution_ordinal=definition["execution_ordinal"],
+            attempt_number=1,
+            attempt_id=attempt_id,
+            campaign_journal_path_sha256=authority.get("campaign_journal_path_sha256"),
+            journal_head_sha256=claim.get("signed_journal_head_sha256"),
+            journal_event_count=claim.get("signed_journal_event_count"),
+            request_payload_sha256=authority.get("request_payload_sha256"),
+            engine_request_sha256=authority.get("engine_request_sha256"),
+            task_prompt_sha256=hashlib.sha256(
+                cast(str, task["prompt"]).encode("utf-8")
+            ).hexdigest(),
+        )
+        if not _strict_equal(authority, normalized_authority):
+            _fail("action_calibration_intervention_authority_mismatch")
+        prefix_count = normalized_authority["journal_event_count"]
+        prefix = campaign_journal[:prefix_count]
+        if (
+            len(prefix) != prefix_count
+            or not prefix
+            or prefix[-1].get("event_sha256") != normalized_authority["journal_head_sha256"]
+            or claim.get("request_payload_sha256") != normalized_authority["request_payload_sha256"]
+        ):
+            _fail("action_calibration_intervention_journal_binding_invalid")
+        intervention_body = {
+            "schema": ACTION_INTERVENTION_SCHEMA,
+            "authority_payload": normalized_authority,
+            "campaign_plan": plan.to_dict(),
+            "campaign_journal_prefix": [dict(row) for row in prefix],
+            "policy_document": dict(policy.document),
+            "task_issuer_attestation": dict(issuer_attestation),
+            "runner_attestation": dict(value["runner_attestation"]),
+        }
+        if (
+            value["intervention_sha256"] != _sha256(intervention_body)
+            or claim.get("intervention_sha256") != value["intervention_sha256"]
+        ):
+            _fail("action_calibration_intervention_envelope_mismatch")
+        verify_role_attestation(
+            policy,
+            value["runner_attestation"],
+            role=CAMPAIGN_RUNNER,
+            expected_payload=normalized_authority,
+        )
+        receipt = validate_action_intervention_receipt_authority(
+            value["worker_receipt"],
+            authority_payload=normalized_authority,
+            intervention_sha256=cast(str, value["intervention_sha256"]),
+            cognitive_action_trace=cast(Sequence[Mapping[str, Any]], trace),
+        )
+    except ActionCalibrationError:
+        raise
+    except (KeyError, StopIteration, TypeError, ValueError) as exc:
+        raise ActionCalibrationError("action_calibration_intervention_evidence_invalid") from exc
+    consumption = receipt["consumption_event"]
+    if (
+        consumption.get("campaign_claim_event_sha256") != claim_event_sha256
+        or receipt.get("cell_id") != cell_id
+        or receipt.get("attempt_id") != attempt_id
+        or receipt.get("campaign_plan_sha256") != plan.plan_sha256
+        or receipt.get("execution_ordinal") != definition["execution_ordinal"]
+        or receipt.get("arm") != definition["arm"]
+        or receipt.get("action") != definition["action"]
+    ):
+        _fail("action_calibration_intervention_receipt_binding_invalid")
+    return {
+        **dict(value),
+        "authority_payload": normalized_authority,
+        "worker_receipt": receipt,
+        "cognitive_action_trace": [dict(row) for row in trace],
+    }
+
+
 def _validated_record(
     record: Mapping[str, Any],
     *,
@@ -1255,6 +1594,9 @@ def _validated_record(
     policy: VerifiedCampaignTrustPolicy,
     issuer_tasks: Mapping[str, FrontierTask],
     output_sealed_at_unix: int,
+    action_intervention_claim: Mapping[str, Any],
+    campaign_journal: Sequence[Mapping[str, Any]],
+    issuer_attestation: Mapping[str, Any],
 ) -> dict[str, Any]:
     if not isinstance(record, Mapping) or set(record) != {
         "cell_id",
@@ -1294,6 +1636,7 @@ def _validated_record(
         "attempt_id",
         "starting_state_sha256",
         "starting_state",
+        "action_intervention_evidence",
         "action_execution",
         "action_trace",
         "text",
@@ -1324,9 +1667,24 @@ def _validated_record(
         model_identity=cast(Mapping[str, Any], metadata["model_identity"]),
         execution_config=cast(Mapping[str, Any], metadata["execution_config"]),
         calibration_bucket=cast(str, metadata["calibration_bucket"]),
+        campaign_design_sha256=cast(
+            str,
+            metadata["campaign_design_sha256"],
+        ),
         policy=policy,
     )
     execution = result.get("action_execution")
+    intervention_evidence = _validate_action_intervention_evidence(
+        result.get("action_intervention_evidence"),
+        plan=plan,
+        policy=policy,
+        cell_id=cell_id,
+        attempt_id=record["attempt_id"],
+        action_intervention_claim=action_intervention_claim,
+        campaign_journal=campaign_journal,
+        issuer_attestation=issuer_attestation,
+    )
+    worker_receipt = intervention_evidence["worker_receipt"]
     expected_execution = (
         {
             "selection_mode": "campaign_forced",
@@ -1348,10 +1706,8 @@ def _validated_record(
         "intervention_ordinal": 0,
         "selected_action_occurrences": 1 if arm == TREATMENT_ARM else 0,
         "action_excluded_at_intervention": arm == CONTROL_ARM,
-        "pre_state_sha256": definition["starting_state_sha256"],
-        "post_state_sha256": (
-            trace.get("post_state_sha256") if isinstance(trace, Mapping) else None
-        ),
+        "pre_state_sha256": worker_receipt["pre_state_sha256"],
+        "post_state_sha256": worker_receipt["post_state_sha256"],
     }
     telemetry = result.get("host_telemetry")
     erasure = result.get("mutation_erasure")
@@ -1366,7 +1722,10 @@ def _validated_record(
         or not _strict_equal(result.get("starting_state"), definition["starting_state"])
         or not _strict_equal(execution, expected_execution)
         or not _strict_equal(trace, expected_trace)
-        or not _is_sha256(expected_trace["post_state_sha256"])
+        or execution["selection_mode"] != worker_receipt["selection_mode"]
+        or execution["selected_action"] != worker_receipt["selected_action"]
+        or trace["selected_action_occurrences"] != worker_receipt["selected_action_occurrences"]
+        or trace["action_excluded_at_intervention"] != (worker_receipt["selected_action"] is None)
         or not isinstance(text, str)
         or not text
         or result.get("output_sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -1613,7 +1972,7 @@ def build_action_calibration_candidate(
         or manifest["journal_head_sha256"] == expected_output_seal["journal_head_sha256"]
     ):
         _fail("action_calibration_post_seal_journal_invalid")
-    journal_transcript, journal_records = _validate_journal_transcript(
+    journal_transcript, journal_records, intervention_claims = _validate_journal_transcript(
         campaign_journal,
         plan=plan,
         manifest=manifest,
@@ -1638,6 +1997,9 @@ def build_action_calibration_candidate(
             policy=policy,
             issuer_tasks=issuer_by_id,
             output_sealed_at_unix=output_sealed_at_unix,
+            action_intervention_claim=intervention_claims[cell_id],
+            campaign_journal=journal_transcript,
+            issuer_attestation=issuer_attestation,
         )
         if row["cell_id"] in normalized_records:
             _fail("action_calibration_record_duplicate")
@@ -1854,9 +2216,7 @@ def _verify_action_calibration_candidate(
             )
         }
     except (KeyError, TypeError, ValueError) as exc:
-        raise ActionCalibrationError(
-            "action_calibration_candidate_plan_metadata_invalid"
-        ) from exc
+        raise ActionCalibrationError("action_calibration_candidate_plan_metadata_invalid") from exc
     manifest = _validate_manifest(
         cast(Mapping[str, Any], normalized["campaign_manifest"]),
         plan=plan,
@@ -1972,7 +2332,7 @@ def _verify_action_calibration_candidate(
         or output_seal.get("sealed_results_sha256") != _sha256(output_seal["sealed_results"])
     ):
         _fail("action_calibration_certificate_output_seal_invalid")
-    journal_transcript, journal_records = _validate_journal_transcript(
+    journal_transcript, journal_records, intervention_claims = _validate_journal_transcript(
         normalized.get("campaign_journal"),
         plan=plan,
         manifest=manifest,
@@ -2172,6 +2532,20 @@ def _verify_action_calibration_candidate(
             definition = journal_record["definition"]
             result = journal_record["result"]
             verification = journal_record["verification"]
+            intervention_evidence = _validate_action_intervention_evidence(
+                result.get("action_intervention_evidence"),
+                plan=plan,
+                policy=policy,
+                cell_id=cell_id,
+                attempt_id=journal_record["attempt_id"],
+                action_intervention_claim=intervention_claims[cell_id],
+                campaign_journal=journal_transcript,
+                issuer_attestation=cast(
+                    Mapping[str, Any],
+                    normalized["issuer_attestation"],
+                ),
+            )
+            worker_receipt = intervention_evidence["worker_receipt"]
             public_task = public_tasks_by_id.get(cast(str, definition.get("task_id")))
             if public_task is None:
                 _fail("action_calibration_state_capture_invalid")
@@ -2183,6 +2557,10 @@ def _verify_action_calibration_candidate(
                 model_identity=cast(Mapping[str, Any], metadata["model_identity"]),
                 execution_config=cast(Mapping[str, Any], execution_config_metadata),
                 calibration_bucket=cast(str, normalized["calibration_bucket"]),
+                campaign_design_sha256=cast(
+                    str,
+                    metadata["campaign_design_sha256"],
+                ),
                 policy=policy,
             )
             capture_signed_at = starting_state["capture_attestation"]["signed_payload"][
@@ -2195,6 +2573,22 @@ def _verify_action_calibration_candidate(
                 or definition.get("pair_id") != pair_id
                 or definition.get("task_id") != task_id
                 or not isinstance(result, Mapping)
+                or result.get("action_execution")
+                != {
+                    "selection_mode": worker_receipt["selection_mode"],
+                    "selected_action": worker_receipt["selected_action"],
+                    "campaign_authority_sha256": plan.plan_sha256,
+                }
+                or result.get("action_trace")
+                != {
+                    "schema": "aura.rlc.action_calibration.action_trace.v1",
+                    "action": definition["action"],
+                    "intervention_ordinal": 0,
+                    "selected_action_occurrences": worker_receipt["selected_action_occurrences"],
+                    "action_excluded_at_intervention": arm == CONTROL_ARM,
+                    "pre_state_sha256": worker_receipt["pre_state_sha256"],
+                    "post_state_sha256": worker_receipt["post_state_sha256"],
+                }
                 or not isinstance(verification, Mapping)
                 or type(verification.get("correct")) is not bool
                 or not isinstance(verification.get("score_receipt"), Mapping)
@@ -2222,10 +2616,7 @@ def _verify_action_calibration_candidate(
                 ) from exc
             action_resources = {
                 "estimated_flops": action_resource["estimated_flops"],
-                **{
-                    counter: action_resource["totals"][counter]
-                    for counter in RESOURCE_COUNTERS
-                },
+                **{counter: action_resource["totals"][counter] for counter in RESOURCE_COUNTERS},
             }
             arm_journal_rows[arm] = {
                 "correct": verification["correct"],
@@ -2271,12 +2662,12 @@ def _verify_action_calibration_candidate(
             "treatment_score_receipt_sha256": treatment["score_receipt_sha256"],
             "control_score_receipt_sha256": control["score_receipt_sha256"],
             "answer_commitment_sha256": row["answer_commitment_sha256"],
-            "treatment_consumed_information_sha256": treatment[
-                "consumed_information_accounting"
-            ]["receipt_sha256"],
-            "control_consumed_information_sha256": control[
-                "consumed_information_accounting"
-            ]["receipt_sha256"],
+            "treatment_consumed_information_sha256": treatment["consumed_information_accounting"][
+                "receipt_sha256"
+            ],
+            "control_consumed_information_sha256": control["consumed_information_accounting"][
+                "receipt_sha256"
+            ],
             "runner_attestations": {
                 TREATMENT_ARM: treatment["runner_attestation"],
                 CONTROL_ARM: control["runner_attestation"],
@@ -2450,9 +2841,9 @@ def certified_evidence_snapshot(
     admission = {
         "schema": ACTION_CALIBRATION_WORKER_ADMISSION_SCHEMA,
         "campaign_name": verified["candidate"]["campaign_name"],
-        "policy_validated_at_unix": verified["final_verifier_attestation"][
-            "signed_payload"
-        ]["signed_at_unix"],
+        "policy_validated_at_unix": verified["final_verifier_attestation"]["signed_payload"][
+            "signed_at_unix"
+        ],
         "policy_document": dict(policy.document),
         "final_verifier_payload": dict(verified["final_verifier_payload"]),
         "final_verifier_attestation": dict(verified["final_verifier_attestation"]),
@@ -2472,6 +2863,7 @@ __all__ = [
     "ACTION_CALIBRATION_AUDIT_PAYLOAD_SCHEMA",
     "ACTION_CALIBRATION_CERTIFICATE_SCHEMA",
     "ACTION_CALIBRATION_CANDIDATE_SCHEMA",
+    "ACTION_CALIBRATION_DESIGN_SCHEMA",
     "ACTION_CALIBRATION_EVIDENCE_SCHEMA",
     "ACTION_CALIBRATION_ISSUER_PAYLOAD_SCHEMA",
     "ACTION_CALIBRATION_FINAL_VERIFIER_SCHEMA",
@@ -2503,6 +2895,7 @@ __all__ = [
     "action_calibration_output_seal_payload",
     "action_calibration_verifier_payload",
     "build_action_calibration_plan",
+    "build_action_calibration_design",
     "build_action_calibration_candidate",
     "certified_evidence_snapshot",
     "finalize_action_calibration_certificate",

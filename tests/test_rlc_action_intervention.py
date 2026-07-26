@@ -17,6 +17,7 @@ from core.brain.llm.latent_cortex.action_calibration import (
     MIN_PAIR_COUNT,
     action_calibration_issuer_payload,
     action_calibration_starting_state_payload,
+    build_action_calibration_design,
     build_action_calibration_plan,
 )
 from core.brain.llm.latent_cortex.action_intervention import (
@@ -188,9 +189,7 @@ def _intervention(
         "generation_seed_policy": "external_issuer_uniform_63bit",
         "generation_seed_count": MIN_PAIR_COUNT,
         "generation_seed_min_entropy_bits": 60,
-        "task_assignment_policy": (
-            "external_issuer_stratified_random_without_replacement_v1"
-        ),
+        "task_assignment_policy": ("external_issuer_stratified_random_without_replacement_v1"),
         "task_assignment_seed_sha256": "2" * 64,
         "action_cost_budget_estimated_flops": 10**12,
         "action_resource_caps": {
@@ -210,6 +209,20 @@ def _intervention(
         "runtime_bundle_sha256": "3" * 64,
         "logical_parameter_count": 32_763_876_352,
     }
+    campaign_trust = {
+        "prelaunch_verified": True,
+        "externally_custodied": True,
+        "policy_sha256": policy.policy_sha256,
+    }
+    campaign_design = build_action_calibration_design(
+        policy.document["campaign_name"],
+        tasks_by_action,
+        model_identity=model_identity,
+        execution_config=execution_config,
+        calibration_bucket="b",
+        campaign_trust=campaign_trust,
+        claim_eligible=False,
+    )
     starting_states = {}
     for operation, tasks in tasks_by_action.items():
         for task in tasks:
@@ -229,10 +242,11 @@ def _intervention(
                 capture_id=f"capture:{task.task_id}",
                 captured_at_unix=now,
                 bucket_classifier_sha256="7" * 64,
-                bucket_evidence_sha256=hashlib.sha256(
-                    f"{task.task_id}:b".encode()
-                ).hexdigest(),
+                bucket_evidence_sha256=hashlib.sha256(f"{task.task_id}:b".encode()).hexdigest(),
                 state_component_sha256=components,
+                campaign_design_sha256=campaign_design[
+                    "campaign_design_sha256"
+                ],
             )
             starting_states[task.task_id] = {
                 **payload,
@@ -250,12 +264,9 @@ def _intervention(
         model_identity=model_identity,
         execution_config=execution_config,
         calibration_bucket="b",
+        campaign_design=campaign_design,
         starting_state_receipts=starting_states,
-        campaign_trust={
-            "prelaunch_verified": True,
-            "externally_custodied": True,
-            "policy_sha256": policy.policy_sha256,
-        },
+        campaign_trust=campaign_trust,
         claim_eligible=False,
     )
     target_action = OperationKind(action).value
@@ -266,9 +277,7 @@ def _intervention(
         and plan.cell_definition(candidate)["arm"] == arm
     )
     definition = plan.cell_definition(cell_id)
-    components = {
-        name: definition["starting_state"][name] for name in _STATE_COMPONENT_NAMES
-    }
+    components = {name: definition["starting_state"][name] for name in _STATE_COMPONENT_NAMES}
     journal_path = tmp_path / f"campaign-{arm}-{target_action}-{attempt_number}.jsonl"
     with CampaignJournal(journal_path, plan) as journal:
         attempt_id = journal.start_cell(cell_id)
@@ -311,9 +320,7 @@ def _intervention(
         execution_ordinal=definition["execution_ordinal"],
         attempt_number=attempt_number,
         attempt_id=attempt_id,
-        campaign_journal_path_sha256=action_intervention_campaign_journal_sha256(
-            journal_path
-        ),
+        campaign_journal_path_sha256=action_intervention_campaign_journal_sha256(journal_path),
         journal_head_sha256=snapshot.journal_head_sha256,
         journal_event_count=len(journal_prefix),
         request_payload_sha256=request_payload_sha256 or "e" * 64,
@@ -456,9 +463,7 @@ def test_signed_intervention_admits_and_tamper_fails_after_rehash(tmp_path, monk
         external_execution_offer=None,
         verifier_present=False,
     )
-    assert engine_request_sha256 == intervention["authority_payload"][
-        "engine_request_sha256"
-    ]
+    assert engine_request_sha256 == intervention["authority_payload"]["engine_request_sha256"]
     assert engine_request_sha256 != action_intervention_engine_request_sha256(
         prompt=_task_prompt(intervention),
         domain="general",
@@ -469,13 +474,10 @@ def test_signed_intervention_admits_and_tamper_fails_after_rehash(tmp_path, monk
         external_execution_offer=None,
         verifier_present=False,
     )
-    assert (
-        validate_action_intervention_objective(
-            intervention,
-            prompt=_task_prompt(intervention),
-        )
-        == _task_prompt(intervention)
-    )
+    assert validate_action_intervention_objective(
+        intervention,
+        prompt=_task_prompt(intervention),
+    ) == _task_prompt(intervention)
     with pytest.raises(ValueError, match="differs from preregistration"):
         validate_action_intervention_objective(
             intervention,
@@ -535,13 +537,14 @@ def test_journal_bound_retry_requires_latest_started_attempt(tmp_path, monkeypat
     authority = intervention["authority_payload"]
     assert authority["attempt_number"] == 2
     assert intervention["campaign_journal_prefix"][-1]["event"] == "STARTED"
-    assert intervention["campaign_journal_prefix"][-1]["attempt_id"] == authority[
-        "attempt_id"
-    ]
-    assert validate_action_intervention(
-        intervention,
-        require_current_policy=True,
-    ) == intervention
+    assert intervention["campaign_journal_prefix"][-1]["attempt_id"] == authority["attempt_id"]
+    assert (
+        validate_action_intervention(
+            intervention,
+            require_current_policy=True,
+        )
+        == intervention
+    )
 
     tampered = deepcopy(intervention)
     tampered["campaign_journal_prefix"] = tampered["campaign_journal_prefix"][:-1]
@@ -738,9 +741,7 @@ def test_tiny_resident_episode_executes_signed_intervention(
     if arm == TREATMENT_ARM:
         post_components["branch_state_sha256"] = "f" * 64
     measured_components = []
-    original_identity = (
-        LatentCortexEngine._action_intervention_state_components.__func__
-    )
+    original_identity = LatentCortexEngine._action_intervention_state_components.__func__
 
     def intervention_identity(cls, **kwargs):
         nonlocal identity_calls
@@ -795,9 +796,7 @@ def test_tiny_resident_episode_executes_signed_intervention(
         assert calibration["selection_mode"] == "campaign_forced"
         assert calibration["selected_action"] == OperationKind.BLIND_RESOLVE.value
         assert calibration["selected_action_occurrences"] == 1
-        assert result.receipt.cognitive_action_trace[0]["decision"]["mode"] == (
-            "campaign_forced"
-        )
+        assert result.receipt.cognitive_action_trace[0]["decision"]["mode"] == ("campaign_forced")
     else:
         assert calibration["selection_mode"] == "matched_no_action_control"
         assert calibration["selected_action"] is None
@@ -807,15 +806,9 @@ def test_tiny_resident_episode_executes_signed_intervention(
         assert control_followup["transition"]["step_index"] == 1
         assert control_followup["state_signal"]["omitted_action_count"] == 1
         assert control_followup["decision"]["mode"] != "campaign_forced"
-        assert (
-            control_followup["decision"]["action"]
-            != OperationKind.BLIND_RESOLVE.value
-        )
+        assert control_followup["decision"]["action"] != OperationKind.BLIND_RESOLVE.value
     assert len(measured_components) == 2
-    assert all(
-        set(components) == set(_STATE_COMPONENT_NAMES)
-        for components in measured_components
-    )
+    assert all(set(components) == set(_STATE_COMPONENT_NAMES) for components in measured_components)
     if arm == TREATMENT_ARM:
         assert (
             measured_components[0]["branch_state_sha256"]

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import tempfile
 from pathlib import Path
-
-import base64
 
 import pytest
 
@@ -40,6 +39,13 @@ class FakeFileWriteGateway:
     def __init__(self) -> None:
         self.text_writes: list[dict[str, object]] = []
         self.byte_writes: list[dict[str, object]] = []
+        self.directory_writes: list[dict[str, object]] = []
+
+    async def ensure_directory_async(self, path, *, source="unknown") -> str:
+        target = Path(path)
+        await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
+        self.directory_writes.append({"path": target, "source": source})
+        return str(target)
 
     def write_text(self, path, text, *, encoding="utf-8", source="unknown", durable=True) -> None:
         target = Path(path)
@@ -130,6 +136,9 @@ async def test_web_asset_download_uses_network_and_file_gateways(monkeypatch, tm
     assert path.endswith(".png")
     assert network.calls[0]["read_only"] is True
     assert network.calls[0]["source"] == "web_asset_handler.download_image"
+    assert writer.directory_writes == [
+        {"path": tmp_path, "source": "web_asset_handler.download_image"}
+    ]
     assert writer.byte_writes[0]["source"] == "web_asset_handler.download_image"
     assert writer.byte_writes[0]["payload"] == png
 

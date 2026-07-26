@@ -12,7 +12,7 @@ from typing import Any
 
 from core.runtime.file_read_gateway import read_stable_bytes
 
-WORKER_IDENTITY_SCHEMA = "aura.latent_cortex.worker_identity.v1"
+WORKER_IDENTITY_SCHEMA = "aura.latent_cortex.worker_identity.v2"
 RUNTIME_IDENTITY_SCHEMA = "aura.latent_cortex.runtime_identity.v1"
 MAX_AFFECTIVE_STEERING_ALPHA = 50.0
 
@@ -208,6 +208,7 @@ def build_worker_identity(
     model_path: str | Path,
     worker_boot_id: str,
     worker_source_path: str | Path,
+    worker_action_capture_identity: Mapping[str, Any],
     affective_steering_active: bool = False,
     affective_steering_alpha: float = 0.0,
 ) -> dict[str, Any]:
@@ -219,6 +220,20 @@ def build_worker_identity(
         model_path,
         stored_element_count=stored_element_count,
     )
+    from core.brain.llm.latent_cortex.worker_capture_identity import (
+        validate_worker_capture_identity,
+    )
+
+    capture_identity = validate_worker_capture_identity(
+        dict(worker_action_capture_identity)
+    )
+    if (
+        capture_identity["worker_boot_id"] != boot_id
+        or capture_identity["worker_pid"] != os.getpid()
+    ):
+        raise ValueError(
+            "worker action-capture identity does not belong to this worker boot"
+        )
     return {
         "schema": WORKER_IDENTITY_SCHEMA,
         "worker_boot_id": boot_id,
@@ -230,6 +245,7 @@ def build_worker_identity(
         "worker_source_sha256": _stable_sha256(worker_source_path, max_bytes=8 * 1024 * 1024),
         "worker_affective_steering_active": bool(affective_steering_active),
         "worker_affective_steering_alpha": float(affective_steering_alpha),
+        "worker_action_capture_identity": capture_identity,
         # CP126 866530f6. Model path plus a parameter count cannot tell two
         # runtimes apart when the difference is WHICH adapter is attached,
         # which tokenizer resolved the text, or how the weights are
@@ -387,6 +403,12 @@ def worker_identity_errors(
     if not isinstance(receipt, Mapping):
         return ["worker_identity_receipt_not_mapping"]
     errors: list[str] = []
+    schema = receipt.get("schema")
+    if schema not in {
+        "aura.latent_cortex.worker_identity.v1",
+        WORKER_IDENTITY_SCHEMA,
+    }:
+        errors.append("invalid_worker_identity_schema")
     boot_id = receipt.get("worker_boot_id")
     if not (
         isinstance(boot_id, str)
@@ -436,6 +458,23 @@ def worker_identity_errors(
         or not 0.0 <= float(steering_alpha) <= MAX_AFFECTIVE_STEERING_ALPHA
     ):
         errors.append("invalid_worker_affective_steering_alpha")
+    if schema == WORKER_IDENTITY_SCHEMA:
+        try:
+            from core.brain.llm.latent_cortex.worker_capture_identity import (
+                validate_worker_capture_identity,
+            )
+
+            capture_identity = validate_worker_capture_identity(
+                receipt.get("worker_action_capture_identity")
+            )
+            if (
+                capture_identity.get("worker_boot_id") != boot_id
+                or capture_identity.get("worker_pid")
+                != receipt.get("worker_pid")
+            ):
+                errors.append("worker_action_capture_identity_mismatch")
+        except (ImportError, TypeError, ValueError):
+            errors.append("invalid_worker_action_capture_identity")
     if expected is not None:
         for key in (
             "worker_boot_id",
@@ -447,6 +486,7 @@ def worker_identity_errors(
             "worker_source_sha256",
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
+            "worker_action_capture_identity",
         ):
             if receipt.get(key) != expected.get(key):
                 errors.append(f"{key}_mismatch")

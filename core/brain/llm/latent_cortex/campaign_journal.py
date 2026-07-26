@@ -370,8 +370,7 @@ class CampaignJournal:
             self._recovered_attempts = {
                 attempt_id
                 for attempt_id in self._state.active_by_cell.values()
-                if self._state.attempts[attempt_id].state
-                != ACTION_INTERVENTION_CLAIMED
+                if self._state.attempts[attempt_id].state != ACTION_INTERVENTION_CLAIMED
             }
         except BaseException:  # noqa: BLE001 - resource cleanup on any exit; original re-raised
             self.close()
@@ -569,6 +568,8 @@ class CampaignJournal:
                 _fail("journal_duplicate_commit")
             if cell_id in state.active_by_cell or attempt_id in state.attempts:
                 _fail("journal_duplicate_attempt")
+            if self._strict_execution_order() and cell_id != self._next_execution_cell(state):
+                _fail("journal_execution_order_drift")
             state.start_counts[cell_id] = attempt_number
             state.attempts[attempt_id] = _Attempt(cell_id, attempt_id, attempt_number)
             state.active_by_cell[cell_id] = attempt_id
@@ -609,7 +610,13 @@ class CampaignJournal:
         elif event == ARM_RESULT:
             if set(payload) != {"result"} or not isinstance(payload["result"], dict):
                 _fail("arm_result_payload_invalid")
-            if attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}:
+            required_state = (
+                ACTION_INTERVENTION_CLAIMED if self._action_intervention_required() else None
+            )
+            if (required_state is not None and attempt.state != required_state) or (
+                required_state is None
+                and attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}
+            ):
                 _fail("journal_invalid_transition")
             attempt.state = ARM_RESULT
             attempt.arm_result_event_sha256 = event_sha256
@@ -650,6 +657,36 @@ class CampaignJournal:
     def _assert_open(self) -> None:
         if self._closed or self._journal_fd is None:
             _fail("journal_closed")
+
+    def _protocol_metadata(self) -> dict[str, Any]:
+        metadata = self.plan.to_dict().get("metadata")
+        return metadata if isinstance(metadata, dict) else {}
+
+    def _action_intervention_required(self) -> bool:
+        return self._protocol_metadata().get("action_intervention_required") is True
+
+    def _strict_execution_order(self) -> bool:
+        return self._protocol_metadata().get("strict_execution_order") is True
+
+    def _next_execution_cell(self, state: _ReplayState) -> str | None:
+        for cell_id in self.plan.cell_ids:
+            if cell_id in state.committed_by_cell:
+                continue
+            active_id = state.active_by_cell.get(cell_id)
+            if active_id is not None:
+                active = state.attempts[active_id]
+                if active.state in {STARTED, ACTION_INTERVENTION_CLAIMED}:
+                    return cell_id
+                continue
+            if state.start_counts.get(cell_id, 0) == 0:
+                return cell_id
+            attempts = (
+                attempt for attempt in state.attempts.values() if attempt.cell_id == cell_id
+            )
+            latest = max(attempts, key=lambda attempt: attempt.attempt_number, default=None)
+            if latest is not None and latest.state == FAILED:
+                return cell_id
+        return None
 
     def _assert_unchanged_size(self) -> None:
         self._assert_open()
@@ -731,6 +768,8 @@ class CampaignJournal:
             _fail("unknown_cell")
         if cell_id in self._state.committed_by_cell:
             _fail("cell_already_committed")
+        if self._strict_execution_order() and cell_id != self._next_execution_cell(self._state):
+            _fail("journal_execution_order_drift")
         active_id = self._state.active_by_cell.get(cell_id)
         if active_id is not None:
             if active_id not in self._recovered_attempts:
@@ -841,7 +880,10 @@ class CampaignJournal:
         attempt = self._active_attempt(cell_id, attempt_id)
         if attempt.state == ARM_RESULT:
             _fail("duplicate_arm_result")
-        if attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}:
+        if self._action_intervention_required():
+            if attempt.state != ACTION_INTERVENTION_CLAIMED:
+                _fail("action_intervention_claim_required")
+        elif attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}:
             _fail("invalid_transition")
         event_sha256 = self._append_event(
             ARM_RESULT,

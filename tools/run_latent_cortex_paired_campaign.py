@@ -2226,15 +2226,27 @@ def _execute_worker(
                 raise CampaignProducerError(
                     "model identity changed across load boundary"
                 )
-            worker_identity = build_worker_identity(
-                model,
-                model_path=model_path,
+            from core.brain.llm.latent_cortex.worker_capture_identity import (
+                build_worker_capture_identity,
+            )
+
+            worker_capture_signing_identity = build_worker_capture_identity(
                 worker_boot_id=(
                     origin_context["client"].session_id
                     if origin_context is not None
                     else uuid.uuid4().hex
                 ),
+            )
+            worker_identity = build_worker_identity(
+                model,
+                model_path=model_path,
+                worker_boot_id=worker_capture_signing_identity.public_identity[
+                    "worker_boot_id"
+                ],
                 worker_source_path=Path(__file__).resolve(),
+                worker_action_capture_identity=(
+                    worker_capture_signing_identity.public_identity
+                ),
             )
             worker_identity.update(
                 {

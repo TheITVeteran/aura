@@ -122,6 +122,7 @@ _RECEIPT_FIELDS = {
     "intervention_ordinal",
     "execution_ordinal",
     "attempt_number",
+    "consumption_event",
     "execution_claim",
     "execution_claim_sha256",
     "consumed",
@@ -160,6 +161,7 @@ _STARTING_STATE_FIELDS = {
     "capture_id",
     "captured_at_unix",
     "campaign_name",
+    "campaign_design_sha256",
     "action",
     "task_id",
     "task_sampling_identity_sha256",
@@ -297,15 +299,11 @@ def action_intervention_engine_request_sha256(
         raise ValueError("action intervention verifier presence is invalid")
     if ablate_slot is not None or ablate_mode != "zero":
         raise ValueError("action intervention does not permit latent ablations")
-    if not isinstance(cognitive_context, Sequence) or isinstance(
-        cognitive_context, (str, bytes)
-    ):
+    if not isinstance(cognitive_context, Sequence) or isinstance(cognitive_context, (str, bytes)):
         raise ValueError("action intervention cognitive context is invalid")
     if not isinstance(action_policy_evidence, Mapping):
         raise ValueError("action intervention action policy evidence is invalid")
-    if external_execution_offer is not None and not isinstance(
-        external_execution_offer, Mapping
-    ):
+    if external_execution_offer is not None and not isinstance(external_execution_offer, Mapping):
         raise ValueError("action intervention external execution offer is invalid")
     budget_contract = {
         "max_layer_apps": getattr(budget, "max_layer_apps", None),
@@ -479,9 +477,7 @@ def _validate_plan_lineage(
             expected_payload=action_calibration_issuer_payload(plan),
         )
     except (ImportError, KeyError, TypeError, ValueError) as exc:
-        raise ValueError(
-            "action intervention independent preregistration is invalid"
-        ) from exc
+        raise ValueError("action intervention independent preregistration is invalid") from exc
     if (
         plan.plan_sha256 != authority["campaign_plan_sha256"]
         or plan.campaign_name != authority["campaign_name"]
@@ -494,9 +490,7 @@ def _validate_plan_lineage(
     ):
         raise ValueError("action intervention campaign lineage differs")
     task_manifest = metadata.get("task_manifest")
-    task_rows = (
-        task_manifest.get("tasks") if isinstance(task_manifest, Mapping) else None
-    )
+    task_rows = task_manifest.get("tasks") if isinstance(task_manifest, Mapping) else None
     matching_tasks = [
         row
         for row in (task_rows or [])
@@ -510,8 +504,7 @@ def _validate_plan_lineage(
         not isinstance(prompt, str)
         or not prompt
         or task.get("task_payload_sha256") != authority["task_payload_sha256"]
-        or hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        != authority["task_prompt_sha256"]
+        or hashlib.sha256(prompt.encode("utf-8")).hexdigest() != authority["task_prompt_sha256"]
     ):
         raise ValueError("action intervention preregistered task differs")
     starting_state = definition.get("starting_state")
@@ -526,6 +519,8 @@ def _validate_plan_lineage(
         state_payload.get("schema") != "aura.rlc.action_calibration.state_capture.v1"
         or state_payload.get("capture_mode") != "externally_captured_runtime_state_v1"
         or state_payload.get("campaign_name") != plan.campaign_name
+        or state_payload.get("campaign_design_sha256")
+        != metadata.get("campaign_design_sha256")
         or state_payload.get("action") != definition.get("action")
         or state_payload.get("task_id") != definition.get("task_id")
         or state_payload.get("state_sha256") != _sha256(state_body)
@@ -614,9 +609,7 @@ def _validate_journal_prefix(
                 or attempt_id is not None
                 or payload != {"plan": plan.to_dict()}
             ):
-                raise ValueError(
-                    "action intervention campaign journal genesis differs"
-                )
+                raise ValueError("action intervention campaign journal genesis differs")
         else:
             if (
                 not isinstance(cell_id, str)
@@ -624,9 +617,7 @@ def _validate_journal_prefix(
                 or not isinstance(attempt_id, str)
                 or not isinstance(payload, Mapping)
             ):
-                raise ValueError(
-                    "action intervention campaign journal identity differs"
-                )
+                raise ValueError("action intervention campaign journal identity differs")
             if event_name == STARTED:
                 attempt_number = start_counts.get(cell_id, 0) + 1
                 if (
@@ -641,9 +632,7 @@ def _validate_journal_prefix(
                         attempt_number=attempt_number,
                     )
                 ):
-                    raise ValueError(
-                        "action intervention campaign journal attempt differs"
-                    )
+                    raise ValueError("action intervention campaign journal attempt differs")
                 start_counts[cell_id] = attempt_number
                 attempts[attempt_id] = {
                     "cell_id": cell_id,
@@ -658,9 +647,7 @@ def _validate_journal_prefix(
                     or attempt["cell_id"] != cell_id
                     or active_by_cell.get(cell_id) != attempt_id
                 ):
-                    raise ValueError(
-                        "action intervention campaign journal attempt is inactive"
-                    )
+                    raise ValueError("action intervention campaign journal attempt is inactive")
                 state = attempt["state"]
                 if event_name == ACTION_INTERVENTION_CLAIMED:
                     valid = (
@@ -679,9 +666,9 @@ def _validate_journal_prefix(
                         and payload.get("signed_journal_event_count") == sequence
                     )
                 elif event_name == ARM_RESULT:
-                    valid = state in {STARTED, ACTION_INTERVENTION_CLAIMED} and set(
-                        payload
-                    ) == {"result"}
+                    valid = state in {STARTED, ACTION_INTERVENTION_CLAIMED} and set(payload) == {
+                        "result"
+                    }
                 elif event_name == VERIFIED:
                     valid = state == ARM_RESULT and set(payload) == {"verification"}
                 elif event_name == COMMITTED:
@@ -696,9 +683,7 @@ def _validate_journal_prefix(
                 else:
                     valid = False
                 if not valid:
-                    raise ValueError(
-                        "action intervention campaign journal transition differs"
-                    )
+                    raise ValueError("action intervention campaign journal transition differs")
                 attempt["state"] = event_name
                 if event_name in {COMMITTED, FAILED}:
                     del active_by_cell[cell_id]
@@ -826,14 +811,8 @@ def validate_action_intervention(
 ) -> dict[str, Any]:
     """Authenticate an intervention against the separately configured root."""
 
-    if not isinstance(value, Mapping) or set(value) != _INTERVENTION_FIELDS:
-        raise ValueError("action intervention fields differ")
-    if value.get("schema") != ACTION_INTERVENTION_SCHEMA:
-        raise ValueError("action intervention schema is invalid")
-    body = {name: value[name] for name in _INTERVENTION_FIELDS - {"intervention_sha256"}}
-    if value.get("intervention_sha256") != _sha256(body):
-        raise ValueError("action intervention digest differs")
-    authority = _validate_authority_payload(value.get("authority_payload"))
+    normalized_contract = _normalize_action_intervention_contract(value)
+    authority = normalized_contract["authority_payload"]
     attestation = value.get("runner_attestation")
     signed_payload = attestation.get("signed_payload") if isinstance(attestation, Mapping) else None
     signed_at_unix = (
@@ -897,7 +876,7 @@ def validate_action_intervention(
         )
     except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
         raise ValueError("action intervention trust admission failed") from exc
-    return json.loads(_canonical_json_bytes(value))
+    return normalized_contract
 
 
 def validate_action_intervention_objective(
@@ -914,9 +893,10 @@ def validate_action_intervention_objective(
         raise ValueError("action intervention requires the prompt-only laboratory lane")
     if not isinstance(prompt, str) or not prompt:
         raise ValueError("action intervention preregistered prompt is unavailable")
-    if hashlib.sha256(prompt.encode("utf-8")).hexdigest() != normalized[
-        "authority_payload"
-    ]["task_prompt_sha256"]:
+    if (
+        hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        != normalized["authority_payload"]["task_prompt_sha256"]
+    ):
         raise ValueError("action intervention prompt differs from preregistration")
     return prompt
 
@@ -983,14 +963,8 @@ def _validate_replay_row(
         or not row["attempt_id"]
         or type(row.get("recorded_at_unix")) is not int
         or row["recorded_at_unix"] <= 0
-        or (
-            event == INTERVENTION_CONSUMED
-            and consumption_sha256 is not None
-        )
-        or (
-            event == INTERVENTION_EXECUTION_CLAIMED
-            and not _is_sha256(consumption_sha256)
-        )
+        or (event == INTERVENTION_CONSUMED and consumption_sha256 is not None)
+        or (event == INTERVENTION_EXECUTION_CLAIMED and not _is_sha256(consumption_sha256))
     ):
         raise ValueError(f"action intervention replay row {sequence + 1} differs")
     return row
@@ -1005,9 +979,7 @@ def _load_replay_ledger(ledger_path: Path) -> list[dict[str, Any]]:
         try:
             candidate = json.loads(line)
         except (TypeError, UnicodeDecodeError, ValueError) as exc:
-            raise ValueError(
-                f"action intervention replay row {line_number} is invalid"
-            ) from exc
+            raise ValueError(f"action intervention replay row {line_number} is invalid") from exc
         rows.append(
             _validate_replay_row(
                 candidate,
@@ -1016,9 +988,7 @@ def _load_replay_ledger(ledger_path: Path) -> list[dict[str, Any]]:
             )
         )
     consumed_by_sha = {
-        row["event_sha256"]: row
-        for row in rows
-        if row["event"] == INTERVENTION_CONSUMED
+        row["event_sha256"]: row for row in rows if row["event"] == INTERVENTION_CONSUMED
     }
     seen_consumed_attempts: set[str] = set()
     seen_consumed_interventions: set[str] = set()
@@ -1039,8 +1009,7 @@ def _load_replay_ledger(ledger_path: Path) -> list[dict[str, Any]]:
             or consumed["intervention_sha256"] != row["intervention_sha256"]
             or consumed["attempt_id"] != row["attempt_id"]
             or consumed["request_payload_sha256"] != row["request_payload_sha256"]
-            or consumed["campaign_claim_event_sha256"]
-            != row["campaign_claim_event_sha256"]
+            or consumed["campaign_claim_event_sha256"] != row["campaign_claim_event_sha256"]
             or row["consumption_event_sha256"] in seen_claims
         ):
             raise ValueError("action intervention execution claim lineage differs")
@@ -1152,8 +1121,7 @@ def claim_action_intervention_execution(
                 raise ValueError("action intervention consumption lineage differs")
             if any(
                 row["event"] == INTERVENTION_EXECUTION_CLAIMED
-                and row["consumption_event_sha256"]
-                == normalized_consumption["event_sha256"]
+                and row["consumption_event_sha256"] == normalized_consumption["event_sha256"]
                 for row in rows
             ):
                 raise ValueError("action intervention execution was already claimed")
@@ -1206,12 +1174,137 @@ def validate_action_intervention_execution_claim(
         or candidate["request_payload_sha256"] != authority["request_payload_sha256"]
     ):
         raise ValueError("action intervention execution claim differs")
+    consumption = next(
+        (row for row in rows if row["event_sha256"] == candidate["consumption_event_sha256"]),
+        None,
+    )
+    if consumption is None:
+        raise ValueError("action intervention execution claim differs")
+    validate_action_intervention_execution_proof(
+        normalized,
+        consumption_event=consumption,
+        execution_claim=candidate,
+    )
     return candidate
 
 
-def build_action_intervention_receipt(
-    *,
+def validate_action_intervention_execution_proof(
     intervention: Mapping[str, Any],
+    *,
+    consumption_event: Mapping[str, Any],
+    execution_claim: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate the portable replay proof without consulting mutable local state."""
+
+    normalized = _normalize_action_intervention_contract(intervention)
+    return _validate_action_intervention_execution_proof_components(
+        intervention_sha256=normalized["intervention_sha256"],
+        authority_payload=normalized["authority_payload"],
+        consumption_event=consumption_event,
+        execution_claim=execution_claim,
+    )
+
+
+def _validate_action_intervention_execution_proof_components(
+    *,
+    intervention_sha256: str,
+    authority_payload: Mapping[str, Any],
+    consumption_event: Mapping[str, Any],
+    execution_claim: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    authority = _validate_authority_payload(authority_payload)
+    if not _is_sha256(intervention_sha256):
+        raise ValueError("action intervention execution proof is invalid")
+    if not isinstance(consumption_event, Mapping) or not isinstance(
+        execution_claim,
+        Mapping,
+    ):
+        raise ValueError("action intervention execution proof is invalid")
+    try:
+        normalized_consumption = _validate_replay_row(
+            consumption_event,
+            sequence=int(consumption_event.get("sequence", -1)),
+            previous_event_sha256=consumption_event.get("previous_event_sha256"),
+        )
+        normalized_claim = _validate_replay_row(
+            execution_claim,
+            sequence=int(execution_claim.get("sequence", -1)),
+            previous_event_sha256=execution_claim.get("previous_event_sha256"),
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("action intervention execution proof is invalid") from exc
+    if (
+        normalized_consumption["event"] != INTERVENTION_CONSUMED
+        or normalized_claim["event"] != INTERVENTION_EXECUTION_CLAIMED
+        or normalized_claim["sequence"] <= normalized_consumption["sequence"]
+        or normalized_consumption["intervention_sha256"] != intervention_sha256
+        or normalized_claim["intervention_sha256"] != intervention_sha256
+        or normalized_consumption["attempt_id"] != authority["attempt_id"]
+        or normalized_claim["attempt_id"] != authority["attempt_id"]
+        or normalized_consumption["request_payload_sha256"] != authority["request_payload_sha256"]
+        or normalized_claim["request_payload_sha256"] != authority["request_payload_sha256"]
+        or normalized_claim["consumption_event_sha256"] != normalized_consumption["event_sha256"]
+        or normalized_claim["campaign_claim_event_sha256"]
+        != normalized_consumption["campaign_claim_event_sha256"]
+    ):
+        raise ValueError("action intervention execution proof differs")
+    return normalized_consumption, normalized_claim
+
+
+def _normalize_action_intervention_contract(value: Any) -> dict[str, Any]:
+    """Validate the immutable intervention envelope without reloading trust roots."""
+
+    if not isinstance(value, Mapping) or set(value) != _INTERVENTION_FIELDS:
+        raise ValueError("action intervention fields differ")
+    if value.get("schema") != ACTION_INTERVENTION_SCHEMA:
+        raise ValueError("action intervention schema is invalid")
+    body = {name: value[name] for name in _INTERVENTION_FIELDS - {"intervention_sha256"}}
+    if value.get("intervention_sha256") != _sha256(body):
+        raise ValueError("action intervention digest differs")
+    _validate_authority_payload(value.get("authority_payload"))
+    return json.loads(_canonical_json_bytes(value))
+
+
+def _persisted_execution_proof(
+    intervention: Mapping[str, Any],
+    execution_claim: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load and validate the exact persisted consumption/claim pair."""
+
+    normalized = validate_action_intervention(intervention, require_current_policy=False)
+    ledger_path = _replay_ledger_path()
+    rows = _load_replay_ledger(ledger_path)
+    claim = next(
+        (
+            row
+            for row in rows
+            if isinstance(execution_claim, Mapping)
+            and row["event_sha256"] == execution_claim.get("event_sha256")
+        ),
+        None,
+    )
+    consumption = next(
+        (
+            row
+            for row in rows
+            if claim is not None and row["event_sha256"] == claim.get("consumption_event_sha256")
+        ),
+        None,
+    )
+    if claim != dict(execution_claim) or consumption is None:
+        raise ValueError("action intervention execution claim differs")
+    return validate_action_intervention_execution_proof(
+        normalized,
+        consumption_event=consumption,
+        execution_claim=claim,
+    )
+
+
+def _build_action_intervention_receipt(
+    *,
+    authority_payload: Mapping[str, Any],
+    intervention_sha256: str,
+    consumption_event: Mapping[str, Any],
     execution_claim: Mapping[str, Any],
     pre_state_components: Mapping[str, str],
     post_state_components: Mapping[str, str],
@@ -1222,17 +1315,15 @@ def build_action_intervention_receipt(
     decision_sha256: str,
     cognitive_action_trace: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Build the public worker receipt after the complete trace is known."""
-
-    normalized = validate_action_intervention(
-        intervention,
-        require_current_policy=False,
+    authority = _validate_authority_payload(authority_payload)
+    normalized_consumption, normalized_execution_claim = (
+        _validate_action_intervention_execution_proof_components(
+            intervention_sha256=intervention_sha256,
+            authority_payload=authority,
+            consumption_event=consumption_event,
+            execution_claim=execution_claim,
+        )
     )
-    normalized_execution_claim = validate_action_intervention_execution_claim(
-        normalized,
-        execution_claim,
-    )
-    authority = normalized["authority_payload"]
     normalized_pre_components = _state_components(pre_state_components)
     normalized_post_components = _state_components(post_state_components)
     arm = authority["arm"]
@@ -1259,9 +1350,7 @@ def build_action_intervention_receipt(
         selection_mode = "matched_no_action_control"
         if occurrences or decision_sha256:
             raise ValueError("matched no-action intervention trace differs")
-        unchanged_control_components = _STARTING_STATE_COMPONENTS - {
-            "public_action_state_sha256"
-        }
+        unchanged_control_components = _STARTING_STATE_COMPONENTS - {"public_action_state_sha256"}
         if (
             any(
                 normalized_pre_components[name] != normalized_post_components[name]
@@ -1301,7 +1390,7 @@ def build_action_intervention_receipt(
     }
     body = {
         "schema": ACTION_INTERVENTION_RECEIPT_SCHEMA,
-        "intervention_sha256": normalized["intervention_sha256"],
+        "intervention_sha256": intervention_sha256,
         "campaign_plan_sha256": authority["campaign_plan_sha256"],
         "cell_id": authority["cell_id"],
         "attempt_id": authority["attempt_id"],
@@ -1311,6 +1400,7 @@ def build_action_intervention_receipt(
         "intervention_ordinal": 0,
         "execution_ordinal": authority["execution_ordinal"],
         "attempt_number": authority["attempt_number"],
+        "consumption_event": normalized_consumption,
         "execution_claim": normalized_execution_claim,
         "execution_claim_sha256": normalized_execution_claim["event_sha256"],
         "consumed": True,
@@ -1332,20 +1422,105 @@ def build_action_intervention_receipt(
     return {**body, "receipt_sha256": _sha256(body)}
 
 
-def validate_action_intervention_receipt(
+def build_action_intervention_receipt(
+    *,
+    intervention: Mapping[str, Any],
+    execution_claim: Mapping[str, Any],
+    consumption_event: Mapping[str, Any] | None = None,
+    pre_state_components: Mapping[str, str],
+    post_state_components: Mapping[str, str],
+    pre_state_sha256: str,
+    pre_kv_sha256: str,
+    post_state_sha256: str,
+    post_kv_sha256: str,
+    decision_sha256: str,
+    cognitive_action_trace: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build the public worker receipt after the complete trace is known."""
+
+    normalized = validate_action_intervention(
+        intervention,
+        require_current_policy=False,
+    )
+    if consumption_event is None:
+        normalized_consumption, normalized_execution_claim = _persisted_execution_proof(
+            normalized,
+            execution_claim,
+        )
+    else:
+        normalized_consumption, normalized_execution_claim = (
+            validate_action_intervention_execution_proof(
+                normalized,
+                consumption_event=consumption_event,
+                execution_claim=execution_claim,
+            )
+        )
+    return _build_action_intervention_receipt(
+        authority_payload=normalized["authority_payload"],
+        intervention_sha256=normalized["intervention_sha256"],
+        consumption_event=normalized_consumption,
+        execution_claim=normalized_execution_claim,
+        pre_state_components=pre_state_components,
+        post_state_components=post_state_components,
+        pre_state_sha256=pre_state_sha256,
+        pre_kv_sha256=pre_kv_sha256,
+        post_state_sha256=post_state_sha256,
+        post_kv_sha256=post_kv_sha256,
+        decision_sha256=decision_sha256,
+        cognitive_action_trace=cognitive_action_trace,
+    )
+
+
+def build_action_intervention_receipt_authority(
+    *,
+    authority_payload: Mapping[str, Any],
+    intervention_sha256: str,
+    consumption_event: Mapping[str, Any],
+    execution_claim: Mapping[str, Any],
+    pre_state_components: Mapping[str, str],
+    post_state_components: Mapping[str, str],
+    pre_state_sha256: str,
+    pre_kv_sha256: str,
+    post_state_sha256: str,
+    post_kv_sha256: str,
+    decision_sha256: str,
+    cognitive_action_trace: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Build a receipt after the worker has already admitted the signed authority."""
+
+    return _build_action_intervention_receipt(
+        authority_payload=authority_payload,
+        intervention_sha256=intervention_sha256,
+        consumption_event=consumption_event,
+        execution_claim=execution_claim,
+        pre_state_components=pre_state_components,
+        post_state_components=post_state_components,
+        pre_state_sha256=pre_state_sha256,
+        pre_kv_sha256=pre_kv_sha256,
+        post_state_sha256=post_state_sha256,
+        post_kv_sha256=post_kv_sha256,
+        decision_sha256=decision_sha256,
+        cognitive_action_trace=cognitive_action_trace,
+    )
+
+
+def validate_admitted_action_intervention_receipt(
     value: Any,
     *,
     intervention: Mapping[str, Any],
     cognitive_action_trace: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Reconstruct a worker intervention receipt from its signed authority."""
+    """Verify a receipt after the caller independently admits intervention trust."""
 
     if not isinstance(value, Mapping) or set(value) != _RECEIPT_FIELDS:
         raise ValueError("action intervention receipt fields differ")
     if value.get("schema") != ACTION_INTERVENTION_RECEIPT_SCHEMA:
         raise ValueError("action intervention receipt schema is invalid")
-    rebuilt = build_action_intervention_receipt(
-        intervention=intervention,
+    normalized = _normalize_action_intervention_contract(intervention)
+    rebuilt = _build_action_intervention_receipt(
+        authority_payload=normalized["authority_payload"],
+        intervention_sha256=normalized["intervention_sha256"],
+        consumption_event=value.get("consumption_event"),
         execution_claim=value.get("execution_claim"),
         pre_state_components=value.get("pre_state_components"),
         post_state_components=value.get("post_state_components"),
@@ -1359,6 +1534,57 @@ def validate_action_intervention_receipt(
     if dict(value) != rebuilt:
         raise ValueError("action intervention receipt differs")
     return rebuilt
+
+
+def validate_action_intervention_receipt_authority(
+    value: Any,
+    *,
+    authority_payload: Mapping[str, Any],
+    intervention_sha256: str,
+    cognitive_action_trace: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Verify a worker receipt from independently authenticated authority."""
+
+    if not isinstance(value, Mapping) or set(value) != _RECEIPT_FIELDS:
+        raise ValueError("action intervention receipt fields differ")
+    if value.get("schema") != ACTION_INTERVENTION_RECEIPT_SCHEMA:
+        raise ValueError("action intervention receipt schema is invalid")
+    rebuilt = _build_action_intervention_receipt(
+        authority_payload=authority_payload,
+        intervention_sha256=intervention_sha256,
+        consumption_event=value.get("consumption_event"),
+        execution_claim=value.get("execution_claim"),
+        pre_state_components=value.get("pre_state_components"),
+        post_state_components=value.get("post_state_components"),
+        pre_state_sha256=value.get("pre_state_sha256"),
+        pre_kv_sha256=value.get("pre_kv_sha256"),
+        post_state_sha256=value.get("post_state_sha256"),
+        post_kv_sha256=value.get("post_kv_sha256"),
+        decision_sha256=value.get("decision_sha256"),
+        cognitive_action_trace=cognitive_action_trace,
+    )
+    if dict(value) != rebuilt:
+        raise ValueError("action intervention receipt differs")
+    return rebuilt
+
+
+def validate_action_intervention_receipt(
+    value: Any,
+    *,
+    intervention: Mapping[str, Any],
+    cognitive_action_trace: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Reconstruct a worker intervention receipt from its signed authority."""
+
+    normalized = validate_action_intervention(
+        intervention,
+        require_current_policy=False,
+    )
+    return validate_admitted_action_intervention_receipt(
+        value,
+        intervention=normalized,
+        cognitive_action_trace=cognitive_action_trace,
+    )
 
 
 __all__ = [
@@ -1377,10 +1603,14 @@ __all__ = [
     "action_intervention_engine_request_sha256",
     "build_action_intervention",
     "build_action_intervention_receipt",
+    "build_action_intervention_receipt_authority",
     "claim_action_intervention_execution",
     "consume_action_intervention_once",
     "validate_action_intervention",
+    "validate_action_intervention_execution_proof",
     "validate_action_intervention_execution_claim",
     "validate_action_intervention_objective",
+    "validate_action_intervention_receipt_authority",
+    "validate_admitted_action_intervention_receipt",
     "validate_action_intervention_receipt",
 ]

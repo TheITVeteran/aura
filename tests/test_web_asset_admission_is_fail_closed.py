@@ -177,6 +177,9 @@ class TestTheMimeGateFailsClosed:
                 }
 
         class _Writer:
+            async def ensure_directory_async(self, path, **_kw):
+                return str(path)
+
             async def write_bytes_async(self, path, data, **kw):
                 writes.append((path, len(data)))
 

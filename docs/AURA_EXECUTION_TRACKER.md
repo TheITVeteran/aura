@@ -27081,6 +27081,7 @@ resource-observation and enterprise-gate broad-exception regressions, then
 implement SPARK-046's correlation-aware verifier fusion. Final multi-hour
 soaks remain deferred until every shorter gate is green.
 
+
 ## Checkpoint 2026-07-24-361: Maturity Infrastructure Rejoins Aura's Ownership Contract
 
 Rebasing CP360 onto the latest `main` incorporated parallel ROS 2,
@@ -28289,3 +28290,151 @@ Counting them and CP375 makes the total checkpoint record 574. The existing
 this checkpoint. Checkpoint-count completion is approximately 68.3%-99.8%,
 with a midpoint planning estimate of 81.1%. Final multi-hour
 soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-376: Acyclic Action Evidence and Encrypted Snapshot Substrate
+
+The action-calibration proof chain no longer asks a starting-state capture to
+commit a final campaign plan that itself contains that capture. A separately
+signed, answer-blind campaign design now freezes the public tasks, exact
+assignments, pair identities, arm order, resident model identity, execution
+configuration, and trust metadata before any private state is acquired. Every
+capture request and receipt binds that design digest. The later canonical plan
+reconstructs the design exactly and then adds the acquired capture receipts;
+any changed assignment, order, identity, or rehashed design is rejected. This
+removes the former circular-plan workaround without allowing the runner to
+choose arms after observing answers or captured state.
+
+Action intervention evidence is now a complete replay object rather than a
+matching summary digest. The worker result carries the full authority
+consumption event, claim, trace, pre/post component map, request and attempt
+identity, and action occurrence evidence. Parent replay reconstructs the
+intervention envelope from the exact plan, journal prefix, current policy,
+task issuer, campaign runner, worker, and runtime attestations, then recomputes
+the intervention hash. A caller-supplied matching digest without that envelope
+is not accepted. The campaign journal enforces plan order, requires a durable
+`ACTION_INTERVENTION_CLAIMED` transition before a claim-grade result, and does
+not admit the next cell until the preceding arm has a reconstructable result.
+`LatentCortexEngine` now forwards the consumed intervention into complete-state
+serialization instead of referencing an unbound local.
+
+A private action-snapshot protocol and custody substrate now exists. A signed
+request binds the design, task, pair, action, resident model, normalized
+execution request, exact capture opportunity, durable-state and RNG
+commitments, and runtime identity. The MLX worker creates a boot-scoped
+Ed25519 capture identity internally; only its public identity leaves the
+worker, while worker receipts are signed by the private key retained inside
+the worker process. Runtime-identity schema v2 validates that worker identity.
+Public replay requires the independently expected campaign-design digest and
+bound runtime identity rather than accepting those values from the receipt
+under test.
+
+The private store accepts exactly eight typed state components: latent slots,
+complete branch state, KV state, evidence state, memory state, public action
+state, runner-attested durable state, and runner-attested RNG state. The latter
+two must byte-match their signed runner commitments. Every component is
+chunked and hashed, then encrypted with AES-256-GCM and chunk-specific
+associated data. A random data-encryption key is stored separately from the
+opaque handle and ciphertext. Files and directories are owner-only; reads
+reject symlinks, non-regular files, hard links, ownership or mode drift,
+oversize content, and inode/size/time changes during the read. State is limited
+to 128 MiB per component and 256 MiB in aggregate because this first
+implementation buffers serialization and encryption; a larger resident state
+must fail admission rather than risk an unbounded allocation.
+
+Each treatment/control arm is one-use. Restore first validates and decrypts
+every component, invokes an explicit resident-application callback, and
+requires the callback's measured aggregate state hash to equal the captured
+hash before committing the arm ledger. Sealing requires both arm uses.
+Erasure destroys the separate data-encryption key before deleting ciphertext
+and distinguishes cryptographic key destruction, ciphertext-namespace
+deletion, and complete file absence in its receipt. Prepared restore, seal,
+and erase operations have bounded recovery behavior and fault-injection
+boundaries. The public capture receipt discloses component commitments and
+worker provenance without disclosing the private state, key, or bearer handle;
+a separate custody verifier reconstructs the private lifecycle.
+
+This checkpoint is deliberately a substrate checkpoint, not the completed
+resident continuation. An independent adversarial review found no P0 inside
+that bounded storage/protocol scope but withheld production acceptance on
+seven P1 boundaries. The worker identity is still self-rooted until a
+supervisor launch challenge and external trust-root attestation bind it.
+An exception or process death after a state-application callback partially
+mutates the resident but before ledger commit can leave a retryable arm; the
+real worker needs atomic/idempotent installation or an
+`UNKNOWN_APPLICATION` quarantine that terminates the contaminated process.
+Path operations are checked but are not yet rooted through persistent
+directory descriptors and `openat`/`renameat`/`unlinkat`, leaving an ancestor
+TOCTOU boundary. Multi-file publication is not yet one recoverable staged
+transaction with orphan reconciliation. The separate key is local custody,
+not an externally controlled key service. Serialization remains buffered
+rather than streamed. Crash tests inject ordinary exceptions in-process and
+do not yet exercise `SIGKILL`, concurrent writers, disk exhaustion, or
+power-loss ordering. Those findings remain mandatory work; they are not
+converted into accepted debt by this checkpoint.
+
+Most importantly, no worker/client/service route yet captures and reinstalls a
+real MLX `ActionOpportunityContinuation`. There is no portable tensor/KV
+codec, engine-owned first-action capture hook, resident 1.5B or 32B paired
+campaign, external-custody certificate, calibrated action-value table,
+selection/lesion/restoration result, causal capability gain, or frontier
+reasoning result. SPARK-051 therefore remains open and the `WOW Signal` name
+remains reserved.
+
+Validation passes the complete action-calibration campaign suite 14/14 in
+633.60 seconds, the combined intervention/runtime/client/wiring/worker-identity
+slice 197/197 in 26.66 seconds, and the focused snapshot/worker-identity slice
+29/29. Strict Ruff, bytecode compilation, and diff hygiene pass for every
+changed file. A fresh external review could not run because the auxiliary
+review quota was exhausted; this checkpoint preserves the prior independent
+findings and local executable evidence rather than inventing a replacement
+approval.
+
+Post-rebase repository gates exposed three integration defects rather than
+being waived. The enterprise scanner classified both new protocol `_fail`
+helpers as raise-only debt; they now validate stable nonblank error codes
+before raising, and the checked-in enterprise maxima remain unchanged. The
+cooperative web-image admission path returned a rejected Pillow decode without
+diagnostic evidence and still performed structural decoding and filesystem
+setup on the event loop. It now records the codec failure at debug level,
+performs full decode and filesystem metadata work off-loop, and creates the
+destination through `FileWriteGateway` only after an image clears admission.
+The web admission/gateway and governance contracts pass together with the
+snapshot slice.
+
+The governance ownership gate also rejected the snapshot store's low-level
+file operations until their ownership was explicit. The store is now a named
+canonical raw-file owner because no-follow opens, link/owner/mode checks,
+directory fsync, key-first destruction, and prepared-operation recovery are
+security semantics that the general convenience writer intentionally does not
+expose. Its namespace and schemas remain fixed and it accepts no caller-chosen
+artifact path. The reviewed ownership baseline reports 1,996 recognized calls
+in 1,867 buckets and leaves migration debt unchanged at 1,788 calls; the new
+store calls are canonical-owner inventory, not normalized migration debt.
+Production readiness, enterprise ratchet, model-load ownership, resource-
+observation ownership, and governance ownership all pass on the integrated
+tree.
+
+A second publication race brought the ontogeny organ onto `main` with eight
+gateway writes not yet assigned to an owner and one raw database-directory
+creation. The database directory now uses the governed file gateway. Ontogeny
+authority, experience, learned-head, and reservoir persistence are registered
+as narrow owners of their schema-bound internal state, each already executing
+inside its named state-mutation scope. The final exact-tree ownership inventory
+therefore reports 2,005 recognized calls in 1,876 buckets while migration debt
+remains 1,788 calls. An `ExperienceSpine` nested-directory/SQLite smoke proves
+the routed constructor remains functional.
+
+Four cooperative web-asset, Heartstone-integrity, and ontogeny-loop commits
+(`dbcc36b49`, `b64eb5b08`, `7533d7617`, and `5b7c793b4`) landed after CP375.
+Counting them and CP376 makes the total checkpoint record 579. The former
+575-record lower forecast is now exhausted
+while substantial trust-root, continuation, IPC, campaign, semantic-closeout,
+release, and soak work remains. The honest forecast is recalibrated to
+640-920 total records, leaving approximately 61-341 records after this
+checkpoint. Checkpoint-count completion is approximately 62.9%-90.5%, with a
+midpoint planning estimate of 74.2%. Next: harden the seven snapshot P1
+boundaries, build the worker-rooted serializable continuation and engine-owned
+first-action hook, wire client/service/runner lineage, then pass the 1.5B
+integration and fault-injection gate before any resident-32B training or proof
+campaign. Final multi-hour soaks remain deferred until every shorter gate is
+green.

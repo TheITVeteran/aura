@@ -8,15 +8,15 @@ to search for; this layer handles the HOW.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import os
 import re
-import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import quote_plus, urlparse
 
 from core.container import ServiceContainer
@@ -69,7 +69,7 @@ class ImageAdmission:
     height: int = 0
     frames: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "valid": self.ok,
             "format": self.fmt,
@@ -143,7 +143,12 @@ def _structural_image_check(data: bytes, declared_fmt: str) -> ImageAdmission:
             # Force a real decode; verify() alone accepts bodies that fail
             # when the pixels are actually read.
             image.load()
-    except Exception as exc:  # Pillow raises a wide, version-dependent set
+    except Exception as exc:  # noqa: BLE001 - Pillow failures vary by codec/version.
+        logger.debug(
+            "Rejected structurally invalid image payload (%s)",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return ImageAdmission(
             ok=False,
             fmt=declared_fmt,
@@ -221,7 +226,7 @@ class WebAssetHandler:
 
     async def search_images(
         self, query: str, count: int = 5, min_width: int = 800, min_height: int = 600
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """Search for images using DuckDuckGo image search.
 
         Returns list of {url, title, source, thumbnail} dicts.
@@ -244,7 +249,7 @@ class WebAssetHandler:
             record_degradation("web_asset.search", e)
             return []
 
-    async def _ddg_image_search(self, query: str, count: int) -> List[Dict[str, str]]:
+    async def _ddg_image_search(self, query: str, count: int) -> list[dict[str, str]]:
         """Scrape DuckDuckGo image search results."""
         url = f"https://duckduckgo.com/?q={quote_plus(query)}&iax=images&ia=images"
         try:
@@ -310,7 +315,7 @@ class WebAssetHandler:
             logger.debug("DDG image API failed: %s", e)
             return await self._fallback_image_search(query, count)
 
-    async def _fallback_image_search(self, query: str, count: int) -> List[Dict[str, str]]:
+    async def _fallback_image_search(self, query: str, count: int) -> list[dict[str, str]]:
         """Fallback: use Unsplash Source for free images."""
         results = []
         for i in range(min(count, 5)):
@@ -328,11 +333,7 @@ class WebAssetHandler:
 
         Returns the local file path, or empty string on failure.
         """
-        if not save_dir:
-            save_dir = os.path.expanduser(self.DEFAULT_SAVE_DIR)
-
-        save_path = Path(save_dir)
-        save_path.mkdir(parents=True, exist_ok=True)
+        save_root = save_dir or self.DEFAULT_SAVE_DIR
 
         try:
             response = await get_network_gateway().request_async(
@@ -391,7 +392,7 @@ class WebAssetHandler:
                 logger.warning("Invalid image data from %s", url[:60])
                 return ""
 
-            admission = _structural_image_check(data, fmt)
+            admission = await asyncio.to_thread(_structural_image_check, data, fmt)
             if not admission.ok:
                 logger.warning(
                     "Refusing image from %s: %s", url[:60], admission.reason,
@@ -412,6 +413,13 @@ class WebAssetHandler:
                     admission.reason,
                 )
             fmt = admission.fmt or fmt
+
+            save_path = Path(
+                await get_file_write_gateway().ensure_directory_async(
+                    save_root,
+                    source="web_asset_handler.download_image",
+                )
+            )
 
             # Determine filename
             if not filename:
@@ -435,13 +443,13 @@ class WebAssetHandler:
 
             # Save
             file_path = save_path / filename
-            if file_path.exists():
+            if await asyncio.to_thread(file_path.exists):
                 # Version it
                 stem = file_path.stem
                 suffix = file_path.suffix
                 for v in range(2, 20):
                     candidate = save_path / f"{stem}_v{v}{suffix}"
-                    if not candidate.exists():
+                    if not await asyncio.to_thread(candidate.exists):
                         file_path = candidate
                         break
 
@@ -459,15 +467,13 @@ class WebAssetHandler:
             logger.debug("Image download failed from %s: %s", url[:60], e)
             return ""
 
-    async def validate_image(self, path: str) -> Dict[str, Any]:
+    async def validate_image(self, path: str) -> dict[str, Any]:
         """Validate an image file, structurally — not just its first bytes."""
-        import asyncio
-
         p = Path(path)
-        if not p.exists():
-            return {"valid": False, "error": "File not found"}
         try:
-            size_bytes = p.stat().st_size
+            size_bytes = await asyncio.to_thread(lambda: p.stat().st_size)
+        except FileNotFoundError:
+            return {"valid": False, "error": "File not found"}
         except OSError as exc:
             return {"valid": False, "error": f"stat_failed:{type(exc).__name__}"}
         if size_bytes > self.MAX_FILE_SIZE:
@@ -493,7 +499,7 @@ class WebAssetHandler:
             }
 
         admission = await asyncio.to_thread(_structural_image_check, data, fmt)
-        result: Dict[str, Any] = admission.to_dict()
+        result: dict[str, Any] = admission.to_dict()
         result.update(size_bytes=size_bytes, path=str(p))
         if not admission.ok:
             result["error"] = admission.reason
@@ -526,11 +532,11 @@ class WebAssetHandler:
             return True, "bmp"
         return False, "unknown"
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {"downloads": self._download_count}
 
 
-_instance: Optional[WebAssetHandler] = None
+_instance: WebAssetHandler | None = None
 
 
 def get_web_asset_handler() -> WebAssetHandler:
