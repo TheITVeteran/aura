@@ -42,14 +42,14 @@ from core.brain.llm.latent_cortex.runtime_identity import (
     latent_request_payload_sha256,
 )
 from core.brain.llm.latent_cortex.worker_capture_identity import (
-    validate_worker_capture_identity,
+    validate_worker_capture_origin_binding,
 )
 from core.runtime.atomic_writer import interprocess_file_lock
 
 ACTION_STATE_CAPTURE_REQUEST_PAYLOAD_SCHEMA: Final = (
-    "aura.rlc.action_state_capture.request_payload.v1"
+    "aura.rlc.action_state_capture.request_payload.v2"
 )
-ACTION_STATE_CAPTURE_REQUEST_SCHEMA: Final = "aura.rlc.action_state_capture.request.v1"
+ACTION_STATE_CAPTURE_REQUEST_SCHEMA: Final = "aura.rlc.action_state_capture.request.v2"
 ACTION_STATE_CAPTURE_RECEIPT_SCHEMA: Final = "aura.rlc.action_state_capture.receipt.v1"
 ACTION_STATE_CAPTURE_OPPORTUNITY_SCHEMA: Final = (
     "aura.rlc.action_state_capture.first_opportunity.v1"
@@ -156,8 +156,8 @@ _REQUEST_PAYLOAD_FIELDS = {
     "latent_reason_request_sha256",
     "runner_durable_state_commitment_sha256",
     "runner_rng_root_commitment_sha256",
-    "worker_origin_identity",
-    "worker_origin_identity_commitment_sha256",
+    "worker_origin_binding",
+    "worker_origin_binding_sha256",
     "expected_action_opportunity_ordinal",
 }
 _REQUEST_FIELDS = {
@@ -213,7 +213,7 @@ _RECEIPT_FIELDS = {
     "latent_reason_request_sha256",
     "runner_durable_state_commitment_sha256",
     "runner_rng_root_commitment_sha256",
-    "worker_origin_identity_commitment_sha256",
+    "worker_origin_binding_sha256",
     "private_snapshot_envelope_sha256",
     "state_components",
     "state_sha256",
@@ -249,7 +249,7 @@ _PUBLIC_BINDING_FIELDS = (
     "latent_reason_request_sha256",
     "runner_durable_state_commitment_sha256",
     "runner_rng_root_commitment_sha256",
-    "worker_origin_identity_commitment_sha256",
+    "worker_origin_binding_sha256",
 )
 
 
@@ -472,7 +472,8 @@ def action_state_capture_request_payload(
     latent_reason_request: Mapping[str, Any],
     runner_durable_state_commitment_sha256: str,
     runner_rng_root_commitment_sha256: str,
-    worker_origin_identity: Mapping[str, Any],
+    worker_origin_binding: Mapping[str, Any],
+    expected_supervisor_public_key: Any,
 ) -> dict[str, Any]:
     """Build the strict, hash-only material signed by the campaign runner."""
 
@@ -486,10 +487,17 @@ def action_state_capture_request_payload(
     if deadline >= policy.document["expires_at_unix"]:
         _fail("action_state_capture_deadline_outside_policy")
     try:
-        worker_identity = validate_worker_capture_identity(dict(worker_origin_identity))
+        origin_binding = validate_worker_capture_origin_binding(
+            worker_origin_binding,
+            expected_supervisor_public_key=expected_supervisor_public_key,
+        )
     except (TypeError, ValueError) as exc:
+        if str(exc) == "worker_capture_launch_challenge_not_current":
+            raise ActionStateCaptureError(
+                "action_state_capture_worker_origin_binding_not_current"
+            ) from exc
         raise ActionStateCaptureError(
-            "action_state_capture_worker_origin_identity_invalid"
+            "action_state_capture_worker_origin_binding_invalid"
         ) from exc
     return {
         "schema": ACTION_STATE_CAPTURE_REQUEST_PAYLOAD_SCHEMA,
@@ -543,8 +551,8 @@ def action_state_capture_request_payload(
             runner_rng_root_commitment_sha256,
             role="action_state_capture_rng_commitment",
         ),
-        "worker_origin_identity": worker_identity,
-        "worker_origin_identity_commitment_sha256": worker_identity["identity_sha256"],
+        "worker_origin_binding": origin_binding,
+        "worker_origin_binding_sha256": origin_binding["binding_sha256"],
         "expected_action_opportunity_ordinal": 1,
     }
 
@@ -553,6 +561,8 @@ def _validate_request_payload(
     value: Any,
     *,
     policy: VerifiedCampaignTrustPolicy,
+    expected_supervisor_public_key: Any,
+    now_unix: int | None,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != _REQUEST_PAYLOAD_FIELDS:
         _fail("action_state_capture_request_payload_fields")
@@ -591,16 +601,24 @@ def _validate_request_payload(
     ):
         _sha256(payload.get(name), role=f"action_state_capture_{name}")
     try:
-        worker_identity = validate_worker_capture_identity(payload.get("worker_origin_identity"))
+        origin_binding = validate_worker_capture_origin_binding(
+            payload.get("worker_origin_binding"),
+            expected_supervisor_public_key=expected_supervisor_public_key,
+            now_unix=now_unix,
+        )
     except (TypeError, ValueError) as exc:
+        if str(exc) == "worker_capture_launch_challenge_not_current":
+            raise ActionStateCaptureError(
+                "action_state_capture_worker_origin_binding_not_current"
+            ) from exc
         raise ActionStateCaptureError(
-            "action_state_capture_worker_origin_identity_invalid"
+            "action_state_capture_worker_origin_binding_invalid"
         ) from exc
     if (
-        payload.get("worker_origin_identity_commitment_sha256")
-        != worker_identity["identity_sha256"]
+        payload.get("worker_origin_binding_sha256")
+        != origin_binding["binding_sha256"]
     ):
-        _fail("action_state_capture_worker_origin_identity_mismatch")
+        _fail("action_state_capture_worker_origin_binding_mismatch")
     for name in ("pair_id", "task_id", "calibration_bucket"):
         _identifier(
             payload.get(name),
@@ -619,12 +637,27 @@ def build_action_state_capture_request(
     policy: VerifiedCampaignTrustPolicy,
     runner_private_key: Any,
     signed_at_unix: int,
+    expected_supervisor_public_key: Any,
     **payload_arguments: Any,
 ) -> dict[str, Any]:
     """Create a runner-attested state-capture request."""
 
     signed_at = _positive_int(signed_at_unix, role="action_state_capture_signed_at")
-    payload = action_state_capture_request_payload(policy=policy, **payload_arguments)
+    payload = action_state_capture_request_payload(
+        policy=policy,
+        expected_supervisor_public_key=expected_supervisor_public_key,
+        **payload_arguments,
+    )
+    try:
+        validate_worker_capture_origin_binding(
+            payload["worker_origin_binding"],
+            expected_supervisor_public_key=expected_supervisor_public_key,
+            now_unix=signed_at,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ActionStateCaptureError(
+            "action_state_capture_worker_origin_binding_not_current"
+        ) from exc
     if signed_at > payload["capture_not_after_unix"]:
         _fail("action_state_capture_signature_after_deadline")
     attestation = build_role_attestation(
@@ -678,6 +711,7 @@ def _verify_request(
     value: Any,
     *,
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
     current_policy_document: Mapping[str, Any] | None,
     now_unix: int | None,
 ) -> VerifiedActionStateCaptureRequest:
@@ -721,7 +755,12 @@ def _verify_request(
             minimum_policy_revision=raw_payload.get("policy_revision"),
             now_unix=validation_time,
         )
-        payload = _validate_request_payload(raw_payload, policy=policy)
+        payload = _validate_request_payload(
+            raw_payload,
+            policy=policy,
+            expected_supervisor_public_key=expected_supervisor_public_key,
+            now_unix=validation_time if current else None,
+        )
         verify_role_attestation(
             policy,
             request.get("runner_attestation"),
@@ -749,6 +788,7 @@ def admit_action_state_capture_request(
     value: Any,
     *,
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
     current_policy_document: Mapping[str, Any],
     now_unix: int,
 ) -> VerifiedActionStateCaptureRequest:
@@ -757,6 +797,7 @@ def admit_action_state_capture_request(
     return _verify_request(
         value,
         trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_supervisor_public_key=expected_supervisor_public_key,
         current_policy_document=current_policy_document,
         now_unix=now_unix,
     )
@@ -766,12 +807,14 @@ def replay_action_state_capture_request(
     value: Any,
     *,
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
 ) -> VerifiedActionStateCaptureRequest:
     """Replay an embedded root-signed policy at its runner signature time."""
 
     return _verify_request(
         value,
         trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_supervisor_public_key=expected_supervisor_public_key,
         current_policy_document=None,
         now_unix=None,
     )
@@ -2565,7 +2608,7 @@ def build_action_state_capture_receipt(
     origin = _worker_origin(
         body,
         worker_private_key=worker_private_key,
-        expected_key_id=payload["worker_origin_identity"]["key_id"],
+        expected_key_id=payload["worker_origin_binding"]["worker_identity"]["key_id"],
     )
     complete = {**body, "worker_origin": origin}
     return {**complete, "receipt_sha256": _digest(complete)}
@@ -2619,6 +2662,7 @@ def _validate_action_state_capture_receipt(
     request: Mapping[str, Any],
     publication: PrivateSnapshotPublication | None,
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
     latent_reason_request: Mapping[str, Any],
     model_identity: Mapping[str, Any],
     execution_identity: Mapping[str, Any],
@@ -2628,7 +2672,9 @@ def _validate_action_state_capture_receipt(
     """Historically replay one worker-origin capture receipt."""
 
     admission = replay_action_state_capture_request(
-        request, trusted_root_public_key_pem=trusted_root_public_key_pem
+        request,
+        trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_supervisor_public_key=expected_supervisor_public_key,
     )
     if publication is not None and (
         not isinstance(publication, PrivateSnapshotPublication)
@@ -2734,7 +2780,7 @@ def _validate_action_state_capture_receipt(
     _verify_worker_origin(
         body,
         receipt["worker_origin"],
-        expected_key_id=payload["worker_origin_identity"]["key_id"],
+        expected_key_id=payload["worker_origin_binding"]["worker_identity"]["key_id"],
     )
     return receipt
 
@@ -2744,6 +2790,7 @@ def validate_action_state_capture_receipt_public(
     *,
     request: Mapping[str, Any],
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
     latent_reason_request: Mapping[str, Any],
     model_identity: Mapping[str, Any],
     execution_identity: Mapping[str, Any],
@@ -2764,6 +2811,7 @@ def validate_action_state_capture_receipt_public(
         request=request,
         publication=None,
         trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_supervisor_public_key=expected_supervisor_public_key,
         latent_reason_request=latent_reason_request,
         model_identity=model_identity,
         execution_identity=execution_identity,
@@ -2778,6 +2826,7 @@ def validate_action_state_capture_receipt(
     request: Mapping[str, Any],
     publication: PrivateSnapshotPublication,
     trusted_root_public_key_pem: bytes,
+    expected_supervisor_public_key: Any,
     latent_reason_request: Mapping[str, Any],
     model_identity: Mapping[str, Any],
     execution_identity: Mapping[str, Any],
@@ -2793,6 +2842,7 @@ def validate_action_state_capture_receipt(
         request=request,
         publication=publication,
         trusted_root_public_key_pem=trusted_root_public_key_pem,
+        expected_supervisor_public_key=expected_supervisor_public_key,
         latent_reason_request=latent_reason_request,
         model_identity=model_identity,
         execution_identity=execution_identity,

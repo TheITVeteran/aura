@@ -183,6 +183,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/ontogeny/experience.py",
             "core/ontogeny/service.py",
             "core/ontogeny/state.py",
+            # The learned world model owns one fixed, schema-bound VRNN
+            # checkpoint under Aura's data root. It accepts no caller path,
+            # and every publication executes in its named state-mutation
+            # scope through FileWriteGateway.
+            "core/world_model/learned_world_model.py",
             # Singleton owns one fixed boot-refusal marker under Aura's private
             # run directory. It accepts no caller-selected path or payload and
             # publishes/clears only that bounded launcher coordination record.

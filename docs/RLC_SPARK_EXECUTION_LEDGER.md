@@ -2183,6 +2183,41 @@ before those dependencies close is not admissible.
   external custody, at least 20 unique pairs per action, final independent
   certificate, live selection/lesion/restoration ablations, and broader
   frontier proof all remain required.
+
+  CP376 removes the circular campaign-plan dependency and establishes the
+  encrypted, one-use private snapshot substrate described in the whole-project
+  tracker. CP377 closes the first mandatory review boundary on that substrate:
+  a worker capture key is no longer its own trust root. Before process spawn,
+  the parent creates a bounded random launch challenge under an ephemeral
+  Ed25519 supervisor key. The child receives only that public challenge and
+  signs its exact digest into a boot- and PID-scoped worker identity. After
+  spawn, the parent verifies the real child PID and challenge, signs the worker
+  identity, and publishes the complete challenge/identity/attestation chain.
+  The parent private key never crosses the process boundary.
+
+  Claim-grade state-capture request schema v2 requires that complete origin
+  binding plus an independently supplied expected supervisor public key at
+  request construction, current admission, historical replay, and public or
+  private receipt verification. A bare legacy worker identity, a self-rooted
+  rogue supervisor, a cross-worker substitution, a wrong PID, a rehashed inner
+  mutation, or a stale live challenge fails closed. Expired launch evidence is
+  rejected for current admission while its signatures remain historically
+  replayable. Synthetic MLX resilience receipts now execute the same parent-
+  challenge/child-signature path instead of receiving a production bypass.
+
+  CP377 validation passes 73 focused worker-origin, state-capture, cancellation,
+  and runtime-identity contracts and the broader MLX client, admission,
+  resilience, ownership, memory, heartbeat, stability, and runtime matrix at
+  337/337. Strict focused Ruff and diff hygiene pass. This closes only the
+  self-rooted-origin P1. Partial resident application ambiguity, descriptor-
+  rooted filesystem transactions, recoverable multi-file publication,
+  external key custody, streaming serialization, kill/race/disk fault tests,
+  and the real serializable resident continuation remain open. No training or
+  capability result is created, and the negative frontier verdict is
+  unchanged. Post-rebase governance integration also assigns the newly landed,
+  fixed-path learned-world-model checkpoint to its narrow canonical owner; the
+  exact inventory is 2,007 calls in 1,878 buckets with migration debt unchanged
+  at 1,788 calls.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

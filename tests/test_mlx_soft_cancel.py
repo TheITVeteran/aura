@@ -168,6 +168,20 @@ def test_worker_spawn_args_include_cancel_channel():
     assert "self._cancel_seq," in inspect.getsource(mlx_client_mod)
 
 
+def test_worker_spawn_carries_only_the_public_capture_launch_challenge():
+    import inspect
+
+    from core.brain.llm.mlx_worker import _mlx_worker_loop
+
+    signature = inspect.signature(_mlx_worker_loop)
+    assert signature.parameters["worker_capture_launch_challenge"].default is None
+    source = inspect.getsource(mlx_client_mod.MLXLocalClient._spawn_worker_blocking)
+    assert "build_worker_capture_launch_authority()" in source
+    spawn_block = source.split("target=_mlx_worker_loop", 1)[1][:900]
+    assert "dict(self._worker_capture_launch_authority.challenge)" in spawn_block
+    assert "_worker_capture_launch_authority.private_key" not in spawn_block
+
+
 # ── parent-side response handling ──────────────────────────────────────
 
 

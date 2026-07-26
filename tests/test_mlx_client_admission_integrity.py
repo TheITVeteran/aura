@@ -260,10 +260,8 @@ class TestReadyRequiresAValidatedReceipt:
         assert not any("recurrent_depth" in e for e in errors)
 
     def test_validation_precedes_the_ready_commit(self):
-        source = inspect.getsource(mlx_client)
-        # Anchor on the handshake site specifically; other status=="ok" sites
-        # in this module are generation and latent-cancellation paths.
-        block = source.split("READINESS IS EARNED", 1)[1][:2000]
+        source = inspect.getsource(mlx_client.MLXLocalClient._ensure_worker_alive_inner)
+        block = source.split("READINESS IS EARNED", 1)[1]
         assert block.index("_init_receipt_errors") < block.index("self._init_done = True")
 
     def test_an_invalid_receipt_does_not_leave_stale_identity(self):

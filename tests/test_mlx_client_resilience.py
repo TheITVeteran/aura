@@ -13,6 +13,10 @@ from types import SimpleNamespace
 import pytest
 
 from core.brain.llm.mlx_client import MLXLocalClient
+from core.brain.llm.latent_cortex.worker_capture_identity import (
+    build_worker_capture_identity,
+    build_worker_capture_launch_authority,
+)
 from core.brain.llm.mlx_vision_client import MLXVisionClient
 from core.brain.llm.mlx_worker import (
     IPCWriterThread,
@@ -33,7 +37,13 @@ QWEN32_MODEL = str(TMP_ROOT / "Qwen2.5-32B-Instruct-8bit")
 TEST_MODEL = str(TMP_ROOT / "test-model")
 
 
-def ready_init_receipt(model_path: str = TEST_MODEL, **overrides) -> dict:
+def ready_init_receipt(
+    model_path: str = TEST_MODEL,
+    *,
+    client: MLXLocalClient | None = None,
+    process=None,
+    **overrides,
+) -> dict:
     """A handshake receipt that satisfies the READINESS-IS-EARNED contract.
 
     CP126 25ca1c12 made ``status: ok`` insufficient on its own: a worker is
@@ -45,13 +55,29 @@ def ready_init_receipt(model_path: str = TEST_MODEL, **overrides) -> dict:
     """
     lowered = str(model_path).lower()
     loops = 2 if any(token in lowered for token in ("32b", "cortex", "zenith")) else 1
+    capture_identity = None
+    if client is not None or process is not None:
+        if client is None or process is None or type(getattr(process, "pid", None)) is not int:
+            raise ValueError("synthetic worker receipt requires client and process")
+        authority = build_worker_capture_launch_authority()
+        client._worker_capture_launch_authority = authority
+        capture_identity = build_worker_capture_identity(
+            worker_boot_id="1" * 32,
+            worker_pid=process.pid,
+            private_key=None,
+            launch_challenge=authority.challenge,
+        ).public_identity
     receipt = {
         "status": "ok",
         "action": "init",
         "worker_identity": {
-            "schema": "aura.latent_cortex.worker_identity.v1",
+            "schema": (
+                "aura.latent_cortex.worker_identity.v2"
+                if capture_identity is not None
+                else "aura.latent_cortex.worker_identity.v1"
+            ),
             "worker_boot_id": "1" * 32,
-            "worker_pid": 4242,
+            "worker_pid": process.pid if process is not None else 4242,
             "worker_model_path": os.path.realpath(model_path),
             "worker_model_parameter_count": 1_000_000,
             "worker_model_stored_parameter_element_count": 1_000_000,
@@ -59,6 +85,11 @@ def ready_init_receipt(model_path: str = TEST_MODEL, **overrides) -> dict:
             "worker_source_sha256": "2" * 64,
             "worker_affective_steering_active": True,
             "worker_affective_steering_alpha": 0.30,
+            **(
+                {"worker_action_capture_identity": capture_identity}
+                if capture_identity is not None
+                else {}
+            ),
         },
         "recurrent_depth": {
             "active": True,
@@ -723,7 +754,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         solver_proc = ProcessProbe(alive=True)
 
         async def _spawn_solver():
-            solver._init_future.set_result(ready_init_receipt(deep_path))
+            solver._init_future.set_result(
+                ready_init_receipt(deep_path, client=solver, process=solver_proc)
+            )
             return solver_proc
 
         old_clients = dict(mlx_module._CLIENTS)
@@ -782,8 +815,11 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         async def spawn_side_effect():
             self.assertIsNotNone(client._init_future)
             self.assertFalse(client._init_future.done())
-            client._init_future.set_result(ready_init_receipt())
-            return ProcessProbe(alive=True)
+            process = ProcessProbe(alive=True)
+            client._init_future.set_result(
+                ready_init_receipt(client=client, process=process)
+            )
+            return process
 
         with ReplaceAttr(client, "_spawn_worker", AsyncCallProbe(side_effect=spawn_side_effect)):
             await client._ensure_worker_alive()
@@ -799,7 +835,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._init_done = False
         import asyncio
         real_future = asyncio.get_running_loop().create_future()
-        real_future.set_result(ready_init_receipt())
+        real_future.set_result(
+            ready_init_receipt(client=client, process=live_process)
+        )
         client._init_future = real_future
 
         spawn_probe = AsyncCallProbe()
@@ -829,7 +867,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
             async def _complete():
                 await asyncio.sleep(0.05)
-                future.set_result(ready_init_receipt())
+                future.set_result(
+                    ready_init_receipt(client=client, process=live_process)
+                )
                 await asyncio.sleep(0.05)
 
             loop.run_until_complete(_complete())
@@ -1725,7 +1765,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         solver_proc = ProcessProbe(alive=True)
 
         async def _spawn_solver():
-            solver._init_future.set_result(ready_init_receipt(deep_path))
+            solver._init_future.set_result(
+                ready_init_receipt(deep_path, client=solver, process=solver_proc)
+            )
             return solver_proc
 
         old_last_heavy = mlx_module._GLOBAL_LAST_HEAVY_MODEL
@@ -1760,7 +1802,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         primary_proc = ProcessProbe(alive=True)
 
         async def _spawn_primary():
-            primary._init_future.set_result(ready_init_receipt(primary_path))
+            primary._init_future.set_result(
+                ready_init_receipt(primary_path, client=primary, process=primary_proc)
+            )
             return primary_proc
 
         old_last_heavy = mlx_module._GLOBAL_LAST_HEAVY_MODEL
@@ -1963,6 +2007,8 @@ class TestMLXRuntimeProbeFailure(unittest.IsolatedAsyncioTestCase):
             client._init_future.set_result(
                 ready_init_receipt(
                     QWEN32_MODEL,
+                    client=client,
+                    process=proc,
                     recurrent_depth={
                         "active": True,
                         "config": {"n_loops": 2},

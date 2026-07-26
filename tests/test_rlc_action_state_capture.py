@@ -38,6 +38,8 @@ from core.brain.llm.latent_cortex.campaign_trust import (
 )
 from core.brain.llm.latent_cortex.worker_capture_identity import (
     build_worker_capture_identity,
+    build_worker_capture_launch_authority,
+    build_worker_capture_origin_binding,
 )
 
 NOW = 10_000
@@ -71,6 +73,10 @@ def _public_pem(key: Ed25519PrivateKey) -> bytes:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+
+
+SUPERVISOR_KEY = _private("worker-supervisor")
+SUPERVISOR_PUBLIC_KEY = SUPERVISOR_KEY.public_key()
 
 
 def _policy_document(
@@ -198,17 +204,41 @@ def _build_request(
     task_id: str = "task-0001",
     latent_request: dict | None = None,
     private_state: dict | None = None,
+    supervisor_key: Ed25519PrivateKey = SUPERVISOR_KEY,
+    expected_supervisor_public_key=None,
+    challenge_lifetime_s: int = 600,
+    worker_origin_binding_override: dict | None = None,
 ):
     state = private_state or _private_state()
+    authority = build_worker_capture_launch_authority(
+        issued_at_unix=NOW - 1,
+        lifetime_s=challenge_lifetime_s,
+        private_key=supervisor_key,
+        challenge_nonce=hashlib.sha256(b"spark-051:worker-launch").digest(),
+        challenge_id=hashlib.sha256(b"spark-051:worker-launch").hexdigest()[:32],
+    )
     worker_identity = build_worker_capture_identity(
         worker_boot_id=WORKER_BOOT_ID,
         worker_pid=4242,
         private_key=worker_key,
+        launch_challenge=authority.challenge,
+        now_unix=NOW,
     )
+    origin_binding = build_worker_capture_origin_binding(
+        authority,
+        worker_identity.public_identity,
+        attested_at_unix=NOW,
+        expected_worker_pid=4242,
+    )
+    if worker_origin_binding_override is not None:
+        origin_binding = worker_origin_binding_override
     request = build_action_state_capture_request(
         policy=policy,
         runner_private_key=role_keys[CAMPAIGN_RUNNER],
         signed_at_unix=NOW,
+        expected_supervisor_public_key=(
+            expected_supervisor_public_key or SUPERVISOR_PUBLIC_KEY
+        ),
         capture_id="a" * 32,
         capture_not_after_unix=NOW + 500,
         campaign_design_sha256=CAMPAIGN_DESIGN_SHA256,
@@ -225,7 +255,7 @@ def _build_request(
         latent_reason_request=latent_request or _latent_request(),
         runner_durable_state_commitment_sha256=_state_sha(state["durable_state"]),
         runner_rng_root_commitment_sha256=_state_sha(state["rng_state"]),
-        worker_origin_identity=worker_identity.public_identity,
+        worker_origin_binding=origin_binding,
     )
     return request
 
@@ -267,6 +297,7 @@ def _case(tmp_path: Path, *, tag: str = "A"):
     admission = admit_action_state_capture_request(
         request,
         trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
         current_policy_document=policy.document,
         now_unix=NOW,
     )
@@ -293,6 +324,7 @@ def _case(tmp_path: Path, *, tag: str = "A"):
         "role_keys": role_keys,
         "policy": policy,
         "worker_key": worker_key,
+        "supervisor_public_key": SUPERVISOR_PUBLIC_KEY,
         "latent_request": latent_request,
         "request": request,
         "admission": admission,
@@ -308,6 +340,7 @@ def _validate(case, receipt=None, *, latent_request=None, publication=None):
         request=case["request"],
         publication=publication or case["publication"],
         trusted_root_public_key_pem=case["root_pem"],
+        expected_supervisor_public_key=case["supervisor_public_key"],
         latent_reason_request=latent_request or case["latent_request"],
         model_identity=MODEL_IDENTITY,
         execution_identity=EXECUTION_IDENTITY,
@@ -388,6 +421,7 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             case["receipt"],
             request=case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             latent_reason_request=case["latent_request"],
             model_identity=MODEL_IDENTITY,
             execution_identity=EXECUTION_IDENTITY,
@@ -404,6 +438,7 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             attacked,
             request=case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             latent_reason_request=case["latent_request"],
             model_identity=MODEL_IDENTITY,
             execution_identity=EXECUTION_IDENTITY,
@@ -415,6 +450,7 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             case["receipt"],
             request=case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             latent_reason_request=case["latent_request"],
             model_identity=MODEL_IDENTITY,
             execution_identity=EXECUTION_IDENTITY,
@@ -426,6 +462,7 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             case["receipt"],
             request=case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             latent_reason_request=case["latent_request"],
             model_identity=MODEL_IDENTITY,
             execution_identity=EXECUTION_IDENTITY,
@@ -578,6 +615,7 @@ def test_private_snapshot_requires_exact_durable_and_rng_commitments(
     admission = admit_action_state_capture_request(
         request,
         trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
         current_policy_document=policy.document,
         now_unix=NOW,
     )
@@ -621,6 +659,7 @@ def test_private_snapshot_buffering_limits_are_hard_admission_boundaries(
     admission = admit_action_state_capture_request(
         request,
         trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
         current_policy_document=policy.document,
         now_unix=NOW,
     )
@@ -692,6 +731,7 @@ def test_public_request_and_receipt_tamper_and_extra_fields_fail_closed(
         admit_action_state_capture_request(
             attacked,
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             current_policy_document=case["policy"].document,
             now_unix=NOW,
         )
@@ -699,7 +739,11 @@ def test_public_request_and_receipt_tamper_and_extra_fields_fail_closed(
     attacked = deepcopy(case["request"])
     attacked["unexpected"] = True
     with pytest.raises(ActionStateCaptureError, match="request_fields"):
-        replay_action_state_capture_request(attacked, trusted_root_public_key_pem=case["root_pem"])
+        replay_action_state_capture_request(
+            attacked,
+            trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
+        )
 
     attacked = deepcopy(case["request"])
     attacked["request_payload"]["policy_revision"] = True
@@ -716,6 +760,7 @@ def test_public_request_and_receipt_tamper_and_extra_fields_fail_closed(
         admit_action_state_capture_request(
             attacked,
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             current_policy_document=case["policy"].document,
             now_unix=NOW,
         )
@@ -728,6 +773,58 @@ def test_public_request_and_receipt_tamper_and_extra_fields_fail_closed(
     attacked["unexpected"] = True
     with pytest.raises(ActionStateCaptureError, match="receipt_fields"):
         _validate(case, attacked)
+
+
+def test_claim_grade_request_rejects_self_rooted_and_legacy_worker_origins():
+    _root, _root_pem, role_keys, policy = _trust_fixture()
+    worker_key = _private("worker-origin-adversary")
+    rogue_supervisor = _private("rogue-worker-supervisor")
+
+    with pytest.raises(ActionStateCaptureError, match="worker_origin_binding_invalid"):
+        _build_request(
+            policy,
+            role_keys,
+            worker_key,
+            supervisor_key=rogue_supervisor,
+            expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        )
+
+    legacy_identity = build_worker_capture_identity(
+        worker_boot_id=WORKER_BOOT_ID,
+        worker_pid=4242,
+        private_key=worker_key,
+    )
+    with pytest.raises(ActionStateCaptureError, match="worker_origin_binding_invalid"):
+        _build_request(
+            policy,
+            role_keys,
+            worker_key,
+            worker_origin_binding_override=legacy_identity.public_identity,
+        )
+
+
+def test_expired_launch_challenge_blocks_current_admission_but_not_history():
+    _root, root_pem, role_keys, policy = _trust_fixture()
+    request = _build_request(
+        policy,
+        role_keys,
+        _private("worker-expiring-origin"),
+        challenge_lifetime_s=120,
+    )
+
+    with pytest.raises(ActionStateCaptureError, match="worker_origin_binding_not_current"):
+        admit_action_state_capture_request(
+            request,
+            trusted_root_public_key_pem=root_pem,
+            expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+            current_policy_document=policy.document,
+            now_unix=NOW + 120,
+        )
+    assert replay_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+    ).request_sha256 == request["request_sha256"]
 
 
 def test_runner_role_substitution_is_rejected(tmp_path: Path):
@@ -746,6 +843,7 @@ def test_runner_role_substitution_is_rejected(tmp_path: Path):
         admit_action_state_capture_request(
             attacked,
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             current_policy_document=case["policy"].document,
             now_unix=NOW,
         )
@@ -776,12 +874,15 @@ def test_current_policy_rejects_stale_revoked_runner_but_replay_is_historical(
         admit_action_state_capture_request(
             case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             current_policy_document=revision_two.document,
             now_unix=NOW,
         )
     assert (
         replay_action_state_capture_request(
-            case["request"], trusted_root_public_key_pem=case["root_pem"]
+            case["request"],
+            trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
         ).request_sha256
         == case["admission"].request_sha256
     )
@@ -789,6 +890,7 @@ def test_current_policy_rejects_stale_revoked_runner_but_replay_is_historical(
         admit_action_state_capture_request(
             case["request"],
             trusted_root_public_key_pem=case["root_pem"],
+            expected_supervisor_public_key=case["supervisor_public_key"],
             current_policy_document=case["policy"].document,
             now_unix=case["policy"].document["expires_at_unix"],
         )
@@ -910,6 +1012,7 @@ def test_pair_local_exactly_once_arm_ledger_and_cross_pair_reuse(
     other_admission = admit_action_state_capture_request(
         other_request,
         trusted_root_public_key_pem=case["root_pem"],
+        expected_supervisor_public_key=case["supervisor_public_key"],
         current_policy_document=case["policy"].document,
         now_unix=NOW,
     )

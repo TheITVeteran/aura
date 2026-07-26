@@ -19,7 +19,7 @@ import sys
 import threading as _threading
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -2541,6 +2541,9 @@ class MLXLocalClient:
         # Empty until a worker is spawned; a client with no worker has
         # nothing to authorize.
         self._contract_key: bytes = b""
+        # Parent-private signer for one MLX worker spawn. Only the public
+        # challenge crosses the process boundary.
+        self._worker_capture_launch_authority: Any = None
         self._latent_progress_by_request: dict[str, dict[str, Any]] = {}
         # Explicit drop accounting for the latent progress channel: state that
         # was refused (uncorrelated id) and state that aged out (window
@@ -4726,6 +4729,58 @@ class MLXLocalClient:
                     errors.append(f"recurrent_depth_mismatch:{reported_loops}!={required_loops}")
         return errors
 
+    def _attest_worker_capture_origin(
+        self,
+        worker_identity: Mapping[str, Any],
+        *,
+        attested_at_unix: int | None = None,
+    ) -> dict[str, Any]:
+        """Bind the worker's boot key to this parent-owned spawn authority."""
+
+        from core.brain.llm.latent_cortex.worker_capture_identity import (
+            build_worker_capture_origin_binding,
+        )
+
+        authority = self._worker_capture_launch_authority
+        process = self._process
+        expected_pid = getattr(process, "pid", None)
+        if authority is None or type(expected_pid) is not int or expected_pid <= 0:
+            raise RuntimeError("worker_capture_launch_authority_unavailable")
+        binding = build_worker_capture_origin_binding(
+            authority,
+            worker_identity.get("worker_action_capture_identity"),
+            attested_at_unix=(
+                int(time.time()) if attested_at_unix is None else attested_at_unix
+            ),
+            expected_worker_pid=expected_pid,
+        )
+        return {
+            **dict(worker_identity),
+            "worker_action_capture_origin_binding": binding,
+        }
+
+    def get_worker_capture_supervisor_public_key(self) -> bytes:
+        """Return the parent key expected by independent capture verification."""
+
+        import base64
+        import binascii
+
+        identity = self.get_worker_identity_snapshot()
+        binding = identity.get("worker_action_capture_origin_binding")
+        if not isinstance(binding, Mapping):
+            return b""
+        challenge = binding.get("launch_challenge")
+        if not isinstance(challenge, Mapping):
+            return b""
+        try:
+            raw = base64.b64decode(
+                challenge.get("supervisor_public_key_b64"),
+                validate=True,
+            )
+        except (binascii.Error, TypeError, ValueError):
+            return b""
+        return raw if len(raw) == 32 else b""
+
     def get_worker_identity_snapshot(self) -> dict[str, Any]:
         """Return immutable identity evidence for resident-scale policy decisions."""
 
@@ -5941,8 +5996,14 @@ class MLXLocalClient:
                 # meaningless to any other worker. Privileged output
                 # contracts must be signed with it to take effect.
                 from core.brain.llm.contract_authority import new_contract_key
+                from core.brain.llm.latent_cortex.worker_capture_identity import (
+                    build_worker_capture_launch_authority,
+                )
 
                 self._contract_key = new_contract_key()
+                self._worker_capture_launch_authority = (
+                    build_worker_capture_launch_authority()
+                )
                 p = ctx.Process(
                     target=_mlx_worker_loop,
                     args=(
@@ -5954,6 +6015,7 @@ class MLXLocalClient:
                         self._steering_active,
                         self._cancel_seq,
                         self._contract_key,
+                        dict(self._worker_capture_launch_authority.challenge),
                     ),
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",
@@ -6846,6 +6908,30 @@ class MLXLocalClient:
                         # the handshake fails if they do not hold — which
                         # feeds the existing one-shot retry.
                         readiness_errors = self._init_receipt_errors(res)
+                        attested_worker_identity: dict[str, Any] = {}
+                        raw_worker_identity = res.get("worker_identity")
+                        if not readiness_errors and isinstance(raw_worker_identity, Mapping):
+                            try:
+                                attested_worker_identity = (
+                                    self._attest_worker_capture_origin(raw_worker_identity)
+                                )
+                            except (
+                                ImportError,
+                                RuntimeError,
+                                TypeError,
+                                ValueError,
+                            ) as capture_origin_exc:
+                                _record_mlx_degradation(
+                                    capture_origin_exc,
+                                    action=(
+                                        "refused READY because the worker capture key was not "
+                                        "bound to this parent spawn"
+                                    ),
+                                    severity="error",
+                                )
+                                readiness_errors.append(
+                                    "worker_capture_launch_attestation_invalid"
+                                )
                         if readiness_errors:
                             _record_mlx_degradation(
                                 ValueError("init_receipt_invalid:" + ",".join(readiness_errors)),
@@ -6880,10 +6966,7 @@ class MLXLocalClient:
                                 ValueError("missing_recurrent_depth_receipt"),
                                 action="cleared stale recurrence status after init receipt omitted it",
                             )
-                        worker_identity = res.get("worker_identity")
-                        self._worker_identity = (
-                            dict(worker_identity) if isinstance(worker_identity, dict) else {}
-                        )
+                        self._worker_identity = attested_worker_identity
                         raw_steering = res.get("steering_active")
                         if raw_steering is not None:
                             try:

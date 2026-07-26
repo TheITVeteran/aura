@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -3647,6 +3648,7 @@ def _mlx_worker_loop(
     steering_active_flag: Any = None,
     cancel_seq: Any = None,
     contract_key: bytes | None = None,
+    worker_capture_launch_challenge: Mapping[str, Any] | None = None,
 ):
     """Runs in a FULLY ISOLATED native subprocess via ForkServer.
 
@@ -3668,6 +3670,7 @@ def _mlx_worker_loop(
     worker_capture_signing_identity = build_worker_capture_identity(
         worker_boot_id=worker_boot_id,
         worker_pid=os.getpid(),
+        launch_challenge=worker_capture_launch_challenge,
     )
     try:
         signal.signal(signal.SIGINT, signal.SIG_IGN)

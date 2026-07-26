@@ -28438,3 +28438,71 @@ first-action hook, wire client/service/runner lineage, then pass the 1.5B
 integration and fault-injection gate before any resident-32B training or proof
 campaign. Final multi-hour soaks remain deferred until every shorter gate is
 green.
+
+## Checkpoint 2026-07-25-377: Parent-Authenticated Worker Capture Origin
+
+The resident worker's action-capture signing key is no longer accepted as its
+own trust root. Before each MLX process spawn, the parent creates a fresh
+Ed25519 launch authority and a bounded random challenge carrying a 256-bit
+nonce, issue/expiry times, and the supervisor public-key identity. Only the
+public challenge crosses into the worker. The child signs the exact challenge
+digest into its boot-scoped key and reports its real PID. After process start,
+the parent checks that PID against the process handle and signs the complete
+worker identity under the private supervisor key retained in the parent.
+
+The resulting public origin binding includes the challenge, child identity,
+parent launch attestation, and canonical aggregate digest. Independent
+verification requires the expected supervisor public key out of band; trusting
+the key embedded in the candidate is not an allowed mode. Wrong parent keys,
+cross-worker substitutions, changed child PIDs, altered inner structures, and
+rehashed envelopes fail cryptographic replay. Launch challenges are valid for
+at most ten minutes. Current admission checks their time window, while
+historical replay verifies the original attestation was made inside that window
+without pretending old evidence is currently live.
+
+Action-state-capture request and payload schema v2 now require the complete
+supervisor-bound origin. Request build, current admission, historical replay,
+and public/private receipt validation all require the independently expected
+supervisor key. Bare legacy worker identities and self-rooted rogue supervisors
+cannot enter claim-grade evidence. Worker capture receipts remain signed by the
+child-private key, but the expected child key is now obtained through the
+verified parent binding. The MLX READY handshake refuses a valid-looking worker
+receipt when the parent cannot establish that lineage, and the public snapshot
+exposes the supervisor key needed by the later campaign verifier without
+exporting either private signer.
+
+Focused adversarial coverage passes 73 tests across worker origin,
+state-capture, soft cancellation, and runtime identity. It covers rogue roots,
+legacy identity rejection, cross-worker and wrong-PID substitution, inner and
+outer tampering, current expiry, historical replay, and public-challenge-only
+spawn transport. The broader MLX admission, resilience, lane ownership,
+pressure, memory, heartbeat, stability, cancellation, runtime, and worker-
+origin matrix passes 337/337. Its synthetic handshakes now perform the same
+parent-challenge/child-signature protocol rather than bypassing it. Strict
+focused Ruff and diff hygiene pass.
+
+Post-rebase governance validation found two newly landed learned-world-model
+checkpoint calls without an assigned canonical owner. `LearnedWorldModel`
+publishes one fixed VRNN state schema under Aura's data root, accepts no caller
+path, and executes both directory and byte publication through
+`FileWriteGateway` inside its named state-mutation scope. It is now registered
+as that narrow owner. The exact inventory advances to 2,007 recognized calls
+in 1,878 buckets while migration debt remains 1,788 calls; the two new calls do
+not become normalized debt.
+
+This closes the self-rooted worker-origin P1 from CP376. It does not close the
+remaining six review boundaries: partial application before ledger commit,
+ancestor TOCTOU, multi-file publication recovery, external key custody,
+buffered serialization, or process-kill/concurrency/disk fault evidence. It
+also does not create the serializable MLX continuation, a resident 1.5B/32B
+campaign, reasoning gain, frontier gain, or `WOW Signal`. SPARK-051 remains
+open. Six cooperative learned-world-model, ontogeny, bus-resilience, and
+semantic-closeout checkpoint commits (`c529677cd` through `e2a5e1579`) landed
+after CP376 and before final CP377 integration. Counting them and CP377 makes
+the total checkpoint record 586. The 640-920 forecast remains, leaving
+approximately 54-334 records after this checkpoint. Checkpoint-count completion
+is approximately 63.7%-91.6%, with a midpoint planning estimate of 75.1%.
+Next: make resident state application atomic or quarantine any ambiguous
+process, then harden descriptor-rooted publication/recovery before wiring the
+real continuation. Final multi-hour soaks remain deferred until every shorter
+gate is green.
