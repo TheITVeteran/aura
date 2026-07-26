@@ -18531,6 +18531,41 @@ async def api_chat(
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):
             nonlocal pending_exchange_id
             final_text = str(reply_text or "…").strip() or "…"
+            # A question with ONE right answer gets checked here, whatever lane
+            # produced the text. Run 7 served these for arithmetic turns:
+            #   'Get bit by Anaconda. Spend extra time roaming around…'
+            #   'Already solved internalmente'
+            # — a small lane answering a problem it cannot do, and the answer
+            # delivered. assess_user_facing_reply catches all of them as hard
+            # failures; the path that served them simply never asked it.
+            #
+            # This is the last gate before a reply reaches a person and 34 call
+            # sites pass through it, so the check belongs here rather than in
+            # each of them. Only the deterministic arithmetic verdict is used:
+            # it is the one judgement that is right or wrong rather than a
+            # matter of style, so it can be applied to every path safely.
+            try:
+                from core.conversation.response_reliability import (
+                    _arithmetic_answer_missing,
+                )
+
+                if _arithmetic_answer_missing(_semantic_user_message, final_text):
+                    logger.warning(
+                        "🔢 Refusing an arithmetic answer that does not contain "
+                        "the correct result (status=%s, %d chars).",
+                        status, len(final_text),
+                    )
+                    final_text = (
+                        "I worked that out and didn't get an answer I trust, so "
+                        "I won't hand you a number that might be wrong. Ask me "
+                        "again and I'll take another run at it."
+                    )
+                    status = "arithmetic_answer_unverified"
+            except (ImportError, RuntimeError, TypeError, ValueError) as _arith_exc:
+                record_degradation(
+                    "chat", _arith_exc, severity="warning",
+                    action="served a reply without the arithmetic verification pass",
+                )
             if _grounded_recall_context:
                 from core.conversation.grounded_recall import (
                     repair_grounded_recall_speaker_attribution,
