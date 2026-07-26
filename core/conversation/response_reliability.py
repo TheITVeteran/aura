@@ -5229,7 +5229,18 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     last_word = match.group(1).lower()
     if len(last_word) <= 2 and len(body) >= 40:
         return True
-    return last_word in _INCOMPLETE_TAIL_WORDS
+    if last_word in _INCOMPLETE_TAIL_WORDS:
+        return True
+    # Prose that simply stops. Everything above looks for a SUSPICIOUS last
+    # word — a dangling conjunction, a two-letter fragment — so a reply cut off
+    # on an ordinary noun read as finished.
+    #
+    # Live 2026-07-26: "…we need to consider each case separately: Both Red"
+    # was served as a complete answer, and assessed ok. It was a correct
+    # derivation truncated at 239 tokens, and "Red" is not a suspicious word.
+    # A reply of real length that ends on any ordinary word with no terminal
+    # punctuation was cut, not finished.
+    return len(body) >= 80 and _word_count(body) >= 12
 
 
 def _is_code_response(text: str) -> bool:

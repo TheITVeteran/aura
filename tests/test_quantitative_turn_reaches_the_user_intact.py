@@ -140,3 +140,51 @@ class TestCollapsedProseIsCaught:
             "Mainframe: Second statement.\nQuantum Processor: Second response.",
         ):
             assert not _has_function_word_starvation(reply), reply[:60]
+
+
+class TestAnAnswerThatStopsIsNotAnAnswer:
+    """Live 2026-07-26. The marble question finally produced correct reasoning
+    and it arrived cut off, assessed ok, because "Red" is not a suspicious
+    last word. The route had asked for 1,536 tokens; memory-pressure capping
+    took it to 384 and resource scaling to 239."""
+
+    CUT = (
+        "Let's break it down. Total marbles: 3 red + 4 blue + 5 green = 12. "
+        "For both to be the same colour, we need to consider each case "
+        "separately: Both Red"
+    )
+
+    def test_prose_that_simply_stops_is_truncated(self):
+        from core.conversation.response_reliability import _has_truncated_tail
+
+        assert _has_truncated_tail(self.CUT)
+        assert "truncated_tail" in assess_user_facing_reply(MARBLES, self.CUT).reasons
+
+    def test_complete_answers_of_every_length_are_untouched(self):
+        from core.conversation.response_reliability import _has_truncated_tail
+
+        for reply in (
+            "Same-colour pairs: 3 choose 2 is 3, 4 choose 2 is 6, 5 choose 2 "
+            "is 10, so 19 of the 66 possible pairs, which is 19/66.",
+            "19/66",
+            "Ready",
+            "The answer is 42",
+            "I am steady, a bit tired, but here with you and following the "
+            "thread closely today.",
+        ):
+            assert not _has_truncated_tail(reply), reply[:50]
+
+
+class TestUserFacingTurnsHaveAStarvationFloor:
+    def test_an_explicit_caller_budget_does_not_waive_the_floor(self):
+        """The desktop route always sets context["max_tokens"], which skipped
+        the anti-starvation block entirely — so no live desktop turn had a
+        floor at all."""
+        from core.brain.inference_gate import InferenceGate
+
+        floor = InferenceGate._configured_token_bound(
+            "AURA_FOREGROUND_CHAT_STARVATION_FLOOR_TOKENS", 512, minimum=256
+        )
+        assert floor >= 256
+        # The floor never raises a budget above what the caller asked for.
+        assert min(128, floor) == 128

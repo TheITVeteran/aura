@@ -7436,6 +7436,55 @@ class InferenceGate:
                 )
                 max_tokens = foreground_floor
 
+        # The block above is skipped whenever the caller named its own budget —
+        # and the desktop chat route always does, so no live desktop turn has
+        # ever had a starvation floor. An explicit cap is an upper bound the
+        # caller is entitled to; it is not permission to modulate the answer
+        # down to a length that cannot finish a sentence.
+        #
+        # LIVE DEFECT, 2026-07-26: the route asked for 1,536 tokens for
+        # "…show the reasoning, then give the exact fraction". Memory-pressure
+        # capping took it to 384 and affective/resource scaling to 239, and the
+        # answer arrived correct and cut mid-sentence:
+        #
+        #   "Total marbles: 3 red + 4 blue + 5 green = 12. For both to be the
+        #    same colour, we need to consider each case separately: Both Red"
+        #
+        # A truncated answer is not a cheaper answer. The person re-asks and
+        # the whole turn is paid for twice.
+        if (
+            not is_background
+            and self._origin_is_user_facing(origin)
+            and requested_tier in {"primary", "secondary"}
+            and not deep_probe_request
+            and not isolated_generation_contract
+            and not health_probe
+            and not bool(context.get("resource_stakes_blocked", False))
+        ):
+            try:
+                requested_budget = int(context.get("max_tokens") or 0)
+            except (TypeError, ValueError):
+                requested_budget = 0
+            if requested_budget > 0:
+                starvation_floor = min(
+                    requested_budget,
+                    self._configured_token_bound(
+                        "AURA_FOREGROUND_CHAT_STARVATION_FLOOR_TOKENS",
+                        512,
+                        minimum=256,
+                    ),
+                )
+                if max_tokens < starvation_floor:
+                    logger.info(
+                        "🧠 Foreground starvation floor raised budget %d→%d "
+                        "(caller asked %d, origin=%s).",
+                        max_tokens,
+                        starvation_floor,
+                        requested_budget,
+                        origin or "unknown",
+                    )
+                    max_tokens = starvation_floor
+
         if (
             not is_background
             and self._origin_is_user_facing(origin)
