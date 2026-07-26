@@ -434,6 +434,15 @@ def _keychain_backend() -> KeychainBackend | None:
     return backend
 
 
+def require_keychain_backend() -> KeychainBackend:
+    """Return the native/injected Keychain backend or fail without fallback."""
+
+    backend = _keychain_backend()
+    if backend is None:
+        raise KeychainUnavailableError("A strict macOS Keychain backend is required")
+    return backend
+
+
 def load_dotenv(path: str | None = None) -> None:
     """Load a .env file into environment variables. Dev convenience only."""
     dot_env = Path(path or ".env")

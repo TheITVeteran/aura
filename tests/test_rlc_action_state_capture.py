@@ -30,6 +30,9 @@ from core.brain.llm.latent_cortex.action_state_capture import (
     validate_action_state_capture_receipt,
     validate_action_state_capture_receipt_public,
 )
+from core.brain.llm.latent_cortex.action_state_key_custody import (
+    KeychainSnapshotKeyCustodian,
+)
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_RUNNER,
@@ -47,6 +50,22 @@ from core.brain.llm.latent_cortex.worker_capture_identity import (
 
 NOW = 10_000
 CAMPAIGN = "spark-051-state-capture"
+
+
+class _KeychainBackend:
+    def __init__(self, key: bytes = b"K" * 32) -> None:
+        self.value = base64.b64encode(key).decode("ascii")
+
+    def get_password(self, _service: str, _account: str) -> str:
+        return self.value
+
+    def set_password(self, _service: str, _account: str, password: str) -> bool:
+        self.value = password
+        return True
+
+
+def _custodian(key: bytes = b"K" * 32) -> KeychainSnapshotKeyCustodian:
+    return KeychainSnapshotKeyCustodian(_KeychainBackend(key))
 
 
 def _sha(value) -> str:
@@ -304,7 +323,11 @@ def _case(tmp_path: Path, *, tag: str = "A"):
         current_policy_document=policy.document,
         now_unix=NOW,
     )
-    store = PrivateActionSnapshotStore(tmp_path / f"private-store-{tag}")
+    custodian = _custodian()
+    store = PrivateActionSnapshotStore(
+        tmp_path / f"private-store-{tag}",
+        key_custodian=custodian,
+    )
     publication = store.publish(admission, private_state, created_at_unix=NOW + 1)
     receipt = build_action_state_capture_receipt(
         admission=admission,
@@ -331,6 +354,7 @@ def _case(tmp_path: Path, *, tag: str = "A"):
         "latent_request": latent_request,
         "request": request,
         "admission": admission,
+        "custodian": custodian,
         "store": store,
         "publication": publication,
         "receipt": receipt,
@@ -354,10 +378,15 @@ def _unpublished_case(tmp_path: Path, *, tag: str) -> dict:
         current_policy_document=policy.document,
         now_unix=NOW,
     )
+    custodian = _custodian()
     return {
         "admission": admission,
+        "custodian": custodian,
         "private_state": private_state,
-        "store": PrivateActionSnapshotStore(tmp_path / f"private-store-{tag}"),
+        "store": PrivateActionSnapshotStore(
+            tmp_path / f"private-store-{tag}",
+            key_custodian=custodian,
+        ),
     }
 
 
@@ -390,8 +419,8 @@ def _restore(store, handle, admission, *, arm: str, restored_at_unix: int):
     )
 
 
-def _restore_until_sigkill(store_root, handle, admission, started) -> None:
-    store = PrivateActionSnapshotStore(store_root)
+def _restore_until_sigkill(store_root, handle, admission, started, custodian) -> None:
+    store = PrivateActionSnapshotStore(store_root, key_custodian=custodian)
 
     def begin_application(_state: dict) -> str:
         started.set()
@@ -407,8 +436,10 @@ def _restore_until_sigkill(store_root, handle, admission, started) -> None:
     )
 
 
-def _race_same_arm_restore(store_root, handle, admission, ready, start, results) -> None:
-    store = PrivateActionSnapshotStore(store_root)
+def _race_same_arm_restore(
+    store_root, handle, admission, ready, start, results, custodian
+) -> None:
+    store = PrivateActionSnapshotStore(store_root, key_custodian=custodian)
     ready.put(os.getpid())
     start.wait(timeout=10.0)
     try:
@@ -426,8 +457,10 @@ def _race_same_arm_restore(store_root, handle, admission, ready, start, results)
         store.close()
 
 
-def _publish_until_sigkill(store_root, admission, private_state, started) -> None:
-    store = PrivateActionSnapshotStore(store_root)
+def _publish_until_sigkill(
+    store_root, admission, private_state, started, custodian
+) -> None:
+    store = PrivateActionSnapshotStore(store_root, key_custodian=custodian)
 
     def pause_before_commit(name: str) -> None:
         if name == "publish_before_bundle_commit":
@@ -448,8 +481,9 @@ def _race_same_capture_publish(
     ready,
     start,
     results,
+    custodian,
 ) -> None:
-    store = PrivateActionSnapshotStore(store_root)
+    store = PrivateActionSnapshotStore(store_root, key_custodian=custodian)
     ready.put(os.getpid())
     start.wait(timeout=10.0)
     try:
@@ -764,6 +798,7 @@ def test_sigkill_inside_state_application_is_durably_quarantined(tmp_path: Path)
             case["publication"].handle,
             case["admission"],
             started,
+            case["custodian"],
         ),
     )
     child.start()
@@ -800,6 +835,7 @@ def test_concurrent_processes_cannot_consume_the_same_arm_twice(tmp_path: Path):
                 ready,
                 start,
                 results,
+                case["custodian"],
             ),
         )
         for _ in range(2)
@@ -909,7 +945,10 @@ def test_private_snapshot_requires_exact_durable_and_rng_commitments(
         ActionStateCaptureError,
         match="private_snapshot_runner_state_commitment_mismatch",
     ):
-        PrivateActionSnapshotStore(tmp_path / "commitment-store").publish(
+        PrivateActionSnapshotStore(
+            tmp_path / "commitment-store",
+            key_custodian=_custodian(),
+        ).publish(
             admission,
             drifted_state,
             created_at_unix=NOW + 1,
@@ -948,13 +987,116 @@ def test_private_snapshot_buffering_limits_are_hard_admission_boundaries(
     )
     monkeypatch.setattr(capture_module, "_MAX_COMPONENT_BYTES", component_limit)
     monkeypatch.setattr(capture_module, "_MAX_SNAPSHOT_BYTES", snapshot_limit)
-    store = PrivateActionSnapshotStore(tmp_path / expected_error)
+    store = PrivateActionSnapshotStore(
+        tmp_path / expected_error,
+        key_custodian=_custodian(),
+    )
 
     with pytest.raises(ActionStateCaptureError, match=expected_error):
         store.publish(admission, private_state, created_at_unix=NOW + 1)
 
     assert not any((store.root / "bundles").iterdir())
     assert not any((store.root / "transactions").iterdir())
+
+
+def test_streaming_codec_bounds_chunks_for_binary_and_large_json_values(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _unpublished_case(tmp_path, tag="Streaming")
+    state = deepcopy(case["private_state"])
+    state["branch_state"] = b"B" * 257
+    state["memory_state"] = {"single_large_scalar": "J" * 257}
+    request = case["admission"].payload
+    state["durable_state"] = case["private_state"]["durable_state"]
+    state["rng_state"] = case["private_state"]["rng_state"]
+    emitted_sizes: list[int] = []
+    original_stream = capture_module._state_value_stream
+
+    def observed_stream(value):
+        value_type, parts = original_stream(value)
+
+        def observed_parts():
+            for part in parts:
+                emitted_sizes.append(len(part))
+                yield part
+
+        return value_type, observed_parts()
+
+    monkeypatch.setattr(capture_module, "_CHUNK_BYTES", 64)
+    monkeypatch.setattr(capture_module, "_state_value_stream", observed_stream)
+    publication = case["store"].publish(
+        case["admission"],
+        state,
+        created_at_unix=NOW + 1,
+    )
+
+    assert request["runner_durable_state_commitment_sha256"] == _state_sha(
+        state["durable_state"]
+    )
+    assert emitted_sizes and max(emitted_sizes) <= 64
+    handle_hash = hashlib.sha256(publication.handle.encode("ascii")).hexdigest()
+    envelope_path = case["store"]._paths_for_handle_hash(handle_hash)["snapshot"] / "envelope.json"
+    envelope = json.loads(envelope_path.read_bytes())
+    by_name = {item["name"]: item for item in envelope["components"]}
+    assert len(by_name["branch_state"]["chunks"]) > 4
+    assert len(by_name["memory_state"]["chunks"]) > 4
+    assert all(
+        chunk["plaintext_byte_count"] <= 64
+        for component in envelope["components"]
+        for chunk in component["chunks"]
+    )
+    restored = _restore(
+        case["store"],
+        publication.handle,
+        case["admission"],
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+    )
+    assert restored.state == state
+
+
+def test_bundle_contains_only_wrapped_dek_and_wrong_custodian_cannot_restore(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _unpublished_case(tmp_path, tag="Custody")
+    captured_data_keys: list[bytes] = []
+    wrap_data_key = case["custodian"].wrap_data_key
+
+    def capture_key(data_key: bytes, *, context_sha256: str):
+        captured_data_keys.append(data_key)
+        return wrap_data_key(data_key, context_sha256=context_sha256)
+
+    monkeypatch.setattr(case["custodian"], "wrap_data_key", capture_key)
+    publication = case["store"].publish(
+        case["admission"],
+        case["private_state"],
+        created_at_unix=NOW + 1,
+    )
+    assert len(captured_data_keys) == 1
+    raw_dek = captured_data_keys[0]
+    handle_hash = hashlib.sha256(publication.handle.encode("ascii")).hexdigest()
+    paths = case["store"]._paths_for_handle_hash(handle_hash)
+    wrapped = json.loads(paths["key"].read_bytes())
+    assert wrapped["schema"] == "aura.rlc.snapshot_key_custody.wrapped_dek.v1"
+    assert wrapped["custody_identity"]["custody_class"] == "macos_keychain"
+    assert all(raw_dek not in path.read_bytes() for path in paths["bundle"].rglob("*") if path.is_file())
+
+    root = case["store"].root
+    case["store"].close()
+    wrong_store = PrivateActionSnapshotStore(
+        root,
+        key_custodian=_custodian(b"W" * 32),
+    )
+    with pytest.raises(ActionStateCaptureError, match="key_custody_failed"):
+        _restore(
+            wrong_store,
+            publication.handle,
+            case["admission"],
+            arm=TREATMENT_ARM,
+            restored_at_unix=NOW + 2,
+        )
 
 
 def test_sigkill_before_bundle_commit_leaves_no_visible_snapshot_and_retry_recovers(
@@ -966,7 +1108,13 @@ def test_sigkill_before_bundle_commit_leaves_no_visible_snapshot_and_retry_recov
     started = context.Event()
     child = context.Process(
         target=_publish_until_sigkill,
-        args=(store.root, case["admission"], case["private_state"], started),
+        args=(
+            store.root,
+            case["admission"],
+            case["private_state"],
+            started,
+            case["custodian"],
+        ),
     )
     child.start()
     try:
@@ -1051,7 +1199,8 @@ def test_disk_full_before_bundle_commit_rolls_back_the_entire_staging_tree(
 
     def fail_publication(path: Path, payload: bytes, *, replace: bool) -> None:
         if path.name == "publication.json":
-            raise OSError(28, "No space left on device")
+            cause = OSError(28, "No space left on device")
+            raise ActionStateCaptureError("private_snapshot_publish_failed") from cause
         atomic_publish(path, payload, replace=replace)
 
     monkeypatch.setattr(store, "_atomic_publish", fail_publication)
@@ -1088,6 +1237,7 @@ def test_concurrent_same_request_publish_is_single_copy_and_idempotent(tmp_path:
                 ready,
                 start,
                 results,
+                case["custodian"],
             ),
         )
         for _ in range(2)
@@ -1565,7 +1715,7 @@ def test_atomic_publication_permissions_and_root_symlink_rejection(
     linked = tmp_path / "linked-root"
     linked.symlink_to(real, target_is_directory=True)
     with pytest.raises(ActionStateCaptureError, match="directory_unsafe"):
-        PrivateActionSnapshotStore(linked)
+        PrivateActionSnapshotStore(linked, key_custodian=_custodian())
 
 
 def test_open_store_rejects_root_path_replacement_without_touching_attacker_tree(

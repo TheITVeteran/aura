@@ -28654,3 +28654,57 @@ action hook; worker/client/service/runner/verifier lineage; and the resident-
 reasoning/frontier campaign follow. No training, gain, or `WOW Signal` claim is
 made here. Final multi-hour soaks remain deferred until every shorter gate is
 green.
+
+## Checkpoint 2026-07-26-381: External Snapshot-Key Custody And Streaming Codec
+
+SPARK-051 private action snapshots no longer store a raw data-encryption key
+beside their ciphertext. `PrivateActionSnapshotStore` now requires a typed key
+custodian. The production custodian holds one AES-256-GCM wrapping key in macOS
+Keychain and places only an authenticated wrapped-DEK envelope inside each
+atomic snapshot bundle. That envelope binds the custody identity, request hash,
+and opaque handle. Restore, retry, and erasure must unwrap and authenticate
+through the same external custody identity; a different key fails closed.
+
+The ordinary system constructor is read-only and refuses an unprovisioned key.
+Only the host coordinator's explicit provisioning method may create and confirm
+the Keychain item before workers spawn, preventing concurrent resident workers
+from racing implicit key creation. The strict Keychain accessor never falls
+back to environment variables. A live native-Keychain probe provisioned the
+wrapping key, closed the first custodian, reopened through the read-only path,
+and observed identical public custody and key identities without printing key
+material.
+
+Snapshot publication is now a bounded stream. Binary values and canonical JSON,
+including a single large scalar, emit at most one configured chunk at a time.
+Each chunk is hashed, AEAD-encrypted, and durably written directly into the
+hidden publication transaction; the former whole-component plaintext and all-
+ciphertext buffering is gone. Restore decrypts one chunk at a time into one
+component buffer, verifies streaming component and canonical-JSON commitments,
+reconstructs its concrete Python value, and zeroes transient component and DEK
+buffers. The callback still receives one complete resident-state mapping; the
+next continuation checkpoint makes that mapping serializable and causal at the
+resident first-action boundary.
+
+Focused snapshot, custody, streaming, and strict-Keychain coverage passes 57/57.
+The broader action-state, worker identity, runtime identity, worker origin, MLX
+runtime, admission, cancellation, resilience, and secrets boundary passes
+277/277. Adversarial cases prove raw-DEK absence across every bundle file,
+wrong-custodian rejection, wrapped-key and context tamper rejection, bounded
+multi-chunk binary/JSON round trips, explicit provisioning, closed-custodian
+refusal, and all prior crash, race, rollback, restoration, and erasure behavior.
+Strict Ruff, bytecode compilation, enterprise ratchet, exact governance
+ownership, and diff hygiene pass; effect ownership remains exactly 2,003 calls
+in 1,875 buckets with 1,783 migration-debt calls.
+
+Seven cooperative prompt, scratchpad, numeric-safety, and homeostasis records
+landed between CP380 and CP381. Counting them and CP381 makes the total
+checkpoint record 613. The 640-920 forecast remains, leaving approximately
+27-307 records. Checkpoint-count completion is approximately 66.6%-95.8%, with
+a midpoint planning estimate of 78.6%.
+
+The fixed SPARK-051 pre-training burn-down now has three checkpoints:
+serializable resident continuation and first-action hook; worker/client/service/
+runner/verifier lineage; and the resident-1.5B destructive integration gate.
+Resident-32B training and the preregistered reasoning/frontier campaign follow.
+No training, gain, or `WOW Signal` claim is made here. Final multi-hour soaks
+remain deferred until every shorter gate is green.

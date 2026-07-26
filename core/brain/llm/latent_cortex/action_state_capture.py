@@ -30,6 +30,11 @@ from core.brain.llm.latent_cortex.action_intervention import (
     CONTROL_ARM,
     TREATMENT_ARM,
 )
+from core.brain.llm.latent_cortex.action_state_key_custody import (
+    SNAPSHOT_KEY_CUSTODY_IDENTITY_SCHEMA,
+    SnapshotKeyCustodian,
+    SnapshotKeyCustodyError,
+)
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_RUNNER,
@@ -61,6 +66,9 @@ PRIVATE_ACTION_SNAPSHOT_CHUNK_AAD_SCHEMA: Final = (
 )
 PRIVATE_ACTION_SNAPSHOT_BINDING_SCHEMA: Final = (
     "aura.rlc.action_state_capture.private_snapshot_binding.v1"
+)
+PRIVATE_ACTION_SNAPSHOT_KEY_CONTEXT_SCHEMA: Final = (
+    "aura.rlc.action_state_capture.private_key_context.v1"
 )
 PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA: Final = "aura.rlc.action_state_capture.private_handle.v1"
 PRIVATE_ACTION_SNAPSHOT_PUBLICATION_SCHEMA: Final = (
@@ -103,10 +111,9 @@ _COMPONENT_OBSERVATION_OWNERS: Final = {
     for name in STATE_COMPONENT_NAMES
 }
 _CHUNK_BYTES = 1024 * 1024
-# This implementation still materializes one complete component during
-# canonical serialization and reconstruction. Keep admission deliberately
-# below resident-worker danger until the MLX continuation codec streams chunks
-# directly. The live campaign must not raise these ceilings as a workaround.
+# Publication encodes and encrypts bounded chunks directly into its hidden
+# transaction. Restore retains at most one reconstructed component because the
+# state-application callback still consumes concrete Python values.
 _MAX_COMPONENT_BYTES = 128 * 1024 * 1024
 _MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 _MAX_JSON_BYTES = 16 * 1024 * 1024
@@ -897,17 +904,52 @@ def _snapshot_binding(
     }
 
 
-def _state_value_bytes(value: Any) -> tuple[str, bytes]:
-    if isinstance(value, bytes):
-        return "bytes", value
-    if isinstance(value, bytearray):
-        return "bytes", bytes(value)
-    if isinstance(value, memoryview):
-        return "bytes", value.tobytes()
-    try:
-        return "canonical_json", canonical_json_bytes(value)
-    except (TypeError, ValueError, RecursionError, OverflowError):
-        _fail("private_snapshot_state_value_invalid")
+def _state_value_stream(value: Any) -> tuple[str, Iterator[bytes]]:
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        view = memoryview(value)
+
+        def iter_bytes() -> Iterator[bytes]:
+            for offset in range(0, len(view), _CHUNK_BYTES):
+                yield view[offset : offset + _CHUNK_BYTES].tobytes()
+
+        return "bytes", iter_bytes()
+
+    encoder = json.JSONEncoder(
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    def iter_json() -> Iterator[bytes]:
+        try:
+            for text in encoder.iterencode(value):
+                for offset in range(0, len(text), _CHUNK_BYTES):
+                    yield text[offset : offset + _CHUNK_BYTES].encode("ascii")
+        except (TypeError, ValueError, RecursionError, OverflowError, UnicodeError):
+            _fail("private_snapshot_state_value_invalid")
+
+    return "canonical_json", iter_json()
+
+
+def _fixed_chunks(parts: Iterator[bytes]) -> Iterator[bytes]:
+    pending = bytearray()
+    observed = False
+    for part in parts:
+        if not isinstance(part, bytes):
+            _fail("private_snapshot_state_stream_invalid")
+        observed = observed or bool(part)
+        view = memoryview(part)
+        offset = 0
+        while offset < len(view):
+            amount = min(_CHUNK_BYTES - len(pending), len(view) - offset)
+            pending.extend(view[offset : offset + amount])
+            offset += amount
+            if len(pending) == _CHUNK_BYTES:
+                yield bytes(pending)
+                pending.clear()
+    if pending or not observed:
+        yield bytes(pending)
 
 
 def _strict_json_loads(raw: bytes, *, role: str) -> dict[str, Any]:
@@ -975,7 +1017,25 @@ def _crash_boundary(_name: str) -> None:
 class PrivateActionSnapshotStore:
     """Content-addressed, pair-local private resident-state lifecycle."""
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(self, root: str | Path, *, key_custodian: SnapshotKeyCustodian) -> None:
+        if not isinstance(key_custodian, SnapshotKeyCustodian):
+            _fail("private_snapshot_key_custodian_required")
+        custody_identity = _normalized_mapping(
+            key_custodian.identity,
+            role="private_snapshot_key_custody_identity",
+        )
+        identity_body = {
+            name: item for name, item in custody_identity.items() if name != "identity_sha256"
+        }
+        if (
+            custody_identity.get("schema") != SNAPSHOT_KEY_CUSTODY_IDENTITY_SCHEMA
+            or custody_identity.get("custody_class")
+            not in {"macos_keychain", "external_service", "hardware_keystore"}
+            or custody_identity.get("identity_sha256") != _digest(identity_body)
+        ):
+            _fail("private_snapshot_key_custody_identity_invalid")
+        self._key_custodian = key_custodian
+        self._key_custody_identity = custody_identity
         candidate = Path(root).expanduser().absolute()
         self.root = candidate
         self._root_fd = self._open_root(candidate)
@@ -1489,7 +1549,7 @@ class PrivateActionSnapshotStore:
             "bundle": bundle,
             "publication": bundle / "publication.json",
             "handle": bundle / "handle.json",
-            "key": bundle / "snapshot.key",
+            "key": bundle / "wrapped-key.json",
             "ledger": bundle / "ledger.json",
             "operation": bundle / "operation.json",
             "tombstone": bundle / "tombstone.json",
@@ -1648,15 +1708,43 @@ class PrivateActionSnapshotStore:
             )
         return value
 
+    @staticmethod
+    def _key_context_sha256(*, handle_hash: str, request_sha256: str) -> str:
+        return _digest(
+            {
+                "schema": PRIVATE_ACTION_SNAPSHOT_KEY_CONTEXT_SCHEMA,
+                "handle_sha256": handle_hash,
+                "request_sha256": request_sha256,
+            }
+        )
+
+    @staticmethod
+    def _zeroize(value: bytearray) -> None:
+        for index in range(len(value)):
+            value[index] = 0
+        value.clear()
+
     def _load_dek(
         self,
         handle_hash: str,
         *,
+        request_sha256: str,
         expected_sha256: str,
-    ) -> bytes:
+    ) -> bytearray:
         path = self._paths_for_handle_hash(handle_hash)["key"]
-        key = self._read_owned(path, maximum=32)
-        if len(key) != 32 or _digest_bytes(key) != expected_sha256:
+        envelope = self._read_json(path, role="private_snapshot_wrapped_key")
+        try:
+            key = self._key_custodian.unwrap_data_key(
+                envelope,
+                context_sha256=self._key_context_sha256(
+                    handle_hash=handle_hash,
+                    request_sha256=request_sha256,
+                ),
+            )
+        except SnapshotKeyCustodyError as exc:
+            raise ActionStateCaptureError("private_snapshot_key_custody_failed") from exc
+        if len(key) != 32 or _digest_bytes(bytes(key)) != expected_sha256:
+            self._zeroize(key)
             _fail("private_snapshot_dek_invalid")
         return key
 
@@ -1835,6 +1923,12 @@ class PrivateActionSnapshotStore:
                 request_sha256=admission.request_sha256,
                 handle_secret=handle_secret,
             )
+            data_key = self._load_dek(
+                handle_hash,
+                request_sha256=admission.request_sha256,
+                expected_sha256=handle_record["dek_sha256"],
+            )
+            self._zeroize(data_key)
             self._load_ledger(
                 handle_hash,
                 request_sha256=admission.request_sha256,
@@ -1968,203 +2062,221 @@ class PrivateActionSnapshotStore:
         handle = f"asc1_{secrets.token_hex(32)}"
         handle_hash = self._handle_hash(handle)
         handle_secret = self._handle_secret(handle)
-        encryption_key = secrets.token_bytes(32)
-        dek_sha256 = _digest_bytes(encryption_key)
-        cipher = AESGCM(encryption_key)
-        encoded: list[tuple[str, list[bytes]]] = []
-        total_bytes = 0
-        component_documents: list[dict[str, Any]] = []
-        for name in _STATE_VALUE_NAMES:
-            value_type, payload = _state_value_bytes(private_state[name])
-            if len(payload) > _MAX_COMPONENT_BYTES:
-                _fail("private_snapshot_component_too_large")
-            total_bytes += len(payload)
-            if total_bytes > _MAX_SNAPSHOT_BYTES:
-                _fail("private_snapshot_too_large")
-            chunks: list[dict[str, Any]] = []
-            encrypted_chunks: list[bytes] = []
-            offsets = range(0, len(payload), _CHUNK_BYTES) if payload else (0,)
-            for ordinal, offset in enumerate(offsets):
-                chunk = payload[offset : offset + _CHUNK_BYTES]
-                plaintext_sha256 = _digest_bytes(chunk)
-                nonce = secrets.token_bytes(12)
-                aad = _chunk_aad(
-                    request_sha256=admission.request_sha256,
-                    component_name=name,
-                    ordinal=ordinal,
-                    plaintext_byte_count=len(chunk),
-                    plaintext_sha256=plaintext_sha256,
-                )
-                encrypted = cipher.encrypt(nonce, chunk, aad)
-                chunks.append(
-                    {
-                        "ordinal": ordinal,
-                        "plaintext_byte_count": len(chunk),
-                        "plaintext_sha256": plaintext_sha256,
-                        "byte_count": len(encrypted),
-                        "file_sha256": _digest_bytes(encrypted),
-                        "nonce_b64": base64.b64encode(nonce).decode("ascii"),
-                    }
-                )
-                encrypted_chunks.append(encrypted)
-            component_documents.append(
-                {
-                    "name": name,
-                    "value_type": value_type,
-                    "byte_count": len(payload),
-                    "value_sha256": _digest_bytes(payload),
-                    "chunks": chunks,
-                }
-            )
-            encoded.append((name, encrypted_chunks))
-        envelope_body = {
-            "schema": PRIVATE_ACTION_SNAPSHOT_ENVELOPE_SCHEMA,
-            "binding": binding,
-            "created_at_unix": created_at,
-            "chunk_size_bytes": _CHUNK_BYTES,
-            "component_count": len(component_documents),
-            "total_bytes": total_bytes,
-            "components": component_documents,
-        }
-        envelope = {
-            **envelope_body,
-            "envelope_sha256": _digest(envelope_body),
-        }
-        component_hashes = {
-            f"{item['name']}_sha256": item["value_sha256"] for item in component_documents
-        }
-        if (
-            component_hashes["durable_state_sha256"]
-            != admission.payload["runner_durable_state_commitment_sha256"]
-            or component_hashes["rng_state_sha256"]
-            != admission.payload["runner_rng_root_commitment_sha256"]
-        ):
-            _fail("private_snapshot_runner_state_commitment_mismatch")
-        snapshot_sha256 = envelope["envelope_sha256"]
+        encryption_key = bytearray(secrets.token_bytes(32))
         paths = self._paths_for_handle_hash(handle_hash)
-        handle_body = {
-            "schema": PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA,
-            "handle_sha256": handle_hash,
-            "snapshot_sha256": snapshot_sha256,
-            "request_sha256": admission.request_sha256,
-            "pair_id": admission.payload["pair_id"],
-            "task_id": admission.payload["task_id"],
-            "dek_sha256": dek_sha256,
-            "state": "active",
-            "created_at_unix": created_at,
-            "seal_receipt_sha256": None,
-        }
-        ledger_body = {
-            "schema": PRIVATE_ACTION_SNAPSHOT_LEDGER_SCHEMA,
-            "handle_sha256": handle_hash,
-            "snapshot_sha256": snapshot_sha256,
-            "request_sha256": admission.request_sha256,
-            "pair_id": admission.payload["pair_id"],
-            "uses": {arm: None for arm in PAIR_ARMS},
-            "sealed": False,
-            "sealed_at_unix": None,
-            "sequence": 0,
-        }
-        publication_body = {
-            "schema": PRIVATE_ACTION_SNAPSHOT_PUBLICATION_SCHEMA,
-            "handle": handle,
-            "handle_sha256": handle_hash,
-            "snapshot_sha256": snapshot_sha256,
-            "request_sha256": admission.request_sha256,
-            "state_components": component_hashes,
-        }
-        with self._locked():
-            recovered = self._recover_published_capture(
-                admission=admission,
-                component_hashes=component_hashes,
+        try:
+            dek_sha256 = _digest_bytes(bytes(encryption_key))
+            cipher = AESGCM(bytes(encryption_key))
+            wrapped_key = dict(
+                self._key_custodian.wrap_data_key(
+                    bytes(encryption_key),
+                    context_sha256=self._key_context_sha256(
+                        handle_hash=handle_hash,
+                        request_sha256=admission.request_sha256,
+                    ),
+                )
             )
-            if recovered is not None:
-                return recovered
-            stage_dir = (
-                self.root
-                / "transactions"
-                / f".tmp-publish-{handle_hash}-{secrets.token_hex(16)}"
-            )
-            stage_snapshot = stage_dir / "snapshot"
-            stage_paths = {
-                "publication": stage_dir / "publication.json",
-                "handle": stage_dir / "handle.json",
-                "key": stage_dir / "snapshot.key",
-                "ledger": stage_dir / "ledger.json",
-            }
-            try:
-                self._ensure_directory(stage_dir)
-                self._atomic_publish(stage_paths["key"], encryption_key, replace=False)
-                self._ensure_directory(stage_snapshot)
-                chunks_root = stage_snapshot / "chunks"
-                self._ensure_directory(chunks_root)
-                for name, encrypted_chunks in encoded:
-                    component_dir = chunks_root / name
-                    self._ensure_directory(component_dir)
-                    component = next(
-                        item for item in component_documents if item["name"] == name
+            with self._locked():
+                stage_dir = (
+                    self.root
+                    / "transactions"
+                    / f".tmp-publish-{handle_hash}-{secrets.token_hex(16)}"
+                )
+                stage_snapshot = stage_dir / "snapshot"
+                stage_paths = {
+                    "publication": stage_dir / "publication.json",
+                    "handle": stage_dir / "handle.json",
+                    "key": stage_dir / "wrapped-key.json",
+                    "ledger": stage_dir / "ledger.json",
+                }
+                try:
+                    self._ensure_directory(stage_dir)
+                    self._atomic_publish(
+                        stage_paths["key"],
+                        canonical_json_bytes(wrapped_key) + b"\n",
+                        replace=False,
                     )
-                    for chunk_info, encrypted in zip(
-                        component["chunks"],
-                        encrypted_chunks,
-                        strict=True,
+                    self._ensure_directory(stage_snapshot)
+                    chunks_root = stage_snapshot / "chunks"
+                    self._ensure_directory(chunks_root)
+                    total_bytes = 0
+                    component_documents: list[dict[str, Any]] = []
+                    for name in _STATE_VALUE_NAMES:
+                        value_type, parts = _state_value_stream(private_state[name])
+                        component_bytes = 0
+                        component_digest = hashlib.sha256()
+                        chunks: list[dict[str, Any]] = []
+                        component_dir = chunks_root / name
+                        self._ensure_directory(component_dir)
+                        for ordinal, chunk in enumerate(_fixed_chunks(parts)):
+                            component_bytes += len(chunk)
+                            total_bytes += len(chunk)
+                            if component_bytes > _MAX_COMPONENT_BYTES:
+                                _fail("private_snapshot_component_too_large")
+                            if total_bytes > _MAX_SNAPSHOT_BYTES:
+                                _fail("private_snapshot_too_large")
+                            component_digest.update(chunk)
+                            plaintext_sha256 = _digest_bytes(chunk)
+                            nonce = secrets.token_bytes(12)
+                            aad = _chunk_aad(
+                                request_sha256=admission.request_sha256,
+                                component_name=name,
+                                ordinal=ordinal,
+                                plaintext_byte_count=len(chunk),
+                                plaintext_sha256=plaintext_sha256,
+                            )
+                            encrypted = cipher.encrypt(nonce, chunk, aad)
+                            file_sha256 = _digest_bytes(encrypted)
+                            chunk_info = {
+                                "ordinal": ordinal,
+                                "plaintext_byte_count": len(chunk),
+                                "plaintext_sha256": plaintext_sha256,
+                                "byte_count": len(encrypted),
+                                "file_sha256": file_sha256,
+                                "nonce_b64": base64.b64encode(nonce).decode("ascii"),
+                            }
+                            chunk_path = component_dir / f"{ordinal:08d}-{file_sha256}.bin"
+                            self._atomic_publish(chunk_path, encrypted, replace=False)
+                            chunks.append(chunk_info)
+                        component_documents.append(
+                            {
+                                "name": name,
+                                "value_type": value_type,
+                                "byte_count": component_bytes,
+                                "value_sha256": component_digest.hexdigest(),
+                                "chunks": chunks,
+                            }
+                        )
+
+                    envelope_body = {
+                        "schema": PRIVATE_ACTION_SNAPSHOT_ENVELOPE_SCHEMA,
+                        "binding": binding,
+                        "created_at_unix": created_at,
+                        "chunk_size_bytes": _CHUNK_BYTES,
+                        "component_count": len(component_documents),
+                        "total_bytes": total_bytes,
+                        "components": component_documents,
+                    }
+                    envelope = {
+                        **envelope_body,
+                        "envelope_sha256": _digest(envelope_body),
+                    }
+                    component_hashes = {
+                        f"{item['name']}_sha256": item["value_sha256"]
+                        for item in component_documents
+                    }
+                    if (
+                        component_hashes["durable_state_sha256"]
+                        != admission.payload["runner_durable_state_commitment_sha256"]
+                        or component_hashes["rng_state_sha256"]
+                        != admission.payload["runner_rng_root_commitment_sha256"]
                     ):
-                        ordinal = chunk_info["ordinal"]
-                        chunk_path = (
-                            component_dir
-                            / f"{ordinal:08d}-{chunk_info['file_sha256']}.bin"
+                        _fail("private_snapshot_runner_state_commitment_mismatch")
+                    recovered = self._recover_published_capture(
+                        admission=admission,
+                        component_hashes=component_hashes,
+                    )
+                    if recovered is not None:
+                        self._remove_tree(stage_dir)
+                        return recovered
+
+                    snapshot_sha256 = envelope["envelope_sha256"]
+                    handle_body = {
+                        "schema": PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA,
+                        "handle_sha256": handle_hash,
+                        "snapshot_sha256": snapshot_sha256,
+                        "request_sha256": admission.request_sha256,
+                        "pair_id": admission.payload["pair_id"],
+                        "task_id": admission.payload["task_id"],
+                        "dek_sha256": dek_sha256,
+                        "state": "active",
+                        "created_at_unix": created_at,
+                        "seal_receipt_sha256": None,
+                    }
+                    ledger_body = {
+                        "schema": PRIVATE_ACTION_SNAPSHOT_LEDGER_SCHEMA,
+                        "handle_sha256": handle_hash,
+                        "snapshot_sha256": snapshot_sha256,
+                        "request_sha256": admission.request_sha256,
+                        "pair_id": admission.payload["pair_id"],
+                        "uses": {arm: None for arm in PAIR_ARMS},
+                        "sealed": False,
+                        "sealed_at_unix": None,
+                        "sequence": 0,
+                    }
+                    publication_body = {
+                        "schema": PRIVATE_ACTION_SNAPSHOT_PUBLICATION_SCHEMA,
+                        "handle": handle,
+                        "handle_sha256": handle_hash,
+                        "snapshot_sha256": snapshot_sha256,
+                        "request_sha256": admission.request_sha256,
+                        "state_components": component_hashes,
+                    }
+                    self._atomic_publish(
+                        stage_snapshot / "envelope.json",
+                        canonical_json_bytes(envelope) + b"\n",
+                        replace=False,
+                    )
+                    self._atomic_publish(
+                        stage_paths["ledger"],
+                        canonical_json_bytes(
+                            self._ledger_document(ledger_body, handle_secret=handle_secret)
                         )
-                        self._atomic_publish(chunk_path, encrypted, replace=False)
-                self._atomic_publish(
-                    stage_snapshot / "envelope.json",
-                    canonical_json_bytes(envelope) + b"\n",
-                    replace=False,
-                )
-                self._atomic_publish(
-                    stage_paths["ledger"],
-                    canonical_json_bytes(
-                        self._ledger_document(ledger_body, handle_secret=handle_secret)
+                        + b"\n",
+                        replace=False,
                     )
-                    + b"\n",
-                    replace=False,
-                )
-                self._atomic_publish(
-                    stage_paths["handle"],
-                    canonical_json_bytes(
-                        self._handle_document(handle_body, handle_secret=handle_secret)
-                    )
-                    + b"\n",
-                    replace=False,
-                )
-                self._atomic_publish(
-                    stage_paths["publication"],
-                    canonical_json_bytes(
-                        self._publication_document(
-                            publication_body,
-                            handle_secret=handle_secret,
+                    self._atomic_publish(
+                        stage_paths["handle"],
+                        canonical_json_bytes(
+                            self._handle_document(handle_body, handle_secret=handle_secret)
                         )
+                        + b"\n",
+                        replace=False,
                     )
-                    + b"\n",
-                    replace=False,
+                    self._atomic_publish(
+                        stage_paths["publication"],
+                        canonical_json_bytes(
+                            self._publication_document(
+                                publication_body,
+                                handle_secret=handle_secret,
+                            )
+                        )
+                        + b"\n",
+                        replace=False,
+                    )
+                    self._fsync_directory(stage_dir)
+                    _crash_boundary("publish_before_bundle_commit")
+                    self._atomic_publish_directory(stage_dir, paths["bundle"])
+                    _crash_boundary("publish_after_bundle_commit")
+                except ActionStateCaptureError as exc:
+                    if self._path_exists(stage_dir):
+                        self._remove_tree(stage_dir)
+                    if isinstance(exc.__cause__, OSError):
+                        raise ActionStateCaptureError(
+                            "private_snapshot_publication_io_failed"
+                        ) from exc.__cause__
+                    raise
+                except OSError as exc:
+                    if self._path_exists(stage_dir):
+                        self._remove_tree(stage_dir)
+                    raise ActionStateCaptureError(
+                        "private_snapshot_publication_io_failed"
+                    ) from exc
+                except Exception:  # noqa: BLE001 - rollback every staged publication failure
+                    if self._path_exists(stage_dir):
+                        self._remove_tree(stage_dir)
+                    raise
+
+                return PrivateSnapshotPublication(
+                    handle=handle,
+                    snapshot_sha256=snapshot_sha256,
+                    request_sha256=admission.request_sha256,
+                    _component_items=tuple(sorted(component_hashes.items())),
                 )
-                self._fsync_directory(stage_dir)
-                _crash_boundary("publish_before_bundle_commit")
-                self._atomic_publish_directory(stage_dir, paths["bundle"])
-                _crash_boundary("publish_after_bundle_commit")
-            except OSError as exc:
-                if self._path_exists(stage_dir):
-                    self._remove_tree(stage_dir)
-                raise ActionStateCaptureError("private_snapshot_publication_io_failed") from exc
-            except Exception:  # noqa: BLE001 - rollback every staged publication failure
-                if self._path_exists(stage_dir):
-                    self._remove_tree(stage_dir)
-                raise
-            return PrivateSnapshotPublication(
-                handle=handle,
-                snapshot_sha256=snapshot_sha256,
-                request_sha256=admission.request_sha256,
-                _component_items=tuple(sorted(component_hashes.items())),
-            )
+        except SnapshotKeyCustodyError as exc:
+            raise ActionStateCaptureError("private_snapshot_key_custody_failed") from exc
+        finally:
+            self._zeroize(encryption_key)
 
     def _read_private_state(
         self,
@@ -2192,13 +2304,14 @@ class PrivateActionSnapshotStore:
                 or component["name"] not in _STATE_VALUE_NAMES
                 or component["value_type"] not in {"bytes", "canonical_json"}
                 or type(component["byte_count"]) is not int
-                or component["byte_count"] < 0
+                or not 0 <= component["byte_count"] <= _MAX_COMPONENT_BYTES
                 or not _is_sha256(component["value_sha256"])
                 or not isinstance(component["chunks"], list)
                 or not component["chunks"]
             ):
                 _fail("private_snapshot_component_manifest_invalid")
-            parts: list[bytes] = []
+            payload = bytearray()
+            component_digest = hashlib.sha256()
             expected_ordinal = 0
             for chunk in component["chunks"]:
                 if (
@@ -2254,25 +2367,41 @@ class PrivateActionSnapshotStore:
                     or _digest_bytes(plaintext) != chunk["plaintext_sha256"]
                 ):
                     _fail("private_snapshot_chunk_plaintext_mismatch")
-                parts.append(plaintext)
+                payload.extend(plaintext)
+                component_digest.update(plaintext)
+                if len(payload) > _MAX_COMPONENT_BYTES:
+                    self._zeroize(payload)
+                    _fail("private_snapshot_component_too_large")
                 expected_ordinal += 1
-            payload = b"".join(parts)
             if (
                 len(payload) != component["byte_count"]
-                or _digest_bytes(payload) != component["value_sha256"]
+                or component_digest.hexdigest() != component["value_sha256"]
             ):
+                self._zeroize(payload)
                 _fail("private_snapshot_component_hash_mismatch")
             total += len(payload)
             if component["value_type"] == "bytes":
-                state[component["name"]] = payload
+                state[component["name"]] = bytes(payload)
             else:
                 try:
                     value = json.loads(payload)
                 except (UnicodeDecodeError, json.JSONDecodeError):
+                    self._zeroize(payload)
                     _fail("private_snapshot_structured_value_invalid")
-                if canonical_json_bytes(value) != payload:
+                canonical_digest = hashlib.sha256()
+                canonical_bytes = 0
+                _value_type, canonical_parts = _state_value_stream(value)
+                for canonical_chunk in _fixed_chunks(canonical_parts):
+                    canonical_digest.update(canonical_chunk)
+                    canonical_bytes += len(canonical_chunk)
+                if (
+                    canonical_bytes != len(payload)
+                    or canonical_digest.hexdigest() != component["value_sha256"]
+                ):
+                    self._zeroize(payload)
                     _fail("private_snapshot_structured_value_noncanonical")
                 state[component["name"]] = value
+            self._zeroize(payload)
         if set(state) != set(_STATE_VALUE_NAMES) or total != envelope["total_bytes"]:
             _fail("private_snapshot_state_reconstruction_mismatch")
         return state
@@ -2632,14 +2761,18 @@ class PrivateActionSnapshotStore:
             _crash_boundary("restore_after_prepare")
             encryption_key = self._load_dek(
                 handle_hash,
+                request_sha256=binding["request_sha256"],
                 expected_sha256=handle_record["dek_sha256"],
             )
-            state = self._read_private_state(
-                handle_hash,
-                handle_record["snapshot_sha256"],
-                envelope,
-                encryption_key=encryption_key,
-            )
+            try:
+                state = self._read_private_state(
+                    handle_hash,
+                    handle_record["snapshot_sha256"],
+                    envelope,
+                    encryption_key=bytes(encryption_key),
+                )
+            finally:
+                self._zeroize(encryption_key)
             started_body = {
                 name: item
                 for name, item in operation.items()
@@ -2907,9 +3040,14 @@ class PrivateActionSnapshotStore:
             _fail("private_snapshot_erasure_operation_invalid")
         key_path = paths["key"]
         if self._path_exists(key_path):
-            key = self._read_owned(key_path, maximum=32)
-            if len(key) != 32 or _digest_bytes(key) != dek_sha256:
+            key = self._load_dek(
+                operation["handle_sha256"],
+                request_sha256=operation["request_sha256"],
+                expected_sha256=dek_sha256,
+            )
+            if len(key) != 32:
                 _fail("private_snapshot_erasure_dek_mismatch")
+            self._zeroize(key)
             self._unlink(key_path, sync=True)
         snapshot_dir = paths["snapshot"]
         for item in files:
@@ -3445,6 +3583,7 @@ __all__ = [
     "PRIVATE_ACTION_SNAPSHOT_ENVELOPE_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_ERASURE_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA",
+    "PRIVATE_ACTION_SNAPSHOT_KEY_CONTEXT_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_LEDGER_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1",

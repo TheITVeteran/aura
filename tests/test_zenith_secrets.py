@@ -54,6 +54,14 @@ def test_keychain_unavailable_falls_back_to_environment(monkeypatch):
     assert os.environ["AURA_TEST_SECRET"] == "runtime-only"
 
 
+def test_strict_keychain_backend_never_falls_back_to_environment(monkeypatch):
+    monkeypatch.setattr(secrets, "_KEYCHAIN_BACKEND", secrets._KEYCHAIN_UNAVAILABLE)
+    monkeypatch.setenv("AURA_TEST_SECRET", "environment-is-not-custody")
+
+    with pytest.raises(secrets.KeychainUnavailableError, match="strict macOS Keychain"):
+        secrets.require_keychain_backend()
+
+
 def test_native_keychain_is_never_opened_by_an_ordinary_test(monkeypatch):
     created = []
 

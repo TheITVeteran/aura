@@ -2299,6 +2299,42 @@ before those dependencies close is not admissible.
   action hook, end-to-end lineage, and the resident-1.5B destructive gate remain
   the four fixed pre-training checkpoints. No resident training, reasoning gain,
   frontier gain, or `WOW Signal` is claimed.
+
+  CP381 closes external snapshot-key custody and bounded streaming. The snapshot
+  store now requires an explicit custodian and has no plaintext-key or
+  environment fallback. Its production provider wraps each random DEK with
+  AES-256-GCM under a wrapping key held by macOS Keychain. The authenticated
+  wrapped-key envelope binds the custodian identity, request, and opaque handle;
+  only that envelope enters the snapshot transaction. Ordinary system opens are
+  read-only and fail if custody was not provisioned. One host-only provisioning
+  method creates and confirms the Keychain item before resident workers spawn,
+  avoiding concurrent implicit key creation.
+
+  Publication now canonicalizes JSON incrementally, slices even one large scalar
+  into bounded pieces, coalesces exact-size chunks, hashes and encrypts each
+  chunk, and writes it directly into the hidden transaction. It no longer holds
+  complete plaintext components plus every encrypted copy. Restore authenticates
+  one chunk at a time into one component buffer, verifies its streaming digest,
+  reconstructs the concrete state value, and zeroes the transient plaintext and
+  DEK buffers. Existing-bundle retry must prove the current custodian can unwrap
+  the committed DEK before it may return the original handle.
+
+  The focused custody, streaming, snapshot, and strict-Keychain boundary passes
+  57/57. The broader snapshot, identity, worker-origin, MLX runtime, admission,
+  cancellation, resilience, and secret-backend boundary passes 277/277. Tests
+  prove bounded multi-chunk binary and single-scalar JSON round trips, absence of
+  the raw DEK from every bundle file, wrong-custodian refusal, tamper/context
+  rejection, explicit provisioning, post-close refusal, and unchanged crash/
+  race/erasure semantics. A real native-Keychain probe provisioned once and
+  reopened read-only with identical public custody and wrapping-key identities.
+  Ruff, bytecode compilation, enterprise gate, exact governance ratchet, and
+  diff hygiene pass.
+
+  CP381 closes only custody and streaming. Serializable resident continuation
+  plus the first-action hook, end-to-end worker/client/service/runner/verifier
+  lineage, and the resident-1.5B destructive integration gate remain the three
+  fixed pre-training checkpoints. No resident training or reasoning/frontier
+  gain is claimed.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while
