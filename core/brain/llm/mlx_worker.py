@@ -6072,6 +6072,31 @@ def _mlx_worker_loop(
                                                 "timestamp": time.time(),
                                             }
                                         )
+                                    else:
+                                        # A token that adds no VISIBLE text is still a
+                                        # token. This was the only progress signal the
+                                        # parent had, so decoding that produces no
+                                        # visible delta — a detokenizer holding a
+                                        # partial UTF-8 sequence, suppressed start ids,
+                                        # a stop-sequence being scanned — looked
+                                        # identical to a wedged worker. Live
+                                        # 2026-07-26: "First-token HARD CEILING
+                                        # exceeded (livelocked: heartbeats but zero
+                                        # tokens) ... 107.7s" on an ~800-token prompt,
+                                        # and a healthy generation was cancelled.
+                                        #
+                                        # `progress` carries no text, and unlike
+                                        # `token` it is essential, so the signal cannot
+                                        # be shed under IPC backpressure either.
+                                        ipc_writer.put(
+                                            {
+                                                "id": job.get("id"),
+                                                "action": "stream",
+                                                "status": "progress",
+                                                "tokens_generated": token_count,
+                                                "timestamp": time.time(),
+                                            }
+                                        )
 
                                     if stop_hit:
                                         break

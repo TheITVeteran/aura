@@ -410,17 +410,32 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
         tick=7,
     )
 
+    # The continuity lane is ATTESTED. A caller-supplied boolean is not
+    # authority (CP126 310a67ee), so the gateway — which has already judged the
+    # write user-facing and low-risk from evidence — mints the token that says
+    # so. Build the context the way the gateway does, rather than asserting a
+    # bare flag still works: that path was closed on purpose, and asserting it
+    # kept this test red while the real lane was healthy.
+    from core.executive.authority_gateway import AuthorityGateway
+
+    continuity_context = AuthorityGateway._memory_write_context(
+        "conversation_continuity",
+        "user",
+        {"provenance_source": "user", "explicit_memory_request": True},
+        "my flight to Lisbon is on October 14th at 6:40am",
+    )
     continuity_policy = runtime.action_policy(
         now,
         domain="memory_write",
         priority=0.5,
-        context={"conversation_continuity": True, "high_risk_memory_write": False},
+        context=continuity_context,
     )
-    explicit_memory_policy = runtime.action_policy(
+    # …and an UNATTESTED flag must still be ignored, or the hardening is theatre.
+    unattested_policy = runtime.action_policy(
         now,
         domain="memory_write",
         priority=0.5,
-        context={"explicit_observational_memory_write": True, "high_risk_memory_write": False},
+        context={"conversation_continuity": True, "high_risk_memory_write": False},
     )
     generic_memory_policy = runtime.action_policy(now, domain="memory_write", priority=0.5)
     high_risk_policy = runtime.action_policy(
@@ -430,10 +445,12 @@ def test_aura_now_constrains_low_risk_interaction_memory_instead_of_dropping_it(
         context={"conversation_continuity": True, "high_risk_memory_write": True},
     )
 
+    assert continuity_context.get("capability_token"), (
+        "the gateway must attest its own approval, or nothing can persist"
+    )
     assert continuity_policy["outcome"] == "constrain"
     assert "continuity_memory_write_constrained:not_deferred" in continuity_policy["constraints"]
-    assert explicit_memory_policy["outcome"] == "constrain"
-    assert "continuity_memory_write_constrained:not_deferred" in explicit_memory_policy["constraints"]
+    assert unattested_policy["outcome"] == "defer"
     assert generic_memory_policy["outcome"] == "defer"
     assert high_risk_policy["outcome"] == "defer"
 
