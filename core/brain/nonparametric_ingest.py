@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -41,8 +42,59 @@ class Encoder(Protocol):
     def first_token(self, continuation: str) -> int: ...
 
 
+#: Legacy receipts kept only 16 hex chars (64 bits). At datastore scale that is
+#: collision-prone, and a collision silently classifies a DISTINCT trusted pair
+#: as already committed — it is never ingested and nothing reports it. Receipts
+#: are now the full digest; the legacy prefix is still honoured on read so
+#: widening does not trigger a one-time re-ingest of everything.
+_LEGACY_HASH_LEN = 16
+
+#: Largest trusted store this will load into memory at once (64 MiB). Generous
+#: for a legitimate local cache, bounded against an adversarial or runaway one.
+_MAX_TRUSTED_STORE_BYTES = 64 * 1024 * 1024
+
+
 def _pair_hash(context: str, answer: str) -> str:
-    return hashlib.sha256(f"{context}\x00{answer}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{context}\x00{answer}".encode()).hexdigest()
+
+
+def _valid_key(key: Any, expected_dim: Any = None) -> bool:
+    """A datastore key must be a finite 1-D vector of the encoder's width.
+
+    Only the batch path checked rank and row count; the fallback and single-pair
+    paths checked nothing, so NaN, infinite, empty, or wrong-width vectors could
+    enter the nearest-neighbour index and corrupt every later lookup.
+    """
+    try:
+        arr = np.asarray(key, dtype=np.float32)
+    except (TypeError, ValueError):
+        return False
+    if arr.ndim != 1 or arr.size == 0:
+        return False
+    if not np.all(np.isfinite(arr)):
+        return False
+    try:
+        if expected_dim is not None and int(expected_dim) > 0 and arr.size != int(expected_dim):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return True
+
+
+def _valid_token_id(token_id: Any, vocab_size: Any = None) -> bool:
+    """Continuation ids were written straight through with no range check."""
+    try:
+        value = int(token_id)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if value < 0:
+        return False
+    try:
+        if vocab_size is not None and int(vocab_size) > 0 and value >= int(vocab_size):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return True
 
 
 def collect_trusted_pairs(
@@ -64,6 +116,19 @@ def collect_trusted_pairs(
         if not path.exists():
             continue
         try:
+            # The advertised `limit` bounds PAIRS, but read_text/json.loads
+            # consume the entire file first — so a large or adversarial trace
+            # file could exhaust memory before the bound had any effect. Refuse
+            # oversized stores up front.
+            size = path.stat().st_size
+            if size > _MAX_TRUSTED_STORE_BYTES:
+                record_degradation(
+                    "nonparametric_ingest_collect",
+                    ValueError(f"trusted store {path.name} is {size} bytes"),
+                    severity="warning",
+                    action="skipped oversized trusted store before loading it",
+                )
+                continue
             raw = json.loads(path.read_text(encoding="utf-8"))
             for entry in (raw.get(key, {}) or {}).values():
                 obj = str(entry.get("objective", "")).strip()
@@ -85,20 +150,39 @@ class NonParametricIngestor:
         self._dedup_path = Path(
             dedup_path or os.path.expanduser("~/.aura/data/runtime/nonparametric_ingested.json")
         )
+        # Guards the check-add-receipt sequence. Concurrent ingest workers could
+        # both observe a hash absent, both commit the same pair, and race the
+        # set update and file write. Atomic file replacement never made the
+        # read-modify-write atomic.
+        self._lock = threading.RLock()
         self._seen: set[str] = set()
+        #: Receipt order, newest last — retention needs recency, and a set has
+        #: no order to retain by.
+        self._seen_order: list[str] = []
         self._load_seen()
+
+    def _mark_seen(self, pair_hash: str) -> None:
+        with self._lock:
+            if pair_hash not in self._seen:
+                self._seen.add(pair_hash)
+                self._seen_order.append(pair_hash)
+
+    def _is_seen(self, pair_hash: str) -> bool:
+        """Receipt lookup that also honours legacy truncated receipts."""
+        with self._lock:
+            return pair_hash in self._seen or pair_hash[:_LEGACY_HASH_LEN] in self._seen
 
     def has_seen(self, context: str, answer: str) -> bool:
         """Return whether a trusted pair already has a committed ingest receipt."""
 
-        return _pair_hash(str(context or "").strip(), str(answer or "").strip()) in self._seen
+        return self._is_seen(_pair_hash(str(context or "").strip(), str(answer or "").strip()))
 
     def ingest_pair(self, context: str, answer: str, encoder: Encoder, *, weight: float = 1.0) -> bool:
         context, answer = str(context or "").strip(), str(answer or "").strip()
         if not context or not answer:
             return False
         h = _pair_hash(context, answer)
-        if h in self._seen:
+        if self._is_seen(h):
             return False
         try:
             key = encoder.encode_hidden(context)
@@ -106,9 +190,24 @@ class NonParametricIngestor:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("nonparametric_ingest_encode", exc)
             return False
-        if not self._mem.add(key, token_id, token=answer, weight=weight):
+        if not _valid_key(key, getattr(encoder, "dim", None)) or not _valid_token_id(
+            token_id, getattr(encoder, "vocab_size", None)
+        ):
+            record_degradation(
+                "nonparametric_ingest_encode",
+                ValueError("encoder produced a malformed key or token id"),
+                severity="debug",
+                action="rejected the pair rather than store an invalid key",
+            )
             return False
-        self._seen.add(h)
+        # One critical section over check-commit-receipt so two workers cannot
+        # both commit the same pair.
+        with self._lock:
+            if self._is_seen(h):
+                return False
+            if not self._mem.add(key, token_id, token=answer, weight=weight):
+                return False
+            self._mark_seen(h)
         return True
 
     def ingest_sequence(
@@ -138,7 +237,7 @@ class NonParametricIngestor:
             added = self.ingest_pair(context, answer, encoder, weight=weight)
             return 1 if added else 0
         h = _pair_hash(context, answer)
-        if h in self._seen:
+        if self._is_seen(h):
             return 0
         if should_continue is not None and not should_continue():
             return 0
@@ -148,6 +247,20 @@ class NonParametricIngestor:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("nonparametric_ingest_tokenize", exc)
             return 0
+        # Token alignment is an ASSUMPTION until it is checked. BPE can merge or
+        # split across the inserted space, so `context` tokenized alone is not
+        # always a prefix of `context + " " + answer`. When it is not,
+        # len(ctx_ids)-1 is the wrong answer boundary and every key would be
+        # bound to the wrong target — silently, and durably. Verify the prefix
+        # and fall back to single-token ingestion rather than poison the store.
+        if len(ctx_ids) > len(full_ids) or full_ids[: len(ctx_ids)] != ctx_ids:
+            record_degradation(
+                "nonparametric_ingest_alignment",
+                ValueError("tokenizer is not prefix-stable across concatenation"),
+                severity="debug",
+                action="fell back to first-token ingestion for this pair",
+            )
+            return 1 if self.ingest_pair(context, answer, encoder, weight=weight) else 0
         start = max(0, len(ctx_ids) - 1)
         positions = list(range(start, len(full_ids) - 1))
         if not positions:
@@ -201,7 +314,27 @@ class NonParametricIngestor:
             return 0
 
         added = 0
+        complete = True
         for key, token_id, token_text in prepared:
+            # Cancellation is checked INSIDE the commit loop, not only before
+            # it. Stopping mid-sequence leaves a partial pair, which must not be
+            # receipted as done.
+            if should_continue is not None and not should_continue():
+                complete = False
+                break
+            if not _valid_key(key, getattr(encoder, "dim", None)) or not _valid_token_id(
+                token_id, getattr(encoder, "vocab_size", None)
+            ):
+                # A wrong-width/NaN key or an out-of-range token id must not
+                # enter the nearest-neighbour store.
+                record_degradation(
+                    "nonparametric_ingest_sequence",
+                    ValueError("rejected malformed key/token during sequence ingest"),
+                    severity="debug",
+                    action="skipped position; pair left un-receipted for retry",
+                )
+                complete = False
+                continue
             try:
                 if self._mem.add(
                     key,
@@ -210,10 +343,17 @@ class NonParametricIngestor:
                     weight=weight,
                 ):
                     added += 1
+                else:
+                    complete = False
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("nonparametric_ingest_sequence", exc)
-        if added:
-            self._seen.add(h)
+                complete = False
+        # Only a FULLY committed sequence earns a receipt. Marking a partial
+        # pair as seen made every future run skip the missing positions
+        # permanently, leaving a half-ingested answer that can never be
+        # completed.
+        if added and complete:
+            self._mark_seen(h)
         return added
 
     def sequence_within_budget(
@@ -287,15 +427,24 @@ class NonParametricIngestor:
         if not self._dedup_path.exists():
             return
         try:
-            self._seen = set(json.loads(self._dedup_path.read_text(encoding="utf-8")).get("seen", []))
+            stored = json.loads(self._dedup_path.read_text(encoding="utf-8")).get("seen", [])
+            # The file preserves order, so recency survives a restart.
+            self._seen_order = [str(x) for x in stored if x]
+            self._seen = set(self._seen_order)
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_ingest_load_seen", exc)
 
     def _save_seen(self) -> bool:
         try:
             self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
-            # keep the dedup ledger bounded
-            seen = list(self._seen)[-50_000:]
+            # Keep the dedup ledger bounded by RECENCY. The old code sliced
+            # list(set), whose iteration order is neither insertion nor recency
+            # and differs between processes, so retention dropped an arbitrary
+            # subset and randomly re-enabled old duplicates.
+            with self._lock:
+                self._seen_order = self._seen_order[-50_000:]
+                self._seen = set(self._seen_order)
+                seen = list(self._seen_order)
             atomic_write_text(self._dedup_path, json.dumps({"seen": seen}), encoding="utf-8")
             return True
         except (OSError, ValueError, TypeError) as exc:

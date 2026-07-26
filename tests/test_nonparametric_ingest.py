@@ -234,3 +234,113 @@ def test_ingest_sequence_cancellation_cannot_publish_partial_pair(tmp_path):
     ) == 0
     assert enc.batch_calls == 1
     assert len(mem) == 0
+
+
+# ── CP126 remediation regressions ───────────────────────────────────────────
+
+
+class _NonPrefixEncoder(FakeSeqEncoder):
+    """A tokenizer that merges across the inserted space, so `context` alone is
+    NOT a prefix of `context + " " + answer` — the BPE reality the sequence
+    boundary arithmetic silently assumed away."""
+
+    def encode_tokens(self, text: str) -> list[int]:
+        ids = super().encode_tokens(text)
+        if len(ids) >= 2:
+            # Merge the final two tokens. The merge therefore lands in a
+            # different place for `context` than for `context + " " + answer`,
+            # exactly as a real BPE merge across the inserted space does.
+            ids = ids[:-2] + [(ids[-2] * 31 + ids[-1]) % 5000]
+        return ids
+
+
+def test_non_prefix_tokenizer_falls_back_instead_of_misaligning(tmp_path):
+    """Misaligned positions would bind every key to the WRONG target, durably."""
+    memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
+    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+
+    added = ingestor.ingest_sequence(
+        "what is two plus two", "the answer is four", _NonPrefixEncoder()
+    )
+
+    # Fell back to single-token ingestion rather than storing misaligned keys.
+    assert added <= 1
+
+
+def test_cancellation_midway_leaves_no_receipt(tmp_path):
+    """A partial sequence must stay retryable: receipting it made every future
+    run skip the missing positions permanently."""
+    memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
+    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+    calls = {"n": 0}
+
+    def should_continue() -> bool:
+        calls["n"] += 1
+        return calls["n"] <= 3   # cancel partway through the commit loop
+
+    ingestor.ingest_sequence(
+        "context words here", "answer words follow along now",
+        FakeSeqEncoder(), should_continue=should_continue,
+    )
+
+    assert ingestor.has_seen("context words here", "answer words follow along now") is False
+
+
+def test_malformed_keys_and_token_ids_are_rejected(tmp_path):
+    class BadKeyEncoder(FakeEncoder):
+        def encode_hidden(self, text: str) -> np.ndarray:
+            return np.array([float("nan")] * self.dim, dtype=np.float32)
+
+    class BadTokenEncoder(FakeEncoder):
+        def first_token(self, continuation: str) -> int:
+            return -5
+
+    memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
+    ingestor = NonParametricIngestor(memory, dedup_path=tmp_path / "seen.json")
+
+    assert ingestor.ingest_pair("ctx", "ans", BadKeyEncoder()) is False
+    assert ingestor.ingest_pair("ctx2", "ans2", BadTokenEncoder()) is False
+    # Neither poisoned pair earned a receipt.
+    assert ingestor.has_seen("ctx", "ans") is False
+    assert ingestor.has_seen("ctx2", "ans2") is False
+
+
+def test_legacy_truncated_receipts_are_still_honoured(tmp_path):
+    """Widening the receipt must not re-ingest everything already committed."""
+    import hashlib as _h
+
+    ctx, ans = "legacy context", "legacy answer"
+    legacy = _h.sha256(f"{ctx}\x00{ans}".encode()).hexdigest()[:16]
+    dedup = tmp_path / "seen.json"
+    dedup.write_text(json.dumps({"seen": [legacy]}), encoding="utf-8")
+
+    memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
+    ingestor = NonParametricIngestor(memory, dedup_path=dedup)
+
+    assert ingestor.has_seen(ctx, ans) is True
+    assert ingestor.ingest_pair(ctx, ans, FakeEncoder()) is False
+
+
+def test_dedup_retention_keeps_the_most_recent(tmp_path):
+    """Retention used list(set)[-N:], whose order is arbitrary and unstable."""
+    memory = NonParametricMemory(dim=8, path=tmp_path / "m.npz")
+    dedup = tmp_path / "seen.json"
+    ingestor = NonParametricIngestor(memory, dedup_path=dedup)
+
+    for i in range(50):
+        ingestor._mark_seen(f"hash-{i:04d}")
+    assert ingestor.persist_seen() is True
+
+    stored = json.loads(dedup.read_text(encoding="utf-8"))["seen"]
+    assert stored == [f"hash-{i:04d}" for i in range(50)]   # insertion order preserved
+
+
+def test_oversized_trusted_store_is_skipped_before_loading(tmp_path, monkeypatch):
+    import core.brain.nonparametric_ingest as ingest_module
+
+    store = tmp_path / "big.json"
+    store.write_text(json.dumps({"entries": {"a": {"objective": "o", "answer": "a"}}}),
+                     encoding="utf-8")
+    monkeypatch.setattr(ingest_module, "_MAX_TRUSTED_STORE_BYTES", 4)
+
+    assert collect_trusted_pairs(sources=[(store, "entries")]) == []
