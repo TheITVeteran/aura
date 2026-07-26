@@ -129,6 +129,16 @@ def _self_development_visible_updates_enabled(orchestrator=None) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# What to assume when the body cannot be read. This loop decides whether to
+# act UNPROMPTED, so an unreadable state is a reason to hold: low energy and
+# elevated pressure, rather than the permissive full-energy/zero-pressure
+# defaults that previously licensed initiative on a failed read
+# (CP126 b53bc839). Not 0/1 — a permanently unreadable sensor should damp
+# initiative, not abolish it.
+_UNREADABLE_ENERGY = 0.35
+_UNREADABLE_PRESSURE = 0.6
+
+
 class AutonomousInitiativeLoop:
     """
     Unprompted world-watching, knowledge-gap monitoring, and topic generation.
@@ -1086,18 +1096,23 @@ class AutonomousInitiativeLoop:
                 else:
                     energy = max(0.0, min(1.0, energy))
             except (RuntimeError, AttributeError, TypeError, ValueError):
-                energy = 1.0
+                # CP126 b53bc839. Defaulting to 1.0 means FULL energy — the
+                # most permissive answer available — so an unreadable body
+                # licensed autonomous initiative. This loop decides whether
+                # to act unprompted; not knowing the body's state is a
+                # reason to hold, not a reason to go.
+                energy = _UNREADABLE_ENERGY
 
         try:
             thermal_pressure = float(
                 getattr(body, "thermal_pressure", getattr(soma, "thermal_pressure", 0.0)) or 0.0
             )
-        except (RuntimeError, AttributeError, TypeError):
-            thermal_pressure = 0.0
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            thermal_pressure = _UNREADABLE_PRESSURE
         try:
             load_pressure = float(getattr(cognition, "load_pressure", 0.0) or 0.0)
-        except (RuntimeError, AttributeError, TypeError):
-            load_pressure = 0.0
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            load_pressure = _UNREADABLE_PRESSURE
         try:
             valence = float(getattr(affect, "valence", 0.0) or 0.0)
             arousal = float(getattr(affect, "arousal", 0.0) or 0.0)
@@ -1113,8 +1128,11 @@ class AutonomousInitiativeLoop:
                     + max(0.0, drive_pressure) * 0.25,
                 ),
             )
-        except (RuntimeError, AttributeError, TypeError):
-            affective_pressure = 0.0
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            # The valence/arousal/drive floats raise ValueError on malformed
+            # state, same as the readings above. Affective pressure unknown
+            # is not affective pressure absent.
+            affective_pressure = _UNREADABLE_PRESSURE
 
         failure_state = dict(modifiers.get("system_failure_state", {}) or {})
         if not failure_state:

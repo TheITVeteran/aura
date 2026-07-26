@@ -701,16 +701,53 @@ class CognitiveEngine:
             logger.debug("Background thought policy check failed: %s", exc)
             return ""
 
-    async def _set_recovery_in_progress(self, value: bool) -> None:
-        """Flip the recovery flag under a short lock without holding it across slow awaits."""
+    async def _set_recovery_in_progress(self, value: bool) -> bool:
+        """Flip the recovery flag under a short lock. Returns whether it took.
+
+        CP126 45d7e755. On lock-acquisition failure this wrote the shared
+        flag anyway — defeating the mutex precisely under contention, which
+        is the only time it matters, and letting overlapping recoveries set
+        or CLEAR each other's state.
+
+        The two directions are not symmetric, so they are not treated the
+        same:
+
+        * Setting True unsynchronised can only over-mark. Failing to acquire
+          usually means someone else holds the lock — i.e. a recovery really
+          is in progress — so the write agrees with reality and is allowed.
+        * Clearing to False unsynchronised can erase a recovery another task
+          still owns, so it is refused. A flag left set resolves when the
+          owning task clears it; a flag wrongly cleared invites a second
+          concurrent recovery.
+        """
         if await self._recovery_lock.acquire_robust(timeout=1.0):
             try:
                 self._recovery_in_progress = value
             finally:
                 if self._recovery_lock.locked():
                     self._recovery_lock.release()
-        else:
-            self._recovery_in_progress = value
+            return True
+
+        if value:
+            self._recovery_in_progress = True
+            record_degradation(
+                "cognitive_engine",
+                RuntimeError("recovery lock unavailable while marking recovery active"),
+                severity="warning",
+                action="set the recovery flag unsynchronised; over-marking is safe",
+            )
+            return True
+
+        record_degradation(
+            "cognitive_engine",
+            RuntimeError("recovery lock unavailable while clearing recovery state"),
+            severity="warning",
+            action=(
+                "refused to clear the recovery flag without the lock; another "
+                "recovery may still own it"
+            ),
+        )
+        return False
 
     async def generate_autonomous_thought(self, prompt: str = None, **kwargs) -> Thought:
         """Entry point for self-initiated/autonomous thinking."""
