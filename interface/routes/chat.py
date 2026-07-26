@@ -3137,12 +3137,42 @@ _ACTION_ANCHOR_TOPIC_PRIORITY = {
 }
 
 
+def _topic_display_forms(text: str) -> dict[str, str]:
+    """Map each stemmed topic token back to a word a person actually wrote.
+
+    LIVE DEFECT, 2026-07-25. _normalize_topic_token strips suffixes so tokens
+    compare equal ("confused" -> "confus"). That is correct for MATCHING and
+    wrong for SPEECH, and the anchor text rendered the stem verbatim: Bryan
+    asked "I'm confused. What is this in reference to" and was told the
+    anchor was "your question about reference and confus".
+
+    Stems stay the matching key; this recovers a real word to say.
+    """
+    display: dict[str, str] = {}
+    for raw_token in _TOPIC_TOKEN_RE.findall(str(text or "").lower()):
+        for part in re.split(r"[-/]", raw_token):
+            surface = str(part or "").strip().strip("-'/")
+            if not surface:
+                continue
+            normalized = _normalize_topic_token(part)
+            if not normalized:
+                continue
+            # Prefer the fullest surface form seen for this stem.
+            if len(surface) > len(display.get(normalized, "")):
+                display[normalized] = surface
+    return display
+
+
 def _select_anchor_topic_tokens(text: str, *, limit: int = 2) -> list[str]:
-    """Pick user-visible nouns/effects before generic action verbs."""
+    """Pick user-visible nouns/effects before generic action verbs.
+
+    Returns words as WRITTEN, not stems: this feeds sentences a person reads.
+    """
 
     tokens = _extract_topic_tokens(text)
     if not tokens:
         return []
+    display = _topic_display_forms(text)
     preferred = sorted(
         (token for token in tokens if token in _ACTION_ANCHOR_TOPIC_PRIORITY),
         key=lambda token: (0, token),
@@ -3151,7 +3181,8 @@ def _select_anchor_topic_tokens(text: str, *, limit: int = 2) -> list[str]:
         (token for token in tokens if token not in _ACTION_ANCHOR_TOPIC_PRIORITY),
         key=lambda token: (-len(token), token),
     )
-    return (preferred + rest)[: max(1, int(limit))]
+    chosen = (preferred + rest)[: max(1, int(limit))]
+    return [display.get(token, token) for token in chosen]
 
 
 def _has_local_choice_antecedent(user_message: str) -> bool:
@@ -10972,20 +11003,27 @@ def _build_degraded_live_reply(
     else:
         anchor = "this exact turn"
 
+    # LIVE DEFECT, 2026-07-25. This text is spoken to a person, and it was
+    # written in implementation vocabulary — "the answer path did not produce
+    # a clean enough draft", "a synthetic fallback as my real answer", "the
+    # grounded anchor is". Bryan's reply was "I'm confused. What is this in
+    # reference to". Being honest about a degraded turn is right; narrating
+    # the pipeline that degraded is not the same thing, and it leaves the
+    # person with nothing they can act on.
+    #
+    # Same facts, said plainly: I could not answer, this is what I understood
+    # you to be asking, ask again.
     if reason == "repeated_reflex":
-        state_clause = "my last recovery shape started repeating"
+        state_clause = "I keep circling the same non-answer"
     elif reason == "desktop_cognitive_engine_repair_failed":
-        state_clause = "the desktop-required repair path did not produce a clean answer"
+        state_clause = "I couldn't put together an answer I trust"
     else:
-        state_clause = "the answer path did not produce a clean enough draft"
-
-    next_action = "stay bounded to that anchor"
-    if action and action not in {"unknown", "none", "rest"}:
-        next_action = f"{action} from that anchor"
+        state_clause = "I couldn't get a clear enough answer together"
 
     return _apply_aura_voice_shaping(
-        f"{state_clause}, so I should not treat a synthetic fallback as my real answer. "
-        f"The grounded anchor is {anchor}; I need to {next_action} rather than inventing around it."
+        f"{state_clause}, and I'd rather say that than hand you something thin. "
+        f"I understood you to be asking about {anchor.removeprefix('your question about ')}. "
+        "Ask me again and I should have it."
     )
 
 

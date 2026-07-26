@@ -315,3 +315,104 @@ class TestASessionIsAConversationNotAMachine:
         source = inspect.getsource(mod)
         assert "client host is good enough for single-user local Aura" not in source
         assert "_conversation_session_id(_host)" in source
+
+
+class TestDegradedTurnsSpeakToAPerson:
+    """LIVE DEFECT, 2026-07-25. Two defects in one sentence, both of which
+    reached Bryan verbatim:
+
+        "the answer path did not produce a clean enough draft, so I should
+        not treat a synthetic fallback as my real answer. The grounded
+        anchor is your question about reference and confus"
+
+    His whole reply was "I'm confused. What is this in reference to".
+
+    1. "confus" — ``_normalize_topic_token`` strips suffixes so that tokens
+       COMPARE equal ("confused" -> "confus"). Correct for matching, wrong
+       for speech, and the stem was rendered straight into the sentence.
+    2. The register — a degraded turn narrated its own pipeline. Saying "I
+       couldn't answer" is honest; saying "the answer path did not produce a
+       clean enough draft" is the same fact in a vocabulary that leaves the
+       person with nothing to do.
+
+    Being honest about a bad turn is right. This pins that it is done in
+    words a person can act on.
+    """
+
+    def _reply(self, message, reason="degraded_turn"):
+        from interface.routes.chat import _build_degraded_live_reply
+
+        return _build_degraded_live_reply(
+            {"attention_focus": "", "dominant_action": "reflect"},
+            message,
+            reason=reason,
+        )
+
+    def test_stems_are_matching_keys_not_words_to_say(self):
+        from interface.routes.chat import _normalize_topic_token
+
+        # The stemmer itself is unchanged; it is supposed to do this.
+        assert _normalize_topic_token("confused") == "confus"
+
+    def test_the_anchor_says_the_word_the_user_wrote(self):
+        from interface.routes.chat import _select_anchor_topic_tokens
+
+        tokens = _select_anchor_topic_tokens(
+            "I am confused. What is this in reference to",
+        )
+        assert "confused" in tokens
+        assert "confus" not in tokens
+
+    def test_the_fullest_surface_form_is_preferred(self):
+        """Two inflections of one stem must not degrade to the shorter."""
+        from interface.routes.chat import _topic_display_forms
+
+        forms = _topic_display_forms("deploying a deployed deployment")
+        assert forms["deploy"] == "deploying"
+
+    def test_no_truncated_stem_reaches_the_reply(self):
+        assert "confus" not in self._reply(
+            "I am confused. What is this in reference to",
+        ).replace("confused", "")
+
+    def test_display_mapping_never_invents_a_token(self):
+        """Every rendered word must appear in what the user actually wrote."""
+        from interface.routes.chat import _select_anchor_topic_tokens
+
+        message = "the deployment keeps failing on staging"
+        for token in _select_anchor_topic_tokens(message, limit=4):
+            assert token in message.lower()
+
+    def test_the_reply_admits_the_failure_plainly(self):
+        reply = self._reply("I am confused. What is this in reference to")
+        assert "couldn't" in reply.lower()
+
+    def test_the_reply_carries_no_implementation_vocabulary(self):
+        """The exact phrases that made the live reply unreadable."""
+        leaks = (
+            "answer path",
+            "synthetic fallback",
+            "grounded anchor",
+            "clean enough draft",
+            "recovery shape",
+            "repair path",
+            "bounded to that anchor",
+        )
+        for reason in (
+            "degraded_turn",
+            "repeated_reflex",
+            "desktop_cognitive_engine_repair_failed",
+        ):
+            reply = self._reply("why is the deployment failing", reason=reason).lower()
+            for phrase in leaks:
+                assert phrase not in reply, f"{reason}: {phrase}"
+
+    def test_the_reply_tells_the_user_what_to_do_next(self):
+        reply = self._reply("why is the deployment failing").lower()
+        assert "ask me again" in reply
+
+    def test_the_reply_shows_what_it_understood(self):
+        """Naming the subject back is what makes the admission useful: it
+        lets the user see whether they were even parsed correctly."""
+        reply = self._reply("why is the deployment failing").lower()
+        assert "deployment" in reply
