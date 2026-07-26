@@ -28,15 +28,57 @@ from core.runtime.task_ownership import create_tracked_task
 logger = logging.getLogger("Aura.CapabilityDiscovery")
 
 
+# How a capability field came to hold its value. A bare boolean cannot say
+# this, and that gap is the whole defect: a False that means "probed and
+# absent" and a False that means "nobody ever looked" are the same value to
+# every consumer, and an optimistic default made the second one indelible.
+# The capability fields a probe is responsible for establishing. Anything
+# here that is still UNPROBED after a scan is reported, not assumed.
+_DISCOVERABLE_FIELDS = (
+    "has_browser",
+    "has_text_editor",
+    "has_terminal",
+    "has_accessibility",
+    "has_screen_recording",
+    "has_microphone",
+    "has_camera",
+    "has_network",
+    "has_screencapture",
+    "has_osascript",
+    "has_pbcopy",
+    "has_say",
+)
+
+UNPROBED = "unprobed"
+PROBED = "probed"
+INFERRED = "inferred"
+PROBE_FAILED = "probe_failed"
+
+
 @dataclass
 class CapabilityReport:
-    """Structured report of machine capabilities."""
+    """Structured report of machine capabilities.
+
+    CP126 (critical): terminal, screencapture, osascript, pbcopy and say all
+    defaulted to ``True``. A freshly constructed report therefore ASSERTED
+    those capabilities before any probe had run — and ``start`` installs a
+    fresh report immediately, keeping it if scan scheduling fails, while
+    ``discover`` gathers its sub-scans with ``return_exceptions=True`` so a
+    raising ``_discover_tools`` silently leaves the optimistic values in
+    place. Planners could receive fabricated positive capabilities at
+    precisely the moment discovery had not executed.
+
+    Every field now starts at the value that claims nothing, and
+    ``provenance`` records whether a probe actually established it. Callers
+    that must not act on a guess ask ``established``; callers that only want
+    a hint keep reading the booleans.
+    """
     # Apps
     installed_apps: list[str] = field(default_factory=list)
     has_browser: bool = False
     preferred_browser: str = ""
     has_text_editor: bool = False
-    has_terminal: bool = True
+    has_terminal: bool = False
 
     # Permissions
     has_accessibility: bool = False
@@ -52,12 +94,51 @@ class CapabilityReport:
     available_models: list[str] = field(default_factory=list)
 
     # Tools
-    has_screencapture: bool = True
-    has_osascript: bool = True
-    has_pbcopy: bool = True
-    has_say: bool = True
+    has_screencapture: bool = False
+    has_osascript: bool = False
+    has_pbcopy: bool = False
+    has_say: bool = False
+
+    # field name -> UNPROBED | PROBED | INFERRED | PROBE_FAILED. Absent means
+    # UNPROBED; nothing has to remember to populate it to stay honest.
+    provenance: dict[str, str] = field(default_factory=dict)
+    # field name -> why its probe failed, for the health surface.
+    probe_failures: dict[str, str] = field(default_factory=dict)
 
     timestamp: float = field(default_factory=time.time)
+
+    def mark(self, *fields_: str, state: str = PROBED, detail: str = "") -> None:
+        """Record how these fields were established."""
+        for name in fields_:
+            self.provenance[name] = state
+            if state == PROBE_FAILED and detail:
+                self.probe_failures[name] = detail[:300]
+            else:
+                self.probe_failures.pop(name, None)
+
+    def state_of(self, name: str) -> str:
+        return self.provenance.get(name, UNPROBED)
+
+    def established(self, name: str) -> bool:
+        """True only when a probe actually ran and the capability is present.
+
+        This is the accessor a privileged caller wants: an inferred or
+        unprobed capability answers False, so "we never checked" can never
+        be spent as "yes".
+        """
+        return self.state_of(name) == PROBED and bool(getattr(self, name, False))
+
+    @property
+    def unprobed_fields(self) -> list[str]:
+        return sorted(
+            name
+            for name in _DISCOVERABLE_FIELDS
+            if self.state_of(name) in {UNPROBED, PROBE_FAILED}
+        )
+
+    @property
+    def fully_discovered(self) -> bool:
+        return not self.unprobed_fields
 
     def summary(self) -> str:
         """Human-readable capability summary."""
@@ -79,11 +160,19 @@ class CapabilityReport:
         capabilities = ", ".join(parts[1:]) if len(parts) > 1 else "limited capabilities"
         result = f"I have access to: {capabilities}."
 
-        # Warnings
-        if not self.has_accessibility:
+        # Warnings. "Not detected" and "not checked" are different claims,
+        # and saying the first when the second is true is the bug.
+        if self.state_of("has_accessibility") != PROBED:
+            result += " Accessibility permission has not been checked."
+        elif not self.has_accessibility:
             result += " Accessibility permission not detected — UI automation may be limited."
-        if not self.has_network:
+        if self.state_of("has_network") != PROBED:
+            result += " Network reachability has not been checked."
+        elif not self.has_network:
             result += " Network appears unavailable."
+        unprobed = self.unprobed_fields
+        if unprobed:
+            result += f" {len(unprobed)} capabilities are still unverified."
         return result
 
 
@@ -130,21 +219,58 @@ class CapabilityDiscovery:
         self._report = report
         logger.info("CapabilityDiscovery scan complete — %s", report.summary()[:120])
 
+    # Sub-scan -> the fields it is responsible for establishing. A scan that
+    # raises leaves its fields PROBE_FAILED rather than at their defaults,
+    # which is what keeps a swallowed exception from reading as a verdict.
+    _SCAN_FIELDS: dict[str, tuple[str, ...]] = {
+        "apps": ("has_browser", "has_text_editor", "has_terminal"),
+        "permissions": (
+            "has_accessibility",
+            "has_screen_recording",
+            "has_microphone",
+            "has_camera",
+        ),
+        "network": ("has_network",),
+        "tools": ("has_screencapture", "has_osascript", "has_pbcopy", "has_say"),
+        "python_packages": (),
+        "writable_dirs": (),
+        "models": (),
+    }
+
     async def discover(self) -> CapabilityReport:
         """Run full capability scan."""
         report = CapabilityReport()
 
-        # Run all checks concurrently
-        await asyncio.gather(
-            self._discover_apps(report),
-            self._discover_permissions(report),
-            self._discover_network(report),
-            self._discover_tools(report),
-            self._discover_python_packages(report),
-            self._discover_writable_dirs(report),
-            self._discover_models(report),
-            return_exceptions=True,
-        )
+        scans = {
+            "apps": self._discover_apps(report),
+            "permissions": self._discover_permissions(report),
+            "network": self._discover_network(report),
+            "tools": self._discover_tools(report),
+            "python_packages": self._discover_python_packages(report),
+            "writable_dirs": self._discover_writable_dirs(report),
+            "models": self._discover_models(report),
+        }
+        names = list(scans)
+        # return_exceptions keeps one failing scan from cancelling the rest —
+        # but the results must then be READ. Gathering exceptions and
+        # discarding them was how a raising _discover_tools left four
+        # capabilities asserted on nothing.
+        outcomes = await asyncio.gather(*scans.values(), return_exceptions=True)
+        for name, outcome in zip(names, outcomes, strict=True):
+            if not isinstance(outcome, BaseException):
+                continue
+            if isinstance(outcome, asyncio.CancelledError):
+                raise outcome
+            report.mark(
+                *self._SCAN_FIELDS.get(name, ()),
+                state=PROBE_FAILED,
+                detail=f"{type(outcome).__name__}: {outcome}",
+            )
+            record_degradation(
+                f"capability_discovery.{name}",
+                outcome,
+                action="marked its capabilities unverified rather than leaving defaults",
+            )
 
         self._report = report
         return report
@@ -163,9 +289,21 @@ class CapabilityDiscovery:
                 pref_editor = registry.get_preferred_text_editor()
                 if pref_editor:
                     report.has_text_editor = True
+                report.mark("has_browser", "has_text_editor")
+                report.mark(
+                    "has_terminal",
+                    state=INFERRED,
+                    detail="app registry does not enumerate terminals",
+                )
                 return
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("capability_discovery.app_registry", exc)
+            report.mark(
+                "has_browser",
+                "has_text_editor",
+                state=PROBE_FAILED,
+                detail=f"app registry unavailable: {type(exc).__name__}: {exc}",
+            )
 
         # Fallback: scan /Applications directly (directory listing is
         # blocking I/O — keep it off the event loop).
@@ -181,8 +319,19 @@ class CapabilityDiscovery:
                 if editor in apps:
                     report.has_text_editor = True
                     break
+            report.has_terminal = any(
+                terminal in apps for terminal in ("Terminal", "iTerm", "iTerm2", "Warp")
+            )
+            report.mark("has_browser", "has_text_editor", "has_terminal")
         except (OSError, PermissionError) as exc:
             record_degradation("capability_discovery.app_scan", exc)
+            report.mark(
+                "has_browser",
+                "has_text_editor",
+                "has_terminal",
+                state=PROBE_FAILED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
 
     def _scan_applications_dir_sync(self) -> list[str]:
         app_dir = Path("/Applications")
@@ -206,9 +355,15 @@ class CapabilityDiscovery:
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             report.has_accessibility = proc.returncode == 0
+            report.mark("has_accessibility")
         except (OSError, TimeoutError, RuntimeError) as exc:
             record_degradation("capability_discovery.accessibility_probe", exc)
             report.has_accessibility = False
+            report.mark(
+                "has_accessibility",
+                state=PROBE_FAILED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
 
         # Screen recording
         try:
@@ -217,16 +372,31 @@ class CapabilityDiscovery:
             guard = get_permission_guard()
             res = await guard.check_permission(PermissionType.SCREEN)
             report.has_screen_recording = res.get("granted", False)
+            report.mark("has_screen_recording")
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("capability_discovery.screen_recording_probe", exc)
             report.has_screen_recording = False
+            report.mark(
+                "has_screen_recording",
+                state=PROBE_FAILED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
 
-        # Microphone — check TCC database heuristic
+        # Microphone and camera. TCC.db is not readable without Full Disk
+        # Access, so its EXISTENCE is all we have — and that means "the
+        # permission system is active on this machine", not "the permission
+        # is granted". Marked INFERRED so `established()` refuses it: a
+        # caller about to open the microphone must ask the real gate, and
+        # this heuristic must never be the thing that authorizes it.
         tcc_db = Path.home() / "Library" / "Application Support" / "com.apple.TCC" / "TCC.db"
-        report.has_microphone = tcc_db.exists()  # Can't read it directly, but presence suggests TCC active
-
-        # Camera — similar heuristic
-        report.has_camera = report.has_microphone  # Same TCC mechanism
+        report.has_microphone = tcc_db.exists()
+        report.has_camera = report.has_microphone
+        report.mark(
+            "has_microphone",
+            "has_camera",
+            state=INFERRED,
+            detail="TCC.db presence only; grant state is not readable",
+        )
 
     async def _discover_network(self, report: CapabilityReport) -> None:
         """Check network connectivity."""
@@ -240,9 +410,15 @@ class CapabilityDiscovery:
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             report.has_network = proc.returncode == 0
+            report.mark("has_network")
         except (OSError, TimeoutError, RuntimeError) as exc:
             record_degradation("capability_discovery.network_probe", exc)
             report.has_network = False
+            report.mark(
+                "has_network",
+                state=PROBE_FAILED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
 
     async def _discover_tools(self, report: CapabilityReport) -> None:
         """Check for required CLI tools (PATH stats are blocking I/O)."""
@@ -252,11 +428,21 @@ class CapabilityDiscovery:
             "pbcopy": "has_pbcopy",
             "say": "has_say",
         }
-        found = await asyncio.to_thread(
-            lambda: {tool: shutil.which(tool) is not None for tool in tools}
-        )
+        try:
+            found = await asyncio.to_thread(
+                lambda: {tool: shutil.which(tool) is not None for tool in tools}
+            )
+        except (OSError, RuntimeError) as exc:
+            record_degradation("capability_discovery.tool_probe", exc)
+            report.mark(
+                *tools.values(),
+                state=PROBE_FAILED,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return
         for tool, attr in tools.items():
             setattr(report, attr, found.get(tool, False))
+        report.mark(*tools.values())
 
     async def _discover_python_packages(self, report: CapabilityReport) -> None:
         """Check for useful Python packages.
@@ -345,7 +531,14 @@ class CapabilityDiscovery:
     def get_status(self) -> dict[str, Any]:
         r = self._report or CapabilityReport()
         return {
-            "discovered": self._report is not None,
+            # "discovered" used to mean only "a report object exists", which
+            # was true one line into start(). It now means a scan actually
+            # established the capabilities, and the unverified list says what
+            # is still missing when it has not.
+            "discovered": r.fully_discovered,
+            "report_present": self._report is not None,
+            "unverified": r.unprobed_fields,
+            "probe_failures": dict(r.probe_failures),
             "apps": len(r.installed_apps),
             "browser": r.preferred_browser,
             "accessibility": r.has_accessibility,

@@ -9,12 +9,165 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from typing import Any
+
+import importlib
+from dataclasses import dataclass
 
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Capabilities")
+
+
+@dataclass(frozen=True)
+class _Provider:
+    """One capability provider and what must be online before it may be.
+
+    ``requires`` is the part that was missing. The boot docstring declared
+    PermissionModel "gates all actions" and promised a strict dependency
+    order, but every provider was attempted unconditionally in a flat list
+    of try/except blocks. If the permission model failed to boot, host
+    automation, browser control, the file broker, the clipboard, screen
+    perception and the microphone all still came online — a dependency
+    fault turned directly into a privileged runtime with no gate in front
+    of it, and the status dict reported them as successfully booted.
+
+    A provider whose requirement did not boot is now SKIPPED rather than
+    attempted, and reported as blocked with the reason.
+    """
+
+    name: str
+    module: str
+    factory: str
+    requires: tuple[str, ...] = ()
+    # Reaches outside the process: the host, the filesystem, the network,
+    # the screen, the microphone. These are the ones that must never
+    # outlive their gate.
+    privileged: bool = False
+
+
+# The gate every privileged provider depends on.
+_PERMISSION_GATE = "permission_model"
+
+_PROVIDERS: tuple[_Provider, ...] = (
+    # --- Tier 1: Foundation ---
+    _Provider("app_registry", "core.capabilities.app_registry", "get_app_registry"),
+    _Provider(
+        "capability_discovery",
+        "core.capabilities.capability_discovery",
+        "get_capability_discovery",
+    ),
+    _Provider(_PERMISSION_GATE, "core.capabilities.permission_model", "get_permission_model"),
+    _Provider(
+        "host_automation",
+        "core.capabilities.host_automation",
+        "get_host_automation",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "post_action_verifier",
+        "core.capabilities.post_action_verifier",
+        "get_post_action_verifier",
+    ),
+    # --- Tier 2: Adapters ---
+    _Provider(
+        "browser_controller",
+        "core.capabilities.browser_controller",
+        "get_browser_controller",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "document_service",
+        "core.capabilities.document_service",
+        "get_document_service",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "file_broker",
+        "core.capabilities.file_broker",
+        "get_file_broker",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "web_asset_handler",
+        "core.capabilities.web_asset_handler",
+        "get_web_asset_handler",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "os_settings",
+        "core.capabilities.os_settings",
+        "get_os_settings",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "clipboard_manager",
+        "core.capabilities.clipboard_manager",
+        "get_clipboard_manager",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "source_summarizer",
+        "core.capabilities.source_summarizer",
+        "get_source_summarizer",
+    ),
+    # --- Tier 2: Perception ---
+    _Provider(
+        "screen_perception",
+        "core.perception.screen_perception",
+        "get_screen_perception",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "perceptual_pump",
+        "core.perception.perceptual_pump",
+        "get_perceptual_pump",
+        # A pump with nothing to pump is not a degraded pump, it is a lie.
+        requires=(_PERMISSION_GATE, "screen_perception"),
+        privileged=True,
+    ),
+    _Provider(
+        "visual_speech",
+        "core.perception.visual_speech",
+        "get_visual_speech_engine",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    # --- Tier 3: Planning ---
+    _Provider("task_decomposer", "core.planning.task_decomposer", "get_task_decomposer"),
+    _Provider("recovery_engine", "core.planning.recovery_engine", "get_recovery_engine"),
+    _Provider("mission_state", "core.planning.mission_state", "get_mission_state"),
+    # --- Tier 3: Voice ---
+    _Provider(
+        "voice_session",
+        "core.voice.voice_session",
+        "get_voice_session_manager",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    _Provider(
+        "wake_word",
+        "core.voice.wake_word",
+        "get_wake_word_detector",
+        requires=(_PERMISSION_GATE,),
+        privileged=True,
+    ),
+    # --- Tier 3: Philosophical ---
+    _Provider(
+        "behavioral_proof",
+        "core.phenomenal_substrate.philosophical_stance",
+        "get_behavioral_proof",
+    ),
+    _Provider("mind_state_exporter", "core.self.mind_state_export", "get_mind_state_exporter"),
+)
 
 
 async def boot_capabilities() -> dict[str, Any]:
@@ -54,200 +207,75 @@ async def boot_capabilities() -> dict[str, Any]:
     start = time.time()
     booted: list[str] = []
     failed: list[str] = []
+    blocked: dict[str, str] = {}
 
-    async def _boot(name: str, factory: Callable[[], Any]) -> None:
-        """Boot a single provider, recording success/failure."""
+    async def _boot(provider: _Provider) -> None:
+        """Boot a single provider, recording success, failure, or refusal."""
+        unmet = [name for name in provider.requires if name not in booted]
+        if unmet:
+            reason = f"required provider(s) not online: {', '.join(unmet)}"
+            blocked[provider.name] = reason
+            record_degradation(
+                f"boot.{provider.name}",
+                RuntimeError(reason),
+                action="refused to start; a privileged provider may not outlive its gate"
+                if provider.privileged
+                else "refused to start without its declared dependency",
+            )
+            logger.warning(
+                "%s NOT booted — %s%s",
+                provider.name,
+                reason,
+                " (privileged)" if provider.privileged else "",
+            )
+            return
         try:
-            instance = factory()
+            module = importlib.import_module(provider.module)
+            instance = getattr(module, provider.factory)()
             if hasattr(instance, "start"):
                 await instance.start()
-            booted.append(name)
+            booted.append(provider.name)
         except (ImportError, AttributeError, RuntimeError, TypeError, OSError) as e:
-            failed.append(name)
-            record_degradation(f"boot.{name}", e)
-            logger.warning("Failed to boot %s: %s", name, e)
+            failed.append(provider.name)
+            record_degradation(f"boot.{provider.name}", e)
+            logger.warning("Failed to boot %s: %s", provider.name, e)
 
-    # --- Tier 1: Foundation ---
-
-    try:
-        from core.capabilities.app_registry import get_app_registry
-        await _boot("app_registry", get_app_registry)
-    except ImportError as e:
-        failed.append("app_registry")
-        record_degradation("boot.app_registry", e)
-
-    try:
-        from core.capabilities.capability_discovery import get_capability_discovery
-        await _boot("capability_discovery", get_capability_discovery)
-    except ImportError as e:
-        failed.append("capability_discovery")
-        record_degradation("boot.capability_discovery", e)
-
-    try:
-        from core.capabilities.permission_model import get_permission_model
-        await _boot("permission_model", get_permission_model)
-    except ImportError as e:
-        failed.append("permission_model")
-        record_degradation("boot.permission_model", e)
-
-    try:
-        from core.capabilities.host_automation import get_host_automation
-        await _boot("host_automation", get_host_automation)
-    except ImportError as e:
-        failed.append("host_automation")
-        record_degradation("boot.host_automation", e)
-
-    try:
-        from core.capabilities.post_action_verifier import get_post_action_verifier
-        await _boot("post_action_verifier", get_post_action_verifier)
-    except ImportError as e:
-        failed.append("post_action_verifier")
-        record_degradation("boot.post_action_verifier", e)
-
-    # --- Tier 2: Adapters ---
-
-    try:
-        from core.capabilities.browser_controller import get_browser_controller
-        await _boot("browser_controller", get_browser_controller)
-    except ImportError as e:
-        failed.append("browser_controller")
-        record_degradation("boot.browser_controller", e)
-
-    try:
-        from core.capabilities.document_service import get_document_service
-        await _boot("document_service", get_document_service)
-    except ImportError as e:
-        failed.append("document_service")
-        record_degradation("boot.document_service", e)
-
-    try:
-        from core.capabilities.file_broker import get_file_broker
-        await _boot("file_broker", get_file_broker)
-    except ImportError as e:
-        failed.append("file_broker")
-        record_degradation("boot.file_broker", e)
-
-    try:
-        from core.capabilities.web_asset_handler import get_web_asset_handler
-        await _boot("web_asset_handler", get_web_asset_handler)
-    except ImportError as e:
-        failed.append("web_asset_handler")
-        record_degradation("boot.web_asset_handler", e)
-
-    try:
-        from core.capabilities.os_settings import get_os_settings
-        await _boot("os_settings", get_os_settings)
-    except ImportError as e:
-        failed.append("os_settings")
-        record_degradation("boot.os_settings", e)
-
-    try:
-        from core.capabilities.clipboard_manager import get_clipboard_manager
-        await _boot("clipboard_manager", get_clipboard_manager)
-    except ImportError as e:
-        failed.append("clipboard_manager")
-        record_degradation("boot.clipboard_manager", e)
-
-    try:
-        from core.capabilities.source_summarizer import get_source_summarizer
-        await _boot("source_summarizer", get_source_summarizer)
-    except ImportError as e:
-        failed.append("source_summarizer")
-        record_degradation("boot.source_summarizer", e)
-
-    # --- Tier 2: Perception ---
-
-    try:
-        from core.perception.screen_perception import get_screen_perception
-        await _boot("screen_perception", get_screen_perception)
-    except ImportError as e:
-        failed.append("screen_perception")
-        record_degradation("boot.screen_perception", e)
-
-    try:
-        from core.perception.perceptual_pump import get_perceptual_pump
-        await _boot("perceptual_pump", get_perceptual_pump)
-    except ImportError as e:
-        failed.append("perceptual_pump")
-        record_degradation("boot.perceptual_pump", e)
-
-    try:
-        from core.perception.visual_speech import get_visual_speech_engine
-        await _boot("visual_speech", get_visual_speech_engine)
-    except ImportError as e:
-        failed.append("visual_speech")
-        record_degradation("boot.visual_speech", e)
-
-    # --- Tier 3: Planning ---
-
-    try:
-        from core.planning.task_decomposer import get_task_decomposer
-        await _boot("task_decomposer", get_task_decomposer)
-    except ImportError as e:
-        failed.append("task_decomposer")
-        record_degradation("boot.task_decomposer", e)
-
-    try:
-        from core.planning.recovery_engine import get_recovery_engine
-        await _boot("recovery_engine", get_recovery_engine)
-    except ImportError as e:
-        failed.append("recovery_engine")
-        record_degradation("boot.recovery_engine", e)
-
-    try:
-        from core.planning.mission_state import get_mission_state
-        await _boot("mission_state", get_mission_state)
-    except ImportError as e:
-        failed.append("mission_state")
-        record_degradation("boot.mission_state", e)
-
-    # --- Tier 3: Voice ---
-
-    try:
-        from core.voice.voice_session import get_voice_session_manager
-        await _boot("voice_session", get_voice_session_manager)
-    except ImportError as e:
-        failed.append("voice_session")
-        record_degradation("boot.voice_session", e)
-
-    try:
-        from core.voice.wake_word import get_wake_word_detector
-        await _boot("wake_word", get_wake_word_detector)
-    except ImportError as e:
-        failed.append("wake_word")
-        record_degradation("boot.wake_word", e)
-
-    # --- Tier 3: Philosophical ---
-
-    try:
-        from core.phenomenal_substrate.philosophical_stance import get_behavioral_proof
-        await _boot("behavioral_proof", get_behavioral_proof)
-    except ImportError as e:
-        failed.append("behavioral_proof")
-        record_degradation("boot.behavioral_proof", e)
-
-    try:
-        from core.self.mind_state_export import get_mind_state_exporter
-        await _boot("mind_state_exporter", get_mind_state_exporter)
-    except ImportError as e:
-        failed.append("mind_state_exporter")
-        record_degradation("boot.mind_state_exporter", e)
+    for provider in _PROVIDERS:
+        await _boot(provider)
 
     duration = time.time() - start
+    blocked_privileged = sorted(
+        name
+        for name in blocked
+        if _PROVIDER_BY_NAME[name].privileged
+    )
     status = {
         "booted": booted,
         "failed": failed,
-        "total": len(booted) + len(failed),
+        # Blocked is neither booted nor failed: nothing was wrong with the
+        # provider, it was refused because its gate was not there. Reporting
+        # it as a failure would hide the cause; omitting it would hide the
+        # refusal.
+        "blocked": dict(blocked),
+        "blocked_privileged": blocked_privileged,
+        "total": len(_PROVIDERS),
         "success_count": len(booted),
         "failure_count": len(failed),
+        "blocked_count": len(blocked),
         "duration_ms": round(duration * 1000, 1),
     }
 
     logger.info(
-        "Capability layer ONLINE: %d/%d providers booted in %.0fms%s",
-        len(booted), len(booted) + len(failed), duration * 1000,
+        "Capability layer ONLINE: %d/%d providers booted in %.0fms%s%s",
+        len(booted), len(_PROVIDERS), duration * 1000,
         f" (FAILED: {', '.join(failed)})" if failed else "",
+        f" (BLOCKED: {', '.join(sorted(blocked))})" if blocked else "",
     )
+    if blocked_privileged:
+        logger.error(
+            "Privileged capabilities refused to start without their gate: %s",
+            ", ".join(blocked_privileged),
+        )
     return status
 
 
@@ -255,16 +283,10 @@ async def get_capabilities_status() -> dict[str, Any]:
     """Get status of all booted capability providers."""
     from core.container import ServiceContainer
 
-    providers = [
-        "app_registry", "capability_discovery", "permission_model",
-        "host_automation", "post_action_verifier", "browser_controller",
-        "document_service", "file_broker", "web_asset_handler",
-        "os_settings", "clipboard_manager", "source_summarizer",
-        "screen_perception", "perceptual_pump", "visual_speech",
-        "task_decomposer", "recovery_engine",
-        "mission_state", "voice_session", "wake_word",
-        "behavioral_proof", "mind_state_exporter",
-    ]
+    # Derived from the boot table rather than hand-maintained: a
+    # hand-copied roster drifts from the thing it describes, and a provider
+    # missing from it is invisible to the status surface.
+    providers = [provider.name for provider in _PROVIDERS]
 
     status = {}
     for name in providers:
@@ -283,3 +305,6 @@ async def get_capabilities_status() -> dict[str, Any]:
 
 
 __all__ = ["boot_capabilities", "get_capabilities_status"]
+
+
+_PROVIDER_BY_NAME: dict[str, _Provider] = {p.name: p for p in _PROVIDERS}
