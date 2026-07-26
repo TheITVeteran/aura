@@ -41,8 +41,12 @@ class SelfOptimizer:
         self.event_bus = event_bus
         
         self.adapter_output.parent.mkdir(parents=True, exist_ok=True)
-        
+
         self._is_optimizing = False
+        # Guards the check-and-set of _is_optimizing so two concurrent
+        # optimize() callers cannot both pass the "already in progress" gate and
+        # launch competing LoRA trainers against the same adapter path.
+        self._guard_lock = asyncio.Lock()
 
     async def optimize(self, iters: int = 50, batch_size: int = 2) -> Dict[str, Any]:
         """Runs a LoRA training cycle on the cortex model.
@@ -65,9 +69,6 @@ class SelfOptimizer:
         if reason:
             return {"ok": False, "error": f"background_deferred:{reason}"}
 
-        if self._is_optimizing:
-            return {"ok": False, "error": "Optimization already in progress"}
-            
         mem = psutil.virtual_memory()
         if mem.available < 8 * 1024**3:  # <8 GB free -> abort
             logger.warning("🧠 Nucleus: Insufficient RAM for LoRA. Requires 8GB free.")
@@ -76,12 +77,37 @@ class SelfOptimizer:
         if not self.dataset_path.exists():
             return {"ok": False, "error": f"Dataset missing: {self.dataset_path}"}
             
-        # Check if we have enough data to bother (min 5 samples)
-        lines = self.dataset_path.read_text(encoding="utf-8").splitlines()
-        if len(lines) < 5:
-            return {"ok": False, "error": "Insufficient data in dataset for training"}
+        # Check if we have enough data to bother (min 5 samples). Parse and
+        # validate here so a single malformed JSONL line can neither crash the
+        # cycle later nor let a mostly-empty/garbage file reach the trainer.
+        raw_lines = self.dataset_path.read_text(encoding="utf-8").splitlines()
+        data: List[Any] = []
+        malformed = 0
+        for line in raw_lines:
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                malformed += 1
+                continue
+            if isinstance(entry, dict):
+                data.append(entry)
+            else:
+                malformed += 1
+        if malformed:
+            logger.warning("🧠 Nucleus: Skipped %d malformed dataset line(s).", malformed)
+        if len(data) < 5:
+            return {"ok": False, "error": "Insufficient valid data in dataset for training"}
 
-        self._is_optimizing = True
+        # Atomic claim: hold the guard lock across the read-and-set so a race
+        # between two callers (all preflight checks having passed) resolves to
+        # exactly one active optimization. Only past this point does the
+        # try/finally below own the reset of _is_optimizing.
+        async with self._guard_lock:
+            if self._is_optimizing:
+                return {"ok": False, "error": "Optimization already in progress"}
+            self._is_optimizing = True
         self._abort_requested = False # Reset abort flag for new optimization cycle
         logger.info("🧠 Nucleus: Starting self-optimization (LoRA) cycle...")
         
@@ -98,8 +124,8 @@ class SelfOptimizer:
             temp_dir = self.dataset_path.parent / "temp_train"
             temp_dir.mkdir(exist_ok=True)
             
-            # Split into train/valid (80/20)
-            data = [json.loads(line) for line in lines]
+            # Split into train/valid (80/20). `data` was already parsed and
+            # validated above.
             split_idx = int(len(data) * 0.8)
             train_data = data[:split_idx]
             valid_data = data[split_idx:]
@@ -168,7 +194,8 @@ class SelfOptimizer:
                     source="adaptation.self_optimizer.training_log",
                 )
                     
-                if fuse_result["returncode"] == 0:
+                fusion_ok = fuse_result["returncode"] == 0
+                if fusion_ok:
                     logger.info("🧠 Nucleus: Fusion successful. Updating active.json...")
                     active_json_path = self.base_model_path.parent.parent / "training" / "fused-model" / "active.json"
                     active_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,19 +207,24 @@ class SelfOptimizer:
                 else:
                     logger.error("❌ Nucleus: Fusion failed.")
 
+                # Delivery truth: overall success requires BOTH training AND
+                # fusion. The previous code returned ok=True (and published
+                # status=success) whenever training succeeded, even when fusion
+                # failed and produced no usable model.
                 if self.event_bus:
                     get_task_tracker().create_task(self.event_bus.publish("core/optimizer/completed", {
-                        "status": "success",
+                        "status": "success" if fusion_ok else "fusion_failed",
                         "duration": duration,
                         "samples": len(data),
-                        "fused_model": str(fused_dir) if fuse_result["returncode"] == 0 else None
+                        "fused_model": str(fused_dir) if fusion_ok else None
                     }))
                 return {
-                    "ok": True, 
-                    "duration": duration, 
+                    "ok": fusion_ok,
+                    "duration": duration,
                     "adapter": str(self.adapter_output),
                     "samples": len(data),
-                    "fused_model": str(fused_dir) if fuse_result["returncode"] == 0 else None
+                    "fused_model": str(fused_dir) if fusion_ok else None,
+                    "error": None if fusion_ok else "fusion_failed",
                 }
             else:
                 # Read error from log file as stdout/stderr were redirected
@@ -206,7 +238,9 @@ class SelfOptimizer:
                 logger.error("❌ Nucleus: Self-optimization failed: %s", error_msg)
                 return {"ok": False, "error": error_msg}
                 
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError, json.JSONDecodeError, UnicodeError) as e:
+            # Broadened: JSON/OS/Unicode/subprocess-shaped failures previously
+            # escaped this narrow handler and crashed the optimizer.
             record_degradation('self_optimizer', e)
             logger.error("❌ Nucleus: Critical optimizer failure: %s", e)
             return {"ok": False, "error": str(e)}
@@ -238,9 +272,11 @@ class SelfOptimizer:
         try:
             if temp_dir and temp_dir.exists():
                 import shutil
-                shutil.rmtree(temp_dir)
+                # rmtree is blocking disk I/O; offload it so a large temp tree
+                # cannot stall the event loop during cleanup.
+                await asyncio.to_thread(shutil.rmtree, temp_dir)
                 logger.debug("🧠 Nucleus: Temporary training data cleaned.")
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, OSError) as e:
             record_degradation('self_optimizer', e)
             logger.warning("Failed to cleanup optimizer temp dir: %s", e)
 
