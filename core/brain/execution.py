@@ -1,7 +1,10 @@
 # core/brain/execution.py
 import asyncio
+import hashlib
 import inspect
+import json
 import math
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -13,6 +16,65 @@ from core.runtime.errors import FallbackClassification, record_degradation
 
 _MAX_RETRIES = 20
 _SENSITIVE_META_MARKERS = ("secret", "password", "passwd", "token", "key", "credential", "auth")
+
+#: Name shapes that are dangerous regardless of whether anyone listed them.
+#: CP126 c0dd3c01: safe mode denied ONLY names present in a caller-supplied
+#: ``dangerous_whitelist``, so an unknown or newly added destructive action
+#: sailed through the one gate that exists.
+_DANGEROUS_NAME_PATTERNS = (
+    re.compile(r"\b(delete|destroy|drop|purge|wipe|erase|truncate|format)\b", re.I),
+    re.compile(r"\b(rm|rmdir|unlink|shred|mkfs|dd)\b", re.I),
+    re.compile(r"\b(kill|terminate|shutdown|reboot|halt)\b", re.I),
+    re.compile(r"\b(deploy|publish|push|release|migrate|rollback)\b", re.I),
+    re.compile(r"\b(send|email|post|tweet|transfer|pay|purchase|charge)\b", re.I),
+    re.compile(r"\b(grant|revoke|chmod|chown|sudo|escalate)\b", re.I),
+    re.compile(r"\b(write|overwrite|patch|modify|mutate)\b", re.I),
+    re.compile(r"\b(exec|eval|spawn|subprocess|shell)\b", re.I),
+)
+
+
+def is_dangerous_action(action_name: str, dangerous_whitelist: set | None = None) -> bool:
+    """Whether this action needs explicit danger authorization.
+
+    Union of the caller's declared set and the structural patterns above, so a
+    name nobody remembered to list still has to be authorized.
+
+    The name is tokenized on separators and camelCase first: ``\b`` does not
+    fire between "delete" and "_all", so a raw word-boundary match would have
+    missed ``delete_all_records`` — exactly the unlisted-name case that
+    CP126 c0dd3c01 is about.
+    """
+    name = str(action_name or "")
+    if name in (dangerous_whitelist or set()):
+        return True
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    spaced = re.sub(r"[^A-Za-z0-9]+", " ", spaced)
+    return any(pattern.search(spaced) for pattern in _DANGEROUS_NAME_PATTERNS)
+
+
+def _danger_authorized(
+    action_name: str, allow_danger: Any, capability_token: str
+) -> tuple[bool, str]:
+    """Whether a dangerous action is genuinely authorized.
+
+    CP126 575d878c: ``allow_danger`` was an unauthenticated caller boolean —
+    any caller could clear the only safety gate with no principal, signed
+    scope, standing-authority lease, gesture or receipt. A bare True is no
+    longer sufficient; it must be accompanied by a capability token that
+    validates for this action.
+    """
+    if not allow_danger:
+        return False, "allow_danger not set"
+    token = str(capability_token or "").strip()
+    if not token:
+        return False, "allow_danger carried no capability token"
+    try:
+        from core.agency.capability_token import get_token_store
+
+        get_token_store().validate(token, domain="tool_execution", action=action_name)
+    except (PermissionError, ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        return False, f"capability token rejected: {exc}"
+    return True, "capability token validated"
 
 
 def _finite(value: Any, *, default: float, low: float, high: float) -> float:
@@ -83,11 +145,52 @@ class ExecutionManager:
     """
 
     def __init__(
-        self, trace: TraceLogger, safe_mode: bool = True, dangerous_whitelist: set | None = None
+        self,
+        trace: TraceLogger,
+        safe_mode: bool = True,
+        dangerous_whitelist: set | None = None,
+        safety_check: Callable[[str, str], bool] | None = None,
     ):
         self.trace = trace
         self.safe_mode = safe_mode
         self.dangerous_whitelist = dangerous_whitelist or set()
+        # CP126 c0dd3c01: the class contract documented a `safety_check`
+        # callback that did not exist anywhere in the file.
+        self.safety_check = safety_check
+        #: Effect receipts by idempotency key, so a retry can prove whether the
+        #: previous attempt already landed (CP126 3c626bb4).
+        self._effects: dict[str, dict[str, Any]] = {}
+
+    def _make_receipt(
+        self,
+        *,
+        action_name: str,
+        context: str,
+        metadata: dict[str, Any],
+        operation_id: str,
+        idempotency_key: str,
+        attempt: int,
+        duration: float,
+        result: Any,
+    ) -> dict[str, Any]:
+        """A state-mutation receipt for a completed action (CP126 aae07b1a)."""
+        body = {
+            "action": action_name,
+            "principal": str(metadata.get("principal") or "unattributed"),
+            "target": str(metadata.get("target") or ""),
+            "authority": metadata.get("danger_authorization", "not_required"),
+            "context": context[:200],
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "attempt": attempt,
+            "duration_s": round(duration, 6),
+            "result_sha256": _result_digest(result),
+            "at": time.time(),
+        }
+        body["receipt_id"] = hashlib.sha256(
+            json.dumps(body, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:32]
+        return body
 
     async def execute(
         self,
@@ -106,6 +209,13 @@ class ExecutionManager:
             timeout_seconds = float(legacy_kwargs.pop("timeout"))
         if legacy_kwargs:
             raise TypeError(f"Unsupported execution options: {sorted(legacy_kwargs)}")
+        # Secret redaction runs on the COPY that reaches traces and results,
+        # but authorization and idempotency need the real values — and both
+        # of those key names match the sensitive markers ("token", "key"), so
+        # they must be read before the copy is redacted.
+        raw_metadata = dict(metadata or {})
+        supplied_token = str(raw_metadata.get("capability_token") or "")
+        supplied_idempotency_key = str(raw_metadata.get("idempotency_key") or "")
         metadata = _copy_meta(metadata)
         # NaN would slip past a bare `<= 0` check; validate finiteness first.
         if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
@@ -119,18 +229,53 @@ class ExecutionManager:
         retry_delay = _finite(retry_delay, default=1.0, low=0.0, high=60.0)
         operation_id = uuid.uuid4().hex
         metadata.setdefault("operation_id", operation_id)
-        # safety gating
-        if self.safe_mode and not allow_danger and action_name in self.dangerous_whitelist:
-            msg = f"Action '{action_name}' denied by safe_mode"
-            self.trace.log(
-                {
-                    "type": "execution_denied",
-                    "action": action_name,
-                    "reason": msg,
-                    "context": context[:200],
-                }
+        # CP126 3c626bb4: an idempotency key lets a retry prove whether the
+        # previous attempt already produced its effect.
+        idempotency_key = supplied_idempotency_key or f"{action_name}:{operation_id}"
+        # The redacted copy keeps a redacted marker; the real key stays local.
+        metadata.setdefault("idempotency_key", "***redacted***" if supplied_idempotency_key else idempotency_key)
+        idempotent = bool(metadata.get("idempotent", False))
+        prior = self._effects.get(idempotency_key)
+        if prior is not None and prior.get("state") == "succeeded":
+            self.trace.log({
+                "type": "execution_deduplicated", "action": action_name,
+                "idempotency_key": idempotency_key, "operation_id": operation_id,
+            })
+            metadata["deduplicated"] = True
+            return ExecResult(
+                ok=True, result=prior.get("result"), duration=0.0, metadata=metadata
             )
-            return ExecResult(ok=False, error=msg, duration=0.0, metadata=metadata)
+
+        # safety gating — the caller's callback runs first and can deny
+        # anything, then the structural danger check applies.
+        if self.safety_check is not None:
+            try:
+                permitted = bool(self.safety_check(action_name, context))
+            except Exception as exc:  # noqa: BLE001 - an unusable check denies
+                _record_execution_degradation(
+                    exc,
+                    action="denied an action because its safety check could not run",
+                    extra={"action": action_name},
+                )
+                permitted = False
+            if not permitted:
+                msg = f"Action '{action_name}' denied by safety_check"
+                self.trace.log({
+                    "type": "execution_denied", "action": action_name,
+                    "reason": msg, "context": context[:200],
+                })
+                return ExecResult(ok=False, error=msg, duration=0.0, metadata=metadata)
+
+        if self.safe_mode and is_dangerous_action(action_name, self.dangerous_whitelist):
+            authorized, why = _danger_authorized(action_name, allow_danger, supplied_token)
+            if not authorized:
+                msg = f"Action '{action_name}' denied by safe_mode ({why})"
+                self.trace.log({
+                    "type": "execution_denied", "action": action_name,
+                    "reason": msg, "context": context[:200],
+                })
+                return ExecResult(ok=False, error=msg, duration=0.0, metadata=metadata)
+            metadata["danger_authorization"] = why
 
         # Monotonic clock: a wall-clock jump must not make a duration negative.
         start = time.monotonic()
@@ -152,9 +297,26 @@ class ExecutionManager:
                         await asyncio.sleep(retry_delay)
                         continue
                     return ExecResult(ok=False, result=res, error=last_err, duration=dur, metadata=metadata)
+                # CP126 aae07b1a: trace logging is not an action receipt. This
+                # binds principal, target, authority, inputs and a result hash.
+                receipt = self._make_receipt(
+                    action_name=action_name,
+                    context=context,
+                    metadata=metadata,
+                    operation_id=operation_id,
+                    idempotency_key=idempotency_key,
+                    attempt=attempt,
+                    duration=dur,
+                    result=res,
+                )
+                self._effects[idempotency_key] = {
+                    "state": "succeeded", "result": res, "receipt": receipt,
+                }
+                metadata["receipt"] = receipt
                 self.trace.log({
                     "type": "execution", "action": action_name, "ok": True,
                     "duration": dur, "attempt": attempt, "operation_id": operation_id,
+                    "receipt_id": receipt["receipt_id"],
                 })
                 return ExecResult(ok=True, result=res, duration=dur, metadata=metadata)
             except TimeoutError:
@@ -163,10 +325,27 @@ class ExecutionManager:
                 # outcome uncertain so a retry is not assumed side-effect-free.
                 last_err = "timeout"
                 metadata["outcome"] = "uncertain_timeout"
+                self._effects[idempotency_key] = {"state": "uncertain", "result": None}
                 self.trace.log({
                     "type": "execution_timeout", "action": action_name, "attempt": attempt,
                     "timeout": timeout_seconds, "operation_id": operation_id,
                 })
+                # CP126 6e82df46 / 3c626bb4: wait_for cancels our await but
+                # cannot stop a sync callable already running in a worker
+                # thread. Retrying would run the effect a second time while the
+                # first is still in flight, so an action that has not declared
+                # itself idempotent stops here with an honest uncertain result.
+                if not idempotent:
+                    metadata["retry_suppressed"] = "non_idempotent_after_uncertain_timeout"
+                    self.trace.log({
+                        "type": "execution_retry_suppressed", "action": action_name,
+                        "reason": "non_idempotent_after_uncertain_timeout",
+                        "operation_id": operation_id,
+                    })
+                    return ExecResult(
+                        ok=False, error="timeout_outcome_uncertain",
+                        duration=time.monotonic() - start, metadata=metadata,
+                    )
             except asyncio.CancelledError:
                 self.trace.log(
                     {"type": "execution_cancelled", "action": action_name, "attempt": attempt}
@@ -200,6 +379,15 @@ class ExecutionManager:
                 await asyncio.sleep(retry_delay)
         dur = time.monotonic() - start
         return ExecResult(ok=False, error=last_err, duration=dur, metadata=metadata)
+
+
+def _result_digest(result: Any) -> str:
+    """A stable digest of the result, for binding into the receipt."""
+    try:
+        payload = json.dumps(result, sort_keys=True, default=str)
+    except (TypeError, ValueError, RecursionError):
+        payload = repr(result)
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
 
 
 def _looks_successful(res: Any, predicate: Callable[[Any], bool] | None) -> bool:
