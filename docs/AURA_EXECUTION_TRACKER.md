@@ -28506,3 +28506,53 @@ Next: make resident state application atomic or quarantine any ambiguous
 process, then harden descriptor-rooted publication/recovery before wiring the
 real continuation. Final multi-hour soaks remain deferred until every shorter
 gate is green.
+
+## Checkpoint 2026-07-25-378: Fatal Quarantine for Ambiguous State Application
+
+Private restore recovery no longer equates "the arm ledger did not commit"
+with "resident mutation never began." Restore-operation schema v2 first writes
+and fsyncs a `prepared` record while all work is still read-only. After every
+private component has been authenticated and reconstructed, it atomically
+replaces that record with `application_started` before invoking the resident
+installation callback. The started record binds the exact operation, arm,
+request, snapshot, worker boot, worker PID, and application-start time.
+
+Only a v2 `prepared` operation can be rolled back and retried. Once the started
+record is durable, a callback exception, wrong post-install state hash, crash
+boundary, ledger-publication uncertainty, or process death produces a typed
+`UNKNOWN_APPLICATION` quarantine. Its immutable evidence says process
+replacement is required and same-process retry is forbidden. Recovery leaves
+the authenticated operation in place and refuses restore, seal, erase, or arm
+reuse rather than deleting the marker and treating the resident as clean. A
+legacy v1 uncommitted restore is also quarantined because that schema did not
+record whether application had begun; committed v1 operations and non-mutating
+seal/erase recovery remain replayable.
+
+The MLX latent-job boundary catches the typed quarantine before its generic
+runtime-error handler, emits the correlated non-secret evidence to the parent,
+sets `requires_worker_recycle=true`, and exits after delivering the response.
+The contaminated process therefore cannot return to the request loop. A real
+spawned-child fault test enters the state-application callback, is killed with
+`SIGKILL`, releases the interprocess lock through process death, and proves the
+surviving process reconstructs `UNKNOWN_APPLICATION` and refuses retry. This is
+in addition to deterministic before-start, after-start, after-apply, mismatch,
+legacy-upgrade, and post-ledger-commit boundaries.
+
+Focused action-store and MLX quarantine coverage passes 52 tests. The broader
+state-capture, worker identity, runtime identity, worker origin, MLX runtime,
+admission, cancellation, and resilience boundary passes 248/248. Strict
+focused Ruff and diff hygiene pass. This closes the partial-application P1 from
+CP376. Descriptor-rooted path operations, recoverable multi-file publication,
+external key custody, streaming serialization, the remaining race/disk/power
+fault matrix, and the serializable resident continuation remain open. No
+resident training, reasoning gain, frontier gain, or `WOW Signal` is claimed.
+
+Four cooperative imagination and autonomous-resilience hardening records landed
+between CP377 and CP378. Counting them and CP378 makes the total checkpoint
+record 591. The 640-920 forecast remains, leaving approximately 49-329 records
+after this checkpoint. Checkpoint-count completion is approximately
+64.2%-92.3%, with a midpoint planning estimate of 75.8%.
+Next: move snapshot namespace operations under persistent directory descriptors
+and one recoverable publication transaction, then continue into external key
+custody and streaming before the resident continuation. Final multi-hour soaks
+remain deferred until every shorter gate is green.

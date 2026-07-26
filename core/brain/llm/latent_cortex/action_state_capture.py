@@ -64,8 +64,11 @@ PRIVATE_ACTION_SNAPSHOT_BINDING_SCHEMA: Final = (
 )
 PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA: Final = "aura.rlc.action_state_capture.private_handle.v1"
 PRIVATE_ACTION_SNAPSHOT_LEDGER_SCHEMA: Final = "aura.rlc.action_state_capture.private_use_ledger.v1"
-PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA: Final = (
+PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1: Final = (
     "aura.rlc.action_state_capture.private_operation.v1"
+)
+PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA: Final = (
+    "aura.rlc.action_state_capture.private_operation.v2"
 )
 PRIVATE_ACTION_SNAPSHOT_RESTORE_SCHEMA: Final = "aura.rlc.action_state_capture.private_restore.v1"
 PRIVATE_ACTION_SNAPSHOT_SEAL_SCHEMA: Final = "aura.rlc.action_state_capture.private_seal.v1"
@@ -259,6 +262,31 @@ class ActionStateCaptureError(ValueError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class UnknownActionStateApplicationError(ActionStateCaptureError):
+    """Resident mutation may have started; this process must not serve again."""
+
+    def __init__(self, operation: Mapping[str, Any]) -> None:
+        super().__init__("private_snapshot_unknown_application_process_replacement_required")
+        evidence = {
+            "state": "UNKNOWN_APPLICATION",
+            "operation_id": str(operation.get("operation_id") or ""),
+            "arm": str(operation.get("arm") or ""),
+            "worker_boot_id": str(operation.get("worker_boot_id") or ""),
+            "worker_pid": operation.get("worker_pid"),
+            "request_sha256": str(operation.get("request_sha256") or ""),
+            "snapshot_sha256": str(operation.get("snapshot_sha256") or ""),
+            "process_replacement_required": True,
+            "same_process_retry_allowed": False,
+        }
+        self._quarantine_evidence_bytes = canonical_json_bytes(evidence)
+
+    @property
+    def quarantine_evidence(self) -> dict[str, Any]:
+        """Return a copy so callers cannot rewrite the fatal evidence in place."""
+
+        return json.loads(self._quarantine_evidence_bytes)
 
 
 def _fail(code: str) -> Never:
@@ -1852,13 +1880,27 @@ class PrivateActionSnapshotStore:
             "handle_authentication_sha256",
             "operation_sha256",
         }
-        expected_by_kind = {
+        expected_by_kind_v1 = {
             "restore": common
             | {
                 "arm",
                 "operation_id",
                 "ledger_before_sha256",
                 "state_sha256",
+            },
+            "seal": common | {"target_ledger", "target_handle", "seal_receipt"},
+            "erase": common | {"dek_sha256", "erase_files", "erasure_receipt"},
+        }
+        expected_by_kind_v2 = {
+            "restore": common
+            | {
+                "arm",
+                "operation_id",
+                "ledger_before_sha256",
+                "state_sha256",
+                "application_started_at_unix",
+                "worker_boot_id",
+                "worker_pid",
             },
             "seal": common | {"target_ledger", "target_handle", "seal_receipt"},
             "erase": common
@@ -1869,15 +1911,35 @@ class PrivateActionSnapshotStore:
             },
         }
         kind = value.get("kind")
-        if kind not in expected_by_kind or set(value) != expected_by_kind[kind]:
+        schema = value.get("schema")
+        expected_by_kind = (
+            expected_by_kind_v2
+            if schema == PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA
+            else expected_by_kind_v1
+        )
+        if (
+            schema
+            not in {
+                PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1,
+                PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA,
+            }
+            or kind not in expected_by_kind
+            or set(value) != expected_by_kind[kind]
+        ):
             _fail("private_snapshot_operation_fields")
         body = {name: item for name, item in value.items() if name != "operation_sha256"}
         if value["operation_sha256"] != _digest(body):
             _fail("private_snapshot_operation_hash_mismatch")
         if (
-            value.get("schema") != PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA
-            or value.get("kind") not in {"restore", "seal", "erase"}
-            or value.get("stage") != "prepared"
+            value.get("kind") not in {"restore", "seal", "erase"}
+            or (
+                value.get("stage") != "prepared"
+                and not (
+                    schema == PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA
+                    and kind == "restore"
+                    and value.get("stage") == "application_started"
+                )
+            )
         ):
             _fail("private_snapshot_operation_invalid")
         self._verify_handle_authentication(
@@ -1903,6 +1965,24 @@ class PrivateActionSnapshotStore:
                 value.get("state_sha256"),
                 role="private_snapshot_operation_state",
             )
+            if schema == PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA:
+                application_started_at = value.get("application_started_at_unix")
+                if value["stage"] == "prepared":
+                    if application_started_at is not None:
+                        _fail("private_snapshot_operation_start_time_invalid")
+                else:
+                    _positive_int(
+                        application_started_at,
+                        role="private_snapshot_operation_start_time",
+                    )
+                _hex_identifier(
+                    value.get("worker_boot_id"),
+                    role="private_snapshot_operation_worker_boot_id",
+                )
+                _positive_int(
+                    value.get("worker_pid"),
+                    role="private_snapshot_operation_worker_pid",
+                )
         elif kind == "erase":
             _sha256(
                 value.get("dek_sha256"),
@@ -1943,6 +2023,11 @@ class PrivateActionSnapshotStore:
             arm = operation.get("arm")
             use = ledger["uses"].get(arm)
             if use is None:
+                if (
+                    operation["schema"] == PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1
+                    or operation["stage"] == "application_started"
+                ):
+                    raise UnknownActionStateApplicationError(operation)
                 operation_path.unlink()
                 self._fsync_directory(operation_path.parent)
                 return {"recovered": "rolled_back_precommit_restore"}
@@ -2019,10 +2104,12 @@ class PrivateActionSnapshotStore:
     ) -> PrivateSnapshotRestore:
         """Install one arm's state, then durably consume that arm exactly once.
 
-        ``apply_state`` runs before the one-use ledger commits and must return
-        the resident aggregate state hash it measured after installation.
-        A callback failure or crash before the ledger commit leaves the arm
-        retryable; a committed arm is never blindly replayed.
+        ``apply_state`` runs after a durable ``application_started`` marker and
+        before the one-use ledger commits. It must return the resident aggregate
+        state hash measured after installation. Once application starts, any
+        exception, mismatch, or process death leaves an ``UNKNOWN_APPLICATION``
+        quarantine that requires process replacement; it is never retried as a
+        pre-apply operation. A committed arm is never blindly replayed.
         """
 
         binding = _snapshot_binding(admission)
@@ -2061,6 +2148,7 @@ class PrivateActionSnapshotStore:
                 _fail("private_snapshot_arm_already_used")
             envelope = self._load_envelope(handle_record["snapshot_sha256"], binding=binding)
             operation_id = secrets.token_hex(16)
+            worker_identity = admission.payload["worker_origin_binding"]["worker_identity"]
             expected_state_sha256 = _digest(
                 {f"{item['name']}_sha256": item["value_sha256"] for item in envelope["components"]}
             )
@@ -2076,6 +2164,9 @@ class PrivateActionSnapshotStore:
                     "operation_id": operation_id,
                     "ledger_before_sha256": ledger["ledger_sha256"],
                     "state_sha256": expected_state_sha256,
+                    "application_started_at_unix": None,
+                    "worker_boot_id": worker_identity["worker_boot_id"],
+                    "worker_pid": worker_identity["worker_pid"],
                 },
                 handle_secret=handle_secret,
             )
@@ -2094,44 +2185,71 @@ class PrivateActionSnapshotStore:
                 envelope,
                 encryption_key=encryption_key,
             )
-            post_apply_state_sha256 = apply_state(state)
-            if (
-                not _is_sha256(post_apply_state_sha256)
-                or post_apply_state_sha256 != expected_state_sha256
-            ):
-                _fail("private_snapshot_post_apply_state_mismatch")
-            _crash_boundary("restore_after_state_apply")
-            receipt = self._restore_receipt(
-                handle_hash=handle_hash,
-                snapshot_sha256=handle_record["snapshot_sha256"],
-                request_sha256=binding["request_sha256"],
-                pair_id=binding["pair_id"],
-                arm=arm,
-                operation_id=operation_id,
-                restored_at_unix=restored_at,
-                envelope=envelope,
-                post_apply_state_sha256=post_apply_state_sha256,
-            )
-            next_ledger_body = {
+            started_body = {
                 name: item
-                for name, item in ledger.items()
-                if name not in {"ledger_sha256", "handle_authentication_sha256"}
+                for name, item in operation.items()
+                if name not in {"handle_authentication_sha256", "operation_sha256"}
             }
-            next_ledger_body["uses"] = dict(ledger["uses"])
-            next_ledger_body["uses"][arm] = {
-                "arm": arm,
-                "operation_id": operation_id,
-                "restored_at_unix": restored_at,
-                "post_apply_state_sha256": post_apply_state_sha256,
-                "restore_receipt_sha256": receipt["restore_receipt_sha256"],
-            }
-            next_ledger_body["sequence"] = ledger["sequence"] + 1
-            next_ledger = self._ledger_document(next_ledger_body, handle_secret=handle_secret)
+            started_body["stage"] = "application_started"
+            started_body["application_started_at_unix"] = restored_at
+            operation = self._operation_document(
+                started_body,
+                handle_secret=handle_secret,
+            )
             self._atomic_publish(
-                paths["ledger"],
-                canonical_json_bytes(next_ledger) + b"\n",
+                paths["operation"],
+                canonical_json_bytes(operation) + b"\n",
                 replace=True,
             )
+            try:
+                _crash_boundary("restore_after_application_started")
+                post_apply_state_sha256 = apply_state(state)
+                if (
+                    not _is_sha256(post_apply_state_sha256)
+                    or post_apply_state_sha256 != expected_state_sha256
+                ):
+                    _fail("private_snapshot_post_apply_state_mismatch")
+                _crash_boundary("restore_after_state_apply")
+                receipt = self._restore_receipt(
+                    handle_hash=handle_hash,
+                    snapshot_sha256=handle_record["snapshot_sha256"],
+                    request_sha256=binding["request_sha256"],
+                    pair_id=binding["pair_id"],
+                    arm=arm,
+                    operation_id=operation_id,
+                    restored_at_unix=restored_at,
+                    envelope=envelope,
+                    post_apply_state_sha256=post_apply_state_sha256,
+                )
+                next_ledger_body = {
+                    name: item
+                    for name, item in ledger.items()
+                    if name not in {"ledger_sha256", "handle_authentication_sha256"}
+                }
+                next_ledger_body["uses"] = dict(ledger["uses"])
+                next_ledger_body["uses"][arm] = {
+                    "arm": arm,
+                    "operation_id": operation_id,
+                    "restored_at_unix": restored_at,
+                    "post_apply_state_sha256": post_apply_state_sha256,
+                    "restore_receipt_sha256": receipt["restore_receipt_sha256"],
+                }
+                next_ledger_body["sequence"] = ledger["sequence"] + 1
+                next_ledger = self._ledger_document(
+                    next_ledger_body,
+                    handle_secret=handle_secret,
+                )
+                self._atomic_publish(
+                    paths["ledger"],
+                    canonical_json_bytes(next_ledger) + b"\n",
+                    replace=True,
+                )
+            except UnknownActionStateApplicationError:
+                raise
+            # An installer is an injected resident boundary. Any ordinary failure
+            # after the durable start marker must quarantine the whole process.
+            except Exception as exc:  # noqa: BLE001
+                raise UnknownActionStateApplicationError(operation) from exc
             _crash_boundary("restore_after_ledger_commit")
             paths["operation"].unlink()
             self._fsync_directory(paths["operation"].parent)
@@ -2866,11 +2984,13 @@ __all__ = [
     "PRIVATE_ACTION_SNAPSHOT_HANDLE_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_LEDGER_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA",
+    "PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1",
     "PRIVATE_ACTION_SNAPSHOT_RESTORE_SCHEMA",
     "PRIVATE_ACTION_SNAPSHOT_SEAL_SCHEMA",
     "STATE_COMPONENT_NAMES",
     "TREATMENT_ARM",
     "ActionStateCaptureError",
+    "UnknownActionStateApplicationError",
     "PrivateActionSnapshotStore",
     "PrivateSnapshotPublication",
     "PrivateSnapshotRestore",

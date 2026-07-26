@@ -2218,6 +2218,28 @@ before those dependencies close is not admissible.
   fixed-path learned-world-model checkpoint to its narrow canonical owner; the
   exact inventory is 2,007 calls in 1,878 buckets with migration debt unchanged
   at 1,788 calls.
+
+  CP378 closes the partial-application ambiguity in the snapshot state machine.
+  Restore schema v2 durably distinguishes `prepared` from
+  `application_started`; the second marker is atomically published and fsynced
+  before the resident mutation callback begins, and binds the exact worker
+  boot, PID, arm, request, snapshot, and operation. Only a provably pre-apply
+  v2 marker may roll back. Any callback exception, post-apply hash mismatch,
+  pre-commit storage failure, or process death after the started marker becomes
+  typed `UNKNOWN_APPLICATION` evidence with same-process retry forbidden and
+  process replacement required. An uncommitted v1 restore is also quarantined
+  because the legacy schema cannot prove whether application started.
+
+  The MLX latent-job boundary handles that typed error before its generic
+  runtime handler, emits a correlated fatal quarantine receipt, and exits the
+  worker after delivery so it cannot serve another request. A spawned-child
+  fault test enters the real apply callback, receives `SIGKILL`, and proves the
+  surviving process reconstructs the durable quarantine and refuses retry.
+  Focused storage/worker coverage passes 52 tests; the broader snapshot,
+  identity, runtime, worker-origin, admission, and MLX resilience boundary
+  passes 248/248. This closes the second CP376 P1, not the remaining descriptor,
+  publication, custody, streaming, broader fault, or continuation work. No
+  training or capability verdict changes.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

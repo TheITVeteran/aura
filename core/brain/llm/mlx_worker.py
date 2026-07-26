@@ -21,6 +21,9 @@ from core.brain.live_mind_contract import (
     append_text_mutation,
     normalize_text_mutations,
 )
+from core.brain.llm.latent_cortex.action_state_capture import (
+    UnknownActionStateApplicationError,
+)
 from core.conversation.user_surface_contract import (
     UserSurfacePromptResolution,
     resolve_user_surface_prompt,
@@ -40,6 +43,21 @@ def _record_mlx_degradation(
     severity: str = "warning",
 ) -> None:
     record_degradation("mlx_worker", exc, severity=severity, action=action)
+
+
+def _state_application_quarantine_response(
+    exc: UnknownActionStateApplicationError,
+) -> dict[str, Any]:
+    """Typed terminal IPC evidence for a worker that may be contaminated."""
+
+    if not isinstance(exc, UnknownActionStateApplicationError):
+        raise TypeError("unknown state-application error required")
+    return {
+        "status": "error",
+        "message": exc.code,
+        "state_application_quarantine": dict(exc.quarantine_evidence),
+        "requires_worker_recycle": True,
+    }
 
 
 def _surface_prompt_resolution(job: dict[str, Any]) -> UserSurfacePromptResolution:
@@ -6115,6 +6133,19 @@ def _mlx_worker_loop(
                             if mx and device != "cpu":
                                 _clear_mlx_cache(mx)
                         response.update({"status": "ok", **result})
+                except UnknownActionStateApplicationError as quarantine_exc:
+                    recycle_after_response = True
+                    _record_mlx_degradation(
+                        quarantine_exc,
+                        action=(
+                            "quarantined MLX worker after ambiguous resident state "
+                            "application and forced clean process replacement"
+                        ),
+                        severity="critical",
+                    )
+                    response.update(
+                        _state_application_quarantine_response(quarantine_exc)
+                    )
                 except (
                     ImportError,
                     OSError,

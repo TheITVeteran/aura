@@ -10,8 +10,14 @@ from __future__ import annotations
 import time
 
 from core.brain.llm import mlx_client as mlx_client_mod
+from core.brain.llm.latent_cortex.action_state_capture import (
+    UnknownActionStateApplicationError,
+)
 from core.brain.llm.mlx_client import MLXLocalClient
-from core.brain.llm.mlx_worker import soft_cancel_requested
+from core.brain.llm.mlx_worker import (
+    _state_application_quarantine_response,
+    soft_cancel_requested,
+)
 
 
 class _Value:
@@ -180,6 +186,44 @@ def test_worker_spawn_carries_only_the_public_capture_launch_challenge():
     spawn_block = source.split("target=_mlx_worker_loop", 1)[1][:900]
     assert "dict(self._worker_capture_launch_authority.challenge)" in spawn_block
     assert "_worker_capture_launch_authority.private_key" not in spawn_block
+
+
+def test_ambiguous_state_application_emits_fatal_worker_quarantine():
+    error = UnknownActionStateApplicationError(
+        {
+            "operation_id": "a" * 32,
+            "arm": "treatment",
+            "worker_boot_id": "b" * 32,
+            "worker_pid": 4242,
+            "request_sha256": "c" * 64,
+            "snapshot_sha256": "d" * 64,
+        }
+    )
+
+    response = _state_application_quarantine_response(error)
+
+    assert response == {
+        "status": "error",
+        "message": "private_snapshot_unknown_application_process_replacement_required",
+        "state_application_quarantine": error.quarantine_evidence,
+        "requires_worker_recycle": True,
+    }
+
+
+def test_latent_worker_exits_after_ambiguous_state_application():
+    import inspect
+
+    from core.brain.llm.mlx_worker import _mlx_worker_loop
+
+    source = inspect.getsource(_mlx_worker_loop)
+    quarantine = source.split(
+        "except UnknownActionStateApplicationError as quarantine_exc:", 1
+    )[1]
+    before_generic_handler = quarantine.split("except (", 1)[0]
+    assert "recycle_after_response = True" in before_generic_handler
+    post_response = source.split("ipc_writer.put(response)", 1)[1]
+    assert "if recycle_after_response:" in post_response
+    assert "break" in post_response.split("if recycle_after_response:", 1)[1][:400]
 
 
 # ── parent-side response handling ──────────────────────────────────────

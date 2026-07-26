@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import multiprocessing as mp
 import os
+import signal
 import stat
 from copy import deepcopy
 from pathlib import Path
@@ -20,6 +22,7 @@ from core.brain.llm.latent_cortex.action_state_capture import (
     TREATMENT_ARM,
     ActionStateCaptureError,
     PrivateActionSnapshotStore,
+    UnknownActionStateApplicationError,
     admit_action_state_capture_request,
     build_action_state_capture_receipt,
     build_action_state_capture_request,
@@ -363,6 +366,23 @@ def _restore(store, handle, admission, *, arm: str, restored_at_unix: int):
     )
 
 
+def _restore_until_sigkill(store_root, handle, admission, started) -> None:
+    store = PrivateActionSnapshotStore(store_root)
+
+    def begin_application(_state: dict) -> str:
+        started.set()
+        signal.pause()
+        return "f" * 64
+
+    store.restore_and_apply(
+        handle,
+        admission,
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+        apply_state=begin_application,
+    )
+
+
 def _resign_receipt(receipt: dict, worker_key: Ed25519PrivateKey) -> dict:
     body = {
         name: item
@@ -532,12 +552,12 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
         )
 
 
-def test_restore_does_not_consume_arm_until_state_application_is_verified(
+def test_state_mismatch_quarantines_ambiguous_application_instead_of_retrying(
     tmp_path: Path,
 ):
     case = _case(tmp_path)
 
-    with pytest.raises(ActionStateCaptureError, match="post_apply_state_mismatch"):
+    with pytest.raises(UnknownActionStateApplicationError) as quarantined:
         case["store"].restore_and_apply(
             case["publication"].handle,
             case["admission"],
@@ -545,22 +565,37 @@ def test_restore_does_not_consume_arm_until_state_application_is_verified(
             restored_at_unix=NOW + 2,
             apply_state=lambda _state: "f" * 64,
         )
-    assert case["store"].recover(case["publication"].handle, case["admission"]) == {
-        "recovered": "rolled_back_precommit_restore"
+    assert quarantined.value.quarantine_evidence == {
+        "state": "UNKNOWN_APPLICATION",
+        "operation_id": quarantined.value.quarantine_evidence["operation_id"],
+        "arm": TREATMENT_ARM,
+        "worker_boot_id": WORKER_BOOT_ID,
+        "worker_pid": 4242,
+        "request_sha256": case["admission"].request_sha256,
+        "snapshot_sha256": case["publication"].snapshot_sha256,
+        "process_replacement_required": True,
+        "same_process_retry_allowed": False,
     }
+    assert len(quarantined.value.quarantine_evidence["operation_id"]) == 32
+    with pytest.raises(
+        ActionStateCaptureError,
+        match="unknown_application_process_replacement_required",
+    ):
+        case["store"].recover(case["publication"].handle, case["admission"])
+    with pytest.raises(
+        ActionStateCaptureError,
+        match="unknown_application_process_replacement_required",
+    ):
+        _restore(
+            case["store"],
+            case["publication"].handle,
+            case["admission"],
+            arm=TREATMENT_ARM,
+            restored_at_unix=NOW + 2,
+        )
 
-    restored = _restore(
-        case["store"],
-        case["publication"].handle,
-        case["admission"],
-        arm=TREATMENT_ARM,
-        restored_at_unix=NOW + 2,
-    )
-    assert restored.receipt["state_applied_before_return"] is True
-    assert restored.receipt["post_apply_state_sha256"] == restored.receipt["state_sha256"]
 
-
-def test_crash_after_state_apply_is_retryable_before_arm_commit(
+def test_crash_after_state_apply_quarantines_worker_and_arm(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -577,7 +612,7 @@ def test_crash_after_state_apply_is_retryable_before_arm_commit(
         return _sha({f"{name}_sha256": _state_sha(value) for name, value in sorted(state.items())})
 
     monkeypatch.setattr(capture_module, "_crash_boundary", crash_after_apply)
-    with pytest.raises(RuntimeError, match="after state installation"):
+    with pytest.raises(UnknownActionStateApplicationError) as quarantined:
         case["store"].restore_and_apply(
             case["publication"].handle,
             case["admission"],
@@ -586,18 +621,145 @@ def test_crash_after_state_apply_is_retryable_before_arm_commit(
             apply_state=apply_state,
         )
     assert applied == 1
+    assert isinstance(quarantined.value.__cause__, RuntimeError)
+    assert "after state installation" in str(quarantined.value.__cause__)
 
     monkeypatch.setattr(capture_module, "_crash_boundary", lambda _name: None)
-    assert case["store"].recover(case["publication"].handle, case["admission"]) == {
-        "recovered": "rolled_back_precommit_restore"
-    }
-    _restore(
-        case["store"],
-        case["publication"].handle,
-        case["admission"],
-        arm=TREATMENT_ARM,
-        restored_at_unix=NOW + 2,
+    operation_path = case["store"].root / "operations" / (
+        hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest() + ".json"
     )
+    operation = json.loads(operation_path.read_bytes())
+    assert operation["stage"] == "application_started"
+    assert operation["worker_boot_id"] == WORKER_BOOT_ID
+    assert operation["worker_pid"] == 4242
+    with pytest.raises(
+        ActionStateCaptureError,
+        match="unknown_application_process_replacement_required",
+    ):
+        case["store"].recover(case["publication"].handle, case["admission"])
+
+
+def test_crash_after_durable_start_marker_quarantines_even_before_callback(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _case(tmp_path)
+    apply_calls = 0
+
+    def crash_after_start(name: str):
+        if name == "restore_after_application_started":
+            raise RuntimeError("simulated death after durable start")
+
+    def apply_state(_state: dict) -> str:
+        nonlocal apply_calls
+        apply_calls += 1
+        return "f" * 64
+
+    monkeypatch.setattr(capture_module, "_crash_boundary", crash_after_start)
+    with pytest.raises(UnknownActionStateApplicationError) as quarantined:
+        case["store"].restore_and_apply(
+            case["publication"].handle,
+            case["admission"],
+            arm=TREATMENT_ARM,
+            restored_at_unix=NOW + 2,
+            apply_state=apply_state,
+        )
+    assert apply_calls == 0
+    assert isinstance(quarantined.value.__cause__, RuntimeError)
+    assert "after durable start" in str(quarantined.value.__cause__)
+    monkeypatch.setattr(capture_module, "_crash_boundary", lambda _name: None)
+    with pytest.raises(
+        ActionStateCaptureError,
+        match="unknown_application_process_replacement_required",
+    ):
+        case["store"].recover(case["publication"].handle, case["admission"])
+
+
+def test_sigkill_inside_state_application_is_durably_quarantined(tmp_path: Path):
+    case = _case(tmp_path)
+    context = mp.get_context("spawn")
+    started = context.Event()
+    child = context.Process(
+        target=_restore_until_sigkill,
+        args=(
+            case["store"].root,
+            case["publication"].handle,
+            case["admission"],
+            started,
+        ),
+    )
+    child.start()
+    try:
+        assert started.wait(timeout=10.0)
+        assert child.pid is not None
+        os.kill(child.pid, signal.SIGKILL)
+        child.join(timeout=10.0)
+        assert child.exitcode == -signal.SIGKILL
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join(timeout=5.0)
+
+    with pytest.raises(UnknownActionStateApplicationError) as quarantined:
+        case["store"].recover(case["publication"].handle, case["admission"])
+    assert quarantined.value.quarantine_evidence["worker_pid"] == 4242
+    assert quarantined.value.quarantine_evidence["same_process_retry_allowed"] is False
+
+
+def test_legacy_uncommitted_restore_is_never_assumed_preapply(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _case(tmp_path)
+
+    def crash_after_prepare(name: str):
+        if name == "restore_after_prepare":
+            raise RuntimeError("leave a prepared v2 operation")
+
+    monkeypatch.setattr(capture_module, "_crash_boundary", crash_after_prepare)
+    with pytest.raises(RuntimeError, match="prepared v2"):
+        _restore(
+            case["store"],
+            case["publication"].handle,
+            case["admission"],
+            arm=TREATMENT_ARM,
+            restored_at_unix=NOW + 2,
+        )
+    monkeypatch.setattr(capture_module, "_crash_boundary", lambda _name: None)
+
+    handle_hash = hashlib.sha256(
+        case["publication"].handle.encode("ascii")
+    ).hexdigest()
+    operation_path = case["store"].root / "operations" / f"{handle_hash}.json"
+    operation = json.loads(operation_path.read_bytes())
+    legacy_body = {
+        name: value
+        for name, value in operation.items()
+        if name
+        not in {
+            "handle_authentication_sha256",
+            "operation_sha256",
+            "application_started_at_unix",
+            "worker_boot_id",
+            "worker_pid",
+        }
+    }
+    legacy_body["schema"] = capture_module.PRIVATE_ACTION_SNAPSHOT_OPERATION_SCHEMA_V1
+    legacy = case["store"]._operation_document(
+        legacy_body,
+        handle_secret=case["store"]._handle_secret(case["publication"].handle),
+    )
+    case["store"]._atomic_publish(
+        operation_path,
+        canonical_json_bytes(legacy) + b"\n",
+        replace=True,
+    )
+
+    with pytest.raises(UnknownActionStateApplicationError) as quarantined:
+        case["store"].recover(case["publication"].handle, case["admission"])
+    assert quarantined.value.quarantine_evidence["worker_boot_id"] == ""
+    assert quarantined.value.quarantine_evidence["worker_pid"] is None
+    assert quarantined.value.quarantine_evidence["process_replacement_required"] is True
 
 
 def test_private_snapshot_requires_exact_durable_and_rng_commitments(
