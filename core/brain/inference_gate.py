@@ -7853,11 +7853,27 @@ class InferenceGate:
             prompt_mode = "compact_foreground"
         if provided_messages is not None:
             prompt_mode = f"{prompt_mode}_prebuilt"
+        # What share of the prompt is the person's actual request? A turn whose
+        # scaffold dwarfs the question tends to be continued as more scaffold:
+        # measured live 2026-07-26, a 78-char arithmetic question arrived inside
+        # 7,414 chars and came back as self-description rather than an answer.
+        # Without this breakdown the only visible number was the total, which
+        # says nothing about the ratio that matters.
+        scaffold_chars = sum(
+            len(str(msg.get("content", "") or ""))
+            for msg in messages
+            if str(msg.get("role", "")).strip().lower() == "system"
+        )
+        request_chars = max(0, prompt_chars - scaffold_chars)
         logger.info(
-            "🧠 [ZENITH] Prompt plan: mode=%s messages=%d chars=%d origin=%s max_tokens=%d",
+            "🧠 [ZENITH] Prompt plan: mode=%s messages=%d chars=%d "
+            "(scaffold=%d request=%d ratio=%.1fx) origin=%s max_tokens=%d",
             prompt_mode,
             len(messages),
             prompt_chars,
+            scaffold_chars,
+            request_chars,
+            (scaffold_chars / request_chars) if request_chars else float("inf"),
             origin or "unknown",
             max_tokens,
         )
