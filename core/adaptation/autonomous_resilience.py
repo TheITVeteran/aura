@@ -47,6 +47,33 @@ _FINDING_SCORES = {
 }
 
 
+#: Score for a service whose health cannot actually be READ. The old value
+#: (0.55) sat in the healthy band, so an uninstrumented or malformed service was
+#: indistinguishable from a working one and quietly never surfaced. This sits
+#: below "fine" without claiming the service is failing — unknown health is a
+#: gap in observation, not evidence of a fault, and must not trigger repairs of
+#: its own accord.
+_UNKNOWN_HEALTH_SCORE = 0.5
+
+#: Services already reported as uninstrumented, so a periodic probe reports the
+#: gap once instead of on every tick.
+_reported_uninstrumented: set[str] = set()
+
+
+def _report_uninstrumented(instance: Any, reason: str) -> float:
+    """Surface an unreadable health contract once, then score it as unknown."""
+    name = type(instance).__name__
+    if name not in _reported_uninstrumented:
+        _reported_uninstrumented.add(name)
+        record_degradation(
+            "autonomous_resilience",
+            RuntimeError(f"{name}: {reason}"),
+            severity="debug",
+            action="scored as unknown health rather than counted as healthy",
+        )
+    return _UNKNOWN_HEALTH_SCORE
+
+
 def _clamp01(value: float) -> float:
     return float(max(0.0, min(1.0, value)))
 
@@ -289,10 +316,25 @@ class StaticFaultAuditor:
         return "<module>"
 
     def _resolve_path(self, path: str | Path) -> Path:
+        """Resolve a scan/repair target, confined to the repository.
+
+        An absolute path used to be returned as-is and a relative one was
+        joined without a containment check, so ``../../`` or ``/etc/...``
+        escaped base_dir entirely — letting the auditor scan outside the repo
+        and, worse, mint repair candidates pointing at files the mesh has no
+        business rewriting. Every path is now canonicalised (which collapses
+        ``..`` and resolves symlinks) and must live under base_dir.
+        """
+        base = Path(self.base_dir).resolve()
         candidate = Path(path)
-        if candidate.is_absolute():
-            return candidate
-        return (self.base_dir / candidate).resolve()
+        resolved = (candidate if candidate.is_absolute() else base / candidate).resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ValueError(
+                f"path escapes the repository boundary: {resolved}"
+            ) from exc
+        return resolved
 
     def _relative_path(self, path: Path) -> str:
         try:
@@ -429,7 +471,7 @@ class IntegrationAuditor:
             def _status_probe(instance: Any = instance) -> float:
                 status = instance.get_status()
                 if not isinstance(status, dict):
-                    return 0.5
+                    return _report_uninstrumented(instance, "get_status did not return a dict")
                 if "health_score" in status:
                     return _clamp01(float(status["health_score"]))
                 if "health" in status and isinstance(status["health"], (int, float)):
@@ -442,7 +484,9 @@ class IntegrationAuditor:
                     return 1.0 if status["passed"] else 0.30
                 if "running" in status:
                     return 1.0 if status["running"] else 0.25
-                return 0.55
+                return _report_uninstrumented(
+                    instance, "get_status exposes no recognised health field"
+                )
 
             return _status_probe
 
@@ -490,7 +534,20 @@ class RuntimeWatchdogAuditor:
         findings: list[ResilienceFinding] = []
 
         lock_snapshot = self._lock_watchdog_snapshot()
-        if lock_snapshot["active_count"] > 0:
+        if lock_snapshot.get("observed") is False:
+            findings.append(
+                ResilienceFinding(
+                    kind="telemetry_unavailable",
+                    severity="error",
+                    subsystem="runtime_locking",
+                    message=(
+                        "lock watchdog telemetry unavailable: "
+                        f"{lock_snapshot.get('error', 'unknown error')}"
+                    ),
+                    metadata=lock_snapshot,
+                )
+            )
+        elif lock_snapshot["active_count"] > 0:
             hottest = lock_snapshot["locks"][0]
             held = float(hottest.get("held_duration_s", 0.0) or 0.0)
             threshold = float(lock_snapshot.get("threshold_s", 180.0) or 180.0)
@@ -516,7 +573,20 @@ class RuntimeWatchdogAuditor:
                 )
 
         task_stats = self._task_tracker_stats()
-        if task_stats["unsupervised_active"] >= 80:
+        if task_stats.get("observed") is False:
+            findings.append(
+                ResilienceFinding(
+                    kind="telemetry_unavailable",
+                    severity="error",
+                    subsystem="runtime_tasks",
+                    message=(
+                        "task tracker telemetry unavailable: "
+                        f"{task_stats.get('error', 'unknown error')}"
+                    ),
+                    metadata=task_stats,
+                )
+            )
+        elif task_stats["unsupervised_active"] >= 80:
             findings.append(
                 ResilienceFinding(
                     kind="unsupervised_task_pressure",
@@ -568,10 +638,15 @@ class RuntimeWatchdogAuditor:
             return dict(lock_watchdog.get_snapshot())
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_resilience', exc)
+            # Unavailable instrumentation is UNKNOWN risk, not zero risk.
+            # Returning bare zeros here suppressed every downstream finding,
+            # so the mesh reported a clean bill of health precisely when it
+            # had lost the ability to see.
             return {
                 "active_count": 0,
                 "locks": [],
                 "threshold_s": 180.0,
+                "observed": False,
                 "error": str(exc),
             }
 
@@ -583,12 +658,14 @@ class RuntimeWatchdogAuditor:
             stats = dict(tracker.get_stats())
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('autonomous_resilience', exc)
+            # Same contract as the lock snapshot: unreadable != healthy.
             return {
                 "active": 0,
                 "high_water": 0,
                 "total_tracked": 0,
                 "max_concurrent": 0,
                 "unsupervised_active": 0,
+                "observed": False,
                 "error": str(exc),
             }
 
@@ -615,7 +692,19 @@ class RuntimeWatchdogAuditor:
         return stats
 
     def _stability_snapshot(self) -> dict[str, Any]:
-        guardian = self._service_resolver("stability_guardian")
+        # The resolver is external and may raise. Unguarded, that took down
+        # audit() itself — the resilience mesh crashing on the very failure it
+        # exists to report. Treat it as the unavailable case it is.
+        try:
+            guardian = self._service_resolver("stability_guardian")
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation('autonomous_resilience', exc)
+            return {
+                "healthy": False,
+                "status": "unavailable",
+                "message": f"stability guardian lookup failed: {exc}",
+                "required_probe_missing": True,
+            }
         if guardian is None:
             return {
                 "healthy": False,
@@ -884,13 +973,24 @@ class VerifierGuidedRepairPipeline:
 
         file_path = context.get("file_path")
         if file_path and context.get("line_number"):
+            # Caller-supplied repair target. A relative "../../" used to be
+            # inserted with no resolution or containment check at all, and an
+            # absolute outside path raised ValueError from relative_to() that
+            # the OSError-only handler did not catch. Both are now resolved and
+            # confined to the repository before they can become a repair target.
             try:
-                candidate = Path(file_path)
-                if candidate.is_absolute():
-                    candidate = candidate.resolve().relative_to(self.base_dir)
-                candidates.insert(0, (str(candidate), int(context["line_number"])))
-            except OSError:
-                pass  # no-op: intentional
+                base = Path(self.base_dir).resolve()
+                raw = Path(file_path).expanduser()
+                resolved = (raw if raw.is_absolute() else base / raw).resolve()
+                rel = resolved.relative_to(base)
+                candidates.insert(0, (str(rel), int(context["line_number"])))
+            except (OSError, ValueError, RuntimeError, TypeError) as exc:
+                record_degradation(
+                    "autonomous_resilience",
+                    exc,
+                    severity="warning",
+                    action="rejected a repair target outside the repository",
+                )
 
         if not candidates:
             return None

@@ -188,3 +188,90 @@ def test_verifier_guided_patch_pipeline_uses_self_modifier(tmp_path):
     assert modifier.code_repair.calls[0][0] == "core/module.py"
     assert modifier.code_repair.calls[0][1] == 1
     assert modifier.applied
+
+
+# ── CP126 remediation regressions ───────────────────────────────────────────
+
+
+def test_static_auditor_refuses_paths_outside_the_repository(tmp_path):
+    """An absolute path used to be returned as-is, letting the auditor scan —
+    and mint repair candidates for — files outside the repo entirely."""
+    import pytest
+
+    repo = tmp_path / "repo"
+    (repo / "core").mkdir(parents=True)
+    outside = tmp_path / "outside" / "secret.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("x = 1\n", encoding="utf-8")
+
+    auditor = StaticFaultAuditor(repo)
+
+    with pytest.raises(ValueError, match="escapes the repository"):
+        auditor._resolve_path(outside)
+    with pytest.raises(ValueError, match="escapes the repository"):
+        auditor._resolve_path("../outside/secret.py")
+    # A legitimate in-repo path still resolves.
+    assert auditor._resolve_path("core/thing.py") == (repo / "core" / "thing.py").resolve()
+
+
+def test_repair_target_from_context_is_confined_to_the_repository(tmp_path):
+    """A caller-supplied '../../' target was inserted with no containment check
+    at all, and an absolute outside path raised an uncaught ValueError."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    pipeline = VerifierGuidedRepairPipeline(
+        base_dir=repo, service_resolver=lambda name: None
+    )
+
+    escaped = pipeline._locate_target(
+        "", context={"file_path": "../../etc/passwd", "line_number": 3}
+    )
+    assert escaped is None
+
+    absolute = pipeline._locate_target(
+        "", context={"file_path": str(tmp_path / "outside.py"), "line_number": 3}
+    )
+    assert absolute is None
+
+    inside = pipeline._locate_target(
+        "", context={"file_path": "core/mod.py", "line_number": 7}
+    )
+    assert inside == ("core/mod.py", 7)
+
+
+def test_unavailable_watchdog_telemetry_reports_unknown_not_zero_risk():
+    """Zero counts from unreadable instrumentation suppressed every finding, so
+    the mesh reported a clean bill of health exactly when it had gone blind."""
+
+    def _resolver(name):
+        raise RuntimeError(f"{name} unavailable")
+
+    auditor = RuntimeWatchdogAuditor(service_resolver=_resolver)
+    snapshot = auditor._lock_watchdog_snapshot()
+
+    assert snapshot["observed"] is False
+    assert snapshot["active_count"] == 0   # still zero...
+    # ...but the audit now says so out loud instead of staying silent.
+    report = auditor.audit()
+    kinds = {finding["kind"] for finding in report["findings"]}
+    assert "telemetry_unavailable" in kinds
+    assert report["threat_score"] > 0.0
+
+
+def test_uninstrumented_service_is_not_scored_as_healthy():
+    """0.55 sat in the healthy band, so a service exposing no health field was
+    indistinguishable from a working one."""
+    import core.adaptation.autonomous_resilience as module
+
+    class _Opaque:
+        def get_status(self):
+            return {"some_unrelated_field": 1}
+
+    module._reported_uninstrumented.clear()
+    probe = IntegrationAuditor._health_probe_for(_Opaque())
+
+    assert probe is not None
+    assert probe() == module._UNKNOWN_HEALTH_SCORE
+    assert module._UNKNOWN_HEALTH_SCORE < 0.55
+    # The gap was surfaced rather than silently absorbed.
+    assert "_Opaque" in module._reported_uninstrumented
