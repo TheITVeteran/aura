@@ -1,6 +1,7 @@
 import asyncio
 import builtins
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -11,6 +12,45 @@ from types import SimpleNamespace
 import pytest
 
 import core.runtime.boot_safety as boot_safety_module
+@pytest.fixture(autouse=True)
+def _restore_process_environment():
+    """Put os.environ back after every test in this file.
+
+    ORDER-DEPENDENCE DEFECT, 2026-07-25.
+    ``test_inference_gate_disables_boot_prewarm_under_safe_desktop_boot``
+    passed alone and failed under roughly half of pytest-randomly's seeds.
+
+    The cause is not a test that forgot to clean up. This file is the only
+    one that invokes a real boot entry point — ``aura_main.main()`` — and
+    that entry point's JOB is to configure the process environment for the
+    desktop runtime. ``monkeypatch`` undoes what monkeypatch set; it knows
+    nothing about the twenty-four variables production code writes directly
+    with ``os.environ[...] = ...`` while it runs.
+
+    ``AURA_DEFERRED_CORTEX_PREWARM=1`` was the one that showed up, because
+    the prewarm test asserts a False that becomes True the moment that
+    variable is set. The rest leaked silently and are worse company:
+    ``AURA_SECURITY_PROFILE=owner_autonomous``,
+    ``AURA_ALLOW_NETWORK_ACCESS=1``, the memory-governor thresholds, the RSS
+    caps, ``AURA_SERVER_PORT``. Any test running afterwards in the same
+    process inherited a fully configured owner-autonomous desktop runtime,
+    which can make a security or admission test pass for a reason that has
+    nothing to do with what it claims to check.
+
+    Restoring the whole environment is the fix that matches the cause: the
+    boot path is allowed to write env — that is what it is for — and a test
+    process is not allowed to keep the result.
+    """
+    snapshot = dict(os.environ)
+    try:
+        yield
+    finally:
+        for key in [k for k in os.environ if k not in snapshot]:
+            del os.environ[key]
+        for key, value in snapshot.items():
+            if os.environ.get(key) != value:
+                os.environ[key] = value
+
 from core.brain.inference_gate import InferenceGate
 from core.brain.llm_health_router import build_router_from_config
 from core.config import PROJECT_ROOT, config
@@ -358,6 +398,10 @@ def test_desktop_resource_guard_does_not_disable_background_local_cognition(monk
 def test_inference_gate_disables_boot_prewarm_under_safe_desktop_boot(monkeypatch):
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
     monkeypatch.delenv("AURA_AUTO_PREWARM_CORTEX", raising=False)
+    # Safe boot only skips the IMPLICIT prewarm; an explicit setting is
+    # honoured on purpose. State it, so the test cannot be decided by
+    # whatever ran before it.
+    monkeypatch.delenv("AURA_DEFERRED_CORTEX_PREWARM", raising=False)
 
     assert InferenceGate._boot_should_eager_warmup() is False
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False
