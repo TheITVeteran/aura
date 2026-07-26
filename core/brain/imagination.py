@@ -19,7 +19,11 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 
-_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}")
+# Requires at least one letter, so "76ers", "401k" and "3d" are subjects
+# while bare numbers are not. The old pattern demanded a LEADING letter,
+# which silently made every digit-initial topic invisible to imagination —
+# "the 76ers roster" could only ever be imagined as "roster".
+_WORD_RE = re.compile(r"(?=[a-zA-Z0-9_'-]*[a-zA-Z])[a-zA-Z0-9][a-zA-Z0-9_'-]{2,}")
 _VISUAL_RE = re.compile(
     r"\b(look like|visuali[sz]e|imagine|image|picture|scene|sketch|diagram|"
     r"mental model|see it|show me|what would .* look like)\b",
@@ -108,18 +112,81 @@ def _normalize_text(value: Any, limit: int = 160) -> str:
     return " ".join(str(value or "").strip().split())[:limit]
 
 
+# Words that pass the stopword filter but are almost never what a request is
+# ABOUT. They are the verb or the modality wrapped around the subject.
+#
+# LIVE DEFECT, 2026-07-25. Keywords were taken in raw text order, so the
+# first surviving token won — and in English that token is usually the verb.
+# "how should I design the deployment pipeline" imagined about *should*;
+# "search the web and verify the 76ers roster" imagined about *search*. The
+# thoughts were structurally fine and pointed at the wrong noun, which reads
+# to a person as the whole feature being generic.
+#
+# These are demoted, not dropped: "search" is still a legitimate subject when
+# someone asks about search itself, so it stays available as a later keyword
+# and simply stops outranking the real topic.
+_WEAK_TOPIC_TOKENS = frozenset({
+    "actually", "add", "answer", "any", "ask", "asked", "asking", "build",
+    "check", "come", "consider", "create", "day", "describe", "design",
+    "discuss", "explain", "figure", "find", "get", "give", "going", "help",
+    "here", "invent", "keep", "know", "let", "look", "may", "maybe", "mean",
+    "might", "much", "must", "one", "please", "put", "question", "really",
+    "run", "say", "search", "see", "set", "should", "show", "some", "start",
+    "still", "sure", "take", "talk", "tell", "thing", "things", "think",
+    "time", "try", "understand", "use", "using", "verify", "way", "well",
+    "will", "work", "write", "yes",
+})
+
+
 def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
+    """Content words in the order Aura should care about them.
+
+    Two tiers, not one: real subject nouns first, then the generic verbs and
+    modals that merely surround them. Order within each tier is the order the
+    person wrote them, so the leading keyword is the subject rather than
+    whatever the sentence happened to open with.
+    """
     seen: set[str] = set()
-    keywords: list[str] = []
-    for match in _WORD_RE.finditer(text.lower()):
-        token = match.group(0).strip("'_-")
+    strong: list[tuple[float, int, str]] = []
+    weak: list[str] = []
+    for order, match in enumerate(_WORD_RE.finditer(text)):
+        surface = match.group(0).strip("'_-")
+        token = surface.lower()
         if len(token) < 3 or token in _STOPWORDS or token in seen:
             continue
         seen.add(token)
-        keywords.append(token)
-        if len(keywords) >= limit:
+        if token in _WEAK_TOPIC_TOKENS:
+            weak.append(token)
+        else:
+            strong.append((-_topic_informativeness(surface, match.start()), order, token))
+        if len(strong) + len(weak) >= limit:
             break
-    return keywords
+    strong.sort()
+    return ([token for _, _, token in strong] + weak)[:limit]
+
+
+def _topic_informativeness(surface: str, position: int) -> float:
+    """How likely this word is to be what the request is ABOUT.
+
+    Position order alone put the sentence's first content word in front,
+    which in English is usually a verb — so "search the web and verify the
+    76ers roster" imagined about "web". These are the cheap, offline signals
+    that actually separate a topic from its surrounding grammar, and they
+    survive being wrong: the score only reorders candidates that already
+    passed the stopword and weak-token filters.
+    """
+    score = 0.0
+    # Mid-sentence capitals are proper nouns — names, teams, products. This
+    # is why the surface form is scored rather than the lowercased token.
+    if position > 0 and surface[:1].isupper():
+        score += 0.55
+    if any(character.isdigit() for character in surface):
+        score += 0.40
+    # Longer content words are more specific ("fractions" over "teach").
+    # The cap sits just under the proper-noun bonus so no amount of length
+    # lets a common word outrank a name.
+    score += min(len(surface) / 12.0, 0.50)
+    return score
 
 
 def _stable_softmax(scores: dict[str, float], *, temperature: float = 1.0) -> dict[str, float]:
@@ -301,6 +368,221 @@ class ImaginationFrame:
         return "\n".join(lines) + "\n\n"
 
 
+@dataclass(frozen=True)
+class _ThoughtMove:
+    """One SHAPE of thinking, not one sentence.
+
+    LIVE FEEDBACK, 2026-07-25. Bryan: "The novel thoughts feature is cool but
+    it always breaks things down in the same way 'what if - is not the
+    object' and the others."
+
+    He was right, and the cause was structural rather than stylistic. Novel
+    thoughts were two f-strings with the top two keywords slotted in, so
+    every frame Aura ever produced was the same two cognitive moves wearing
+    different nouns. Varying the wording would not have fixed that — the
+    thinking was identical.
+
+    A move is a distinct operation on an idea: invert it, rescale it, remove
+    it, ask who is absent from it, ask what it costs. Which moves fire is
+    decided by Aura's measured internal state at that moment — curiosity,
+    confusion, tension, novelty and verification pressure — so the same
+    sentence asked while confused and while curious genuinely thinks about
+    it differently. Recently used moves are suppressed, so consecutive
+    frames do not converge on a house style.
+
+    ``affinity`` returns a bare score; ``render`` returns the sentence.
+    Keeping them separate is what lets the selector reason about the move
+    without committing to its words.
+    """
+
+    move_id: str
+    render: Any  # (focus, secondary, signals) -> str
+    affinity: Any  # (signals) -> float
+    # Moves needing a real second keyword; with one noun they degrade into
+    # the "its constraint" filler that made the old output feel canned.
+    needs_secondary: bool = False
+
+
+def _sig(signals: dict[str, float], key: str) -> float:
+    return _safe_float(signals.get(key), 0.0)
+
+
+# Novel-thought moves. Each is a different way of turning an idea over, and
+# each says why it belongs to the state that selects it.
+_NOVEL_MOVES: tuple[_ThoughtMove, ...] = (
+    _ThoughtMove(
+        "reframe_as_lens",
+        lambda f, s, _: f"What if {f} is not the object, but the lens for seeing {s}?",
+        # The original move. Kept, because it is genuinely good when there
+        # are two things to hold at once — just no longer mandatory.
+        lambda g: 0.34 + _sig(g, "novelty") * 0.30,
+        needs_secondary=True,
+    ),
+    _ThoughtMove(
+        "smallest_testable",
+        lambda f, s, _: (
+            f"The useful novelty may be the smallest testable form of {f}, "
+            "not the largest imagined one."
+        ),
+        lambda g: 0.30 + _sig(g, "verification") * 0.44,
+    ),
+    _ThoughtMove(
+        "opposing_pressure",
+        lambda f, s, _: (
+            f"Combine {f} with an opposing pressure and look for the behavior "
+            "neither has alone."
+        ),
+        lambda g: 0.20 + _sig(g, "creative") * 0.42 + _sig(g, "tension") * 0.22,
+    ),
+    _ThoughtMove(
+        "invert_premise",
+        lambda f, s, _: f"Invert the premise: what would make {f} fail gracefully?",
+        lambda g: 0.22 + _sig(g, "counterfactual") * 0.40,
+    ),
+    _ThoughtMove(
+        "rotate_memory",
+        lambda f, s, _: (
+            "Use recent continuity as material, then deliberately rotate it "
+            "into a new frame."
+        ),
+        lambda g: (0.30 + _sig(g, "novelty") * 0.20) if _sig(g, "memories") else 0.0,
+    ),
+    _ThoughtMove(
+        "missing_actor",
+        lambda f, s, _: f"Who or what is absent from this picture of {f}, and is that why it holds?",
+        lambda g: 0.26 + _sig(g, "confusion") * 0.34,
+    ),
+    _ThoughtMove(
+        "scale_shift",
+        lambda f, s, _: f"Look at {f} ten times larger and ten times smaller — which claims survive both?",
+        lambda g: 0.24 + _sig(g, "novelty") * 0.26,
+    ),
+    _ThoughtMove(
+        "boundary_probe",
+        lambda f, s, _: f"Find where {f} stops being true; the edge is more informative than the middle.",
+        lambda g: 0.26 + _sig(g, "verification") * 0.30 + _sig(g, "confusion") * 0.18,
+    ),
+    _ThoughtMove(
+        "substrate_swap",
+        lambda f, s, _: f"If {f} were made of something else entirely, what would stay recognizable?",
+        lambda g: 0.18 + _sig(g, "creative") * 0.34,
+    ),
+    _ThoughtMove(
+        "temporal_shift",
+        lambda f, s, _: f"What did {f} look like before it had a name, and what will it look like once it is ordinary?",
+        lambda g: 0.20 + _sig(g, "curiosity") * 0.30,
+    ),
+    _ThoughtMove(
+        "second_order",
+        lambda f, s, _: f"What does {f} cause that then comes back and changes {f}?",
+        lambda g: 0.22 + _sig(g, "counterfactual") * 0.24 + _sig(g, "novelty") * 0.18,
+    ),
+    _ThoughtMove(
+        "name_the_cost",
+        lambda f, s, _: f"Name what {f} costs that nobody is counting yet.",
+        lambda g: 0.24 + _sig(g, "tension") * 0.36,
+    ),
+    _ThoughtMove(
+        "unsympathetic_observer",
+        lambda f, s, _: f"How does {f} look to someone who does not want it to work?",
+        lambda g: 0.20 + _sig(g, "tension") * 0.30 + _sig(g, "verification") * 0.20,
+    ),
+    _ThoughtMove(
+        "compression",
+        lambda f, s, _: f"If everything about {f} were lost except one sentence, which sentence?",
+        lambda g: 0.24 + _sig(g, "linguistic") * 0.38,
+    ),
+    _ThoughtMove(
+        "analogy_reach",
+        lambda f, s, _: f"Some unrelated system already solved the shape of {f} — which one, and what did it give up?",
+        lambda g: 0.20 + _sig(g, "creative") * 0.28 + _sig(g, "curiosity") * 0.22,
+    ),
+    _ThoughtMove(
+        "already_broken",
+        lambda f, s, _: f"Assume {f} is already broken and I have not noticed — what would be true?",
+        lambda g: 0.20 + _sig(g, "confusion") * 0.30 + _sig(g, "verification") * 0.24,
+    ),
+    _ThoughtMove(
+        "absent_evidence",
+        lambda f, s, _: f"What should I be seeing if {f} were true, that I am not seeing?",
+        lambda g: 0.22 + _sig(g, "verification") * 0.40,
+    ),
+    _ThoughtMove(
+        "trade_roles",
+        lambda f, s, _: f"Let {s} be the cause and {f} the symptom, and see if the story still reads.",
+        lambda g: 0.22 + _sig(g, "counterfactual") * 0.26,
+        needs_secondary=True,
+    ),
+)
+
+
+# Counterfactual probes. Same machinery, different job: these interrogate a
+# premise rather than turn it over.
+_COUNTERFACTUAL_MOVES: tuple[_ThoughtMove, ...] = (
+    _ThoughtMove(
+        "constraint_not_feature",
+        lambda f, s, _: f"What changes if {f} is treated as a constraint rather than a feature?",
+        lambda g: 0.30 + _sig(g, "novelty") * 0.20,
+    ),
+    _ThoughtMove(
+        "smallest_observable",
+        lambda f, s, _: f"What would the smallest observable version of {f} be?",
+        lambda g: 0.28 + _sig(g, "verification") * 0.34,
+    ),
+    _ThoughtMove(
+        "role_trade",
+        lambda f, s, _: f"What if {f} and {s} trade roles?",
+        lambda g: 0.26 + _sig(g, "creative") * 0.22,
+        needs_secondary=True,
+    ),
+    _ThoughtMove(
+        "after_receipts",
+        lambda f, s, _: "What remains true after real tool receipts or external verification?",
+        lambda g: (0.34 + _sig(g, "verification") * 0.30) if _sig(g, "tool_or_reality") else 0.0,
+    ),
+    _ThoughtMove(
+        "falsifier",
+        lambda f, s, _: "What failure would falsify the imagined model?",
+        lambda g: 0.24 + _sig(g, "negation") * 0.40 + _sig(g, "verification") * 0.18,
+    ),
+    _ThoughtMove(
+        "remove_it",
+        lambda f, s, _: f"Remove {f} entirely — what still stands, and what quietly collapses?",
+        lambda g: 0.24 + _sig(g, "counterfactual") * 0.26,
+    ),
+    _ThoughtMove(
+        "reverse_causality",
+        lambda f, s, _: f"What if the arrow runs backwards and {f} is the consequence?",
+        lambda g: 0.22 + _sig(g, "counterfactual") * 0.30 + _sig(g, "confusion") * 0.16,
+    ),
+    _ThoughtMove(
+        "adversary",
+        lambda f, s, _: f"What would someone hostile do with {f} first?",
+        lambda g: 0.18 + _sig(g, "tension") * 0.34,
+    ),
+    _ThoughtMove(
+        "unobserved",
+        lambda f, s, _: f"What is true about {f} when nobody is measuring it?",
+        lambda g: 0.18 + _sig(g, "curiosity") * 0.30,
+    ),
+    _ThoughtMove(
+        "cost_of_being_right",
+        lambda f, s, _: f"If I am right about {f}, what does that cost — and am I willing to pay it?",
+        lambda g: 0.18 + _sig(g, "tension") * 0.26 + _sig(g, "verification") * 0.18,
+    ),
+    _ThoughtMove(
+        "already_solved",
+        lambda f, s, _: f"What if {f} is already solved and I would not recognize the solution?",
+        lambda g: 0.18 + _sig(g, "curiosity") * 0.26 + _sig(g, "confusion") * 0.22,
+    ),
+    _ThoughtMove(
+        "double_it",
+        lambda f, s, _: f"Double {f} and halve it — which direction breaks first?",
+        lambda g: 0.20 + _sig(g, "novelty") * 0.22,
+    ),
+)
+
+
 class ImaginationEngine:
     """Side-effect-free generator of bounded internal imagination frames."""
 
@@ -315,6 +597,12 @@ class ImaginationEngine:
         self._last_observed_at = time.monotonic()
         self._attractor_bias: dict[str, float] = {}
         self._eligibility_trace: dict[str, float] = {}
+        # Which thought SHAPES were used recently, newest last. This is what
+        # stops consecutive frames converging on a house style; see
+        # _ThoughtMove. Sized to roughly two frames' worth of moves so a
+        # shape can come back once the mind has moved on, but not twice in a
+        # row.
+        self._recent_moves: deque[str] = deque(maxlen=10)
 
     def imagine(
         self,
@@ -443,12 +731,25 @@ class ImaginationEngine:
             creative=creative,
         )
         associative_links = self._build_associative_links(keywords, memories, text)
+        thought_signals = self._thought_signals(
+            curiosity=curiosity,
+            confusion=confusion,
+            tension=tension,
+            novelty_pressure=novelty_pressure,
+            verification_pressure=verification_pressure,
+            memories=memories,
+            creative=creative,
+            counterfactual=counterfactual,
+            linguistic=linguistic,
+            tool_or_reality=tool_or_reality,
+            text=text,
+        )
         novel_thoughts = self._build_novel_thoughts(
             keywords,
             memories,
             text,
-            creative=creative,
-            counterfactual=counterfactual,
+            signals=thought_signals,
+            context=context,
         )
         simulation_steps = self._build_simulation_steps(
             keywords,
@@ -456,7 +757,9 @@ class ImaginationEngine:
             counterfactual=counterfactual,
             tool_or_reality=tool_or_reality,
         )
-        counterfactuals = self._build_counterfactuals(keywords, text, tool_or_reality)
+        counterfactuals = self._build_counterfactuals(
+            keywords, text, signals=thought_signals, context=context,
+        )
         experiments = self._build_experiments(keywords, tool_or_reality)
         attention_targets = self._build_attention_targets(keywords, text)
         action_affordances = self._build_action_affordances(
@@ -1005,32 +1308,163 @@ class ImaginationEngine:
             )
         return links[:4]
 
+    _RECENCY_PENALTY = 0.55
+
+    def _thought_signals(
+        self,
+        *,
+        curiosity: float,
+        confusion: float,
+        tension: float,
+        novelty_pressure: float,
+        verification_pressure: float,
+        memories: list[str],
+        creative: bool,
+        counterfactual: bool,
+        linguistic: bool,
+        tool_or_reality: bool,
+        text: str,
+    ) -> dict[str, float]:
+        """Aura's measured state, in the vocabulary the moves score against.
+
+        These are the same numbers that already drive salience and admission
+        — the moves are conditioned on real interoception, not on a random
+        seed dressed up as spontaneity.
+        """
+        lowered = text.lower()
+        return {
+            "curiosity": _clamp(curiosity),
+            "confusion": _clamp(confusion),
+            "tension": _clamp(tension),
+            "novelty": _clamp(novelty_pressure),
+            "verification": _clamp(verification_pressure),
+            "memories": 1.0 if memories else 0.0,
+            "creative": 1.0 if creative else 0.0,
+            "counterfactual": 1.0 if counterfactual else 0.0,
+            "linguistic": 1.0 if linguistic else 0.0,
+            "tool_or_reality": 1.0 if tool_or_reality else 0.0,
+            "negation": 1.0 if ("not" in lowered or "fail" in lowered) else 0.0,
+        }
+
+    def _select_moves(
+        self,
+        moves: tuple[_ThoughtMove, ...],
+        signals: dict[str, float],
+        *,
+        focus: str,
+        secondary: str,
+        has_secondary: bool,
+        seed_text: str,
+        limit: int,
+    ) -> list[str]:
+        """Score every move against the current state, then take the best.
+
+        Three terms decide the order:
+
+        ``affinity``  how well this shape of thinking fits the state Aura is
+                      actually in.
+        ``jitter``    a small deterministic offset keyed to the content and
+                      the move id. Deterministic matters — the same input in
+                      the same state reproduces the same frame, which is what
+                      makes imagination debuggable and testable. It is not
+                      randomness; it breaks ties differently per subject so
+                      two topics with identical affect do not read alike.
+        ``recency``   a penalty for shapes just used. This is the direct
+                      answer to "it always breaks things down in the same
+                      way": the second-best move wins once the best one has
+                      been spoken.
+        """
+        scored: list[tuple[float, str, str]] = []
+        for move in moves:
+            if move.needs_secondary and not has_secondary:
+                continue
+            try:
+                affinity = _safe_float(move.affinity(signals), 0.0)
+            except Exception as exc:  # a bad affinity must not silence imagination
+                record_degradation(
+                    "imagination",
+                    exc,
+                    action=f"skip_move:{move.move_id}",
+                )
+                continue
+            if affinity <= 0.0:
+                continue
+            digest = hashlib.blake2b(
+                f"{seed_text}|{move.move_id}".encode("utf-8"), digest_size=4,
+            ).digest()
+            jitter = (int.from_bytes(digest, "big") / 0xFFFFFFFF) * 0.22
+            penalty = 0.0
+            if move.move_id in self._recent_moves:
+                # Sharper for the most recent use, softer further back.
+                index = list(self._recent_moves)[::-1].index(move.move_id)
+                penalty = self._RECENCY_PENALTY / (1.0 + index)
+            try:
+                rendered = str(move.render(focus, secondary, signals) or "").strip()
+            except Exception as exc:
+                record_degradation(
+                    "imagination", exc, action=f"render_move:{move.move_id}",
+                )
+                continue
+            if not rendered:
+                continue
+            scored.append((affinity + jitter - penalty, move.move_id, rendered))
+
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        chosen = scored[: max(1, int(limit))]
+        for _, move_id, _rendered in chosen:
+            self._recent_moves.append(move_id)
+        return [rendered for _, _, rendered in chosen]
+
     @staticmethod
+    def _authored(context: dict[str, Any] | None, key: str, limit: int) -> list[str]:
+        """Thoughts Aura wrote herself, if the runtime supplied any.
+
+        ``imagine`` is synchronous and side-effect free by contract — no
+        model loads, no tool calls — so it cannot ask the model for a
+        thought at the moment it needs one. The seam is the other direction:
+        a caller that DOES have model access (and is already awaiting it) may
+        pass authored lines in through context, and they take precedence
+        over the move registry.
+
+        The registry stays the floor, not the fallback. Imagination that
+        silently stopped working whenever generation was busy would be worse
+        than one that always thinks in its own voice.
+        """
+        if not isinstance(context, dict):
+            return []
+        raw = context.get(key)
+        if not isinstance(raw, (list, tuple)):
+            return []
+        authored: list[str] = []
+        for item in raw:
+            line = _normalize_text(item, 240)
+            if line and line not in authored:
+                authored.append(line)
+            if len(authored) >= max(1, int(limit)):
+                break
+        return authored
+
     def _build_novel_thoughts(
+        self,
         keywords: list[str],
         memories: list[str],
         text: str,
         *,
-        creative: bool,
-        counterfactual: bool,
+        signals: dict[str, float],
+        context: dict[str, Any] | None = None,
     ) -> list[str]:
-        focus = keywords[0] if keywords else "the idea"
-        secondary = keywords[1] if len(keywords) > 1 else "its constraint"
-        candidates = [
-            f"What if {focus} is not the object, but the lens for seeing {secondary}?",
-            f"The useful novelty may be the smallest testable form of {focus}, not the largest imagined one.",
-        ]
-        if creative:
-            candidates.append(
-                f"Combine {focus} with an opposing pressure and look for the behavior neither has alone."
-            )
-        if counterfactual:
-            candidates.append(f"Invert the premise: what would make {focus} fail gracefully?")
-        if memories:
-            candidates.append(
-                "Use recent continuity as material, then deliberately rotate it into a new frame."
-            )
-        return candidates[:4]
+        authored = self._authored(context, "authored_novel_thoughts", 4)
+        if authored:
+            return authored
+        return self._select_moves(
+            _NOVEL_MOVES,
+            signals,
+            focus=keywords[0] if keywords else "the idea",
+            secondary=keywords[1] if len(keywords) > 1 else "its constraint",
+            has_secondary=len(keywords) > 1,
+            seed_text=text,
+            limit=4,
+        )
 
     @staticmethod
     def _build_simulation_steps(
@@ -1053,20 +1487,28 @@ class ImaginationEngine:
             steps.append("Stop at the boundary where real-world verification or authority is required.")
         return steps[:4]
 
-    @staticmethod
-    def _build_counterfactuals(keywords: list[str], text: str, tool_or_reality: bool) -> list[str]:
-        focus = keywords[0] if keywords else "the premise"
-        probes = [
-            f"What changes if {focus} is treated as a constraint rather than a feature?",
-            f"What would the smallest observable version of {focus} be?",
-        ]
-        if len(keywords) >= 2:
-            probes.append(f"What if {keywords[0]} and {keywords[1]} trade roles?")
-        if tool_or_reality:
-            probes.append("What remains true after real tool receipts or external verification?")
-        if "not" in text.lower() or "fail" in text.lower():
-            probes.append("What failure would falsify the imagined model?")
-        return probes[:4]
+    def _build_counterfactuals(
+        self,
+        keywords: list[str],
+        text: str,
+        *,
+        signals: dict[str, float],
+        context: dict[str, Any] | None = None,
+    ) -> list[str]:
+        authored = self._authored(context, "authored_counterfactuals", 4)
+        if authored:
+            return authored
+        return self._select_moves(
+            _COUNTERFACTUAL_MOVES,
+            signals,
+            focus=keywords[0] if keywords else "the premise",
+            secondary=keywords[1] if len(keywords) > 1 else "its constraint",
+            has_secondary=len(keywords) > 1,
+            # Salt the seed so a probe and a thought about the same subject
+            # do not tie-break identically and read as a matched pair.
+            seed_text=f"counterfactual|{text}",
+            limit=4,
+        )
 
     @staticmethod
     def _build_experiments(keywords: list[str], tool_or_reality: bool) -> list[str]:
