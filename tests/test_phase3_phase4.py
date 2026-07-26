@@ -442,3 +442,87 @@ class TestLongHorizonStability(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestIntrinsicMotivationCP126(unittest.TestCase):
+    """CP126 remediation regressions for core/adaptation/intrinsic_motivation.py"""
+
+    def test_deteriorating_competence_is_not_rewarded_as_progress(self):
+        """abs(δC) paid out identically for collapsing and improving competence,
+        so a goal Aura was rapidly getting worse at looked maximally worth
+        practising."""
+        from core.adaptation.intrinsic_motivation import CompetenceMotivation
+
+        cm = CompetenceMotivation()
+        # Start strong, then collapse: competence derivative goes negative.
+        for _ in range(15):
+            cm.record_attempt("skill", success=True)
+        rewards = [cm.record_attempt("skill", success=False).reward for _ in range(15)]
+
+        self.assertTrue(all(r >= 0.0 for r in rewards))
+        self.assertEqual(max(rewards), 0.0, "deterioration must earn no progress reward")
+
+    def test_exact_repeat_is_not_maximally_novel(self):
+        """min(1, 0.1/density) clamped to 1.0 once a few states were archived,
+        so an exact repeat still scored maximally novel."""
+        from core.adaptation.intrinsic_motivation import NoveltyMotivation
+
+        nm = NoveltyMotivation()
+        state = np.array([1.0, 2.0, 3.0])
+        for _ in range(20):
+            nm.observe_and_reward(state, "same")
+
+        repeat = nm.compute_novelty(state)
+        fresh = nm.compute_novelty(np.array([500.0, -500.0, 900.0]))
+
+        self.assertLess(repeat, 0.5, "an exact repeat must not read as novel")
+        self.assertGreater(fresh, repeat)
+
+    def test_mismatched_state_dimension_does_not_raise(self):
+        """The archive never enforced a width, so a differently-shaped state
+        made the array construction ragged or the subtraction raise."""
+        from core.adaptation.intrinsic_motivation import NoveltyMotivation
+
+        nm = NoveltyMotivation()
+        nm.observe_and_reward(np.zeros(4), "four")
+        # A 7-wide state must be handled, not crash.
+        value = nm.compute_novelty(np.ones(7))
+        self.assertGreaterEqual(value, 0.0)
+        self.assertLessEqual(value, 1.0)
+
+    def test_evidence_is_not_replayed_on_every_feed(self):
+        """Without a cursor each feed resubmitted the whole history, inflating
+        DVG evidence counts without a single new observation."""
+        from core.adaptation.intrinsic_motivation import IntrinsicMotivationEngine
+
+        engine = IntrinsicMotivationEngine()
+        for i in range(20):
+            engine.record_competence("skill", success=(i > 5))
+
+        first = engine.feed_to_value_graph()
+        second = engine.feed_to_value_graph()
+
+        self.assertGreaterEqual(first, 0)
+        self.assertEqual(second, 0, "a feed with no new observations must submit nothing")
+
+    def test_intrinsic_evidence_is_not_labelled_free_energy_reduction(self):
+        """Nothing here computes a free-energy quantity."""
+        import inspect
+
+        from core.adaptation import intrinsic_motivation
+
+        src = inspect.getsource(intrinsic_motivation.IntrinsicMotivationEngine.feed_to_value_graph)
+        self.assertNotIn("FREE_ENERGY_REDUCTION", src)
+        self.assertIn("OUTCOME_QUALITY", src)
+
+    def test_proposal_evidence_clusters_stay_bounded(self):
+        from core.adaptation.intrinsic_motivation import IntrinsicMotivationEngine
+
+        engine = IntrinsicMotivationEngine()
+        engine._reward_threshold = 0.0     # everything counts as "high"
+        engine._max_cluster_evidence = 25
+        for i in range(200):
+            engine.record_competence("skill", success=(i % 2 == 0))
+
+        for cluster in engine._high_reward_clusters.values():
+            self.assertLessEqual(len(cluster), 25)

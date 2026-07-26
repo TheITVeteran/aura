@@ -144,11 +144,13 @@ class CompetenceMotivation:
         record = self._goals[goal_name]
         record.record(success)
 
-        # Compute intrinsic reward = |δC_g| (absolute learning progress)
+        # Reward POSITIVE learning progress only. abs(δC) paid out exactly the
+        # same for competence collapsing as for competence improving, so a goal
+        # Aura was rapidly getting worse at looked maximally worth practising —
+        # the opposite of the documented intent, and a reward signal that grows
+        # as performance degrades.
         delta_c = record.competence_derivative()
-        # Reward is proportional to absolute learning progress
-        # (we want to practice where we're improving, not where we're stable)
-        reward = abs(delta_c)
+        reward = max(0.0, delta_c)
 
         ir = IntrinsicReward(
             source="competence",
@@ -169,7 +171,9 @@ class CompetenceMotivation:
         deltas = []
         for name, record in self._goals.items():
             delta = record.competence_derivative()
-            deltas.append((name, abs(delta)))
+            # "Most improving", not "most changing": a goal in freefall is not
+            # an improving one.
+            deltas.append((name, max(0.0, delta)))
         deltas.sort(key=lambda x: x[1], reverse=True)
         return deltas[:top_k]
 
@@ -224,19 +228,36 @@ class NoveltyMotivation:
             return 1.0
 
         state = np.asarray(state, dtype=np.float64).ravel()
+        if state.size == 0 or not np.all(np.isfinite(state)):
+            return 0.0
 
-        # Compute distances to all archived states
-        archive = np.array(list(self._state_archive), dtype=np.float64)
+        # Only compare against archived states of the SAME width. The archive
+        # never enforced a dimension, so a later state of a different length
+        # made the array construction ragged or the subtraction raise — after
+        # the caller had already been told novelty was being measured.
+        same_dim = [row for row in self._state_archive if len(row) == state.size]
+        if not same_dim:
+            return 1.0
+        archive = np.asarray(same_dim, dtype=np.float64)
         distances = np.linalg.norm(archive - state[np.newaxis, :], axis=1)
 
-        # Kernel density estimate (Gaussian kernel)
-        h = self._config.bandwidth
-        density = np.mean(np.exp(-0.5 * (distances / h) ** 2))
+        # Kernel density estimate (Gaussian kernel). Each kernel is in (0, 1],
+        # so the mean density is too: 1.0 means "identical to everything in the
+        # archive", near 0 means "far from all of it".
+        h = max(1e-6, float(self._config.bandwidth))
+        density = float(np.mean(np.exp(-0.5 * (distances / h) ** 2)))
 
-        # Novelty = inverse density (capped)
-        novelty = 1.0 / (density + 1e-6)
-        # Normalize to [0, 1] range approximately
-        novelty = min(1.0, novelty * 0.1)
+        # Novelty is the complement of density. The old formula was
+        # min(1, 0.1/density): with even a handful of archived states, density
+        # is small enough that this clamps to 1.0 — an EXACT repeat of a seen
+        # state still scored maximally novel. The complement is bounded,
+        # monotone, and actually discriminates.
+        novelty = max(0.0, min(1.0, 1.0 - density))
+
+        # min_novelty was declared and then never used. Honour it: below the
+        # floor the state is not novel at all, rather than faintly novel.
+        if novelty < float(self._config.min_novelty):
+            return 0.0
 
         return float(novelty)
 
@@ -304,6 +325,16 @@ class IntrinsicMotivationEngine:
         self._high_reward_clusters: Dict[str, List[IntrinsicReward]] = defaultdict(list)
         self._proposal_threshold: int = 10  # N high-reward events → propose
         self._reward_threshold: float = 0.3  # Reward above this = "high"
+        #: Per-context cap on retained proposal evidence. These lists were
+        #: never capped, expired, or cleared, so a long-lived process grew them
+        #: without bound.
+        self._max_cluster_evidence: int = 200
+        #: How far into each reward history has already been submitted as value
+        #: evidence. Without this the whole history was replayed on every feed.
+        self._fed_competence: int = 0
+        self._fed_novelty: int = 0
+        #: Values already submitted as proposals, so one cluster proposes once.
+        self._proposed_values: set = set()
 
     def record_competence(self, goal_name: str, success: bool) -> IntrinsicReward:
         """Record a competence attempt and get reward."""
@@ -322,7 +353,13 @@ class IntrinsicMotivationEngine:
     def _track_for_proposals(self, reward: IntrinsicReward) -> None:
         """Track high-reward experiences for potential value proposals."""
         if reward.reward >= self._reward_threshold:
-            self._high_reward_clusters[reward.goal_name].append(reward)
+            cluster = self._high_reward_clusters[reward.goal_name]
+            cluster.append(reward)
+            # Bounded, newest-wins. An unbounded per-context list grew forever
+            # in a long-lived process; the proposal only ever reads a count and
+            # a mean, both of which the recent window represents faithfully.
+            if len(cluster) > self._max_cluster_evidence:
+                del cluster[: len(cluster) - self._max_cluster_evidence]
 
     def check_value_proposals(
         self, existing_drives: Optional[List[str]] = None
@@ -384,11 +421,22 @@ class IntrinsicMotivationEngine:
         graph = get_dynamic_value_graph()
         count = 0
 
+        # Only rewards observed SINCE THE LAST FEED are submitted. Without a
+        # cursor every call replayed the entire history, so the same
+        # observation was counted again on every feed — inflating DVG evidence
+        # counts and apparent diversity without a single new observation.
+        competence_history = list(self.competence._reward_history)
+        novelty_history = list(self.novelty._reward_history)
+
         # Feed competence rewards
-        for reward in self.competence._reward_history:
+        for reward in competence_history[self._fed_competence:]:
             if reward.reward > 0.01:  # Only meaningful signals
                 graph.record_evidence(ValueEvidence(
-                    evidence_type=EvidenceType.FREE_ENERGY_REDUCTION,
+                    # NOT free-energy reduction: nothing here computes a
+                    # free-energy quantity. Competence reward is derived from
+                    # recorded attempt outcomes, which is what OUTCOME_QUALITY
+                    # means.
+                    evidence_type=EvidenceType.OUTCOME_QUALITY,
                     value_name=reward.goal_name,
                     signal=min(1.0, reward.reward),
                     confidence=min(1.0, reward.details.get("attempts", 1) / 10.0),
@@ -396,12 +444,14 @@ class IntrinsicMotivationEngine:
                     context=f"δC={reward.details.get('delta_c', 0):.4f}",
                 ))
                 count += 1
+        self._fed_competence = len(competence_history)
 
         # Feed novelty rewards
-        for reward in self.novelty._reward_history:
+        for reward in novelty_history[self._fed_novelty:]:
             if reward.reward > 0.01:
                 graph.record_evidence(ValueEvidence(
-                    evidence_type=EvidenceType.FREE_ENERGY_REDUCTION,
+                    # Exploration pull, not free-energy reduction.
+                    evidence_type=EvidenceType.ENGAGEMENT,
                     value_name=reward.goal_name,
                     signal=min(1.0, reward.reward),
                     confidence=0.5,  # Novelty is inherently uncertain
@@ -409,11 +459,19 @@ class IntrinsicMotivationEngine:
                     context=f"novelty={reward.details.get('novelty', 0):.4f}",
                 ))
                 count += 1
+        self._fed_novelty = len(novelty_history)
 
-        # Check for value proposals
+        # Check for value proposals. A value is proposed ONCE: without this the
+        # same cluster was resubmitted on every feed, so a single proposal
+        # accumulated unbounded supporting "evidence" it had never earned.
         existing = list(graph.get_adopted_values().keys())
-        proposals = self.check_value_proposals(existing)
+        proposals = [
+            proposal
+            for proposal in self.check_value_proposals(existing)
+            if proposal["proposed_value_name"] not in self._proposed_values
+        ]
         for proposal in proposals:
+            self._proposed_values.add(proposal["proposed_value_name"])
             graph.record_evidence(ValueEvidence(
                 evidence_type=EvidenceType.SELF_REPORT,
                 value_name=proposal["proposed_value_name"],
