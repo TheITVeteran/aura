@@ -2825,16 +2825,24 @@
       "scope": "<module>.PostTrainingValidator.quarantine_adapter"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
-      "canonical_owner": false,
+      "callee": "<file_write_gateway>.write_bytes_async",
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/adaptation/safe_optimizer.py",
       "scope": "<module>.SafeSelfOptimizer._backup_current_weights"
     },
     {
+      "callee": "<file_write_gateway>.write_bytes_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/safe_optimizer.py",
+      "scope": "<module>.SafeSelfOptimizer._rollback"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/adaptation/safe_optimizer.py",
@@ -2842,7 +2850,7 @@
     },
     {
       "callee": "<file_write_gateway>.write_bytes_async",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 2,
       "path": "core/adaptation/safe_optimizer.py",
@@ -2850,7 +2858,7 @@
     },
     {
       "callee": "<file_write_gateway>.write_text_async",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/adaptation/safe_optimizer.py",
@@ -7353,7 +7361,7 @@
       "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
     },
     {
-      "callee": "temporary.unlink",
+      "callee": "os.unlink",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 2,
@@ -7361,68 +7369,28 @@
       "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
     },
     {
-      "callee": "path.unlink",
+      "callee": "os.mkdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._cleanup_temporary_files"
+      "scope": "<module>.PrivateActionSnapshotStore._open_directory"
     },
     {
-      "callee": "chunks_root.rmdir",
+      "callee": "os.open",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+      "scope": "<module>.PrivateActionSnapshotStore._open_directory"
     },
     {
-      "callee": "component_dir.rmdir",
+      "callee": "os.open",
       "canonical_owner": true,
       "category": "raw_file_mutation",
-      "count": 1,
+      "count": 2,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
-    },
-    {
-      "callee": "key_path.unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
-    },
-    {
-      "callee": "metadata.unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
-    },
-    {
-      "callee": "snapshot_dir.rmdir",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
-    },
-    {
-      "callee": "target.unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
-    },
-    {
-      "callee": "unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._complete_erasure"
+      "scope": "<module>.PrivateActionSnapshotStore._open_lock_file"
     },
     {
       "callee": "os.chmod",
@@ -7430,7 +7398,15 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._ensure_directory"
+      "scope": "<module>.PrivateActionSnapshotStore._open_root"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._open_root"
     },
     {
       "callee": "path.mkdir",
@@ -7438,7 +7414,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._ensure_directory"
+      "scope": "<module>.PrivateActionSnapshotStore._open_root"
     },
     {
       "callee": "os.open",
@@ -7446,31 +7422,23 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._fsync_directory"
+      "scope": "<module>.PrivateActionSnapshotStore._read_owned_at"
     },
     {
-      "callee": "os.open",
+      "callee": "os.rmdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._read_owned"
+      "scope": "<module>.PrivateActionSnapshotStore._rmdir"
     },
     {
-      "callee": "operation_path.unlink",
-      "canonical_owner": true,
-      "category": "raw_file_mutation",
-      "count": 3,
-      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore._recover_operation"
-    },
-    {
-      "callee": "unlink",
+      "callee": "os.unlink",
       "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/brain/llm/latent_cortex/action_state_capture.py",
-      "scope": "<module>.PrivateActionSnapshotStore.restore_and_apply"
+      "scope": "<module>.PrivateActionSnapshotStore._unlink"
     },
     {
       "callee": "self.path.parent.mkdir",
@@ -15026,6 +14994,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "64aceb96ec99d7b0ae7c1139d1409cc3e9f73275fb2a59190243fe83e8271d0d",
+  "inventory_sha256": "087bbec0be7db936effa4f4b804a0dd8e515b3228611cb161398d4fc145c1c70",
   "schema_version": 1
 }

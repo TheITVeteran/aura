@@ -383,6 +383,25 @@ def _restore_until_sigkill(store_root, handle, admission, started) -> None:
     )
 
 
+def _race_same_arm_restore(store_root, handle, admission, ready, start, results) -> None:
+    store = PrivateActionSnapshotStore(store_root)
+    ready.put(os.getpid())
+    start.wait(timeout=10.0)
+    try:
+        restored = _restore(
+            store,
+            handle,
+            admission,
+            arm=TREATMENT_ARM,
+            restored_at_unix=NOW + 2,
+        )
+        results.put(("restored", restored.receipt["operation_id"]))
+    except ActionStateCaptureError as exc:
+        results.put(("rejected", str(exc)))
+    finally:
+        store.close()
+
+
 def _resign_receipt(receipt: dict, worker_key: Ed25519PrivateKey) -> dict:
     body = {
         name: item
@@ -704,6 +723,49 @@ def test_sigkill_inside_state_application_is_durably_quarantined(tmp_path: Path)
         case["store"].recover(case["publication"].handle, case["admission"])
     assert quarantined.value.quarantine_evidence["worker_pid"] == 4242
     assert quarantined.value.quarantine_evidence["same_process_retry_allowed"] is False
+
+
+def test_concurrent_processes_cannot_consume_the_same_arm_twice(tmp_path: Path):
+    case = _case(tmp_path, tag="ConcurrentArm")
+    context = mp.get_context("spawn")
+    ready = context.Queue()
+    start = context.Event()
+    results = context.Queue()
+    children = [
+        context.Process(
+            target=_race_same_arm_restore,
+            args=(
+                case["store"].root,
+                case["publication"].handle,
+                case["admission"],
+                ready,
+                start,
+                results,
+            ),
+        )
+        for _ in range(2)
+    ]
+    for child in children:
+        child.start()
+    try:
+        assert {ready.get(timeout=10.0), ready.get(timeout=10.0)} == {
+            child.pid for child in children
+        }
+        start.set()
+        outcomes = [results.get(timeout=15.0), results.get(timeout=15.0)]
+        for child in children:
+            child.join(timeout=10.0)
+            assert child.exitcode == 0
+    finally:
+        start.set()
+        for child in children:
+            if child.is_alive():
+                child.kill()
+                child.join(timeout=5.0)
+
+    assert sorted(kind for kind, _detail in outcomes) == ["rejected", "restored"]
+    rejection = next(detail for kind, detail in outcomes if kind == "rejected")
+    assert rejection == "private_snapshot_arm_already_used"
 
 
 def test_legacy_uncommitted_restore_is_never_assumed_preapply(
@@ -1284,6 +1346,58 @@ def test_atomic_publication_permissions_and_root_symlink_rejection(
     linked.symlink_to(real, target_is_directory=True)
     with pytest.raises(ActionStateCaptureError, match="directory_unsafe"):
         PrivateActionSnapshotStore(linked)
+
+
+def test_open_store_rejects_root_path_replacement_without_touching_attacker_tree(
+    tmp_path: Path,
+):
+    case = _case(tmp_path, tag="RootBinding")
+    root = case["store"].root
+    retained = root.with_name(f"{root.name}-retained")
+    root.rename(retained)
+    root.mkdir(mode=0o700)
+    for name in capture_module._NAMESPACE_NAMES:
+        (root / name).mkdir(mode=0o700)
+    attacker_lock = root / ".action-state-capture.lock"
+    attacker_lock.write_bytes(b"attacker lock")
+    attacker_lock.chmod(0o600)
+    before = tuple(sorted(path.relative_to(root).as_posix() for path in root.rglob("*")))
+
+    with pytest.raises(ActionStateCaptureError, match="root_binding_changed"):
+        case["store"].recover(case["publication"].handle, case["admission"])
+
+    after = tuple(sorted(path.relative_to(root).as_posix() for path in root.rglob("*")))
+    assert after == before
+
+
+def test_open_store_rejects_namespace_replacement_before_private_io(tmp_path: Path):
+    case = _case(tmp_path, tag="NamespaceBinding")
+    handles = case["store"].root / "handles"
+    retained = case["store"].root / "handles-retained"
+    handles.rename(retained)
+    handles.mkdir(mode=0o700)
+    marker = handles / "attacker.json"
+    marker.write_bytes(b"attacker")
+    marker.chmod(0o600)
+
+    with pytest.raises(ActionStateCaptureError, match="namespace_binding_changed"):
+        case["store"].recover(case["publication"].handle, case["admission"])
+
+    assert marker.read_bytes() == b"attacker"
+    assert sorted(path.name for path in handles.iterdir()) == ["attacker.json"]
+
+
+def test_open_store_rejects_lock_file_substitution(tmp_path: Path):
+    case = _case(tmp_path, tag="LockBinding")
+    lock_path = case["store"].root / ".action-state-capture.lock"
+    lock_path.rename(case["store"].root / ".action-state-capture.lock-retained")
+    lock_path.write_bytes(b"replacement")
+    lock_path.chmod(0o600)
+
+    with pytest.raises(ActionStateCaptureError, match="lock_binding_changed"):
+        case["store"].recover(case["publication"].handle, case["admission"])
+
+    assert lock_path.read_bytes() == b"replacement"
 
 
 def test_restore_and_erase_crash_boundaries_recover_deterministically(tmp_path: Path, monkeypatch):

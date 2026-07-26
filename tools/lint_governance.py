@@ -202,6 +202,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # content-addressed artifact schema. It accepts no runtime action
             # or arbitrary effect and is the sole writer for that evidence.
             "core/learning/prefix_stability.py",
+            # The safe optimizer writes only its configured adapter state and
+            # byte-identical backup through FileWriteGateway; rollback restores
+            # that same bounded artifact inside the optimizer's governed lane.
+            "core/adaptation/safe_optimizer.py",
             "core/runtime/action_executor.py",
             "core/runtime/detached_subprocess_broker.py",
             "core/runtime/flight_recorder.py",

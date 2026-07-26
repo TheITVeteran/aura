@@ -2240,6 +2240,33 @@ before those dependencies close is not admissible.
   passes 248/248. This closes the second CP376 P1, not the remaining descriptor,
   publication, custody, streaming, broader fault, or continuation work. No
   training or capability verdict changes.
+
+  CP379 closes the ancestor/path-reentry P1. The private snapshot store captures
+  the root inode once, retains descriptors for every fixed namespace and the
+  interprocess lock, and performs nested traversal, creation, read, atomic
+  replacement, unlink, directory removal, listing, and fsync relative to those
+  descriptors with no-follow semantics. Every operation verifies that the
+  public root name, namespace entries, and lock name still resolve to the held
+  inodes before and after mutation. Root, namespace, and lock substitution fail
+  before private I/O and leave the replacement tree untouched.
+
+  A real two-process race against one arm proves the descriptor-held `flock`
+  serializes independent store instances: one process commits the restore and
+  the other receives `private_snapshot_arm_already_used`; no second application
+  occurs. Existing kill, recovery, tamper, and lifecycle coverage remains green.
+  Focused action-store coverage passes 32 tests and the broader worker/client/
+  runtime boundary passes 252/252. CP379 does not claim multi-file publication
+  atomicity, external key custody, streaming serialization, a resident
+  continuation, training, or reasoning gain.
+
+  To prevent SPARK-051 from expanding indefinitely, its remaining pre-training
+  implementation is a fixed five-checkpoint burn-down: recoverable publication
+  transaction; external key custody plus streaming codec; serializable resident
+  continuation and first-action hook; worker/client/service/runner/verifier
+  lineage; then the resident-1.5B destructive integration gate. Defects found by
+  those gates are repaired in place, but unrelated capability expansion does not
+  enter SPARK-051. The resident-32B training and preregistered reasoning campaign
+  follow that gate.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

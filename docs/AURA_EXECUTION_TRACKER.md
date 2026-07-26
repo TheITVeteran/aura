@@ -28556,3 +28556,51 @@ Next: move snapshot namespace operations under persistent directory descriptors
 and one recoverable publication transaction, then continue into external key
 custody and streaming before the resident continuation. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-26-379: Descriptor-Rooted Private Snapshot Namespace
+
+SPARK-051's private action snapshot store no longer re-enters its security
+boundary through mutable absolute paths after checking them. Construction opens
+and retains the exact root inode, all six fixed namespace directories, and the
+interprocess lock. Nested directory traversal and creation use descriptor-
+relative `open`/`mkdir` with no-follow and owner/mode validation. File reads,
+temporary creation, atomic replacement, deletion, directory removal, listing,
+and durability fsyncs all operate relative to the already validated parent
+descriptor.
+
+Before and after each locked mutation, the store verifies that the visible root,
+every namespace name, and the lock name still resolve to the held inodes. Root
+replacement, namespace replacement, and lock-file substitution therefore fail
+closed before private I/O; adversarial replacement trees remain byte-for-byte
+untouched. Descriptors have explicit close semantics and partially initialized
+objects release safely. A real spawned two-process race constructs independent
+stores against the same root and attempts to consume the same arm concurrently.
+The held lock serializes them: one restore commits and the other is rejected as
+already used.
+
+Focused action-store coverage passes 32/32 without destructor warnings. The
+broader action-state, worker identity, runtime identity, worker origin, MLX
+runtime, admission, cancellation, and resilience matrix passes 252/252. Strict
+Ruff, bytecode compilation, enterprise ratchet, and diff hygiene pass. The
+reviewed effect-ownership inventory records 2,002 calls in 1,874 buckets. The
+descriptor migration removes path-level mutation buckets; a concurrently landed
+safe-optimizer checkpoint's six fixed adapter/backup/log writes were reviewed as
+one narrow `FileWriteGateway` owner, reducing migration debt from 1,789 to 1,783
+rather than accepting a regression.
+
+This closes the ancestor-TOCTOU P1, not recoverable multi-file publication,
+external key custody, streaming serialization, the real resident continuation,
+or the remaining disk/power fault matrix. No resident training, reasoning gain,
+frontier gain, or `WOW Signal` is claimed. Eight cooperative nonparametric,
+intrinsic-motivation, safe-optimizer, and distillation records landed between
+CP378 and CP379. Counting them and CP379 makes the total checkpoint record 600.
+The 640-920 forecast remains, leaving approximately 40-320 records.
+Checkpoint-count completion is approximately 65.2%-93.8%, with a midpoint
+planning estimate of 76.9%.
+
+SPARK-051 now has a fixed five-checkpoint pre-training burn-down: recoverable
+publication transaction; external key custody plus streaming codec; serializable
+resident continuation and first-action hook; worker/client/service/runner/
+verifier lineage; and the resident-1.5B destructive integration gate. The
+resident-32B training and preregistered frontier campaign follow that gate.
+Final multi-hour soaks remain deferred until every shorter gate is green.

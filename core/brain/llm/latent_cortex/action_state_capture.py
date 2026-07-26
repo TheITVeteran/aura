@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import fcntl
 import hashlib
 import hmac
 import json
@@ -44,7 +45,6 @@ from core.brain.llm.latent_cortex.runtime_identity import (
 from core.brain.llm.latent_cortex.worker_capture_identity import (
     validate_worker_capture_origin_binding,
 )
-from core.runtime.atomic_writer import interprocess_file_lock
 
 ACTION_STATE_CAPTURE_REQUEST_PAYLOAD_SCHEMA: Final = (
     "aura.rlc.action_state_capture.request_payload.v2"
@@ -109,6 +109,15 @@ _MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 _MAX_JSON_BYTES = 16 * 1024 * 1024
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _CLOEXEC = getattr(os, "O_CLOEXEC", 0)
+_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_NAMESPACE_NAMES: Final = (
+    "snapshots",
+    "handles",
+    "keys",
+    "ledgers",
+    "operations",
+    "tombstones",
+)
 
 _LATENT_REQUIRED_FIELDS = {
     "prompt",
@@ -964,65 +973,279 @@ class PrivateActionSnapshotStore:
     def __init__(self, root: str | Path) -> None:
         candidate = Path(root).expanduser().absolute()
         self.root = candidate
-        self._ensure_directory(candidate)
-        for name in (
-            "snapshots",
-            "handles",
-            "keys",
-            "ledgers",
-            "operations",
-            "tombstones",
-        ):
+        self._root_fd = self._open_root(candidate)
+        self._namespace_fds: dict[str, int] = {}
+        self._lock_fd = -1
+        for name in _NAMESPACE_NAMES:
             self._ensure_directory(candidate / name)
+            self._namespace_fds[name] = self._open_directory(candidate / name)
         self._lock_path = candidate / ".action-state-capture.lock"
+        self._lock_fd = self._open_lock_file()
+
+    def close(self) -> None:
+        """Release descriptors without changing the durable store."""
+
+        lock_fd = getattr(self, "_lock_fd", -1)
+        self._lock_fd = -1
+        if lock_fd >= 0:
+            os.close(lock_fd)
+        namespace_fds = getattr(self, "_namespace_fds", {})
+        self._namespace_fds = {}
+        for descriptor in namespace_fds.values():
+            os.close(descriptor)
+        root_fd = getattr(self, "_root_fd", -1)
+        self._root_fd = -1
+        if root_fd >= 0:
+            os.close(root_fd)
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except OSError:
+            pass
 
     @staticmethod
-    def _ensure_directory(path: Path) -> None:
-        try:
-            observed = path.lstat()
-        except FileNotFoundError:
-            path.mkdir(parents=True, mode=0o700, exist_ok=False)
-            os.chmod(path, 0o700)
-            return
+    def _validate_private_directory_stat(observed: os.stat_result) -> None:
         if (
-            stat.S_ISLNK(observed.st_mode)
-            or not stat.S_ISDIR(observed.st_mode)
+            not stat.S_ISDIR(observed.st_mode)
             or observed.st_uid != os.geteuid()
             or stat.S_IMODE(observed.st_mode) != 0o700
         ):
             _fail("private_snapshot_directory_unsafe")
 
-    @staticmethod
-    def _assert_private_file(path: Path, *, allow_empty: bool = False) -> os.stat_result:
+    @classmethod
+    def _open_root(cls, path: Path) -> int:
         try:
             observed = path.lstat()
-        except OSError:
-            _fail("private_snapshot_file_unavailable")
+        except FileNotFoundError:
+            path.mkdir(parents=True, mode=0o700, exist_ok=False)
+            os.chmod(path, 0o700)
+            observed = path.lstat()
+        if stat.S_ISLNK(observed.st_mode):
+            _fail("private_snapshot_directory_unsafe")
+        cls._validate_private_directory_stat(observed)
+        try:
+            descriptor = os.open(
+                path,
+                os.O_RDONLY | _DIRECTORY | _CLOEXEC | _NOFOLLOW,
+            )
+        except OSError as exc:
+            raise ActionStateCaptureError("private_snapshot_directory_unavailable") from exc
+        current = os.fstat(descriptor)
+        if (current.st_dev, current.st_ino) != (observed.st_dev, observed.st_ino):
+            os.close(descriptor)
+            _fail("private_snapshot_root_changed_during_open")
+        try:
+            cls._validate_private_directory_stat(current)
+        except ActionStateCaptureError:
+            os.close(descriptor)
+            raise
+        return descriptor
+
+    def _relative_parts(self, path: Path) -> tuple[str, ...]:
+        try:
+            relative = path.relative_to(self.root)
+        except ValueError:
+            _fail("private_snapshot_path_escape")
+        if relative == Path("."):
+            return ()
+        if any(part in {"", ".", ".."} for part in relative.parts):
+            _fail("private_snapshot_path_escape")
+        return relative.parts
+
+    def _open_directory(self, path: Path, *, create: bool = False) -> int:
+        parts = self._relative_parts(path)
+        if self._root_fd < 0:
+            _fail("private_snapshot_store_closed")
+        offset = 0
+        if parts and parts[0] in self._namespace_fds:
+            descriptor = os.dup(self._namespace_fds[parts[0]])
+            offset = 1
+        else:
+            descriptor = os.dup(self._root_fd)
+        try:
+            self._validate_private_directory_stat(os.fstat(descriptor))
+            for part in parts[offset:]:
+                if create:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=descriptor)
+                    except FileExistsError:
+                        pass
+                child = os.open(
+                    part,
+                    os.O_RDONLY | _DIRECTORY | _CLOEXEC | _NOFOLLOW,
+                    dir_fd=descriptor,
+                )
+                self._validate_private_directory_stat(os.fstat(child))
+                os.close(descriptor)
+                descriptor = child
+            return descriptor
+        except ActionStateCaptureError:
+            os.close(descriptor)
+            raise
+        except OSError as exc:
+            os.close(descriptor)
+            raise ActionStateCaptureError("private_snapshot_directory_unavailable") from exc
+
+    @contextmanager
+    def _directory(self, path: Path, *, create: bool = False) -> Iterator[int]:
+        descriptor = self._open_directory(path, create=create)
+        try:
+            yield descriptor
+        finally:
+            os.close(descriptor)
+
+    def _open_lock_file(self) -> int:
+        name = self._lock_path.name
+        flags = os.O_RDWR | _CLOEXEC | _NOFOLLOW
+        try:
+            try:
+                descriptor = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=self._root_fd)
+                os.fchmod(descriptor, 0o600)
+                os.fsync(descriptor)
+                os.fsync(self._root_fd)
+            except FileExistsError:
+                descriptor = os.open(name, flags, dir_fd=self._root_fd)
+            self._validate_private_file_stat(os.fstat(descriptor), allow_empty=True)
+            return descriptor
+        except ActionStateCaptureError:
+            raise
+        except OSError as exc:
+            raise ActionStateCaptureError("private_snapshot_lock_failed") from exc
+
+    def _assert_descriptor_bindings(self) -> None:
+        try:
+            root_path_stat = self.root.lstat()
+            root_fd_stat = os.fstat(self._root_fd)
+            if stat.S_ISLNK(root_path_stat.st_mode) or (
+                root_path_stat.st_dev,
+                root_path_stat.st_ino,
+            ) != (root_fd_stat.st_dev, root_fd_stat.st_ino):
+                _fail("private_snapshot_root_binding_changed")
+            self._validate_private_directory_stat(root_fd_stat)
+            for name, descriptor in self._namespace_fds.items():
+                path_stat = os.stat(name, dir_fd=self._root_fd, follow_symlinks=False)
+                descriptor_stat = os.fstat(descriptor)
+                if (
+                    stat.S_ISLNK(path_stat.st_mode)
+                    or (path_stat.st_dev, path_stat.st_ino)
+                    != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+                ):
+                    _fail("private_snapshot_namespace_binding_changed")
+                self._validate_private_directory_stat(descriptor_stat)
+            lock_path_stat = os.stat(
+                self._lock_path.name,
+                dir_fd=self._root_fd,
+                follow_symlinks=False,
+            )
+            lock_fd_stat = os.fstat(self._lock_fd)
+            if (lock_path_stat.st_dev, lock_path_stat.st_ino) != (
+                lock_fd_stat.st_dev,
+                lock_fd_stat.st_ino,
+            ):
+                _fail("private_snapshot_lock_binding_changed")
+            self._validate_private_file_stat(lock_fd_stat, allow_empty=True)
+        except ActionStateCaptureError:
+            raise
+        except OSError as exc:
+            raise ActionStateCaptureError("private_snapshot_descriptor_binding_unavailable") from exc
+
+    def _ensure_directory(self, path: Path) -> None:
+        descriptor = self._open_directory(path, create=True)
+        os.close(descriptor)
+
+    @staticmethod
+    def _validate_private_file_stat(
+        observed: os.stat_result,
+        *,
+        allow_empty: bool = False,
+    ) -> None:
         if (
-            stat.S_ISLNK(observed.st_mode)
-            or not stat.S_ISREG(observed.st_mode)
+            not stat.S_ISREG(observed.st_mode)
             or observed.st_uid != os.geteuid()
             or observed.st_nlink != 1
             or stat.S_IMODE(observed.st_mode) != 0o600
             or (not allow_empty and observed.st_size <= 0)
         ):
             _fail("private_snapshot_file_unsafe")
+
+    def _stat_path(self, path: Path) -> os.stat_result:
+        parts = self._relative_parts(path)
+        if not parts:
+            return os.fstat(self._root_fd)
+        with self._directory(path.parent) as parent_fd:
+            try:
+                return os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise ActionStateCaptureError("private_snapshot_file_unavailable") from exc
+
+    def _path_exists(self, path: Path) -> bool:
+        parts = self._relative_parts(path)
+        if not parts:
+            return self._root_fd >= 0
+        try:
+            with self._directory(path.parent) as parent_fd:
+                os.stat(parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+            return True
+        except FileNotFoundError:
+            return False
+        except ActionStateCaptureError as exc:
+            if isinstance(exc.__cause__, FileNotFoundError):
+                return False
+            raise
+
+    def _assert_private_file(self, path: Path, *, allow_empty: bool = False) -> os.stat_result:
+        observed = self._stat_path(path)
+        self._validate_private_file_stat(observed, allow_empty=allow_empty)
         return observed
+
+    def _unlink(self, path: Path, *, missing_ok: bool = False, sync: bool = False) -> None:
+        parts = self._relative_parts(path)
+        if not parts:
+            _fail("private_snapshot_path_escape")
+        with self._directory(path.parent) as parent_fd:
+            try:
+                os.unlink(parts[-1], dir_fd=parent_fd)
+            except FileNotFoundError:
+                if not missing_ok:
+                    raise
+            if sync:
+                os.fsync(parent_fd)
+
+    def _rmdir(self, path: Path, *, sync: bool = False) -> None:
+        parts = self._relative_parts(path)
+        if not parts:
+            _fail("private_snapshot_path_escape")
+        with self._directory(path.parent) as parent_fd:
+            os.rmdir(parts[-1], dir_fd=parent_fd)
+            if sync:
+                os.fsync(parent_fd)
+
+    def _list_directory(self, path: Path) -> tuple[str, ...]:
+        with self._directory(path) as descriptor:
+            return tuple(sorted(os.listdir(descriptor)))
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
-        self._ensure_directory(self.root)
-        if self._lock_path.exists() or self._lock_path.is_symlink():
-            self._assert_private_file(self._lock_path, allow_empty=True)
+        if self._lock_fd < 0:
+            _fail("private_snapshot_store_closed")
+        acquired = False
         try:
-            with interprocess_file_lock(self._lock_path):
-                self._assert_private_file(self._lock_path, allow_empty=True)
-                self._cleanup_temporary_files()
-                yield
+            self._validate_private_directory_stat(os.fstat(self._root_fd))
+            self._validate_private_file_stat(os.fstat(self._lock_fd), allow_empty=True)
+            fcntl.flock(self._lock_fd, fcntl.LOCK_EX)
+            acquired = True
+            self._assert_descriptor_bindings()
+            self._cleanup_temporary_files()
+            yield
+            self._assert_descriptor_bindings()
         except ActionStateCaptureError:
             raise
         except OSError as exc:
             raise ActionStateCaptureError("private_snapshot_lock_failed") from exc
+        finally:
+            if acquired and self._lock_fd >= 0:
+                fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
 
     def _cleanup_temporary_files(self) -> None:
         for directory in (
@@ -1034,21 +1257,16 @@ class PrivateActionSnapshotStore:
             self.root / "operations",
             self.root / "tombstones",
         ):
-            if not directory.exists():
-                continue
-            for path in directory.iterdir():
-                if not path.name.startswith(".tmp-"):
+            for name in self._list_directory(directory):
+                if not name.startswith(".tmp-"):
                     continue
+                path = directory / name
                 self._assert_private_file(path, allow_empty=True)
-                path.unlink()
+                self._unlink(path)
 
-    @staticmethod
-    def _fsync_directory(path: Path) -> None:
-        descriptor = os.open(path, os.O_RDONLY | _CLOEXEC)
-        try:
+    def _fsync_directory(self, path: Path) -> None:
+        with self._directory(path) as descriptor:
             os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
 
     def _atomic_publish(
         self,
@@ -1057,51 +1275,69 @@ class PrivateActionSnapshotStore:
         *,
         replace: bool,
     ) -> None:
-        self._assert_directory_chain(path.parent)
         self._ensure_directory(path.parent)
-        temporary = path.parent / f".tmp-{path.name}-{secrets.token_hex(16)}"
+        temporary_name = f".tmp-{path.name}-{secrets.token_hex(16)}"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | _CLOEXEC | _NOFOLLOW
         descriptor = -1
-        try:
-            descriptor = os.open(temporary, flags, 0o600)
-            os.fchmod(descriptor, 0o600)
-            view = memoryview(payload)
-            while view:
-                written = os.write(descriptor, view)
-                if written <= 0:
-                    _fail("private_snapshot_write_failed")
-                view = view[written:]
-            os.fsync(descriptor)
-            os.close(descriptor)
-            descriptor = -1
-            if path.exists() or path.is_symlink():
-                self._assert_private_file(path, allow_empty=True)
-                if not replace:
-                    if self._read_owned(path, maximum=max(1, len(payload))) != payload:
-                        _fail("private_snapshot_content_address_collision")
-                    temporary.unlink()
-                    return
-            os.replace(temporary, path)
-            self._fsync_directory(path.parent)
-            observed = self._assert_private_file(path, allow_empty=True)
-            if observed.st_size != len(payload):
-                _fail("private_snapshot_publish_size_mismatch")
-        except ActionStateCaptureError:
-            raise
-        except OSError as exc:
-            raise ActionStateCaptureError("private_snapshot_publish_failed") from exc
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
+        with self._directory(path.parent) as parent_fd:
             try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
+                descriptor = os.open(temporary_name, flags, 0o600, dir_fd=parent_fd)
+                os.fchmod(descriptor, 0o600)
+                view = memoryview(payload)
+                while view:
+                    written = os.write(descriptor, view)
+                    if written <= 0:
+                        _fail("private_snapshot_write_failed")
+                    view = view[written:]
+                os.fsync(descriptor)
+                os.close(descriptor)
+                descriptor = -1
+                target_exists = True
+                try:
+                    target_stat = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    target_exists = False
+                if target_exists:
+                    self._validate_private_file_stat(target_stat, allow_empty=True)
+                    if not replace:
+                        if (
+                            self._read_owned_at(parent_fd, path.name, maximum=max(1, len(payload)))
+                            != payload
+                        ):
+                            _fail("private_snapshot_content_address_collision")
+                        os.unlink(temporary_name, dir_fd=parent_fd)
+                        os.fsync(parent_fd)
+                        return
+                os.replace(
+                    temporary_name,
+                    path.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+                os.fsync(parent_fd)
+                observed = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+                self._validate_private_file_stat(observed, allow_empty=True)
+                if observed.st_size != len(payload):
+                    _fail("private_snapshot_publish_size_mismatch")
+            except ActionStateCaptureError:
+                raise
+            except OSError as exc:
+                raise ActionStateCaptureError("private_snapshot_publish_failed") from exc
+            finally:
+                if descriptor >= 0:
+                    os.close(descriptor)
+                try:
+                    os.unlink(temporary_name, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    pass
 
     def _read_owned(self, path: Path, *, maximum: int) -> bytes:
-        self._assert_directory_chain(path.parent)
+        with self._directory(path.parent) as parent_fd:
+            return self._read_owned_at(parent_fd, path.name, maximum=maximum)
+
+    def _read_owned_at(self, parent_fd: int, name: str, *, maximum: int) -> bytes:
         try:
-            descriptor = os.open(path, os.O_RDONLY | _CLOEXEC | _NOFOLLOW)
+            descriptor = os.open(name, os.O_RDONLY | _CLOEXEC | _NOFOLLOW, dir_fd=parent_fd)
         except OSError as exc:
             raise ActionStateCaptureError("private_snapshot_file_unavailable") from exc
         try:
@@ -1126,7 +1362,7 @@ class PrivateActionSnapshotStore:
             if os.read(descriptor, 1):
                 _fail("private_snapshot_changed_during_read")
             after = os.fstat(descriptor)
-            current = path.lstat()
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
             identity = (
                 before.st_dev,
                 before.st_ino,
@@ -1158,15 +1394,8 @@ class PrivateActionSnapshotStore:
             os.close(descriptor)
 
     def _assert_directory_chain(self, directory: Path) -> None:
-        try:
-            relative = directory.relative_to(self.root)
-        except ValueError:
-            _fail("private_snapshot_path_escape")
-        current = self.root
-        self._ensure_directory(current)
-        for part in relative.parts:
-            current = current / part
-            self._ensure_directory(current)
+        descriptor = self._open_directory(directory)
+        os.close(descriptor)
 
     def _read_json(self, path: Path, *, role: str) -> dict[str, Any]:
         raw = self._read_owned(path, maximum=_MAX_JSON_BYTES)
@@ -1216,7 +1445,7 @@ class PrivateActionSnapshotStore:
         handle_secret: bytes,
     ) -> dict[str, Any]:
         paths = self._paths_for_handle_hash(handle_hash)
-        if paths["tombstone"].exists() or paths["tombstone"].is_symlink():
+        if self._path_exists(paths["tombstone"]):
             self._read_erasure(paths["tombstone"], handle_secret=handle_secret)
             _fail("private_snapshot_erased")
         value = self._read_json(paths["handle"], role="private_snapshot_handle")
@@ -1999,7 +2228,7 @@ class PrivateActionSnapshotStore:
     ) -> dict[str, Any] | None:
         paths = self._paths_for_handle_hash(handle_hash)
         operation_path = paths["operation"]
-        if not operation_path.exists() and not operation_path.is_symlink():
+        if not self._path_exists(operation_path):
             return None
         operation = self._read_operation(operation_path, handle_secret=handle_secret)
         if (
@@ -2028,16 +2257,14 @@ class PrivateActionSnapshotStore:
                     or operation["stage"] == "application_started"
                 ):
                     raise UnknownActionStateApplicationError(operation)
-                operation_path.unlink()
-                self._fsync_directory(operation_path.parent)
+                self._unlink(operation_path, sync=True)
                 return {"recovered": "rolled_back_precommit_restore"}
             if (
                 isinstance(use, dict)
                 and use.get("operation_id") == operation.get("operation_id")
                 and use.get("post_apply_state_sha256") == operation.get("state_sha256")
             ):
-                operation_path.unlink()
-                self._fsync_directory(operation_path.parent)
+                self._unlink(operation_path, sync=True)
                 return {"recovered": "finalized_committed_restore"}
             _fail("private_snapshot_restore_recovery_conflict")
         if kind == "seal":
@@ -2069,8 +2296,7 @@ class PrivateActionSnapshotStore:
                 canonical_json_bytes(target_handle) + b"\n",
                 replace=True,
             )
-            operation_path.unlink()
-            self._fsync_directory(operation_path.parent)
+            self._unlink(operation_path, sync=True)
             return {"recovered": "completed_seal"}
         self._complete_erasure(operation, paths=paths)
         return {"recovered": "completed_erasure"}
@@ -2251,8 +2477,7 @@ class PrivateActionSnapshotStore:
             except Exception as exc:  # noqa: BLE001
                 raise UnknownActionStateApplicationError(operation) from exc
             _crash_boundary("restore_after_ledger_commit")
-            paths["operation"].unlink()
-            self._fsync_directory(paths["operation"].parent)
+            self._unlink(paths["operation"], sync=True)
             return PrivateSnapshotRestore(state=state, receipt=receipt)
 
     def seal(
@@ -2451,12 +2676,11 @@ class PrivateActionSnapshotStore:
         ):
             _fail("private_snapshot_erasure_operation_invalid")
         key_path = paths["key"]
-        if key_path.exists() or key_path.is_symlink():
+        if self._path_exists(key_path):
             key = self._read_owned(key_path, maximum=32)
             if len(key) != 32 or _digest_bytes(key) != dek_sha256:
                 _fail("private_snapshot_erasure_dek_mismatch")
-            key_path.unlink()
-            self._fsync_directory(key_path.parent)
+            self._unlink(key_path, sync=True)
         snapshot_dir = self.root / "snapshots" / snapshot_sha256
         for item in files:
             if (
@@ -2471,38 +2695,39 @@ class PrivateActionSnapshotStore:
             if relative.is_absolute() or ".." in relative.parts:
                 _fail("private_snapshot_erasure_path_invalid")
             target = snapshot_dir / relative
-            if target.exists() or target.is_symlink():
+            if self._path_exists(target):
                 raw = self._read_owned(target, maximum=max(_MAX_JSON_BYTES, _CHUNK_BYTES))
                 if len(raw) != item["byte_count"] or _digest_bytes(raw) != item["file_sha256"]:
                     _fail("private_snapshot_erasure_source_mismatch")
-                target.unlink()
+                self._unlink(target)
         chunks_root = snapshot_dir / "chunks"
-        if chunks_root.exists():
-            for component_dir in chunks_root.iterdir():
-                if component_dir.is_symlink() or not component_dir.is_dir():
+        if self._path_exists(chunks_root):
+            for component_name in self._list_directory(chunks_root):
+                component_dir = chunks_root / component_name
+                if not stat.S_ISDIR(self._stat_path(component_dir).st_mode):
                     _fail("private_snapshot_erasure_directory_invalid")
-                if any(component_dir.iterdir()):
+                if self._list_directory(component_dir):
                     _fail("private_snapshot_erasure_directory_not_empty")
-                component_dir.rmdir()
-            chunks_root.rmdir()
-        if snapshot_dir.exists():
-            if any(snapshot_dir.iterdir()):
+                self._rmdir(component_dir)
+            self._rmdir(chunks_root)
+        if self._path_exists(snapshot_dir):
+            if self._list_directory(snapshot_dir):
                 _fail("private_snapshot_erasure_directory_not_empty")
-            snapshot_dir.rmdir()
+            self._rmdir(snapshot_dir, sync=True)
         for metadata in (paths["ledger"], paths["handle"]):
-            if metadata.exists() or metadata.is_symlink():
+            if self._path_exists(metadata):
                 self._assert_private_file(metadata)
-                metadata.unlink()
+                self._unlink(metadata)
         self._atomic_publish(
             paths["tombstone"],
             canonical_json_bytes(erasure_receipt) + b"\n",
             replace=False,
         )
-        if snapshot_dir.exists():
+        if self._path_exists(snapshot_dir):
             _fail("private_snapshot_erasure_incomplete")
-        if paths["operation"].exists() or paths["operation"].is_symlink():
+        if self._path_exists(paths["operation"]):
             self._assert_private_file(paths["operation"])
-            paths["operation"].unlink()
+            self._unlink(paths["operation"])
         self._fsync_directory(paths["operation"].parent)
 
     def erase(
@@ -2525,7 +2750,7 @@ class PrivateActionSnapshotStore:
                 request_sha256=binding["request_sha256"],
                 handle_secret=handle_secret,
             )
-            if paths["tombstone"].exists() or paths["tombstone"].is_symlink():
+            if self._path_exists(paths["tombstone"]):
                 return self._read_erasure(paths["tombstone"], handle_secret=handle_secret)
             handle_record = self._load_handle(
                 handle_hash,
