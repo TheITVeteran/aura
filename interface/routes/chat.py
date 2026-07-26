@@ -8434,6 +8434,7 @@ async def _run_cognitive_engine_chat_turn(
             is_live_self_reflection_turn,
             is_self_process_question,
             is_status_check_turn,
+            numeric_answer_missing,
         )
 
         recent_user_messages = await _gather_recent_user_messages_for_relevance(visible)
@@ -8452,6 +8453,31 @@ async def _run_cognitive_engine_chat_turn(
             assessment_text,
             recent_user_messages=recent_user_messages,
         )
+        # The engine path does not leave through _finalize_fastpath, so the
+        # numeric floor installed there never saw these replies. Live
+        # 2026-07-26, "What is 17 minus 8, and then times 3?" was answered with
+        # "A quick refresh on classic habits: green tea, journaling, and
+        # standing by the window to watch the light change." — no number, and
+        # every gate passed it because they check form, not whether the
+        # question was answered.
+        if numeric_answer_missing(visible, text):
+            logger.warning(
+                "🔢 CognitiveEngine reply carried no number for a question that "
+                "can only be answered with one (%d chars); refusing it rather "
+                "than serving an answer to a different question.",
+                len(text),
+            )
+            text = (
+                "I didn't actually work that out — what I had wasn't an answer, "
+                "and I won't dress it up as one. Ask me again and I'll do the "
+                "arithmetic properly."
+            )
+            assessment_text = text
+            assessment = assess_user_facing_reply(
+                visible,
+                assessment_text,
+                recent_user_messages=recent_user_messages,
+            )
         if (
             require_engine
             and _is_explicit_capability_inventory_request(visible)

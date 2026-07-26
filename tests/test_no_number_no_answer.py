@@ -103,6 +103,29 @@ def test_it_fails_open_on_unparseable_input() -> None:
     assert asks_for_a_number(None) is False
 
 
+def test_the_cognitive_engine_path_also_consults_it() -> None:
+    """The engine path does not leave through _finalize_fastpath.
+
+    Live 2026-07-26, after the fastpath floor was in place: "What is 17 minus 8,
+    and then times 3?" was answered with "A quick refresh on classic habits:
+    green tea, journaling, and standing by the window to watch the light
+    change." — no number, served anyway, because that reply left by the
+    cognitive_engine path and never reached the floor.
+    """
+    from pathlib import Path
+
+    chat = Path("interface/routes/chat.py").read_text(encoding="utf-8")
+    # Imported where the engine path assesses its reply...
+    block = chat[chat.index("            is_status_check_turn,") :]
+    block = block[: block.index("_is_explicit_capability_inventory_request(visible)")]
+    assert "numeric_answer_missing," in block, "the engine path must import the floor"
+    assert "if numeric_answer_missing(visible, text):" in block, (
+        "the engine path must apply the floor to its own reply"
+    )
+    # ...and the reply is replaced rather than served.
+    assert "I didn't actually work that out" in block
+
+
 def test_the_serving_gate_consults_it_before_the_arithmetic_verdict() -> None:
     """It must run on the path a reply actually leaves by."""
     from pathlib import Path
