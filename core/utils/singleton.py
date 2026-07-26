@@ -103,7 +103,7 @@ def _publish_boot_blocked(lock_name: str, holder_pid: int) -> None:
                 if is_foreign
                 else "  (quit the other Aura window)"
             )
-            + ", then relaunch. `./aura_cleanup.sh` also reclaims a stuck runtime."
+            + ", then relaunch. `python aura_cleanup.py` also reclaims a stuck runtime."
         ),
     }
     try:
