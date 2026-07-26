@@ -189,8 +189,24 @@ def test_unpinned_install_refused_by_default(gw):
 
 def test_pinned_install_uses_end_of_options_and_noninteractive(gw):
     act = PackageInstallActuator()
-    res = act.execute({"package_name": "numpy==1.26.0", "allow_install": True, "_aura_authorized": True})
+    # CP126 3a5c4a39: installing into the RUNNING interpreter now requires an
+    # explicit acknowledgement, because it mutates Aura's own environment with
+    # no rollback. The option-injection property under test is unchanged.
+    res = act.execute({
+        "package_name": "numpy==1.26.0", "allow_install": True,
+        "_aura_authorized": True, "allow_mutating_running_env": True,
+    })
     assert res.success is True
-    run = gw.runs[-1]
+    run = [cmd for cmd in gw.runs if "install" in cmd][-1]
     assert "--" in run and run[-1] == "numpy==1.26.0"
     assert "--no-input" in run
+
+
+def test_installing_into_the_running_interpreter_needs_acknowledgement(gw):
+    """CP126 3a5c4a39: a bad resolution degrades Aura until a restart."""
+    act = PackageInstallActuator()
+    res = act.execute({
+        "package_name": "numpy==1.26.0", "allow_install": True, "_aura_authorized": True,
+    })
+    assert res.success is False
+    assert "RUNNING interpreter" in res.message

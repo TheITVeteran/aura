@@ -298,12 +298,63 @@ class PackageInstallActuator(BaseActuator):
                 {},
             )
 
+        # CP126 cc1d78b7: a pinned VERSION still executes installer code from
+        # whatever index is configured. A digest is what actually binds the
+        # artifact. Hashes are used when supplied, and their absence is
+        # reported rather than passed off as a verified install.
+        hashes = params.get("hashes")
+        hash_args: list[str] = []
+        if isinstance(hashes, (list, tuple)) and hashes:
+            for digest in hashes:
+                text = str(digest or "").strip()
+                if not re.fullmatch(r"(sha256|sha384|sha512):[0-9a-f]{64,128}", text):
+                    return ActuatorResult(
+                        False, f"Refused install: malformed hash '{text[:40]}'.", {}
+                    )
+                hash_args += ["--hash", text]
+        require_hashes = bool(hash_args)
+
+        # CP126 3a5c4a39: installing into sys.executable mutates the RUNNING
+        # interpreter with no isolated target, transaction or rollback, so a
+        # bad resolution degrades Aura itself until a restart. A different
+        # target may be named; using the live interpreter is an explicit,
+        # acknowledged choice.
+        target_python = str(params.get("python_executable") or "").strip() or sys.executable
+        mutates_running_interpreter = os.path.realpath(target_python) == os.path.realpath(sys.executable)
+        if mutates_running_interpreter and not bool(params.get("allow_mutating_running_env")):
+            return ActuatorResult(
+                False,
+                "Refused install: this would mutate the RUNNING interpreter "
+                f"({target_python}). Pass allow_mutating_running_env=True to "
+                "accept that, or name an isolated python_executable.",
+                {"target_python": target_python},
+            )
+
+        # CP126 6da6af1d: a dry run resolves dependencies and reports what
+        # WOULD change before anything is written, which is the closest thing
+        # to a preview this path can offer.
+        dry_run = bool(params.get("dry_run"))
+
         # `--` terminates option parsing so a spec can never become a pip flag.
-        cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", "--", pkg]
+        cmd = [target_python, "-m", "pip", "install", "--no-input", "--disable-pip-version-check"]
+        if require_hashes:
+            cmd.append("--require-hashes")
+        if dry_run:
+            cmd.append("--dry-run")
+        cmd += hash_args + ["--", pkg]
+
+        # CP126 3a5c4a39: capture the pre-install state so a caller can tell
+        # what changed, and reconcile an uncertain outcome afterwards.
+        before = self._installed_version(target_python, pkg)
 
         try:
-            res = get_subprocess_gateway().run(cmd, timeout=120.0, source="package_install_actuator")
+            timeout_s = float(params.get("timeout_s") or 120.0)
+            timeout_s = max(10.0, min(900.0, timeout_s))
+            res = get_subprocess_gateway().run(
+                cmd, timeout=timeout_s, source="package_install_actuator"
+            )
             success = res.returncode == 0
+            after = self._installed_version(target_python, pkg)
             return ActuatorResult(
                 success,
                 f"Package '{pkg}' installation finished with exit code {res.returncode}.",
@@ -312,7 +363,59 @@ class PackageInstallActuator(BaseActuator):
                     "stdout": _clean_output(res.stdout),
                     "stderr": _clean_output(res.stderr),
                     "pinned": "==" in pkg,
+                    # CP126 cc1d78b7: say what was actually verified.
+                    "hash_verified": require_hashes,
+                    "supply_chain_bound": (
+                        "artifact digest verified" if require_hashes
+                        else "version pin only — no artifact digest, signature or provenance"
+                    ),
+                    "dry_run": dry_run,
+                    "target_python": target_python,
+                    "mutated_running_interpreter": mutates_running_interpreter and not dry_run,
+                    # CP126 6da6af1d: reconcile the outcome instead of leaving
+                    # a partial install uncertain.
+                    "version_before": before,
+                    "version_after": after,
+                    "changed": before != after,
+                    "restart_required": bool(
+                        mutates_running_interpreter and not dry_run and before != after
+                    ),
+                },
+            )
+        except subprocess.TimeoutExpired:
+            after = self._installed_version(target_python, pkg)
+            return ActuatorResult(
+                False,
+                f"Package '{pkg}' install timed out; outcome reconciled from the environment.",
+                {
+                    "exit_code": -1,
+                    "timed_out": True,
+                    "version_before": before,
+                    "version_after": after,
+                    "changed": before != after,
+                    "partial_install_suspected": before != after,
                 },
             )
         except (subprocess.SubprocessError, OSError, ValueError) as e:
             return ActuatorResult(False, f"Package installation failed: {e}", {})
+
+    @staticmethod
+    def _installed_version(python_executable: str, spec: str) -> str:
+        """The installed version of ``spec``'s distribution, or ''."""
+        name = re.split(r"[\[=<>!~]", str(spec or ""), maxsplit=1)[0].strip()
+        if not name:
+            return ""
+        probe = (
+            "import importlib.metadata as m,sys\n"
+            f"try: print(m.version({name!r}))\n"
+            "except Exception: print('')\n"
+        )
+        try:
+            res = get_subprocess_gateway().run(
+                [python_executable, "-I", "-S", "-c", probe],
+                timeout=20.0,
+                source="package_install_actuator_probe",
+            )
+            return (res.stdout or "").strip()
+        except (subprocess.SubprocessError, OSError, ValueError):
+            return ""
