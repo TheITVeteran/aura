@@ -119,6 +119,41 @@ def test_executor_inventory_and_state_preconditions_are_fail_closed():
     assert floor_pending == (OperationKind.BRANCH,)
 
 
+def test_admitted_constraint_recovery_preempts_terminal_policy_once():
+    state = _state(
+        step_index=3,
+        neural_steps=3,
+        pending_constraint_action=OperationKind.CHECK_ASSUMPTION,
+        previously_selected=(
+            OperationKind.DECOMPOSE,
+            OperationKind.FORMALIZE,
+            OperationKind.SIMULATE,
+        ),
+        answer_verified=True,
+        irreducible_uncertainty=True,
+    )
+    decision = _policy().choose(
+        state,
+        executors=(
+            OperationKind.CHECK_ASSUMPTION,
+            OperationKind.ANSWER,
+            OperationKind.ABSTAIN,
+        ),
+    )
+
+    assert feasible_actions(
+        state,
+        executors=(
+            OperationKind.CHECK_ASSUMPTION,
+            OperationKind.ANSWER,
+            OperationKind.ABSTAIN,
+        ),
+    ) == (OperationKind.CHECK_ASSUMPTION,)
+    assert decision["action"] == OperationKind.CHECK_ASSUMPTION.value
+    assert decision["mode"] == "constraint_recovery"
+    assert CognitiveStateSignal.from_dict(state.to_dict()) == state
+
+
 def test_unavailable_execute_cannot_be_selected_even_with_strong_evidence():
     evidence = ActionEvidence()
     for _ in range(MIN_ACTION_TRIALS):

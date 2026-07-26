@@ -56,6 +56,7 @@ _ORDINARY_DECISION_MODES = frozenset(
         "bounded_explore",
         "measured",
         "bootstrap",
+        "constraint_recovery",
     }
 )
 _CAMPAIGN_DECISION_MODE = "campaign_forced"
@@ -699,6 +700,7 @@ class CognitiveStateSignal:
     can_execute: bool
     answer_verified: bool
     irreducible_uncertainty: bool
+    pending_constraint_action: OperationKind | None = None
     omitted_action_count: int = 0
     previously_selected: tuple[OperationKind, ...] = ()
 
@@ -758,6 +760,11 @@ class CognitiveStateSignal:
                 )
         if any(not isinstance(action, OperationKind) for action in self.previously_selected):
             raise ValueError("previously_selected contains an invalid action")
+        if self.pending_constraint_action is not None and self.pending_constraint_action not in {
+            OperationKind.FALSIFY,
+            OperationKind.CHECK_ASSUMPTION,
+        }:
+            raise ValueError("pending_constraint_action is invalid")
         if (
             type(self.omitted_action_count) is not int
             or not 0 <= self.omitted_action_count <= self.step_index
@@ -788,6 +795,11 @@ class CognitiveStateSignal:
             "can_execute": self.can_execute,
             "answer_verified": self.answer_verified,
             "irreducible_uncertainty": self.irreducible_uncertainty,
+            "pending_constraint_action": (
+                self.pending_constraint_action.value
+                if self.pending_constraint_action is not None
+                else None
+            ),
             "omitted_action_count": self.omitted_action_count,
             "previously_selected": [action.value for action in self.previously_selected],
         }
@@ -815,18 +827,22 @@ class CognitiveStateSignal:
             "can_execute",
             "answer_verified",
             "irreducible_uncertainty",
+            "pending_constraint_action",
             "omitted_action_count",
             "previously_selected",
         }
-        legacy_fields = fields - {"omitted_action_count"}
-        actual_fields = frozenset(value) if isinstance(value, Mapping) else frozenset()
-        if not isinstance(value, Mapping) or actual_fields not in {
+        accepted_fields = {
             frozenset(fields),
-            frozenset(legacy_fields),
-        }:
+            frozenset(fields - {"omitted_action_count"}),
+            frozenset(fields - {"pending_constraint_action"}),
+            frozenset(fields - {"omitted_action_count", "pending_constraint_action"}),
+        }
+        actual_fields = frozenset(value) if isinstance(value, Mapping) else frozenset()
+        if not isinstance(value, Mapping) or actual_fields not in accepted_fields:
             raise ValueError("cognitive state signal fields differ")
         normalized_value = dict(value)
         normalized_value.setdefault("omitted_action_count", 0)
+        normalized_value.setdefault("pending_constraint_action", None)
         previous = normalized_value.get("previously_selected")
         if not isinstance(previous, list) or len(previous) > int(
             normalized_value.get("max_steps") or 0
@@ -836,11 +852,17 @@ class CognitiveStateSignal:
             previous_actions = tuple(OperationKind(item) for item in previous)
         except (TypeError, ValueError) as exc:
             raise ValueError("cognitive state previous actions are invalid") from exc
+        pending_raw = normalized_value.get("pending_constraint_action")
+        try:
+            pending_action = OperationKind(pending_raw) if pending_raw is not None else None
+        except (TypeError, ValueError) as exc:
+            raise ValueError("cognitive state pending constraint is invalid") from exc
         return cls(
             **{
                 name: normalized_value[name]
-                for name in fields - {"previously_selected"}
+                for name in fields - {"previously_selected", "pending_constraint_action"}
             },
+            pending_constraint_action=pending_action,
             previously_selected=previous_actions,
         )
 
@@ -935,6 +957,10 @@ def feasible_actions(
     executors: tuple[OperationKind, ...],
 ) -> tuple[OperationKind, ...]:
     available = set(executors)
+    if state.pending_constraint_action is not None:
+        if state.pending_constraint_action not in available or not state.has_verifier:
+            return ()
+        return (state.pending_constraint_action,)
     neural_actions = {
         OperationKind.DECOMPOSE,
         OperationKind.BLIND_RESOLVE,
@@ -1025,7 +1051,10 @@ class ValueOfComputationPolicy:
             raise ValueError("no executable cognitive action is feasible")
 
         # Terminal rules are explicit, preregistered, and dominate exploration.
-        if OperationKind.EXECUTE in feasible and state.can_execute and state.answer_verified:
+        if state.pending_constraint_action is not None:
+            chosen = state.pending_constraint_action
+            mode = "constraint_recovery"
+        elif OperationKind.EXECUTE in feasible and state.can_execute and state.answer_verified:
             chosen = OperationKind.EXECUTE
             mode = "verified_execute"
         elif OperationKind.ANSWER in feasible and state.answer_verified:
@@ -1492,6 +1521,19 @@ def validate_action_trace_row(
         )
     if decision != expected_decision:
         raise ValueError("cognitive action decision does not match policy and state")
+    if signal.pending_constraint_action is not None:
+        if (
+            decision["mode"] != "constraint_recovery"
+            or not transient_constraint
+            or transient_constraint.get("source_action") != signal.pending_constraint_action.value
+            or transient_constraint.get("applied_action") != signal.pending_constraint_action.value
+            or transient_constraint.get("applied_action_step") != signal.step_index
+            or type(transient_constraint.get("created_action_step")) is not int
+            or transient_constraint["created_action_step"] >= signal.step_index
+        ):
+            raise ValueError("constraint recovery decision lacks admitted authority")
+    elif decision["mode"] == "constraint_recovery":
+        raise ValueError("constraint recovery decision lacks a pending constraint")
     transition = validate_action_transition(
         value.get("transition"),
         require_checked=False,

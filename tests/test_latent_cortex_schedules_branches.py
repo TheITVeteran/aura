@@ -768,6 +768,43 @@ def test_fixed_depth_performs_terminal_exchange_before_halting(tiny_model):
     assert ensemble.all_halted()
 
 
+def test_interval_exchange_waits_for_resynchronization_and_ignores_other_exchange_kinds(
+    tiny_model,
+):
+    cache = _prefill(tiny_model)
+    ensemble, runner, budget = _ensemble(
+        tiny_model,
+        cache,
+        n_branches=2,
+        exchange_interval=2,
+        max_steps=6,
+        fixed_depth=True,
+        isolation_steps=1,
+    )
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.exchange_now(
+        sync_kind="schedule_bytecode",
+        sync_id="mixed-exchange-before-interval",
+        budget=budget,
+    )
+
+    first, second = ensemble.branches
+    second.halted = True
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    second.halted = False
+    first.halted = True
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    first.halted = False
+    assert {branch.steps for branch in ensemble.active()} == {2}
+    assert [row["sync_kind"] for row in ensemble.exchange_receipts] == ["schedule_bytecode"]
+
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    assert ensemble.step_all(runner, cache, P_END, C_START, budget=budget)
+    interval_rows = [row for row in ensemble.exchange_receipts if row["sync_kind"] == "interval"]
+    assert [row["sync_id"] for row in interval_rows] == ["recurrent-step:4"]
+
+
 def test_loop_diagnostics_reset_derivatives_after_exchange(tiny_model):
     continuous_cache = _prefill(tiny_model)
     continuous, runner, budget = _ensemble(

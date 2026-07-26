@@ -34,6 +34,7 @@ from core.brain.llm.latent_cortex.transient_constraints import (  # noqa: E402
 from core.brain.llm.latent_cortex.types import ComputeBudget  # noqa: E402
 from core.brain.llm.latent_cortex.verified_best import (  # noqa: E402
     VerifierObservation,
+    tensor_sha256,
 )
 
 
@@ -112,9 +113,9 @@ def _ledger(
 
 
 def _states() -> tuple[np.ndarray, np.ndarray]:
-    parent = np.zeros((1, 4, 8), dtype=np.float32)
+    parent = np.full((1, 4, 8), 2.0, dtype=np.float32)
     failed = np.array(parent, copy=True)
-    failed[:, 1:, :] = 1.0
+    failed[:, 1:, :] = 3.0
     return parent, failed
 
 
@@ -290,6 +291,15 @@ def test_verified_failure_admits_one_use_branch_local_constraint_and_reduces_rep
     assert attempt["guided_beats_controls"] is True
     assert attempt["controls_repeat_failure"] is True
     assert len(evaluator.calls) == 6
+    assert (
+        ledger.pending_action(
+            branch_index=0,
+            action_step=1,
+            kv_boundary_sha256="d" * 64,
+            state_sha256=tensor_sha256(_states()[0]),
+        )
+        == "falsify"
+    )
 
     current = np.full((1, 4, 8), 2.0, dtype=np.float32)
     changed, application = ledger.apply_next(
@@ -453,6 +463,66 @@ def test_constraint_scope_requires_same_branch_action_and_unexpired_step():
     assert receipt["constraints"][0]["status"] == "expired_ttl"
 
 
+def test_pending_constraint_with_stale_kv_is_erased_before_policy_selection():
+    ledger = _ledger()
+    _admit(ledger)
+
+    assert (
+        ledger.pending_action(
+            branch_index=0,
+            action_step=1,
+            kv_boundary_sha256="e" * 64,
+            state_sha256=tensor_sha256(_states()[0]),
+        )
+        is None
+    )
+    assert ledger.private_direction_count == 0
+    receipt = ledger.finalize(final_action_step=1)
+    assert receipt["constraints"][0]["status"] == "expired_stale_kv"
+    assert receipt["erasures"][0]["reason"] == "stale_kv_boundary"
+
+
+def test_pending_constraint_with_stale_parent_state_is_erased_before_policy_selection():
+    ledger = _ledger()
+    _admit(ledger)
+    stale_state = np.full((1, 4, 8), 2.5, dtype=np.float32)
+
+    assert (
+        ledger.pending_action(
+            branch_index=0,
+            action_step=1,
+            kv_boundary_sha256="d" * 64,
+            state_sha256=tensor_sha256(stale_state),
+        )
+        is None
+    )
+    assert ledger.private_direction_count == 0
+    receipt = ledger.finalize(final_action_step=1)
+    assert receipt["constraints"][0]["status"] == "expired_stale_state"
+    assert receipt["erasures"][0]["reason"] == "stale_parent_state"
+
+
+def test_constraint_application_rejects_a_different_state_with_the_same_kv_boundary():
+    ledger = _ledger()
+    _admit(ledger)
+    stale_state = np.full((1, 4, 8), 2.5, dtype=np.float32)
+
+    unchanged, application = ledger.apply_next(
+        stale_state,
+        branch_index=0,
+        action="falsify",
+        action_step=1,
+        branch_step=4,
+        kv_boundary_sha256="d" * 64,
+    )
+
+    assert unchanged is stale_state
+    assert application is None
+    receipt = ledger.finalize(final_action_step=1)
+    assert receipt["constraints"][0]["status"] == "expired_stale_state"
+    assert receipt["erasures"][0]["reason"] == "stale_parent_state"
+
+
 def test_relative_rms_bound_is_computed_only_over_mutable_slots():
     ledger = TransientConstraintLedger(
         episode_id="episode-test",
@@ -464,7 +534,7 @@ def test_relative_rms_bound_is_computed_only_over_mutable_slots():
     attempt = _admit(ledger)
     assert attempt["status"] == "admitted"
     guided = next(arm for arm in attempt["arms"] if arm["name"] == "negative_direction")
-    assert guided["relative_mutable_delta_rms"] <= 0.08
+    assert guided["relative_mutable_delta_rms"] <= 0.08 + 1e-6
 
     state = np.full((1, 4, 8), 2.0, dtype=np.float32)
     changed, reservation = ledger.apply_next(

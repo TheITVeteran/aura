@@ -965,14 +965,24 @@ class BranchEnsemble:
 
         self._seal_isolation_if_ready()
 
+        active_branches = self.active()
+        active_steps = {branch.steps for branch in active_branches}
+        completed_interval_steps = {
+            int(row["sync_id"].removeprefix("recurrent-step:"))
+            for row in self.exchange_receipts
+            if row.get("sync_kind") == "interval"
+            and isinstance(row.get("sync_id"), str)
+            and row["sync_id"].removeprefix("recurrent-step:").isdigit()
+        }
         if (
-            len(self.active()) > 1
-            and self.exchanges * self.config.exchange_interval < max(b.steps for b in self.branches)
-            and max(b.steps for b in self.branches) % self.config.exchange_interval == 0
+            len(active_branches) > 1
+            and len(active_steps) == 1
+            and next(iter(active_steps)) % self.config.exchange_interval == 0
+            and next(iter(active_steps)) not in completed_interval_steps
         ):
             if self.exchange(
                 sync_kind="interval",
-                sync_id=f"recurrent-step:{max(b.steps for b in self.branches)}",
+                sync_id=f"recurrent-step:{next(iter(active_steps))}",
                 budget=budget,
             ):
                 self.maintain_diversity(budget=budget)

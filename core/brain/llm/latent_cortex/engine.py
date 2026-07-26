@@ -812,9 +812,7 @@ class LatentCortexEngine:
             "public_action_state_sha256": cls._canonical_sha256(
                 {
                     "state_signal": state_signal.to_dict(),
-                    "active_action_executors": [
-                        action.value for action in active_action_executors
-                    ],
+                    "active_action_executors": [action.value for action in active_action_executors],
                 }
             ),
             "durable_state_sha256": expected["durable_state_sha256"],
@@ -2084,9 +2082,7 @@ class LatentCortexEngine:
                 or capture_decode_logprobs
                 or decode_sentence_grace_tokens is not None
             ):
-                raise ValueError(
-                    "action intervention does not permit direct decode overrides"
-                )
+                raise ValueError("action intervention does not permit direct decode overrides")
             engine_request_sha256 = action_intervention_engine_request_sha256(
                 prompt=prompt,
                 domain=str(domain),
@@ -2101,9 +2097,7 @@ class LatentCortexEngine:
             )
             if (
                 engine_request_sha256
-                != normalized_action_intervention["authority_payload"][
-                    "engine_request_sha256"
-                ]
+                != normalized_action_intervention["authority_payload"]["engine_request_sha256"]
             ):
                 raise ValueError("action intervention engine request differs")
             if not isinstance(action_intervention_consumption, dict):
@@ -2173,9 +2167,7 @@ class LatentCortexEngine:
                     cognitive_context_items=context_items,
                     action_policy_evidence=policy_evidence,
                     action_intervention=normalized_action_intervention,
-                    action_intervention_execution_claim=(
-                        action_intervention_execution_claim
-                    ),
+                    action_intervention_execution_claim=(action_intervention_execution_claim),
                     external_execution_offer=normalized_execution_offer,
                     information_encoded_tokens=encoded_tokens,
                     information_verifier=verifier,
@@ -2887,7 +2879,7 @@ class LatentCortexEngine:
                         )
                 bytecode_events.append(event)
                 continue
-            for _ in range(op.repeats):
+            for repeat_index in range(op.repeats):
                 if ensemble.all_halted() or budget.exhausted:
                     break
                 if action_index >= self.config.recurrence.max_steps:
@@ -2900,14 +2892,33 @@ class LatentCortexEngine:
                 before_residual = self._mean_latest_residual(ensemble)
                 before_disagreement = ensemble.disagreement(budget=budget)
                 signal_candidates = ensemble.active() or list(ensemble.branches)
-                prospective_target = min(
-                    signal_candidates,
-                    key=lambda branch: (
-                        branch.halting.residual_trail[-1]
-                        if branch.halting.residual_trail
-                        else float("inf")
-                    ),
+                future_window_turn = repeat_index + 1 < op.repeats or any(
+                    getattr(future_op, "kind", "window") == "window" and future_op.repeats > 0
+                    for future_op in schedule.ops[op_index + 1 :]
                 )
+                prospective_target: BranchState | None = None
+                pending_constraint_action = None
+                if not intervention_pending:
+                    for candidate in sorted(signal_candidates, key=lambda branch: branch.index):
+                        pending_name = transient_constraints.pending_action(
+                            branch_index=candidate.index,
+                            action_step=action_index,
+                            kv_boundary_sha256=candidate.kv_boundary_sha256,
+                            state_sha256=tensor_sha256(candidate.z),
+                        )
+                        if pending_name is not None:
+                            prospective_target = candidate
+                            pending_constraint_action = OperationKind(pending_name)
+                            break
+                if prospective_target is None:
+                    prospective_target = min(
+                        signal_candidates,
+                        key=lambda branch: (
+                            branch.halting.residual_trail[-1]
+                            if branch.halting.residual_trail
+                            else float("inf")
+                        ),
+                    )
                 previous_verifier_score = branch_verifier_scores.get(prospective_target.index)
                 previous_verifier_delta = branch_verifier_deltas.get(prospective_target.index)
                 remaining_fraction = budget.remaining_layer_apps / max(1, budget.max_layer_apps)
@@ -2956,6 +2967,7 @@ class LatentCortexEngine:
                         and not has_memory
                         and not has_evidence
                     ),
+                    pending_constraint_action=pending_constraint_action,
                     omitted_action_count=omitted_action_count,
                     previously_selected=tuple(selected_actions),
                 )
@@ -3048,6 +3060,7 @@ class LatentCortexEngine:
                 )
                 action = OperationKind(decision["action"])
                 spent_before = int(budget.spent_layer_apps)
+                action_started_monotonic = time.monotonic()
                 outcome = "completed"
                 affected_branches = 0
                 probe_score: float | None = None
@@ -3435,18 +3448,6 @@ class LatentCortexEngine:
                         if action is OperationKind.SEARCH_MEMORY
                         else "evidence_context_focused"
                     )
-                if action in _ACTION_CONTROL_TEXT and not tree_search_handled:
-                    operator_receipts = ensemble.apply_cognitive_operators(
-                        action_controls[action],
-                        action=action.value,
-                        action_step=action_index,
-                        budget=budget,
-                    )
-                    cognitive_operator_trace.extend(operator_receipts)
-                    affected_branches = max(
-                        affected_branches,
-                        len(operator_receipts),
-                    )
                 if action in {
                     OperationKind.FALSIFY,
                     OperationKind.CHECK_ASSUMPTION,
@@ -3470,6 +3471,18 @@ class LatentCortexEngine:
                         )
                         prospective_target.workspace.update(prospective_target.z)
                         receipt.flag("transient_negative_constraint_applied")
+                if action in _ACTION_CONTROL_TEXT and not tree_search_handled:
+                    operator_receipts = ensemble.apply_cognitive_operators(
+                        action_controls[action],
+                        action=action.value,
+                        action_step=action_index,
+                        budget=budget,
+                    )
+                    cognitive_operator_trace.extend(operator_receipts)
+                    affected_branches = max(
+                        affected_branches,
+                        len(operator_receipts),
+                    )
                 if (
                     action
                     in {
@@ -3756,6 +3769,15 @@ class LatentCortexEngine:
                                     bridge_tokens,
                                     count=(3 * transient_constraint_config.replicates),
                                 )
+                                constraint_recovery_apps = len(
+                                    ensemble.active() or ensemble.branches
+                                ) * self.config.workspace.n_slots * max(
+                                    0, op.end - op.start
+                                ) + self._verifier_probe_layer_apps(bridge_tokens)
+                                constraint_recovery_wall_reserve_s = max(
+                                    0.25,
+                                    time.monotonic() - action_started_monotonic,
+                                )
                                 constraint_evaluator = None
                                 constraint_unavailable_reason = ""
                                 if (
@@ -3765,15 +3787,33 @@ class LatentCortexEngine:
                                     constraint_unavailable_reason = (
                                         "verifier_authority_commitment_unavailable"
                                     )
+                                elif action_index + 1 >= self.config.recurrence.max_steps:
+                                    constraint_unavailable_reason = (
+                                        "constraint_recovery_action_budget_unavailable"
+                                    )
+                                elif not future_window_turn:
+                                    constraint_unavailable_reason = (
+                                        "constraint_recovery_schedule_turn_unavailable"
+                                    )
+                                elif decision["mode"] == "campaign_forced":
+                                    constraint_unavailable_reason = (
+                                        "constraint_recovery_intervention_arm_isolation"
+                                    )
                                 elif (
-                                    constraint_probe_apps + safety_reserve
+                                    constraint_probe_apps
+                                    + constraint_recovery_apps
+                                    + safety_reserve
                                     > budget.remaining_layer_apps
                                 ):
                                     constraint_unavailable_reason = (
                                         "matched_counterfactual_probe_budget_unavailable"
                                     )
+                                elif budget.remaining_wall_s <= constraint_recovery_wall_reserve_s:
+                                    constraint_unavailable_reason = (
+                                        "constraint_recovery_wall_budget_unavailable"
+                                    )
                                 else:
-                                    constraint_evaluator = self._counterfactual_probe_evaluator(
+                                    raw_constraint_evaluator = self._counterfactual_probe_evaluator(
                                         branch=target,
                                         cache=cache,
                                         runner=runner,
@@ -3781,6 +3821,26 @@ class LatentCortexEngine:
                                         bridge_tokens=bridge_tokens,
                                         verifier=verifier,
                                     )
+                                    if raw_constraint_evaluator is not None:
+
+                                        def constraint_evaluator(
+                                            label,
+                                            state,
+                                            replicate,
+                                            _evaluator=raw_constraint_evaluator,
+                                            _wall_reserve_s=constraint_recovery_wall_reserve_s,
+                                        ):
+                                            result = _evaluator(
+                                                label,
+                                                state,
+                                                replicate,
+                                            )
+                                            if budget.remaining_wall_s <= _wall_reserve_s:
+                                                raise RuntimeError(
+                                                    "constraint recovery wall reserve consumed"
+                                                )
+                                            return result
+
                                 if (
                                     len(transient_verifier_policy_sha256) == 64
                                     and len(preflight_sha256) == 64

@@ -60,7 +60,7 @@ def _proposal(context, *, primitive="tool_execution"):
 def strict_will(monkeypatch):
     """The live runtime runs strict default-deny; the gate only exists there.
 
-    The existential-stakes stub is not decoration. The Will vetoes every
+    The existential-stakes fixture is not decoration. The Will vetoes every
     heavy domain — tool_execution included — when threat exceeds 0.75, and
     that check runs BEFORE the authority gate these tests are about. Other
     suites leave a critical-threat stakes service in the shared
@@ -80,7 +80,7 @@ def strict_will(monkeypatch):
             return 0.0
 
     # Intercept the lookup rather than registering into the shared
-    # container. Registering would leave the stub behind when nothing was
+    # container. Registering would leave the fixture behind when nothing was
     # registered before, and a test that quietly disables the survival veto
     # for every suite after it is the same disease being treated here.
     real_get = ServiceContainer.get.__func__

@@ -28189,3 +28189,103 @@ total records, leaving approximately 12-277 records after this checkpoint.
 Checkpoint-count completion is approximately 67.0%-97.9%, with a midpoint
 planning estimate of 79.6%. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-375: Constraint Recovery and Proof-Bearing No-Op Output
+
+The two inherited tiny-Qwen failures recorded at CP374 are closed as runtime
+contracts rather than waived tests. A counterfactual negative direction that
+passes the matched failed-state, orthogonal-sham, equal-compute, equal-token,
+fully metered, repeated-observation admission trial now creates a public
+one-turn recovery obligation. The obligation is part of the bounded cognitive
+state and deterministically restricts the next feasible action to the admitted
+`FALSIFY` or `CHECK_ASSUMPTION` executor before `ANSWER` or `ABSTAIN` may
+terminate the episode. The action trace binds the recovery mode to the exact
+constraint application, creation step, application step, source action, and
+receipt digest. Independent transient-receipt replay still binds the source
+verified failure, branch, KV boundary, recurrence commit, post-recurrence
+state, follow-up verifier observation, one-use erasure, and resulting
+reduction/repetition verdict.
+
+Admission now reserves a concrete later schedule window, another controller
+slot, conservative compute, and a measured wall-clock allowance for the
+recurrent recovery plus its verifier probe. The matched trial aborts before
+minting authority if it consumes that wall reserve. A failure discovered on
+the final schedule turn, too late in the action budget, or without enough
+compute beyond the existing completion/fallback reserve is recorded as an
+unavailable trial. Campaign-forced intervention arms cannot create this
+follow-on authority and contaminate their own causal treatment. The obligation
+is bound to the exact restored parent-state digest as well as branch, action,
+and KV boundary; any state or KV drift zeroizes it before policy selection. The
+bound branch preempts ordinary residual-based target selection, and the
+constraint is applied before the recovery action's cognitive operator can
+change that parent. The real tiny-Qwen regression therefore proves one admitted
+application, one committed recurrence, unchanged protected positions and KV
+boundary, exact private-direction erasure, and one authoritative reduction
+instead of accepting an episode-end expiration.
+
+Answer replacement advances to schema v3. When local diagnosis produced no
+repair request, the worker no longer transports branch text, baseline text,
+tokens, or an empty candidate-shaped private bundle merely to prove that no
+replacement occurred. The public receipt explicitly commits
+`private_evidence_required=false`, an empty private-evidence hash, no
+candidates, `retain`, and `no_local_repair_candidates`. The parent reconstructs
+the baseline decomposition, deterministic routes, quality interval, and exact
+text/token binding from the already returned output. Supplying private material
+on this path fails closed. A no-request baseline that is deterministically
+refuted is not treated as a no-op: it abstains, and preserves the private
+baseline evidence needed for independent reconstruction instead of returning a
+known-invalid decode. Episodes with an actual repair request retain the full
+private reconstruction contract; the no-op path cannot be forged for them.
+
+The repair also closes an adjacent branch-scheduling defect. Automatic
+interval exchange now occurs only when every active branch is at the same
+recurrent step, and interval identity is deduplicated from the actual prior
+interval receipts rather than the total count of interval, bytecode, and
+controller exchanges. A mixed bytecode/interval regression also proves that a
+temporary branch-step desynchronization cannot trigger an undeclared exchange
+or cause a later synchronized interval to be skipped. The latent-tree
+integration test no longer pretends
+eight raw online moments are calibrated authority: it uses the signed,
+externally rooted action-calibration fixture to select `BRANCH`
+deterministically and exercises the intended tree path.
+
+An independent defect review requested changes on four points: refuted
+no-request output, final-turn authority, parent-state aliasing, and mixed-kind
+exchange coverage. All four were reproduced, repaired, and regressed. The
+expanded focused verified-best, answer-replacement, value-policy, transient-
+constraint, and branch-scheduling contracts pass 112 tests. The complete
+68-file RLC, latent-cortex, transient-constraint, and branch-exchange battery
+passes 1,230 tests. Strict
+repository Ruff, bytecode compilation, production readiness, enterprise
+ratchet, governance ownership, model-load ownership, resource-observation
+ownership, and all 20 closeout-rubric criteria pass. This checkpoint still does
+not claim resident-32B calibration, broad capability gain, frontier reasoning,
+whole-host post-mutation state equivalence, live selection/lesion/restoration,
+or long-duration reliability. The next bounded milestone remains the
+crash-resumable resident state-capture and action-calibration runner, followed
+by externally custodied acquisition and independent verification.
+
+Post-rebase enterprise validation also caught two broad exception handlers in
+the newly landed cooperative imagination move registry. They now contain only
+the explicit arithmetic, data, render, and runtime failures covered by that
+registry's contract instead of swallowing arbitrary programmer/system
+exceptions. The imagination, visualization, inner-monologue, chat-leakage,
+initiative, and recovery suites pass 105 tests, and the enterprise exception
+ratchet returns to baseline.
+
+The final origin reconciliation inherited an agency-authority regression test
+whose prose used the enterprise scanner's reserved placeholder-implementation
+term twice. The fixtures were real and all 32 inherited agency/stakes tests
+passed, but the wording falsely raised placeholder debt from 13 to 15. The
+descriptions now name those objects as fixtures, so the ratchet measures code
+structure rather than test commentary and returns to its checked-in ceiling.
+
+Ten cooperative conversation, autonomy, recovery, closeout, capability,
+agency, MLX-deadline, test-isolation, and runtime-layering commits (`4a1df408b`
+through `15e901f54`, plus `a364a0ba7`, `278ea9693`, `9a3ca1ba3`, `7851bff39`,
+`271939da0`, and `8ba0ae4ea`) landed after CP374 and before final integration.
+Counting them and CP375 makes the total checkpoint record 574. The existing
+575-840 forecast remains honest, leaving approximately 1-266 records after
+this checkpoint. Checkpoint-count completion is approximately 68.3%-99.8%,
+with a midpoint planning estimate of 81.1%. Final multi-hour
+soaks remain deferred until every shorter gate is green.

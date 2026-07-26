@@ -56,6 +56,7 @@ from core.brain.llm.latent_cortex.virtual_quanta import (  # noqa: E402
     VirtualQuantaConfig,
     validate_virtual_quanta_receipt,
 )
+from tests.fixtures.action_calibration import certified_action_snapshot  # noqa: E402
 
 
 class _Workspace:
@@ -606,7 +607,10 @@ def test_real_tiny_qwen_applies_virtual_quantum_before_recurrence_and_proves_rec
         )
 
 
-def test_real_tiny_qwen_branch_action_runs_verified_latent_tree_and_service_accepts():
+def test_real_tiny_qwen_branch_action_runs_verified_latent_tree_and_service_accepts(
+    tmp_path,
+    monkeypatch,
+):
     from core.brain.llm.latent_cortex.latent_tree_search import (
         LatentTreeSearchConfig,
         validate_latent_tree_receipt,
@@ -622,18 +626,15 @@ def test_real_tiny_qwen_branch_action_runs_verified_latent_tree_and_service_acce
         "branching_factor": 2,
         "min_verifier_margin": 0.0,
     }
-    cells = {}
-    for action in OperationKind:
-        cell = ActionEvidence()
-        for _ in range(8):
-            cell = cell.append(
-                gain=1.0 if action is OperationKind.BRANCH else -1.0,
-                cost=0.1,
-            )
-        cells[action] = cell
-    evidence = build_evidence_snapshot(
+    evidence, root_pem = certified_action_snapshot(
         bucket="verified-tree|none|short|s:mid|u:mid",
-        cells=cells,
+        cells={OperationKind.BRANCH: (0.8, 0.9, 1.0, 0.1)},
+    )
+    root_path = tmp_path / "action-calibration-root.pem"
+    root_path.write_bytes(root_pem)
+    monkeypatch.setenv(
+        "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+        str(root_path),
     )
     result = engine.reason(
         token_ids=[5, 9, 17, 3, 42, 7],
@@ -808,6 +809,49 @@ class _FailureThenRecoveryVerifier(_BoundedVerifier):
             basis="deterministic_exact",
             samples=1,
         )
+
+
+class _AlwaysFailureVerifier(_BoundedVerifier):
+    def observe_with_bounds(self, _text: str):
+        self.bound_calls += 1
+        return _observation(
+            score=0.0,
+            lower=0.0,
+            upper=0.0,
+            name=f"persistent-failure-{self.bound_calls}",
+            basis="deterministic_exact",
+            samples=1,
+        )
+
+
+def test_final_schedule_turn_cannot_mint_unexecutable_recovery_authority(
+    monkeypatch,
+):
+    engine, evidence = _tiny_engine(seed=41, allow_vanilla_fallback=False)
+    engine.config.schedule = {
+        "name": "two-turn-final-failure",
+        "ops": [{"start": 2, "end": 6, "repeats": 2}],
+    }
+    monkeypatch.setattr(
+        engine,
+        "_counterfactual_probe_evaluator",
+        _matched_constraint_evaluator,
+    )
+
+    result = engine.reason(
+        token_ids=[5, 9, 17, 3, 42, 7],
+        budget=ComputeBudget(),
+        verifier=_AlwaysFailureVerifier(),
+        action_policy_evidence=evidence,
+    )
+
+    assert result.ok is True
+    transient = result.receipt.transient_negative_constraints
+    assert transient["aggregates"]["admitted_count"] == 0
+    assert transient["constraints"] == []
+    assert [(row["status"], row["reason"]) for row in transient["attempts"]] == [
+        ("skipped", "constraint_recovery_schedule_turn_unavailable")
+    ]
 
 
 def test_real_tiny_qwen_engine_applies_verified_constraint_on_live_recurrence(

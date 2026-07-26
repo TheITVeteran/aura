@@ -31,7 +31,7 @@ from core.brain.llm.latent_cortex.local_repair import (
     validate_local_repair_receipt,
 )
 
-ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v2"
+ANSWER_REPLACEMENT_SCHEMA = "aura.rlc.answer_replacement.v3"
 ANSWER_REPLACEMENT_PRIVATE_SCHEMA = "aura.rlc.answer_replacement_private.v2"
 DEFAULT_REPLACEMENT_MARGIN = 0.05
 MAX_REPLACEMENT_OUTPUT_TOKENS = 1024
@@ -96,8 +96,7 @@ def _quality_interval(
     refuted = [
         row
         for row in routed["routes"]
-        if row["verifier"] in _REFUTATION_VERIFIERS
-        and row["outcome"] == "refuted"
+        if row["verifier"] in _REFUTATION_VERIFIERS and row["outcome"] == "refuted"
     ]
     semantic_verified = 0
     partial_or_nonsemantic = 0
@@ -115,11 +114,7 @@ def _quality_interval(
     )
     if refuted or atomic["grade_admissible"] is not True:
         lower = upper = 0.0
-        basis = (
-            "deterministic_exact_refutation"
-            if refuted
-            else "structural_grade_refutation"
-        )
+        basis = "deterministic_exact_refutation" if refuted else "structural_grade_refutation"
     elif every_atom_semantically_verified:
         lower = upper = 1.0
         basis = "full_span_semantic_exact_complete"
@@ -184,12 +179,8 @@ def _normalize_private_evidence(value: Any) -> dict[str, Any]:
     return {
         "schema": ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
         "objective": value["objective"],
-        "branch_candidates": {
-            str(key): str(text) for key, text in sorted(branches.items())
-        },
-        "generated_repairs": {
-            str(key): str(text) for key, text in sorted(repairs.items())
-        },
+        "branch_candidates": {str(key): str(text) for key, text in sorted(branches.items())},
+        "generated_repairs": {str(key): str(text) for key, text in sorted(repairs.items())},
         "baseline_text": value["baseline_text"],
         "baseline_tokens": list(baseline_tokens),
     }
@@ -226,22 +217,7 @@ def _candidate_inventory(
     if selected_branch in branch_quality:
         selected_quality = branch_quality[selected_branch]
     else:
-        unavailable_payload = {
-            "object": "conjunctive_full_span_exact_claim_validity",
-            "lower_bound": 0.0,
-            "upper_bound": 1.0,
-            "basis": "candidate_probe_unavailable",
-            "atom_count": 0,
-            "semantic_exact_verified_count": 0,
-            "exact_refuted_count": 0,
-            "partial_or_nonsemantic_count": 0,
-            "decomposition_sha256": "",
-            "routes_sha256": "",
-        }
-        selected_quality = {
-            **unavailable_payload,
-            "interval_sha256": _sha(unavailable_payload),
-        }
+        selected_quality = _unavailable_quality()
 
     repairs = private_evidence["generated_repairs"]
     rows: list[dict[str, Any]] = []
@@ -251,9 +227,7 @@ def _candidate_inventory(
         strict=True,
     ):
         branch = int(request["branch"])
-        replacement_available = (
-            transaction["status"] == "repaired_candidate_admitted"
-        )
+        replacement_available = transaction["status"] == "repaired_candidate_admitted"
         replacement_text = repairs.get(request["request_id"])
         if replacement_available and not isinstance(replacement_text, str):
             raise ValueError("admitted replacement private source is absent")
@@ -310,6 +284,22 @@ def _candidate_inventory(
     return rows, selected_quality
 
 
+def _unavailable_quality() -> dict[str, Any]:
+    payload = {
+        "object": "conjunctive_full_span_exact_claim_validity",
+        "lower_bound": 0.0,
+        "upper_bound": 1.0,
+        "basis": "candidate_probe_unavailable",
+        "atom_count": 0,
+        "semantic_exact_verified_count": 0,
+        "exact_refuted_count": 0,
+        "partial_or_nonsemantic_count": 0,
+        "decomposition_sha256": "",
+        "routes_sha256": "",
+    }
+    return {**payload, "interval_sha256": _sha(payload)}
+
+
 def _intended_decision(
     rows: list[dict[str, Any]],
     *,
@@ -333,6 +323,10 @@ def _intended_decision(
             "replacement_lower_bound_exceeds_final_decode_upper_bound_plus_margin",
             str(winner["request_id"]),
         )
+    if not rows:
+        if baseline_quality["basis"] == "deterministic_exact_refutation":
+            return "abstain", "known_refutation_has_no_dominant_repair", ""
+        return "retain", "no_local_repair_candidates", ""
     if baseline_quality["basis"] == "full_span_semantic_exact_complete":
         return "retain", "final_decode_already_exactly_verified", ""
     if (
@@ -385,29 +379,6 @@ def build_answer_replacement_receipt(
         disagreement_graph=disagreement_graph,
         diagnostic_selection=diagnostic_selection,
     )
-    admitted_request_ids = {
-        str(transaction["request_id"])
-        for transaction in local_repair["transactions"]
-        if transaction["status"] == "repaired_candidate_admitted"
-    }
-    private_evidence = _normalize_private_evidence(
-        {
-            "schema": ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
-            "objective": objective,
-            "branch_candidates": {
-                str(index): text for index, text in branch_candidates.items()
-            },
-            "generated_repairs": {
-                request_id: str(result["candidate"])
-                for request_id, result in generated_repairs.items()
-                if request_id in admitted_request_ids
-                if isinstance(result, Mapping)
-                and isinstance(result.get("candidate"), str)
-            },
-            "baseline_text": baseline_text,
-            "baseline_tokens": baseline,
-        }
-    )
     baseline_decomposition = build_atomic_decomposition(
         baseline_text,
         objective=objective,
@@ -422,15 +393,47 @@ def build_answer_replacement_receipt(
         baseline_routes,
         candidate=baseline_text,
     )
-    rows, selected_quality = _candidate_inventory(
-        disagreement_graph=disagreement_graph,
-        diagnostic_selection=diagnostic_selection,
-        local_repair=local_repair,
-        private_evidence=private_evidence,
-        selected_branch=selected_branch,
-        baseline_quality=baseline_quality,
-        margin=normalized_margin,
+    admitted_request_ids = {
+        str(transaction["request_id"])
+        for transaction in local_repair["transactions"]
+        if transaction["status"] == "repaired_candidate_admitted"
+    }
+    private_evidence_required = bool(local_repair["requests"]) or (
+        baseline_quality["basis"] == "deterministic_exact_refutation"
     )
+    private_evidence = (
+        _normalize_private_evidence(
+            {
+                "schema": ANSWER_REPLACEMENT_PRIVATE_SCHEMA,
+                "objective": objective,
+                "branch_candidates": {
+                    str(index): text for index, text in branch_candidates.items()
+                },
+                "generated_repairs": {
+                    request_id: str(result["candidate"])
+                    for request_id, result in generated_repairs.items()
+                    if request_id in admitted_request_ids
+                    if isinstance(result, Mapping) and isinstance(result.get("candidate"), str)
+                },
+                "baseline_text": baseline_text,
+                "baseline_tokens": baseline,
+            }
+        )
+        if private_evidence_required
+        else {}
+    )
+    if private_evidence_required:
+        rows, selected_quality = _candidate_inventory(
+            disagreement_graph=disagreement_graph,
+            diagnostic_selection=diagnostic_selection,
+            local_repair=local_repair,
+            private_evidence=private_evidence,
+            selected_branch=selected_branch,
+            baseline_quality=baseline_quality,
+            margin=normalized_margin,
+        )
+    else:
+        rows, selected_quality = [], _unavailable_quality()
     intended, reason, selected_request_id = _intended_decision(
         rows,
         enabled=enabled,
@@ -482,9 +485,7 @@ def build_answer_replacement_receipt(
         ),
         "text_sha256": _text_sha(accepted_text) if decision != "abstain" else "",
         "token_count": len(accepted_tokens),
-        "tokens_sha256": (
-            _token_sha(accepted_tokens) if decision != "abstain" else ""
-        ),
+        "tokens_sha256": (_token_sha(accepted_tokens) if decision != "abstain" else ""),
         "binding_status": binding_status,
     }
     policy = {
@@ -502,6 +503,7 @@ def build_answer_replacement_receipt(
         "disagreement_graph_sha256": disagreement_graph["receipt_sha256"],
         "diagnostic_selection_sha256": diagnostic_selection["receipt_sha256"],
         "local_repair_sha256": local_repair["receipt_sha256"],
+        "private_evidence_required": private_evidence_required,
         "private_evidence_sha256": _sha(private_evidence),
         "selected_branch": selected_branch,
         "policy": policy,
@@ -568,6 +570,7 @@ def validate_answer_replacement_receipt(
         "disagreement_graph_sha256",
         "diagnostic_selection_sha256",
         "local_repair_sha256",
+        "private_evidence_required",
         "private_evidence_sha256",
         "selected_branch",
         "policy",
@@ -599,19 +602,35 @@ def validate_answer_replacement_receipt(
         raise ValueError("answer replacement expected policy is invalid")
     margin = _margin(expected_margin)
     output_limit = _output_limit(expected_max_output_tokens)
-    private = _normalize_private_evidence(private_evidence)
-    if (
-        private["objective"] != expected_objective
-        or value["private_evidence_sha256"] != _sha(private)
-    ):
-        raise ValueError("answer replacement private evidence binding differs")
     validate_local_repair_receipt(
         local_repair,
         disagreement_graph=disagreement_graph,
         diagnostic_selection=diagnostic_selection,
     )
-    baseline_text = private["baseline_text"]
-    baseline_tokens = private["baseline_tokens"]
+    private_required = bool(local_repair["requests"]) or (
+        isinstance(value.get("baseline_quality"), Mapping)
+        and value["baseline_quality"].get("basis") == "deterministic_exact_refutation"
+    )
+    if value["private_evidence_required"] is not private_required:
+        raise ValueError("answer replacement private evidence policy differs")
+    if private_required:
+        private = _normalize_private_evidence(private_evidence)
+        if private["objective"] != expected_objective or value["private_evidence_sha256"] != _sha(
+            private
+        ):
+            raise ValueError("answer replacement private evidence binding differs")
+        baseline_text = private["baseline_text"]
+        baseline_tokens = private["baseline_tokens"]
+    else:
+        if private_evidence != {} or value["private_evidence_sha256"] != _sha({}):
+            raise ValueError("answer replacement no-op retained private evidence")
+        if expected_output_text is None or expected_output_tokens is None:
+            raise ValueError("answer replacement no-op output binding is absent")
+        baseline_text = expected_output_text
+        baseline_tokens = list(expected_output_tokens)
+        if any(type(token) is not int or token < 0 for token in baseline_tokens):
+            raise ValueError("answer replacement no-op output tokens are invalid")
+        private = {}
     baseline_decomposition = build_atomic_decomposition(
         baseline_text,
         objective=expected_objective,
@@ -626,15 +645,18 @@ def validate_answer_replacement_receipt(
         baseline_routes,
         candidate=baseline_text,
     )
-    expected_rows, selected_quality = _candidate_inventory(
-        disagreement_graph=disagreement_graph,
-        diagnostic_selection=diagnostic_selection,
-        local_repair=local_repair,
-        private_evidence=private,
-        selected_branch=expected_selected_branch,
-        baseline_quality=baseline_quality,
-        margin=margin,
-    )
+    if private_required:
+        expected_rows, selected_quality = _candidate_inventory(
+            disagreement_graph=disagreement_graph,
+            diagnostic_selection=diagnostic_selection,
+            local_repair=local_repair,
+            private_evidence=private,
+            selected_branch=expected_selected_branch,
+            baseline_quality=baseline_quality,
+            margin=margin,
+        )
+    else:
+        expected_rows, selected_quality = [], _unavailable_quality()
     intended, expected_reason, selected_request_id = _intended_decision(
         expected_rows,
         enabled=expected_enabled,
@@ -655,10 +677,8 @@ def validate_answer_replacement_receipt(
     binding = value["accepted_output"]
     if (
         value["schema"] != ANSWER_REPLACEMENT_SCHEMA
-        or value["disagreement_graph_sha256"]
-        != disagreement_graph.get("receipt_sha256")
-        or value["diagnostic_selection_sha256"]
-        != diagnostic_selection.get("receipt_sha256")
+        or value["disagreement_graph_sha256"] != disagreement_graph.get("receipt_sha256")
+        or value["diagnostic_selection_sha256"] != diagnostic_selection.get("receipt_sha256")
         or value["local_repair_sha256"] != local_repair.get("receipt_sha256")
         or value["selected_branch"] != expected_selected_branch
         or value["policy"] != policy
@@ -722,10 +742,7 @@ def validate_answer_replacement_receipt(
             and binding["binding_status"] == "failed_closed"
         )
         if (
-            not (
-                (intended == "abstain" and value["reason"] == expected_reason)
-                or binding_failure
-            )
+            not ((intended == "abstain" and value["reason"] == expected_reason) or binding_failure)
             or binding["source"] != "none"
             or binding["text_sha256"] != ""
             or binding["token_count"] != 0
@@ -747,11 +764,7 @@ def validate_answer_replacement_receipt(
             and (
                 binding["token_count"] != len(expected_output_tokens)
                 or binding["tokens_sha256"]
-                != (
-                    _token_sha(expected_output_tokens)
-                    if decision != "abstain"
-                    else ""
-                )
+                != (_token_sha(expected_output_tokens) if decision != "abstain" else "")
             )
         )
     ):

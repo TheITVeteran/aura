@@ -1380,7 +1380,7 @@ class ImaginationEngine:
                 continue
             try:
                 affinity = _safe_float(move.affinity(signals), 0.0)
-            except Exception as exc:  # a bad affinity must not silence imagination
+            except (ArithmeticError, RuntimeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "imagination",
                     exc,
@@ -1390,7 +1390,7 @@ class ImaginationEngine:
             if affinity <= 0.0:
                 continue
             digest = hashlib.blake2b(
-                f"{seed_text}|{move.move_id}".encode("utf-8"), digest_size=4,
+                f"{seed_text}|{move.move_id}".encode(), digest_size=4,
             ).digest()
             jitter = (int.from_bytes(digest, "big") / 0xFFFFFFFF) * 0.22
             penalty = 0.0
@@ -1400,7 +1400,7 @@ class ImaginationEngine:
                 penalty = self._RECENCY_PENALTY / (1.0 + index)
             try:
                 rendered = str(move.render(focus, secondary, signals) or "").strip()
-            except Exception as exc:
+            except (ArithmeticError, RuntimeError, TypeError, ValueError) as exc:
                 record_degradation(
                     "imagination", exc, action=f"render_move:{move.move_id}",
                 )

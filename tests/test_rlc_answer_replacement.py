@@ -50,9 +50,7 @@ def _scenario(
                 "index": index,
                 "operator_transition_count": 1,
                 "operator_program_sha256": _digest(f"program-{index}"),
-                "candidate_decomposition_sha256": decompositions[str(index)][
-                    "receipt_sha256"
-                ],
+                "candidate_decomposition_sha256": decompositions[str(index)]["receipt_sha256"],
             }
             for index in range(2)
         ],
@@ -72,15 +70,11 @@ def _scenario(
                     "atom_ordinal": 0,
                     "left": {
                         "atom_id": "a000",
-                        "text_sha256": decompositions["0"]["atoms"][0][
-                            "text_sha256"
-                        ],
+                        "text_sha256": decompositions["0"]["atoms"][0]["text_sha256"],
                     },
                     "right": {
                         "atom_id": "a000",
-                        "text_sha256": decompositions["1"]["atoms"][0][
-                            "text_sha256"
-                        ],
+                        "text_sha256": decompositions["1"]["atoms"][0]["text_sha256"],
                     },
                 },
             }
@@ -115,27 +109,31 @@ def _scenario(
             }
         ],
     )
-    request = prepare_local_repair_requests(
+    requests = prepare_local_repair_requests(
         disagreement_graph=graph,
         diagnostic_selection=selector,
         branch_candidates=candidates,
         objective=objective,
-    )[0]
-    generated = {
-        request["request_id"]: {
-            "candidate": repaired,
-            "generation_context": {
-                "prompt_sha256": request["prompt_sha256"],
-                "generated_token_count": 16,
-                "termination": "contract_complete",
-                "initial_cache_offsets": [0, 0],
-                "final_cache_offsets": [16, 16],
-                "all_initial_offsets_zero": True,
-                "solver_context_imported": False,
-                "parameter_relation": "shared_resident_checkpoint",
-            },
+    )
+    generated = (
+        {
+            requests[0]["request_id"]: {
+                "candidate": repaired,
+                "generation_context": {
+                    "prompt_sha256": requests[0]["prompt_sha256"],
+                    "generated_token_count": 16,
+                    "termination": "contract_complete",
+                    "initial_cache_offsets": [0, 0],
+                    "final_cache_offsets": [16, 16],
+                    "all_initial_offsets_zero": True,
+                    "solver_context_imported": False,
+                    "parameter_relation": "shared_resident_checkpoint",
+                },
+            }
         }
-    }
+        if requests
+        else {}
+    )
     local_repair = build_local_repair_receipt(
         disagreement_graph=graph,
         diagnostic_selection=selector,
@@ -260,6 +258,101 @@ def test_explicit_disable_retains_baseline_without_borrowing_authority():
     assert receipt["decision"] == "retain"
     assert receipt["reason"] == "answer_replacement_disabled"
     assert _decode(tokens) == "2 + 2 = 5."
+
+
+def test_no_repair_candidate_is_public_noop_without_private_evidence():
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left="2 + 2 = 4.",
+        right="2 + 2 = 4.",
+        repaired="2 + 2 = 4.",
+    )
+    assert local_repair["requests"] == []
+    baseline = "2 + 2 = 4."
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text=baseline,
+        baseline_tokens=_encode(baseline),
+        encode=_encode,
+        decode=_decode,
+        enabled=True,
+        margin=0.05,
+        max_output_tokens=64,
+    )
+
+    assert private == {}
+    assert receipt["private_evidence_required"] is False
+    assert receipt["candidates"] == []
+    assert receipt["decision"] == "retain"
+    assert receipt["reason"] == "no_local_repair_candidates"
+    validate_answer_replacement_receipt(
+        receipt,
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        private_evidence={},
+        expected_objective=objective,
+        expected_selected_branch=0,
+        expected_enabled=True,
+        expected_margin=0.05,
+        expected_max_output_tokens=64,
+        expected_output_text=baseline,
+        expected_output_tokens=tokens,
+    )
+    with pytest.raises(ValueError, match="retained private evidence"):
+        validate_answer_replacement_receipt(
+            receipt,
+            disagreement_graph=graph,
+            diagnostic_selection=selector,
+            local_repair=local_repair,
+            private_evidence={"unexpected": "candidate"},
+            expected_objective=objective,
+            expected_selected_branch=0,
+            expected_enabled=True,
+            expected_margin=0.05,
+            expected_max_output_tokens=64,
+            expected_output_text=baseline,
+            expected_output_tokens=tokens,
+        )
+
+
+def test_no_repair_budget_never_returns_a_deterministically_refuted_decode():
+    objective, candidates, graph, selector, local_repair, generated = _scenario(
+        left="2 + 2 = 4.",
+        right="2 + 2 = 4.",
+        repaired="2 + 2 = 4.",
+    )
+    assert local_repair["requests"] == []
+    baseline = "2 + 2 = 5."
+
+    receipt, tokens, private = build_answer_replacement_receipt(
+        disagreement_graph=graph,
+        diagnostic_selection=selector,
+        local_repair=local_repair,
+        selected_branch=0,
+        branch_candidates=candidates,
+        generated_repairs=generated,
+        objective=objective,
+        baseline_text=baseline,
+        baseline_tokens=_encode(baseline),
+        encode=_encode,
+        decode=_decode,
+        enabled=True,
+        margin=0.05,
+        max_output_tokens=64,
+    )
+
+    assert private["baseline_text"] == baseline
+    assert receipt["private_evidence_required"] is True
+    assert receipt["baseline_quality"]["basis"] == "deterministic_exact_refutation"
+    assert receipt["decision"] == "abstain"
+    assert receipt["reason"] == "known_refutation_has_no_dominant_repair"
+    assert tokens == []
 
 
 def test_output_text_tamper_is_rejected_by_service_reconstruction():
@@ -414,12 +507,8 @@ def test_actual_final_decode_is_the_comparator_not_short_branch_probe():
         baseline_text="2 + 2 = 4.",
     )
 
-    assert receipt["selected_branch_quality"]["basis"] == (
-        "deterministic_exact_refutation"
-    )
-    assert receipt["baseline_quality"]["basis"] == (
-        "full_span_semantic_exact_complete"
-    )
+    assert receipt["selected_branch_quality"]["basis"] == ("deterministic_exact_refutation")
+    assert receipt["baseline_quality"]["basis"] == ("full_span_semantic_exact_complete")
     assert receipt["decision"] == "retain"
     assert receipt["reason"] == "final_decode_already_exactly_verified"
     assert _decode(tokens) == "2 + 2 = 4."
@@ -448,9 +537,7 @@ def test_refuted_selected_branch_abstains_when_request_budget_omits_it():
         max_output_tokens=64,
     )
 
-    assert receipt["selected_branch_quality"]["basis"] == (
-        "deterministic_exact_refutation"
-    )
+    assert receipt["selected_branch_quality"]["basis"] == ("deterministic_exact_refutation")
     assert receipt["decision"] == "abstain"
     assert tokens == []
 
@@ -505,9 +592,7 @@ def test_rejected_generated_repair_has_no_private_authority_or_fallback():
         right="2 + 2 = 4.",
         repaired="2 + 2 = 5.",
     )
-    assert local_repair["transactions"][0]["status"] == (
-        "repaired_candidate_rejected"
-    )
+    assert local_repair["transactions"][0]["status"] == ("repaired_candidate_rejected")
     receipt, tokens, private = build_answer_replacement_receipt(
         disagreement_graph=graph,
         diagnostic_selection=selector,

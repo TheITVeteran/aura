@@ -226,6 +226,7 @@ class _PrivateConstraint:
     direction_sha256: str
     direction_shape: tuple[int, ...]
     source_kv_boundary_sha256: str
+    source_parent_state_sha256: str
     status: str = "active"
     applied_action_step: int | None = None
     reservation_id: str = ""
@@ -748,6 +749,7 @@ class TransientConstraintLedger:
                 direction_sha256=tensor_sha256(private_direction),
                 direction_shape=tuple(private_direction.shape),
                 source_kv_boundary_sha256=source_kv_boundary_sha256,
+                source_parent_state_sha256=source["parent_state_sha256"],
             )
         return attempt
 
@@ -801,6 +803,54 @@ class TransientConstraintLedger:
                     reason="episode_aborted",
                 )
 
+    def pending_action(
+        self,
+        *,
+        branch_index: int,
+        action_step: int,
+        kv_boundary_sha256: str,
+        state_sha256: str,
+    ) -> str | None:
+        """Return the next constraint-bound action, expiring stale authority."""
+
+        if type(branch_index) is not int or not 0 <= branch_index < self.n_branches:
+            raise ValueError("constraint pending branch index is invalid")
+        action_step = _bounded_step(action_step, name="constraint pending action step")
+        if not is_sha256(kv_boundary_sha256):
+            raise ValueError("constraint pending KV boundary is invalid")
+        if not is_sha256(state_sha256):
+            raise ValueError("constraint pending state is invalid")
+        self._expire_before(branch_index=branch_index, action_step=action_step)
+        candidates = sorted(
+            (
+                constraint
+                for constraint in self._private.values()
+                if constraint.status == "active"
+                and constraint.branch_index == branch_index
+                and constraint.created_action_step < action_step
+                and action_step <= constraint.expires_after_action_step
+            ),
+            key=lambda item: (item.created_action_step, item.constraint_id),
+        )
+        for stale in candidates:
+            if stale.source_kv_boundary_sha256 != kv_boundary_sha256:
+                stale.status = "expired_stale_kv"
+                self._erase_private(stale, reason="stale_kv_boundary")
+            elif stale.source_parent_state_sha256 != state_sha256:
+                stale.status = "expired_stale_state"
+                self._erase_private(stale, reason="stale_parent_state")
+        candidate = next(
+            (
+                item
+                for item in candidates
+                if item.status == "active"
+                and item.source_kv_boundary_sha256 == kv_boundary_sha256
+                and item.source_parent_state_sha256 == state_sha256
+            ),
+            None,
+        )
+        return candidate.source_action if candidate is not None else None
+
     def apply_next(
         self,
         state: Any,
@@ -822,6 +872,7 @@ class TransientConstraintLedger:
         if not is_sha256(kv_boundary_sha256):
             raise ValueError("constraint application KV boundary is invalid")
         current = _as_state(state, name="constraint application")
+        pre_sha256 = tensor_sha256(current)
         protected = self.protected_positions[branch_index]
         if any(position >= current.shape[1] for position in protected):
             raise ValueError("constraint protected position exceeds state")
@@ -844,11 +895,15 @@ class TransientConstraintLedger:
             if stale.source_kv_boundary_sha256 != kv_boundary_sha256:
                 stale.status = "expired_stale_kv"
                 self._erase_private(stale, reason="stale_kv_boundary")
+            elif stale.source_parent_state_sha256 != pre_sha256:
+                stale.status = "expired_stale_state"
+                self._erase_private(stale, reason="stale_parent_state")
         constraint = next(
             (
                 candidate
                 for candidate in candidates
                 if candidate.source_kv_boundary_sha256 == kv_boundary_sha256
+                and candidate.source_parent_state_sha256 == pre_sha256
             ),
             None,
         )
@@ -872,7 +927,6 @@ class TransientConstraintLedger:
         output = current + direction
         if protected:
             output[:, protected, :] = current[:, protected, :]
-        pre_sha256 = tensor_sha256(current)
         post_sha256 = tensor_sha256(output)
         if pre_sha256 == post_sha256 or not np.all(np.isfinite(output)):
             raise RuntimeError("transient constraint did not produce a finite causal change")
@@ -1693,6 +1747,7 @@ def validate_transient_constraint_receipt(
                 "expired_ttl",
                 "expired_episode_end",
                 "expired_stale_kv",
+                "expired_stale_state",
                 "aborted_episode_failure",
             }
             or row["max_uses"] != 1
@@ -1765,6 +1820,7 @@ def validate_transient_constraint_receipt(
             or row["branch_step_after"] != row["branch_step_before"] + 1
             or row["kv_boundary_before_sha256"] != source["source_kv_boundary_sha256"]
             or row["kv_boundary_after_sha256"] != row["kv_boundary_before_sha256"]
+            or row["pre_state_sha256"] != source["parent_state_sha256"]
             or not is_sha256(row["post_recurrence_state_sha256"])
             or not is_sha256(row["pre_state_sha256"])
             or not is_sha256(row["post_state_sha256"])
@@ -1879,6 +1935,7 @@ def validate_transient_constraint_receipt(
                 "expired_ttl": "ttl_expired",
                 "expired_episode_end": "episode_ended",
                 "expired_stale_kv": "stale_kv_boundary",
+                "expired_stale_state": "stale_parent_state",
                 "aborted_episode_failure": "episode_aborted",
             }.get(inventory["status"])
             if inventory is not None
