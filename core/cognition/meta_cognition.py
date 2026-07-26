@@ -99,11 +99,21 @@ class MetaEvolutionEngine(AuraBaseModule):
                 if cog_engine and getattr(cog_engine, "current_mode", None) == "deliberate":
                     audit_depth = 2
                 
-                audit_result = await scratchpad.think_recursive(
+                audit = await scratchpad.think_recursive(
                     objective=objective,
                     context={"recent_cycles": 1000, "error_priority": "high"},
                     depth=audit_depth
                 )
+                # CP126 92172bb9: use the DISTILLED strategy, never the raw
+                # inner monologue — this value is spliced into a Hephaestus
+                # prompt below and logged.
+                audit_result = getattr(audit, "strategy", "") if not isinstance(audit, str) else audit
+                if not getattr(audit, "ok", bool(audit_result)):
+                    self._is_optimizing = False
+                    return {
+                        "ok": False,
+                        "error": f"self-audit unavailable: {getattr(audit, 'error', 'no strategy')}",
+                    }
                 self.logger.info("Self-Audit complete (depth=%d). Strategy: %s", audit_depth, audit_result[:100] + "...")
                 hypha.log("Audit Complete")
 

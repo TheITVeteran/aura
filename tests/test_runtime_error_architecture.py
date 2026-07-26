@@ -853,7 +853,11 @@ def test_small_runtime_service_batch_uses_registry():
 
         pad = scratchpad.ScratchpadEngine()
         plan = asyncio.run(pad.think_recursive("plan carefully", {"history": []}, depth=0))
-        assert plan.startswith("[Plan] summary:")
+        # CP126 92172bb9: the result separates a user-safe strategy from the
+        # private monologue; str() yields the safe one.
+        assert plan.ok is True
+        assert plan.strategy.startswith("summary:")
+        assert plan.monologue.startswith("[Plan] summary:")
 
         monitor = singularity_monitor.SingularityMonitor(orchestrator=SimpleNamespace(container=True))
         monitor.pulse()
