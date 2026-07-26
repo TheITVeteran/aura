@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from core.brain.llm.latent_cortex.atomic_decomposition import (
@@ -353,6 +354,7 @@ class EpisodeTaskVerifier:
         *,
         evaluation_index: int,
         tokenizer: Any,
+        structural_diversity: Mapping[str, Any],
     ) -> tuple[dict[str, Any], list[int]]:
         """Return the exact-evidence subset eligible for temporary learning.
 
@@ -375,6 +377,7 @@ class EpisodeTaskVerifier:
             objective=self.objective,
             evaluation_index=evaluation_index,
             tokenizer=tokenizer,
+            structural_diversity=structural_diversity,
         )
 
     def to_receipt(

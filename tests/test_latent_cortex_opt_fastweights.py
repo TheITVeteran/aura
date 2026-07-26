@@ -10,6 +10,7 @@ The heart of these contracts:
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import stat
@@ -555,6 +556,93 @@ def test_fast_weights_optimize_changes_function_then_erase_restores(tiny_model):
     assert fw.lifecycle.erased and fw.lifecycle.erase_proven
 
 
+def test_fast_weight_matched_arm_snapshot_restore_and_fixed_schedule(tiny_model):
+    fw = EpisodicFastWeights(
+        FastWeightsConfig(
+            enabled=True,
+            rank=2,
+            target="down_proj",
+            opt_steps=1,
+            lr=0.05,
+        )
+    )
+    fw.attach(
+        tiny_model.model,
+        (P_END, P_END + 1),
+        seed_stat=0.4,
+        episode_id="ep-matched-arms",
+    )
+    initial = fw.snapshot_delta()
+    budget = ComputeBudget(max_layer_apps=2_000)
+
+    def loss_fn():
+        out = _probe(tiny_model)[0, -1]
+        return -(out[42] - mx.logsumexp(out))
+
+    fw.optimize(
+        loss_fn,
+        steps=1,
+        budget=budget,
+        layer_apps_per_forward=N_LAYERS * len(PROMPT_TOKENS),
+        tokens_per_forward=len(PROMPT_TOKENS),
+        layers_per_forward=N_LAYERS,
+        fixed_line_search_evaluations=2,
+        operation_prefix="fast_weight_treatment",
+    )
+    treatment = fw.snapshot_delta()
+    treatment_trace = fw.optimization_trace()
+    assert treatment_trace["gradient_evaluations"] == 1
+    assert treatment_trace["line_search_evaluations"] == 2
+    assert any(
+        not bool(mx.array_equal(before["V"], after["V"]))
+        for before, after in zip(initial, treatment, strict=True)
+    )
+
+    fw.restore_delta(initial, reason="unit_matched_control_reset")
+    reset = fw.snapshot_delta()
+    assert all(
+        bool(mx.array_equal(before["U"], after["U"]))
+        and bool(mx.array_equal(before["V"], after["V"]))
+        for before, after in zip(initial, reset, strict=True)
+    )
+    fw.reset_optimization_trace()
+    assert fw.optimization_trace()["attempts"] == 0
+
+    fw.optimize(
+        loss_fn,
+        steps=1,
+        budget=budget,
+        layer_apps_per_forward=N_LAYERS * len(PROMPT_TOKENS),
+        tokens_per_forward=len(PROMPT_TOKENS),
+        layers_per_forward=N_LAYERS,
+        fixed_line_search_evaluations=2,
+        operation_prefix="fast_weight_sham",
+    )
+    sham_trace = fw.optimization_trace()
+    assert sham_trace["gradient_evaluations"] == 1
+    assert sham_trace["line_search_evaluations"] == 2
+
+    fw.restore_delta(treatment, reason="unit_treatment_restore")
+    fw.restore_optimization_trace(treatment_trace)
+    restored = fw.snapshot_delta()
+    assert all(
+        bool(mx.array_equal(before["U"], after["U"]))
+        and bool(mx.array_equal(before["V"], after["V"]))
+        for before, after in zip(treatment, restored, strict=True)
+    )
+    assert fw.optimization_trace() == treatment_trace
+    operations = budget.to_receipt()["resource_accounting"]["operations"]
+    assert (
+        operations["fast_weight_treatment_gradient"]["transformer_layer_apps"]
+        == operations["fast_weight_sham_gradient"]["transformer_layer_apps"]
+    )
+    assert (
+        operations["fast_weight_treatment_line_search"]["transformer_layer_apps"]
+        == operations["fast_weight_sham_line_search"]["transformer_layer_apps"]
+    )
+    fw.detach()
+
+
 def test_fast_weight_optimizer_is_visible_at_resident_parameter_scale():
     wrapper = SimpleNamespace(
         U=mx.zeros((8192, 2)),
@@ -779,9 +867,11 @@ def _patch_matched_fast_weight_probe(monkeypatch):
     def deterministic_probe(self, *_args, **_kwargs):
         target = self.model.model.layers[self.prelude_end].self_attn.o_proj
         if isinstance(target, EpisodicDeltaLinear):
-            nonzero = bool(mx.any(mx.abs(target.V) > 0.0))
-            if nonzero:
+            mean_delta = float(mx.mean(target.V))
+            if mean_delta > 0.0:
                 return [2]
+            if mean_delta < 0.0:
+                return [3]
         return [1]
 
     monkeypatch.setattr(
@@ -844,12 +934,18 @@ def _fw_engine_config(opt_steps: int = 1):
 def _force_accepted_step(monkeypatch, bump: float = 1e-3):
     """Deterministically accept one benign ΔW step regardless of the proxy."""
 
+    calls = {"count": 0}
+
     def patched(self, loss_fn, **kwargs):
+        calls["count"] += 1
+        signed_bump = bump if calls["count"] % 2 else -bump
         for handle in self.handles:
-            handle.wrapper.U = handle.wrapper.U * 0.0 + bump
-            handle.wrapper.V = handle.wrapper.V * 0.0 + bump
+            handle.wrapper.U = handle.wrapper.U * 0.0 + signed_bump
+            handle.wrapper.V = handle.wrapper.V * 0.0 + signed_bump
         self.lifecycle.optimization_attempts += 1
         self.lifecycle.optimized_steps += 1
+        self.lifecycle.gradient_evaluations += 1
+        self.lifecycle.line_search_evaluations += 2
         self.lifecycle.loss_trail.extend([1.0, 0.5])
         self.lifecycle.gradient_global_norm_trail.append(0.25)
         self.lifecycle.accepted_step_sizes.append(0.01)
@@ -889,6 +985,7 @@ def test_fast_weight_verifier_erases_on_regression(monkeypatch):
 
 
 def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
+    from core.brain.latent_cortex_service import LatentCortexService
     from core.brain.llm.latent_cortex.engine import LatentCortexEngine
 
     _force_accepted_step(monkeypatch)
@@ -904,9 +1001,10 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     engine = LatentCortexEngine(
         _fresh_model(), _ProbeTokenizer(), config=_fw_engine_config()
     )
+    budget = ComputeBudget()
     result = engine.reason(
         token_ids=PROMPT_TOKENS,
-        budget=ComputeBudget(),
+        budget=budget,
         verifier=improving_verifier,
     )
     assert result.ok
@@ -917,6 +1015,55 @@ def test_fast_weight_verifier_accepts_on_improvement(monkeypatch):
     assert "fast_weight_verifier_erased" not in result.receipt.honest_flags
     # Cleanup still proves erasure at episode end — acceptance is scoped.
     assert result.receipt.fast_weights_erased is True
+
+    # The monkeypatched optimizer above exposes deterministic arm effects but
+    # intentionally bypasses the real optimizer's accounting. Reconstruct the
+    # exact claimed work so the host can independently bind the arm receipt to
+    # the resource ledger.
+    for arm in ("treatment", "sham"):
+        budget.charge_training_work(
+            f"fast_weight_{arm}_gradient",
+            tokens=4,
+            layers=C_START - P_END,
+            attention_pairs_per_forward=(
+                4 * 4 * (C_START - P_END)
+            ),
+            forward_evaluations=1,
+            backward_evaluations=1,
+        )
+        budget.charge_training_work(
+            f"fast_weight_{arm}_line_search",
+            tokens=4,
+            layers=C_START - P_END,
+            attention_pairs_per_forward=(
+                4 * 4 * (C_START - P_END)
+            ),
+            forward_evaluations=2,
+            backward_evaluations=0,
+        )
+    payload = result.receipt.to_dict()
+    payload["budget"] = budget.to_receipt()
+    contract_args = {
+        "output_tokens": result.tokens,
+        "output_text": result.text,
+    }
+    errors = LatentCortexService._receipt_contract_errors(
+        payload,
+        {"fast_weights": True},
+        **contract_args,
+    )
+    assert "fast_weight_matched_compute_resource_unproven" not in errors
+
+    tampered = copy.deepcopy(payload)
+    tampered["budget"]["resource_accounting"]["operations"][
+        "fast_weight_treatment_gradient"
+    ]["transformer_layer_apps"] += 1
+    errors = LatentCortexService._receipt_contract_errors(
+        tampered,
+        {"fast_weights": True},
+        **contract_args,
+    )
+    assert "fast_weight_matched_compute_resource_unproven" in errors
 
 
 def test_post_verifier_state_change_removes_fast_weight_decode_authority(

@@ -32,7 +32,7 @@ import math
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -180,6 +180,8 @@ class FastWeightsLifecycle:
     optimization_attempts: int = 0
     optimized_steps: int = 0
     rejected_steps: int = 0
+    gradient_evaluations: int = 0
+    line_search_evaluations: int = 0
     line_search_backtracks: int = 0
     budget_exhausted: bool = False
     detach_conflicts: int = 0
@@ -210,6 +212,8 @@ class FastWeightsLifecycle:
             "optimization_attempts": self.optimization_attempts,
             "optimized_steps": self.optimized_steps,
             "rejected_steps": self.rejected_steps,
+            "gradient_evaluations": self.gradient_evaluations,
+            "line_search_evaluations": self.line_search_evaluations,
             "line_search_backtracks": self.line_search_backtracks,
             "budget_exhausted": self.budget_exhausted,
             "detach_conflicts": self.detach_conflicts,
@@ -512,6 +516,143 @@ class EpisodicFastWeights:
         self.detach()
         self.lifecycle.canary_erased = True
 
+    def snapshot_delta(self) -> tuple[dict[str, Any], ...]:
+        """Copy the complete temporary parameter state for a matched arm."""
+
+        import mlx.core as mx
+
+        if not self.handles:
+            raise RuntimeError(
+                "fast-weight snapshot requires attached wrappers"
+            )
+        snapshots: list[dict[str, Any]] = []
+        for handle in self.handles:
+            wrapper = handle.wrapper
+            u = mx.array(wrapper.U)
+            v = mx.array(wrapper.V)
+            mx.eval(u, v)
+            snapshots.append(
+                {
+                    "layer": int(handle.layer_index),
+                    "scale": float(wrapper.scale),
+                    "U": u,
+                    "V": v,
+                }
+            )
+        return tuple(snapshots)
+
+    def restore_delta(
+        self,
+        snapshots: Sequence[Mapping[str, Any]],
+        *,
+        reason: str,
+    ) -> None:
+        """Restore one arm's temporary parameters without touching W0."""
+
+        import mlx.core as mx
+
+        rows = list(snapshots)
+        if not self.handles or len(rows) != len(self.handles):
+            raise RuntimeError("fast-weight restore inventory differs")
+        rebound = []
+        for handle, row in zip(self.handles, rows, strict=True):
+            if (
+                row.get("layer") != handle.layer_index
+                or not isinstance(row.get("scale"), (int, float))
+                or isinstance(row.get("scale"), bool)
+            ):
+                raise ValueError("fast-weight restore identity differs")
+            u = row.get("U")
+            v = row.get("V")
+            if (
+                getattr(u, "shape", None) != handle.wrapper.U.shape
+                or getattr(v, "shape", None) != handle.wrapper.V.shape
+            ):
+                raise ValueError("fast-weight restore tensor shape differs")
+            rebound.extend((u, v))
+            handle.wrapper.U = u
+            handle.wrapper.V = v
+            handle.wrapper.scale = float(row["scale"])
+        mx.eval(*rebound)
+        self._notify_function_change(reason)
+
+    def optimization_trace(self) -> dict[str, Any]:
+        lifecycle = self.lifecycle
+        return {
+            "optimizer": lifecycle.optimizer,
+            "attempts": lifecycle.optimization_attempts,
+            "accepted_steps": lifecycle.optimized_steps,
+            "rejected_steps": lifecycle.rejected_steps,
+            "gradient_evaluations": lifecycle.gradient_evaluations,
+            "line_search_evaluations": lifecycle.line_search_evaluations,
+            "loss_trail": list(lifecycle.loss_trail),
+            "gradient_norm_trail": list(
+                lifecycle.gradient_global_norm_trail
+            ),
+            "accepted_step_sizes": list(
+                lifecycle.accepted_step_sizes
+            ),
+            "line_search_backtracks": lifecycle.line_search_backtracks,
+            "budget_exhausted": lifecycle.budget_exhausted,
+        }
+
+    def reset_optimization_trace(self) -> None:
+        lifecycle = self.lifecycle
+        lifecycle.optimization_attempts = 0
+        lifecycle.optimized_steps = 0
+        lifecycle.rejected_steps = 0
+        lifecycle.gradient_evaluations = 0
+        lifecycle.line_search_evaluations = 0
+        lifecycle.line_search_backtracks = 0
+        lifecycle.budget_exhausted = False
+        lifecycle.loss_trail.clear()
+        lifecycle.gradient_global_norm_trail.clear()
+        lifecycle.accepted_step_sizes.clear()
+
+    def restore_optimization_trace(
+        self,
+        trace: Mapping[str, Any],
+    ) -> None:
+        required = {
+            "optimizer",
+            "attempts",
+            "accepted_steps",
+            "rejected_steps",
+            "gradient_evaluations",
+            "line_search_evaluations",
+            "loss_trail",
+            "gradient_norm_trail",
+            "accepted_step_sizes",
+            "line_search_backtracks",
+            "budget_exhausted",
+        }
+        if not isinstance(trace, Mapping) or set(trace) != required:
+            raise ValueError(
+                "fast-weight optimization trace fields differ"
+            )
+        lifecycle = self.lifecycle
+        lifecycle.optimizer = str(trace["optimizer"])
+        lifecycle.optimization_attempts = int(trace["attempts"])
+        lifecycle.optimized_steps = int(trace["accepted_steps"])
+        lifecycle.rejected_steps = int(trace["rejected_steps"])
+        lifecycle.gradient_evaluations = int(
+            trace["gradient_evaluations"]
+        )
+        lifecycle.line_search_evaluations = int(
+            trace["line_search_evaluations"]
+        )
+        lifecycle.loss_trail = list(trace["loss_trail"])
+        lifecycle.gradient_global_norm_trail = list(
+            trace["gradient_norm_trail"]
+        )
+        lifecycle.accepted_step_sizes = list(
+            trace["accepted_step_sizes"]
+        )
+        lifecycle.line_search_backtracks = int(
+            trace["line_search_backtracks"]
+        )
+        lifecycle.budget_exhausted = bool(trace["budget_exhausted"])
+
     def prove_erase(self, probe_fn: Callable[[], Any], baseline) -> bool:
         """Assert the model's function is EXACTLY the pre-attach baseline."""
         import mlx.core as mx
@@ -548,6 +689,8 @@ class EpisodicFastWeights:
         tokens_per_forward: int = 0,
         layers_per_forward: int = 0,
         reserve_layer_apps: int = 0,
+        fixed_line_search_evaluations: int | None = None,
+        operation_prefix: str = "fast_weight",
     ) -> None:
         """Functional gradient steps on every wrapper's (U, V).
 
@@ -597,6 +740,22 @@ class EpisodicFastWeights:
             raise ValueError(
                 "budgeted fast-weight optimization requires a positive forward cost"
             )
+        if (
+            fixed_line_search_evaluations is not None
+            and (
+                type(fixed_line_search_evaluations) is not int
+                or not 1 <= fixed_line_search_evaluations <= 12
+            )
+        ):
+            raise ValueError(
+                "fixed line-search evaluations must be an integer inside [1, 12]"
+            )
+        if (
+            not isinstance(operation_prefix, str)
+            or not operation_prefix
+            or not operation_prefix.replace("_", "").isalnum()
+        ):
+            raise ValueError("fast-weight operation prefix is invalid")
 
         def bind_params(params) -> None:
             parameter_pairs = zip(params[0::2], params[1::2], strict=True)
@@ -624,7 +783,7 @@ class EpisodicFastWeights:
             if budget is not None:
                 if exact_forward_shape:
                     budget.charge_training_work(
-                        "fast_weight_gradient",
+                        f"{operation_prefix}_gradient",
                         tokens=tokens_per_forward,
                         layers=layers_per_forward,
                         attention_pairs_per_forward=(
@@ -638,9 +797,10 @@ class EpisodicFastWeights:
                 else:
                     budget.charge_layer_apps(
                         gradient_cost,
-                        operation="fast_weight_gradient",
+                        operation=f"{operation_prefix}_gradient",
                     )
             self.lifecycle.optimization_attempts += 1
+            self.lifecycle.gradient_evaluations += 1
             value, grads = grad_fn(params)
             current_loss = float(value)
             if not self.lifecycle.loss_trail:
@@ -658,7 +818,12 @@ class EpisodicFastWeights:
                 directions.append(mx.clip(grad / grad_rms, -8.0, 8.0))
             step_size = float(self.config.lr)
             accepted = False
-            for backtrack in range(12):
+            best_candidate = None
+            best_candidate_loss = math.inf
+            best_step_size = 0.0
+            best_backtrack = 0
+            line_search_limit = fixed_line_search_evaluations or 12
+            for backtrack in range(line_search_limit):
                 candidate_cost = layer_apps_per_forward
                 if budget is not None and (
                     budget.exhausted
@@ -669,7 +834,7 @@ class EpisodicFastWeights:
                 if budget is not None:
                     if exact_forward_shape:
                         budget.charge_training_work(
-                            "fast_weight_line_search",
+                            f"{operation_prefix}_line_search",
                             tokens=tokens_per_forward,
                             layers=layers_per_forward,
                             attention_pairs_per_forward=(
@@ -683,12 +848,13 @@ class EpisodicFastWeights:
                     else:
                         budget.charge_layer_apps(
                             candidate_cost,
-                            operation="fast_weight_line_search",
+                            operation=f"{operation_prefix}_line_search",
                         )
                 candidate = [
                     parameter - step_size * direction
                     for parameter, direction in zip(params, directions, strict=True)
                 ]
+                self.lifecycle.line_search_evaluations += 1
                 try:
                     candidate_value = with_params(candidate)
                     mx.eval(candidate_value, *candidate)
@@ -701,18 +867,31 @@ class EpisodicFastWeights:
                     math.isfinite(candidate_loss)
                     and current_loss - candidate_loss >= minimum_improvement
                 ):
-                    params = candidate
-                    self.lifecycle.loss_trail.append(candidate_loss)
-                    self.lifecycle.optimized_steps += 1
-                    self.lifecycle.line_search_backtracks += backtrack
-                    self.lifecycle.accepted_step_sizes.append(step_size)
-                    accepted = True
-                    break
+                    if fixed_line_search_evaluations is None:
+                        best_candidate = candidate
+                        best_candidate_loss = candidate_loss
+                        best_step_size = step_size
+                        best_backtrack = backtrack
+                        accepted = True
+                        break
+                    if candidate_loss < best_candidate_loss:
+                        best_candidate = candidate
+                        best_candidate_loss = candidate_loss
+                        best_step_size = step_size
+                        best_backtrack = backtrack
                 step_size *= 0.5
+            if best_candidate is not None:
+                params = best_candidate
+                self.lifecycle.loss_trail.append(best_candidate_loss)
+                self.lifecycle.optimized_steps += 1
+                self.lifecycle.line_search_backtracks += best_backtrack
+                self.lifecycle.accepted_step_sizes.append(best_step_size)
+                accepted = True
             if not accepted:
                 self.lifecycle.rejected_steps += 1
                 bind_params(params)
-                break
+                if fixed_line_search_evaluations is None:
+                    break
         bind_params(params)  # leave the best params installed without another forward pass
         if self.lifecycle.optimized_steps:
             self._notify_function_change("fast_weights_optimized")

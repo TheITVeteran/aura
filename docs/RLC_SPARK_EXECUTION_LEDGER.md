@@ -2675,10 +2675,72 @@ before those dependencies close is not admissible.
   trainer. SPARK-051 remains open for answer-channel remediation, admitted
   resident training, and powered equal-compute reasoning/frontier evidence.
   Final multi-hour soaks remain deferred until all shorter gates are green.
-- [ ] **SPARK-057 - Recalibrated test-time trainer.** Implement a TEMPO-style or
+- [x] **SPARK-057 - Recalibrated test-time trainer.** Implement a TEMPO-style or
   stronger bounded refinement loop with held-out critic recalibration,
   high-confidence pseudo-label admission, drift detection, rollback, and
   matched-compute controls.
+
+  **CP393 implementation and evidence:** Query-time adaptation now has an
+  independently reconstructable training certificate rather than treating any
+  parser success as a learning label. The first authority-bearing critic is a
+  fixed, balanced, content-addressed 128-case holdout over exact signed integer
+  addition, subtraction, multiplication, and division. Admission requires at
+  least 48 examples per class, a 95% Wilson precision lower bound above 0.90,
+  zero false accepts, bounded Brier and calibration error, and an exact
+  reconstruction of every per-case route. Python AST and JSON validity remain
+  diagnostics only and cannot authorize a pseudo-label.
+
+  A candidate pseudo-label must be fully verified by the calibrated exact
+  arithmetic family, be disjoint from the calibration cases, and bind to a
+  certified structural-diversity receipt. The worker snapshots the complete
+  attached delta at its exact identity state, runs a fixed treatment schedule,
+  restores the identity snapshot, runs a deterministic same-length sham target
+  under the same optimizer and evaluation schedule, measures the sham, and
+  restores the exact treatment delta and trace. Treatment and sham receipts
+  must match attempts, forward/backward evaluations, line-search evaluations,
+  layer applications, probe applications, and probe token count. Acceptance
+  requires treatment to change the baseline trajectory, remain distinct from
+  the sham trajectory, improve over the unchanged function, improve over the
+  equal-compute sham, and preserve critic calibration. Every other result
+  erases the temporary delta before final decoding.
+
+  The service independently reconstructs the nested critic, pseudo-label,
+  matched-arm, output, cleanup, and structural bindings. It also cross-checks
+  the arm claims against the transformer resource ledger, so a self-consistent
+  training receipt cannot conceal missing or unequal work. Snapshot/restore,
+  fixed-schedule, copy-isolation, parser-authority, calibration-overlap,
+  structural-evidence, score, collapse, compute, resource-ledger, and receipt
+  tampering tests cover the negative boundary.
+
+  Validation passes 58/58 focused recalibration/learning/MLX tests, 163/163
+  filtered engine/service/runtime/conversation tests, and 249/249 complete
+  affected engine, service, integrity, critic, verifier, and fast-weight tests.
+  A broader randomized RLC sweep reached 465 passing tests with two intentional
+  deselections and no failures before the already-recorded quadratic
+  action-calibration/campaign-journal path crossed the bounded-gate limit; that
+  separate production defect remains assigned to SPARK-068. The first broad
+  attempt also exposed repeated recalibration at every episode. The immutable
+  calibration artifact is now cached once per loaded critic implementation and
+  returned through a fresh copy on every call, eliminating the live latency
+  defect without exposing mutable authority.
+
+  Strict focused Ruff, bytecode compilation, and diff hygiene pass. The
+  enterprise ratchet remains non-green, but an archived clean-CP392 scan and
+  the complete CP393 tree have exactly identical counts: nine inherited
+  baseline regressions, including `placeholder_stub_mock` 20 > 13 and 46
+  actual high/critical findings > 39. CP393 adds no enterprise finding and
+  raises no baseline.
+
+  Counting CP393 makes the total checkpoint record 635. The 640-920 forecast
+  remains, leaving approximately 5-285 records. Checkpoint-count completion is
+  approximately 69.0%-99.2%, with a midpoint planning estimate of 81.4%.
+  SPARK-057 proves bounded test-time-training authority and causal incremental
+  gain over a matched sham inside its exact-arithmetic domain. It does not prove
+  a resident-32B, broad reasoning, frontier, or `WOW Signal` gain. Next is
+  SPARK-058's verified replay buffer. SPARK-051 remains open for answer-channel
+  remediation, admitted resident training, and powered equal-compute
+  reasoning/frontier evidence. Final multi-hour soaks remain deferred until all
+  shorter gates are green.
 - [ ] **SPARK-058 - Verified replay buffer.** Store initial failure, earliest
   causal error, discriminating test, corrected transition, verified solution,
   error class, escape strategy, provenance, and privacy/governance disposition;

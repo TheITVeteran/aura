@@ -16,6 +16,10 @@ from core.brain.llm.latent_cortex.fast_weight_learning import (
     validate_fast_weight_learning_receipt,
 )
 from core.brain.llm.latent_cortex.task_verifiers import EpisodeTaskVerifier
+from core.brain.llm.latent_cortex.test_time_training import (
+    build_matched_compute_receipt,
+    build_test_time_training_receipt,
+)
 
 
 class _ByteTokenizer:
@@ -33,6 +37,10 @@ def _admission(candidate: str) -> tuple[dict, list[int]]:
         objective=verifier.objective,
         evaluation_index=0,
         tokenizer=_ByteTokenizer(),
+        structural_diversity={
+            "certified": True,
+            "receipt_sha256": hashlib.sha256(b"structural").hexdigest(),
+        },
     )
 
 
@@ -107,9 +115,44 @@ def _accepted_learning_receipt() -> dict:
         "accepted_step_sizes": [0.01],
         "line_search_backtracks": 0,
     }
+    arm_common = {
+        "optimizer": "rms_normalized_sgd_backtracking_v1",
+        "attempts": 1,
+        "forward_evaluations": 3,
+        "backward_evaluations": 1,
+        "line_search_evaluations": 2,
+        "layer_apps": 5,
+        "probe_layer_apps": 4,
+        "probe_token_count": 1,
+    }
+    matched = build_matched_compute_receipt(
+        treatment={
+            **arm_common,
+            "arm": "treatment",
+            "target_tokens_sha256": token_sequence_sha256([4]),
+            "probe_tokens_sha256": token_sequence_sha256([2]),
+            "score": 0.75,
+        },
+        sham={
+            **arm_common,
+            "arm": "sham",
+            "target_tokens_sha256": token_sequence_sha256([5]),
+            "probe_tokens_sha256": token_sequence_sha256([3]),
+            "score": 0.55,
+        },
+        baseline_tokens_sha256=token_sequence_sha256([1]),
+        baseline_score=0.5,
+        critic_before=admission["critic_recalibration"],
+        critic_after=admission["critic_recalibration"],
+    )
     state["controls"] = {
         "decision": "accepted",
         "capability_canaries": {"decision": "accepted"},
+        "test_time_training": build_test_time_training_receipt(
+            critic_recalibration=admission["critic_recalibration"],
+            pseudo_label_admission=admission["pseudo_label_admission"],
+            matched_compute=matched,
+        ),
     }
     state["causal_probe"] = {
         "evaluated": True,
@@ -231,6 +274,12 @@ def test_service_reconstructs_active_learning_and_output_binding():
         "fast_weight_gradient_norm_trail": [0.25],
         "fast_weight_accepted_step_sizes": [0.01],
         "fast_weight_line_search_backtracks": 0,
+        "structural_diversity": {
+            "certified": True,
+            "receipt_sha256": learning["admission"][
+                "pseudo_label_admission"
+            ]["structural_diversity_sha256"],
+        },
     }
     errors = LatentCortexService._receipt_contract_errors(
         receipt,

@@ -22,6 +22,14 @@ from core.brain.llm.latent_cortex.atomic_decomposition import (
 from core.brain.llm.latent_cortex.deterministic_verifier_router import (
     validate_deterministic_router_envelope,
 )
+from core.brain.llm.latent_cortex.test_time_training import (
+    build_critic_recalibration_receipt,
+    build_pseudo_label_admission,
+    build_test_time_training_receipt,
+    validate_critic_recalibration_receipt,
+    validate_pseudo_label_admission,
+    validate_test_time_training_receipt,
+)
 
 ADMISSION_SCHEMA = "aura.rlc.fast_weight_admission.v1"
 LEARNING_SCHEMA = "aura.rlc.fast_weight_learning.v1"
@@ -35,6 +43,9 @@ _ADMISSION_POLICY = {
     "unsupported_atoms_allowed": False,
     "unknown_atoms_are_excluded_from_target": True,
     "max_target_tokens": MAX_TARGET_TOKENS,
+    "pseudo_label_authority": (
+        "held_out_recalibration_lower_bound_above_0.90_exact_verifier_only"
+    ),
 }
 _LEARNING_POLICY = {
     "attach_identity": "measured_exact_full_stack_probe",
@@ -60,6 +71,8 @@ _ADMISSION_FIELDS = {
     "evidence_text_sha256",
     "target_tokens_sha256",
     "target_token_count",
+    "critic_recalibration",
+    "pseudo_label_admission",
     "receipt_sha256",
 }
 _LEARNING_FIELDS = {
@@ -86,6 +99,7 @@ _DISPOSITIONS = {
     "rejected_capability_regression",
     "rejected_no_causal_effect",
     "rejected_non_improvement",
+    "rejected_matched_control",
     "rejected_verifier_unavailable",
     "rejected_state_lineage_changed",
     "accepted_causal_improvement",
@@ -137,6 +151,8 @@ def _admission_reason(
     refuted: int,
     unsupported: int,
     target_token_count: int,
+    pseudo_label_admitted: bool,
+    pseudo_label_reason: str,
 ) -> str:
     if not atomic_admissible:
         return "atomic_decomposition_unproven"
@@ -150,6 +166,8 @@ def _admission_reason(
         return "evidence_target_tokenization_empty"
     if target_token_count > MAX_TARGET_TOKENS:
         return "evidence_target_exceeds_bound"
+    if not pseudo_label_admitted:
+        return pseudo_label_reason
     return "admitted_exact_local_evidence"
 
 
@@ -183,6 +201,8 @@ def unavailable_admission(
         "evidence_text_sha256": _text_sha256(""),
         "target_tokens_sha256": token_sequence_sha256([]),
         "target_token_count": 0,
+        "critic_recalibration": {},
+        "pseudo_label_admission": {},
     }
     return {**payload, "receipt_sha256": _canonical_sha256(payload)}
 
@@ -194,6 +214,7 @@ def build_fast_weight_admission(
     objective: str,
     evaluation_index: int,
     tokenizer: Any,
+    structural_diversity: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[int]]:
     """Extract a bounded private target from exact verified candidate atoms."""
 
@@ -237,12 +258,22 @@ def build_fast_weight_admission(
     if any(type(token) is not int or token < 0 for token in raw_tokens):
         raise ValueError("fast-weight evidence tokenizer returned an invalid token")
     counts = router["counts"]
+    critic_recalibration = build_critic_recalibration_receipt()
+    pseudo_label_admission = build_pseudo_label_admission(
+        router_receipt=router,
+        atomic_receipt=atomic,
+        source_sha256=atomic["source_sha256"],
+        structural_diversity=structural_diversity,
+        critic_recalibration=critic_recalibration,
+    )
     reason = _admission_reason(
         atomic_admissible=bool(atomic["grade_admissible"]),
         verified=int(counts["verified"]),
         refuted=int(counts["refuted"]),
         unsupported=int(counts["unsupported"]),
         target_token_count=len(target_tokens),
+        pseudo_label_admitted=bool(pseudo_label_admission["admitted"]),
+        pseudo_label_reason=str(pseudo_label_admission["reason"]),
     )
     admitted = reason == "admitted_exact_local_evidence"
     evidence_atom_ids = [row["atom_id"] for row in verified_rows]
@@ -263,6 +294,8 @@ def build_fast_weight_admission(
         "evidence_text_sha256": _text_sha256(evidence_text),
         "target_tokens_sha256": token_sequence_sha256(target_tokens),
         "target_token_count": len(target_tokens),
+        "critic_recalibration": critic_recalibration,
+        "pseudo_label_admission": pseudo_label_admission,
     }
     receipt = {**payload, "receipt_sha256": _canonical_sha256(payload)}
     validate_fast_weight_admission(
@@ -311,6 +344,8 @@ def validate_fast_weight_admission(
             or value["evidence_atom_ids"]
             or value["evidence_atom_sha256s"]
             or value["target_token_count"] != 0
+            or value["critic_recalibration"]
+            or value["pseudo_label_admission"]
             or value["evidence_text_sha256"] != _text_sha256("")
             or value["target_tokens_sha256"] != token_sequence_sha256([])
             or value["reason"]
@@ -340,12 +375,31 @@ def validate_fast_weight_admission(
     if value["evidence_atom_ids"] != expected_ids or value["evidence_atom_sha256s"] != expected_hashes:
         raise ValueError("fast-weight admission exact-evidence inventory mismatch")
     counts = router["counts"]
+    critic = validate_critic_recalibration_receipt(
+        value["critic_recalibration"]
+    )
+    pseudo = validate_pseudo_label_admission(
+        value["pseudo_label_admission"],
+        router_receipt=router,
+        atomic_receipt=atomic,
+        structural_diversity={
+            "certified": value["pseudo_label_admission"].get(
+                "structural_diversity_certified"
+            ),
+            "receipt_sha256": value["pseudo_label_admission"].get(
+                "structural_diversity_sha256"
+            ),
+        },
+        critic_recalibration=critic,
+    )
     expected_reason = _admission_reason(
         atomic_admissible=bool(atomic["grade_admissible"]),
         verified=int(counts["verified"]),
         refuted=int(counts["refuted"]),
         unsupported=int(counts["unsupported"]),
         target_token_count=value["target_token_count"],
+        pseudo_label_admitted=bool(pseudo["admitted"]),
+        pseudo_label_reason=str(pseudo["reason"]),
     )
     if value["reason"] != expected_reason or value["admitted"] is not (
         expected_reason == "admitted_exact_local_evidence"
@@ -398,7 +452,23 @@ def empty_learning_state(
             "accepted_step_sizes": [],
             "line_search_backtracks": 0,
         },
-        "controls": {"decision": "not_run", "capability_canaries": {}},
+        "controls": {
+            "decision": "not_run",
+            "capability_canaries": {},
+            "test_time_training": (
+                build_test_time_training_receipt(
+                    critic_recalibration=admission[
+                        "critic_recalibration"
+                    ],
+                    pseudo_label_admission=admission[
+                        "pseudo_label_admission"
+                    ],
+                    matched_compute=None,
+                )
+                if admission["candidate_checked"]
+                else {}
+            ),
+        },
         "causal_probe": {
             "evaluated": False,
             "pre_tokens_sha256": "",
@@ -494,7 +564,11 @@ def validate_fast_weight_learning_receipt(
         "loss_trail", "gradient_norm_trail", "accepted_step_sizes", "line_search_backtracks",
     }:
         raise ValueError("fast-weight optimization receipt is invalid")
-    if not isinstance(controls, Mapping) or set(controls) != {"decision", "capability_canaries"}:
+    if not isinstance(controls, Mapping) or set(controls) != {
+        "decision",
+        "capability_canaries",
+        "test_time_training",
+    }:
         raise ValueError("fast-weight control receipt is invalid")
     if not isinstance(causal, Mapping) or set(causal) != {
         "evaluated", "pre_tokens_sha256", "post_tokens_sha256", "pre_text_sha256",
@@ -543,6 +617,16 @@ def validate_fast_weight_learning_receipt(
         or not isinstance(controls["capability_canaries"], Mapping)
     ):
         raise ValueError("fast-weight optimizer or control receipt is invalid")
+    test_time_training = controls["test_time_training"]
+    if admission["candidate_checked"]:
+        validate_test_time_training_receipt(
+            test_time_training,
+            fast_weight_admission=admission,
+        )
+    elif test_time_training:
+        raise ValueError(
+            "unavailable fast-weight admission claimed test-time training"
+        )
     integer_fields = (
         optimization["attempts"], optimization["accepted_steps"],
         optimization["rejected_steps"], optimization["line_search_backtracks"],
@@ -691,6 +775,8 @@ def validate_fast_weight_learning_receipt(
             or float(causal["post_score"]) <= float(causal["pre_score"]) + 1e-6
             or causal["pre_text_sha256"] != admission["source_sha256"]
             or final["decoded_under_adaptation"] is not True
+            or test_time_training["decision"]
+            != "accepted_bounded_refinement"
         ):
             raise ValueError("accepted fast-weight adaptation lacks causal improvement")
     elif not not_admitted and final["decoded_under_adaptation"] is not False:
@@ -723,6 +809,14 @@ def validate_fast_weight_learning_receipt(
         or causal["strict_improvement"] is not True
     ):
         raise ValueError("state-lineage fast-weight rejection is contradictory")
+    if disposition == "rejected_matched_control" and (
+        causal["evaluated"] is not True
+        or causal["strict_improvement"] is not True
+        or test_time_training["decision"] != "rejected_matched_control"
+    ):
+        raise ValueError(
+            "matched-control fast-weight rejection is contradictory"
+        )
     if (
         not _is_sha256(final["tokens_sha256"])
         or not _is_sha256(final["text_sha256"])

@@ -2525,6 +2525,96 @@ class LatentCortexService:
                         receipt.get("input_tokens_sha256") or ""
                     ),
                 )
+                pseudo_label = learning["admission"].get(
+                    "pseudo_label_admission"
+                )
+                structural_diversity = receipt.get(
+                    "structural_diversity"
+                )
+                if (
+                    isinstance(pseudo_label, dict)
+                    and pseudo_label
+                    and (
+                        not isinstance(structural_diversity, dict)
+                        or pseudo_label.get(
+                            "structural_diversity_sha256"
+                        )
+                        != structural_diversity.get("receipt_sha256")
+                        or pseudo_label.get(
+                            "structural_diversity_certified"
+                        )
+                        is not (
+                            structural_diversity.get("certified") is True
+                        )
+                    )
+                ):
+                    raise ValueError(
+                        "fast-weight pseudo-label structural binding differs"
+                    )
+                test_time_training = learning["controls"].get(
+                    "test_time_training"
+                )
+                matched_compute = (
+                    test_time_training.get("matched_compute")
+                    if isinstance(test_time_training, dict)
+                    else None
+                )
+                if isinstance(matched_compute, dict) and matched_compute:
+                    operations = (
+                        resource_accounting.get("operations", {})
+                        if isinstance(resource_accounting, dict)
+                        else {}
+                    )
+                    arm_resource_valid = True
+                    for arm_name in ("treatment", "sham"):
+                        arm = matched_compute.get(arm_name)
+                        if not isinstance(arm, dict):
+                            arm_resource_valid = False
+                            break
+                        gradients = arm.get("backward_evaluations")
+                        line_searches = arm.get(
+                            "line_search_evaluations"
+                        )
+                        layer_apps = arm.get("layer_apps")
+                        denominator = (
+                            3 * gradients + line_searches
+                            if type(gradients) is int
+                            and type(line_searches) is int
+                            else 0
+                        )
+                        if (
+                            denominator <= 0
+                            or type(layer_apps) is not int
+                            or layer_apps <= 0
+                            or layer_apps % denominator
+                        ):
+                            arm_resource_valid = False
+                            break
+                        forward_layer_apps = layer_apps // denominator
+                        gradient_operation = operations.get(
+                            f"fast_weight_{arm_name}_gradient"
+                        )
+                        line_operation = operations.get(
+                            f"fast_weight_{arm_name}_line_search"
+                        )
+                        if (
+                            not isinstance(gradient_operation, dict)
+                            or not isinstance(line_operation, dict)
+                            or gradient_operation.get(
+                                "transformer_layer_apps"
+                            )
+                            != gradients * forward_layer_apps
+                            or line_operation.get(
+                                "transformer_layer_apps"
+                            )
+                            != line_searches * forward_layer_apps
+                        ):
+                            arm_resource_valid = False
+                            break
+                    if not arm_resource_valid:
+                        errors.append(
+                            "fast_weight_matched_compute_resource_unproven"
+                        )
                 if not isinstance(output_tokens, list) or not isinstance(
                     output_text,
                     str,

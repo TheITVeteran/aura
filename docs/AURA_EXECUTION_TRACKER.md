@@ -29257,3 +29257,67 @@ reasoning or frontier gain. Next is SPARK-057's recalibrated test-time trainer.
 SPARK-051 remains separately open for answer-channel remediation, admitted
 resident training, and powered equal-compute reasoning/frontier evidence.
 Final multi-hour soaks remain deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-26-393: Recalibrated Test-Time Training
+
+SPARK-057 is complete. Query-time fast-weight refinement now requires a
+reconstructable, high-confidence pseudo-label rather than promoting parser
+success into correctness. The first admitted family is exact bounded integer
+arithmetic. Its fixed 128-case holdout is balanced across positive and negative
+claims, covers all supported operators and signs, and must reconstruct with a
+95% Wilson precision lower bound above 0.90, zero false accepts, and bounded
+Brier and calibration error. Python and JSON syntax checks are explicitly
+non-authoritative.
+
+Every admitted candidate binds the critic receipt, task-disjoint source,
+deterministic verifier routes, atomic evidence, and certified structural
+diversity. The engine snapshots the exact identity delta, executes treatment
+and deterministic same-length sham arms from the same initial state under a
+fixed optimizer schedule, measures both, and restores the winning treatment
+state only long enough to complete causal verification. Attempts,
+forward/backward evaluations, line searches, layer applications, probe work,
+and probe length must match. Treatment must beat both the unchanged baseline
+and sham while producing a distinct trajectory and preserving critic
+calibration. Missing evidence, compute mismatch, collapse, drift, equality, or
+regression erases the delta.
+
+The host service independently reconstructs the nested test-time-training
+certificate and cross-checks its treatment/sham work against the transformer
+resource ledger. It also binds the pseudo-label to the episode's structural
+certificate and preserves the existing final-answer, cleanup, runtime
+integrity, and exact-erasure checks. A self-consistently rehashed receipt cannot
+manufacture matched compute or learning authority.
+
+Testing exposed a live latency defect during the broad gate: the deterministic
+128-case critic battery was being recomputed for every episode. It is now
+cached once per loaded critic implementation as canonical immutable text and
+decoded into a fresh mapping for every caller. A mutation-isolation regression
+proves one consumer cannot poison future authority.
+
+Validation passes 58/58 focused test-time-training, fast-weight, and real-MLX
+tests; 163/163 filtered engine, service, runtime-integrity, and conversation
+tests; and 249/249 complete affected engine, service, integrity, critic,
+verifier, and fast-weight tests. A broader randomized RLC sweep reached 465
+passing tests with two intentional deselections and no failures before the
+known quadratic action-calibration/campaign-journal fixture crossed the
+bounded-gate limit. That distinct production performance defect remains an
+explicit SPARK-068 requirement rather than being hidden or called green.
+
+Strict focused Ruff, bytecode compilation, and diff hygiene pass. The
+enterprise ratchet remains non-green, but an archived clean-CP392 scan and the
+complete CP393 tree produce exactly the same counts: nine inherited baseline
+regressions, including `placeholder_stub_mock` 20 > 13 and 46 actual
+high/critical findings > 39. CP393 adds no enterprise finding and raises no
+baseline.
+
+Counting CP393 makes the total checkpoint record 635. The 640-920 forecast
+remains, leaving approximately 5-285 records. Checkpoint-count completion is
+approximately 69.0%-99.2%, with a midpoint planning estimate of 81.4%.
+
+SPARK-057 proves bounded, causally measured test-time refinement over an
+equal-compute sham inside the calibrated exact-arithmetic domain. It does not
+prove resident-32B, broad reasoning, frontier, or `WOW Signal` gains. Next is
+SPARK-058's verified replay buffer. SPARK-051 remains separately open for
+answer-channel remediation, admitted resident training, and powered
+equal-compute reasoning/frontier evidence. Final multi-hour soaks remain
+deferred until all shorter gates are green.

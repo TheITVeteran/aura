@@ -56,6 +56,13 @@ from core.brain.llm.latent_cortex.resource_accounting import (
 )
 from core.brain.llm.latent_cortex.schedules import LayerSchedule, ScheduleLibrary
 from core.brain.llm.latent_cortex.telemetry import LatentTelemetry
+from core.brain.llm.latent_cortex.test_time_training import (
+    MATCHED_LINE_SEARCH_EVALUATIONS,
+    build_critic_recalibration_receipt,
+    build_matched_compute_receipt,
+    build_test_time_training_receipt,
+    deterministic_sham_target,
+)
 from core.brain.llm.latent_cortex.types import (
     ComputeBudget,
     CortexConfig,
@@ -2567,6 +2574,21 @@ class LatentCortexEngine:
             if self.config.fast_weights.enabled and self.tokenizer is not None
             else 0
         )
+        fast_weight_window_forward_cost = (
+            self.config.workspace.n_slots
+            * (self.coda_start - self.prelude_end)
+            if self.config.fast_weights.enabled
+            else 0
+        )
+        fast_weight_matched_trial_cost = (
+            2
+            * self.config.fast_weights.opt_steps
+            * (3 + MATCHED_LINE_SEARCH_EVALUATIONS)
+            * fast_weight_window_forward_cost
+            + fast_weight_verifier_probe_cost
+            if self.config.fast_weights.enabled
+            else 0
+        )
         canaries: CapabilityCanaries | None = None
         canary_pass_cost = 0
         canary_reserve = 0
@@ -2604,6 +2626,7 @@ class LatentCortexEngine:
         fast_weight_baseline_cost = (
             fast_weight_attach_identity_cost
             + fast_weight_verifier_probe_cost
+            + fast_weight_matched_trial_cost
         )
         minimum_admission = (
             prefill_cost + branch_seed_cost + safety_reserve + fast_weight_baseline_cost
@@ -5431,6 +5454,13 @@ class LatentCortexEngine:
         fw_verifier_pre: float | None = None
         fast_weight_decode_active = False
         canary_baseline: dict[str, float] | None = None
+        fw_initial_snapshot: tuple[dict[str, Any], ...] = ()
+        fw_treatment_snapshot: tuple[dict[str, Any], ...] = ()
+        fw_treatment_trace: dict[str, Any] = {}
+        fw_sham_trace: dict[str, Any] = {}
+        fw_sham_target_tokens: list[int] = []
+        fw_sham_probe_tokens: list[int] = []
+        fw_sham_score: float | None = None
         if self.config.fast_weights.enabled and not heterogeneous_finalized:
             winner_state_sha256 = tensor_sha256(winner.z)
             objective_sha256 = hashlib.sha256(
@@ -5477,6 +5507,7 @@ class LatentCortexEngine:
                             fw_verifier_pre_text,
                             evaluation_index=evaluation_index,
                             tokenizer=self.tokenizer,
+                            structural_diversity=receipt.structural_diversity,
                         )
                         admission = validate_fast_weight_admission(
                             admission,
@@ -5577,6 +5608,7 @@ class LatentCortexEngine:
                 )
                 receipt.fast_weights_applied = True
                 receipt.fast_weights_layers = wrapped
+                fw_initial_snapshot = fast_weights.snapshot_delta()
                 try:
                     fast_weight_learning_state["lease"] = (
                         fast_weights.lease_receipt()
@@ -5658,6 +5690,78 @@ class LatentCortexEngine:
                     tokens_per_forward=self.config.workspace.n_slots,
                     layers_per_forward=(self.coda_start - self.prelude_end),
                     reserve_layer_apps=safety_reserve,
+                    fixed_line_search_evaluations=(
+                        MATCHED_LINE_SEARCH_EVALUATIONS
+                    ),
+                    operation_prefix="fast_weight_treatment",
+                )
+                fw_treatment_snapshot = fast_weights.snapshot_delta()
+                fw_treatment_trace = fast_weights.optimization_trace()
+                fast_weights.restore_delta(
+                    fw_initial_snapshot,
+                    reason="fast_weights_matched_control_reset",
+                )
+                fast_weights.reset_optimization_trace()
+                vocab_size = int(
+                    self.model.model.embed_tokens.weight.shape[0]
+                )
+                fw_sham_target_tokens = deterministic_sham_target(
+                    fast_weight_target_tokens,
+                    vocab_size=vocab_size,
+                    episode_id=receipt.episode_id,
+                )
+                sham_loss_fn = build_proxy_loss(
+                    self.model,
+                    winner.anchor,
+                    fw_sham_target_tokens,
+                    self.config.latent_opt,
+                )
+
+                def fw_sham_loss():
+                    z_pass = self._nocache_window_pass(winner.z)
+                    return sham_loss_fn(z_pass)
+
+                fast_weights.optimize(
+                    fw_sham_loss,
+                    budget=budget,
+                    layer_apps_per_forward=(
+                        self.config.workspace.n_slots
+                        * (self.coda_start - self.prelude_end)
+                    ),
+                    tokens_per_forward=self.config.workspace.n_slots,
+                    layers_per_forward=(
+                        self.coda_start - self.prelude_end
+                    ),
+                    reserve_layer_apps=safety_reserve,
+                    fixed_line_search_evaluations=(
+                        MATCHED_LINE_SEARCH_EVALUATIONS
+                    ),
+                    operation_prefix="fast_weight_sham",
+                )
+                fw_sham_trace = fast_weights.optimization_trace()
+                if verifier is not None and self.tokenizer is not None:
+                    fw_sham_probe_tokens = self._decode_probe(
+                        winner,
+                        cache,
+                        runner,
+                        budget,
+                        bridge_tokens=bridge_tokens,
+                        use_cache=False,
+                        force_exact_tokens=True,
+                    )
+                    fw_sham_score = float(
+                        verifier(
+                            self.tokenizer.decode(
+                                fw_sham_probe_tokens
+                            )
+                        )
+                    )
+                fast_weights.restore_delta(
+                    fw_treatment_snapshot,
+                    reason="fast_weights_matched_treatment_restore",
+                )
+                fast_weights.restore_optimization_trace(
+                    fw_treatment_trace
                 )
                 lifecycle = fast_weights.lifecycle
                 fast_weight_learning_state["optimization"] = {
@@ -5712,11 +5816,17 @@ class LatentCortexEngine:
                         "capability_canaries": dict(
                             receipt.fast_weight_canaries
                         ),
+                        "test_time_training": fast_weight_learning_state[
+                            "controls"
+                        ]["test_time_training"],
                     }
                 else:
                     fast_weight_learning_state["controls"] = {
                         "decision": "accepted",
                         "capability_canaries": {},
+                        "test_time_training": fast_weight_learning_state[
+                            "controls"
+                        ]["test_time_training"],
                     }
                 if verifier is not None and self.tokenizer is not None:
                     verifier_decision = self._enforce_fast_weight_verifier(
@@ -5733,6 +5843,12 @@ class LatentCortexEngine:
                         pre_text=fw_verifier_pre_text,
                         learning_state=fast_weight_learning_state,
                         safety_reserve=safety_reserve,
+                        treatment_trace=fw_treatment_trace,
+                        treatment_target_tokens=fast_weight_target_tokens,
+                        sham_trace=fw_sham_trace,
+                        sham_target_tokens=fw_sham_target_tokens,
+                        sham_probe_tokens=fw_sham_probe_tokens,
+                        sham_score=fw_sham_score,
                     )
                     stage_started = self._stage_checkpoint(
                         receipt=receipt,
@@ -6610,6 +6726,12 @@ class LatentCortexEngine:
         pre_text: str,
         learning_state: dict[str, Any],
         safety_reserve: int,
+        treatment_trace: Mapping[str, Any],
+        treatment_target_tokens: list[int],
+        sham_trace: Mapping[str, Any],
+        sham_target_tokens: list[int],
+        sham_probe_tokens: list[int],
+        sham_score: float | None,
     ) -> str:
         """Give the task verifier the last word over the adapted function.
 
@@ -6644,6 +6766,23 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_verifier_no_reference")
             learning_state["disposition"] = "rejected_verifier_unavailable"
             return "erased_no_reference"
+        if (
+            sham_score is None
+            or not math.isfinite(sham_score)
+            or not sham_probe_tokens
+            or not treatment_trace
+            or not sham_trace
+        ):
+            fast_weights.canary_erase()
+            receipt.fast_weight_verifier = {
+                "evaluated": False,
+                "decision": "erased_matched_control_unavailable",
+            }
+            receipt.flag("fast_weight_matched_control_unavailable")
+            learning_state["disposition"] = (
+                "rejected_verifier_unavailable"
+            )
+            return "erased_matched_control_unavailable"
         probe_cost = self._verifier_probe_layer_apps(bridge_tokens)
         if probe_cost + safety_reserve > budget.remaining_layer_apps:
             fast_weights.canary_erase()
@@ -6689,9 +6828,6 @@ class LatentCortexEngine:
             "post_text_sha256": hashlib.sha256(
                 post_text.encode("utf-8")
             ).hexdigest(),
-            # The proof contract reconstructs the strict >1e-6 comparison.
-            # Preserve the exact finite values used by that decision; display
-            # telemetry may round independently below.
             "pre_score": float(pre_score),
             "post_score": (
                 float(post_score) if math.isfinite(post_score) else None
@@ -6711,6 +6847,79 @@ class LatentCortexEngine:
             receipt.flag("fast_weight_verifier_erased")
             learning_state["disposition"] = "rejected_non_improvement"
             return "erased_nonfinite_score"
+        forward_layer_apps = (
+            self.config.workspace.n_slots
+            * (self.coda_start - self.prelude_end)
+        )
+        probe_layer_apps = self._verifier_probe_layer_apps(
+            bridge_tokens
+        )
+
+        def arm_receipt(
+            *,
+            arm: str,
+            trace: Mapping[str, Any],
+            target_tokens: list[int],
+            probe_tokens: list[int],
+            score: float,
+        ) -> dict[str, Any]:
+            gradients = int(trace["gradient_evaluations"])
+            line_searches = int(trace["line_search_evaluations"])
+            return {
+                "arm": arm,
+                "target_tokens_sha256": token_sequence_sha256(
+                    target_tokens
+                ),
+                "optimizer": str(trace["optimizer"]),
+                "attempts": int(trace["attempts"]),
+                "forward_evaluations": gradients + line_searches,
+                "backward_evaluations": gradients,
+                "line_search_evaluations": line_searches,
+                "layer_apps": (
+                    (3 * gradients + line_searches)
+                    * forward_layer_apps
+                ),
+                "probe_layer_apps": probe_layer_apps,
+                "probe_tokens_sha256": token_sequence_sha256(
+                    probe_tokens
+                ),
+                "probe_token_count": len(probe_tokens),
+                "score": float(score),
+            }
+
+        critic_before = learning_state["admission"][
+            "critic_recalibration"
+        ]
+        critic_after = build_critic_recalibration_receipt()
+        matched_compute = build_matched_compute_receipt(
+            treatment=arm_receipt(
+                arm="treatment",
+                trace=treatment_trace,
+                target_tokens=treatment_target_tokens,
+                probe_tokens=probe,
+                score=post_score,
+            ),
+            sham=arm_receipt(
+                arm="sham",
+                trace=sham_trace,
+                target_tokens=sham_target_tokens,
+                probe_tokens=sham_probe_tokens,
+                score=float(sham_score),
+            ),
+            baseline_tokens_sha256=pre_tokens_sha256,
+            baseline_score=float(pre_score),
+            critic_before=critic_before,
+            critic_after=critic_after,
+        )
+        learning_state["controls"]["test_time_training"] = (
+            build_test_time_training_receipt(
+                critic_recalibration=critic_before,
+                pseudo_label_admission=learning_state["admission"][
+                    "pseudo_label_admission"
+                ],
+                matched_compute=matched_compute,
+            )
+        )
         if not strict_improvement:
             fast_weights.canary_erase()
             decision = (
@@ -6731,6 +6940,15 @@ class LatentCortexEngine:
                 post_score,
                 token_sequence_changed,
             )
+        elif matched_compute["accepted"] is not True:
+            fast_weights.canary_erase()
+            decision = "erased_matched_control"
+            receipt.flag("fast_weight_matched_control_rejected")
+            learning_state["disposition"] = "rejected_matched_control"
+            logger.info(
+                "Fast-weight verifier erased treatment after matched control: %s",
+                matched_compute["reason"],
+            )
         else:
             decision = "accepted_causal_improvement"
             learning_state["disposition"] = "accepted_causal_improvement"
@@ -6745,6 +6963,12 @@ class LatentCortexEngine:
             "winner_state_unchanged": (
                 winner_state_before_sha256 == winner_state_after_sha256
             ),
+            "matched_compute_sha256": matched_compute[
+                "receipt_sha256"
+            ],
+            "incremental_gain_over_sham": matched_compute[
+                "incremental_gain_over_sham"
+            ],
         }
         return decision
 

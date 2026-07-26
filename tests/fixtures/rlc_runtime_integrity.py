@@ -193,6 +193,12 @@ def _accepted_admission_template() -> dict[str, Any]:
         objective=verifier.objective,
         evaluation_index=0,
         tokenizer=_ByteTokenizer(),
+        structural_diversity={
+            "certified": True,
+            "receipt_sha256": hashlib.sha256(
+                b"runtime-integrity-structural"
+            ).hexdigest(),
+        },
     )[0]
 
 
@@ -205,6 +211,10 @@ def accepted_fast_weight_learning(
         empty_learning_state,
         finalize_fast_weight_learning_receipt,
         token_sequence_sha256,
+    )
+    from core.brain.llm.latent_cortex.test_time_training import (
+        build_matched_compute_receipt,
+        build_test_time_training_receipt,
     )
 
     admission = copy.deepcopy(_accepted_admission_template())
@@ -244,9 +254,44 @@ def accepted_fast_weight_learning(
         "accepted_step_sizes": [0.01],
         "line_search_backtracks": 0,
     }
+    arm_common = {
+        "optimizer": "rms_normalized_sgd_backtracking_v1",
+        "attempts": 1,
+        "forward_evaluations": 3,
+        "backward_evaluations": 1,
+        "line_search_evaluations": 2,
+        "layer_apps": 5,
+        "probe_layer_apps": 4,
+        "probe_token_count": 1,
+    }
+    matched = build_matched_compute_receipt(
+        treatment={
+            **arm_common,
+            "arm": "treatment",
+            "target_tokens_sha256": token_sequence_sha256([4]),
+            "probe_tokens_sha256": token_sequence_sha256([2]),
+            "score": 0.75,
+        },
+        sham={
+            **arm_common,
+            "arm": "sham",
+            "target_tokens_sha256": token_sequence_sha256([5]),
+            "probe_tokens_sha256": token_sequence_sha256([3]),
+            "score": 0.55,
+        },
+        baseline_tokens_sha256=token_sequence_sha256([1]),
+        baseline_score=0.5,
+        critic_before=admission["critic_recalibration"],
+        critic_after=admission["critic_recalibration"],
+    )
     state["controls"] = {
         "decision": "accepted",
         "capability_canaries": {"decision": "accepted"},
+        "test_time_training": build_test_time_training_receipt(
+            critic_recalibration=admission["critic_recalibration"],
+            pseudo_label_admission=admission["pseudo_label_admission"],
+            matched_compute=matched,
+        ),
     }
     state["causal_probe"] = {
         "evaluated": True,
