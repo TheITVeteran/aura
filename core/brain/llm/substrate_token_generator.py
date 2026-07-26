@@ -68,14 +68,37 @@ class SubstrateTokenGenerator:
     ) -> None:
         self.substrate = substrate
         self.seed = int(seed)
-        self.threshold = (
-            float(threshold)
-            if threshold is not None
-            else float(os.getenv("AURA_SUBSTRATE_PREDICTION_THRESHOLD", "0.34"))
+        # A non-finite/out-of-range threshold would make every error>threshold
+        # comparison degenerate (NaN comparisons are always False), enabling
+        # every substrate response. Clamp to a valid [0,1] gate.
+        raw_threshold = (
+            threshold if threshold is not None
+            else os.getenv("AURA_SUBSTRATE_PREDICTION_THRESHOLD", "0.34")
         )
-        self._vocab_size = int(vocab_size or len(PROTO_TOKENS))
+        self.threshold = self._finite_unit(raw_threshold, 0.34)
+        # Bound vocab_size so a negative/huge value cannot fail unpredictably or
+        # allocate an unbounded readout matrix.
+        try:
+            requested_vocab = int(vocab_size or len(PROTO_TOKENS))
+        except (TypeError, ValueError):
+            requested_vocab = len(PROTO_TOKENS)
+        self._vocab_size = max(1, min(65536, requested_vocab))
         self._readout: Optional[np.ndarray] = None
         self.last_generation: Optional[SubstrateGeneration] = None
+
+    @staticmethod
+    def _finite_unit(value: Any, default: float) -> float:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return default
+        if not math.isfinite(v):
+            return default
+        return max(0.0, min(1.0, v))
+
+    # A single substrate state must not exceed a sane dimension — a huge or
+    # malformed vector would poison the readout matmul and receipt.
+    _MAX_STATE_DIM = 16384
 
     def _state_vector(self) -> np.ndarray:
         getter = getattr(self.substrate, "get_state_vector", None)
@@ -87,6 +110,12 @@ class SubstrateTokenGenerator:
             state = np.zeros(64, dtype=np.float32)
         if state.size == 0:
             state = np.zeros(64, dtype=np.float32)
+        if state.size > self._MAX_STATE_DIM:
+            state = state[: self._MAX_STATE_DIM]
+        # Replace non-finite elements (NaN/inf) with 0 so a corrupt substrate
+        # cannot propagate NaN through tanh into every logit.
+        if not np.all(np.isfinite(state)):
+            state = np.nan_to_num(state, nan=0.0, posinf=0.0, neginf=0.0)
         return np.tanh(state).astype(np.float32)
 
     def _ensure_readout(self, state_dim: int) -> np.ndarray:
