@@ -118,6 +118,55 @@ def last_recall_outcome() -> dict[str, Any]:
     return dict(_RECALL_OUTCOME)
 
 
+# A datastore has to be able to answer before it is allowed to speak.
+#
+# LIVE DEFECT, 2026-07-26. The resident 32B served fluent, grammatical,
+# meaning-free replies to ordinary questions — and kept serving them with
+# substrate steering clamped to 0.01 and recurrent depth off, which is what
+# ruled both of those out as the cause:
+#
+#   "Define S as extracting for Draw [w] from colored ([I:E]): (card frequency
+#    in the bag - matching cards already know to counted)"
+#
+# The live datastore (~/.aura/data/runtime/nonparametric_memory_5120, built
+# 2026-07-13) holds 1,689 hidden-state keys of which 1,677 — 99.3% — carry no
+# decoded token text at all. Their token_ids are the most ordinary tokens in
+# the vocabulary: space, digits, "the", "is", "to". The remaining 12 store an
+# entire ANSWER as a single "token", which is not what a per-token kNN store
+# holds either.
+#
+# Blending THAT into the model's top-64 logits, at a weight that reaches 0.87,
+# is a recipe for text that is grammatically shaped and says nothing — which
+# is precisely the failure. Recall is an enhancement; a store that cannot
+# support recall must decline, and the module's stated contract is already to
+# fail open to normal generation.
+_MIN_USABLE_ENTRY_FRACTION = 0.5
+_MIN_USABLE_ENTRIES = 32
+
+
+def _unusable_datastore_reason(memory: Any) -> str:
+    """Why this datastore may not steer live generation, or "" if it may."""
+    try:
+        tokens = list(getattr(memory, "_tokens", None) or [])
+    except (AttributeError, TypeError, ValueError):
+        return ""
+    total = len(tokens)
+    if total == 0:
+        return ""
+    usable = sum(1 for token in tokens if str(token or "").strip())
+    if usable < _MIN_USABLE_ENTRIES:
+        return (
+            f"only {usable} of {total} entries carry a recallable token "
+            f"(need at least {_MIN_USABLE_ENTRIES})"
+        )
+    if usable < total * _MIN_USABLE_ENTRY_FRACTION:
+        return (
+            f"{total - usable} of {total} entries carry no recallable token "
+            f"({100.0 * usable / total:.1f}% usable)"
+        )
+    return ""
+
+
 def maybe_build_foreground(
     model: Any,
     *,
@@ -147,6 +196,15 @@ def maybe_build_foreground(
             return None
         if len(memory) == 0:
             _set_recall_outcome("empty", "datastore holds no entries")
+            return None
+        unusable = _unusable_datastore_reason(memory)
+        if unusable:
+            _set_recall_outcome("not_admitted", unusable)
+            logger.warning(
+                "🧠 [WORKER] Foreground non-parametric memory REFUSED: %s. "
+                "Generating from the model alone.",
+                unusable,
+            )
             return None
         tap = HiddenStateTap(model)
         proc = make_tapped_nonparametric_processor(tap, memory)
@@ -268,7 +326,14 @@ def make_tapped_nonparametric_processor(
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     min_cos: float = 0.55,
-    base_lam: float = 0.75,
+    # A retrieved neighbour may INFORM the next token; it may not choose it.
+    # base_lam was 0.75 and the free-energy term below multiplies by up to
+    # 1.16, so a single neighbour could take 87% of the next-token
+    # distribution away from the model — against ~0.25 in the kNN-LM
+    # literature, and tuned there on held-out data rather than asserted.
+    # At 0.87 the datastore is not augmenting generation, it is performing it.
+    base_lam: float = 0.25,
+    max_lam: float = 0.35,
 ) -> Callable[[Any, Any], Any]:
     """O(1)-per-token non-parametric logits-processor driven by the hidden-state tap."""
     import mlx.core as mx
@@ -297,6 +362,7 @@ def make_tapped_nonparametric_processor(
             state["last_fired_index"] = nearest_index
             fe = 0.5 if free_energy is None else float(free_energy)
             lam = base_lam * ((sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
+            lam = min(float(max_lam), max(0.0, float(lam)))
             lg = np.array(logits, dtype=np.float32).reshape(-1)
             ktop = min(64, lg.shape[0])
             idx = np.argpartition(lg, -ktop)[-ktop:]
