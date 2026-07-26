@@ -4210,12 +4210,30 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
     const prefersReducedMotion = window.matchMedia
         && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const words = text.split(' ');
+
+    // The whole reply, rendered at once. The typewriter below is decoration on
+    // top of this — it must never be the only path that can produce the text.
+    const renderFinal = () => {
+        if (isAura) {
+            div.innerHTML = `<div class="aura-avatar"></div>` + badgeHtml + `<div class="msg-content">` + render(text) + thoughtHtml + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
+        } else {
+            div.innerHTML = `<div class="msg-content">` + render(text) + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
+        }
+        div.classList.remove('typing');
+        if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
+    };
+
     const canTypewriterRender = (
         isAura
         && text.length > 5
         && !isHtml
         && !prefersReducedMotion
         && words.length <= 180
+        // requestAnimationFrame does not run while the document is hidden, so a
+        // reply that lands while the user is in another window would animate one
+        // word and freeze there permanently. Observed live 2026-07-26: the full
+        // sentence arrived over the wire and the chat showed "Yes," forever.
+        && !document.hidden
     );
 
     if (canTypewriterRender) {
@@ -4225,8 +4243,29 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
         let lastTypeTime = 0;
         const wordsPerSec = 15;
         const msPerWord = 1000 / wordsPerSec;
+        let finished = false;
+        let stallGuard = 0;
+
+        function finish() {
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(stallGuard);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            renderFinal();
+        }
+
+        // Two ways the frame loop can stop mid-word: the window gets hidden, or
+        // the loop is throttled past any useful rate. Both must still end with
+        // the complete message on screen, never a fragment of it.
+        function onVisibilityChange() {
+            if (document.hidden) finish();
+        }
+
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        stallGuard = window.setTimeout(finish, Math.max(4000, words.length * msPerWord * 4));
 
         function typeChunk(timestamp) {
+            if (finished) return;
             if (!lastTypeTime) lastTypeTime = timestamp;
             const elapsed = timestamp - lastTypeTime;
 
@@ -4243,18 +4282,12 @@ async function appendMsg(role, text, isHtml = false, metadata = {}) {
             if (i < words.length) {
                 requestAnimationFrame(typeChunk);
             } else {
-                div.classList.remove('typing');
+                finish();
             }
         }
         requestAnimationFrame(typeChunk);
     } else {
-        if (isAura) {
-            div.innerHTML = `<div class="aura-avatar"></div>` + badgeHtml + `<div class="msg-content">` + render(text) + thoughtHtml + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
-        } else {
-            div.innerHTML = `<div class="msg-content">` + render(text) + `</div><div class="msg-meta" data-timestamp="${tsStr}"><span class="msg-timestamp">${tsStr}</span></div>`;
-        }
-        div.classList.remove('typing');
-        if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
+        renderFinal();
     }
 }
 

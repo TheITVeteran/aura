@@ -979,6 +979,29 @@ def _background_error_is_quiet(error: str) -> bool:
     ))
 
 
+def _consume_deliberate_no_text_reason(client: Any) -> str:
+    """Why the client last returned no text ON PURPOSE, if it did.
+
+    The foreground path hands the router an InferenceGate rather than the MLX
+    client itself, so look through the common wrapper attribute as well. Reading
+    the reason clears it at the source, which is what keeps it scoped to the one
+    turn that earned it.
+    """
+    for candidate in (client, getattr(client, "_mlx_client", None)):
+        if candidate is None:
+            continue
+        consume = getattr(candidate, "consume_deliberate_no_text_reason", None)
+        if not callable(consume):
+            continue
+        try:
+            reason = consume()
+        except (RuntimeError, AttributeError, TypeError):
+            continue
+        if reason:
+            return str(reason)
+    return ""
+
+
 def _local_client_failure_reason(client: Any) -> str:
     def _get_declared_attr(candidate: Any, attr: str) -> Any:
         try:
@@ -4221,6 +4244,25 @@ class HealthAwareLLMRouter:
                                 "tokens": 0,
                                 "latency_ms": latency_ms,
                                 "error": "benchmark_no_text",
+                            }
+                        # An empty result we CHOSE — a healthy worker cancelled
+                        # at this turn's budget — is a deferral, not endpoint
+                        # damage. Tripping the circuit for it costs the NEXT
+                        # turn the real mind as well, which is how a single
+                        # 0.7s budget overrun turned into bounded filler on the
+                        # desktop surface (2026-07-26).
+                        deliberate = _consume_deliberate_no_text_reason(client)
+                        if deliberate:
+                            logger.info(
+                                "Endpoint %s produced no text because we cancelled it on "
+                                "purpose (%s); the lane stays warm and the circuit stays "
+                                "closed.",
+                                ep.name,
+                                deliberate,
+                            )
+                            return {
+                                "ok": False,
+                                "error": f"deliberate_no_text:{deliberate}",
                             }
                         if ep.is_local:
                             ep.trip_temporarily("client_returned_no_text")

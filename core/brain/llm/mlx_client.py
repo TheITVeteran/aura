@@ -2509,6 +2509,12 @@ class MLXLocalClient:
         self._lock = _threading.Lock()
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
+        # A generation this client cancelled ON PURPOSE — healthy worker, turn
+        # budget spent — yields no text. That is a deferral, not a broken
+        # endpoint, and the router must not open the Cortex circuit over it.
+        # One-shot: consumed by the reader so it can never leak into a later
+        # turn that failed for its own reasons.
+        self._deliberate_no_text_reason: str | None = None
         self._expert_adapter_path: str | None = None
         self._process: mp.Process | None = None
         self._model_lane_owner_id = f"mlx:{os.getpid()}:{_real_model_path(model_path)}"
@@ -5733,6 +5739,23 @@ class MLXLocalClient:
         logger.info("🧬 [MLX] Promoted artifact live: %s", resolved.name)
         return {"ok": True, "mode": "recycled", "previous": previous}
 
+    def consume_deliberate_no_text_reason(self) -> str:
+        """Return (and clear) why this client last produced no text on purpose.
+
+        A healthy worker whose generation we cancelled at the turn budget
+        returns nothing. Callers that score endpoint health must be able to
+        tell that apart from a client that is actually broken, or they open the
+        Cortex circuit over our own deferral and the NEXT turn loses the real
+        mind too (observed live 2026-07-26: one 0.7s budget overrun opened the
+        circuit and the reply became bounded filler).
+
+        One-shot by design: reading it clears it, so a later empty result that
+        failed for its own reasons is never excused by this one.
+        """
+        reason = self._deliberate_no_text_reason or ""
+        self._deliberate_no_text_reason = None
+        return reason
+
     def soft_cancel_active_generation(
         self, reason: str = "foreground_preemption"
     ) -> dict[str, Any]:
@@ -7559,6 +7582,12 @@ class MLXLocalClient:
                             ),
                             severity="warning",
                             foreground_request=foreground_request,
+                        )
+                        # We chose to end this generation while the worker was
+                        # healthy. Publish that so the router scores the empty
+                        # result as our deferral rather than as Cortex damage.
+                        self._deliberate_no_text_reason = (
+                            "first_token_deadline_exceeded_worker_healthy"
                         )
                     # Ask the worker to drop the orphaned generation between
                     # tokens — the abandoned output then never arrives at all,
