@@ -7369,6 +7369,14 @@
       "scope": "<module>.PrivateActionSnapshotStore._atomic_publish"
     },
     {
+      "callee": "os.rename",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/brain/llm/latent_cortex/action_state_capture.py",
+      "scope": "<module>.PrivateActionSnapshotStore._atomic_publish_directory"
+    },
+    {
       "callee": "os.mkdir",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -14994,6 +15002,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "087bbec0be7db936effa4f4b804a0dd8e515b3228611cb161398d4fc145c1c70",
+  "inventory_sha256": "2467984fb79cc27341ec0cbc62f3febe64daf21ab8c2a264b8c6537a36e41ea8",
   "schema_version": 1
 }

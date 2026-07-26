@@ -337,6 +337,30 @@ def _case(tmp_path: Path, *, tag: str = "A"):
     }
 
 
+def _unpublished_case(tmp_path: Path, *, tag: str) -> dict:
+    _, root_pem, role_keys, policy = _trust_fixture()
+    worker_key = _private(f"worker-{tag}")
+    private_state = _private_state(tag)
+    request = _build_request(
+        policy,
+        role_keys,
+        worker_key,
+        private_state=private_state,
+    )
+    admission = admit_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        current_policy_document=policy.document,
+        now_unix=NOW,
+    )
+    return {
+        "admission": admission,
+        "private_state": private_state,
+        "store": PrivateActionSnapshotStore(tmp_path / f"private-store-{tag}"),
+    }
+
+
 def _validate(case, receipt=None, *, latent_request=None, publication=None):
     return validate_action_state_capture_receipt(
         receipt or case["receipt"],
@@ -398,6 +422,41 @@ def _race_same_arm_restore(store_root, handle, admission, ready, start, results)
         results.put(("restored", restored.receipt["operation_id"]))
     except ActionStateCaptureError as exc:
         results.put(("rejected", str(exc)))
+    finally:
+        store.close()
+
+
+def _publish_until_sigkill(store_root, admission, private_state, started) -> None:
+    store = PrivateActionSnapshotStore(store_root)
+
+    def pause_before_commit(name: str) -> None:
+        if name == "publish_before_bundle_commit":
+            started.set()
+            signal.pause()
+
+    capture_module._crash_boundary = pause_before_commit
+    try:
+        store.publish(admission, private_state, created_at_unix=NOW + 1)
+    finally:
+        store.close()
+
+
+def _race_same_capture_publish(
+    store_root,
+    admission,
+    private_state,
+    ready,
+    start,
+    results,
+) -> None:
+    store = PrivateActionSnapshotStore(store_root)
+    ready.put(os.getpid())
+    start.wait(timeout=10.0)
+    try:
+        publication = store.publish(admission, private_state, created_at_unix=NOW + 1)
+        results.put(("published", publication.handle, publication.snapshot_sha256))
+    except Exception as exc:  # noqa: BLE001 - preserve subprocess failure evidence
+        results.put(("failed", type(exc).__name__, str(exc)))
     finally:
         store.close()
 
@@ -509,11 +568,12 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             expected_campaign_design_sha256=CAMPAIGN_DESIGN_SHA256,
         )
 
-    snapshot_dir = case["store"].root / "snapshots" / case["publication"].snapshot_sha256
     handle_hash = hashlib.sha256(
         case["publication"].handle.encode("ascii")
     ).hexdigest()
-    key_path = case["store"].root / "keys" / f"{handle_hash}.key"
+    paths = case["store"]._paths_for_handle_hash(handle_hash)
+    snapshot_dir = paths["snapshot"]
+    key_path = paths["key"]
     assert key_path.exists()
     assert key_path.read_bytes() != bytes.fromhex(case["publication"].handle[5:])
     ciphertext = b"".join(path.read_bytes() for path in sorted(snapshot_dir.glob("chunks/*/*.bin")))
@@ -644,9 +704,8 @@ def test_crash_after_state_apply_quarantines_worker_and_arm(
     assert "after state installation" in str(quarantined.value.__cause__)
 
     monkeypatch.setattr(capture_module, "_crash_boundary", lambda _name: None)
-    operation_path = case["store"].root / "operations" / (
-        hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest() + ".json"
-    )
+    handle_hash = hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest()
+    operation_path = case["store"]._paths_for_handle_hash(handle_hash)["operation"]
     operation = json.loads(operation_path.read_bytes())
     assert operation["stage"] == "application_started"
     assert operation["worker_boot_id"] == WORKER_BOOT_ID
@@ -792,7 +851,7 @@ def test_legacy_uncommitted_restore_is_never_assumed_preapply(
     handle_hash = hashlib.sha256(
         case["publication"].handle.encode("ascii")
     ).hexdigest()
-    operation_path = case["store"].root / "operations" / f"{handle_hash}.json"
+    operation_path = case["store"]._paths_for_handle_hash(handle_hash)["operation"]
     operation = json.loads(operation_path.read_bytes())
     legacy_body = {
         name: value
@@ -894,8 +953,168 @@ def test_private_snapshot_buffering_limits_are_hard_admission_boundaries(
     with pytest.raises(ActionStateCaptureError, match=expected_error):
         store.publish(admission, private_state, created_at_unix=NOW + 1)
 
-    assert not any((store.root / "snapshots").iterdir())
-    assert not any((store.root / "keys").iterdir())
+    assert not any((store.root / "bundles").iterdir())
+    assert not any((store.root / "transactions").iterdir())
+
+
+def test_sigkill_before_bundle_commit_leaves_no_visible_snapshot_and_retry_recovers(
+    tmp_path: Path,
+):
+    case = _unpublished_case(tmp_path, tag="PublishSigkill")
+    store = case["store"]
+    context = mp.get_context("spawn")
+    started = context.Event()
+    child = context.Process(
+        target=_publish_until_sigkill,
+        args=(store.root, case["admission"], case["private_state"], started),
+    )
+    child.start()
+    try:
+        assert started.wait(timeout=15.0)
+        assert child.pid is not None
+        assert not any((store.root / "bundles").iterdir())
+        assert any((store.root / "transactions").iterdir())
+        os.kill(child.pid, signal.SIGKILL)
+        child.join(timeout=10.0)
+        assert child.exitcode == -signal.SIGKILL
+    finally:
+        if child.is_alive():
+            child.kill()
+            child.join(timeout=5.0)
+
+    publication = store.publish(
+        case["admission"],
+        case["private_state"],
+        created_at_unix=NOW + 1,
+    )
+    assert len(tuple((store.root / "bundles").iterdir())) == 1
+    assert not any((store.root / "transactions").iterdir())
+    restored = _restore(
+        store,
+        publication.handle,
+        case["admission"],
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+    )
+    assert restored.state == case["private_state"]
+
+
+def test_post_commit_crash_retry_returns_the_committed_publication(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _unpublished_case(tmp_path, tag="PublishPostCommit")
+    store = case["store"]
+
+    def crash_after_commit(name: str) -> None:
+        if name == "publish_after_bundle_commit":
+            raise RuntimeError("simulated post-commit process death")
+
+    monkeypatch.setattr(capture_module, "_crash_boundary", crash_after_commit)
+    with pytest.raises(RuntimeError, match="post-commit process death"):
+        store.publish(
+            case["admission"],
+            case["private_state"],
+            created_at_unix=NOW + 1,
+        )
+    committed_bundles = tuple((store.root / "bundles").iterdir())
+    assert len(committed_bundles) == 1
+    assert not any((store.root / "transactions").iterdir())
+
+    monkeypatch.setattr(capture_module, "_crash_boundary", lambda _name: None)
+    recovered = store.publish(
+        case["admission"],
+        case["private_state"],
+        created_at_unix=NOW + 1,
+    )
+    assert hashlib.sha256(recovered.handle.encode("ascii")).hexdigest() == (
+        committed_bundles[0].name
+    )
+    assert len(tuple((store.root / "bundles").iterdir())) == 1
+    restored = _restore(
+        store,
+        recovered.handle,
+        case["admission"],
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+    )
+    assert restored.state == case["private_state"]
+
+
+def test_disk_full_before_bundle_commit_rolls_back_the_entire_staging_tree(
+    tmp_path: Path,
+    monkeypatch,
+):
+    case = _unpublished_case(tmp_path, tag="PublishDiskFull")
+    store = case["store"]
+    atomic_publish = store._atomic_publish
+
+    def fail_publication(path: Path, payload: bytes, *, replace: bool) -> None:
+        if path.name == "publication.json":
+            raise OSError(28, "No space left on device")
+        atomic_publish(path, payload, replace=replace)
+
+    monkeypatch.setattr(store, "_atomic_publish", fail_publication)
+    with pytest.raises(
+        ActionStateCaptureError,
+        match="private_snapshot_publication_io_failed",
+    ) as failed:
+        store.publish(
+            case["admission"],
+            case["private_state"],
+            created_at_unix=NOW + 1,
+        )
+    assert isinstance(failed.value.__cause__, OSError)
+    assert failed.value.__cause__.errno == 28
+
+    assert not any((store.root / "bundles").iterdir())
+    assert not any((store.root / "transactions").iterdir())
+
+
+def test_concurrent_same_request_publish_is_single_copy_and_idempotent(tmp_path: Path):
+    case = _unpublished_case(tmp_path, tag="PublishRace")
+    store = case["store"]
+    context = mp.get_context("spawn")
+    ready = context.Queue()
+    start = context.Event()
+    results = context.Queue()
+    children = [
+        context.Process(
+            target=_race_same_capture_publish,
+            args=(
+                store.root,
+                case["admission"],
+                case["private_state"],
+                ready,
+                start,
+                results,
+            ),
+        )
+        for _ in range(2)
+    ]
+    for child in children:
+        child.start()
+    try:
+        assert {ready.get(timeout=10.0), ready.get(timeout=10.0)} == {
+            child.pid for child in children
+        }
+        start.set()
+        outcomes = [results.get(timeout=20.0), results.get(timeout=20.0)]
+        for child in children:
+            child.join(timeout=10.0)
+            assert child.exitcode == 0
+    finally:
+        start.set()
+        for child in children:
+            if child.is_alive():
+                child.kill()
+                child.join(timeout=5.0)
+
+    assert {outcome[0] for outcome in outcomes} == {"published"}
+    assert len({outcome[1] for outcome in outcomes}) == 1
+    assert len({outcome[2] for outcome in outcomes}) == 1
+    assert len(tuple((store.root / "bundles").iterdir())) == 1
+    assert not any((store.root / "transactions").iterdir())
 
 
 def test_private_snapshot_lifecycle_rejects_impossible_timestamp_order(
@@ -1268,13 +1487,13 @@ def test_opaque_handle_authentication_prevents_arm_ledger_reset(
         restored_at_unix=NOW + 2,
     )
     handle_hash = hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest()
-    ledger_path = case["store"].root / "ledgers" / f"{handle_hash}.json"
+    ledger_path = case["store"]._paths_for_handle_hash(handle_hash)["ledger"]
     attacked = json.loads(ledger_path.read_bytes())
     attacked["uses"][TREATMENT_ARM] = None
     attacked["sequence"] -= 1
     body = {name: item for name, item in attacked.items() if name != "ledger_sha256"}
     # An attacker can recompute public hashes, but not the HMAC derived from
-    # the opaque handle token, which is never stored in the snapshot tree.
+    # the opaque handle token, which is never exposed outside the private bundle.
     attacked["ledger_sha256"] = _sha(body)
     ledger_path.write_bytes(canonical_json_bytes(attacked) + b"\n")
     ledger_path.chmod(0o600)
@@ -1289,7 +1508,8 @@ def test_opaque_handle_authentication_prevents_arm_ledger_reset(
 
 
 def _first_chunk(case) -> Path:
-    chunk_root = case["store"].root / "snapshots" / case["publication"].snapshot_sha256 / "chunks"
+    handle_hash = hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest()
+    chunk_root = case["store"]._paths_for_handle_hash(handle_hash)["snapshot"] / "chunks"
     return sorted(chunk_root.glob("*/*.bin"))[0]
 
 
@@ -1454,7 +1674,10 @@ def test_restore_and_erase_crash_boundaries_recover_deterministically(tmp_path: 
             restored_at_unix=NOW + 3,
         )
 
-    abandoned = case["store"].root / "operations" / ".tmp-abandoned"
+    handle_hash = hashlib.sha256(case["publication"].handle.encode("ascii")).hexdigest()
+    abandoned = (
+        case["store"]._paths_for_handle_hash(handle_hash)["bundle"] / ".tmp-abandoned"
+    )
     abandoned.write_bytes(b"torn temporary publication")
     abandoned.chmod(0o600)
     assert case["store"].recover(case["publication"].handle, case["admission"]) == {

@@ -2267,6 +2267,38 @@ before those dependencies close is not admissible.
   those gates are repaired in place, but unrelated capability expansion does not
   enter SPARK-051. The resident-32B training and preregistered reasoning campaign
   follow that gate.
+
+  CP380 closes recoverable snapshot publication. A capture is now assembled in
+  a hidden transaction directory containing its encrypted chunks, envelope,
+  key, authenticated handle, use ledger, and authenticated private publication
+  record. Every file and newly created directory is durably synced before one
+  descriptor-relative directory rename makes the complete bundle visible. Both
+  parent directories are synced after the rename. No reader can observe the
+  former partial key/chunk/envelope/ledger/handle sequence.
+
+  Retry under the interprocess lock searches authenticated complete bundles by
+  request and component commitments. A crash after commit therefore returns the
+  original opaque handle instead of producing a duplicate. A crash before
+  commit leaves only a hidden transaction, which the next lock holder validates
+  and removes before retry. Publication I/O failures roll back the whole staging
+  tree and retain their original `OSError` as causal evidence under a stable
+  snapshot-publication error.
+
+  Four new destructive contracts prove the transaction boundary: a spawned
+  publisher is killed with `SIGKILL` before commit and leaves zero visible
+  bundles; an injected `ENOSPC` leaves neither bundle nor transaction; a forced
+  post-commit death recovers the exact committed handle; and two independent
+  simultaneous publishers converge on one handle, one snapshot digest, and one
+  bundle. Focused storage coverage passes 36/36 and the broader snapshot,
+  identity, worker-origin, MLX runtime, admission, cancellation, and resilience
+  boundary passes 256/256. Strict Ruff, bytecode compilation, enterprise gate,
+  exact effect-ownership ratchet, and diff hygiene pass.
+
+  CP380 closes only the publication-transaction checkpoint. External key
+  custody plus streaming, the serializable resident continuation and first-
+  action hook, end-to-end lineage, and the resident-1.5B destructive gate remain
+  the four fixed pre-training checkpoints. No resident training, reasoning gain,
+  frontier gain, or `WOW Signal` is claimed.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

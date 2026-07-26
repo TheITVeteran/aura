@@ -28604,3 +28604,53 @@ resident continuation and first-action hook; worker/client/service/runner/
 verifier lineage; and the resident-1.5B destructive integration gate. The
 resident-32B training and preregistered frontier campaign follow that gate.
 Final multi-hour soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-26-380: Recoverable Atomic Snapshot Publication
+
+SPARK-051 no longer publishes a private action snapshot as a sequence of
+independently visible files. The store now stages the encryption key, encrypted
+component chunks, schema-bound envelope, authenticated handle, authenticated
+use ledger, and authenticated private publication record beneath one hidden
+transaction directory. File fsync, directory-creation fsync, staging-directory
+fsync, one descriptor-relative directory rename, and source/target parent fsync
+form the durable commit protocol. The committed bundle is the only visible
+snapshot unit.
+
+Publication retry is idempotent. While holding the cross-process lock, the store
+validates existing bundle names, publication authentication, request binding,
+component commitments, handle record, ledger, and envelope. A retry after an
+acknowledgement-loss crash returns the already committed opaque handle; a
+different state for the same request fails closed. Hidden pre-commit remnants
+are recursively removed by the next lock holder. Publication I/O failures roll
+back the complete staging tree and surface a stable typed error whose cause
+retains the original operating-system failure.
+
+The new destructive tests use real spawned processes and injected faults. A
+publisher killed with `SIGKILL` immediately before commit leaves zero visible
+bundles and is cleanly retried. An injected disk-full failure leaves zero
+bundles and zero transaction remnants. A forced crash immediately after commit
+recovers the exact existing handle and restores the original state. Two
+independent simultaneous publishers of the same admitted capture both receive
+the same handle and snapshot digest while exactly one bundle exists.
+
+Focused action-store coverage passes 36/36. The broader action-state, worker
+identity, runtime identity, worker origin, MLX runtime, admission, cancellation,
+and resilience matrix passes 256/256. Strict Ruff, bytecode compilation,
+enterprise ratchet, and diff hygiene pass. The effect-ownership inventory
+matches exactly at 2,003 recognized calls in 1,875 buckets with 1,783 migration-
+debt calls; the sole added primitive is the reviewed descriptor-relative rename
+inside the already registered fixed-namespace snapshot owner.
+
+Four cooperative schema and dimensional-expansion records landed between CP379
+and CP380. Counting them and CP380 makes the total checkpoint record 605. The
+640-920 forecast remains, leaving approximately 35-315 records. Checkpoint-count
+completion is approximately 65.8%-94.5%, with a midpoint planning estimate of
+77.6%.
+
+The fixed SPARK-051 pre-training burn-down now has four checkpoints: external
+key custody plus streaming codec; serializable resident continuation and first-
+action hook; worker/client/service/runner/verifier lineage; and the resident-
+1.5B destructive integration gate. Resident-32B training and the preregistered
+reasoning/frontier campaign follow. No training, gain, or `WOW Signal` claim is
+made here. Final multi-hour soaks remain deferred until every shorter gate is
+green.
