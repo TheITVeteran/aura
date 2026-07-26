@@ -204,70 +204,112 @@
                 <span class="splash-logo-word splash-logo-left" aria-hidden="true"><span class="splash-logo-ink">AURA</span></span>
                 <span class="splash-logo-word splash-logo-right" aria-hidden="true"><span class="splash-logo-ink">LUNA</span></span>
                 </div>
-                <!-- The sigil is real SVG geometry: each electron rides its own
-                     ellipse via animateMotion/mpath, so it is exactly on the
-                     curve and stays circular. The previous CSS build stretched
-                     circles with scaleX, which deformed the dots into ovals and
-                     left them off the path they were meant to trace. -->
+                <!-- Aura's neuron mark, matching the native launcher: a
+                     chunky low-poly soma, dendrites that branch to square
+                     terminal nodes, and a myelinated axon. Signal spikes are
+                     PIXELS (square) driven by animateMotion/mpath along the
+                     real dendrite/axon geometry, so a spike is exactly on its
+                     fibre rather than approximated with offsets — the same
+                     discipline the old electrons used on their ellipses. -->
                 <div class="splash-sigil" aria-hidden="true">
                     <svg class="splash-sigil-svg" viewBox="0 0 200 200" role="presentation" focusable="false">
                         <defs>
-                            <radialGradient id="sigil-core-fill" cx="38%" cy="34%" r="72%">
-                                <stop offset="0%" stop-color="#ffffff"/>
-                                <stop offset="20%" stop-color="#a8fff4"/>
-                                <stop offset="58%" stop-color="#9a4bff"/>
-                                <stop offset="100%" stop-color="#170727"/>
+                            <radialGradient id="soma-fill" cx="38%" cy="34%" r="72%">
+                                <stop offset="0%" stop-color="#c9a6ff"/>
+                                <stop offset="45%" stop-color="#9a4bff"/>
+                                <stop offset="100%" stop-color="#3a1163"/>
                             </radialGradient>
                             <radialGradient id="sigil-halo-fill" cx="50%" cy="50%" r="50%">
-                                <stop offset="0%" stop-color="#57eaff" stop-opacity="0.42"/>
-                                <stop offset="55%" stop-color="#9a4bff" stop-opacity="0.16"/>
+                                <stop offset="0%" stop-color="#57eaff" stop-opacity="0.34"/>
+                                <stop offset="55%" stop-color="#9a4bff" stop-opacity="0.14"/>
                                 <stop offset="100%" stop-color="#9a4bff" stop-opacity="0"/>
                             </radialGradient>
                             <filter id="sigil-bloom" x="-60%" y="-60%" width="220%" height="220%">
-                                <feGaussianBlur stdDeviation="2.4" result="blur"/>
+                                <feGaussianBlur stdDeviation="2.2" result="blur"/>
                                 <feMerge>
                                     <feMergeNode in="blur"/>
                                     <feMergeNode in="SourceGraphic"/>
                                 </feMerge>
                             </filter>
-                            <!-- Ellipses drawn as paths so <mpath> can reference them. -->
-                            <path id="sigil-orbit-a" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
-                            <path id="sigil-orbit-b" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
-                            <path id="sigil-orbit-c" d="M 100,100 m -82,0 a 82,31 0 1,0 164,0 a 82,31 0 1,0 -164,0"/>
+                            <!-- Dendrite fibres: spikes travel tip -> soma, the
+                                 direction a dendrite actually carries signal. -->
+                            <path id="dend-a" d="M 44,52 L 68,72 L 86,88"/>
+                            <path id="dend-b" d="M 30,92 L 60,96 L 84,98"/>
+                            <path id="dend-c" d="M 74,26 L 82,58 L 92,84"/>
+                            <path id="dend-d" d="M 52,142 L 72,124 L 88,110"/>
+                            <!-- Axon: soma -> knee -> terminal. -->
+                            <path id="axon" d="M 122,118 L 146,150 L 168,162"/>
                         </defs>
 
                         <circle cx="100" cy="100" r="96" fill="url(#sigil-halo-fill)"/>
 
-                        <g class="sigil-orbits" filter="url(#sigil-bloom)" fill="none">
-                            <g transform="rotate(0 100 100)">
-                                <use href="#sigil-orbit-a" stroke="#00ffe1" stroke-opacity="0.72" stroke-width="1.6"/>
-                                <circle class="sigil-electron" r="4.2" fill="#eaffff">
-                                    <animateMotion dur="8s" repeatCount="indefinite" rotate="auto">
-                                        <mpath href="#sigil-orbit-a"/>
-                                    </animateMotion>
-                                </circle>
-                            </g>
-                            <g transform="rotate(62 100 100)">
-                                <use href="#sigil-orbit-b" stroke="#b55cff" stroke-opacity="0.64" stroke-width="1.6"/>
-                                <circle class="sigil-electron" r="3.6" fill="#f4e8ff">
-                                    <animateMotion dur="9.5s" begin="-3.1s" repeatCount="indefinite" rotate="auto">
-                                        <mpath href="#sigil-orbit-b"/>
-                                    </animateMotion>
-                                </circle>
-                            </g>
-                            <g transform="rotate(-58 100 100)">
-                                <use href="#sigil-orbit-c" stroke="#57eaff" stroke-opacity="0.5" stroke-width="1.4"/>
-                                <circle class="sigil-electron" r="3.2" fill="#e6fbff">
-                                    <animateMotion dur="11s" begin="-6.4s" repeatCount="indefinite" rotate="auto">
-                                        <mpath href="#sigil-orbit-c"/>
-                                    </animateMotion>
-                                </circle>
-                            </g>
+                        <g class="neuron-fibres" filter="url(#sigil-bloom)" fill="none"
+                           stroke-linejoin="miter" stroke-linecap="square">
+                            <!-- Dendrites -->
+                            <use href="#dend-a" stroke="#00ffe1" stroke-opacity="0.95" stroke-width="3.2"/>
+                            <use href="#dend-b" stroke="#00ffe1" stroke-opacity="0.88" stroke-width="3.0"/>
+                            <use href="#dend-c" stroke="#00ffe1" stroke-opacity="0.92" stroke-width="3.1"/>
+                            <use href="#dend-d" stroke="#00ffe1" stroke-opacity="0.86" stroke-width="3.0"/>
+                            <!-- Forks -->
+                            <path d="M 68,72 L 58,44" stroke="#00ffe1" stroke-opacity="0.70" stroke-width="2.4"/>
+                            <path d="M 60,96 L 34,112" stroke="#00ffe1" stroke-opacity="0.68" stroke-width="2.4"/>
+                            <path d="M 82,58 L 104,38" stroke="#00ffe1" stroke-opacity="0.68" stroke-width="2.4"/>
+                            <!-- Myelinated axon: chunky dashes read as segmented armour -->
+                            <use href="#axon" stroke="#b55cff" stroke-opacity="1" stroke-width="5"
+                                 stroke-dasharray="9 4.5"/>
+                            <!-- Terminal boutons -->
+                            <path d="M 168,162 L 180,172" stroke="#b55cff" stroke-opacity="0.85" stroke-width="2.6"/>
+                            <path d="M 168,162 L 182,154" stroke="#b55cff" stroke-opacity="0.85" stroke-width="2.6"/>
                         </g>
 
-                        <circle class="sigil-pulse" cx="100" cy="100" r="26"
-                            fill="none" stroke="#00e5ff" stroke-opacity="0.55" stroke-width="1"/>
-                        <circle class="sigil-core" cx="100" cy="100" r="22" fill="url(#sigil-core-fill)"/>
+                        <!-- Square terminal nodes: sprites, not dots. -->
+                        <g class="neuron-nodes" filter="url(#sigil-bloom)">
+                            <rect x="38" y="46" width="11" height="11" fill="#8ffff0"/>
+                            <rect x="24" y="86" width="11" height="11" fill="#8ffff0"/>
+                            <rect x="68" y="20" width="11" height="11" fill="#8ffff0"/>
+                            <rect x="46" y="136" width="11" height="11" fill="#8ffff0"/>
+                            <rect x="52" y="38" width="8" height="8" fill="#8ffff0" opacity="0.9"/>
+                            <rect x="28" y="106" width="8" height="8" fill="#8ffff0" opacity="0.9"/>
+                            <rect x="98" y="32" width="8" height="8" fill="#8ffff0" opacity="0.9"/>
+                            <rect x="176" y="168" width="10" height="10" fill="#d9b3ff"/>
+                            <rect x="178" y="150" width="10" height="10" fill="#d9b3ff"/>
+                            <rect x="162" y="156" width="12" height="12" fill="#d9b3ff"/>
+                        </g>
+
+                        <!-- Travelling spikes: square pixels bound to the fibres. -->
+                        <g class="neuron-spikes" filter="url(#sigil-bloom)">
+                            <rect class="neuron-spike" width="9" height="9" fill="#ffffff" x="-4.5" y="-4.5">
+                                <animateMotion dur="2.4s" repeatCount="indefinite" calcMode="discrete" keyPoints="0;0.2;0.4;0.6;0.8;1" keyTimes="0;0.2;0.4;0.6;0.8;1">
+                                    <mpath href="#dend-a"/>
+                                </animateMotion>
+                            </rect>
+                            <rect class="neuron-spike" width="9" height="9" fill="#ffffff" x="-4.5" y="-4.5">
+                                <animateMotion dur="2.9s" begin="-0.7s" repeatCount="indefinite" calcMode="discrete" keyPoints="0;0.2;0.4;0.6;0.8;1" keyTimes="0;0.2;0.4;0.6;0.8;1">
+                                    <mpath href="#dend-b"/>
+                                </animateMotion>
+                            </rect>
+                            <rect class="neuron-spike" width="9" height="9" fill="#ffffff" x="-4.5" y="-4.5">
+                                <animateMotion dur="2.6s" begin="-1.4s" repeatCount="indefinite" calcMode="discrete" keyPoints="0;0.2;0.4;0.6;0.8;1" keyTimes="0;0.2;0.4;0.6;0.8;1">
+                                    <mpath href="#dend-c"/>
+                                </animateMotion>
+                            </rect>
+                            <rect class="neuron-spike" width="9" height="9" fill="#ffffff" x="-4.5" y="-4.5">
+                                <animateMotion dur="3.1s" begin="-2.0s" repeatCount="indefinite" calcMode="discrete" keyPoints="0;0.2;0.4;0.6;0.8;1" keyTimes="0;0.2;0.4;0.6;0.8;1">
+                                    <mpath href="#dend-d"/>
+                                </animateMotion>
+                            </rect>
+                            <rect class="neuron-spike neuron-spike-axon" width="10" height="10" fill="#ffffff" x="-5" y="-5">
+                                <animateMotion dur="1.7s" repeatCount="indefinite" calcMode="discrete" keyPoints="0;0.16;0.33;0.5;0.66;0.83;1" keyTimes="0;0.16;0.33;0.5;0.66;0.83;1">
+                                    <mpath href="#axon"/>
+                                </animateMotion>
+                            </rect>
+                        </g>
+
+                        <!-- Soma: chunky hexagon, not a sphere. -->
+                        <polygon class="neuron-soma" points="100,68 126,83 126,113 100,128 74,113 74,83"
+                                 fill="url(#soma-fill)" stroke="#00ffe1" stroke-opacity="0.9"
+                                 stroke-width="3.4" stroke-linejoin="miter"/>
+                        <rect class="neuron-nucleus" x="91" y="89" width="18" height="18" fill="#ffffff" opacity="0.94"/>
                     </svg>
                 </div>
             </div>

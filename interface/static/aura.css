@@ -3805,28 +3805,48 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     height: 100%;
     overflow: visible;
 }
-.sigil-core {
-    filter: drop-shadow(0 0 7px rgba(255, 255, 255, 0.7)) drop-shadow(0 0 18px rgba(0, 229, 255, 0.6));
-}
-.sigil-pulse {
+/* ── Neuron mark ──────────────────────────────────────
+ * The soma breathes, the nucleus flickers like a sprite on a CRT, and the
+ * spikes glow. Nothing here MOVES the spikes — their travel is animateMotion
+ * bound to the real fibre paths in the markup, so a spike is always exactly on
+ * its dendrite/axon rather than approximated with a CSS transform. */
+.neuron-soma {
     transform-box: fill-box;
     transform-origin: center;
-    animation: sigilPulse 2.7s ease-in-out infinite;
+    filter: drop-shadow(0 0 8px rgba(154, 75, 255, 0.75)) drop-shadow(0 0 20px rgba(0, 255, 225, 0.4));
+    animation: neuronBreathe 3.4s ease-in-out infinite;
 }
-/* The whole orbit cage counter-rotates slowly; each electron's own motion is
- * driven by animateMotion along its real path, so nothing drifts off-curve. */
-.sigil-orbits {
-    transform-box: fill-box;
-    transform-origin: center;
-    animation: sigilCage 34s linear infinite;
+.neuron-nucleus {
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
+    animation: neuronFlicker 1.9s steps(1, end) infinite;
 }
-@keyframes sigilCage {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+.neuron-spike {
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 12px rgba(0, 255, 225, 0.7));
+}
+.neuron-spike-axon {
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.95)) drop-shadow(0 0 14px rgba(181, 92, 255, 0.8));
+}
+/* Terminal nodes pop in steps — pixels lighting up, not a smooth fade. */
+.neuron-nodes {
+    animation: neuronNodes 2.6s steps(3, end) infinite;
+}
+@keyframes neuronBreathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.06); }
+}
+@keyframes neuronFlicker {
+    0%, 82%, 100% { opacity: 0.92; }
+    86%           { opacity: 0.42; }
+    92%           { opacity: 1; }
+}
+@keyframes neuronNodes {
+    0%, 100% { opacity: 0.72; }
+    50%      { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-    .sigil-orbits,
-    .sigil-pulse,
+    .neuron-soma,
+    .neuron-nucleus,
+    .neuron-nodes,
     .splash-logo-word {
         animation: none;
     }
@@ -3963,10 +3983,6 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     9%  { opacity: 1; }
     53% { opacity: 0.94; }
     54% { opacity: 1; }
-}
-@keyframes sigilPulse {
-    0%, 100% { transform: scale(0.76); opacity: 0.35; }
-    50% { transform: scale(2.22); opacity: 0.06; }
 }
 @keyframes orbPulse {
     0%, 100% {

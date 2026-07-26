@@ -1,12 +1,10 @@
-from __future__ import annotations
 #!/usr/bin/env python3
 """Generate Aura's launcher icon assets."""
-
+from __future__ import annotations
 
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
-
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = ROOT / "interface" / "static"
@@ -31,6 +29,154 @@ def _radial_mask(size: int, blur: int = 0) -> Image.Image:
 
 def _ellipse_bounds(cx: int, cy: int, radius: int) -> tuple[int, int, int, int]:
     return (cx - radius, cy - radius, cx + radius, cy + radius)
+
+
+# ── the neuron mark ────────────────────────────────────────────────────────
+#
+# The mark is authored once, in the same 200x200 space as the web splash
+# (interface/static/index.html) and the native launcher (scripts/AuraLauncher.swift),
+# so the three surfaces stay the same drawing rather than three drifting
+# lookalikes. `_Mark` maps that space onto whatever pixel size is requested.
+
+
+class _Mark:
+    """Maps the shared 200x200 mark space onto the icon canvas."""
+
+    def __init__(self, size: int, cx: int, cy: int, extent: float) -> None:
+        self.scale = (size * extent) / 200.0
+        self.cx = cx
+        self.cy = cy
+
+    def pt(self, x: float, y: float) -> tuple[float, float]:
+        return (self.cx + (x - 100.0) * self.scale, self.cy + (y - 100.0) * self.scale)
+
+    def px(self, v: float) -> int:
+        """A mark-space length in canvas pixels, never rounded away to nothing."""
+        return max(1, int(round(v * self.scale)))
+
+
+def _pixel(draw: ImageDraw.ImageDraw, mark: _Mark, x: float, y: float, side: float, color) -> None:
+    """A square sprite node — the arcade vocabulary, never a soft dot."""
+    px, py = mark.pt(x, y)
+    half = (side * mark.scale) / 2.0
+    draw.rectangle((px - half, py - half, px + half, py + half), fill=color)
+
+
+def _fibre(draw: ImageDraw.ImageDraw, mark: _Mark, points, width: float, color) -> None:
+    draw.line([mark.pt(*p) for p in points], fill=color, width=mark.px(width), joint="curve")
+
+
+def _myelinated(draw: ImageDraw.ImageDraw, mark: _Mark, points, width: float, color,
+                dash: float = 9.0, gap: float = 4.5) -> None:
+    """A dashed polyline: the segmented armour that reads as myelin sheath.
+
+    PIL has no dash support, so walk the polyline by arc length and stamp the
+    lit stretches. Walking the real geometry (rather than dashing each straight
+    segment independently) keeps the rhythm continuous across the axon's knee.
+    """
+    span = dash + gap
+    carry = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:], strict=False):
+        seg = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        if seg <= 0:
+            continue
+        ux, uy = (x1 - x0) / seg, (y1 - y0) / seg
+        pos = 0.0
+        while pos < seg:
+            phase = (carry + pos) % span
+            if phase < dash:
+                lit = min(dash - phase, seg - pos)
+                a = mark.pt(x0 + ux * pos, y0 + uy * pos)
+                b = mark.pt(x0 + ux * (pos + lit), y0 + uy * (pos + lit))
+                draw.line([a, b], fill=color, width=mark.px(width))
+                pos += lit
+            else:
+                pos += span - phase
+        carry = (carry + seg) % span
+
+
+def _draw_neuron(canvas: Image.Image, size: int, cx: int, cy: int) -> Image.Image:
+    """Soma, dendrites, myelinated axon, and travelling spikes — in that order."""
+    mark = _Mark(size, cx, cy, extent=0.76)
+
+    cyan = (0, 255, 225, 255)
+    cyan_dim = (0, 255, 225, 190)
+    node = (143, 255, 240, 255)
+    violet = (181, 92, 255, 255)
+    bouton = (217, 179, 255, 255)
+    spike = (255, 255, 255, 255)
+
+    # Ambient bloom under the mark, so the fibres sit in light rather than on
+    # flat black. Blurred on its own layer to keep the sprite edges hard.
+    bloom = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    bloom_draw = ImageDraw.Draw(bloom)
+    for pts, width, color in (
+        (((44, 52), (68, 72), (86, 88)), 5.0, (0, 255, 225, 120)),
+        (((30, 92), (60, 96), (84, 98)), 5.0, (0, 255, 225, 110)),
+        (((74, 26), (82, 58), (92, 84)), 5.0, (0, 255, 225, 115)),
+        (((52, 142), (72, 124), (88, 110)), 5.0, (0, 255, 225, 105)),
+        (((122, 118), (146, 150), (168, 162)), 7.0, (181, 92, 255, 150)),
+    ):
+        _fibre(bloom_draw, mark, pts, width, color)
+    bloom_draw.ellipse(
+        _ellipse_bounds(cx, cy, int(size * 0.20)), fill=(133, 72, 255, 96)
+    )
+    bloom = bloom.filter(ImageFilter.GaussianBlur(int(size * 0.028)))
+    canvas = Image.alpha_composite(canvas, bloom)
+
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    # Dendrites, then their forks.
+    _fibre(draw, mark, ((44, 52), (68, 72), (86, 88)), 3.2, cyan)
+    _fibre(draw, mark, ((30, 92), (60, 96), (84, 98)), 3.0, cyan_dim)
+    _fibre(draw, mark, ((74, 26), (82, 58), (92, 84)), 3.1, cyan)
+    _fibre(draw, mark, ((52, 142), (72, 124), (88, 110)), 3.0, cyan_dim)
+    for fork in (((68, 72), (58, 44)), ((60, 96), (34, 112)), ((82, 58), (104, 38))):
+        _fibre(draw, mark, fork, 2.4, (0, 255, 225, 150))
+
+    # Myelinated axon out to the terminal, then the two boutons.
+    _myelinated(draw, mark, ((122, 118), (146, 150), (168, 162)), 5.0, violet)
+    _fibre(draw, mark, ((168, 162), (180, 172)), 2.6, (181, 92, 255, 200))
+    _fibre(draw, mark, ((168, 162), (182, 154)), 2.6, (181, 92, 255, 200))
+
+    # Square terminal nodes.
+    for x, y, side in ((43.5, 51.5, 11), (29.5, 91.5, 11), (73.5, 25.5, 11), (51.5, 141.5, 11)):
+        _pixel(draw, mark, x, y, side, node)
+    for x, y, side in ((56, 42, 8), (32, 110, 8), (102, 36, 8)):
+        _pixel(draw, mark, x, y, side, (143, 255, 240, 225))
+    for x, y, side in ((181, 173, 10), (183, 155, 10), (168, 162, 12)):
+        _pixel(draw, mark, x, y, side, bouton)
+
+    # Spikes caught mid-flight on their fibres.
+    _pixel(draw, mark, 68, 72, 9, spike)
+    _pixel(draw, mark, 146, 150, 10, spike)
+
+    # Soma: a chunky hexagon, not a sphere.
+    hexagon = [
+        mark.pt(*p)
+        for p in ((100, 68), (126, 83), (126, 113), (100, 128), (74, 113), (74, 83))
+    ]
+    draw.polygon(hexagon, fill=(138, 62, 220, 255), outline=cyan, width=mark.px(3.4))
+    _pixel(draw, mark, 100, 98, 18, (255, 255, 255, 255))
+
+    return Image.alpha_composite(canvas, layer)
+
+
+def _scanlines(canvas: Image.Image, size: int, inset: int, corner: int) -> Image.Image:
+    """CRT banding, clipped to the plate so it never reads as a floating box."""
+    lines = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    lines_draw = ImageDraw.Draw(lines)
+    pitch = max(3, int(size * 0.012))
+    thickness = max(1, pitch // 3)
+    for y in range(0, size, pitch):
+        lines_draw.rectangle((0, y, size, y + thickness), fill=(0, 0, 0, 62))
+    plate = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(plate).rounded_rectangle(
+        (inset, inset, size - inset, size - inset), radius=corner, fill=255
+    )
+    lines.putalpha(ImageChops.multiply(lines.getchannel("A"), plate))
+    return Image.alpha_composite(canvas, lines)
 
 
 def build_icon(size: int = 1024) -> Image.Image:
@@ -64,107 +210,9 @@ def build_icon(size: int = 1024) -> Image.Image:
 
     cx = size // 2
     cy = int(size * 0.515)
-    orb_radius = int(size * 0.29)
 
-    # Ambient glow
-    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse(
-        _ellipse_bounds(cx, cy, int(orb_radius * 1.28)),
-        fill=(133, 72, 255, 108),
-    )
-    glow_draw.ellipse(
-        _ellipse_bounds(int(cx + orb_radius * 0.18), int(cy - orb_radius * 0.26), int(orb_radius * 0.78)),
-        fill=(103, 245, 255, 80),
-    )
-    glow_draw.ellipse(
-        _ellipse_bounds(int(cx - orb_radius * 0.28), int(cy + orb_radius * 0.18), int(orb_radius * 0.72)),
-        fill=(255, 91, 222, 74),
-    )
-    glow = glow.filter(ImageFilter.GaussianBlur(int(size * 0.05)))
-    canvas = Image.alpha_composite(canvas, glow)
-
-    # Orb body
-    orb = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    orb_draw = ImageDraw.Draw(orb)
-    orb_draw.ellipse(_ellipse_bounds(cx, cy, orb_radius), fill=(82, 34, 158, 255))
-    orb_draw.ellipse(
-        _ellipse_bounds(cx, cy, orb_radius),
-        outline=(190, 133, 255, 210),
-        width=max(6, size // 128),
-    )
-    canvas = Image.alpha_composite(canvas, orb)
-
-    # Inner bloom
-    inner = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    inner_draw = ImageDraw.Draw(inner)
-    inner_draw.ellipse(
-        _ellipse_bounds(int(cx - orb_radius * 0.07), int(cy - orb_radius * 0.12), int(orb_radius * 0.76)),
-        fill=(246, 215, 255, 132),
-    )
-    inner_draw.ellipse(
-        _ellipse_bounds(int(cx + orb_radius * 0.12), int(cy - orb_radius * 0.18), int(orb_radius * 0.58)),
-        fill=(118, 244, 255, 108),
-    )
-    inner_draw.ellipse(
-        _ellipse_bounds(int(cx - orb_radius * 0.1), int(cy + orb_radius * 0.22), int(orb_radius * 0.7)),
-        fill=(109, 58, 210, 122),
-    )
-    inner = inner.filter(ImageFilter.GaussianBlur(int(size * 0.035)))
-    canvas = Image.alpha_composite(canvas, inner)
-
-    # Highlight and shadow for depth
-    accent = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    accent_draw = ImageDraw.Draw(accent)
-    accent_draw.ellipse(
-        (
-            int(cx - orb_radius * 0.52),
-            int(cy - orb_radius * 0.63),
-            int(cx + orb_radius * 0.02),
-            int(cy - orb_radius * 0.12),
-        ),
-        fill=(255, 255, 255, 118),
-    )
-    accent_draw.ellipse(
-        (
-            int(cx - orb_radius * 0.7),
-            int(cy + orb_radius * 0.12),
-            int(cx + orb_radius * 0.45),
-            int(cy + orb_radius * 0.85),
-        ),
-        fill=(18, 7, 37, 138),
-    )
-    accent = accent.filter(ImageFilter.GaussianBlur(int(size * 0.03)))
-    canvas = Image.alpha_composite(canvas, accent)
-
-    # Orbital ring
-    ring = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ring_draw = ImageDraw.Draw(ring)
-    ring_bounds = (
-        int(cx - orb_radius * 1.08),
-        int(cy - orb_radius * 0.92),
-        int(cx + orb_radius * 1.08),
-        int(cy + orb_radius * 1.12),
-    )
-    ring_draw.ellipse(
-        ring_bounds,
-        outline=(124, 232, 255, 124),
-        width=max(5, size // 180),
-    )
-    ring = ring.filter(ImageFilter.GaussianBlur(int(size * 0.012)))
-    canvas = Image.alpha_composite(canvas, ring)
-
-    # Small spark points
-    sparks = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    sparks_draw = ImageDraw.Draw(sparks)
-    for px, py, radius, color in (
-        (int(cx + orb_radius * 0.55), int(cy - orb_radius * 0.62), int(size * 0.014), (122, 244, 255, 255)),
-        (int(cx - orb_radius * 0.66), int(cy + orb_radius * 0.18), int(size * 0.011), (210, 162, 255, 235)),
-        (int(cx + orb_radius * 0.12), int(cy - orb_radius * 0.86), int(size * 0.009), (255, 220, 255, 215)),
-    ):
-        sparks_draw.ellipse((px - radius, py - radius, px + radius, py + radius), fill=color)
-    sparks = sparks.filter(ImageFilter.GaussianBlur(int(size * 0.004)))
-    canvas = Image.alpha_composite(canvas, sparks)
+    canvas = _draw_neuron(canvas, size, cx, cy)
+    canvas = _scanlines(canvas, size, inset, corner)
 
     return canvas
 
