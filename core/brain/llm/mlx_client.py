@@ -4886,6 +4886,7 @@ class MLXLocalClient:
         operation_authority: dict[str, Any] | None = None,
         action_policy_evidence: dict[str, Any] | None = None,
         action_intervention: dict[str, Any] | None = None,
+        action_state_runtime: dict[str, Any] | None = None,
         external_execution_offer: dict[str, Any] | None = None,
         response_contract: str | None = None,
     ) -> dict[str, Any]:
@@ -4968,6 +4969,61 @@ class MLXLocalClient:
                     **base,
                     "reason": "action_intervention_requires_lab_lane",
                 }
+        wire_action_state_runtime: dict[str, Any] | None = None
+        admitted_action_state_runtime: Any | None = None
+        if action_state_runtime is not None:
+            if foreground_request:
+                return {
+                    **base,
+                    "reason": "action_state_runtime_requires_lab_lane",
+                }
+            try:
+                from core.brain.llm.latent_cortex.action_state_runtime import (
+                    admit_action_state_runtime,
+                    provision_action_state_store_custody,
+                )
+
+                binding = self.get_worker_identity_snapshot().get(
+                    "worker_action_capture_origin_binding"
+                )
+                if not isinstance(binding, Mapping):
+                    raise ValueError("worker capture origin unavailable")
+                candidate_runtime = json.loads(
+                    json.dumps(action_state_runtime, allow_nan=False)
+                )
+                candidate_runtime["resident_worker_origin_binding"] = json.loads(
+                    json.dumps(binding, allow_nan=False)
+                )
+                provision_action_state_store_custody()
+                admitted_runtime = admit_action_state_runtime(
+                    candidate_runtime,
+                    worker_launch_challenge=binding.get("launch_challenge"),
+                    now_unix=int(time.time()),
+                )
+                if (
+                    admitted_runtime.mode == "capture"
+                    and wire_action_intervention is not None
+                ):
+                    raise ValueError("capture cannot carry an intervention")
+                if admitted_runtime.mode == "restore":
+                    if wire_action_intervention is None:
+                        raise ValueError("restore requires an intervention")
+                    if (
+                        wire_action_intervention["authority_payload"]["arm"]
+                        != admitted_runtime.arm
+                    ):
+                        raise ValueError("restore arm differs from intervention")
+                wire_action_state_runtime = candidate_runtime
+                admitted_action_state_runtime = admitted_runtime
+            except (
+                ImportError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+                OverflowError,
+            ):
+                return {**base, "reason": "invalid_action_state_runtime"}
         wire_external_execution_offer: dict[str, Any] | None = None
         if external_execution_offer is not None:
             try:
@@ -5198,6 +5254,8 @@ class MLXLocalClient:
                 job["action_policy_evidence"] = wire_action_policy_evidence
             if wire_action_intervention is not None:
                 job["action_intervention"] = wire_action_intervention
+            if wire_action_state_runtime is not None:
+                job["action_state_runtime"] = wire_action_state_runtime
             if wire_external_execution_offer is not None:
                 job["external_execution_offer"] = wire_external_execution_offer
             if response_contract is not None:
@@ -5284,6 +5342,19 @@ class MLXLocalClient:
                 return {**base, "reason": "invalid_worker_receipt"}
             receipt = dict(raw_receipt or {})
             reason = str(res.get("message") or res.get("reason") or "")
+            if res.get("requires_worker_recycle") is True or isinstance(
+                res.get("state_application_quarantine"),
+                dict,
+            ):
+                deferred_reboot = "latent_integrity:state_application_quarantine"
+                return {
+                    **base,
+                    "receipt": receipt,
+                    "state_application_quarantine": dict(
+                        res.get("state_application_quarantine") or {}
+                    ),
+                    "reason": reason or "state_application_quarantine",
+                }
             if reason in {
                 "checkpoint_invariant_violated",
                 "fast_weight_cleanup_unproven",
@@ -5439,6 +5510,105 @@ class MLXLocalClient:
                         "receipt": receipt,
                         "reason": "runtime_identity_unbound",
                     }
+                action_capture_receipt: dict[str, Any] | None = None
+                action_restore_receipt: dict[str, Any] | None = None
+                if admitted_action_state_runtime is not None:
+                    try:
+                        from core.brain.llm.latent_cortex.action_state_capture import (
+                            validate_action_state_capture_receipt_public,
+                        )
+                        from core.brain.llm.latent_cortex.action_state_runtime import (
+                            assert_public_runtime_result,
+                            validate_action_state_restore_receipt,
+                        )
+
+                        raw_capture_receipt = res.get(
+                            "action_state_capture_receipt"
+                        )
+                        if not isinstance(raw_capture_receipt, dict):
+                            raise ValueError("action-state capture receipt missing")
+                        action_capture_receipt = (
+                            validate_action_state_capture_receipt_public(
+                                raw_capture_receipt,
+                                request=admitted_action_state_runtime.admission.request,
+                                trusted_root_public_key_pem=(
+                                    admitted_action_state_runtime.trusted_root_public_key_pem
+                                ),
+                                expected_supervisor_public_key=(
+                                    admitted_action_state_runtime.capture_supervisor_public_key
+                                ),
+                                latent_reason_request=(
+                                    admitted_action_state_runtime.latent_reason_request
+                                ),
+                                model_identity=(
+                                    admitted_action_state_runtime.model_identity
+                                ),
+                                execution_identity=(
+                                    admitted_action_state_runtime.execution_identity
+                                ),
+                                runtime_identity=runtime_identity,
+                                expected_campaign_design_sha256=(
+                                    admitted_action_state_runtime.admission.payload[
+                                        "campaign_design_sha256"
+                                    ]
+                                ),
+                            )
+                        )
+                        if admitted_action_state_runtime.mode == "restore":
+                            raw_restore_receipt = res.get(
+                                "action_state_restore_receipt"
+                            )
+                            if not isinstance(raw_restore_receipt, dict):
+                                raise ValueError(
+                                    "action-state restore receipt missing"
+                                )
+                            worker_capture_identity = self.get_worker_identity_snapshot().get(
+                                "worker_action_capture_identity"
+                            )
+                            if not isinstance(worker_capture_identity, Mapping):
+                                raise ValueError("worker capture identity missing")
+                            action_restore_receipt = (
+                                validate_action_state_restore_receipt(
+                                    raw_restore_receipt,
+                                    capture_receipt=action_capture_receipt,
+                                    action_intervention=wire_action_intervention,
+                                    runtime_identity=runtime_identity,
+                                    expected_worker_public_key_b64=str(
+                                        worker_capture_identity.get("public_key_b64")
+                                        or ""
+                                    ),
+                                    expected_supervisor_public_key=(
+                                        admitted_action_state_runtime.resident_supervisor_public_key
+                                    ),
+                                )
+                            )
+                        assert_public_runtime_result(res)
+                    except (
+                        ImportError,
+                        KeyError,
+                        OSError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ):
+                        deferred_reboot = "latent_integrity:action_state_receipt_invalid"
+                        return {
+                            **base,
+                            "receipt": receipt,
+                            "reason": "action_state_runtime_receipt_invalid",
+                        }
+                    if admitted_action_state_runtime.mode == "capture":
+                        self._mark_progress()
+                        return {
+                            "ok": True,
+                            "text": "",
+                            "receipt": receipt,
+                            "action_state_capture_receipt": action_capture_receipt,
+                            "progress": dict(
+                                self._latent_progress_by_request.get(req_id) or {}
+                            ),
+                            "reason": "action_state_captured",
+                        }
                 # CP126 d78cbfa4: a status=ok response used to be coerced with
                 # str(value or "") — a missing, empty, list, or mapping answer
                 # became ok=true with empty or stringified-container text and
@@ -5465,6 +5635,14 @@ class MLXLocalClient:
                     "ok": True,
                     "text": answer,
                     "receipt": receipt,
+                    **(
+                        {
+                            "action_state_capture_receipt": action_capture_receipt,
+                            "action_state_restore_receipt": action_restore_receipt,
+                        }
+                        if action_capture_receipt is not None
+                        else {}
+                    ),
                     "progress": dict(self._latent_progress_by_request.get(req_id) or {}),
                     "reason": str(res.get("reason") or ""),
                 }

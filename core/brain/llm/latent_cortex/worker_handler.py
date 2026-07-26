@@ -32,8 +32,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -343,6 +344,7 @@ def handle_latent_reason(
     model_path: str,
     worker_identity: dict[str, Any] | None = None,
     worker_capture_signing_identity: Any | None = None,
+    worker_capture_launch_challenge: Mapping[str, Any] | None = None,
     surface_control_state: dict[str, Any] | None = None,
     cancel_check: Callable[[], bool] | None = None,
     progress: Callable[[dict], None] | None = None,
@@ -423,6 +425,7 @@ def handle_latent_reason(
     operation_authority = job.get("operation_authority")
     action_policy_evidence = job.get("action_policy_evidence")
     action_intervention = job.get("action_intervention")
+    action_state_runtime_wire = job.get("action_state_runtime")
     external_execution_offer = job.get("external_execution_offer")
     if external_execution_offer is not None:
         if operation_authority is None or action_policy_evidence is None:
@@ -517,6 +520,40 @@ def handle_latent_reason(
                 "status": "error",
                 "message": f"latent_reason operation authority rejected: {exc}",
             }
+    if action_state_runtime_wire is not None:
+        try:
+            from core.brain.llm.latent_cortex.runtime_identity import (
+                latent_request_payload_sha256,
+            )
+
+            actual_capture_request_sha256 = latent_request_payload_sha256(
+                prompt=prompt,
+                messages=messages,
+                domain=str(job.get("domain", "general")),
+                config=job.get("config"),
+                budget=job.get("budget"),
+                runtime_controls=job.get("runtime_controls"),
+                cognitive_context=cognitive_context,
+                operation_authority=operation_authority,
+                action_policy_evidence=action_policy_evidence,
+                external_execution_offer=external_execution_offer,
+                response_contract=response_contract,
+                verifier_guidance=(True if job.get("verifier_guidance") else None),
+                facet_reliability=job.get("facet_reliability"),
+            )
+            capture_payload = action_state_runtime_wire.get("capture_request", {}).get(
+                "request_payload", {}
+            )
+            if (
+                actual_capture_request_sha256
+                != capture_payload.get("latent_reason_request_sha256")
+            ):
+                raise ValueError("action-state latent request differs")
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason action-state request rejected: {exc}",
+            }
     if worker_identity is None:
         from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
         from core.brain.llm.latent_cortex.worker_capture_identity import (
@@ -538,6 +575,75 @@ def handle_latent_reason(
                 worker_capture_signing_identity.public_identity
             ),
         )
+    action_state_runtime = None
+    action_state_store = None
+    action_state_custodian = None
+    action_state_runtime_identity: dict[str, Any] | None = None
+    if action_state_runtime_wire is not None:
+        if worker_capture_launch_challenge is None:
+            return {
+                "status": "error",
+                "message": "latent_reason action-state runtime lacks launch challenge",
+            }
+        if worker_capture_signing_identity is None:
+            return {
+                "status": "error",
+                "message": "latent_reason action-state runtime lacks worker signer",
+            }
+        try:
+            from core.brain.llm.latent_cortex.action_state_runtime import (
+                admit_action_state_runtime,
+            )
+            from core.brain.llm.latent_cortex.runtime_identity import (
+                collect_latent_runtime_identity,
+            )
+
+            action_state_runtime = admit_action_state_runtime(
+                action_state_runtime_wire,
+                worker_launch_challenge=worker_capture_launch_challenge,
+                now_unix=int(time.time()),
+            )
+            if (
+                action_state_runtime.resident_worker_origin_binding.get(
+                    "worker_identity"
+                )
+                != worker_capture_signing_identity.public_identity
+            ):
+                raise ValueError(
+                    "action-state resident origin differs from this worker"
+                )
+            action_state_runtime_identity = collect_latent_runtime_identity(
+                Path(__file__).resolve().parents[4]
+            )
+            if action_state_runtime_identity.get("identity_bound") is not True:
+                raise ValueError("action-state runtime identity is unbound")
+            if action_state_runtime.mode == "capture" and action_intervention is not None:
+                raise ValueError("capture must precede action intervention")
+            if action_state_runtime.mode == "restore":
+                if action_intervention is None:
+                    raise ValueError("restore requires an action intervention")
+                authority = action_intervention.get("authority_payload", {})
+                if authority.get("arm") != action_state_runtime.arm:
+                    raise ValueError("restore arm differs from intervention")
+                capture_receipt = action_state_runtime.capture_receipt or {}
+                if (
+                    authority.get("starting_state_components")
+                    != capture_receipt.get("state_components")
+                    or authority.get("expected_pre_state_sha256")
+                    != capture_receipt.get("state_sha256")
+                    or authority.get("expected_pre_kv_sha256")
+                    != capture_receipt.get("state_components", {}).get(
+                        "kv_cache_sha256"
+                    )
+                ):
+                    raise ValueError(
+                        "restore capture receipt differs from intervention prestate"
+                    )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason action-state runtime rejected: {exc}",
+            }
     engine = LatentCortexEngine(
         model,
         tokenizer,
@@ -712,20 +818,184 @@ def handle_latent_reason(
                 "status": "error",
                 "message": (f"latent_reason action intervention replay admission rejected: {exc}"),
             }
-    result = engine.reason(
-        prompt=prompt if isinstance(prompt, str) else None,
-        messages=episode_messages,
-        budget=budget,
-        domain=str(job.get("domain", "general")),
-        verifier=task_verifier,
-        cognitive_context=cognitive_context,
-        action_policy_evidence=action_policy_evidence,
-        action_intervention=action_intervention,
-        action_intervention_consumption=action_intervention_consumption,
-        external_execution_offer=external_execution_offer,
-        cancel_check=cancel_check,
-        progress=progress,
-    )
+    def reason_with_continuation(**continuation_kwargs: Any) -> Any:
+        return engine.reason(
+            prompt=prompt if isinstance(prompt, str) else None,
+            messages=episode_messages,
+            budget=budget,
+            domain=str(job.get("domain", "general")),
+            verifier=task_verifier,
+            cognitive_context=cognitive_context,
+            action_policy_evidence=action_policy_evidence,
+            action_intervention=action_intervention,
+            action_intervention_consumption=action_intervention_consumption,
+            external_execution_offer=external_execution_offer,
+            cancel_check=cancel_check,
+            progress=progress,
+            **continuation_kwargs,
+        )
+
+    public_action_state_receipt: dict[str, Any] | None = None
+    action_state_restore_receipt: dict[str, Any] | None = None
+    try:
+        if action_state_runtime is None:
+            result = reason_with_continuation()
+        else:
+            from core.brain.llm.latent_cortex.action_state_capture import (
+                ActionStateCaptureError,
+                build_action_state_capture_receipt,
+                validate_action_state_capture_receipt,
+            )
+            from core.brain.llm.latent_cortex.action_state_runtime import (
+                build_action_state_restore_receipt,
+                continuation_from_private_state,
+                open_action_state_store,
+            )
+
+            action_state_store, action_state_custodian = open_action_state_store()
+            if action_state_runtime.mode == "capture":
+                captured: dict[str, Any] = {}
+
+                def publish_continuation(continuation: Any) -> None:
+                    publication = action_state_store.publish(
+                        action_state_runtime.admission,
+                        continuation.private_state,
+                        created_at_unix=int(time.time()),
+                    )
+                    captured["continuation"] = continuation
+                    captured["publication"] = publication
+
+                result = reason_with_continuation(
+                    action_continuation_capture=publish_continuation,
+                    action_continuation_runner_state=action_state_runtime.runner_state,
+                    action_continuation_capture_only=True,
+                )
+                continuation = captured.get("continuation")
+                publication = captured.get("publication")
+                if continuation is None or publication is None or not result.ok:
+                    raise ValueError("action-state continuation capture did not complete")
+                public_action_state_receipt = build_action_state_capture_receipt(
+                    admission=action_state_runtime.admission,
+                    publication=publication,
+                    worker_private_key=(worker_capture_signing_identity.private_key),
+                    captured_at_unix=int(time.time()),
+                    latent_reason_request=action_state_runtime.latent_reason_request,
+                    model_identity=action_state_runtime.model_identity,
+                    execution_identity=action_state_runtime.execution_identity,
+                    runtime_identity=action_state_runtime_identity,
+                    episode_step=continuation.episode_step,
+                    schedule_step=continuation.schedule_step,
+                    branch_id=continuation.branch_id,
+                    layer_index=continuation.layer_index,
+                    kv_position=continuation.kv_position,
+                )
+            else:
+                publication = action_state_store.publication_for_request(
+                    action_state_runtime.admission
+                )
+                public_action_state_receipt = validate_action_state_capture_receipt(
+                    action_state_runtime.capture_receipt,
+                    request=action_state_runtime.admission.request,
+                    publication=publication,
+                    trusted_root_public_key_pem=(
+                        action_state_runtime.trusted_root_public_key_pem
+                    ),
+                    expected_supervisor_public_key=(
+                        action_state_runtime.capture_supervisor_public_key
+                    ),
+                    latent_reason_request=action_state_runtime.latent_reason_request,
+                    model_identity=action_state_runtime.model_identity,
+                    execution_identity=action_state_runtime.execution_identity,
+                    runtime_identity=action_state_runtime_identity,
+                    expected_campaign_design_sha256=(
+                        action_state_runtime.admission.payload[
+                            "campaign_design_sha256"
+                        ]
+                    ),
+                )
+                restored_result: dict[str, Any] = {}
+
+                def install_and_run(private_state: dict[str, Any]) -> str:
+                    continuation = continuation_from_private_state(
+                        private_state,
+                        public_action_state_receipt,
+                    )
+                    verified: dict[str, str] = {}
+                    episode = reason_with_continuation(
+                        action_continuation_restore=continuation,
+                        action_continuation_runner_state=(
+                            action_state_runtime.runner_state
+                        ),
+                        action_continuation_restore_verified=(
+                            lambda state_sha256: verified.setdefault(
+                                "state_sha256", state_sha256
+                            )
+                        ),
+                    )
+                    if not episode.ok:
+                        raise RuntimeError(
+                            f"restored action episode failed:{episode.reason}"
+                        )
+                    expected = public_action_state_receipt["state_sha256"]
+                    if verified.get("state_sha256") != expected:
+                        raise RuntimeError(
+                            "restored action state was not verified before action"
+                        )
+                    restored_result["result"] = episode
+                    return expected
+
+                restore = action_state_store.restore_and_apply(
+                    publication.handle,
+                    action_state_runtime.admission,
+                    arm=str(action_state_runtime.arm),
+                    restored_at_unix=int(time.time()),
+                    apply_state=install_and_run,
+                    application_worker_identity=(
+                        action_state_runtime.resident_worker_origin_binding[
+                            "worker_identity"
+                        ]
+                    ),
+                )
+                result = restored_result.get("result")
+                if result is None:
+                    raise RuntimeError("restored action episode result missing")
+                lifecycle_receipts: dict[str, Any] = {"complete": False}
+                try:
+                    seal_receipt = action_state_store.seal(
+                        publication.handle,
+                        action_state_runtime.admission,
+                        sealed_at_unix=int(time.time()),
+                    )
+                except ActionStateCaptureError as exc:
+                    if exc.code != "private_snapshot_pair_incomplete":
+                        raise
+                else:
+                    erasure_receipt = action_state_store.erase(
+                        publication.handle,
+                        action_state_runtime.admission,
+                        erased_at_unix=int(time.time()),
+                    )
+                    lifecycle_receipts = {
+                        "complete": True,
+                        "seal_receipt": seal_receipt,
+                        "erasure_receipt": erasure_receipt,
+                    }
+                action_state_restore_receipt = build_action_state_restore_receipt(
+                    capture_receipt=public_action_state_receipt,
+                    custody_restore_receipt=restore.receipt,
+                    action_intervention=action_intervention,
+                    runtime_identity=action_state_runtime_identity,
+                    worker_private_key=(worker_capture_signing_identity.private_key),
+                    custody_lifecycle_receipts=lifecycle_receipts,
+                    resident_worker_origin_binding=(
+                        action_state_runtime.resident_worker_origin_binding
+                    ),
+                )
+    finally:
+        if action_state_store is not None:
+            action_state_store.close()
+        if action_state_custodian is not None:
+            action_state_custodian.close()
     if task_verifier is not None:
         excluded = set(
             result.receipt.verifier_preflight.get(
@@ -815,6 +1085,15 @@ def handle_latent_reason(
     )
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"
+    if public_action_state_receipt is not None:
+        body["action_state_capture_receipt"] = dict(
+            public_action_state_receipt
+        )
+        body["action_state_runtime_mode"] = str(action_state_runtime.mode)
+    if action_state_restore_receipt is not None:
+        body["action_state_restore_receipt"] = dict(
+            action_state_restore_receipt
+        )
     if not result.ok:
         body["message"] = result.reason
     # An unproven fast-weight erase means prompt caches computed before the
@@ -837,6 +1116,12 @@ def handle_latent_reason(
             "Latent episode returned no parameter-integrity proof; recycling the "
             "worker rather than trusting unverified resident weights."
         )
+    if action_state_runtime is not None:
+        from core.brain.llm.latent_cortex.action_state_runtime import (
+            assert_public_runtime_result,
+        )
+
+        assert_public_runtime_result(body)
     return body
 
 

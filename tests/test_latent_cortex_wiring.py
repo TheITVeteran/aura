@@ -1661,6 +1661,100 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_client_action_state_capture_uses_public_wire_and_accepts_empty_decode(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.latent_cortex import action_state_capture as capture_mod
+    from core.brain.llm.latent_cortex import action_state_runtime as runtime_mod
+
+    admitted = SimpleNamespace(
+        mode="capture",
+        arm=None,
+        admission=SimpleNamespace(
+            request={"request_sha256": "a" * 64},
+            payload={"campaign_design_sha256": "b" * 64},
+        ),
+        trusted_root_public_key_pem=b"root",
+        capture_supervisor_public_key=b"s" * 32,
+        resident_supervisor_public_key=b"s" * 32,
+        latent_reason_request={"prompt": "reason"},
+        model_identity={"model": "test"},
+        execution_identity={"execution": "test"},
+    )
+    monkeypatch.setattr(
+        runtime_mod,
+        "admit_action_state_runtime",
+        lambda value, **kwargs: admitted,
+    )
+    monkeypatch.setattr(
+        runtime_mod,
+        "provision_action_state_store_custody",
+        lambda: {"identity_sha256": "a" * 64},
+    )
+    monkeypatch.setattr(runtime_mod, "assert_public_runtime_result", lambda value: None)
+    monkeypatch.setattr(
+        capture_mod,
+        "validate_action_state_capture_receipt_public",
+        lambda value, **kwargs: dict(value),
+    )
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    monkeypatch.setattr(
+        client,
+        "get_worker_identity_snapshot",
+        lambda: {
+            **_WORKER_IDENTITY,
+            "worker_action_capture_origin_binding": {
+                "launch_challenge": {"challenge": "public"}
+            },
+            "worker_action_capture_identity": {"public_key_b64": "cHVibGlj"},
+        },
+    )
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason",
+            action_state_runtime={"schema": "public-capture-wire"},
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert request["action_state_runtime"]["schema"] == "public-capture-wire"
+    assert request["action_state_runtime"]["resident_worker_origin_binding"] == {
+        "launch_challenge": {"challenge": "public"}
+    }
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "",
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-action-state-capture",
+            ),
+            "action_state_capture_receipt": {"receipt_sha256": "d" * 64},
+        },
+    )
+
+    result = await task
+    assert result["ok"] is True
+    assert result["text"] == ""
+    assert result["reason"] == "action_state_captured"
+    assert result["action_state_capture_receipt"]["receipt_sha256"] == "d" * 64
+
+
+@pytest.mark.asyncio
 async def test_client_action_intervention_is_lab_only_and_bound_on_worker_wire(
     monkeypatch,
 ):
@@ -4047,6 +4141,133 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
     assert captured["verifier"] is None
 
 
+def test_worker_handler_capture_lane_exits_before_action_and_returns_public_receipt(
+    monkeypatch,
+):
+    import core.brain.llm.latent_cortex.action_state_capture as capture_mod
+    import core.brain.llm.latent_cortex.action_state_runtime as runtime_mod
+    import core.brain.llm.latent_cortex.runtime_identity as identity_mod
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+    from core.brain.llm.latent_cortex.types import (
+        EpisodeReceipt,
+        LatentReasoningResult,
+    )
+
+    signer_public = {"schema": "test-worker-capture-identity"}
+    admitted = SimpleNamespace(
+        mode="capture",
+        arm=None,
+        admission=object(),
+        runner_state={"durable_state": {}, "rng_state": {}},
+        latent_reason_request={"prompt": "capture"},
+        model_identity={"model": "test"},
+        execution_identity={"execution": "test"},
+        resident_worker_origin_binding={"worker_identity": signer_public},
+    )
+    monkeypatch.setattr(
+        runtime_mod,
+        "admit_action_state_runtime",
+        lambda value, **kwargs: admitted,
+    )
+    monkeypatch.setattr(
+        identity_mod,
+        "collect_latent_runtime_identity",
+        lambda *args, **kwargs: dict(_RUNTIME_IDENTITY),
+    )
+    monkeypatch.setattr(runtime_mod, "assert_public_runtime_result", lambda value: None)
+
+    class Store:
+        closed = False
+
+        def publish(self, admission, private_state, *, created_at_unix):
+            assert admission is admitted.admission
+            assert private_state == {"portable": "state"}
+            return object()
+
+        def close(self):
+            self.closed = True
+
+    class Custodian:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    store = Store()
+    custodian = Custodian()
+    monkeypatch.setattr(
+        runtime_mod,
+        "open_action_state_store",
+        lambda: (store, custodian),
+    )
+    monkeypatch.setattr(
+        capture_mod,
+        "build_action_state_capture_receipt",
+        lambda **kwargs: {"receipt_sha256": "a" * 64},
+    )
+
+    class StubEngine:
+        def __init__(self, *args, **kwargs):
+            self.initialized_with = (args, kwargs)
+
+        def reason(self, **kwargs):
+            assert kwargs["action_continuation_capture_only"] is True
+            kwargs["action_continuation_capture"](
+                SimpleNamespace(
+                    private_state={"portable": "state"},
+                    episode_step=0,
+                    schedule_step=0,
+                    branch_id="branch-0",
+                    layer_index=1,
+                    kv_position=8,
+                )
+            )
+            return LatentReasoningResult(
+                ok=True,
+                text="",
+                receipt=EpisodeReceipt(params_unchanged=True),
+                reason="action_state_captured",
+            )
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", StubEngine)
+    request_sha256 = latent_request_payload_sha256(
+        prompt="capture",
+        messages=None,
+        domain="general",
+        config=None,
+        budget=None,
+        runtime_controls=None,
+    )
+    body = handler_mod.handle_latent_reason(
+        {
+            "prompt": "capture",
+            "action_state_runtime": {
+                "capture_request": {
+                    "request_payload": {
+                        "latent_reason_request_sha256": request_sha256
+                    }
+                }
+            },
+        },
+        model=object(),
+        tokenizer=None,
+        model_path="/models/test-32b",
+        worker_identity=dict(_WORKER_IDENTITY),
+        worker_capture_signing_identity=SimpleNamespace(
+            private_key=object(),
+            public_identity=signer_public,
+        ),
+        worker_capture_launch_challenge={"challenge": "public"},
+    )
+
+    assert body["status"] == "ok"
+    assert body["text"] == ""
+    assert body["action_state_runtime_mode"] == "capture"
+    assert body["action_state_capture_receipt"]["receipt_sha256"] == "a" * 64
+    assert store.closed is True
+    assert custodian.closed is True
+
+
 def test_service_requests_verifier_guidance_for_resident_profile(monkeypatch):
     svc = LatentCortexService()
     captured: dict = {}
@@ -4071,6 +4292,45 @@ def test_service_requests_verifier_guidance_for_resident_profile(monkeypatch):
             foreground_request=True,
         )
     )
+    assert captured["verifier_guidance"] is True
+
+
+def test_service_action_state_lane_preserves_frozen_runner_inputs(monkeypatch):
+    svc = LatentCortexService()
+    captured: dict = {}
+
+    class ClaimClient:
+        async def latent_reason_async(self, **kwargs):
+            captured.update(kwargs)
+            return {
+                "ok": True,
+                "text": "",
+                "receipt": {"episode_id": "capture"},
+                "action_state_capture_receipt": {"receipt_sha256": "a" * 64},
+            }
+
+    import core.brain.llm.mlx_client as mlx_client_mod
+
+    monkeypatch.setattr(mlx_client_mod, "get_mlx_client", lambda: ClaimClient())
+    result = asyncio.run(
+        svc.run_action_state_episode(
+            prompt="frozen task",
+            domain="reasoning",
+            config={"decode_max_tokens": 32},
+            budget={"wall_clock_s": 30.0},
+            cognitive_context=[{"source": "public-task", "text": "evidence"}],
+            action_policy_evidence={"schema": "policy"},
+            action_state_runtime={"schema": "runtime"},
+            timeout_s=45.0,
+        )
+    )
+
+    assert result["ok"] is True
+    assert captured["foreground_request"] is False
+    assert captured["action_state_runtime"] == {"schema": "runtime"}
+    assert captured["action_policy_evidence"] == {"schema": "policy"}
+    assert captured["config"] == {"decode_max_tokens": 32}
+    assert captured["budget"] == {"wall_clock_s": 30.0}
     assert captured["verifier_guidance"] is True
 
 

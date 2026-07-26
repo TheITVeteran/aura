@@ -48,6 +48,7 @@ from core.brain.llm.latent_cortex.runtime_identity import (
     latent_request_payload_sha256,
 )
 from core.brain.llm.latent_cortex.worker_capture_identity import (
+    validate_worker_capture_identity,
     validate_worker_capture_origin_binding,
 )
 
@@ -1954,6 +1955,80 @@ class PrivateActionSnapshotStore:
             )
         return None
 
+    def publication_for_request(
+        self,
+        admission: VerifiedActionStateCaptureRequest,
+    ) -> PrivateSnapshotPublication:
+        """Recover the unique authenticated private publication for a request.
+
+        This is deliberately a worker-private lookup.  The bearer handle is
+        reconstructed only inside the custody boundary, which lets a replaced
+        resident worker continue a paired experiment without putting the
+        handle in a public IPC frame or campaign artifact.
+        """
+
+        binding = _snapshot_binding(admission)
+        matches: list[PrivateSnapshotPublication] = []
+        with self._locked():
+            for handle_hash in self._list_directory(self.root / "bundles"):
+                _hex_identifier(
+                    handle_hash,
+                    role="private_snapshot_bundle_handle",
+                    length=64,
+                )
+                paths = self._paths_for_handle_hash(handle_hash)
+                if not self._path_exists(paths["publication"]):
+                    continue
+                publication = self._read_publication(paths["publication"])
+                if publication["handle_sha256"] != handle_hash:
+                    _fail("private_snapshot_publication_directory_mismatch")
+                if publication["request_sha256"] != admission.request_sha256:
+                    continue
+                handle = publication["handle"]
+                handle_secret = self._handle_secret(handle)
+                recovered = self._recover_operation(
+                    handle_hash,
+                    request_sha256=binding["request_sha256"],
+                    handle_secret=handle_secret,
+                )
+                if recovered is not None:
+                    publication = self._read_publication(paths["publication"])
+                handle_record = self._load_handle(
+                    handle_hash,
+                    request_sha256=admission.request_sha256,
+                    handle_secret=handle_secret,
+                )
+                self._load_ledger(
+                    handle_hash,
+                    request_sha256=admission.request_sha256,
+                    snapshot_sha256=handle_record["snapshot_sha256"],
+                    handle_secret=handle_secret,
+                )
+                envelope = self._load_envelope(
+                    handle_hash,
+                    handle_record["snapshot_sha256"],
+                    binding=binding,
+                )
+                components = {
+                    f"{item['name']}_sha256": item["value_sha256"]
+                    for item in envelope["components"]
+                }
+                if components != publication["state_components"]:
+                    _fail("private_snapshot_publication_envelope_mismatch")
+                matches.append(
+                    PrivateSnapshotPublication(
+                        handle=handle,
+                        snapshot_sha256=handle_record["snapshot_sha256"],
+                        request_sha256=admission.request_sha256,
+                        _component_items=tuple(sorted(components.items())),
+                    )
+                )
+        if not matches:
+            _fail("private_snapshot_publication_not_found")
+        if len(matches) != 1:
+            _fail("private_snapshot_publication_ambiguous")
+        return matches[0]
+
     def _load_target_ledger(
         self,
         value: Mapping[str, Any],
@@ -2704,6 +2779,7 @@ class PrivateActionSnapshotStore:
         arm: str,
         restored_at_unix: int,
         apply_state: Callable[[dict[str, Any]], str],
+        application_worker_identity: Mapping[str, Any] | None = None,
     ) -> PrivateSnapshotRestore:
         """Install one arm's state, then durably consume that arm exactly once.
 
@@ -2755,7 +2831,11 @@ class PrivateActionSnapshotStore:
                 binding=binding,
             )
             operation_id = secrets.token_hex(16)
-            worker_identity = admission.payload["worker_origin_binding"]["worker_identity"]
+            worker_identity = (
+                validate_worker_capture_identity(application_worker_identity)
+                if application_worker_identity is not None
+                else admission.payload["worker_origin_binding"]["worker_identity"]
+            )
             expected_state_sha256 = _digest(
                 {f"{item['name']}_sha256": item["value_sha256"] for item in envelope["components"]}
             )

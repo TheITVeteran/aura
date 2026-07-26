@@ -58,6 +58,7 @@ PRIVILEGED_CONTRACT_FIELDS: tuple[str, ...] = (
     "capability_inventory_contract",
     "health_probe",
     "disable_prompt_cache",
+    "action_state_runtime",
     "schema",
 )
 

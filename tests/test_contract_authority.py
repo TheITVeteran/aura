@@ -239,6 +239,19 @@ class TestWiring:
 
 
 class TestRoundTripThroughBothSides:
+    def test_action_state_runtime_is_a_privileged_worker_contract(self, key):
+        from core.brain.llm import mlx_client, mlx_worker
+
+        client = mlx_client.MLXLocalClient.__new__(mlx_client.MLXLocalClient)
+        client._contract_key = key
+        job = client._authorize_job(
+            _job(action_state_runtime={"schema": "signed-public-frame"}),
+            principal="mlx_client.latent_reason",
+        )
+
+        assert "action_state_runtime" in selected_privileged_fields(job)
+        assert mlx_worker._verify_contract_authority(job, key) == ""
+
     def test_client_signature_verifies_in_the_worker(self, key):
         from core.brain.llm import mlx_client, mlx_worker
 

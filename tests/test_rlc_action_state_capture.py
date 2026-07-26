@@ -34,6 +34,17 @@ from core.brain.llm.latent_cortex.action_state_capture import (
 from core.brain.llm.latent_cortex.action_state_key_custody import (
     KeychainSnapshotKeyCustodian,
 )
+from core.brain.llm.latent_cortex.action_state_runtime import (
+    ActionStateRuntimeError,
+    admit_action_state_runtime,
+    assert_public_runtime_result,
+    build_action_state_restore_receipt,
+    build_action_state_runtime_frame,
+    continuation_from_private_state,
+    runner_state_for_capture_payload,
+    validate_action_state_restore_receipt,
+    verify_action_state_pair_evidence,
+)
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_RUNNER,
@@ -813,6 +824,406 @@ def test_independent_public_receipt_replay_needs_no_private_handle(tmp_path: Pat
             arm=TREATMENT_ARM,
             restored_at_unix=NOW + 6,
         )
+
+
+def _runtime_case(tmp_path: Path) -> dict:
+    _root, root_pem, role_keys, policy = _trust_fixture()
+    worker_key = _private("runtime-worker")
+    draft = _build_request(policy, role_keys, worker_key)
+    runner_state = runner_state_for_capture_payload(draft["request_payload"])
+    private_state = {
+        name: PortableStateComponent.from_value(value)
+        for name, value in {
+            "branch_state": {"branch": 1},
+            "durable_state": runner_state["durable_state"],
+            "evidence_state": {"evidence": "bounded"},
+            "kv_cache": {"layers": [1, 2]},
+            "latent_slots": {"slot": [0.25, 0.75]},
+            "memory_state": [{"memory": "present"}],
+            "public_action_state": {"candidate": "falsify"},
+            "rng_state": runner_state["rng_state"],
+        }.items()
+    }
+    request = _build_request(
+        policy,
+        role_keys,
+        worker_key,
+        private_state=private_state,
+    )
+    origin = request["request_payload"]["worker_origin_binding"]
+    frame = build_action_state_runtime_frame(
+        mode="capture",
+        capture_request=request,
+        trusted_root_public_key_pem=root_pem,
+        current_policy_document=policy.document,
+        model_identity=MODEL_IDENTITY,
+        execution_identity=EXECUTION_IDENTITY,
+        latent_reason_request=_latent_request(),
+    )
+    admitted = admit_action_state_runtime(
+        frame,
+        worker_launch_challenge=origin["launch_challenge"],
+        now_unix=NOW,
+    )
+    store = PrivateActionSnapshotStore(
+        tmp_path / "runtime-store",
+        key_custodian=_custodian(),
+    )
+    publication = store.publish(
+        admitted.admission,
+        private_state,
+        created_at_unix=NOW + 1,
+    )
+    capture_receipt = build_action_state_capture_receipt(
+        admission=admitted.admission,
+        publication=publication,
+        worker_private_key=worker_key,
+        captured_at_unix=NOW + 1,
+        latent_reason_request=_latent_request(),
+        model_identity=MODEL_IDENTITY,
+        execution_identity=EXECUTION_IDENTITY,
+        runtime_identity=RUNTIME_IDENTITY,
+        episode_step=0,
+        schedule_step=0,
+        branch_id="branch-0",
+        layer_index=7,
+        kv_position=32,
+    )
+    return {
+        "root_pem": root_pem,
+        "policy": policy,
+        "worker_key": worker_key,
+        "worker_public_key_b64": origin["worker_identity"]["public_key_b64"],
+        "request": request,
+        "frame": frame,
+        "admitted": admitted,
+        "store": store,
+        "publication": publication,
+        "capture_receipt": capture_receipt,
+    }
+
+
+def _runtime_intervention(arm: str) -> dict:
+    return {
+        "intervention_sha256": hashlib.sha256(arm.encode()).hexdigest(),
+        "authority_payload": {"arm": arm},
+    }
+
+
+def test_runtime_frame_reconstructs_runner_roots_without_transporting_them(
+    tmp_path: Path,
+):
+    case = _runtime_case(tmp_path)
+
+    assert case["admitted"].runner_state == runner_state_for_capture_payload(
+        case["request"]["request_payload"]
+    )
+    assert "runner_state" not in json.dumps(case["frame"], sort_keys=True)
+    recovered = case["store"].publication_for_request(case["admitted"].admission)
+    assert recovered.handle == case["publication"].handle
+    assert recovered.state_components == case["publication"].state_components
+
+
+def test_restore_rotates_parent_and_worker_without_retrusting_capture(
+    tmp_path: Path,
+):
+    _root, root_pem, role_keys, policy = _trust_fixture()
+    capture_worker = _private("expired-capture-worker")
+    draft = _build_request(
+        policy,
+        role_keys,
+        capture_worker,
+        challenge_lifetime_s=10,
+    )
+    runner_state = runner_state_for_capture_payload(draft["request_payload"])
+    state = {
+        name: PortableStateComponent.from_value(value)
+        for name, value in {
+            "branch_state": {"branch": 1},
+            "durable_state": runner_state["durable_state"],
+            "evidence_state": {},
+            "kv_cache": {"layers": []},
+            "latent_slots": {"slot": 1},
+            "memory_state": [],
+            "public_action_state": {"candidate": "falsify"},
+            "rng_state": runner_state["rng_state"],
+        }.items()
+    }
+    request = _build_request(
+        policy,
+        role_keys,
+        capture_worker,
+        private_state=state,
+        challenge_lifetime_s=10,
+    )
+    capture_admission = admit_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        current_policy_document=policy.document,
+        now_unix=NOW,
+    )
+    store = PrivateActionSnapshotStore(
+        tmp_path / "rotation-store",
+        key_custodian=_custodian(),
+    )
+    publication = store.publish(
+        capture_admission,
+        state,
+        created_at_unix=NOW + 1,
+    )
+    receipt = build_action_state_capture_receipt(
+        admission=capture_admission,
+        publication=publication,
+        worker_private_key=capture_worker,
+        captured_at_unix=NOW + 1,
+        latent_reason_request=_latent_request(),
+        model_identity=MODEL_IDENTITY,
+        execution_identity=EXECUTION_IDENTITY,
+        runtime_identity=RUNTIME_IDENTITY,
+        episode_step=0,
+        schedule_step=0,
+        branch_id="branch-0",
+        layer_index=7,
+        kv_position=32,
+    )
+
+    replacement_supervisor = _private("replacement-supervisor")
+    replacement_authority = build_worker_capture_launch_authority(
+        issued_at_unix=NOW + 19,
+        lifetime_s=100,
+        private_key=replacement_supervisor,
+        challenge_nonce=hashlib.sha256(b"replacement-challenge").digest(),
+        challenge_id=hashlib.sha256(b"replacement-challenge").hexdigest()[:32],
+    )
+    replacement_worker = build_worker_capture_identity(
+        worker_boot_id="e" * 32,
+        worker_pid=5252,
+        private_key=_private("replacement-worker"),
+        launch_challenge=replacement_authority.challenge,
+        now_unix=NOW + 20,
+    )
+    replacement_binding = build_worker_capture_origin_binding(
+        replacement_authority,
+        replacement_worker.public_identity,
+        attested_at_unix=NOW + 20,
+        expected_worker_pid=5252,
+    )
+    frame = build_action_state_runtime_frame(
+        mode="restore",
+        capture_request=request,
+        trusted_root_public_key_pem=root_pem,
+        current_policy_document=policy.document,
+        model_identity=MODEL_IDENTITY,
+        execution_identity=EXECUTION_IDENTITY,
+        latent_reason_request=_latent_request(),
+        resident_worker_origin_binding=replacement_binding,
+        capture_receipt=receipt,
+        arm=TREATMENT_ARM,
+    )
+
+    admitted = admit_action_state_runtime(
+        frame,
+        worker_launch_challenge=replacement_authority.challenge,
+        now_unix=NOW + 20,
+    )
+    assert admitted.admission.request_sha256 == capture_admission.request_sha256
+    assert (
+        admitted.resident_worker_origin_binding["worker_identity"]
+        == replacement_worker.public_identity
+    )
+    assert admitted.capture_supervisor_public_key == _public_raw(SUPERVISOR_KEY)
+    assert admitted.resident_supervisor_public_key == _public_raw(
+        replacement_supervisor
+    )
+    validate_action_state_capture_receipt(
+        receipt,
+        request=admitted.admission.request,
+        publication=publication,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=admitted.capture_supervisor_public_key,
+        latent_reason_request=_latent_request(),
+        model_identity=MODEL_IDENTITY,
+        execution_identity=EXECUTION_IDENTITY,
+        runtime_identity=RUNTIME_IDENTITY,
+        expected_campaign_design_sha256=admitted.admission.payload[
+            "campaign_design_sha256"
+        ],
+    )
+    with pytest.raises(ActionStateCaptureError, match="worker_origin_binding"):
+        validate_action_state_capture_receipt(
+            receipt,
+            request=admitted.admission.request,
+            publication=publication,
+            trusted_root_public_key_pem=root_pem,
+            expected_supervisor_public_key=admitted.resident_supervisor_public_key,
+            latent_reason_request=_latent_request(),
+            model_identity=MODEL_IDENTITY,
+            execution_identity=EXECUTION_IDENTITY,
+            runtime_identity=RUNTIME_IDENTITY,
+            expected_campaign_design_sha256=admitted.admission.payload[
+                "campaign_design_sha256"
+            ],
+        )
+
+
+def test_runtime_pair_is_signed_once_only_and_erased_after_second_arm(
+    tmp_path: Path,
+):
+    case = _runtime_case(tmp_path)
+    receipts: dict[str, dict] = {}
+    interventions = {
+        arm: _runtime_intervention(arm) for arm in (TREATMENT_ARM, CONTROL_ARM)
+    }
+
+    for index, arm in enumerate((TREATMENT_ARM, CONTROL_ARM), start=2):
+        restore = case["store"].restore_and_apply(
+            case["publication"].handle,
+            case["admitted"].admission,
+            arm=arm,
+            restored_at_unix=NOW + index,
+            apply_state=lambda state: _sha(
+                {
+                    f"{name}_sha256": value.sha256()
+                    for name, value in state.items()
+                }
+            ),
+        )
+        lifecycle: dict[str, object] = {"complete": False}
+        if arm == CONTROL_ARM:
+            seal = case["store"].seal(
+                case["publication"].handle,
+                case["admitted"].admission,
+                sealed_at_unix=NOW + 5,
+            )
+            erasure = case["store"].erase(
+                case["publication"].handle,
+                case["admitted"].admission,
+                erased_at_unix=NOW + 6,
+            )
+            lifecycle = {
+                "complete": True,
+                "seal_receipt": seal,
+                "erasure_receipt": erasure,
+            }
+        receipts[arm] = build_action_state_restore_receipt(
+            capture_receipt=case["capture_receipt"],
+            custody_restore_receipt=restore.receipt,
+            action_intervention=interventions[arm],
+            runtime_identity=RUNTIME_IDENTITY,
+            worker_private_key=case["worker_key"],
+            custody_lifecycle_receipts=lifecycle,
+            resident_worker_origin_binding=case["request"]["request_payload"][
+                "worker_origin_binding"
+            ],
+        )
+        validate_action_state_restore_receipt(
+            receipts[arm],
+            capture_receipt=case["capture_receipt"],
+            action_intervention=interventions[arm],
+            runtime_identity=RUNTIME_IDENTITY,
+            expected_worker_public_key_b64=case["worker_public_key_b64"],
+            expected_supervisor_public_key=_public_raw(SUPERVISOR_KEY),
+        )
+
+    verdict = verify_action_state_pair_evidence(
+        capture_receipt=case["capture_receipt"],
+        restore_receipts=receipts,
+        interventions=interventions,
+        runtime_identity=RUNTIME_IDENTITY,
+        expected_worker_public_keys_b64={
+            arm: case["worker_public_key_b64"]
+            for arm in (TREATMENT_ARM, CONTROL_ARM)
+        },
+        expected_supervisor_public_keys={
+            arm: _public_raw(SUPERVISOR_KEY)
+            for arm in (TREATMENT_ARM, CONTROL_ARM)
+        },
+    )
+    assert verdict["both_arms_restored_once"] is True
+    assert verdict["terminal_erasure_verified"] is True
+    assert_public_runtime_result(
+        {
+            "action_state_capture_receipt": case["capture_receipt"],
+            "action_state_restore_receipts": receipts,
+            "verification": verdict,
+        }
+    )
+    with pytest.raises(ActionStateCaptureError, match="publication_not_found"):
+        case["store"].publication_for_request(case["admitted"].admission)
+
+
+def test_runtime_rejects_binding_signature_and_private_transport_tampering(
+    tmp_path: Path,
+):
+    case = _runtime_case(tmp_path)
+    attacked = deepcopy(case["frame"])
+    attacked["model_identity"]["checkpoint_sha256"] = "f" * 64
+    with pytest.raises(ActionStateRuntimeError, match="public_binding_mismatch"):
+        admit_action_state_runtime(
+            attacked,
+            worker_launch_challenge=case["request"]["request_payload"][
+                "worker_origin_binding"
+            ]["launch_challenge"],
+            now_unix=NOW,
+        )
+
+    with pytest.raises(ActionStateRuntimeError, match="private_material_leaked"):
+        assert_public_runtime_result({"opaque": case["publication"].handle})
+
+    intervention = _runtime_intervention(TREATMENT_ARM)
+    restore = case["store"].restore_and_apply(
+        case["publication"].handle,
+        case["admitted"].admission,
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+        apply_state=lambda state: _sha(
+            {
+                f"{name}_sha256": value.sha256()
+                for name, value in state.items()
+            }
+        ),
+    )
+    signed = build_action_state_restore_receipt(
+        capture_receipt=case["capture_receipt"],
+        custody_restore_receipt=restore.receipt,
+        action_intervention=intervention,
+        runtime_identity=RUNTIME_IDENTITY,
+        worker_private_key=case["worker_key"],
+        custody_lifecycle_receipts={"complete": False},
+        resident_worker_origin_binding=case["request"]["request_payload"][
+            "worker_origin_binding"
+        ],
+    )
+    signed["worker_origin"]["signature_b64"] = base64.b64encode(b"x" * 64).decode()
+    signed_body = {name: item for name, item in signed.items() if name != "receipt_sha256"}
+    signed["receipt_sha256"] = _sha(signed_body)
+    with pytest.raises(ActionStateRuntimeError, match="signature_invalid"):
+        validate_action_state_restore_receipt(
+            signed,
+            capture_receipt=case["capture_receipt"],
+            action_intervention=intervention,
+            runtime_identity=RUNTIME_IDENTITY,
+            expected_worker_public_key_b64=case["worker_public_key_b64"],
+            expected_supervisor_public_key=_public_raw(SUPERVISOR_KEY),
+        )
+
+
+def test_continuation_reconstruction_binds_public_opportunity(tmp_path: Path):
+    case = _runtime_case(tmp_path)
+    restore = case["store"].restore_and_apply(
+        case["publication"].handle,
+        case["admitted"].admission,
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+        apply_state=lambda state: case["capture_receipt"]["state_sha256"],
+    )
+    continuation = continuation_from_private_state(
+        restore.state,
+        case["capture_receipt"],
+    )
+    assert continuation.state_components == case["capture_receipt"]["state_components"]
+    assert continuation.branch_id == "branch-0"
 
 
 def test_state_mismatch_quarantines_ambiguous_application_instead_of_retrying(

@@ -2369,6 +2369,53 @@ before those dependencies close is not admissible.
   service/runner/verifier lineage and the resident-1.5B destructive integration
   gate remain the two fixed pre-training checkpoints. No resident-32B training,
   reasoning gain, frontier gain, or `WOW Signal` is claimed.
+
+  CP383 closes the public resident action-state transport and independent
+  verification lineage. The runner-facing frame contains only the signed
+  capture request, current policy, exact model/execution/request identities,
+  current parent-attested worker binding, and, for restore, the public capture
+  receipt and arm. Runner durable and RNG roots are reconstructed from the
+  signed payload inside both runner and worker code and checked against the
+  request's portable-state commitments. No opaque snapshot handle, continuation
+  value, raw runner state, DEK, or wrapped-key material crosses ordinary MLX
+  IPC.
+
+  The client provisions external Keychain custody only when this claim-only lab
+  lane is requested, replaces the proposed resident binding with the real live
+  worker binding, independently admits the frame, and verifies every returned
+  public receipt. The worker captures before action/decode, retrieves private
+  state by authenticated request after process replacement, installs and
+  re-encodes all eight continuation components, and invokes a first-action hook
+  only after the exact aggregate state hash matches. Treatment and matched
+  no-action are consumed once each; the second committed arm seals the pair,
+  cryptographically destroys its key, deletes ciphertext, and returns signed
+  terminal lifecycle evidence. Unknown application quarantines and replaces
+  the MLX worker.
+
+  Capture and restore trust are intentionally separate. Historical request and
+  capture signatures remain rooted in the original supervisor, while each
+  replacement resident worker receives a fresh parent challenge and
+  attestation under the current supervisor. A review-discovered key-confusion
+  bug was repaired before publication, and the challenge-expiry regression now
+  proves historical capture verification under the old root plus restore
+  verification under the new root. The independent pair verifier accepts
+  distinct worker/supervisor keys by arm and reconstructs capture, intervention,
+  restore, once-only custody, seal, and erasure lineage.
+
+  Focused action-state, worker/client/service, and authority coverage passes
+  186/186. The complete affected continuation, custody, intervention, engine,
+  runtime identity, worker origin, MLX admission/cancellation/resilience,
+  secrets, and contract matrix passes 480/480. Ruff, bytecode compilation, and
+  diff hygiene pass. CP383 adds no enterprise or governance debt; the two
+  inherited enterprise regressions and unrelated three-new/one-stale governance
+  drift remain explicit and no baseline is raised.
+
+  CP383 closes the lineage checkpoint, not the resident result. The sole fixed
+  pre-training checkpoint is now the resident-1.5B destructive integration gate
+  across capture, process replacement, both arms, duplicate refusal, terminal
+  erasure, and independent verification. Resident-32B training and the
+  preregistered reasoning/frontier campaign follow. No gain or `WOW Signal` is
+  claimed.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

@@ -2903,6 +2903,82 @@ class LatentCortexService:
             )
         return returned
 
+    async def run_action_state_episode(
+        self,
+        *,
+        prompt: str | None = None,
+        messages: list | None = None,
+        domain: str,
+        config: dict[str, Any],
+        budget: dict[str, Any],
+        cognitive_context: list | None,
+        action_policy_evidence: dict[str, Any],
+        action_state_runtime: dict[str, Any],
+        action_intervention: dict[str, Any] | None = None,
+        external_execution_offer: dict[str, Any] | None = None,
+        timeout_s: float = 300.0,
+    ) -> dict[str, Any]:
+        """Run the claim-grade first-action lane without product-policy drift.
+
+        The campaign runner supplies the complete signed public experiment
+        contract.  The service deliberately does not synthesize body, Will,
+        memory, or controller inputs on this lane because doing so after the
+        runner froze its request would change the paired prestate.
+        """
+
+        if not isinstance(action_state_runtime, dict):
+            return self._record_failure("invalid_action_state_runtime")
+        if action_intervention is not None and not isinstance(
+            action_intervention, dict
+        ):
+            return self._record_failure("invalid_action_intervention")
+        try:
+            from core.brain.llm.mlx_client import get_mlx_client
+
+            client = get_mlx_client()
+            result = await client.latent_reason_async(
+                prompt=prompt,
+                messages=messages,
+                config=config,
+                budget=budget,
+                domain=domain,
+                timeout_s=timeout_s,
+                foreground_request=False,
+                cognitive_context=cognitive_context,
+                action_policy_evidence=action_policy_evidence,
+                action_intervention=action_intervention,
+                action_state_runtime=action_state_runtime,
+                external_execution_offer=external_execution_offer,
+                verifier_guidance=True,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            TimeoutError,
+        ) as exc:
+            record_degradation(
+                "latent_cortex.action_state_lane",
+                exc,
+                action="contained claim-grade action-state lane failure",
+                severity="error",
+            )
+            return self._record_failure(
+                f"action_state_runtime_failed:{type(exc).__name__}"
+            )
+        if result.get("ok") is not True:
+            self._last_failure_receipt = dict(result.get("receipt") or {})
+            return self._record_failure(
+                str(result.get("reason") or "action_state_runtime_failed")
+            )
+        self._last_receipt = dict(result.get("receipt") or {})
+        self._last_progress = dict(result.get("progress") or {})
+        return result
+
     # ── The episode ─────────────────────────────────────────────────────
     async def deep_reason(
         self,

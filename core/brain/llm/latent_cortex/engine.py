@@ -2026,6 +2026,7 @@ class LatentCortexEngine:
         action_continuation_restore: Any | None = None,
         action_continuation_runner_state: Mapping[str, Any] | None = None,
         action_continuation_capture_only: bool = False,
+        action_continuation_restore_verified: Callable[[str], None] | None = None,
     ) -> LatentReasoningResult:
         if type(capture_decode_logprobs) is not bool:
             raise TypeError("capture_decode_logprobs must be boolean")
@@ -2051,6 +2052,20 @@ class LatentCortexEngine:
                 action_continuation_capture
             ):
                 raise TypeError("action_continuation_capture must be callable")
+            if (
+                action_continuation_restore_verified is not None
+                and not callable(action_continuation_restore_verified)
+            ):
+                raise TypeError(
+                    "action_continuation_restore_verified must be callable"
+                )
+            if (
+                action_continuation_restore_verified is not None
+                and action_continuation_restore is None
+            ):
+                raise ValueError(
+                    "action_continuation_restore_verified requires a restore"
+                )
             if action_continuation_restore is not None and not isinstance(
                 action_continuation_restore,
                 ActionOpportunityContinuation,
@@ -2228,6 +2243,9 @@ class LatentCortexEngine:
                         else None
                     ),
                     action_continuation_capture_only=action_continuation_capture_only,
+                    action_continuation_restore_verified=(
+                        action_continuation_restore_verified
+                    ),
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
                     failure_reason = "answer_replacement_abstained"
@@ -2460,6 +2478,7 @@ class LatentCortexEngine:
         action_continuation_restore: Any | None = None,
         action_continuation_runner_state: dict[str, Any] | None = None,
         action_continuation_capture_only: bool = False,
+        action_continuation_restore_verified: Callable[[str], None] | None = None,
     ) -> tuple[list[int], EpisodeReceipt, dict[str, Any]]:
         import mlx.core as mx
 
@@ -3158,6 +3177,18 @@ class LatentCortexEngine:
                                     }
                                 ) from rollback_exc
                             raise restore_exc
+                        if action_continuation_restore_verified is not None:
+                            from core.brain.llm.latent_cortex.campaign_journal import (
+                                canonical_json_bytes,
+                            )
+
+                            action_continuation_restore_verified(
+                                hashlib.sha256(
+                                    canonical_json_bytes(
+                                        active_action_continuation.state_components
+                                    )
+                                ).hexdigest()
+                            )
                     continuation_pending = False
                     if action_continuation_capture is not None:
                         action_continuation_capture(active_action_continuation)

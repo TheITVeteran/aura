@@ -6462,6 +6462,9 @@ def _mlx_worker_loop(
                                     worker_capture_signing_identity=(
                                         worker_capture_signing_identity
                                     ),
+                                    worker_capture_launch_challenge=(
+                                        worker_capture_launch_challenge
+                                    ),
                                     surface_control_state=surface_control_state,
                                     cancel_check=lambda _job_seq=job_seq: soft_cancel_requested(
                                         cancel_seq,
@@ -6497,6 +6500,19 @@ def _mlx_worker_loop(
                             if mx and device != "cpu":
                                 _clear_mlx_cache(mx)
                     response.update(body)
+                except UnknownActionStateApplicationError as quarantine_exc:
+                    recycle_after_response = True
+                    _record_mlx_degradation(
+                        quarantine_exc,
+                        action=(
+                            "quarantined MLX worker after ambiguous RLC action-state "
+                            "application and forced clean process replacement"
+                        ),
+                        severity="critical",
+                    )
+                    response.update(
+                        _state_application_quarantine_response(quarantine_exc)
+                    )
                 except (
                     ImportError,
                     RuntimeError,

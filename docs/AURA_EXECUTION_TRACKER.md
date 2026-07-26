@@ -28767,3 +28767,63 @@ destructive integration gate. Resident-32B training and the preregistered
 reasoning/frontier campaign follow. No training, reasoning gain, frontier gain,
 or `WOW Signal` is claimed here. Final multi-hour soaks remain deferred until
 every shorter gate is green.
+
+## Checkpoint 2026-07-26-383: Resident Action-State Lineage
+
+SPARK-051's first-action continuation now crosses the complete resident
+boundary without putting a bearer handle, raw continuation, runner state, or
+snapshot key on the MLX IPC channel. The external runner constructs a strict
+public frame from its signed capture request. Durable campaign and RNG roots are
+independently reconstructed from that signed payload and compared with the
+portable-state commitments already inside the request. The client provisions
+macOS Keychain custody only for this lab lane, binds the frame to the currently
+parent-attested resident worker, and sends only public trust material.
+
+The worker admits the frame against the current campaign policy, current launch
+challenge, exact model/execution/runtime identities, and the normalized latent
+request. Capture exits before action or decode, durably publishes the eight-
+component continuation, and returns a worker-signed public receipt. Restore
+recovers the unique private publication internally, validates that historical
+receipt against its original supervisor, installs the continuation into a fresh
+resident frame, and proves the aggregate restored state immediately before the
+forced or matched-no-action intervention. The new resident supervisor and
+worker attest the restore separately. This distinction permits safe process and
+parent-key rotation after the original launch challenge expires without
+retrusting or rewriting the capture.
+
+Each arm is one-use. Once both treatment and control have committed, the worker
+seals the pair, destroys its wrapped data key, deletes the ciphertext namespace,
+and signs the terminal lifecycle evidence. The independent verifier accepts
+distinct worker and supervisor roots for each arm, reconstructs capture,
+restore, intervention, custody, and terminal-erasure lineage, and rejects
+private-material leakage. Ambiguous application enters the existing typed MLX
+quarantine and forces process replacement. Ordinary chat/model startup does not
+provision or require this claim-only custody path.
+
+Review found and repaired one rotation defect before publication: the first
+candidate attempted to verify a historical capture with the replacement
+supervisor key. The final contract carries separate capture and resident trust
+roots and proves the split after challenge expiry. Focused action-state,
+client/service/worker, and contract coverage passes 186/186. The complete
+affected continuation, snapshot, custody, intervention, engine, worker-origin,
+runtime, MLX admission/cancellation/resilience, secrets, and authority matrix
+passes 480/480 in 43.54 seconds. Strict Ruff, bytecode compilation, and diff
+hygiene pass.
+
+The repository-wide ratchets are still not called green. CP383 adds no finding
+or effect-ownership drift; the unchanged candidate reports the two inherited
+enterprise regressions (`placeholder_stub_mock` 15 > 13 and high/critical 40 >
+39) and the same unrelated three-new/one-stale governance drift in hierarchical
+planner and causal-world-model work. Neither baseline is raised.
+
+Counting CP383 makes the total checkpoint record 625. The 640-920 forecast
+remains, leaving approximately 15-295 records. Checkpoint-count completion is
+approximately 67.9%-97.7%, with a midpoint planning estimate of 80.1%.
+
+The fixed SPARK-051 pre-training burn-down now has one checkpoint: execute and
+repair the resident-1.5B destructive integration gate across real capture,
+process replacement, both interventions, one-use enforcement, terminal
+erasure, and independent verification. Resident-32B training and the
+preregistered reasoning/frontier campaign follow. No training, gain, or `WOW
+Signal` is claimed here. Final multi-hour soaks remain deferred until every
+shorter gate is green.
