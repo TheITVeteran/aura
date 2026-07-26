@@ -15,16 +15,25 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+from core.actuators.authority import verify_actuator_authority
+
 # CP126 3bba0f36: the URL policy now lives in core.runtime.url_policy so the
 # sensory actor (which drives a real browser) shares this exact policy instead
-# of having none. These names are re-exported for existing callers.
-from core.runtime.url_policy import (  # noqa: F401
-    DEFAULT_FETCH_ALLOWLIST as _DEFAULT_FETCH_ALLOWLIST,
-    allowed_fetch_domains as _allowed_fetch_domains,
-    ip_is_public as _ip_is_public,
+# of having none.
+from core.runtime.url_policy import (
+    DEFAULT_FETCH_ALLOWLIST,
+    allowed_fetch_domains,
+    ip_is_public,
     validate_fetch_url,
     validate_fetch_url_static,
 )
+
+# Back-compat aliases for existing callers/tests that imported the private
+# names from this module before the policy moved. Assigned (not re-exported via
+# `import ... as`) so an import-sorter cannot strip them as "unused".
+_DEFAULT_FETCH_ALLOWLIST = DEFAULT_FETCH_ALLOWLIST
+_allowed_fetch_domains = allowed_fetch_domains
+_ip_is_public = ip_is_public
 
 _DEFAULT_BRIDGE_DEADLINE_S = 60.0
 _MAX_QUERY_CHARS = 2048
@@ -81,8 +90,9 @@ class WebSearchActuator(BaseActuator):
         return WebSearchActuator._pipeline
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Web search requires ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Invalid search query parameter.", {})
 
@@ -136,8 +146,9 @@ class WebFetchActuator(BaseActuator):
         return validated is not None
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Web fetch requires ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
 
         validated_url, url_err = validate_fetch_url(params.get("url"))
         if validated_url is None:

@@ -25,6 +25,21 @@ from core.actuators.process_supervisor import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _registry_authorization():
+    """Simulate the ActuatorRegistry's post-AuthorityGateway scope.
+
+    `_aura_authorized` alone is no longer authorization (CP126): the actuator
+    verifies a live registry authorization context, so tests standing in for
+    the registry must establish one.
+    """
+    from core.actuators.authority import actuator_authorization
+
+    with actuator_authorization("process_supervisor"):
+        yield
+
+
+
 class _FakeProc:
     def __init__(self, pid: int = 4321):
         self.pid = pid

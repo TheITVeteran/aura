@@ -21,6 +21,21 @@ from core.actuators.doc_ingest import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _registry_authorization():
+    """Simulate the ActuatorRegistry's post-AuthorityGateway scope.
+
+    `_aura_authorized` alone is no longer authorization (CP126): the actuator
+    verifies a live registry authorization context, so tests standing in for
+    the registry must establish one.
+    """
+    from core.actuators.authority import actuator_authorization
+
+    with actuator_authorization("document_ingest"):
+        yield
+
+
+
 class _FakeFacade:
     def __init__(self, results=None):
         self.calls: list[tuple[str, dict]] = []

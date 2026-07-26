@@ -24,6 +24,21 @@ from core.actuators.web_actuators import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _registry_authorization():
+    """Simulate the ActuatorRegistry's post-AuthorityGateway scope.
+
+    `_aura_authorized` alone is no longer authorization (CP126): the actuator
+    verifies a live registry authorization context, so tests standing in for
+    the registry must establish one.
+    """
+    from core.actuators.authority import actuator_authorization
+
+    with actuator_authorization("*"):
+        yield
+
+
+
 def _mock_resolve(monkeypatch, ip: str):
     monkeypatch.setattr(socket, "getaddrinfo", lambda host, port, **kw: [(2, 1, 6, "", (ip, port or 443))])
 
@@ -142,11 +157,27 @@ def test_fetch_forwards_capability_context(monkeypatch):
     import core.skills.sovereign_browser as sb
     monkeypatch.setattr(sb, "SovereignBrowserSkill", _FakeSkill)
 
+    # A REAL capability token — a fabricated id is now rejected (see below).
+    from core.runtime.capability_tokens import get_capability_token_store
+
+    token = get_capability_token_store().issue(capability="web_fetch", scope="test")
+
     res = WebFetchActuator().execute({
         "url": "https://github.com/org/repo",
         "_aura_authorized": True,
-        "_capability_token_id": "cap-123",
+        "_capability_token_id": token.token_id,
     })
     assert res.success is True
-    assert captured.get("_capability_token_id") == "cap-123"
+    assert captured.get("_capability_token_id") == token.token_id
     assert captured.get("_aura_authorized") is True
+
+
+def test_fabricated_capability_token_is_refused(monkeypatch):
+    _mock_resolve(monkeypatch, "140.82.112.3")
+    res = WebFetchActuator().execute({
+        "url": "https://github.com/org/repo",
+        "_aura_authorized": True,
+        "_capability_token_id": "cap-not-a-real-token",
+    })
+    assert res.success is False
+    assert "capability token is unknown" in res.message

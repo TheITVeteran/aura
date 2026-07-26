@@ -9,6 +9,7 @@ import hashlib
 from typing import Any
 
 from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+from core.actuators.authority import verify_actuator_authority
 
 _BANNED_MODULES = {
     "ctypes", "importlib", "os", "pathlib", "pty", "shutil", "subprocess", "sys",
@@ -74,8 +75,9 @@ class CodeExecutionActuator(BaseActuator):
         )
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Code execution requires ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Safety validation failed: code contains banned imports or functions.", {})
 

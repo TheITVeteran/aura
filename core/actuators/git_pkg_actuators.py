@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+from core.actuators.authority import verify_actuator_authority
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 # ── Shared constraints ───────────────────────────────────────────────────────
@@ -150,8 +151,9 @@ class GitActuator(BaseActuator):
         return True
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Git operations require ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Invalid git action or missing parameters.", {})
 
@@ -278,8 +280,9 @@ class PackageInstallActuator(BaseActuator):
         return True
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Package installation requires ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Safety validation failed: package name or explicit install approval is invalid.", {})
 

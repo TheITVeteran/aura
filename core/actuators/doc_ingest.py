@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from core.actuators.actuator_registry import ActuatorResult, BaseActuator
+from core.actuators.authority import verify_actuator_authority
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.DocumentIngest")
@@ -132,8 +133,9 @@ class DocumentIngestActuator(BaseActuator):
         return isinstance(path, str) and bool(path.strip())
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
-        if not params.get("_aura_authorized"):
-            return ActuatorResult(False, "Document ingestion requires ActuatorRegistry/AuthorityGateway authorization.", {})
+        _authorized, _auth_reason = verify_actuator_authority(params, actuator=self.name)
+        if not _authorized:
+            return ActuatorResult(False, _auth_reason, {})
         if not self.validate_params(params):
             return ActuatorResult(False, "Invalid path parameter.", {})
 

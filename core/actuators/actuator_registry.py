@@ -656,9 +656,21 @@ class ActuatorRegistry:
         if authority_decision is None:
             return actuator.execute(params)
 
+        from core.actuators.authority import actuator_authorization
         from core.governance_context import governed_scope_sync
 
-        with governed_scope_sync(authority_decision):
+        # The authorization is put on a ContextVar for the dynamic extent of the
+        # call, so a privileged actuator can PROVE it was reached through the
+        # registry rather than trusting an injected `_aura_authorized` flag that
+        # any direct caller could set (CP126 8900fa05 / 27651212 / 9f94bf4d /
+        # 251ada47 / bdb4255d / 5ce6b589 …). ContextVars propagate into
+        # asyncio.to_thread, which is where blocking actuator bodies run.
+        with actuator_authorization(
+            getattr(actuator, "name", "") or type(actuator).__name__,
+            capability_token_id=params.get("_capability_token_id"),
+            decision_reason=str(getattr(authority_decision, "reason", "") or ""),
+            principal=str(getattr(authority_decision, "principal", "") or ""),
+        ), governed_scope_sync(authority_decision):
             return actuator.execute(params)
 
     @staticmethod
