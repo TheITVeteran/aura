@@ -164,7 +164,49 @@ def _nested_float(
     return _bounded_float(_nested_value(data, path, default), default, lower=lower, upper=upper)
 
 
-def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
+def _turn_needs_undistorted_computation(user_message: Any) -> bool:
+    """Whether this turn has one right answer that affect must not bend.
+
+    Substrate steering exists to give her replies her own voice. It works by
+    pushing an affect direction into the residual stream, and on a turn whose
+    answer is a fact rather than a feeling that push is pure distortion.
+
+    Measured live on the desktop surface 2026-07-26. "What is 17 minus 8, and
+    then times 3?" — a question the bare 32B answers without effort — came back
+    twice, from a healthy resident cortex:
+
+        "Not too broad. Some skills serve me better than others.Did you pay
+         attention in class? Hey, look at this - ätze! I got chocolate on my
+         shirt."
+
+        "Five thousand: So first you break it down. Mental operations can
+         generate digits well outside the world's population. Imagination
+         defaults to scalar scaling when pushed into math without boundaries."
+
+    The second is the tell: not noise, but the answer being pulled toward
+    whatever the affect vector encodes — talking ABOUT scaling and imagination
+    instead of subtracting eight from seventeen.
+    """
+    try:
+        from core.conversation.response_reliability import (
+            asks_for_a_number,
+            requires_reasoning_lane,
+        )
+    except ImportError:
+        return False
+    try:
+        return bool(
+            asks_for_a_number(user_message) or requires_reasoning_lane(user_message)
+        )
+    except (RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _live_mind_generation_controls(
+    live_mind_context: Any,
+    *,
+    user_message: Any = None,
+) -> dict[str, Any]:
     if not isinstance(live_mind_context, dict):
         return {}
     quality = live_mind_context.get("mind_snapshot_quality")
@@ -239,6 +281,19 @@ def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
     if second_order_strength >= 0.75:
         temperature -= 0.02
 
+    if _turn_needs_undistorted_computation(user_message):
+        # Her voice is not at stake in an arithmetic answer; correctness is.
+        # Steering stands down for this turn — note the floor below is 0.20,
+        # so without this branch it can never stand down at all — and the
+        # recurrent pass drops to one so the answer is read off a clean
+        # forward pass. Everything else about the turn is unchanged.
+        return {
+            "temperature": round(min(temperature, 0.30), 4),
+            "top_p": round(min(top_p, 0.90), 4),
+            "clean_user_surface_recurrent_loops": 1,
+            "clean_user_surface_steering_alpha": 0.0,
+        }
+
     return {
         "temperature": round(max(0.22, min(0.82, temperature)), 4),
         "top_p": round(max(0.72, min(0.94, top_p)), 4),
@@ -268,7 +323,10 @@ def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, An
     """Bind one authoritative mind-state control contract to a cognitive turn."""
 
     live_mind_context = context.get("live_mind_context")
-    generation_controls = _live_mind_generation_controls(live_mind_context)
+    generation_controls = _live_mind_generation_controls(
+        live_mind_context,
+        user_message=context.get("visible_user_message"),
+    )
     controls_bound = _live_mind_controls_bound(
         live_mind_context,
         generation_controls,
@@ -2273,7 +2331,10 @@ class CognitiveEngine:
         live_speech_frame = context.get("live_speech_grounding_frame")
         live_mind_context = context.get("live_mind_context")
         live_mind_required = bool(context.get("live_mind_context_required", False))
-        live_mind_generation_controls = _live_mind_generation_controls(live_mind_context)
+        live_mind_generation_controls = _live_mind_generation_controls(
+            live_mind_context,
+            user_message=visible_user_message,
+        )
         if not live_mind_generation_controls and isinstance(
             context.get("live_mind_generation_controls"), dict
         ):
@@ -3223,7 +3284,8 @@ class CognitiveEngine:
             generation_controls = {}
         if not generation_controls:
             generation_controls = _live_mind_generation_controls(
-                context.get("live_mind_context")
+                context.get("live_mind_context"),
+                user_message=context.get("visible_user_message"),
             )
         controls_bound = bool(
             context.get("live_mind_controls_bound")
