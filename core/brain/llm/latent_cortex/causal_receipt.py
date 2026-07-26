@@ -151,6 +151,7 @@ _STAGES = (
             "fast_weight_canaries",
             "fast_weight_verifier",
             "fast_weight_learning",
+            "fast_weight_cleanup",
         ),
         ("latent_opt_applied", "fast_weights_applied"),
     ),
@@ -195,6 +196,8 @@ _STAGES = (
             "fast_weights_erased",
             "weight_integrity",
             "integrity_verdicts",
+            "runtime_integrity",
+            "worker_identity",
             "runtime_identity",
         ),
         (
@@ -203,9 +206,8 @@ _STAGES = (
             "worker_pid",
             "worker_model_path",
             "worker_source_sha256",
-            "params_unchanged",
-            "weight_integrity",
-            "integrity_verdicts",
+            "runtime_integrity",
+            "worker_identity",
             "runtime_identity",
         ),
     ),
@@ -254,6 +256,41 @@ def _anchor_present(name: str, receipt: Mapping[str, Any]) -> bool:
     return _present(value)
 
 
+def _runtime_integrity_proven(receipt: Mapping[str, Any]) -> bool:
+    try:
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            validate_runtime_integrity_receipt,
+        )
+
+        worker_identity = receipt.get("worker_identity")
+        if not isinstance(worker_identity, Mapping):
+            return False
+        proof = validate_runtime_integrity_receipt(
+            receipt.get("runtime_integrity"),
+            require_worker=True,
+            expected_episode_id=str(receipt.get("episode_id") or ""),
+            expected_input_tokens_sha256=str(
+                receipt.get("input_tokens_sha256") or ""
+            ),
+            expected_worker_identity=worker_identity,
+            expected_fast_weights_applied=(
+                receipt.get("fast_weights_applied") is True
+            ),
+            expected_checkpoint_fingerprint=str(
+                receipt.get("checkpoint_fingerprint") or ""
+            ),
+            expected_checkpoint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+            expected_checkpoint_file_count=receipt.get(
+                "checkpoint_file_count"
+            ),
+        )
+    except (ImportError, TypeError, ValueError):
+        return False
+    return proof["verdict"]["safe_to_continue"] is True
+
+
 def build_causal_receipt(worker_receipt: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(worker_receipt, Mapping):
         raise TypeError("worker receipt must be a mapping")
@@ -269,10 +306,9 @@ def build_causal_receipt(worker_receipt: Mapping[str, Any]) -> dict[str, Any]:
             _anchor_present(name, worker_receipt) for name in stage.anchors
         )
         if stage.name == "runtime_and_model_integrity":
-            fast_weights_disposed = worker_receipt.get("fast_weights_applied") is False or (
-                _anchor_present("fast_weights_erased", worker_receipt)
+            anchors_present = anchors_present and _runtime_integrity_proven(
+                worker_receipt
             )
-            anchors_present = anchors_present and fast_weights_disposed
         any_present = any(row["present"] for row in commitments)
         status = (
             "complete"
@@ -302,22 +338,7 @@ def build_causal_receipt(worker_receipt: Mapping[str, Any]) -> dict[str, Any]:
     final_output_sha256 = (
         language.get("output_text_sha256") if isinstance(language, Mapping) else ""
     )
-    integrity = worker_receipt.get("integrity_verdicts")
-    fast_weights_proven_or_not_applied = bool(
-        worker_receipt.get("fast_weights_applied") is False
-        or (
-            isinstance(integrity, Mapping)
-            and isinstance(integrity.get("fast_weights_erased"), Mapping)
-            and integrity["fast_weights_erased"].get("verdict") == "proven"
-        )
-    )
-    integrity_proven = bool(
-        isinstance(integrity, Mapping)
-        and isinstance(integrity.get("params_unchanged"), Mapping)
-        and integrity["params_unchanged"].get("verdict") == "proven"
-        and fast_weights_proven_or_not_applied
-        and integrity.get("contradictions") == []
-    )
+    integrity_proven = _runtime_integrity_proven(worker_receipt)
     payload = {
         "schema": SCHEMA,
         "policy_version": POLICY_VERSION,

@@ -211,6 +211,9 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert len(receipt["behavior_logprobs_sha256"]) == 64
     assert len(receipt["differentiable_logprobs_sha256"]) == 64
     assert receipt["cached_params_unchanged"] is True
+    assert receipt["cached_nonparametric_memory_status"] == (
+        "disabled_by_policy"
+    )
     assert receipt["cached_recurrence_adapter"]["active"] is True
 
 

@@ -934,13 +934,28 @@ def test_fast_weight_episode_proves_erase_and_invariant():
     assert r.fast_weight_learning["attach_identity"]["measured"] is True
     assert r.fast_weight_learning["attach_identity"]["exact"] is True
     assert r.fast_weight_learning["lease"]["released"] is True
-    assert r.fast_weight_learning["cleanup"] == {
+    cleanup = r.fast_weight_learning["cleanup"]
+    assert {
+        key: cleanup[key]
+        for key in (
+            "required",
+            "detached",
+            "erase_proven",
+            "lease_released",
+            "conflicts",
+        )
+    } == {
         "required": True,
         "detached": True,
         "erase_proven": True,
         "lease_released": True,
         "conflicts": 0,
     }
+    assert len(cleanup["pre_probe_sha256"]) == 64
+    assert cleanup["post_probe_sha256"] == cleanup["pre_probe_sha256"]
+    assert cleanup["erased_layer_ids"] == [
+        f"layers.{index}.o_proj" for index in (2, 3, 4, 5)
+    ]
     assert parameter_fingerprint(model) == before, "episode must leave W0 untouched"
 
 
@@ -1069,7 +1084,7 @@ def test_fast_weight_snapshot_memory_failure_still_detaches(monkeypatch):
 def test_post_episode_invariant_probe_failure_refuses_output(monkeypatch, tiny_model):
     engine = LatentCortexEngine(tiny_model, config=_config())
 
-    def fail_post_probe():
+    def fail_post_probe(_receipt=None):
         raise RuntimeError("injected post-probe failure")
 
     monkeypatch.setattr(engine.invariant, "post_episode", fail_post_probe)

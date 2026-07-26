@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import copy
 import importlib
 import os
 import queue
@@ -12,11 +13,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.brain.llm.mlx_client import MLXLocalClient
+from core.brain.llm.latent_cortex.runtime_integrity import canonical_sha256
 from core.brain.llm.latent_cortex.worker_capture_identity import (
     build_worker_capture_identity,
     build_worker_capture_launch_authority,
 )
+from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.llm.mlx_vision_client import MLXVisionClient
 from core.brain.llm.mlx_worker import (
     IPCWriterThread,
@@ -31,6 +33,7 @@ from core.brain.llm.mlx_worker import (
     _trim_complete_operator_evidence,
 )
 from core.utils.deadlines import get_deadline
+from tests.fixtures.rlc_runtime_integrity import complete_serving_stack
 
 TMP_ROOT = Path(tempfile.gettempdir())
 QWEN32_MODEL = str(TMP_ROOT / "Qwen2.5-32B-Instruct-8bit")
@@ -90,6 +93,7 @@ def ready_init_receipt(
                 if capture_identity is not None
                 else {}
             ),
+            **complete_serving_stack(),
         },
         "recurrent_depth": {
             "active": True,
@@ -197,6 +201,43 @@ class ProcessProbe:
     def assert_joined_with(self, *, timeout):
         assert self.join_calls
         assert self.join_calls[-1].timeout == timeout
+
+
+def test_expert_adapter_identity_transition_is_narrow_and_reattested():
+    client = MLXLocalClient(model_path=TEST_MODEL)
+    process = ProcessProbe(alive=True)
+    raw = ready_init_receipt(
+        client=client,
+        process=process,
+    )["worker_identity"]
+    client._process = process
+    client._worker_identity = client._attest_worker_capture_origin(raw)
+
+    transitioned = copy.deepcopy(raw)
+    transitioned["worker_adapters"] = [
+        {
+            "name": "layers.1.self_attn.o_proj",
+            "type": "LoRALinear",
+            "rank": 8,
+            "scale": 1.0,
+            "parameter_sha256": "a" * 64,
+            "parameter_scope": "adapter_owned_excluding_wrapped_base_v1",
+        }
+    ]
+    transitioned["worker_adapter_stack_sha256"] = canonical_sha256(
+        transitioned["worker_adapters"]
+    )
+    accepted = client._accept_worker_identity_transition(transitioned)
+    assert accepted["worker_adapters"] == transitioned["worker_adapters"]
+    assert accepted["worker_action_capture_origin_binding"]
+
+    tokenizer_swap = copy.deepcopy(transitioned)
+    tokenizer_swap["worker_runtime_tokenizer"]["vocab_size"] = 256
+    with pytest.raises(
+        ValueError,
+        match="worker_runtime_tokenizer_changed_during_adapter_swap",
+    ):
+        client._accept_worker_identity_transition(tokenizer_swap)
 
 
 @pytest.fixture(autouse=True)

@@ -14,6 +14,7 @@ from core.brain.nonparametric_generation import normalize
 SCHEMA = "aura.rlc.nonparametric_context.v1"
 _STATUSES = frozenset(
     {
+        "disabled_by_policy",
         "store_unavailable",
         "invalid_hidden",
         "query_failed",
@@ -134,9 +135,18 @@ def current_source_identity(hidden_size: int) -> dict[str, Any]:
 def retrieve_observation(
     hidden: Any,
     tokenizer: Any,
+    *,
+    enabled: bool = True,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Retrieve one continuation clue and make it context-only recurrent evidence."""
 
+    if type(enabled) is not bool:
+        raise TypeError("nonparametric retrieval enabled flag must be boolean")
+    if not enabled:
+        return None, _base_receipt(
+            status="disabled_by_policy",
+            source_identity={},
+        )
     try:
         key = normalize(np.asarray(hidden, dtype=np.float32).reshape(-1))
     except (TypeError, ValueError, FloatingPointError):
@@ -323,7 +333,11 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     if accounting != expected_accounting:
         raise ValueError("nonparametric resource accounting differs")
     status = value["status"]
-    if status in {"store_unavailable", "invalid_hidden"}:
+    if status in {
+        "disabled_by_policy",
+        "store_unavailable",
+        "invalid_hidden",
+    }:
         if (
             source
             or value["query_sha256"]
@@ -370,7 +384,12 @@ def validate_receipt(value: Any) -> dict[str, Any]:
             or value["observation_sha256"]
         ):
             raise ValueError("empty nonparametric query verdict is invalid")
-    elif status not in {"store_unavailable", "invalid_hidden", "query_failed"}:
+    elif status not in {
+        "disabled_by_policy",
+        "store_unavailable",
+        "invalid_hidden",
+        "query_failed",
+    }:
         similarity = value["similarity"]
         gate = value["similarity_gate"]
         if (

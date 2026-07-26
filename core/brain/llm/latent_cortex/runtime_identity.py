@@ -209,6 +209,7 @@ def build_worker_identity(
     worker_boot_id: str,
     worker_source_path: str | Path,
     worker_action_capture_identity: Mapping[str, Any],
+    tokenizer: Any = None,
     affective_steering_active: bool = False,
     affective_steering_alpha: float = 0.0,
 ) -> dict[str, Any]:
@@ -253,11 +254,20 @@ def build_worker_identity(
         # serving materially different functions, so identity comparisons
         # and control/treatment claims built on this receipt were weaker
         # than they read.
-        **_serving_stack_identity(model, model_path),
+        **serving_stack_identity(
+            model,
+            model_path,
+            tokenizer=tokenizer,
+        ),
     }
 
 
-def _serving_stack_identity(model: Any, model_path: str | Path) -> dict[str, Any]:
+def serving_stack_identity(
+    model: Any,
+    model_path: str | Path,
+    *,
+    tokenizer: Any = None,
+) -> dict[str, Any]:
     """Identity of everything that changes what the model computes.
 
     Ordered adapter identity, tokenizer identity, and the quantization/dtype
@@ -270,13 +280,15 @@ def _serving_stack_identity(model: Any, model_path: str | Path) -> dict[str, Any
     gaps: list[str] = []
 
     adapters = _attached_adapter_identity(model, gaps)
-    tokenizer = _tokenizer_identity(model_path, gaps)
+    tokenizer_artifacts = _tokenizer_identity(model_path, gaps)
     quantization = _quantization_identity(model_path, gaps)
+    runtime_tokenizer = _runtime_tokenizer_identity(tokenizer, gaps)
 
     return {
         "worker_adapters": adapters,
         "worker_adapter_stack_sha256": _digest_of_json(adapters),
-        "worker_tokenizer": tokenizer,
+        "worker_tokenizer": tokenizer_artifacts,
+        "worker_runtime_tokenizer": runtime_tokenizer,
         "worker_quantization": quantization,
         "worker_stack_identity_gaps": gaps,
     }
@@ -296,19 +308,70 @@ def _attached_adapter_identity(model: Any, gaps: list[str]) -> list[dict[str, An
             return adapters
         for name, module in named_modules():
             type_name = type(module).__name__
-            if "LoRA" not in type_name and "Adapter" not in type_name:
+            if not any(
+                marker in type_name
+                for marker in ("LoRA", "DoRA", "Adapter")
+            ):
                 continue
+            parameter_sha256, parameter_scope = _module_parameter_identity(
+                module
+            )
+            if not _sha256(parameter_sha256):
+                gaps.append(f"adapters:{name}:parameter_identity_unavailable")
             adapters.append(
                 {
                     "name": str(name),
                     "type": type_name,
                     "rank": _int_or_zero(getattr(module, "r", None)),
                     "scale": _float_or_zero(getattr(module, "scale", None)),
+                    "parameter_sha256": parameter_sha256,
+                    "parameter_scope": parameter_scope,
                 }
             )
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         gaps.append(f"adapters:{type(exc).__name__}")
     return adapters
+
+
+def _module_parameter_identity(module: Any) -> tuple[str, str]:
+    """Hash adapter-owned bytes without recursively rehashing the base model."""
+
+    try:
+        import numpy as np
+        from mlx.utils import tree_flatten
+
+        parameters = getattr(module, "parameters", None)
+        if not callable(parameters):
+            return "", ""
+        rows = sorted(tree_flatten(parameters()), key=lambda row: row[0])
+        type_name = type(module).__name__
+        if "LoRA" in type_name or "DoRA" in type_name:
+            # mlx_lm wrappers recursively expose ``linear.*`` or
+            # ``embedding.*`` base tensors through parameters(). Hashing that
+            # tree for every adapter would reread much of the resident 32B on
+            # every pre/post stack check. Those permanent bytes are measured
+            # by the parameter canary and exact adapted-layer proof; adapter
+            # identity owns the low-rank tensors and DoRA magnitude state.
+            rows = [
+                row
+                for row in rows
+                if not row[0].startswith(("linear.", "embedding."))
+            ]
+            scope = "adapter_owned_excluding_wrapped_base_v1"
+        else:
+            scope = "module_parameter_tree_v1"
+        if not rows:
+            return "", scope
+        digest = hashlib.sha256()
+        for name, tensor in rows:
+            array = np.asarray(tensor)
+            digest.update(str(name).encode("utf-8"))
+            digest.update(str(array.dtype).encode("ascii"))
+            digest.update(str(array.shape).encode("ascii"))
+            digest.update(array.tobytes())
+        return digest.hexdigest(), scope
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return "", ""
 
 
 def _tokenizer_identity(model_path: str | Path, gaps: list[str]) -> dict[str, Any]:
@@ -332,6 +395,42 @@ def _tokenizer_identity(model_path: str | Path, gaps: list[str]) -> dict[str, An
             gaps.append("tokenizer:no_tokenizer_artifacts_found")
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         gaps.append(f"tokenizer:{type(exc).__name__}")
+    return identity
+
+
+def _runtime_tokenizer_identity(
+    tokenizer: Any,
+    gaps: list[str],
+) -> dict[str, Any]:
+    if tokenizer is None:
+        gaps.append("runtime_tokenizer:unavailable")
+        return {}
+    identity: dict[str, Any] = {
+        "type": f"{type(tokenizer).__module__}.{type(tokenizer).__qualname__}",
+    }
+    for field in (
+        "vocab_size",
+        "bos_token_id",
+        "eos_token_id",
+        "pad_token_id",
+        "unk_token_id",
+    ):
+        value = getattr(tokenizer, field, None)
+        if isinstance(value, bool) or (value is not None and not isinstance(value, int)):
+            gaps.append(f"runtime_tokenizer:{field}_invalid")
+            continue
+        if field == "vocab_size" and (value is None or value <= 0):
+            gaps.append("runtime_tokenizer:vocab_size_unavailable")
+        identity[field] = value
+    special_tokens = getattr(tokenizer, "special_tokens_map", None)
+    if isinstance(special_tokens, Mapping):
+        identity["special_tokens_sha256"] = _digest_of_json(special_tokens)
+    else:
+        identity["special_tokens_sha256"] = _digest_of_json({})
+    chat_template = getattr(tokenizer, "chat_template", None)
+    identity["chat_template_sha256"] = hashlib.sha256(
+        str(chat_template or "").encode("utf-8")
+    ).hexdigest()
     return identity
 
 
@@ -393,6 +492,111 @@ def _float_or_zero(value: Any) -> float:
         return result if math.isfinite(result) else 0.0
     except (TypeError, ValueError):
         return 0.0
+
+
+def serving_stack_identity_errors(identity: Any) -> list[str]:
+    """Validate the complete function-defining serving-stack identity."""
+
+    if not isinstance(identity, Mapping):
+        return ["worker_serving_stack_identity_not_mapping"]
+    expected_fields = {
+        "worker_adapters",
+        "worker_adapter_stack_sha256",
+        "worker_tokenizer",
+        "worker_runtime_tokenizer",
+        "worker_quantization",
+        "worker_stack_identity_gaps",
+    }
+    errors: list[str] = []
+    if set(identity) != expected_fields:
+        errors.append("invalid_worker_serving_stack_fields")
+
+    adapters = identity.get("worker_adapters")
+    if (
+        not isinstance(adapters, list)
+        or identity.get("worker_adapter_stack_sha256")
+        != _digest_of_json(adapters)
+    ):
+        errors.append("invalid_worker_adapter_identity")
+    elif any(
+        not isinstance(adapter, Mapping)
+        or not str(adapter.get("name") or "")
+        or not str(adapter.get("type") or "")
+        or type(adapter.get("rank")) is not int
+        or adapter["rank"] < 0
+        or isinstance(adapter.get("scale"), bool)
+        or not isinstance(adapter.get("scale"), (int, float))
+        or not math.isfinite(float(adapter["scale"]))
+        or not _sha256(adapter.get("parameter_sha256"))
+        or adapter.get("parameter_scope")
+        not in {
+            "adapter_owned_excluding_wrapped_base_v1",
+            "module_parameter_tree_v1",
+        }
+        for adapter in adapters
+    ):
+        errors.append("invalid_worker_adapter_identity")
+
+    tokenizer = identity.get("worker_tokenizer")
+    if (
+        not isinstance(tokenizer, Mapping)
+        or not tokenizer
+        or any(
+            not isinstance(name, str)
+            or not name
+            or Path(name).name != name
+            or not _sha256(digest)
+            for name, digest in tokenizer.items()
+        )
+    ):
+        errors.append("invalid_worker_tokenizer_identity")
+
+    runtime_tokenizer = identity.get("worker_runtime_tokenizer")
+    if (
+        not isinstance(runtime_tokenizer, Mapping)
+        or not str(runtime_tokenizer.get("type") or "")
+        or type(runtime_tokenizer.get("vocab_size")) is not int
+        or runtime_tokenizer["vocab_size"] <= 0
+        or not _sha256(runtime_tokenizer.get("special_tokens_sha256"))
+        or not _sha256(runtime_tokenizer.get("chat_template_sha256"))
+        or any(
+            value is not None
+            and (
+                type(value) is not int
+                or value < 0
+            )
+            for value in (
+                runtime_tokenizer.get("bos_token_id"),
+                runtime_tokenizer.get("eos_token_id"),
+                runtime_tokenizer.get("pad_token_id"),
+                runtime_tokenizer.get("unk_token_id"),
+            )
+        )
+    ):
+        errors.append("invalid_worker_runtime_tokenizer_identity")
+
+    quantization = identity.get("worker_quantization")
+    if (
+        not isinstance(quantization, Mapping)
+        or type(quantization.get("bits")) is not int
+        or quantization["bits"] < 0
+        or type(quantization.get("group_size")) is not int
+        or quantization["group_size"] < 0
+        or not isinstance(quantization.get("dtype"), str)
+        or not str(quantization.get("model_type") or "")
+        or not _sha256(quantization.get("config_sha256"))
+    ):
+        errors.append("invalid_worker_quantization_identity")
+
+    gaps = identity.get("worker_stack_identity_gaps")
+    if (
+        not isinstance(gaps, list)
+        or any(not isinstance(item, str) or not item for item in gaps)
+    ):
+        errors.append("invalid_worker_stack_identity_gaps")
+    elif gaps:
+        errors.append("worker_serving_stack_identity_incomplete")
+    return errors
 
 
 def worker_identity_errors(
@@ -475,6 +679,18 @@ def worker_identity_errors(
                 errors.append("worker_action_capture_identity_mismatch")
         except (ImportError, TypeError, ValueError):
             errors.append("invalid_worker_action_capture_identity")
+        stack = {
+            key: receipt.get(key)
+            for key in (
+                "worker_adapters",
+                "worker_adapter_stack_sha256",
+                "worker_tokenizer",
+                "worker_runtime_tokenizer",
+                "worker_quantization",
+                "worker_stack_identity_gaps",
+            )
+        }
+        errors.extend(serving_stack_identity_errors(stack))
     if expected is not None:
         for key in (
             "worker_boot_id",
@@ -487,6 +703,12 @@ def worker_identity_errors(
             "worker_affective_steering_active",
             "worker_affective_steering_alpha",
             "worker_action_capture_identity",
+            "worker_adapters",
+            "worker_adapter_stack_sha256",
+            "worker_tokenizer",
+            "worker_runtime_tokenizer",
+            "worker_quantization",
+            "worker_stack_identity_gaps",
         ):
             if receipt.get(key) != expected.get(key):
                 errors.append(f"{key}_mismatch")
@@ -637,5 +859,7 @@ __all__ = [
     "latent_request_payload_sha256",
     "logical_model_parameter_count",
     "model_parameter_count",
+    "serving_stack_identity",
+    "serving_stack_identity_errors",
     "worker_identity_errors",
 ]

@@ -178,7 +178,6 @@ class LatentCortexEngine:
         if problems:
             raise ValueError(f"invalid CortexConfig: {problems}")
         self.library = schedule_library
-        self.invariant = CheckpointInvariant(model, model_path)
         # Decode discipline state: token→is-pure-newline verdicts (per
         # tokenizer, so per engine) and the last final-decode suppression
         # count for the episode receipt.
@@ -203,6 +202,18 @@ class LatentCortexEngine:
                 f"recurrent region empty: prelude_end={self.prelude_end} "
                 f"coda_start={self.coda_start} for {self.n_layers} layers"
             )
+        adapted_layers = tuple(
+            list(range(self.prelude_end, self.coda_start))[
+                : max(1, self.config.fast_weights.max_wrapped_layers)
+            ]
+        )
+        self.invariant = CheckpointInvariant(
+            model,
+            model_path,
+            tokenizer=tokenizer,
+            adapted_layer_indices=adapted_layers,
+            adapted_target=self.config.fast_weights.target,
+        )
 
     @staticmethod
     def _cancel_requested(cancel_check: Callable[[], bool] | None) -> bool:
@@ -2059,6 +2070,7 @@ class LatentCortexEngine:
         action_continuation_runner_state: Mapping[str, Any] | None = None,
         action_continuation_capture_only: bool = False,
         action_continuation_restore_verified: Callable[[str], None] | None = None,
+        nonparametric_memory_enabled: bool = True,
     ) -> LatentReasoningResult:
         if type(capture_decode_logprobs) is not bool:
             raise TypeError("capture_decode_logprobs must be boolean")
@@ -2069,6 +2081,8 @@ class LatentCortexEngine:
             raise ValueError("decode_sentence_grace_tokens must be null or inside [0, 4096]")
         if type(action_continuation_capture_only) is not bool:
             raise TypeError("action_continuation_capture_only must be boolean")
+        if type(nonparametric_memory_enabled) is not bool:
+            raise TypeError("nonparametric_memory_enabled must be boolean")
         continuation_requested = (
             action_continuation_capture is not None
             or action_continuation_restore is not None
@@ -2278,6 +2292,7 @@ class LatentCortexEngine:
                     action_continuation_restore_verified=(
                         action_continuation_restore_verified
                     ),
+                    nonparametric_memory_enabled=nonparametric_memory_enabled,
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
                     failure_reason = "answer_replacement_abstained"
@@ -2382,7 +2397,7 @@ class LatentCortexEngine:
                         severity="critical",
                     )
             try:
-                receipt.params_unchanged = self.invariant.post_episode()
+                receipt.params_unchanged = self.invariant.post_episode(receipt)
             except _LATENT_PHASE_ERRORS as exc:
                 receipt.params_unchanged = False
                 receipt.flag(f"checkpoint_post_probe_failed:{type(exc).__name__}")
@@ -2454,14 +2469,7 @@ class LatentCortexEngine:
             failure_reason = f"decode_incomplete:{receipt.decode_termination}"
         if receipt.params_unchanged is False:
             receipt.flag("checkpoint_invariant_violated")
-            return LatentReasoningResult(
-                ok=False,
-                text="",
-                receipt=receipt,
-                reason="checkpoint_invariant_violated",
-                decode_token_logprobs=decode_token_logprobs,
-                answer_replacement_private=answer_replacement_private,
-            )
+            failure_reason = failure_reason or "checkpoint_invariant_violated"
         if failure_reason:
             return LatentReasoningResult(
                 ok=False,
@@ -2516,6 +2524,7 @@ class LatentCortexEngine:
         action_continuation_runner_state: dict[str, Any] | None = None,
         action_continuation_capture_only: bool = False,
         action_continuation_restore_verified: Callable[[str], None] | None = None,
+        nonparametric_memory_enabled: bool = True,
     ) -> tuple[list[int], EpisodeReceipt, dict[str, Any]]:
         import mlx.core as mx
 
@@ -2644,6 +2653,7 @@ class LatentCortexEngine:
         one_shot_observation, one_shot_receipt = retrieve_observation(
             self._last_prefill_hidden,
             self.tokenizer,
+            enabled=nonparametric_memory_enabled,
         )
         receipt.nonparametric_memory = validate_nonparametric_receipt(one_shot_receipt)
         one_shot_accounting = receipt.nonparametric_memory["resource_accounting"]
@@ -6236,7 +6246,44 @@ class LatentCortexEngine:
                     lifecycle.detach_conflicts
                     + lifecycle.lease_conflicts
                 ),
+                "pre_probe_sha256": (
+                    lifecycle.erase_probe_before_sha256
+                ),
+                "post_probe_sha256": (
+                    lifecycle.erase_probe_after_sha256
+                ),
+                "erased_layer_ids": [
+                    f"layers.{index}.{lifecycle.target}"
+                    for index in lifecycle.layers
+                ],
             }
+        try:
+            from core.brain.llm.latent_cortex.runtime_integrity import (
+                build_fast_weight_cleanup_proof,
+            )
+
+            receipt.fast_weight_cleanup = build_fast_weight_cleanup_proof(
+                episode_id=receipt.episode_id,
+                input_tokens_sha256=receipt.input_tokens_sha256,
+                detached=lifecycle.erased,
+                erase_proven=lifecycle.erase_proven,
+                lease_released=lifecycle.lease_released,
+                conflicts=(
+                    lifecycle.detach_conflicts
+                    + lifecycle.lease_conflicts
+                ),
+                pre_probe_sha256=lifecycle.erase_probe_before_sha256,
+                post_probe_sha256=lifecycle.erase_probe_after_sha256,
+                layer_ids=[
+                    f"layers.{index}.{lifecycle.target}"
+                    for index in lifecycle.layers
+                ],
+            )
+        except (TypeError, ValueError) as exc:
+            receipt.fast_weight_cleanup = {}
+            receipt.flag(
+                f"fast_weight_cleanup_proof_failed:{type(exc).__name__}"
+            )
         if lifecycle.budget_exhausted:
             receipt.flag("fast_weight_budget_exhausted")
         if lifecycle.optimized_steps <= 0:

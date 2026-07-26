@@ -905,7 +905,11 @@ def sample_recurrent_group(
     samples = []
     completions: list[str] = []
     rejected_receipts: list[dict[str, Any]] = []
-    max_attempts = max(size + 2, size * 4)
+    # Admission is intentionally strict and can reject correlated cached
+    # samples. Eight attempts per requested member keeps the sampler bounded
+    # while avoiding false exhaustion on small groups whose first few
+    # deterministic seeds happen to land outside the PPO drift envelope.
+    max_attempts = max(size + 2, size * 8)
     for attempt in range(max_attempts):
         if len(samples) >= size:
             break

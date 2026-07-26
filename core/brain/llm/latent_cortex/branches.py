@@ -70,6 +70,7 @@ from core.brain.llm.latent_cortex.workspace import (
 )
 
 logger = logging.getLogger("Aura.LatentCortex.Branches")
+_UNSCORED_BRANCH_FLOOR = -1e30
 
 BRANCH_ISOLATION_SCHEMA = "aura.rlc.branch_isolation.v1"
 
@@ -1837,7 +1838,14 @@ class BranchEnsemble:
                 branch.score = float(score_fn(branch))
             else:
                 trail = branch.halting.residual_trail
-                branch.score = -trail[-1] if trail else float("-inf")
+                # Empty trajectories are ineligible, but public causal receipts
+                # must remain canonical JSON. A finite floor preserves the same
+                # ordering without leaking an IEEE infinity into evidence.
+                branch.score = (
+                    -trail[-1]
+                    if trail
+                    else _UNSCORED_BRANCH_FLOOR
+                )
         return max(self.branches, key=lambda b: b.score)
 
     def to_receipt(self) -> dict[str, Any]:

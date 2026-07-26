@@ -12,6 +12,10 @@ from core.brain.llm.latent_cortex.causal_receipt import (
     validate_causal_receipt,
 )
 from core.brain.llm.latent_cortex.loop_core import canonical_sha256
+from tests.fixtures.rlc_runtime_integrity import (
+    attach_bound_runtime_integrity,
+    complete_worker_identity,
+)
 
 STAGES = (
     "identity_and_ingress",
@@ -31,7 +35,12 @@ STAGES = (
 
 def _complete_worker_receipt(*, private_marker: str = "PRIVATE-THOUGHT-DO-NOT-LEAK"):
     digest = "e" * 64
-    return {
+    worker_identity = complete_worker_identity(
+        boot_id="a" * 32,
+        pid=42,
+        model_path="/models/resident-32b",
+    )
+    receipt = {
         "episode_id": "episode-spark-054",
         "request_payload_sha256": "1" * 64,
         "input_tokens_sha256": "2" * 64,
@@ -71,10 +80,11 @@ def _complete_worker_receipt(*, private_marker: str = "PRIVATE-THOUGHT-DO-NOT-LE
         "decode_generated_tokens": 24,
         "decode_termination": "eos",
         "checkpoint_fingerprint": digest,
-        "worker_boot_id": "boot-spark-054",
+        "worker_boot_id": worker_identity["worker_boot_id"],
         "worker_pid": 42,
         "worker_model_path": "/models/resident-32b",
         "worker_source_sha256": "7" * 64,
+        "worker_identity": worker_identity,
         "params_unchanged": True,
         "fast_weights_erased": True,
         "weight_integrity": {
@@ -89,6 +99,10 @@ def _complete_worker_receipt(*, private_marker: str = "PRIVATE-THOUGHT-DO-NOT-LE
             "contradictions": [],
         },
     }
+    return attach_bound_runtime_integrity(
+        receipt,
+        worker_identity=worker_identity,
+    )
 
 
 def _rehash_envelope(value: dict) -> None:
@@ -239,9 +253,12 @@ def test_missing_stage_and_unproven_integrity_remain_honest_partial_receipts():
         )
 
     unproven_worker = _complete_worker_receipt()
-    unproven_worker["integrity_verdicts"]["params_unchanged"]["verdict"] = "unproven"
+    unproven_worker["runtime_integrity"] = {}
     unproven = build_causal_receipt(unproven_worker)
-    assert unproven["required_stages_complete"] is True
+    assert unproven["required_stages_complete"] is False
+    assert unproven["missing_required_stages"] == [
+        "runtime_and_model_integrity"
+    ]
     assert unproven["integrity_proven"] is False
     with pytest.raises(ValueError, match="integrity is unproven"):
         validate_causal_receipt(

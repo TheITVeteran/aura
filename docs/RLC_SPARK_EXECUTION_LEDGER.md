@@ -2619,10 +2619,62 @@ before those dependencies close is not admissible.
   gates, and enterprise ratchet are recorded in the matching execution-tracker
   checkpoint. This closes query-scoped causal mechanics, not a resident
   reasoning or frontier-performance gain.
-- [ ] **SPARK-056 - Runtime integrity proof producer.** Measure pre/post fixed
+- [x] **SPARK-056 - Runtime integrity proof producer.** Measure pre/post fixed
   parameter canaries, adapted-layer identity, exact erase, caches, tokenizer,
   adapters, quantization, and worker identity; make certification consume the
   measurements rather than mutable booleans.
+
+  **CP392 implementation and evidence:** Every latent episode now produces one
+  schema-exact runtime-integrity receipt over the checkpoint artifact, fixed
+  permanent-parameter canary, every permanent parameter byte in each
+  fast-weight target layer, tokenizer artifacts and runtime tokenizer,
+  ordered adapter identities and adapter-owned bytes, quantization
+  configuration, probe-cache invalidation, and the exact resident worker boot,
+  process, model, source, steering, and serving-stack identity. Pre/post
+  measurements are bound to the episode and input, then re-attested at the
+  worker boundary. Worker reuse, cancellation acknowledgement, hot expert
+  adapter transitions, the live service, causal receipt, and frontier
+  certification consume the reconstructed proof instead of compatibility
+  booleans.
+
+  Temporary-weight cleanup is its own committed transaction. It is emitted
+  even when attach or optimization fails, binds exact target layers and
+  full-stack probe hashes, proves detach and lease release, and remains
+  independently available when the successful-learning receipt cannot be
+  finalized. Missing proof remains an explicit negative measurement;
+  mismatched learning/cleanup evidence, cross-episode or cross-input
+  substitution, hidden cleanup outside the declared fast-weight scope,
+  malformed self-rehashing, stale caches, incomplete serving identity, or an
+  unprovable hot-adapter rollback cannot authorize fallback or worker reuse.
+  Proof-grade recurrent GRPO also explicitly disables query-time
+  nonparametric memory so its treatment cannot silently read a mutable
+  one-shot datastore.
+
+  Adversarial testing found and closed two additional production defects:
+  failed-but-clean fast-weight episodes discarded their cleanup evidence
+  before fallback, and an unscored branch used IEEE negative infinity, which
+  could make the canonical causal receipt unserializable under a valid
+  randomized execution order. Cleanup now survives every attempted
+  transaction, specific integrity failures are preserved, and unscored
+  branches use a finite ineligible floor.
+
+  The final broad latent/RLC/frontier/causal gate passes 1702/1702 with two
+  intentional deselections. The isolated exact action-calibration certificate
+  passes 14/14 in 931.37 seconds; focused core and MLX/worker boundaries pass
+  232/232 and 124/124. The neural-uncertainty receipt path passes 13/13 under
+  three additional randomized seeds. Strict Ruff, bytecode compilation, and
+  diff hygiene pass. A clean CP391 comparison proves the enterprise ratchet
+  counts are identical before and after CP392; its nine inherited baseline
+  excesses remain non-green and were not raised or attributed to this work.
+
+  Counting CP392 makes the total checkpoint record 634. The 640-920 forecast
+  remains, leaving approximately 6-286 records. Checkpoint-count completion is
+  approximately 68.9%-99.1%, with a midpoint planning estimate of 81.3%.
+  SPARK-056 proves measured runtime integrity and reuse authority, not a
+  reasoning or frontier gain. Next is SPARK-057's recalibrated test-time
+  trainer. SPARK-051 remains open for answer-channel remediation, admitted
+  resident training, and powered equal-compute reasoning/frontier evidence.
+  Final multi-hour soaks remain deferred until all shorter gates are green.
 - [ ] **SPARK-057 - Recalibrated test-time trainer.** Implement a TEMPO-style or
   stronger bounded refinement loop with held-out critic recalibration,
   high-confidence pseudo-label admission, drift detection, rollback, and

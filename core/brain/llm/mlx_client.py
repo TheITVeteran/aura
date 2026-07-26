@@ -4671,6 +4671,29 @@ class MLXLocalClient:
             return {"ok": False, "reason": f"swap_timeout:{type(exc).__name__}"}
 
         if res and res.get("status") == "ok":
+            raw_worker_identity = res.get("worker_identity")
+            try:
+                transitioned_identity = self._accept_worker_identity_transition(
+                    raw_worker_identity
+                )
+            except (TypeError, ValueError) as exc:
+                _record_mlx_degradation(
+                    exc,
+                    action=(
+                        "recycled resident worker after expert adapter swap "
+                        "returned an unprovable identity transition"
+                    ),
+                    severity="critical",
+                )
+                await self.reboot_worker(
+                    reason="expert_adapter_identity_transition_unproven",
+                    mark_failed=False,
+                )
+                return {
+                    "ok": False,
+                    "reason": f"identity_transition_unproven:{exc}",
+                }
+            self._worker_identity = transitioned_identity
             self._expert_adapter_path = str(res.get("resident") or "") or None
             return {
                 "ok": True,
@@ -4678,10 +4701,70 @@ class MLXLocalClient:
                 "wrapped_layers": int(res.get("wrapped_layers") or 0),
                 "detached_layers": int(res.get("detached_layers") or 0),
             }
+        if res and res.get("requires_worker_recycle") is True:
+            await self.reboot_worker(
+                reason="expert_adapter_swap_identity_unrecovered",
+                mark_failed=False,
+            )
         return {
             "ok": False,
             "reason": str((res or {}).get("message") or "swap_failed"),
         }
+
+    def _accept_worker_identity_transition(
+        self,
+        raw_identity: Any,
+    ) -> dict[str, Any]:
+        """Validate and re-attest the sole allowed live identity transition.
+
+        A hot expert-adapter swap may change only the measured adapter list and
+        its digest. Model, tokenizer, quantization, process, source, steering,
+        and capture key must remain exactly the initialized worker's values.
+        """
+
+        from core.brain.llm.latent_cortex.runtime_identity import (
+            worker_identity_errors,
+        )
+
+        if not isinstance(raw_identity, Mapping):
+            raise ValueError("expert adapter response omitted worker identity")
+        errors = worker_identity_errors(raw_identity)
+        current = getattr(self, "_worker_identity", {})
+        if not isinstance(current, Mapping) or not current:
+            errors.append("parent_worker_identity_unavailable")
+        immutable_fields = (
+            "schema",
+            "worker_boot_id",
+            "worker_pid",
+            "worker_model_path",
+            "worker_model_parameter_count",
+            "worker_model_stored_parameter_element_count",
+            "worker_model_parameter_count_basis",
+            "worker_source_sha256",
+            "worker_affective_steering_active",
+            "worker_affective_steering_alpha",
+            "worker_action_capture_identity",
+            "worker_tokenizer",
+            "worker_runtime_tokenizer",
+            "worker_quantization",
+            "worker_stack_identity_gaps",
+        )
+        if isinstance(current, Mapping):
+            errors.extend(
+                f"{field}_changed_during_adapter_swap"
+                for field in immutable_fields
+                if raw_identity.get(field) != current.get(field)
+            )
+        if errors:
+            raise ValueError(",".join(sorted(set(errors))))
+        attested = self._attest_worker_capture_origin(dict(raw_identity))
+        attested_errors = worker_identity_errors(attested)
+        if attested_errors:
+            raise ValueError(
+                "reattested_worker_identity_invalid:"
+                + ",".join(sorted(set(attested_errors)))
+            )
+        return attested
 
     @property
     def expert_adapter_resident(self) -> str | None:
@@ -4836,29 +4919,65 @@ class MLXLocalClient:
         # process whose weights are no longer the ones we are about to keep
         # serving on.
         identity = getattr(self, "_worker_identity", None)
+        receipt_worker_identity = receipt.get("worker_identity")
         if isinstance(identity, dict) and identity:
             expected_boot = str(identity.get("worker_boot_id") or "")
-            if expected_boot and str(receipt.get("worker_boot_id") or "") != expected_boot:
+            if (
+                not isinstance(receipt_worker_identity, Mapping)
+                or expected_boot
+                and str(receipt_worker_identity.get("worker_boot_id") or "")
+                != expected_boot
+            ):
                 self._record_cancel_ack_rejection("worker_boot_id_mismatch")
                 return False
             expected_pid = identity.get("worker_pid")
-            if isinstance(expected_pid, int) and receipt.get("worker_pid") not in (
-                None,
-                expected_pid,
+            if (
+                isinstance(expected_pid, int)
+                and receipt_worker_identity.get("worker_pid") != expected_pid
             ):
                 self._record_cancel_ack_rejection("worker_pid_mismatch")
                 return False
-        reported_path = str(receipt.get("worker_model_path") or "")
+        reported_path = str(
+            receipt_worker_identity.get("worker_model_path")
+            if isinstance(receipt_worker_identity, Mapping)
+            else ""
+        )
         if reported_path and _real_model_path(reported_path) != _real_model_path(self.model_path):
             self._record_cancel_ack_rejection("worker_model_path_mismatch")
             return False
 
-        if receipt.get("params_unchanged") is not True:
-            return False
-        if (
-            receipt.get("fast_weights_applied") is True
-            and receipt.get("fast_weights_erased") is not True
-        ):
+        try:
+            from core.brain.llm.latent_cortex.runtime_integrity import (
+                runtime_integrity_safe,
+            )
+
+            integrity_safe = runtime_integrity_safe(
+                receipt.get("runtime_integrity"),
+                require_worker=True,
+                expected_episode_id=str(receipt.get("episode_id") or ""),
+                expected_input_tokens_sha256=str(
+                    receipt.get("input_tokens_sha256") or ""
+                ),
+                expected_worker_identity=(
+                    identity if isinstance(identity, Mapping) else None
+                ),
+                expected_fast_weights_applied=(
+                    receipt.get("fast_weights_applied") is True
+                ),
+                expected_checkpoint_fingerprint=str(
+                    receipt.get("checkpoint_fingerprint") or ""
+                ),
+                expected_checkpoint_method=str(
+                    receipt.get("checkpoint_fingerprint_method") or ""
+                ),
+                expected_checkpoint_file_count=receipt.get(
+                    "checkpoint_file_count"
+                ),
+            )
+        except ImportError:
+            integrity_safe = False
+        if not integrity_safe:
+            self._record_cancel_ack_rejection("runtime_integrity_unproven")
             return False
         return True
 
@@ -5372,10 +5491,48 @@ class MLXLocalClient:
                     worker_identity_errors,
                 )
 
+                receipt_worker_identity = receipt.get("worker_identity")
                 identity_errors = worker_identity_errors(
-                    receipt,
+                    receipt_worker_identity,
                     expected=getattr(self, "_worker_identity", {}),
                 )
+                try:
+                    from core.brain.llm.latent_cortex.runtime_integrity import (
+                        runtime_integrity_safe,
+                    )
+
+                    integrity_safe = runtime_integrity_safe(
+                        receipt.get("runtime_integrity"),
+                        require_worker=True,
+                        expected_episode_id=str(receipt.get("episode_id") or ""),
+                        expected_input_tokens_sha256=str(
+                            receipt.get("input_tokens_sha256") or ""
+                        ),
+                        expected_worker_identity=getattr(
+                            self,
+                            "_worker_identity",
+                            {},
+                        ),
+                        expected_fast_weights_applied=(
+                            receipt.get("fast_weights_applied") is True
+                        ),
+                        expected_checkpoint_fingerprint=str(
+                            receipt.get("checkpoint_fingerprint") or ""
+                        ),
+                        expected_checkpoint_method=str(
+                            receipt.get(
+                                "checkpoint_fingerprint_method"
+                            )
+                            or ""
+                        ),
+                        expected_checkpoint_file_count=receipt.get(
+                            "checkpoint_file_count"
+                        ),
+                    )
+                except ImportError:
+                    integrity_safe = False
+                if not integrity_safe:
+                    identity_errors.append("runtime_integrity_unproven")
                 if receipt.get("request_payload_sha256") != expected_request_sha256:
                     identity_errors.append("request_payload_sha256_mismatch")
                 if identity_errors:

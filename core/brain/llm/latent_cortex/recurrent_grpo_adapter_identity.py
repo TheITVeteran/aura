@@ -384,13 +384,29 @@ def _validate_step_receipts(
             if not isinstance(sample, Mapping):
                 _fail("sample_receipt_invalid")
             activation = sample.get("cached_recurrence_adapter")
+            try:
+                from core.brain.llm.latent_cortex.runtime_integrity import (
+                    runtime_integrity_safe,
+                )
+
+                measured_runtime_safe = runtime_integrity_safe(
+                    sample.get("cached_runtime_integrity"),
+                    require_worker=False,
+                    expected_input_tokens_sha256=str(
+                        sample.get("prompt_tokens_sha256") or ""
+                    ),
+                )
+            except ImportError:
+                measured_runtime_safe = False
             if not isinstance(activation, Mapping):
                 _fail("sample_behavior_not_admitted")
             if (
-                sample.get("schema") != "aura.recurrent_sampling_behavior.v2"
+                sample.get("schema") != "aura.recurrent_sampling_behavior.v3"
                 or sample.get("behavior_admitted") is not True
                 or sample.get("execution_spec_sha256") != execution_spec_sha256
-                or sample.get("cached_params_unchanged") is not True
+                or measured_runtime_safe is not True
+                or sample.get("cached_nonparametric_memory_status")
+                != "disabled_by_policy"
                 or activation.get("schema")
                 != "aura.recurrence_adapter_activation.v1"
                 or activation.get("active") is not True

@@ -34,7 +34,7 @@ from core.learning.recurrence_native_objective_v2 import (
 )
 
 RECURRENT_GRPO_SCHEMA = "aura.recurrent_grpo.v1"
-RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v2"
+RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +171,15 @@ class RecurrentPolicySample:
             ),
             "cached_params_unchanged": self.episode_receipt.get(
                 "params_unchanged"
+            ),
+            "cached_runtime_integrity": dict(
+                self.episode_receipt.get("runtime_integrity", {})
+            ),
+            "cached_nonparametric_memory_status": str(
+                self.episode_receipt.get("nonparametric_memory", {}).get(
+                    "status",
+                    "",
+                )
             ),
             "cached_recurrence_adapter": dict(
                 self.episode_receipt.get("recurrence_adapter", {})
@@ -362,6 +371,7 @@ def sample_recurrent_completion(
         decode_max_tokens=resolved.max_tokens,
         capture_decode_logprobs=True,
         decode_sentence_grace_tokens=0,
+        nonparametric_memory_enabled=False,
     )
     if not result.ok:
         raise RuntimeError(f"cached recurrent sampling failed: {result.reason}")
@@ -401,12 +411,32 @@ def sample_recurrent_completion(
     old_policy_approx_kl = sum(
         (ratio - 1.0) - math.log(ratio) for ratio in ratios
     ) / len(ratios)
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        runtime_integrity_safe,
+    )
+
+    measured_runtime_safe = runtime_integrity_safe(
+        result.receipt.runtime_integrity,
+        require_worker=False,
+        expected_episode_id=result.receipt.episode_id,
+        expected_input_tokens_sha256=result.receipt.input_tokens_sha256,
+        expected_fast_weights_applied=result.receipt.fast_weights_applied,
+        expected_checkpoint_fingerprint=(
+            result.receipt.checkpoint_fingerprint
+        ),
+        expected_checkpoint_method=(
+            result.receipt.checkpoint_fingerprint_method
+        ),
+        expected_checkpoint_file_count=(
+            result.receipt.checkpoint_file_count
+        ),
+    )
     admitted = (
         maximum <= float(resolved.max_abs_logprob_drift)
         and mean <= float(resolved.max_mean_abs_logprob_drift)
         and clipped_fraction <= float(resolved.max_clipped_token_fraction)
         and old_policy_approx_kl <= float(resolved.max_old_policy_approx_kl)
-        and result.receipt.params_unchanged is True
+        and measured_runtime_safe
         and not any(
             flag.startswith("fallback_")
             for flag in result.receipt.honest_flags

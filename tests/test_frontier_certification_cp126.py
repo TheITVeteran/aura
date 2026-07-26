@@ -5,11 +5,22 @@ outcome gap must not be attributable to decoding rather than the treatment.
 """
 from __future__ import annotations
 
+import copy
+
 from core.brain.llm.latent_cortex.frontier_certification import (
     _ARM_GENERATION_PARITY_FIELDS,
     _receipt_integrity_verdict,
     _validate_arm_generation_parity,
     _validate_treatment_receipt,
+)
+from core.brain.llm.latent_cortex.runtime_integrity import (
+    build_fast_weight_cleanup_proof,
+    canonical_sha256,
+)
+from tests.fixtures.rlc_runtime_integrity import (
+    accepted_fast_weight_learning,
+    bound_runtime_integrity,
+    complete_worker_identity,
 )
 
 
@@ -17,19 +28,35 @@ class TestTreatmentIntegrityDigest:
     """6090a5ae + 01e8b3c1: the treatment arm's integrity claims are measured."""
 
     def _receipt(self, **overrides):
+        episode_id = "ep-1"
+        input_sha256 = "9" * 64
+        worker_identity = complete_worker_identity(boot_id="1" * 32)
+        learning = accepted_fast_weight_learning(
+            episode_id=episode_id,
+            input_tokens_sha256=input_sha256,
+        )
         receipt = {
             "params_unchanged": True,
             "latent_opt_applied": True,
             "fast_weights_applied": True,
             "fast_weights_erased": True,
-            "checkpoint_fingerprint": "a" * 64,
+            "checkpoint_fingerprint": "f" * 64,
             "checkpoint_fingerprint_method": "sha256",
-            "checkpoint_file_count": 3,
-            "worker_boot_id": "boot",
+            "checkpoint_file_count": 8,
+            "worker_boot_id": worker_identity["worker_boot_id"],
+            "worker_identity": worker_identity,
             "installed_app_build_sha256": "b" * 64,
-            "episode_id": "ep-1",
+            "episode_id": episode_id,
+            "input_tokens_sha256": input_sha256,
             "schedule_hash": "c" * 64,
             "latent_opt_mode": "gradient",
+            "runtime_integrity": bound_runtime_integrity(
+                episode_id=episode_id,
+                input_tokens_sha256=input_sha256,
+                fast_weights_applied=True,
+                fast_weight_learning=learning,
+                worker_identity=worker_identity,
+            ),
         }
         receipt.update(overrides)
         return receipt
@@ -39,8 +66,8 @@ class TestTreatmentIntegrityDigest:
         gaps: list[str] = []
         _validate_treatment_receipt(
             {"trial_id": "t1", "treatment_receipt": receipt},
-            "a" * 64,
-            "boot",
+            "f" * 64,
+            "1" * 32,
             "b" * 64,
             reasons,
             gaps,
@@ -48,27 +75,56 @@ class TestTreatmentIntegrityDigest:
         return reasons, gaps
 
     def test_refuted_digest_rejects_the_trial(self):
-        receipt = self._receipt(
-            integrity_verdicts={
-                "params_unchanged": {"verdict": "refuted"},
-                "fast_weights_erased": {"verdict": "proven"},
+        receipt = self._receipt()
+        proof = copy.deepcopy(receipt["runtime_integrity"])
+        proof["parameters"]["after"]["sha256"] = "8" * 64
+        proof["parameters"]["unchanged"] = False
+        proof["verdict"]["engine_measurements_complete"] = False
+        proof["verdict"]["safe_to_continue"] = False
+        proof["verdict"]["reasons"] = ["parameter_canary_changed"]
+        proof["receipt_sha256"] = canonical_sha256(
+            {
+                key: value
+                for key, value in proof.items()
+                if key != "receipt_sha256"
             }
         )
+        receipt["runtime_integrity"] = proof
         reasons, _ = self._run(receipt)
         assert any("params_unchanged_refuted_by_digest" in r for r in reasons)
 
     def test_refuted_erasure_rejects_the_trial(self):
-        receipt = self._receipt(
-            integrity_verdicts={
-                "params_unchanged": {"verdict": "proven"},
-                "fast_weights_erased": {"verdict": "refuted"},
-            }
+        receipt = self._receipt()
+        learning = accepted_fast_weight_learning(
+            episode_id=receipt["episode_id"],
+            input_tokens_sha256=receipt["input_tokens_sha256"],
+        )
+        failed_cleanup = build_fast_weight_cleanup_proof(
+            episode_id=receipt["episode_id"],
+            input_tokens_sha256=receipt["input_tokens_sha256"],
+            detached=True,
+            erase_proven=False,
+            lease_released=True,
+            conflicts=0,
+            pre_probe_sha256="7" * 64,
+            post_probe_sha256="8" * 64,
+            layer_ids=["layers.1.o_proj", "layers.2.o_proj"],
+        )
+        receipt["runtime_integrity"] = bound_runtime_integrity(
+            episode_id=receipt["episode_id"],
+            input_tokens_sha256=receipt["input_tokens_sha256"],
+            fast_weights_applied=True,
+            fast_weight_learning=learning,
+            fast_weight_cleanup=failed_cleanup,
+            worker_identity=receipt["worker_identity"],
         )
         reasons, _ = self._run(receipt)
         assert any("fast_weights_erased_refuted_by_digest" in r for r in reasons)
 
     def test_absent_digest_disqualifies_and_is_distinguishable(self):
-        reasons, gaps = self._run(self._receipt())
+        receipt = self._receipt()
+        receipt.pop("runtime_integrity")
+        reasons, gaps = self._run(receipt)
         # A bare boolean is not measured evidence, and the producer
         # (EpisodeReceipt.to_dict) DOES emit the digests — so an absent
         # verdict on a published claim disqualifies the trial...
@@ -78,12 +134,7 @@ class TestTreatmentIntegrityDigest:
         assert not any("refuted_by_digest" in r for r in reasons)
 
     def test_proven_digest_leaves_no_gap(self):
-        receipt = self._receipt(
-            integrity_verdicts={
-                "params_unchanged": {"verdict": "proven"},
-                "fast_weights_erased": {"verdict": "proven"},
-            }
-        )
+        receipt = self._receipt()
         reasons, gaps = self._run(receipt)
         assert gaps == []
         assert not any("refuted_by_digest" in r for r in reasons)

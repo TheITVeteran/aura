@@ -197,6 +197,8 @@ class FastWeightsLifecycle:
     lease_acquired: bool = False
     lease_released: bool = False
     lease_conflicts: int = 0
+    erase_probe_before_sha256: str = ""
+    erase_probe_after_sha256: str = ""
 
     def to_receipt(self) -> dict[str, Any]:
         return {
@@ -229,6 +231,8 @@ class FastWeightsLifecycle:
             "lease_acquired": self.lease_acquired,
             "lease_released": self.lease_released,
             "lease_conflicts": self.lease_conflicts,
+            "erase_probe_before_sha256": self.erase_probe_before_sha256,
+            "erase_probe_after_sha256": self.erase_probe_after_sha256,
         }
 
 
@@ -512,9 +516,13 @@ class EpisodicFastWeights:
         """Assert the model's function is EXACTLY the pre-attach baseline."""
         import mlx.core as mx
 
+        from core.brain.llm.latent_cortex.verified_best import tensor_sha256
+
         if self.handles or not self.lifecycle.erased:
             raise RuntimeError("prove_erase called while fast weights still attached")
         after = probe_fn()
+        self.lifecycle.erase_probe_before_sha256 = tensor_sha256(baseline)
+        self.lifecycle.erase_probe_after_sha256 = tensor_sha256(after)
         proven = self.lifecycle.detach_conflicts == 0 and bool(
             mx.allclose(after, baseline, atol=0.0, rtol=0.0)
         )

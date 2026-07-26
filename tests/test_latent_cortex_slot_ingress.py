@@ -61,7 +61,13 @@ def _typed_memory_item(text="Historical observation: the June restart fixed it."
 
 
 class FakeTokenizer:
+    vocab_size = 128
+    bos_token_id = 1
     eos_token_id = None
+    pad_token_id = 0
+    unk_token_id = 3
+    special_tokens_map = {}
+    chat_template = ""
 
     def encode(self, text, add_special_tokens=False):
         return [(ord(ch) % 96) + 8 for ch in str(text)][:48]
@@ -559,12 +565,22 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         "operation_authority": lease.authority,
         "action_policy_evidence": action_policy,
     }
+    model_root = tmp_path / "synthetic-checkpoint"
+    model_root.mkdir()
+    (model_root / "config.json").write_text(
+        '{"model_type":"qwen2","torch_dtype":"float32"}',
+        encoding="utf-8",
+    )
+    (model_root / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").write_bytes(
+        b"synthetic-checkpoint-identity"
+    )
 
     body = handle_latent_reason(
         job,
         model=tiny_model,
         tokenizer=FakeTokenizer(),
-        model_path="",
+        model_path=str(model_root),
     )
     assert body["status"] == "ok", body
     assert body["receipt"]["runtime_operation_authority"] == lease.authority
@@ -578,7 +594,7 @@ def test_worker_recomputes_and_echoes_runtime_operation_authority(
         tampered,
         model=tiny_model,
         tokenizer=FakeTokenizer(),
-        model_path="",
+        model_path=str(model_root),
     )
     assert rejected["status"] == "error"
     assert "operation authority rejected" in rejected["message"]

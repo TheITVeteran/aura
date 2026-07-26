@@ -2247,6 +2247,7 @@ def _execute_worker(
                 worker_action_capture_identity=(
                     worker_capture_signing_identity.public_identity
                 ),
+                tokenizer=tokenizer,
             )
             worker_identity.update(
                 {

@@ -22,6 +22,7 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     sha256_bytes,
 )
 from core.learning.grpo_training_state import canonical_json_bytes as training_json_bytes
+from tests.fixtures.rlc_runtime_integrity import engine_runtime_integrity
 from tools import prepare_latent_cortex_campaign as preparation
 from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
@@ -152,11 +153,19 @@ def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
         "training": training,
     }
     protocol_bytes = training_json_bytes(protocol)
+    prompt_tokens_sha256 = "6" * 64
     sample = {
-        "schema": "aura.recurrent_sampling_behavior.v2",
+        "schema": "aura.recurrent_sampling_behavior.v3",
         "behavior_admitted": True,
         "execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": prompt_tokens_sha256,
         "cached_params_unchanged": True,
+        "cached_runtime_integrity": engine_runtime_integrity(
+            episode_id="adapter-identity-sample",
+            input_tokens_sha256=prompt_tokens_sha256,
+            checkpoint_required=False,
+        ),
+        "cached_nonparametric_memory_status": "disabled_by_policy",
         "cached_recurrence_adapter": {
             "schema": "aura.recurrence_adapter_activation.v1",
             "active": True,

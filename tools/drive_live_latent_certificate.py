@@ -130,7 +130,42 @@ def _evaluate_live_response(
     )
 
     require("receipt_complete", receipt.get("last_stage") == "complete")
-    require("checkpoint_params_unchanged", receipt.get("params_unchanged") is True)
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        runtime_integrity_safe,
+    )
+
+    worker_identity = receipt.get("worker_identity")
+    require("worker_identity_present", isinstance(worker_identity, dict))
+    require(
+        "measured_runtime_integrity",
+        runtime_integrity_safe(
+            receipt.get("runtime_integrity"),
+            require_worker=True,
+            expected_episode_id=str(receipt.get("episode_id") or ""),
+            expected_input_tokens_sha256=str(
+                receipt.get("input_tokens_sha256") or ""
+            ),
+            expected_worker_identity=(
+                worker_identity if isinstance(worker_identity, dict) else None
+            ),
+            expected_fast_weights_applied=(
+                receipt.get("fast_weights_applied") is True
+            ),
+            expected_checkpoint_fingerprint=str(
+                receipt.get("checkpoint_fingerprint") or ""
+            ),
+            expected_checkpoint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+            expected_checkpoint_file_count=receipt.get(
+                "checkpoint_file_count"
+            ),
+        ),
+    )
+    require(
+        "checkpoint_params_unchanged_telemetry",
+        receipt.get("params_unchanged") is True,
+    )
     require(
         "decode_complete",
         receipt.get("decode_termination")
@@ -158,7 +193,10 @@ def _evaluate_live_response(
         and receipt.get("latent_opt_steps", 0) >= 1,
     )
     require("fast_weights_applied", receipt.get("fast_weights_applied") is True)
-    require("fast_weights_erased", receipt.get("fast_weights_erased") is True)
+    require(
+        "fast_weights_erased_telemetry",
+        receipt.get("fast_weights_erased") is True,
+    )
 
     require("runtime_identity_bound", runtime_identity.get("identity_bound") is True)
     require("signed_app_launch", runtime_identity.get("launch_mode") == "signed_app")

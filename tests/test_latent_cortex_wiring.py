@@ -34,6 +34,11 @@ from core.brain.llm.latent_cortex.worker_handler import (
     handle_latent_reason,
 )
 from core.brain.llm.mlx_client import MLXLocalClient
+from tests.fixtures.rlc_runtime_integrity import (
+    attach_bound_runtime_integrity,
+    complete_worker_identity,
+    engine_runtime_integrity,
+)
 
 
 def _digest(label: str) -> str:
@@ -54,18 +59,7 @@ class _ResidentProcess:
         self.alive = False
 
 
-_WORKER_IDENTITY = {
-    "schema": "aura.latent_cortex.worker_identity.v1",
-    "worker_boot_id": "1" * 32,
-    "worker_pid": 4242,
-    "worker_model_path": "/models/test-32b",
-    "worker_model_parameter_count": 32_000_000_000,
-    "worker_model_stored_parameter_element_count": 5_000_000_000,
-    "worker_model_parameter_count_basis": "architecture_config_logical",
-    "worker_source_sha256": "2" * 64,
-    "worker_affective_steering_active": True,
-    "worker_affective_steering_alpha": 0.30,
-}
+_WORKER_IDENTITY = complete_worker_identity()
 
 _RUNTIME_IDENTITY = {
     "schema": "aura.latent_cortex.runtime_identity.v1",
@@ -85,9 +79,17 @@ def _identity_receipt(**overrides):
     integrity_digest = "e" * 64
     receipt = {
         **_WORKER_IDENTITY,
+        "episode_id": "episode-runtime-integrity",
         "request_payload_sha256": "6" * 64,
         "input_tokens_sha256": "7" * 64,
         "input_token_count": 64,
+        "checkpoint_fingerprint": "f" * 64,
+        "checkpoint_fingerprint_method": "sha256",
+        "checkpoint_file_count": 8,
+        "params_unchanged": True,
+        "fast_weights_applied": False,
+        "fast_weights_erased": None,
+        "worker_identity": dict(_WORKER_IDENTITY),
         "episode_affective_steering_applied": True,
         "episode_affective_steering_alpha": 0.30,
         "runtime_identity": dict(_RUNTIME_IDENTITY),
@@ -113,12 +115,18 @@ def _identity_receipt(**overrides):
         },
     }
     receipt.update(overrides)
-    return receipt
+    worker_identity = receipt.get("worker_identity")
+    if not isinstance(worker_identity, dict):
+        worker_identity = dict(_WORKER_IDENTITY)
+    return attach_bound_runtime_integrity(
+        receipt,
+        worker_identity=worker_identity,
+    )
 
 
 def _identity_receipt_for_request(request, **overrides):
-    receipt = _identity_receipt(
-        request_payload_sha256=latent_request_payload_sha256(
+    values = {
+        "request_payload_sha256": latent_request_payload_sha256(
             prompt=request.get("prompt"),
             messages=request.get("messages"),
             domain=request.get("domain", "general"),
@@ -134,8 +142,28 @@ def _identity_receipt_for_request(request, **overrides):
             verifier_guidance=(True if request.get("verifier_guidance") else None),
             facet_reliability=request.get("facet_reliability"),
         )
+    }
+    values.update(overrides)
+    return _identity_receipt(**values)
+
+
+def _measured_episode_receipt(episode_id: str):
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt
+
+    input_tokens_sha256 = _digest(f"{episode_id}:input")
+    receipt = EpisodeReceipt(
+        episode_id=episode_id,
+        input_tokens_sha256=input_tokens_sha256,
+        checkpoint_fingerprint="f" * 64,
+        checkpoint_fingerprint_method="sha256",
+        checkpoint_file_count=8,
+        params_unchanged=True,
+        fast_weights_applied=False,
     )
-    receipt.update(overrides)
+    receipt.runtime_integrity = engine_runtime_integrity(
+        episode_id=episode_id,
+        input_tokens_sha256=input_tokens_sha256,
+    )
     return receipt
 
 
@@ -1257,7 +1285,7 @@ def test_handler_rejects_external_offer_without_full_authority_tuple(
 
 
 def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
-    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+    from core.brain.llm.latent_cortex.types import LatentReasoningResult
 
     monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
     captured: dict = {}
@@ -1271,7 +1299,9 @@ def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text='FINAL_ANSWER: {"answer":7}',
-                    receipt=EpisodeReceipt(episode_id="response-contract-test"),
+                    receipt=_measured_episode_receipt(
+                        "response-contract-test"
+                    ),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1300,7 +1330,7 @@ def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
 
 def test_handler_authenticates_and_binds_action_intervention(monkeypatch):
     from core.brain.llm.latent_cortex import action_intervention as intervention_mod
-    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+    from core.brain.llm.latent_cortex.types import LatentReasoningResult
     from core.brain.llm.latent_cortex.value_of_computation import (
         build_evidence_snapshot,
     )
@@ -1351,7 +1381,9 @@ def test_handler_authenticates_and_binds_action_intervention(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text="bounded",
-                    receipt=EpisodeReceipt(episode_id="action-intervention-test"),
+                    receipt=_measured_episode_receipt(
+                        "action-intervention-test"
+                    ),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1390,7 +1422,6 @@ def test_handler_authenticates_and_binds_action_intervention(monkeypatch):
 
 def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
     from core.brain.llm.latent_cortex.types import (
-        EpisodeReceipt,
         LatentReasoningResult,
     )
 
@@ -1406,7 +1437,9 @@ def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text="bounded",
-                    receipt=EpisodeReceipt(episode_id="context-compaction-test"),
+                    receipt=_measured_episode_receipt(
+                        "context-compaction-test"
+                    ),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1465,9 +1498,33 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     )
     model = Model(args)
     mx.eval(model.parameters())
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen2",
+                "hidden_size": 64,
+                "intermediate_size": 128,
+                "num_hidden_layers": 8,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "vocab_size": 128,
+                "tie_word_embeddings": False,
+                "quantization": {"bits": 4, "group_size": 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "weights.npz").write_bytes(b"tiny-model-fixture")
 
     class StubTokenizer:
         eos_token_id = 0
+        bos_token_id = 1
+        pad_token_id = 0
+        unk_token_id = 2
+        vocab_size = 128
+        special_tokens_map = {}
+        chat_template = ""
 
         def encode(self, text):
             return [ord(c) % 128 for c in text][:16]
@@ -1491,7 +1548,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
         },
         model=model,
         tokenizer=StubTokenizer(),
-        model_path="",
+        model_path=str(tmp_path),
     )
     assert body["status"] == "ok", body
     assert body["receipt"]["params_unchanged"] is True
@@ -2441,21 +2498,30 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
         # "id" on every response and its receipt carries the worker identity
         # and payload digest, so the fake models that rather than the
         # unbound shape an attacker (or a stale reply) could produce.
+        cancel_worker = complete_worker_identity(
+            boot_id="b" * 32,
+            pid=4242,
+            model_path="/models/test-32b",
+        )
+        cancel_receipt = attach_bound_runtime_integrity(
+            {
+                "episode_id": "cancel-episode",
+                "input_tokens_sha256": "7" * 64,
+                "params_unchanged": True,
+                "fast_weights_applied": False,
+                "fast_weights_erased": None,
+                "last_stage": "prefill",
+                "input_token_count": 4096,
+                "request_payload_sha256": _captured["expected_sha256"],
+                "worker_identity": cancel_worker,
+            },
+            worker_identity=cancel_worker,
+        )
         return {
             "id": client._current_request_id,
             "status": "error",
             "message": "soft_cancelled",
-            "receipt": {
-                "params_unchanged": True,
-                "fast_weights_applied": True,
-                "fast_weights_erased": True,
-                "last_stage": "prefill",
-                "input_token_count": 4096,
-                "request_payload_sha256": _captured["expected_sha256"],
-                "worker_boot_id": "b" * 32,
-                "worker_pid": 4242,
-                "worker_model_path": "/models/test-32b",
-            },
+            "receipt": cancel_receipt,
         }
 
     async def record_reboot(reason, mark_failed=False):
@@ -2463,7 +2529,11 @@ async def test_client_latent_reason_timeout_keeps_clean_cooperatively_cancelled_
 
     monkeypatch.setattr(mlx_client, "_await_shared_future", timeout_then_ack)
     monkeypatch.setattr(client, "reboot_worker", record_reboot)
-    client._worker_identity = {"worker_boot_id": "b" * 32, "worker_pid": 4242}
+    client._worker_identity = complete_worker_identity(
+        boot_id="b" * 32,
+        pid=4242,
+        model_path="/models/test-32b",
+    )
 
     # The client imports this from runtime_identity inside the call, so the
     # patch has to land on the source module.
@@ -2767,10 +2837,13 @@ async def test_client_recycles_worker_on_identity_receipt_mismatch(monkeypatch):
             "id": request["id"],
             "status": "ok",
             "text": "untrusted",
-            "receipt": _identity_receipt_for_request(
-                request,
-                worker_boot_id="9" * 32,
-            ),
+                "receipt": _identity_receipt_for_request(
+                    request,
+                    worker_boot_id="9" * 32,
+                    worker_identity=complete_worker_identity(
+                        boot_id="9" * 32,
+                    ),
+                ),
         },
     )
 
@@ -3190,7 +3263,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_fingerprint": "a" * 64,
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
-                    **_identity_receipt(),
+                    **_identity_receipt(episode_id="abc"),
                     **_branch_isolation_fields(kwargs["config"]),
                         **_recurrent_grounding_fields(
                             kwargs["config"],
@@ -3436,7 +3509,7 @@ def test_service_reconstructs_and_rejects_kv_state_tree_tampering():
     config = {"n_slots": 8, "n_branches": 2}
     receipt = {
         "episode_id": "ep-kv-tree",
-        **_identity_receipt(),
+        **_identity_receipt(episode_id="ep-kv-tree"),
         **_kv_state_tree_fields(
             config,
             episode_id="ep-kv-tree",
@@ -3653,7 +3726,7 @@ def test_service_reconstructs_transient_constraints_and_rejects_rehashed_scope_l
 
     config = {"n_slots": 8, "n_branches": 2}
     receipt = {
-        **_identity_receipt(),
+        **_identity_receipt(episode_id="ep-transient"),
         "episode_id": "ep-transient",
         "n_slots": 8,
         "n_branches": 2,
@@ -3683,7 +3756,7 @@ def test_service_reconstructs_virtual_quanta_and_rejects_rehashed_scope_lie():
 
     config = {"n_slots": 8, "n_branches": 2}
     receipt = {
-        **_identity_receipt(),
+        **_identity_receipt(episode_id="ep-virtual-quanta"),
         "episode_id": "ep-virtual-quanta",
         "n_slots": 8,
         "n_branches": 2,
@@ -4289,7 +4362,6 @@ def test_service_name_registered_in_spine():
 
 def test_handler_builds_task_verifier_when_guided(monkeypatch):
     from core.brain.llm.latent_cortex.types import (
-        EpisodeReceipt,
         LatentReasoningResult,
     )
 
@@ -4307,7 +4379,7 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text="ok",
-                receipt=EpisodeReceipt(episode_id="task-verifier-test"),
+                receipt=_measured_episode_receipt("task-verifier-test"),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -4365,7 +4437,6 @@ def test_worker_handler_capture_lane_exits_before_action_and_returns_public_rece
     import core.brain.llm.latent_cortex.runtime_identity as identity_mod
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
     from core.brain.llm.latent_cortex.types import (
-        EpisodeReceipt,
         LatentReasoningResult,
     )
 
@@ -4446,9 +4517,8 @@ def test_worker_handler_capture_lane_exits_before_action_and_returns_public_rece
             return LatentReasoningResult(
                 ok=True,
                 text="",
-                    receipt=EpisodeReceipt(
-                        episode_id="action-state-capture-test",
-                        params_unchanged=True,
+                    receipt=_measured_episode_receipt(
+                        "action-state-capture-test"
                     ),
                 reason="action_state_captured",
             )
@@ -4578,7 +4648,7 @@ def _full_success_stub_client(captured):
                     "checkpoint_fingerprint": "a" * 64,
                     "checkpoint_fingerprint_method": "sha256",
                     "checkpoint_file_count": 8,
-                    **_identity_receipt(),
+                    **_identity_receipt(episode_id="ep-gwt"),
                     **_branch_isolation_fields(kwargs["config"]),
                     **_recurrent_grounding_fields(
                         kwargs["config"],

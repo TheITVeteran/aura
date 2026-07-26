@@ -11,11 +11,12 @@ The whole project's honesty rests on one sentence from the spec:
   by (path, size, mtime) so the 20GB resident model is hashed once per boot,
   not per episode. When full hashing is too costly mid-flight, a structural
   fingerprint (sizes + boundary chunks) is used and the receipt SAYS SO.
-- **Parameter fingerprint** — a deterministic sample of
-  live tensors hashed pre- and post-episode. Fast weights wrap modules without
-  touching base tensors, so detected drift means something illegitimately
-  wrote to W₀. This is an online corruption sentinel, not a full proof that
-  every unsampled element remained unchanged.
+- **Parameter canary** — a fixed leading/middle/trailing sample of a declared
+  stride over the live parameter tree, measured pre/post.
+- **Adapted-layer identity** — every permanent parameter byte in every layer
+  temporary fast weights can touch, measured pre/post.
+- **Serving-stack identity** — tokenizer artifacts/runtime tokenizer,
+  adapter order and bytes, and quantization configuration, measured pre/post.
 """
 from __future__ import annotations
 
@@ -105,52 +106,192 @@ def parameter_fingerprint(model) -> str:
     """Deterministic digest over a stride-sample of live parameter tensors.
 
     Iterates the flattened parameter tree in sorted-name order, takes every
-    Nth leaf, and hashes the first K elements' bytes. Wrappers (fast weights)
-    live OUTSIDE the parameter tree, so this sees only permanent tensors.
+    Nth leaf, and hashes fixed leading/middle/trailing elements. Wrappers
+    (fast weights) live outside the permanent parameter tree.
     """
-    import mlx.core as mx
-    from mlx.utils import tree_flatten
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        parameter_canary_fingerprint,
+    )
 
-    leaves = sorted(tree_flatten(model.parameters()), key=lambda kv: kv[0])
-    digest = hashlib.sha256()
-    for name, tensor in leaves[::_PARAM_SAMPLE_STRIDE]:
-        head = mx.reshape(tensor, (-1,))[:_PARAM_SAMPLE_ELEMENTS]
-        mx.eval(head)
-        digest.update(name.encode())
-        digest.update(memoryview(head))
-    return digest.hexdigest()[:32]
+    return parameter_canary_fingerprint(
+        model,
+        stride=_PARAM_SAMPLE_STRIDE,
+        elements_per_tensor=_PARAM_SAMPLE_ELEMENTS,
+    )["sha256"]
 
 
 class CheckpointInvariant:
     """Pre/post-episode proof that the permanent cortex never changed."""
 
-    def __init__(self, model, model_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        model,
+        model_path: str | Path | None = None,
+        *,
+        tokenizer: Any = None,
+        adapted_layer_indices: tuple[int, ...] = (),
+        adapted_target: str = "o_proj",
+    ) -> None:
         self._model = model
         self._model_path = str(model_path) if model_path else ""
+        self._tokenizer = tokenizer
+        self._adapted_layer_indices = adapted_layer_indices
+        self._adapted_target = adapted_target
         self._pre_params = ""
+        self._pre_parameter_measurement: dict[str, Any] = {}
+        self._post_parameter_measurement: dict[str, Any] = {}
+        self._pre_adapted_layers: dict[str, Any] = {}
+        self._post_adapted_layers: dict[str, Any] = {}
+        self._pre_serving_stack: dict[str, Any] = {}
+        self._post_serving_stack: dict[str, Any] = {}
         self.file_receipt: dict[str, Any] = {}
+        self.runtime_receipt: dict[str, Any] = {}
 
     def pre_episode(self) -> None:
         started = time.monotonic()
         if self._model_path:
             self.file_receipt = checkpoint_file_fingerprint(self._model_path)
-        self._pre_params = parameter_fingerprint(self._model)
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            adapted_layer_fingerprint,
+            parameter_canary_fingerprint,
+            serving_stack_measurement,
+        )
+
+        self._pre_parameter_measurement = parameter_canary_fingerprint(
+            self._model,
+            stride=_PARAM_SAMPLE_STRIDE,
+            elements_per_tensor=_PARAM_SAMPLE_ELEMENTS,
+        )
+        self._pre_params = self._pre_parameter_measurement["sha256"]
+        self._pre_adapted_layers = adapted_layer_fingerprint(
+            self._model,
+            layer_indices=self._adapted_layer_indices,
+            target=self._adapted_target,
+        )
+        self._pre_serving_stack = serving_stack_measurement(
+            self._model,
+            self._tokenizer,
+            self._model_path,
+        )
         logger.debug(
             "Checkpoint invariant armed in %.2fs (%s)",
             time.monotonic() - started,
             self.file_receipt.get("method", "params-only"),
         )
 
-    def post_episode(self) -> bool:
-        post = parameter_fingerprint(self._model)
+    def post_episode(self, receipt: Any | None = None) -> bool:
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            adapted_layer_fingerprint,
+            build_engine_runtime_integrity,
+            parameter_canary_fingerprint,
+            serving_stack_measurement,
+        )
+
+        self._post_parameter_measurement = parameter_canary_fingerprint(
+            self._model,
+            stride=_PARAM_SAMPLE_STRIDE,
+            elements_per_tensor=_PARAM_SAMPLE_ELEMENTS,
+        )
+        post = self._post_parameter_measurement["sha256"]
+        self._post_adapted_layers = adapted_layer_fingerprint(
+            self._model,
+            layer_indices=self._adapted_layer_indices,
+            target=self._adapted_target,
+        )
+        self._post_serving_stack = serving_stack_measurement(
+            self._model,
+            self._tokenizer,
+            self._model_path,
+        )
         unchanged = post == self._pre_params
+        if receipt is not None:
+            self.runtime_receipt = build_engine_runtime_integrity(
+                episode_id=str(getattr(receipt, "episode_id", "") or ""),
+                input_tokens_sha256=str(
+                    getattr(receipt, "input_tokens_sha256", "") or ""
+                ),
+                checkpoint={
+                    **self.file_receipt,
+                    "required": bool(self._model_path),
+                },
+                parameters_before=self._pre_parameter_measurement,
+                parameters_after=self._post_parameter_measurement,
+                adapted_layers_before=self._pre_adapted_layers,
+                adapted_layers_after=self._post_adapted_layers,
+                serving_stack_before=self._pre_serving_stack,
+                serving_stack_after=self._post_serving_stack,
+                fast_weights_applied=(
+                    getattr(receipt, "fast_weights_applied", False) is True
+                ),
+                fast_weight_learning=getattr(
+                    receipt,
+                    "fast_weight_learning",
+                    {},
+                ),
+                fast_weight_cleanup=getattr(
+                    receipt,
+                    "fast_weight_cleanup",
+                    {},
+                ),
+                probe_cache=getattr(receipt, "probe_cache", {}),
+            )
+            receipt.runtime_integrity = dict(self.runtime_receipt)
+            from core.brain.llm.latent_cortex.types import (
+                WeightIntegrityProof,
+            )
+
+            erase = self.runtime_receipt["fast_weight_erase"]
+            canary_before = (
+                erase["pre_probe_sha256"]
+                if erase["required"]
+                else self._pre_adapted_layers["sha256"]
+            )
+            canary_after = (
+                erase["post_probe_sha256"]
+                if erase["required"]
+                else self._post_adapted_layers["sha256"]
+            )
+            receipt.weight_integrity = WeightIntegrityProof(
+                algorithm="sha256",
+                version=2,
+                params_before=self._pre_params,
+                params_after=post,
+                canary_before=canary_before,
+                canary_after=canary_after,
+                erased_layer_ids=list(erase["layer_ids"]),
+                unavailable_reason=(
+                    ""
+                    if self.runtime_receipt["verdict"][
+                        "engine_measurements_complete"
+                    ]
+                    else ",".join(
+                        self.runtime_receipt["verdict"]["reasons"]
+                    )
+                ),
+            )
+            # Direct engine callers consume this compatibility return. It
+            # must reflect the complete measured engine state, not only the
+            # sampled parameter canary.
+            unchanged = bool(
+                self.runtime_receipt["verdict"][
+                    "engine_measurements_complete"
+                ]
+            )
         if not unchanged:
+            reasons = self.runtime_receipt.get("verdict", {}).get(
+                "reasons",
+                [],
+            )
             record_degradation(
                 "latent_cortex",
                 RuntimeError(
-                    "permanent parameter fingerprint changed across a latent episode"
+                    "runtime integrity changed across a latent episode"
+                    + (f":{','.join(reasons)}" if reasons else "")
                 ),
-                action="flagged episode output as untrusted (checkpoint invariant violated)",
+                action=(
+                    "refused output because checkpoint, serving stack, cache, "
+                    "or temporary-weight cleanup was not intact"
+                ),
                 severity="critical",
             )
         return unchanged
@@ -158,6 +299,7 @@ class CheckpointInvariant:
     def to_receipt(self) -> dict[str, Any]:
         receipt = dict(self.file_receipt)
         receipt["param_fingerprint"] = self._pre_params
+        receipt["runtime_integrity"] = dict(self.runtime_receipt)
         return receipt
 
 

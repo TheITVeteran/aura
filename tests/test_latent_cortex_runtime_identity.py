@@ -7,6 +7,7 @@ from core.brain.llm.latent_cortex import runtime_identity
 from core.brain.llm.latent_cortex.worker_capture_identity import (
     build_worker_capture_identity,
 )
+from tests.fixtures.rlc_runtime_integrity import complete_serving_stack
 
 
 def _source_identity():
@@ -38,6 +39,7 @@ def _worker_identity():
         "worker_affective_steering_active": True,
         "worker_affective_steering_alpha": 0.30,
         "worker_action_capture_identity": capture_identity.public_identity,
+        **complete_serving_stack(),
     }
 
 
@@ -114,6 +116,25 @@ def test_worker_identity_accepts_production_steering_coefficient():
     identity["worker_affective_steering_alpha"] = 5.525
 
     assert runtime_identity.worker_identity_errors(identity) == []
+
+
+def test_lora_identity_hashes_adapter_owned_tensors_not_wrapped_base():
+    import mlx.core as mx
+    from mlx_lm.tuner.lora import LoRALinear
+
+    adapter = LoRALinear(16, 8, r=2)
+    first, scope = runtime_identity._module_parameter_identity(adapter)
+    assert scope == "adapter_owned_excluding_wrapped_base_v1"
+
+    adapter.linear.weight = adapter.linear.weight + 1.0
+    mx.eval(adapter.linear.weight)
+    base_changed, _ = runtime_identity._module_parameter_identity(adapter)
+    assert base_changed == first
+
+    adapter.lora_a = adapter.lora_a + 1.0
+    mx.eval(adapter.lora_a)
+    adapter_changed, _ = runtime_identity._module_parameter_identity(adapter)
+    assert adapter_changed != first
 
 
 def test_worker_identity_rejects_parameter_count_basis_contradictions():

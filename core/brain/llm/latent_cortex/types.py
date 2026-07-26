@@ -1207,6 +1207,10 @@ class EpisodeReceipt:
     worker_source_sha256: str = ""
     worker_affective_steering_active: bool = False
     worker_affective_steering_alpha: float = 0.0
+    # Exact worker boot/model/serving-stack identity. The flattened fields
+    # above remain compatibility telemetry; this object is what SPARK-056
+    # binds into the measured runtime-integrity proof.
+    worker_identity: dict[str, Any] = field(default_factory=dict)
     episode_affective_steering_applied: bool = False
     episode_affective_steering_alpha: float = 0.0
     request_payload_sha256: str = ""
@@ -1244,6 +1248,9 @@ class EpisodeReceipt:
     fast_weights_erased: bool | None = None
     # Digest evidence backing the two booleans above.
     weight_integrity: WeightIntegrityProof = field(default_factory=WeightIntegrityProof)
+    # Unified measured proof over checkpoint, permanent canaries, exact
+    # adapted layers, serving stack, fast-weight erase, caches, and worker.
+    runtime_integrity: dict[str, Any] = field(default_factory=dict)
     # Topology actually used.
     n_layers: int = 0
     prelude_end: int = 0
@@ -1365,6 +1372,10 @@ class EpisodeReceipt:
     # and exact cleanup. Public commitments only; no latent values or evidence
     # text are copied into the receipt.
     fast_weight_learning: dict[str, Any] = field(default_factory=dict)
+    # Cleanup is a separate transaction proof so optimizer/attach failures do
+    # not discard the measured erase evidence needed to decide whether the
+    # resident worker may safely continue or run a vanilla fallback.
+    fast_weight_cleanup: dict[str, Any] = field(default_factory=dict)
     # Decode completeness. Contract-required tasks separately receipt whether
     # generated text actually satisfied the terminal answer contract.
     decode_requested_tokens: int = 0
@@ -1523,8 +1534,46 @@ class EpisodeReceipt:
             return "proven" if proven else "refuted"
 
         proof = self.weight_integrity
-        params_verdict = _verdict(proof.params_unchanged_proven)
-        erased_verdict = _verdict(proof.fast_weights_erased_proven)
+        params_proven = proof.params_unchanged_proven
+        erased_proven = proof.fast_weights_erased_proven
+        runtime_reason = ""
+        if self.runtime_integrity:
+            try:
+                from core.brain.llm.latent_cortex.runtime_integrity import (
+                    validate_runtime_integrity_receipt,
+                )
+
+                runtime = validate_runtime_integrity_receipt(
+                    self.runtime_integrity,
+                    require_worker=False,
+                    expected_episode_id=self.episode_id,
+                    expected_input_tokens_sha256=self.input_tokens_sha256,
+                    expected_fast_weights_applied=self.fast_weights_applied,
+                    expected_checkpoint_fingerprint=(
+                        self.checkpoint_fingerprint
+                    ),
+                    expected_checkpoint_method=(
+                        self.checkpoint_fingerprint_method
+                    ),
+                    expected_checkpoint_file_count=(
+                        self.checkpoint_file_count
+                    ),
+                )
+                params_proven = bool(
+                    runtime["parameters"]["unchanged"]
+                    and runtime["adapted_layers"]["unchanged"]
+                    and runtime["serving_stack"]["unchanged"]
+                )
+                erased_proven = bool(
+                    runtime["fast_weight_erase"]["exact"]
+                    and runtime["cache"]["safe"]
+                )
+            except (ImportError, TypeError, ValueError) as exc:
+                params_proven = None
+                erased_proven = None
+                runtime_reason = f"runtime_integrity_invalid:{type(exc).__name__}"
+        params_verdict = _verdict(params_proven)
+        erased_verdict = _verdict(erased_proven)
         verdicts = {
             "params_unchanged": {
                 "verdict": params_verdict,
@@ -1536,7 +1585,7 @@ class EpisodeReceipt:
             },
             "algorithm": proof.algorithm,
             "version": proof.version,
-            "unavailable_reason": proof.unavailable_reason,
+            "unavailable_reason": runtime_reason or proof.unavailable_reason,
         }
         # A claim contradicted by its own evidence is the case worth
         # shouting about, so it is named rather than left to be inferred by
@@ -1580,6 +1629,7 @@ class EpisodeReceipt:
             "worker_source_sha256": self.worker_source_sha256,
             "worker_affective_steering_active": self.worker_affective_steering_active,
             "worker_affective_steering_alpha": self.worker_affective_steering_alpha,
+            "worker_identity": dict(self.worker_identity),
             "episode_affective_steering_applied": self.episode_affective_steering_applied,
             "episode_affective_steering_alpha": self.episode_affective_steering_alpha,
             "request_payload_sha256": self.request_payload_sha256,
@@ -1595,6 +1645,7 @@ class EpisodeReceipt:
             "params_unchanged": self.params_unchanged,
             "fast_weights_erased": self.fast_weights_erased,
             "weight_integrity": self.weight_integrity.to_dict(),
+            "runtime_integrity": dict(self.runtime_integrity),
             "integrity_verdicts": self.integrity_verdicts(),
             "n_layers": self.n_layers,
             "prelude_end": self.prelude_end,
@@ -1653,6 +1704,7 @@ class EpisodeReceipt:
             "fast_weight_canaries": dict(self.fast_weight_canaries),
             "fast_weight_verifier": dict(self.fast_weight_verifier),
             "fast_weight_learning": dict(self.fast_weight_learning),
+            "fast_weight_cleanup": dict(self.fast_weight_cleanup),
             "decode_requested_tokens": self.decode_requested_tokens,
             "decode_generated_tokens": self.decode_generated_tokens,
             "decode_termination": self.decode_termination,

@@ -424,6 +424,9 @@ def empty_learning_state(
             "erase_proven": None,
             "lease_released": False,
             "conflicts": 0,
+            "pre_probe_sha256": "",
+            "post_probe_sha256": "",
+            "erased_layer_ids": [],
         },
         "disposition": "not_admitted_high_confidence_evidence_absent",
     }
@@ -504,7 +507,8 @@ def validate_fast_weight_learning_receipt(
     }:
         raise ValueError("fast-weight final-answer binding is invalid")
     if not isinstance(cleanup, Mapping) or set(cleanup) != {
-        "required", "detached", "erase_proven", "lease_released", "conflicts"
+        "required", "detached", "erase_proven", "lease_released", "conflicts",
+        "pre_probe_sha256", "post_probe_sha256", "erased_layer_ids",
     }:
         raise ValueError("fast-weight cleanup receipt is invalid")
     if (
@@ -520,6 +524,11 @@ def validate_fast_weight_learning_receipt(
         or type(cleanup["required"]) is not bool
         or type(cleanup["detached"]) is not bool
         or type(cleanup["lease_released"]) is not bool
+        or not isinstance(cleanup["erased_layer_ids"], list)
+        or any(
+            not isinstance(item, str) or not item
+            for item in cleanup["erased_layer_ids"]
+        )
         or (
             cleanup["erase_proven"] is not None
             and type(cleanup["erase_proven"]) is not bool
@@ -639,6 +648,9 @@ def validate_fast_weight_learning_receipt(
             or cleanup["erase_proven"] is not None
             or cleanup["lease_released"]
             or cleanup["conflicts"]
+            or cleanup["pre_probe_sha256"]
+            or cleanup["post_probe_sha256"]
+            or cleanup["erased_layer_ids"]
         ):
             raise ValueError("non-admitted fast-weight learning performed adaptation")
     else:
@@ -658,6 +670,10 @@ def validate_fast_weight_learning_receipt(
             or cleanup["erase_proven"] is not True
             or cleanup["lease_released"] is not True
             or cleanup["conflicts"] != 0
+            or not _is_sha256(cleanup["pre_probe_sha256"])
+            or cleanup["pre_probe_sha256"]
+            != cleanup["post_probe_sha256"]
+            or not cleanup["erased_layer_ids"]
         ):
             raise ValueError("admitted fast-weight lifecycle proof is incomplete")
         if optimization["optimizer"] != "rms_normalized_sgd_backtracking_v1":

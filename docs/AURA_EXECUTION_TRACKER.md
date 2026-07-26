@@ -29197,3 +29197,63 @@ production. SPARK-051 remains separately open for answer-channel remediation,
 admitted resident training, and powered equal-compute reasoning/frontier
 evidence. Final multi-hour soaks remain deferred until all shorter gates are
 green.
+
+## Checkpoint 2026-07-26-392: Measured Runtime Integrity
+
+SPARK-056 is complete. A latent episode now produces one schema-exact,
+independently reconstructable integrity receipt over checkpoint provenance,
+fixed permanent-parameter canaries, exact permanent bytes in every adapted
+layer, tokenizer artifacts and runtime tokenizer, adapter order and
+adapter-owned bytes, quantization, cache invalidation, and exact resident
+worker identity. The engine measures pre/post state, the worker binds those
+measurements to its boot/process/model/source/serving identity, and the client
+rechecks that identity before treating a cancellation, successful result, or
+worker reuse as safe.
+
+Fast-weight cleanup is a separate episode/input/layer-bound transaction proof,
+so attach, optimization, cancellation, or answer-path failure cannot discard
+the evidence needed to decide whether vanilla fallback and resident-worker
+reuse are safe. Exact probe restoration, detach, lease release, conflict
+counts, and cache invalidation reconstruct from committed measurements.
+Malformed, missing, substituted, mismatched, out-of-scope, or internally
+rehashed cleanup evidence remains an explicit negative result and forces
+failure or worker recycle. A successful hot expert-adapter swap refreshes the
+measured adapter identity and permits only that exact identity transition;
+an unprovable swap or rollback recycles the worker.
+
+Certification, the live service, causal receipts, recurrent-GRPO sampling, and
+worker/client lifecycle decisions now consume the measured proof rather than
+the legacy `params_unchanged` and `fast_weights_erased` booleans. Proof-grade
+GRPO explicitly disables mutable one-shot nonparametric memory, preventing an
+undeclared datastore from entering the treatment arm.
+
+Adversarial validation found and repaired two production paths beyond the
+initial implementation. Failed-but-clean fast-weight episodes previously lost
+their cleanup evidence before fallback, and a branch with no transition
+evidence used negative infinity as its score, making a canonical causal receipt
+order-dependently unserializable. Cleanup evidence now survives every attempted
+transaction, specific failure reasons are preserved, and unscored branches use
+a finite ineligible floor.
+
+The final broad latent/RLC/frontier/causal gate passes 1702/1702 with two
+intentional deselections. The separately isolated exact action-calibration
+certificate passes 14/14 in 931.37 seconds. Focused core and MLX/worker
+boundaries pass 232/232 and 124/124, and the neural-uncertainty path passes
+13/13 under three additional randomized seeds. Strict Ruff, bytecode
+compilation, and diff hygiene pass.
+
+The enterprise ratchet remains honestly non-green, but a detached CP391
+comparison produced exactly the same counts as CP392: nine inherited baseline
+regressions, including `placeholder_stub_mock` 19 > 13 and actual
+high/critical findings 45 > 39. CP392 adds no finding and does not raise a
+baseline.
+
+Counting CP392 makes the total checkpoint record 634. The 640-920 forecast
+remains, leaving approximately 6-286 records. Checkpoint-count completion is
+approximately 68.9%-99.1%, with a midpoint planning estimate of 81.3%.
+
+SPARK-056 proves measured runtime integrity and worker-reuse authority, not a
+reasoning or frontier gain. Next is SPARK-057's recalibrated test-time trainer.
+SPARK-051 remains separately open for answer-channel remediation, admitted
+resident training, and powered equal-compute reasoning/frontier evidence.
+Final multi-hour soaks remain deferred until all shorter gates are green.

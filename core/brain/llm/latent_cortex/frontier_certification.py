@@ -425,30 +425,40 @@ _CONTROL_DECODE_PARAMETERS: tuple[str, ...] = (
 
 
 def _receipt_integrity_verdict(receipt: Any, claim: str) -> str:
-    """Verdict from the receipt's digest evidence; "unproven" when absent."""
+    """Verdict reconstructed from the complete worker-bound measurements."""
     if not isinstance(receipt, dict):
         return "unproven"
-    verdicts = receipt.get("integrity_verdicts")
-    if isinstance(verdicts, dict):
-        entry = verdicts.get(claim)
-        if isinstance(entry, dict):
-            verdict = str(entry.get("verdict") or "")
-            if verdict in {"proven", "refuted", "unproven"}:
-                return verdict
     try:
-        from core.brain.llm.latent_cortex.types import WeightIntegrityProof
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            runtime_integrity_claim_verdict,
+        )
 
-        proof = WeightIntegrityProof.from_dict(receipt.get("weight_integrity"))
-    except (ImportError, AttributeError, TypeError, ValueError):
+        worker_identity = receipt.get("worker_identity")
+        if not isinstance(worker_identity, dict):
+            return "unproven"
+        return runtime_integrity_claim_verdict(
+            receipt.get("runtime_integrity"),
+            claim,
+            expected_episode_id=str(receipt.get("episode_id") or ""),
+            expected_input_tokens_sha256=str(
+                receipt.get("input_tokens_sha256") or ""
+            ),
+            expected_worker_identity=worker_identity,
+            expected_fast_weights_applied=(
+                receipt.get("fast_weights_applied") is True
+            ),
+            expected_checkpoint_fingerprint=str(
+                receipt.get("checkpoint_fingerprint") or ""
+            ),
+            expected_checkpoint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+            expected_checkpoint_file_count=receipt.get(
+                "checkpoint_file_count"
+            ),
+        )
+    except (ImportError, TypeError, ValueError):
         return "unproven"
-    proven = (
-        proof.params_unchanged_proven
-        if claim == "params_unchanged"
-        else proof.fast_weights_erased_proven
-    )
-    if proven is None:
-        return "unproven"
-    return "proven" if proven else "refuted"
 
 
 #: Everything that can make two arms decode differently. CP126 8a56c486: the

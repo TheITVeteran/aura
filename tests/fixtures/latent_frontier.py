@@ -28,6 +28,11 @@ from core.brain.llm.latent_cortex.resource_accounting import (
     ResourceLedger,
     build_information_receipt,
 )
+from tests.fixtures.rlc_runtime_integrity import (
+    accepted_fast_weight_learning,
+    attach_bound_runtime_integrity,
+    complete_worker_identity,
+)
 
 _VERIFIER_KEY = Ed25519PrivateKey.generate()
 _TASK_ISSUER_KEY = Ed25519PrivateKey.generate()
@@ -340,7 +345,7 @@ def _bundle(
                         "checkpoint_fingerprint": checkpoint,
                         "checkpoint_fingerprint_method": "sha256",
                         "checkpoint_file_count": 8,
-                        "worker_boot_id": "boot-live-1",
+                        "worker_boot_id": "b" * 32,
                         "installed_app_build_sha256": app_build,
                         "schedule_hash": "3" * 64,
                         "params_unchanged": True,
@@ -415,7 +420,7 @@ def _bundle(
                             "checkpoint_fingerprint": checkpoint,
                             "checkpoint_fingerprint_method": "sha256",
                             "checkpoint_file_count": 8,
-                            "worker_boot_id": "boot-live-1",
+                            "worker_boot_id": "b" * 32,
                             "installed_app_build_sha256": app_build,
                             # CP126 869a0ce4: a control is vanilla only when
                             # every enhancement is positively declared OFF.
@@ -425,6 +430,33 @@ def _bundle(
                     ),
                 }
             )
+            worker_identity = complete_worker_identity(
+                boot_id="b" * 32,
+                pid=4242,
+                model_path="/models/frontier-fixture",
+            )
+            treatment = trials[-1]["treatment_receipt"]
+            treatment["input_tokens_sha256"] = task_payload_sha256
+            treatment["worker_identity"] = worker_identity
+            treatment["fast_weight_learning"] = (
+                accepted_fast_weight_learning(
+                    episode_id=treatment["episode_id"],
+                    input_tokens_sha256=task_payload_sha256,
+                )
+            )
+            attach_bound_runtime_integrity(
+                treatment,
+                worker_identity=worker_identity,
+            )
+            if not external:
+                control = trials[-1]["control_receipt"]
+                control["episode_id"] = f"control-episode-{trial_id}"
+                control["input_tokens_sha256"] = task_payload_sha256
+                control["worker_identity"] = worker_identity
+                attach_bound_runtime_integrity(
+                    control,
+                    worker_identity=worker_identity,
+                )
             index += 1
     bundle = {
         "schema": SCHEMA,
@@ -446,7 +478,7 @@ def _bundle(
             "checkpoint_fingerprint": checkpoint,
             "checkpoint_fingerprint_method": "sha256",
             "checkpoint_file_count": 8,
-            "worker_boot_id": "boot-live-1",
+            "worker_boot_id": "b" * 32,
             "loaded_in_installed_app": True,
             "installed_app_bundle_id": "com.aura.desktop",
             "installed_app_build_sha256": app_build,

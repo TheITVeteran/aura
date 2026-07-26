@@ -574,6 +574,7 @@ def handle_latent_reason(
             worker_action_capture_identity=(
                 worker_capture_signing_identity.public_identity
             ),
+            tokenizer=tokenizer,
         )
     action_state_runtime = None
     action_state_store = None
@@ -1054,6 +1055,7 @@ def handle_latent_reason(
         worker_identity.get("worker_model_parameter_count_basis") or ""
     )
     receipt.worker_source_sha256 = str(worker_identity.get("worker_source_sha256") or "")
+    receipt.worker_identity = dict(worker_identity)
     receipt.worker_affective_steering_active = bool(
         worker_identity.get("worker_affective_steering_active", False)
     )
@@ -1091,9 +1093,47 @@ def handle_latent_reason(
         verifier_guidance=True if job.get("verifier_guidance") else None,
         facet_reliability=job.get("facet_reliability"),
     )
-    # The engine can only emit an honest partial envelope. Rebind it after
-    # worker and request identity are known; the client performs the final
-    # reconstruction after capturing runtime/app provenance.
+    # The engine measures model state but cannot identify the worker process.
+    # Bind those measurements to this exact boot and serving stack before any
+    # caller is allowed to keep the resident worker alive.
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        bind_worker_runtime_integrity,
+        runtime_integrity_safe,
+    )
+
+    try:
+        receipt.runtime_integrity = bind_worker_runtime_integrity(
+            receipt.runtime_integrity,
+            worker_identity=worker_identity,
+        )
+    except (ImportError, TypeError, ValueError) as exc:
+        receipt.flag(f"runtime_integrity_binding_failed:{type(exc).__name__}")
+        result.ok = False
+        result.text = ""
+        result.tokens = []
+        result.reason = f"runtime integrity could not be proven: {exc}"
+
+    integrity_safe = runtime_integrity_safe(
+        receipt.runtime_integrity,
+        require_worker=True,
+        expected_episode_id=receipt.episode_id,
+        expected_input_tokens_sha256=receipt.input_tokens_sha256,
+        expected_worker_identity=worker_identity,
+        expected_fast_weights_applied=receipt.fast_weights_applied,
+        expected_checkpoint_fingerprint=receipt.checkpoint_fingerprint,
+        expected_checkpoint_method=receipt.checkpoint_fingerprint_method,
+        expected_checkpoint_file_count=receipt.checkpoint_file_count,
+    )
+    if not integrity_safe:
+        receipt.flag("runtime_integrity_unproven")
+        result.ok = False
+        result.text = ""
+        result.tokens = []
+        result.reason = result.reason or "runtime integrity is unproven"
+
+    # The client performs the final causal-envelope reconstruction after it
+    # captures runtime/app provenance, but the worker boundary itself must
+    # already be complete and independently reconstructable.
     from core.brain.llm.latent_cortex.causal_receipt import build_causal_receipt
 
     receipt.causal_receipt = build_causal_receipt(receipt.to_dict())
@@ -1110,25 +1150,16 @@ def handle_latent_reason(
         )
     if not result.ok:
         body["message"] = result.reason
-    # An unproven fast-weight erase means prompt caches computed before the
-    # episode can no longer be trusted — the caller must clear them.
-    body["requires_cache_clear"] = (
-        result.receipt.fast_weights_applied and result.receipt.fast_weights_erased is not True
+    # Compatibility booleans remain telemetry only. The measured, worker-bound
+    # proof is the sole authority for cache retention and process reuse.
+    body["requires_cache_clear"] = bool(
+        result.receipt.fast_weights_applied and not integrity_safe
     )
-    # MISSING PROOF IS NOT PROOF OF SAFETY. This tested `is False` only, so a
-    # parameter check that FAILED to run — or was skipped entirely — left
-    # params_unchanged as None and the worker kept serving with weights whose
-    # integrity had never been established. The absent case is exactly when a
-    # recycle matters most: it is the case where nothing can vouch for the
-    # resident parameters. Only an explicit True (the check ran and the
-    # parameters were unchanged) avoids the recycle.
-    body["requires_worker_recycle"] = result.receipt.params_unchanged is not True or (
-        result.receipt.fast_weights_applied and result.receipt.fast_weights_erased is not True
-    )
-    if result.receipt.params_unchanged is None:
+    body["requires_worker_recycle"] = not integrity_safe
+    if not integrity_safe:
         logger.warning(
-            "Latent episode returned no parameter-integrity proof; recycling the "
-            "worker rather than trusting unverified resident weights."
+            "Latent episode returned no complete worker-bound runtime-integrity "
+            "proof; recycling rather than trusting unverified resident state."
         )
     if action_state_runtime is not None:
         from core.brain.llm.latent_cortex.action_state_runtime import (

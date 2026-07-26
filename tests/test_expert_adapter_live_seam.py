@@ -7,9 +7,6 @@ async residency honesty → router hook safety.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-
 import pytest
 
 from core.brain.expert_lora_library import (
@@ -96,7 +93,7 @@ def test_worker_dispatch_handles_set_expert_adapter():
     # KV caches must be invalidated on weight change (CP126: invalidation is
     # now proven-or-fatal, validation precedes mutation, and a failed attach
     # rolls back to the previous identity instead of silently going bare).
-    handler = source.split('elif action == "set_expert_adapter":', 1)[1][:8000]
+    handler = source.split('elif action == "set_expert_adapter":', 1)[1][:12000]
     assert "prompt_cache_lru.clear()" in handler
     assert "_clear_mlx_cache" in handler
     assert "metal_semaphore" in handler
@@ -104,6 +101,9 @@ def test_worker_dispatch_handles_set_expert_adapter():
     assert "_unrestorable_wrapped" in handler
     assert "restored_previous" in handler
     assert "cache_invalidated" in handler
+    assert "_current_worker_identity()" in handler
+    assert '"worker_identity": dict(worker_identity)' in handler
+    assert '"requires_worker_recycle": not identity_restored' in handler
 
 
 # ── client guards ─────────────────────────────────────────────────────────────

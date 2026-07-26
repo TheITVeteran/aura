@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import stat
 
 import pytest
@@ -1009,6 +1010,15 @@ def test_selection_prefers_external_score_then_convergence(tiny_model):
     by_convergence = ensemble.select()
     trails = {b.index: b.halting.residual_trail[-1] for b in ensemble.branches}
     assert by_convergence.index == min(trails, key=trails.get)
+
+
+def test_selection_without_transition_uses_finite_ineligible_score(tiny_model):
+    cache = _prefill(tiny_model)
+    ensemble, _runner, _budget = _ensemble(tiny_model, cache)
+    winner = ensemble.select()
+    assert winner.index == 0
+    assert all(math.isfinite(branch.score) for branch in ensemble.branches)
+    assert all(branch.score < -1e20 for branch in ensemble.branches)
 
 
 def test_equal_flop_accounting_scales_with_branches(tiny_model):

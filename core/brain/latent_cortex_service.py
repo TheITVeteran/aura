@@ -84,54 +84,48 @@ def _cortex_enabled() -> bool:
     return True
 
 
-def _integrity_verdict(receipt: Any, claim: str) -> str:
-    """ "proven" | "refuted" | "unproven" for one weight-integrity claim.
-
-    WHERE STRICTNESS BELONGS. A verdict of "refuted" — evidence that
-    contradicts the claim — is fatal everywhere, immediately: it means
-    weights really did change, or an adaptation really is still resident.
-    Requiring "proven" is a different matter, because the digests that
-    would prove it are not yet produced by the episode path; demanding them
-    here would fail every real episode and take the latent cortex down
-    rather than make it honest.
-
-    So the requirement is placed where an unbacked claim actually causes
-    harm: frontier certification, which publishes capability claims, must
-    see "proven". Routine episodes carry their verdict in the receipt, so
-    nothing downstream can mistake an assertion for a measurement, and the
-    remaining work is the PRODUCER (a cheap canary digest around the
-    episode), not another gate.
-
-    Reads the receipt's digest evidence rather than its boolean. A receipt
-    that predates the proof schema, or whose proof is malformed, yields
-    "unproven" — which callers must treat as unsafe, because the absence of
-    a check is not a passed check.
-    """
+def _integrity_verdict(
+    receipt: Any,
+    claim: str,
+    *,
+    expected_worker_identity: dict[str, Any] | None = None,
+) -> str:
+    """Return the independently reconstructed measured integrity verdict."""
     if not isinstance(receipt, dict):
         return "unproven"
-    verdicts = receipt.get("integrity_verdicts")
-    if isinstance(verdicts, dict):
-        entry = verdicts.get(claim)
-        if isinstance(entry, dict):
-            verdict = str(entry.get("verdict") or "")
-            if verdict in {"proven", "refuted", "unproven"}:
-                return verdict
-    # Fall back to recomputing from the raw proof, so a receipt carrying
-    # digests but no precomputed verdicts is still judged on its evidence.
     try:
-        from core.brain.llm.latent_cortex.types import WeightIntegrityProof
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            runtime_integrity_claim_verdict,
+        )
 
-        proof = WeightIntegrityProof.from_dict(receipt.get("weight_integrity"))
-    except (ImportError, AttributeError, TypeError, ValueError):
+        worker_identity = receipt.get("worker_identity")
+        if not isinstance(worker_identity, dict):
+            return "unproven"
+        return runtime_integrity_claim_verdict(
+            receipt.get("runtime_integrity"),
+            claim,
+            expected_episode_id=str(receipt.get("episode_id") or ""),
+            expected_input_tokens_sha256=str(
+                receipt.get("input_tokens_sha256") or ""
+            ),
+            expected_worker_identity=(
+                expected_worker_identity or worker_identity
+            ),
+            expected_fast_weights_applied=(
+                receipt.get("fast_weights_applied") is True
+            ),
+            expected_checkpoint_fingerprint=str(
+                receipt.get("checkpoint_fingerprint") or ""
+            ),
+            expected_checkpoint_method=str(
+                receipt.get("checkpoint_fingerprint_method") or ""
+            ),
+            expected_checkpoint_file_count=receipt.get(
+                "checkpoint_file_count"
+            ),
+        )
+    except (ImportError, TypeError, ValueError):
         return "unproven"
-    proven = (
-        proof.params_unchanged_proven
-        if claim == "params_unchanged"
-        else proof.fast_weights_erased_proven
-    )
-    if proven is None:
-        return "unproven"
-    return "proven" if proven else "refuted"
 
 
 def _erased_layers_declared(receipt: Any) -> bool:
@@ -825,18 +819,16 @@ class LatentCortexService:
 
         if not str(receipt.get("episode_id") or ""):
             errors.append("missing_episode_id")
-        # CP126 e93ffe9f. A bare params_unchanged=True was accepted as proof
-        # that resident weights survived the episode. It is an assertion, and
-        # this gate decides whether the lane may keep serving on those
-        # weights — exactly where an unbacked claim must not pass. The
-        # digests are now required, and a claim its own evidence REFUTES is
-        # reported separately from one that was merely never measured.
-        params_verdict = _integrity_verdict(receipt, "params_unchanged")
+        # Compatibility booleans and cached verdicts carry no authority here.
+        # The worker-bound measured receipt is reconstructed independently.
+        params_verdict = _integrity_verdict(
+            receipt,
+            "params_unchanged",
+            expected_worker_identity=expected_worker_identity,
+        )
         if params_verdict == "refuted":
-            # Evidence CONTRADICTS the claim: weights changed. Always fatal.
             errors.append("checkpoint_invariant_refuted")
-        elif params_verdict == "unproven" and receipt.get("params_unchanged") is not True:
-            # No evidence AND no claim.
+        elif params_verdict != "proven":
             errors.append("checkpoint_invariant_unproven")
         if (
             not sha256(receipt.get("checkpoint_fingerprint"))
@@ -846,7 +838,13 @@ class LatentCortexService:
             errors.append("exact_checkpoint_identity_unproven")
         from core.brain.llm.latent_cortex.runtime_identity import worker_identity_errors
 
-        errors.extend(worker_identity_errors(receipt))
+        worker_identity = receipt.get("worker_identity")
+        errors.extend(
+            worker_identity_errors(
+                worker_identity,
+                expected=(expected_worker_identity or None),
+            )
+        )
         guidance = receipt.get("verifier_guidance")
         if (
             isinstance(guidance, dict)
@@ -2615,13 +2613,11 @@ class LatentCortexService:
                     erase_verdict = _integrity_verdict(
                         receipt,
                         "fast_weights_erased",
+                        expected_worker_identity=expected_worker_identity,
                     )
                     if erase_verdict == "refuted":
                         errors.append("fast_weight_erase_refuted")
-                    elif (
-                        erase_verdict == "unproven"
-                        and receipt.get("fast_weights_erased") is not True
-                    ):
+                    elif erase_verdict != "proven":
                         errors.append("fast_weight_erase_unproven")
                     if not positive_int(receipt, "fast_weights_layers"):
                         errors.append("fast_weights_no_layers")
@@ -4589,6 +4585,9 @@ class LatentCortexService:
                     "fast_weight_accepted_step_sizes",
                     "fast_weight_line_search_backtracks",
                     "fast_weight_learning",
+                    "fast_weight_cleanup",
+                    "worker_identity",
+                    "runtime_integrity",
                     "verifier_probe_max_tokens",
                     "latent_opt_verifier",
                     "last_stage",
@@ -4630,6 +4629,8 @@ class LatentCortexService:
                     "input_tokens_sha256",
                     "input_token_count",
                     "input_context_compaction",
+                    "worker_identity",
+                    "runtime_integrity",
                     "runtime_identity",
                     "params_unchanged",
                     "latent_opt_applied",
@@ -4643,6 +4644,7 @@ class LatentCortexService:
                     "fast_weight_optimized_steps",
                     "fast_weight_budget_exhausted",
                     "fast_weight_learning",
+                    "fast_weight_cleanup",
                     "fast_weights_erased",
                     "decode_requested_tokens",
                     "decode_generated_tokens",

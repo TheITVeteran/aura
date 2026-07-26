@@ -3857,17 +3857,6 @@ def _mlx_worker_loop(
             model, tokenizer = load(model_path)
             logger.info("Model loaded (no compatible LoRA adapter).")
 
-        from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
-
-        worker_identity = build_worker_identity(
-            model,
-            model_path=model_path,
-            worker_boot_id=worker_boot_id,
-            worker_source_path=Path(__file__),
-            worker_action_capture_identity=(
-                worker_capture_signing_identity.public_identity
-            ),
-        )
         draft_model = _load_speculative_draft(model_path, tokenizer)
 
         # Attach Affective Steering
@@ -3905,15 +3894,6 @@ def _mlx_worker_loop(
             )
             logger.error("FATAL: Affective steering failed to attach. Cannot run sovereign inference unsteered. %s", se)
             raise RuntimeError(f"Steering liveness gate failed: {se}") from se
-
-        worker_identity.update(
-            {
-                "worker_affective_steering_active": bool(_steering_active),
-                "worker_affective_steering_alpha": float(
-                    getattr(engine, "_alpha", 0.0) or 0.0
-                ),
-            }
-        )
 
         # Write steering liveness to shared state so parent can query it
         if substrate_mem is not None:
@@ -3992,6 +3972,33 @@ def _mlx_worker_loop(
                 severity="degraded",
             )
             logger.warning("Recurrent depth not applied: %s", rd_exc)
+
+        from core.brain.llm.latent_cortex.runtime_identity import (
+            build_worker_identity,
+        )
+
+        def _current_worker_identity() -> dict[str, Any]:
+            """Measure the exact serving identity after every model mutation."""
+
+            return build_worker_identity(
+                model,
+                model_path=model_path,
+                worker_boot_id=worker_boot_id,
+                worker_source_path=Path(__file__),
+                worker_action_capture_identity=(
+                    worker_capture_signing_identity.public_identity
+                ),
+                tokenizer=tokenizer,
+                affective_steering_active=bool(_steering_active),
+                affective_steering_alpha=float(
+                    getattr(engine, "_alpha", 0.0) or 0.0
+                ),
+            )
+
+        # Measure after personality adaptation, affective steering, and
+        # recurrent-depth installation. The init receipt must describe the
+        # worker that will actually serve, not an earlier boot phase.
+        worker_identity = _current_worker_identity()
 
         ipc_writer.put(
             {
@@ -6344,6 +6351,11 @@ def _mlx_worker_loop(
                             }
                         )
                     else:
+                        # The adapter stack is part of worker identity. Publish
+                        # a fresh measurement atomically with the successful
+                        # swap so the parent can re-attest this exact serving
+                        # function before admitting another request.
+                        worker_identity = _current_worker_identity()
                         response.update(
                             {
                                 "status": "ok",
@@ -6351,6 +6363,7 @@ def _mlx_worker_loop(
                                 "wrapped_layers": len(expert_adapter_state["wrapped"]),
                                 "detached_layers": detached,
                                 "cache_invalidated": True,
+                                "worker_identity": dict(worker_identity),
                             }
                         )
                         logger.info(
@@ -6379,16 +6392,49 @@ def _mlx_worker_loop(
                                 _detach_expert_adapter(model, expert_adapter_state["wrapped"])
                         finally:
                             expert_adapter_state.update({"path": "", "wrapped": []})
+                    identity_restored = False
+                    try:
+                        restored_identity = _current_worker_identity()
+                        from core.brain.llm.latent_cortex.runtime_identity import (
+                            worker_identity_errors,
+                        )
+
+                        identity_restored = not worker_identity_errors(
+                            restored_identity,
+                            expected=worker_identity,
+                        )
+                    except (
+                        ImportError,
+                        OSError,
+                        RuntimeError,
+                        AttributeError,
+                        TypeError,
+                        ValueError,
+                    ) as identity_exc:
+                        _record_mlx_degradation(
+                            identity_exc,
+                            action=(
+                                "could not prove worker identity after expert "
+                                "adapter swap failure"
+                            ),
+                            severity="critical",
+                        )
+                    if not identity_restored:
+                        # The mutation failed and the exact pre-swap serving
+                        # identity was not recovered. Do not process another
+                        # request under the stale parent attestation.
+                        worker_active = False
                     _record_mlx_degradation(
                         adapter_exc,
                         action="reported expert adapter swap failure with truthful resident identity",
-                        severity="warning",
+                        severity=("warning" if identity_restored else "critical"),
                     )
                     response.update(
                         {
                             "status": "error",
                             "message": f"expert_adapter_swap_failed: {adapter_exc}",
                             "resident": expert_adapter_state["path"] or None,
+                            "requires_worker_recycle": not identity_restored,
                         }
                     )
                 ipc_writer.put(response)

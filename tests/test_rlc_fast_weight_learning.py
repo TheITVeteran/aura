@@ -136,6 +136,9 @@ def _accepted_learning_receipt() -> dict:
         "erase_proven": True,
         "lease_released": True,
         "conflicts": 0,
+        "pre_probe_sha256": probe_sha,
+        "post_probe_sha256": probe_sha,
+        "erased_layer_ids": ["layers.0.o_proj"],
     }
     state["disposition"] = "accepted_causal_improvement"
     return finalize_fast_weight_learning_receipt(state)

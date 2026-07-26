@@ -24,22 +24,30 @@ class TestMissingProofIsNotSafety:
 
     def test_recycle_requires_an_explicit_pass(self):
         source = self._source()
-        assert "result.receipt.params_unchanged is not True" in source
-        assert "result.receipt.params_unchanged is False" not in source
+        assert 'body["requires_worker_recycle"] = not integrity_safe' in source
+        assert "runtime_integrity_safe(" in source
 
     def test_absent_proof_is_reported(self):
         source = self._source()
-        assert "no parameter-integrity proof" in source
+        assert "no complete worker-bound runtime-integrity" in source
 
     def test_recycle_decision_truth_table(self):
-        """None and False must both recycle; only True may skip it."""
+        """Only a complete measured, worker-bound proof may skip recycle."""
+        from core.brain.llm.latent_cortex.runtime_integrity import (
+            runtime_integrity_safe,
+        )
+        from tests.fixtures.rlc_runtime_integrity import (
+            bound_runtime_integrity,
+        )
 
-        def decide(params_unchanged, fw_applied=False, fw_erased=True):
-            return params_unchanged is not True or (fw_applied and fw_erased is not True)
-
-        assert decide(None) is True, "absent proof must recycle"
-        assert decide(False) is True, "failed proof must recycle"
-        assert decide(True) is False, "a passing proof may skip the recycle"
+        assert runtime_integrity_safe({}) is False
+        assert runtime_integrity_safe(
+            bound_runtime_integrity(
+                episode_id="proof-integrity-test",
+                input_tokens_sha256="7" * 64,
+            ),
+            expected_fast_weights_applied=False,
+        )
 
 
 class TestRequestedVerifierCannotVanish:
