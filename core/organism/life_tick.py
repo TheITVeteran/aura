@@ -383,6 +383,13 @@ class LifeTickProcessor:
             from core.body.action_body import get_action_body
 
             action_body = get_action_body()
+            # CP126 92b64654: a postcondition can only be a DIFF if something
+            # recorded the target's state BEFORE the action ran.
+            pre_snapshot = None
+            if params.get("path"):
+                from core.body.action_postcondition import snapshot_path_async
+
+                pre_snapshot = await snapshot_path_async(params.get("path"))
             receipt = await action_body.execute_action(intent, state)
             if not isinstance(receipt, dict):
                 receipt = {"status": "failed", "error": "motor returned non-dict receipt"}
@@ -394,6 +401,8 @@ class LifeTickProcessor:
                 receipt["goal_id"] = params["goal_id"]
             receipt["action_id"] = req_event.action_id
             receipt.setdefault("receipt_id", self._new_id("rec"))
+            if pre_snapshot is not None:
+                receipt["pre_action_snapshot"] = pre_snapshot
 
             exec_event = ActionExecuted(
                 event_id=self._new_id("exec"),
@@ -417,7 +426,9 @@ class LifeTickProcessor:
             from core.body.action_postcondition import ActionPostconditionVerifier
 
             verifier = ActionPostconditionVerifier()
-            verification = await verifier.verify(receipt, state)
+            verification = await verifier.verify(
+                receipt, state, before=receipt.get("pre_action_snapshot"),
+            )
 
             # Get the expected observations from the active plan
             expected = "successful_status"
