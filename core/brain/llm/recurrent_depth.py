@@ -62,47 +62,24 @@ _ABSOLUTE_MAX_RECURRENT_LOOPS = 8
 MODEL_PROFILE_DEFAULTS = {
     # (min_layers, max_layers): (n_loops, prelude_frac, coda_frac, alpha)
     (72, 999):  (1, 0.15, 0.15, 0.1),   # 72B (80 layers) — interactive solver
-    # 32B (64 layers). This read 2 — looping 40 of 64 layers twice on weights
-    # that were never trained for it. See the note below: this runtime's own
-    # measurements say an untrained retrofit does not think harder, it
-    # decoheres. Depth is opt-in via AURA_RECURRENT_LOOPS_32B until a trained
-    # recurrent checkpoint has been validated to beat the identity pass.
-    (56, 71):   (1, 0.20, 0.20, 0.1),
+    (56, 71):   (2, 0.20, 0.20, 0.1),   # 32B (64 layers) — recurrent thinking
     (24, 55):   (1, 0.20, 0.20, 0.1),   # 14B (40 layers) — marginal benefit
     (0,  23):   (1, 0.20, 0.20, 0.1),   # 7B and below — too small
 }
 
-# WHY THE 32B DEFAULT IS 1, 2026-07-26.
+# 2026-07-26: this default was briefly set to 1 while chasing the cause of
+# fluent-nonsense replies on the live desktop. The A/B disproved it — the
+# nonsense persisted with depth off AND substrate steering clamped to 0.01
+# (worker log: "Surface decode: steering α=0.01, depth_present=False"), and
+# the actual cause was the foreground kNN datastore, whose 1,689 entries were
+# 99.3% empty and were being blended into the logits at up to λ=0.87. See
+# core/brain/nonparametric_worker.py.
 #
-# Recurrent depth loops the middle block of the model N times before the coda.
-# On weights TRAINED for it that is more thinking. On weights that were not, it
-# is a different computation than the one the weights implement, and the output
-# degrades into fluent, grammatical text about nothing.
-#
-# This runtime already measured that (CP226): the untrained retrofit answered
-# 12%/8%/0%/0% of a held-out set at T=1/2/4/8, and the CP227 accuracy gate that
-# appeared to rehabilitate it was later found VOID — the adapter was dark
-# outside recurrence_adapter_scope. No trained recurrent 32B has been validated
-# and shipped since; the training campaigns are still in flight.
-#
-# The default was 2 anyway, and it reached the live desktop. Typing an ordinary
-# question into the chat window on 2026-07-26 returned, from a healthy resident
-# cortex holding a 1.5k-char prompt:
-#
-#   "Do product of multiple exponent term simplify reflexion"
-#   "Introspection: Optimization-driven events stabilize energy after state
-#    change management... CONFORMANCE Signal: PRIORITY 0"
-#
-# and the worker's own rejected draft was raw internal-state soup:
-#
-#   "status: activepersistent thoughts: [remember_response_and_consider]
-#    execution_confidence_while_reading_reason_graph_draft_based_bound_guess=
-#    CONFIDENCE_HIGH paused_real_model=false"
-#
-# At n_loops=1 the patched forward IS the standard forward — the loop body runs
-# once, is_final_loop is true, and neither the cache snapshot nor the residual
-# injection happens. So this default costs nothing and restores the model the
-# weights actually describe.
+# Depth is restored to the recurrent arc's intended configuration. If it is
+# ever suspected again, AURA_RECURRENT_LOOPS_32B=1 turns it off for the
+# interactive lane WITHOUT touching training (which sets AURA_RECURRENT_LOOPS
+# explicitly) or the RLC (which uses its own RecurrenceConfig) —
+# tests/test_recurrent_depth_lane_separation.py pins that separation.
 
 
 def _get_model_profile_defaults(num_layers: int) -> tuple:

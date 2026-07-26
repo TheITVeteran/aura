@@ -6884,7 +6884,24 @@ class InferenceGate:
                     )
                     return None
                 near_process_limit = bool(process_limit > 0.0 and process_rss >= process_limit * 0.90)
-                capped_tokens = 256 if available < 12.0 or pressure >= 84.0 or near_process_limit else 384
+                # What an output token actually costs is KV cache, not model
+                # weights. For this 64-layer 32B with 8 KV heads at head_dim
+                # 128: 64 × 2 × 8 × 128 × 2 bytes ≈ 0.26 MB per token. 1,536
+                # tokens is ~400 MB — about 3% of the 14 GB free when this
+                # fired. The weights are the 21 GB, and no output cap moves them.
+                #
+                # LIVE DEFECT, 2026-07-26: this branch runs whenever admission
+                # says can_admit=False, which with a resident 32B on this host
+                # is every foreground turn. So 384 was not a pressure response,
+                # it was a permanent ceiling on how long any desktop answer
+                # could be, and "…show the reasoning, then give the exact
+                # fraction" was cut mid-derivation at
+                #   "Probability of first being red = 3/12 - Given the first is
+                #    red, probability second is also red ="
+                # every time, on a host with 14 GB free.
+                #
+                # Genuinely critical pressure still refuses outright, above.
+                capped_tokens = 768 if available < 12.0 or pressure >= 84.0 or near_process_limit else 1536
                 if max_tokens > capped_tokens:
                     logger.warning(
                         "🛡️ InferenceGate: capping primary foreground output to %d tokens under "

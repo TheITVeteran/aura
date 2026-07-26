@@ -3821,6 +3821,14 @@ async def test_cortex_recovery_skips_primary_spawn_during_nonprimary_proof_lane(
 @pytest.mark.asyncio
 async def test_cortex_recovery_does_not_report_deferred_warmup_as_ready(monkeypatch):
     gate = InferenceGate()
+    # Cold-start recovery is gated by _boot_should_schedule_deferred_prewarm,
+    # which consults REAL host memory through the warmup admission snapshot.
+    # These tests are about what happens once the policy says yes, so they pin
+    # the policy instead of inheriting the operator's env and whatever the host
+    # happens to have free — the reason they passed alone and failed in a long
+    # run, where the resident 32B is holding 20GB by the time they execute.
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "1")
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     client = _LaneWarmupClient()
 
     async def _defer_warmup():
@@ -4174,6 +4182,14 @@ async def test_deferred_cortex_prewarm_treats_visible_probe_missing_as_unproven_
 @pytest.mark.asyncio
 async def test_cortex_recovery_reserves_ownership_before_task_is_scheduled(monkeypatch):
     gate = InferenceGate()
+    # Cold-start recovery is gated by _boot_should_schedule_deferred_prewarm,
+    # which consults REAL host memory through the warmup admission snapshot.
+    # These tests are about what happens once the policy says yes, so they pin
+    # the policy instead of inheriting the operator's env and whatever the host
+    # happens to have free — the reason they passed alone and failed in a long
+    # run, where the resident 32B is holding 20GB by the time they execute.
+    monkeypatch.setenv("AURA_DEFERRED_CORTEX_PREWARM", "1")
+    monkeypatch.setenv("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "1")
     release_warmup = asyncio.Event()
 
     class _DeadClient:

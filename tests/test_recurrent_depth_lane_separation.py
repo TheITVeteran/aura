@@ -1,8 +1,10 @@
 """The interactive lane and the training lane resolve depth independently.
 
-2026-07-26: the live interactive 32B lane defaulted to 2 recurrent loops. This
-pins that turning that default off does NOT reach the training or RLC lanes,
-and that flipping the env turns it back on when a trained checkpoint lands.
+2026-07-26: depth was briefly suspected of causing fluent-nonsense replies and
+the default was flipped off; the A/B disproved it (the cause was the kNN
+datastore) and the default was restored. What this pins is the separation that
+made that experiment safe: the interactive lane can be changed on its own
+without reaching the training lane or the Recursive Latent Cortex.
 """
 
 import pytest
@@ -34,10 +36,10 @@ def _clear(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_the_interactive_32b_lane_defaults_to_the_identity_pass(monkeypatch):
+def test_the_interactive_32b_lane_keeps_its_configured_depth(monkeypatch):
     _clear(monkeypatch)
-    assert resolve_loops_for_model(_Model(64)) == 1
-    assert _get_lane_defaults(64)[0] == 1
+    assert resolve_loops_for_model(_Model(64)) == 2
+    assert _get_lane_defaults(64)[0] == 2
 
 
 def test_the_training_lane_still_gets_two_loops(monkeypatch):
@@ -61,10 +63,12 @@ def test_the_training_script_still_requests_depth():
     )
 
 
-def test_depth_returns_the_moment_a_trained_checkpoint_earns_it(monkeypatch):
+def test_depth_can_be_taken_off_the_interactive_lane_alone(monkeypatch):
+    """If depth is ever suspected again, this is the switch — and it does not
+    reach training or the RLC."""
     _clear(monkeypatch)
-    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "2")
-    assert resolve_loops_for_model(_Model(64)) == 2
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "1")
+    assert resolve_loops_for_model(_Model(64)) == 1
 
 
 def test_the_parent_health_mirror_agrees_with_the_worker(monkeypatch):
@@ -77,7 +81,7 @@ def test_the_parent_health_mirror_agrees_with_the_worker(monkeypatch):
     assert _expected_recurrent_loops_from_model_path(path) == resolve_loops_for_model(
         _Model(64)
     )
-    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "2")
+    monkeypatch.setenv("AURA_RECURRENT_LOOPS_32B", "1")
     assert _expected_recurrent_loops_from_model_path(path) == resolve_loops_for_model(
         _Model(64)
     )
