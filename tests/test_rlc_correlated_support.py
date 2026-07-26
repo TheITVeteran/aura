@@ -48,6 +48,7 @@ def _structure(*, duplicate_first_pair: bool = False) -> dict:
         distances[0] = 0.0
         duplicate_groups = [[0, 1]]
     return {
+        "certified": True,
         "branches": [
             {
                 "index": index,
@@ -122,6 +123,23 @@ def test_duplicate_programs_collapse_without_waiting_for_history():
     assert receipt["duplicate_votes_collapsed"] is True
     assert receipt["evidence_state"] == "bootstrap_unmeasured"
     assert receipt["effective_support_count"] < 3.0
+
+
+def test_unproven_structural_diversity_has_zero_support_authority():
+    structure = _structure()
+    structure["certified"] = False
+
+    receipt = build_correlated_support_receipt(
+        structural_diversity=structure,
+        correlation_evidence=None,
+    )
+
+    assert receipt["structural_diversity_certified"] is False
+    assert receipt["effective_support_count"] == 0.0
+    assert receipt["confidence_multiplier"] == 0.0
+    assert receipt["reason"] == "structural_diversity_unproven"
+    assert all(row["weight"] == 0.0 for row in receipt["branch_weights"])
+    assert all(row["weight"] == 0.0 for row in receipt["exchange_weights_applied"])
 
 
 def test_correlated_support_claim_is_exactly_reconstructed():

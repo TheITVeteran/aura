@@ -400,7 +400,12 @@ def _result_core(
     }
 
 
-def _complete_campaign(tmp_path: Path, *, task_count: int = 8):
+def _complete_campaign(
+    tmp_path: Path,
+    *,
+    task_count: int = 8,
+    claim_interventions: bool = False,
+):
     policy, role_keys, root = _trust_fixture()
     plan, tasks_by_action = _plan(
         policy,
@@ -417,6 +422,20 @@ def _complete_campaign(tmp_path: Path, *, task_count: int = 8):
         for cell_id in plan.cell_ids:
             definition = plan.cell_definition(cell_id)
             attempt_id = journal.start_cell(cell_id)
+            if claim_interventions:
+                snapshot = journal.resume()
+                journal.claim_action_intervention(
+                    cell_id,
+                    attempt_id,
+                    intervention_sha256=hashlib.sha256(
+                        f"{cell_id}:intervention".encode()
+                    ).hexdigest(),
+                    request_payload_sha256=hashlib.sha256(
+                        f"{cell_id}:request".encode()
+                    ).hexdigest(),
+                    expected_journal_head_sha256=snapshot.journal_head_sha256,
+                    expected_journal_event_count=2 + len(attempts) * 3,
+                )
             core = _result_core(
                 plan,
                 cell_id,
@@ -451,7 +470,8 @@ def _complete_campaign(tmp_path: Path, *, task_count: int = 8):
                 for cell_id, result in results.items()
             },
             journal_head_sha256=sealed_head,
-            journal_event_count=1 + len(plan.cell_ids) * 2,
+            journal_event_count=1
+            + len(plan.cell_ids) * (3 if claim_interventions else 2),
         )
         output_seal_attestation = build_role_attestation(
             policy,
@@ -802,6 +822,21 @@ def test_full_external_campaign_verifies_but_eight_is_not_promoted(tmp_path):
         == ACTION_EVIDENCE_SCHEMA
     )
     assert plan.plan_sha256 == candidate["plan_sha256"]
+
+
+def test_final_certificate_replays_claimed_intervention_transitions(tmp_path):
+    policy, _root, plan, candidate, certificate = _complete_campaign(
+        tmp_path,
+        claim_interventions=True,
+    )
+
+    claims = [
+        event
+        for event in candidate["campaign_journal"]
+        if event["event"] == "ACTION_INTERVENTION_CLAIMED"
+    ]
+    assert len(claims) == len(plan.cell_ids)
+    assert verify_action_calibration_certificate(certificate, policy=policy) == certificate
 
 
 def test_certificate_rejects_statistic_and_final_attestation_tampering(

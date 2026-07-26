@@ -71,6 +71,7 @@ def _observed_process_rss_bytes(pid: int) -> int:
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return 0
 
+
 _MODEL_LOAD_FOREGROUND_ADMISSION_TIMEOUT_FLAG = declare(
     "AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S",
     kind=FlagKind.FLOAT,
@@ -296,6 +297,8 @@ def _readiness_answer_accepted(text: Any) -> bool:
         return False
     # An echo of the instruction is not an answer to it.
     return "reply exactly" not in lowered
+
+
 SharedFuture = asyncio.Future[Any] | cfutures.Future[Any]
 
 
@@ -386,7 +389,7 @@ def _measured_model_footprint_gb(model_path: Any) -> float | None:
     """
     text = str(model_path or "").strip()
     if not text:
-        return None          # Path("") is the CWD, which is a real directory
+        return None  # Path("") is the CWD, which is a real directory
     try:
         root = pathlib.Path(text)
         if not root.is_dir():
@@ -414,9 +417,7 @@ def _env_projected_footprint_gb(name: str) -> float | None:
     # A zero/negative override makes a real multi-GB worker appear free and
     # NaN/inf poisons every downstream admission sum — ignore such overrides.
     if not math.isfinite(value) or value <= 0.0:
-        logger.warning(
-            "Ignoring invalid projected-footprint override %s=%r.", name, raw
-        )
+        logger.warning("Ignoring invalid projected-footprint override %s=%r.", name, raw)
         return None
     return value
 
@@ -494,7 +495,11 @@ def _projected_model_footprint_gb(model_path: str) -> float:
         override = _env_projected_footprint_gb("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB")
         if override is not None:
             return override
-        default = 20.0 if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510")) else 35.0
+        default = (
+            20.0
+            if any(token in lowered for token in ("4bit", "q4", "fused-model", "20260510"))
+            else 35.0
+        )
         return _projected_footprint_from_artifact_gb(model_path, fallback_gb=default)
     if "14b" in lowered:
         return _env_float("AURA_MLX_14B_PROJECTED_FOOTPRINT_GB", 10.0)
@@ -520,23 +525,32 @@ def _model_process_reserve_gb(model_path: str) -> float:
 def _declared_mlx_worker_footprint_gb(model_path: str) -> float:
     """Declared peak for the main worker plus optional in-worker model owners."""
 
-    declared = _projected_model_footprint_gb(model_path) + _model_process_reserve_gb(
-        model_path
-    )
+    declared = _projected_model_footprint_gb(model_path) + _model_process_reserve_gb(model_path)
     from core.runtime.flags import FlagKind, declare
 
-    contrastive_enabled = bool(declare(
-        "AURA_CONTRASTIVE_DECODING", kind=FlagKind.BOOL, default=False,
-        description="Enable contrastive decoding with an amateur model",
-        owner="core.brain.llm.mlx_client",
-    ).value())
-    amateur_path = str(declare(
-        "AURA_CONTRASTIVE_AMATEUR_MODEL", kind=FlagKind.STRING, default="",
-        description="Amateur model path for contrastive decoding",
-        owner="core.brain.llm.mlx_client",
-    ).value() or "").strip()
-    if contrastive_enabled and amateur_path and _real_model_path(amateur_path) != _real_model_path(
-        model_path
+    contrastive_enabled = bool(
+        declare(
+            "AURA_CONTRASTIVE_DECODING",
+            kind=FlagKind.BOOL,
+            default=False,
+            description="Enable contrastive decoding with an amateur model",
+            owner="core.brain.llm.mlx_client",
+        ).value()
+    )
+    amateur_path = str(
+        declare(
+            "AURA_CONTRASTIVE_AMATEUR_MODEL",
+            kind=FlagKind.STRING,
+            default="",
+            description="Amateur model path for contrastive decoding",
+            owner="core.brain.llm.mlx_client",
+        ).value()
+        or ""
+    ).strip()
+    if (
+        contrastive_enabled
+        and amateur_path
+        and _real_model_path(amateur_path) != _real_model_path(model_path)
     ):
         declared += _projected_model_footprint_gb(amateur_path) + 1.0
     return declared
@@ -579,15 +593,12 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
         return snapshot.reason or "critical_memory_pressure"
     if snapshot.available_gb < min_available_gb:
         return (
-            f"model_load_headroom:{snapshot.available_gb:.1f}GB "
-            f"< required {min_available_gb:.1f}GB"
+            f"model_load_headroom:{snapshot.available_gb:.1f}GB < required {min_available_gb:.1f}GB"
         )
     process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
     process_rss_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
     process_reserve_gb = _model_process_reserve_gb(model_path)
-    projected_footprint_gb = (
-        _declared_mlx_worker_footprint_gb(model_path) - process_reserve_gb
-    )
+    projected_footprint_gb = _declared_mlx_worker_footprint_gb(model_path) - process_reserve_gb
     projected_process_rss_gb = process_rss_gb + projected_footprint_gb + process_reserve_gb
     if (
         process_rss_limit_gb > 0.0
@@ -690,9 +701,7 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
                     metadata={
                         "runtime_pid": os.getpid(),
                         "lane": lane,
-                        "fencing_token": int(
-                            getattr(client, "_model_lane_fencing_token", 0) or 0
-                        ),
+                        "fencing_token": int(getattr(client, "_model_lane_fencing_token", 0) or 0),
                     },
                 )
             )
@@ -749,16 +758,21 @@ async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
 
 async def _reclaim_model_lane_capacity(claim: Any) -> bool:
     from core.runtime.flags import FlagKind, declare
+
     """Wait boundedly for killed model memory to leave the observed envelope."""
 
     try:
         timeout_s = max(
             0.0,
-            float(declare(
-                "AURA_MODEL_LANE_RECLAIM_TIMEOUT_S", kind=FlagKind.FLOAT, default=20.0,
-                description="Budget for reclaiming a model lane before spawn",
-                owner="core.brain.llm.mlx_client",
-            ).value()),
+            float(
+                declare(
+                    "AURA_MODEL_LANE_RECLAIM_TIMEOUT_S",
+                    kind=FlagKind.FLOAT,
+                    default=20.0,
+                    description="Budget for reclaiming a model lane before spawn",
+                    owner="core.brain.llm.mlx_client",
+                ).value()
+            ),
         )
     except (TypeError, ValueError):
         timeout_s = 20.0
@@ -993,12 +1007,8 @@ async def _model_load_admission_context(
     # and doing that on the event loop during a concurrent 20GB model read
     # produced the recorded 5.5-8.6s admission stalls. The walk is also
     # memoized, so this thread hop is cold-path only.
-    request_gb = await asyncio.to_thread(
-        _declared_mlx_worker_footprint_gb, client.model_path
-    )
-    timeout_s = _model_load_admission_timeout_s(
-        foreground_request=foreground_request
-    )
+    request_gb = await asyncio.to_thread(_declared_mlx_worker_footprint_gb, client.model_path)
+    timeout_s = _model_load_admission_timeout_s(foreground_request=foreground_request)
     from core.brain.lane_admission import QoSClass
 
     # The PRIMARY cortex (GUARANTEED QoS) always loads at FOREGROUND priority,
@@ -1139,9 +1149,7 @@ async def _model_load_admission_context(
         process = getattr(client, "_process", None)
         pid = int(getattr(process, "pid", 0) or 0) if process is not None else 0
         worker_ready = bool(
-            process is not None
-            and process.is_alive()
-            and getattr(client, "_init_done", False)
+            process is not None and process.is_alive() and getattr(client, "_init_done", False)
         )
         if not worker_ready:
             await _release_schedule_lease("model_load_did_not_reach_ready")
@@ -1352,13 +1360,9 @@ def _open_spawn_lock_file(lock_file_path: str):
         if not stat.S_ISREG(st.st_mode):
             raise RuntimeError(f"mlx_spawn_lock_not_regular_file:{lock_file_path}")
         if st.st_uid != os.getuid():
-            raise RuntimeError(
-                f"mlx_spawn_lock_foreign_owner:{lock_file_path}:uid={st.st_uid}"
-            )
+            raise RuntimeError(f"mlx_spawn_lock_foreign_owner:{lock_file_path}:uid={st.st_uid}")
         if st.st_nlink != 1:
-            raise RuntimeError(
-                f"mlx_spawn_lock_hardlinked:{lock_file_path}:links={st.st_nlink}"
-            )
+            raise RuntimeError(f"mlx_spawn_lock_hardlinked:{lock_file_path}:links={st.st_nlink}")
         if st.st_mode & 0o077:
             # Group/other permissions on a lock another user could then hold.
             os.fchmod(lock_fd, 0o600)
@@ -1413,6 +1417,7 @@ def _safe_close_queue(q: mp.Queue | None) -> None:
     """Close an mp.Queue to release its shared-memory file descriptor."""
     if q is None:
         return
+
     def _close_and_join() -> None:
         q.close()
         q.join_thread()
@@ -1483,9 +1488,7 @@ def _bounded_generation_max_tokens(
     if hard_output_ceiling is not None and hard_output_ceiling != "":
         bounded = _bounded_max_tokens(bounded, hard_output_ceiling, fallback)
 
-    contract_floor = _requested_output_contract_generation_floor(
-        requested_output_contract
-    )
+    contract_floor = _requested_output_contract_generation_floor(requested_output_contract)
     if contract_floor <= 0:
         return bounded
 
@@ -1632,11 +1635,7 @@ def _surface_quality_rejection_reasons(value: Any) -> tuple[str, ...]:
     raw_reasons = receipt.get("surface_quality_gate_reasons")
     if not isinstance(raw_reasons, (list, tuple)):
         return ()
-    return tuple(
-        str(reason).strip()[:120]
-        for reason in raw_reasons
-        if str(reason).strip()
-    )[:8]
+    return tuple(str(reason).strip()[:120] for reason in raw_reasons if str(reason).strip())[:8]
 
 
 def _coerce_timeout_seconds(value: Any) -> float | None:
@@ -1674,11 +1673,7 @@ def _spawn_gate_snapshot() -> dict[str, Any]:
         "held": bool(token),
         "owner": owner,
         "acquired_at_monotonic": acquired_at,
-        "age_s": (
-            max(0.0, time.monotonic() - acquired_at)
-            if token and acquired_at > 0.0
-            else 0.0
-        ),
+        "age_s": (max(0.0, time.monotonic() - acquired_at) if token and acquired_at > 0.0 else 0.0),
     }
 
 
@@ -2342,9 +2337,7 @@ def _normalize_probe_detail(stdout: str, stderr: str, returncode: int) -> str:
 # how many consecutive spawns it may cover. A crash that outlives this is not
 # a driver glitch; it is a broken runtime, and spawning onto it wastes a
 # 20-40GB load and strands the lane anyway.
-_LKG_PROBE_WINDOW_S = _finite_env_float(
-    "AURA_MLX_LKG_PROBE_WINDOW_S", 300.0, minimum=0.0
-)
+_LKG_PROBE_WINDOW_S = _finite_env_float("AURA_MLX_LKG_PROBE_WINDOW_S", 300.0, minimum=0.0)
 _LKG_PROBE_MAX_CONSECUTIVE = 2
 
 
@@ -2394,9 +2387,7 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 read_only=True,
                 source="runtime_probe:mlx_runtime_probe",
             )
-            ok = completed.returncode == 0 and "mlx_runtime_ok" in (
-                completed.stdout or ""
-            )
+            ok = completed.returncode == 0 and "mlx_runtime_ok" in (completed.stdout or "")
             detail = _normalize_probe_detail(
                 completed.stdout or "",
                 completed.stderr or "",
@@ -2466,7 +2457,9 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
             logger.warning(
                 "♻️ [MLX] Runtime probe hit an enumeration crash; bridging with a "
                 "last-known-good status from %.0fs ago (use %d/%d).",
-                age_s, lkg_uses + 1, _LKG_PROBE_MAX_CONSECUTIVE,
+                age_s,
+                lkg_uses + 1,
+                _LKG_PROBE_MAX_CONSECUTIVE,
             )
             return True, "lkg_fallback_after_enumeration_crash"
         if cached_ok:
@@ -2603,11 +2596,9 @@ class MLXLocalClient:
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
         self._worker_identity: dict[str, Any] = {}
         self._last_surface_control_receipt: dict[str, Any] = {}
-        self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = (
-            ContextVar(
-                f"aura_mlx_surface_receipt_{id(self)}",
-                default=None,
-            )
+        self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = ContextVar(
+            f"aura_mlx_surface_receipt_{id(self)}",
+            default=None,
         )
         self._last_interoception: dict[str, Any] = {}
         self._clock_sample_wall = time.time()
@@ -2675,7 +2666,10 @@ class MLXLocalClient:
     def _model_load_admission_backoff_seconds(reason: str, count: int) -> float:
         normalized = str(reason or "").lower()
         attempt = max(1, int(count))
-        if normalized.startswith("event_loop_lag_") or normalized == "event_loop_signal_unavailable":
+        if (
+            normalized.startswith("event_loop_lag_")
+            or normalized == "event_loop_signal_unavailable"
+        ):
             base_s, cap_s = 3.0, 30.0
         elif "memory_pressure" in normalized or "thermal_pressure" in normalized:
             base_s, cap_s = 15.0, 300.0
@@ -2691,9 +2685,7 @@ class MLXLocalClient:
 
     def _model_load_admission_backoff_active(self) -> bool:
         with self._model_load_admission_state_lock:
-            active = time.monotonic() < float(
-                self._model_load_admission_backoff_until or 0.0
-            )
+            active = time.monotonic() < float(self._model_load_admission_backoff_until or 0.0)
             if active:
                 self._model_load_admission_suppressed_count += 1
             return active
@@ -2966,11 +2958,7 @@ class MLXLocalClient:
             "generated_tokens",
             "termination",
         }
-        snapshot = {
-            key: response.get(key)
-            for key in allowed
-            if key in response
-        }
+        snapshot = {key: response.get(key) for key in allowed if key in response}
         snapshot.update(
             {
                 "request_id": request_id,
@@ -3114,7 +3102,9 @@ class MLXLocalClient:
             self._last_interoception = stored
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
             record_degradation(
-                "mlx_client_interoception", exc, severity="warning",
+                "mlx_client_interoception",
+                exc,
+                severity="warning",
                 action="continued generation return after interoception ingest failed",
             )
 
@@ -3238,12 +3228,9 @@ class MLXLocalClient:
         if classification:
             return classification
         normalized_reason = str(reason or "").lower()
-        if (
-            self._is_deep_solver_lane()
-            and (
-                "memory_pressure_refused_worker_spawn" in normalized_reason
-                or "optional_deep_solver_memory_refusal" in normalized_reason
-            )
+        if self._is_deep_solver_lane() and (
+            "memory_pressure_refused_worker_spawn" in normalized_reason
+            or "optional_deep_solver_memory_refusal" in normalized_reason
         ):
             return "non_critical_fallback"
         if foreground_request or (self._is_primary_or_deep_lane() and _foreground_owner_active()):
@@ -3286,7 +3273,9 @@ class MLXLocalClient:
             logger.debug("Failed to record MLX degraded event: %s", exc)
 
     def _is_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
-        return self._is_deep_solver_lane() and "memory_pressure_refused_worker_spawn:" in str(detail)
+        return self._is_deep_solver_lane() and "memory_pressure_refused_worker_spawn:" in str(
+            detail
+        )
 
     def _handle_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
         """Treat a refused 72B load as an unavailable optional lane, not a live-system failure."""
@@ -3348,9 +3337,12 @@ class MLXLocalClient:
         still dominate, and the emergency tier still refuses generation
         outright before this is consulted.
         """
-        if str(
-            os.environ.get("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
-        ).strip().lower() not in {"1", "true", "yes", "on"}:
+        if str(os.environ.get("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")).strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
             return 1.0, ""
         if not _model_is_heavy_lane(self.model_path):
             return 1.0, ""
@@ -3605,9 +3597,7 @@ class MLXLocalClient:
 
         first_token_at = float(getattr(self, "_current_first_token_at", 0.0) or 0.0)
         if first_token_at <= 0.0:
-            threshold_s = float(
-                getattr(self, "_current_first_token_hard_ceiling_s", 0.0) or 0.0
-            )
+            threshold_s = float(getattr(self, "_current_first_token_hard_ceiling_s", 0.0) or 0.0)
             if threshold_s <= 0.0:
                 threshold_s = self._first_token_hard_ceiling(
                     foreground_request=self._is_primary_or_deep_lane(),
@@ -3678,9 +3668,7 @@ class MLXLocalClient:
             float(getattr(self, "_last_user_facing_completed_at", 0.0) or 0.0),
         )
         progress_age_s = (
-            max(0.0, now - worker_progress_anchor)
-            if worker_progress_anchor > 0.0
-            else None
+            max(0.0, now - worker_progress_anchor) if worker_progress_anchor > 0.0 else None
         )
         heartbeat_age_s = (
             max(0.0, now - self._last_heartbeat) if self._last_heartbeat > 0.0 else None
@@ -4024,9 +4012,7 @@ class MLXLocalClient:
             sla = self._first_token_sla(foreground_request=True)
             if holder_age > sla:
                 heartbeat_age = (
-                    time.time() - self._last_heartbeat
-                    if self._last_heartbeat > 0
-                    else 999.0
+                    time.time() - self._last_heartbeat if self._last_heartbeat > 0 else 999.0
                 )
                 if heartbeat_age > 30.0:
                     logger.error(
@@ -4047,9 +4033,7 @@ class MLXLocalClient:
                         sla,
                         heartbeat_age,
                     )
-                    self._deferred_reboot_reason = (
-                        "recoverable_foreground_preemption_slow_holder"
-                    )
+                    self._deferred_reboot_reason = "recoverable_foreground_preemption_slow_holder"
                 try:
                     stuck_future = self._current_gen_future
                     if stuck_future is not None:
@@ -4081,9 +4065,7 @@ class MLXLocalClient:
             # still-cancelling task as reusable left the fresh worker with
             # NO response consumer. A stopped-but-unclosed foreign loop is
             # equally dead for our purposes.
-            cancelling = task.cancelled() or bool(
-                getattr(task, "cancelling", lambda: 0)()
-            )
+            cancelling = task.cancelled() or bool(getattr(task, "cancelling", lambda: 0)())
             loop_serving = False
             try:
                 task_loop = task.get_loop()
@@ -4350,9 +4332,7 @@ class MLXLocalClient:
                 # The queued decode continues invisibly after a timeout;
                 # ask the worker to yield instead of burning the lane.
                 with contextlib.suppress(Exception):
-                    self.soft_cancel_active_generation(
-                        reason=f"batch_timeout:{req_id[:12]}"
-                    )
+                    self.soft_cancel_active_generation(reason=f"batch_timeout:{req_id[:12]}")
         if not res or res.get("status") != "ok":
             return {}
         raw_texts_value = res.get("texts")
@@ -4577,9 +4557,7 @@ class MLXLocalClient:
                     timeout_s=bounded_timeout_s,
                 )
             except TimeoutError:
-                self.soft_cancel_active_generation(
-                    reason="nonparametric_ingest_deadline"
-                )
+                self.soft_cancel_active_generation(reason="nonparametric_ingest_deadline")
                 try:
                     response = await _await_shared_future(future, timeout_s=3.0)
                 except TimeoutError:
@@ -4599,29 +4577,20 @@ class MLXLocalClient:
                 "pairs_considered": int(response.get("pairs_considered") or 0),
                 "pairs_scanned": int(response.get("pairs_scanned") or 0),
                 "pairs_ingested": int(response.get("pairs_ingested") or 0),
-                "positions_ingested": int(
-                    response.get("positions_ingested") or 0
-                ),
+                "positions_ingested": int(response.get("positions_ingested") or 0),
             }
         except asyncio.CancelledError:
             if future is not None:
-                self.soft_cancel_active_generation(
-                    reason="nonparametric_ingest_caller_cancelled"
-                )
+                self.soft_cancel_active_generation(reason="nonparametric_ingest_caller_cancelled")
                 try:
-                    await asyncio.shield(
-                        _await_shared_future(future, timeout_s=3.0)
-                    )
+                    await asyncio.shield(_await_shared_future(future, timeout_s=3.0))
                 except (asyncio.CancelledError, TimeoutError):
                     deferred_reboot = "nonparametric_ingest_cancel_drain_failed"
             raise
         except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
             _record_mlx_degradation(
                 exc,
-                action=(
-                    "kept non-parametric maintenance bounded after resident "
-                    "worker IPC failed"
-                ),
+                action=("kept non-parametric maintenance bounded after resident worker IPC failed"),
                 severity="warning",
             )
             return {**base, "status": f"ipc_failed:{type(exc).__name__}"}
@@ -4657,17 +4626,14 @@ class MLXLocalClient:
         path = str(adapter_path or "").strip()
         if self._closed:
             return {"ok": False, "reason": "client_closed"}
-        if (
-            self._req_q is None
-            or not (self._process and self._process.is_alive() and self._init_done)
+        if self._req_q is None or not (
+            self._process and self._process.is_alive() and self._init_done
         ):
             return {"ok": False, "reason": "worker_not_ready"}
         if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
             return {"ok": False, "reason": "generation_active"}
         adapter_exists = (
-            await asyncio.to_thread(lambda: Path(path).expanduser().is_dir())
-            if path
-            else True
+            await asyncio.to_thread(lambda: Path(path).expanduser().is_dir()) if path else True
         )
         if not adapter_exists:
             return {"ok": False, "reason": f"adapter_missing:{path}"}
@@ -4756,13 +4722,8 @@ class MLXLocalClient:
                 if not bool(recurrent_status.get("active")):
                     errors.append("recurrent_depth_inactive")
                 reported_loops = recurrent_status.get("loops")
-                if (
-                    isinstance(reported_loops, int)
-                    and reported_loops != required_loops
-                ):
-                    errors.append(
-                        f"recurrent_depth_mismatch:{reported_loops}!={required_loops}"
-                    )
+                if isinstance(reported_loops, int) and reported_loops != required_loops:
+                    errors.append(f"recurrent_depth_mismatch:{reported_loops}!={required_loops}")
         return errors
 
     def get_worker_identity_snapshot(self) -> dict[str, Any]:
@@ -4820,16 +4781,14 @@ class MLXLocalClient:
                 self._record_cancel_ack_rejection("worker_boot_id_mismatch")
                 return False
             expected_pid = identity.get("worker_pid")
-            if (
-                isinstance(expected_pid, int)
-                and receipt.get("worker_pid") not in (None, expected_pid)
+            if isinstance(expected_pid, int) and receipt.get("worker_pid") not in (
+                None,
+                expected_pid,
             ):
                 self._record_cancel_ack_rejection("worker_pid_mismatch")
                 return False
         reported_path = str(receipt.get("worker_model_path") or "")
-        if reported_path and _real_model_path(reported_path) != _real_model_path(
-            self.model_path
-        ):
+        if reported_path and _real_model_path(reported_path) != _real_model_path(self.model_path):
             self._record_cancel_ack_rejection("worker_model_path_mismatch")
             return False
 
@@ -4871,6 +4830,7 @@ class MLXLocalClient:
         cognitive_context: list | None = None,
         operation_authority: dict[str, Any] | None = None,
         action_policy_evidence: dict[str, Any] | None = None,
+        action_intervention: dict[str, Any] | None = None,
         external_execution_offer: dict[str, Any] | None = None,
         response_contract: str | None = None,
     ) -> dict[str, Any]:
@@ -4927,11 +4887,32 @@ class MLXLocalClient:
                     validate_evidence_snapshot,
                 )
 
-                wire_action_policy_evidence = validate_evidence_snapshot(
-                    action_policy_evidence
-                )
+                wire_action_policy_evidence = validate_evidence_snapshot(action_policy_evidence)
             except (ImportError, TypeError, ValueError):
                 return {**base, "reason": "invalid_action_policy_evidence"}
+        wire_action_intervention: dict[str, Any] | None = None
+        if action_intervention is not None:
+            try:
+                from core.brain.llm.latent_cortex.action_intervention import (
+                    validate_action_intervention,
+                )
+
+                wire_action_intervention = validate_action_intervention(
+                    action_intervention,
+                    require_current_policy=True,
+                )
+            except (ImportError, OSError, RuntimeError, TypeError, ValueError):
+                return {**base, "reason": "invalid_action_intervention"}
+            if wire_action_policy_evidence is None:
+                return {
+                    **base,
+                    "reason": "action_intervention_policy_evidence_missing",
+                }
+            if foreground_request:
+                return {
+                    **base,
+                    "reason": "action_intervention_requires_lab_lane",
+                }
         wire_external_execution_offer: dict[str, Any] | None = None
         if external_execution_offer is not None:
             try:
@@ -4944,14 +4925,20 @@ class MLXLocalClient:
                 )
             except (ImportError, TypeError, ValueError):
                 return {**base, "reason": "invalid_external_execution_offer"}
-            if (
-                wire_action_policy_evidence is None
-                or operation_authority is None
-            ):
+            if wire_action_policy_evidence is None or operation_authority is None:
                 return {
                     **base,
                     "reason": "external_execution_authority_tuple_missing",
                 }
+        if (
+            wire_action_intervention is not None
+            and wire_action_intervention["authority_payload"]["action"] == "execute"
+            and wire_external_execution_offer is None
+        ):
+            return {
+                **base,
+                "reason": "execute_intervention_offer_missing",
+            }
         wire_operation_authority: dict[str, Any] | None = None
         if operation_authority is not None:
             try:
@@ -4978,12 +4965,8 @@ class MLXLocalClient:
             }
             if set(wire_runtime_controls) != required_controls:
                 return {**base, "reason": "invalid_runtime_controls"}
-            recurrent_loops = wire_runtime_controls.get(
-                "clean_user_surface_recurrent_loops"
-            )
-            steering_alpha = wire_runtime_controls.get(
-                "clean_user_surface_steering_alpha"
-            )
+            recurrent_loops = wire_runtime_controls.get("clean_user_surface_recurrent_loops")
+            steering_alpha = wire_runtime_controls.get("clean_user_surface_steering_alpha")
             if (
                 type(recurrent_loops) is not int
                 or not 1 <= recurrent_loops <= 2
@@ -5012,18 +4995,43 @@ class MLXLocalClient:
                 latent_request_payload_sha256,
             )
 
+            if wire_action_intervention is not None:
+                intervention_request_sha256 = latent_request_payload_sha256(
+                    prompt=str(prompt) if prompt is not None else None,
+                    messages=list(messages) if messages is not None else None,
+                    domain=str(domain or "general"),
+                    config=wire_config if config is not None else None,
+                    budget=wire_budget if budget is not None else None,
+                    runtime_controls=(
+                        wire_runtime_controls if runtime_controls is not None else None
+                    ),
+                    cognitive_context=wire_cognitive_context,
+                    operation_authority=wire_operation_authority,
+                    action_policy_evidence=wire_action_policy_evidence,
+                    external_execution_offer=wire_external_execution_offer,
+                    response_contract=response_contract,
+                    verifier_guidance=wire_verifier_guidance,
+                    facet_reliability=wire_facet_reliability,
+                )
+                if (
+                    intervention_request_sha256
+                    != wire_action_intervention["authority_payload"]["request_payload_sha256"]
+                ):
+                    return {
+                        **base,
+                        "reason": "action_intervention_request_mismatch",
+                    }
             expected_request_sha256 = latent_request_payload_sha256(
                 prompt=str(prompt) if prompt is not None else None,
                 messages=list(messages) if messages is not None else None,
                 domain=str(domain or "general"),
                 config=wire_config if config is not None else None,
                 budget=wire_budget if budget is not None else None,
-                runtime_controls=(
-                    wire_runtime_controls if runtime_controls is not None else None
-                ),
+                runtime_controls=(wire_runtime_controls if runtime_controls is not None else None),
                 cognitive_context=wire_cognitive_context,
                 operation_authority=wire_operation_authority,
                 action_policy_evidence=wire_action_policy_evidence,
+                action_intervention=wire_action_intervention,
                 external_execution_offer=wire_external_execution_offer,
                 response_contract=response_contract,
                 verifier_guidance=wire_verifier_guidance,
@@ -5038,9 +5046,8 @@ class MLXLocalClient:
         if not math.isfinite(bounded_timeout_s) or bounded_timeout_s <= 0.0:
             return {**base, "reason": "invalid_timeout"}
         bounded_timeout_s = min(900.0, max(5.0, bounded_timeout_s))
-        if (
-            self._req_q is None
-            or not (self._process and self._process.is_alive() and self._init_done)
+        if self._req_q is None or not (
+            self._process and self._process.is_alive() and self._init_done
         ):
             return {**base, "reason": "worker_not_ready"}
         try:
@@ -5084,9 +5091,8 @@ class MLXLocalClient:
         deferred_reboot = ""
         lane_fenced = False
         try:
-            if (
-                self._req_q is None
-                or not (self._process and self._process.is_alive() and self._init_done)
+            if self._req_q is None or not (
+                self._process and self._process.is_alive() and self._init_done
             ):
                 return {**base, "reason": "worker_not_ready"}
             if self._warmup_in_flight or self._active_generations > 0:
@@ -5135,6 +5141,8 @@ class MLXLocalClient:
                 job["operation_authority"] = wire_operation_authority
             if wire_action_policy_evidence is not None:
                 job["action_policy_evidence"] = wire_action_policy_evidence
+            if wire_action_intervention is not None:
+                job["action_intervention"] = wire_action_intervention
             if wire_external_execution_offer is not None:
                 job["external_execution_offer"] = wire_external_execution_offer
             if response_contract is not None:
@@ -5194,15 +5202,11 @@ class MLXLocalClient:
                     expected_request_sha256=expected_request_sha256,
                 ):
                     receipt = dict(cancel_ack.get("receipt") or {})
-                    progress = dict(
-                        self._latent_progress_by_request.get(req_id) or {}
-                    )
+                    progress = dict(self._latent_progress_by_request.get(req_id) or {})
                     logger.warning(
                         "Latent owner deadline reached cleanly: stage=%s "
                         "input_tokens=%s elapsed=%s timings=%s",
-                        receipt.get("last_stage")
-                        or progress.get("stage")
-                        or "unknown",
+                        receipt.get("last_stage") or progress.get("stage") or "unknown",
                         receipt.get("input_token_count")
                         or progress.get("input_tokens")
                         or "unknown",
@@ -5249,6 +5253,100 @@ class MLXLocalClient:
                         "receipt": receipt,
                         "reason": "worker_identity_failed:" + ",".join(identity_errors),
                     }
+                if wire_action_intervention is not None:
+                    try:
+                        from core.brain.llm.latent_cortex.action_intervention import (
+                            validate_action_intervention_receipt,
+                        )
+                        from core.brain.llm.latent_cortex.epistemic_state import (
+                            OperationKind,
+                        )
+                        from core.brain.llm.latent_cortex.value_of_computation import (
+                            validate_action_trace,
+                        )
+
+                        policy_receipt = receipt.get("value_of_computation")
+                        action_trace = receipt.get("cognitive_action_trace")
+                        expected_policy_fields = {
+                            "schema",
+                            "bucket",
+                            "snapshot_sha256",
+                            "active",
+                            "calibration_intervention",
+                            "executors",
+                            "actions_selected",
+                            "checked_transitions",
+                            "selected_actions",
+                        }
+                        if (
+                            not isinstance(policy_receipt, dict)
+                            or set(policy_receipt) != expected_policy_fields
+                            or not isinstance(action_trace, list)
+                        ):
+                            raise ValueError("worker intervention policy receipt is incomplete")
+                        executors = tuple(
+                            OperationKind(item) for item in policy_receipt.get("executors", ())
+                        )
+                        if not executors or len(set(executors)) != len(executors):
+                            raise ValueError("worker intervention executor inventory is invalid")
+                        validated_trace = validate_action_trace(
+                            action_trace,
+                            evidence_snapshot=wire_action_policy_evidence,
+                            executors=executors,
+                            action_intervention=wire_action_intervention,
+                        )
+                        validate_action_intervention_receipt(
+                            policy_receipt["calibration_intervention"],
+                            intervention=wire_action_intervention,
+                            cognitive_action_trace=action_trace,
+                        )
+                        selected_actions = validated_trace["selected_actions"]
+                        if (
+                            wire_external_execution_offer is not None
+                            or OperationKind.EXECUTE.value in selected_actions
+                        ):
+                            if wire_external_execution_offer is None:
+                                raise ValueError(
+                                    "worker selected execute without an external execution offer"
+                                )
+                            from core.brain.llm.latent_cortex.external_execution import (
+                                validate_external_execution_handoff,
+                            )
+
+                            validate_external_execution_handoff(
+                                receipt.get("external_execution_handoff"),
+                                offer=wire_external_execution_offer,
+                                cognitive_action_trace=action_trace,
+                            )
+                        elif receipt.get("external_execution_handoff"):
+                            raise ValueError(
+                                "worker emitted an unsolicited external execution handoff"
+                            )
+                        checked_transitions = sum(
+                            int(row["transition"]["checked"]) for row in validated_trace["rows"]
+                        )
+                        if (
+                            policy_receipt.get("schema") != wire_action_policy_evidence["schema"]
+                            or policy_receipt.get("bucket") != wire_action_policy_evidence["bucket"]
+                            or policy_receipt.get("snapshot_sha256")
+                            != wire_action_policy_evidence["snapshot_sha256"]
+                            or policy_receipt.get("active") is not True
+                            or policy_receipt.get("actions_selected") != len(action_trace)
+                            or policy_receipt.get("selected_actions") != selected_actions
+                            or policy_receipt.get("checked_transitions") != checked_transitions
+                        ):
+                            raise ValueError("worker intervention policy summary differs")
+                    except (
+                        ImportError,
+                        KeyError,
+                        TypeError,
+                        ValueError,
+                    ):
+                        return {
+                            **base,
+                            "receipt": receipt,
+                            "reason": "action_intervention_receipt_invalid",
+                        }
                 try:
                     identity_remaining = deadline.remaining
                     if identity_remaining is not None and identity_remaining <= 0.0:
@@ -5304,9 +5402,7 @@ class MLXLocalClient:
                     return {
                         **base,
                         "receipt": receipt,
-                        "progress": dict(
-                            self._latent_progress_by_request.get(req_id) or {}
-                        ),
+                        "progress": dict(self._latent_progress_by_request.get(req_id) or {}),
                         "reason": "latent_answer_invalid",
                     }
                 self._mark_progress()
@@ -5314,17 +5410,13 @@ class MLXLocalClient:
                     "ok": True,
                     "text": answer,
                     "receipt": receipt,
-                    "progress": dict(
-                        self._latent_progress_by_request.get(req_id) or {}
-                    ),
+                    "progress": dict(self._latent_progress_by_request.get(req_id) or {}),
                     "reason": str(res.get("reason") or ""),
                 }
             return {
                 **base,
                 "receipt": receipt,
-                "progress": dict(
-                    self._latent_progress_by_request.get(req_id) or {}
-                ),
+                "progress": dict(self._latent_progress_by_request.get(req_id) or {}),
                 "reason": reason or "latent_reason_failed",
             }
         except asyncio.CancelledError:
@@ -5361,9 +5453,7 @@ class MLXLocalClient:
                             )
                         )
                     elif lane_fenced and fut is None and self._active_generations <= 0:
-                        await asyncio.shield(
-                            self._set_durable_lane_preemptible(True)
-                        )
+                        await asyncio.shield(self._set_durable_lane_preemptible(True))
             finally:
                 self._latent_progress_by_request.pop(req_id, None)
                 self._release_request_lock()
@@ -5382,9 +5472,7 @@ class MLXLocalClient:
         respawn path re-resolves the fused manifest, so crash recovery after
         the swap also serves the promoted artifact.
         """
-        resolved = await asyncio.to_thread(
-            lambda: Path(str(model_path or "")).expanduser()
-        )
+        resolved = await asyncio.to_thread(lambda: Path(str(model_path or "")).expanduser())
         if not await asyncio.to_thread(resolved.is_dir):
             return {"ok": False, "reason": f"artifact_missing:{resolved}"}
         previous = self.model_path
@@ -5404,7 +5492,9 @@ class MLXLocalClient:
         logger.info("🧬 [MLX] Promoted artifact live: %s", resolved.name)
         return {"ok": True, "mode": "recycled", "previous": previous}
 
-    def soft_cancel_active_generation(self, reason: str = "foreground_preemption") -> dict[str, Any]:
+    def soft_cancel_active_generation(
+        self, reason: str = "foreground_preemption"
+    ) -> dict[str, Any]:
         """Ask the ACTIVE generation to stop between tokens (cooperative).
 
         Writes the active job's sequence number into shared memory; the worker
@@ -5419,15 +5509,15 @@ class MLXLocalClient:
         reason = str(reason or "foreground_preemption")
         cancel_seq = getattr(self, "_cancel_seq", None)
         active_seq = int(getattr(self, "_current_request_seq", 0) or 0)
-        generation_active = bool(
-            self._current_request_started_at > 0.0 and active_seq > 0
-        )
+        generation_active = bool(self._current_request_started_at > 0.0 and active_seq > 0)
         if cancel_seq is None or not generation_active:
             return {
                 "requested": False,
                 "reason": reason,
                 "active_seq": active_seq,
-                "detail": "no_active_generation" if cancel_seq is not None else "cancel_channel_unavailable",
+                "detail": "no_active_generation"
+                if cancel_seq is not None
+                else "cancel_channel_unavailable",
             }
         try:
             cancel_seq.value = active_seq
@@ -5494,8 +5584,7 @@ class MLXLocalClient:
             except (OSError, ValueError):
                 return False
             heartbeat_fresh = (
-                self._last_heartbeat > 0.0
-                and (time.time() - self._last_heartbeat) < 20.0
+                self._last_heartbeat > 0.0 and (time.time() - self._last_heartbeat) < 20.0
             )
             if cancel_cleared and heartbeat_fresh:
                 return True
@@ -5677,11 +5766,7 @@ class MLXLocalClient:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
 
-            if (
-                process is not None
-                and process.is_alive()
-                and not killed_process_before_lock
-            ):
+            if process is not None and process.is_alive() and not killed_process_before_lock:
                 _note_lane_worker_death(self, reason)
                 self._process_started_at = 0.0
                 self._kill_and_join_blocking(process)
@@ -5752,10 +5837,7 @@ class MLXLocalClient:
                         and "mlx_worker" in str(command)
                     ):
                         ancestor_pids = set(observed_process.ancestor_pids)
-                        if (
-                            observed_process.pid != os.getpid()
-                            and os.getpid() in ancestor_pids
-                        ):
+                        if observed_process.pid != os.getpid() and os.getpid() in ancestor_pids:
                             logger.warning(
                                 "🧹 [STABILITY] Killing orphan MLXWorker pid=%d for %s",
                                 observed_process.pid,
@@ -6017,9 +6099,7 @@ class MLXLocalClient:
                             action="worker heartbeat reports a broken response pipe; expecting worker exit",
                             severity="critical",
                         )
-                    owner_id, fencing_token, _receipt_id = (
-                        self._durable_model_lane_owner_snapshot()
-                    )
+                    owner_id, fencing_token, _receipt_id = self._durable_model_lane_owner_snapshot()
                     if fencing_token > 0 and owner_id:
                         try:
                             from core.runtime.model_lane_control import (
@@ -6091,8 +6171,7 @@ class MLXLocalClient:
                     audit = ServiceContainer.get("subsystem_audit", default=None)
                     if audit:
                         tier_name = (
-                            "mlx_heavy" if _model_is_heavy_lane(self.model_path)
-                            else "mlx_light"
+                            "mlx_heavy" if _model_is_heavy_lane(self.model_path) else "mlx_light"
                         )
                         audit.heartbeat(tier_name)
                     continue
@@ -6152,9 +6231,7 @@ class MLXLocalClient:
                         continue
                     if not req_id:
                         _record_mlx_degradation(
-                            RuntimeError(
-                                f"uncorrelated_worker_response:{action or 'unknown'}"
-                            ),
+                            RuntimeError(f"uncorrelated_worker_response:{action or 'unknown'}"),
                             action=(
                                 "dropped an id-less worker response instead of "
                                 "completing the active request with it"
@@ -6173,9 +6250,7 @@ class MLXLocalClient:
                         ),
                         action=f"worker self-reported degradation ({action or 'unknown'})",
                         severity=(
-                            "critical"
-                            if action == "memory_sentinel_degraded"
-                            else "warning"
+                            "critical" if action == "memory_sentinel_degraded" else "warning"
                         ),
                     )
                     logger.warning(
@@ -6297,11 +6372,7 @@ class MLXLocalClient:
         """
         if _shutdown_blocks_model_work(self.model_path, action="worker start/recovery"):
             return False
-        if (
-            request_is_background
-            and _foreground_owner_active()
-            and not self._is_primary_lane()
-        ):
+        if request_is_background and _foreground_owner_active() and not self._is_primary_lane():
             # Same inversion as the warmup guard (2026-07-10): the Reflex
             # fallback serving turns OWNED the foreground, which deferred
             # cortex recovery here — the primary could never come back while
@@ -6427,8 +6498,7 @@ class MLXLocalClient:
                 )
             admission_logger = logger.warning if foreground_request else logger.info
             admission_logger(
-                "⏸️ [MLX] Model-load admission deferred for %s: %s "
-                "(receipt=%s, recheck_in=%.1fs)",
+                "⏸️ [MLX] Model-load admission deferred for %s: %s (receipt=%s, recheck_in=%.1fs)",
                 os.path.basename(self.model_path),
                 admission_exc.reason,
                 admission_exc.receipt_id or "none",
@@ -6449,7 +6519,8 @@ class MLXLocalClient:
             )
             logger.warning(
                 "⏸️ [MLX] Spawn gate held too long by another lane; deferring %s spawn (%s).",
-                os.path.basename(self.model_path), gate_exc,
+                os.path.basename(self.model_path),
+                gate_exc,
             )
             return False
 
@@ -6498,11 +6569,7 @@ class MLXLocalClient:
 
         global _GLOBAL_LAST_SWAP_TIME, _GLOBAL_LAST_HEAVY_MODEL
 
-        if (
-            request_is_background
-            and _foreground_owner_active()
-            and not self._is_primary_lane()
-        ):
+        if request_is_background and _foreground_owner_active() and not self._is_primary_lane():
             # Primary-lane exemption (2026-07-10 inversion family): the
             # reconciler's prewarm arrives here as background work; blocking
             # it while the Reflex fallback owns the foreground kept the
@@ -6691,7 +6758,9 @@ class MLXLocalClient:
                 _spawn_fails = getattr(self, "_consecutive_spawn_failures", 0)
                 _spawn_backoff_until = getattr(self, "_spawn_backoff_until", 0.0)
                 if time.time() < _spawn_backoff_until:
-                    if not await asyncio.to_thread(self.refresh_runtime_availability, force_probe=True):
+                    if not await asyncio.to_thread(
+                        self.refresh_runtime_availability, force_probe=True
+                    ):
                         return False  # Still in backoff window
 
                 self._drain_queue()
@@ -6779,9 +6848,7 @@ class MLXLocalClient:
                         readiness_errors = self._init_receipt_errors(res)
                         if readiness_errors:
                             _record_mlx_degradation(
-                                ValueError(
-                                    "init_receipt_invalid:" + ",".join(readiness_errors)
-                                ),
+                                ValueError("init_receipt_invalid:" + ",".join(readiness_errors)),
                                 action="refused READY on an unvalidated worker init receipt",
                                 severity="error",
                             )
@@ -6789,7 +6856,8 @@ class MLXLocalClient:
                             self._worker_identity = {}
                             self._recurrent_depth_status = {}
                             self._set_lane_state(
-                                "failed", "init_receipt_invalid",
+                                "failed",
+                                "init_receipt_invalid",
                             )
                             if handshake_attempt == 0:
                                 continue
@@ -6814,9 +6882,7 @@ class MLXLocalClient:
                             )
                         worker_identity = res.get("worker_identity")
                         self._worker_identity = (
-                            dict(worker_identity)
-                            if isinstance(worker_identity, dict)
-                            else {}
+                            dict(worker_identity) if isinstance(worker_identity, dict) else {}
                         )
                         raw_steering = res.get("steering_active")
                         if raw_steering is not None:
@@ -6828,16 +6894,19 @@ class MLXLocalClient:
                                     # never bool() an untyped IPC value into
                                     # the shared steering channels.
                                     _record_mlx_degradation(
-                                        TypeError(
-                                            f"non-bool steering receipt: {raw_steering!r}"
-                                        ),
+                                        TypeError(f"non-bool steering receipt: {raw_steering!r}"),
                                         action="treated malformed steering receipt as inactive",
                                     )
                                     steering_active = False
                                 self._steering_active.value = steering_active
                                 self._substrate_mem[-1] = 1.0 if steering_active else 0.0
                                 self._steering_liveness_observed = True
-                            except (TypeError, ValueError, IndexError, AttributeError) as steering_receipt_exc:
+                            except (
+                                TypeError,
+                                ValueError,
+                                IndexError,
+                                AttributeError,
+                            ) as steering_receipt_exc:
                                 _record_mlx_degradation(
                                     steering_receipt_exc,
                                     action="kept worker ready after steering liveness receipt write failed",
@@ -7017,9 +7086,7 @@ class MLXLocalClient:
                     live_override = consume_override(
                         "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION",
                         guard="live_memory_pressure_abort",
-                        observed=(
-                            f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"
-                        ),
+                        observed=(f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"),
                     )
                     if not live_override.active:
                         logger.error(
@@ -7035,12 +7102,14 @@ class MLXLocalClient:
                             foreground_request=foreground_request,
                         )
                         try:
-                            self.force_abort_active_generation(
-                                "memory_pressure_during_generation"
-                            )
+                            self.force_abort_active_generation("memory_pressure_during_generation")
                             _cancel_shared_future(future)
                         except (
-                            OSError, AttributeError, RuntimeError, TypeError, ValueError,
+                            OSError,
+                            AttributeError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
                         ) as abort_exc:
                             # The abort itself failed. Critical pressure WAS
                             # observed and cleanup cannot be proven, so the
@@ -7447,7 +7516,9 @@ class MLXLocalClient:
         try:
             return bool(self._steering_active.value)
         except (AttributeError, TypeError, ValueError, OSError) as _exc:
-            logger.debug("Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc)
+            logger.debug(
+                "Suppressed %s in core.brain.llm.mlx_client: %s", type(_exc).__name__, _exc
+            )
         try:
             sm = getattr(self, "_substrate_mem", None)
             if sm is None:
@@ -7576,13 +7647,9 @@ class MLXLocalClient:
                 override_decision = consume_override(
                     "AURA_MLX_ALLOW_CRITICAL_MEMORY_GENERATION",
                     guard="critical_memory_generation_refusal",
-                    observed=(
-                        f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"
-                    ),
+                    observed=(f"{os.path.basename(self.model_path)}:{memory_snapshot.reason}"),
                 )
-            critical_override = bool(
-                override_decision is not None and override_decision.active
-            )
+            critical_override = bool(override_decision is not None and override_decision.active)
             if override_applies and critical_override:
                 # The override disables a refusal made AFTER critical pressure
                 # was positively observed, i.e. the last guard before the model
@@ -7664,6 +7731,7 @@ class MLXLocalClient:
         # hiccup) but it runs damped rather than wide open.
         try:
             from core.brain.llm.somatic_throttle import SomaticComputeSentinel
+
             sentinel = SomaticComputeSentinel()
             kwargs = sentinel.adjust_generation_options(kwargs)
         except _MLX_OPTIONAL_THROTTLE_ERRORS as exc:
@@ -7729,6 +7797,7 @@ class MLXLocalClient:
             # (contextvars), so a slow turn reads as one connected trace.
             try:
                 from core.observability.tracing import get_tracer
+
                 _span_cm = get_tracer().span(
                     "inference.generate",
                     attributes={
@@ -7826,7 +7895,9 @@ class MLXLocalClient:
             # meant for small models, and handed unrelated paths containing
             # "32b" an inflated one. Measured artifact evidence decides.
             is_heavy = _model_is_heavy_lane(self.model_path)
-            deadline = get_deadline(timeout_s if timeout_s is not None else (240.0 if is_heavy else 60.0))
+            deadline = get_deadline(
+                timeout_s if timeout_s is not None else (240.0 if is_heavy else 60.0)
+            )
             kwargs["deadline"] = deadline
         init_timeout, soft_init_timeout = self._request_scoped_init_timeout(
             deadline,
@@ -7955,18 +8026,10 @@ class MLXLocalClient:
             "web_interlocutor_contract": bool(kwargs.get("web_interlocutor_contract", False)),
             "health_probe": bool(kwargs.get("health_probe", False)),
             "warmup_precompile": bool(kwargs.get("warmup_precompile", False)),
-            "runtime_fact_status_contract": bool(
-                kwargs.get("runtime_fact_status_contract", False)
-            ),
-            "requires_memory_grounding": bool(
-                kwargs.get("requires_memory_grounding", False)
-            ),
-            "memory_state_contract": bool(
-                kwargs.get("memory_state_contract", False)
-            ),
-            "grounded_recall_contract": bool(
-                kwargs.get("grounded_recall_contract", False)
-            ),
+            "runtime_fact_status_contract": bool(kwargs.get("runtime_fact_status_contract", False)),
+            "requires_memory_grounding": bool(kwargs.get("requires_memory_grounding", False)),
+            "memory_state_contract": bool(kwargs.get("memory_state_contract", False)),
+            "grounded_recall_contract": bool(kwargs.get("grounded_recall_contract", False)),
             "grounded_runtime_status_contract": bool(
                 kwargs.get("grounded_runtime_status_contract", False)
             ),
@@ -8022,9 +8085,7 @@ class MLXLocalClient:
                 if stop not in req["stop_sequences"]:
                     req["stop_sequences"].append(stop)
 
-        if self._active_generations <= 0 and not await self._set_durable_lane_preemptible(
-            False
-        ):
+        if self._active_generations <= 0 and not await self._set_durable_lane_preemptible(False):
             logger.info(
                 "MLX generation yielded because durable lane ownership is being evicted: %s",
                 os.path.basename(self.model_path),
@@ -8310,11 +8371,16 @@ class MLXLocalClient:
                     os.path.basename(self.model_path),
                 )
             self._pending_generations.pop(req_id, None)
-            if not expected_cancel_reason and not benchmark_baseline_cancel and not shutdown_cancel and (
-                foreground_request
-                or (
-                    self._is_primary_or_deep_lane()
-                    and self._lane_state not in {"cold", "warming", "recovering"}
+            if (
+                not expected_cancel_reason
+                and not benchmark_baseline_cancel
+                and not shutdown_cancel
+                and (
+                    foreground_request
+                    or (
+                        self._is_primary_or_deep_lane()
+                        and self._lane_state not in {"cold", "warming", "recovering"}
+                    )
                 )
             ):
                 self._record_degraded_event(
@@ -8444,9 +8510,7 @@ class MLXLocalClient:
             # advertised JSON schema before anything executes. A call whose
             # arguments do not satisfy the schema is a malformed call, not an
             # effect to attempt.
-            schema_error = _tool_arguments_schema_error(
-                tools.get(tool_name), tool_args
-            )
+            schema_error = _tool_arguments_schema_error(tools.get(tool_name), tool_args)
             if schema_error:
                 _record_mlx_degradation(
                     ValueError(f"tool_arguments_invalid:{tool_name}:{schema_error}"),
@@ -8613,8 +8677,7 @@ class MLXLocalClient:
                 if not _readiness_answer_accepted(readiness_text):
                     self._set_lane_state("recovering", "warmup_readiness_answer_mismatch")
                     raise RuntimeError(
-                        "warmup_readiness_answer_mismatch:"
-                        f"{str(readiness_text).strip()[:60]!r}"
+                        f"warmup_readiness_answer_mismatch:{str(readiness_text).strip()[:60]!r}"
                     )
                 self._last_visible_readiness_at = time.time()
                 self._set_lane_state("ready")
@@ -8817,11 +8880,7 @@ class MLXLocalClient:
             # warmup, and deferring it deadlocked the lane live (2026-07-10:
             # 206s foreground budget expired every turn while the precompile
             # it needed sat deferred behind it).
-            if (
-                request_is_background
-                and _foreground_owner_active()
-                and not self._is_primary_lane()
-            ):
+            if request_is_background and _foreground_owner_active() and not self._is_primary_lane():
                 logger.info(
                     "⏸️ [MLX] Background warmup deferred for %s (before worker spawn) while foreground lane is owned by %s.",
                     os.path.basename(self.model_path),
@@ -8839,11 +8898,7 @@ class MLXLocalClient:
                     self._set_lane_state("recovering", "warmup_deferred")
                 logger.info("⏸️ [MLX] Warmup deferred for %s.", os.path.basename(self.model_path))
                 return False
-            if (
-                request_is_background
-                and _foreground_owner_active()
-                and not self._is_primary_lane()
-            ):
+            if request_is_background and _foreground_owner_active() and not self._is_primary_lane():
                 # Re-check: a foreground turn can take ownership while the
                 # worker was coming up.
                 logger.info(
@@ -9152,6 +9207,7 @@ class MLXLocalClient:
         ``_ensure_worker_alive``. This is a normal lifecycle event, not a
         failure, so it records no degradation. Returns a telemetry dict.
         """
+
         # Programmatic thresholds get the same fail-safe normalization as
         # env values: NaN bypasses every age comparison and a negative value
         # tears down a lane that idled for one tick.
@@ -9191,9 +9247,12 @@ class MLXLocalClient:
         # citizenship unload. AURA_VRAM_SCAVENGE_PRIMARY_HARD=1 restores
         # the old behavior.
         if not under_pressure and self._is_primary_lane():
-            if os.environ.get(
-                "AURA_VRAM_SCAVENGE_PRIMARY_HARD", "0"
-            ).strip().lower() not in {"1", "true", "yes", "on"}:
+            if os.environ.get("AURA_VRAM_SCAVENGE_PRIMARY_HARD", "0").strip().lower() not in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
                 return {
                     "unloaded": False,
                     "reason": "primary_lane_stays_resident_without_pressure",
@@ -9224,8 +9283,7 @@ class MLXLocalClient:
             return {"unloaded": False, "reason": blocker}
 
         logger.info(
-            "🧹 [MLX] Idle VRAM scavenge: unloading %s after %.0fs idle "
-            "(pressure=%s, ~%.1fGB).",
+            "🧹 [MLX] Idle VRAM scavenge: unloading %s after %.0fs idle (pressure=%s, ~%.1fGB).",
             os.path.basename(self.model_path),
             age,
             under_pressure,
@@ -9344,12 +9402,17 @@ def get_mlx_client(model_path: str | None = None, **kwargs) -> MLXLocalClient:
 
         from .model_registry import model_identities_compatible
 
-        if proof_run_active(origin=kwargs.get("origin", "mlx_client")) and proof_model_tier() == "primary":
+        if (
+            proof_run_active(origin=kwargs.get("origin", "mlx_client"))
+            and proof_model_tier() == "primary"
+        ):
             primary_path = _real_model_path(get_model_path(ACTIVE_MODEL))
             target_path = _real_model_path(runtime_path)
             primary_name = os.path.basename(primary_path)
             target_name = os.path.basename(target_path)
-            if target_name != primary_name and not model_identities_compatible(target_name, primary_name):
+            if target_name != primary_name and not model_identities_compatible(
+                target_name, primary_name
+            ):
                 raise RuntimeError(
                     "Proof-primary run refused lower local model lane: "
                     f"{target_name} != {primary_name}"

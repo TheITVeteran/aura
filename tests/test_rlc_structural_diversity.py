@@ -38,6 +38,7 @@ def _action_trace(*, surface_text: str = "") -> list[dict]:
 
 def _isolation(roles: list[str]) -> dict:
     return {
+        "certified": True,
         "candidates": [
             {"index": index, "candidate_sha256": _digest(f"candidate-{index}")}
             for index, _role in enumerate(roles)
@@ -98,6 +99,46 @@ def test_distinct_causal_structures_create_independent_support_classes():
     assert receipt["duplicate_groups"] == []
     assert all(row["independent"] for row in receipt["pairwise"])
     assert all("algorithms" in row["differing_facets"] for row in receipt["pairwise"])
+
+
+def test_incomplete_branch_isolation_is_diagnostic_but_never_certified():
+    roles = ["constructive_solution", "counterexample_search"]
+    operators = [
+        CognitiveOperator.CONSTRUCTIVE_SOLUTION,
+        CognitiveOperator.COUNTEREXAMPLE,
+    ]
+    isolation = {
+        "certified": False,
+        "reason": "isolation_incomplete",
+        "candidates": [
+            {"index": 0, "candidate_sha256": _digest("candidate-0")},
+            {"index": 1, "candidate_sha256": ""},
+        ],
+    }
+
+    receipt = build_structural_diversity_receipt(
+        n_branches=2,
+        cognitive_slots=[],
+        operator_trace=_operator_rows(roles, operators),
+        action_trace=_action_trace(),
+        branch_isolation=isolation,
+    )
+
+    assert receipt["certified"] is False
+    assert receipt["reason"] == "branch_isolation_unproven"
+    assert receipt["branch_isolation_certified"] is False
+    assert receipt["candidate_commitments_complete"] is False
+    assert receipt["structural_independence_observed"] is True
+    assert len(receipt["branches"]) == 2
+    with pytest.raises(ValueError, match="not independently certified"):
+        validate_structural_diversity_receipt(
+            receipt,
+            n_branches=2,
+            cognitive_slots=[],
+            operator_trace=_operator_rows(roles, operators),
+            action_trace=_action_trace(),
+            branch_isolation=isolation,
+        )
 
 
 def test_surface_paraphrase_cannot_create_or_change_structural_support():

@@ -10,6 +10,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.Utils.Singleton")
@@ -48,8 +49,11 @@ def boot_blocked_path() -> Path:
 def clear_boot_blocked() -> None:
     """Drop any stale blocked-boot notice (called once a lock is acquired)."""
     try:
-        boot_blocked_path().unlink(missing_ok=True)
-    except OSError as exc:  # pragma: no cover - best effort
+        get_file_write_gateway().delete_file(
+            boot_blocked_path(),
+            source="singleton.clear_boot_blocked",
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
         logger.debug("Could not clear boot-blocked notice: %s", exc)
 
 
@@ -108,11 +112,13 @@ def _publish_boot_blocked(lock_name: str, holder_pid: int) -> None:
     }
     try:
         path = boot_blocked_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(notice, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError as exc:  # pragma: no cover - best effort
+        get_file_write_gateway().write_text(
+            path,
+            json.dumps(notice, indent=2, sort_keys=True),
+            encoding="utf-8",
+            source="singleton.publish_boot_blocked",
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
         logger.debug("Could not publish boot-blocked notice: %s", exc)
 
 

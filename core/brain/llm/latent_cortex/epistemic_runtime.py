@@ -98,9 +98,7 @@ def _normalized_external_execution_offer(value: Any) -> dict[str, Any]:
 
         return validate_external_execution_offer(value)
     except (ImportError, TypeError, ValueError) as exc:
-        raise EpistemicStateError(
-            "external execution offer is invalid"
-        ) from exc
+        raise EpistemicStateError("external execution offer is invalid") from exc
 
 
 def _visible_objective(prompt: str | None, messages: list | None) -> str:
@@ -137,12 +135,8 @@ def _normalized_decision(decision: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(decision, Mapping):
         raise EpistemicStateError("controller decision must be an object")
     normalized = {
-        "schema": _bounded_text(
-            decision.get("schema"), name="controller schema", limit=96
-        ),
-        "bucket": _bounded_text(
-            decision.get("bucket"), name="controller bucket", limit=160
-        ),
+        "schema": _bounded_text(decision.get("schema"), name="controller schema", limit=96),
+        "bucket": _bounded_text(decision.get("bucket"), name="controller bucket", limit=160),
         "arm": _bounded_text(decision.get("arm"), name="controller arm", limit=64),
         "mode": _bounded_text(decision.get("mode"), name="controller mode", limit=32),
         "evidence": dict(decision.get("evidence") or {}),
@@ -213,9 +207,8 @@ def validate_runtime_operation_authority(
     if (
         not isinstance(authority, Mapping)
         or not _AUTHORITY_FIELDS.issubset(authority_fields)
-        or authority_fields - _AUTHORITY_FIELDS != (
-            _OPTIONAL_AUTHORITY_FIELDS if external_execution_offer is not None else set()
-        )
+        or authority_fields - _AUTHORITY_FIELDS
+        != (_OPTIONAL_AUTHORITY_FIELDS if external_execution_offer is not None else set())
     ):
         raise EpistemicStateError("runtime operation authority fields differ")
     normalized = dict(authority)
@@ -236,16 +229,9 @@ def validate_runtime_operation_authority(
         if not _is_digest(normalized.get(name)):
             raise EpistemicStateError(f"runtime operation authority {name} is invalid")
     if external_execution_offer is not None:
-        normalized_offer = _normalized_external_execution_offer(
-            external_execution_offer
-        )
-        if (
-            normalized.get("external_execution_offer_sha256")
-            != normalized_offer["offer_sha256"]
-        ):
-            raise EpistemicStateError(
-                "runtime operation external execution offer differs"
-            )
+        normalized_offer = _normalized_external_execution_offer(external_execution_offer)
+        if normalized.get("external_execution_offer_sha256") != normalized_offer["offer_sha256"]:
+            raise EpistemicStateError("runtime operation external execution offer differs")
     for name, limit in (
         ("episode_id", 96),
         ("operation_id", 96),
@@ -293,9 +279,7 @@ def validate_runtime_operation_authority(
         or type(journal_entry_count) is not int
         or journal_entry_count != version + 1
     ):
-        raise EpistemicStateError(
-            "runtime operation admitted state or journal version is invalid"
-        )
+        raise EpistemicStateError("runtime operation admitted state or journal version is invalid")
     try:
         operation_kind = OperationKind(normalized["operation_kind"])
     except ValueError as exc:
@@ -328,10 +312,7 @@ def validate_runtime_operation_authority(
             cells={},
         )
     )
-    if (
-        normalized_action_policy["snapshot_sha256"]
-        != normalized["action_policy_sha256"]
-    ):
+    if normalized_action_policy["snapshot_sha256"] != normalized["action_policy_sha256"]:
         raise EpistemicStateError("runtime operation action policy digest mismatches")
     decision = {
         "schema": normalized["controller_schema"],
@@ -353,9 +334,7 @@ def validate_runtime_operation_authority(
         "controller": decision,
     }
     if external_execution_offer is not None:
-        payload["external_execution_offer_sha256"] = normalized[
-            "external_execution_offer_sha256"
-        ]
+        payload["external_execution_offer_sha256"] = normalized["external_execution_offer_sha256"]
     if canonical_sha256(payload) != normalized["input_payload_sha256"]:
         raise EpistemicStateError("runtime operation payload digest mismatches")
     expected_attempt = OperationRecord.compute_attempt_sha256(
@@ -376,9 +355,7 @@ def validate_runtime_operation_authority(
         for item in (cognitive_context or [])
         if isinstance(item, Mapping) and item.get("context_role") == "memory_observation"
     }
-    if memory_state_hashes and memory_state_hashes != {
-        normalized["admitted_state_sha256"]
-    }:
+    if memory_state_hashes and memory_state_hashes != {normalized["admitted_state_sha256"]}:
         raise EpistemicStateError("runtime operation and memory state authority differ")
     return normalized
 
@@ -390,6 +367,7 @@ def validate_completed_runtime_operation_receipt(
     action_policy_evidence: Mapping[str, Any],
     action_policy_receipt: Mapping[str, Any],
     cognitive_action_trace: list[Mapping[str, Any]],
+    action_intervention: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate the durable host completion that authorized one worker trace."""
 
@@ -435,9 +413,7 @@ def validate_completed_runtime_operation_receipt(
         "external_execution_offer_sha256",
     ):
         if not _is_digest(normalized_authority.get(name)):
-            raise EpistemicStateError(
-                f"runtime operation completion authority {name} is invalid"
-            )
+            raise EpistemicStateError(f"runtime operation completion authority {name} is invalid")
     from core.brain.llm.latent_cortex.external_execution import (
         validate_external_execution_offer,
     )
@@ -449,11 +425,9 @@ def validate_completed_runtime_operation_receipt(
     offer = validate_external_execution_offer(external_execution_offer)
     evidence = validate_evidence_snapshot(action_policy_evidence)
     if (
-        normalized_authority["external_execution_offer_sha256"]
-        != offer["offer_sha256"]
+        normalized_authority["external_execution_offer_sha256"] != offer["offer_sha256"]
         or normalized_authority["objective_sha256"] != offer["objective_sha256"]
-        or normalized_authority["action_policy_sha256"]
-        != evidence["snapshot_sha256"]
+        or normalized_authority["action_policy_sha256"] != evidence["snapshot_sha256"]
     ):
         raise EpistemicStateError("runtime operation completion authority differs")
     for name, limit in (
@@ -475,9 +449,7 @@ def validate_completed_runtime_operation_receipt(
         )
     controller_evidence = normalized_authority.get("controller_evidence")
     if not isinstance(controller_evidence, Mapping):
-        raise EpistemicStateError(
-            "runtime operation completion controller evidence is invalid"
-        )
+        raise EpistemicStateError("runtime operation completion controller evidence is invalid")
     normalized_authority["controller_evidence"] = dict(controller_evidence)
     canonical_sha256(normalized_authority["controller_evidence"])
     input_refs: dict[str, tuple[str, ...]] = {}
@@ -495,16 +467,12 @@ def validate_completed_runtime_operation_receipt(
             )
             or len(set(values)) != len(values)
         ):
-            raise EpistemicStateError(
-                f"runtime operation completion {name} is invalid"
-            )
+            raise EpistemicStateError(f"runtime operation completion {name} is invalid")
         input_refs[name] = tuple(sorted(values))
         normalized_authority[name] = list(input_refs[name])
     retry = normalized_authority.get("retry_of_operation_id")
     admitted_version = normalized_authority.get("admitted_state_version")
-    admitted_journal_entry_count = normalized_authority.get(
-        "admitted_journal_entry_count"
-    )
+    admitted_journal_entry_count = normalized_authority.get("admitted_journal_entry_count")
     if (
         not isinstance(retry, str)
         or len(retry) > 96
@@ -519,17 +487,12 @@ def validate_completed_runtime_operation_receipt(
     try:
         operation_kind = OperationKind(normalized_authority["operation_kind"])
     except ValueError as exc:
-        raise EpistemicStateError(
-            "runtime operation completion kind is unsupported"
-        ) from exc
+        raise EpistemicStateError("runtime operation completion kind is unsupported") from exc
     if (
         normalized_authority["operator_id"] != RUNTIME_OPERATION_OPERATOR_ID
-        or normalized_authority["operator_version"]
-        != RUNTIME_OPERATION_OPERATOR_VERSION
+        or normalized_authority["operator_version"] != RUNTIME_OPERATION_OPERATOR_VERSION
     ):
-        raise EpistemicStateError(
-            "runtime operation completion producer identity is invalid"
-        )
+        raise EpistemicStateError("runtime operation completion producer identity is invalid")
     decision = {
         "schema": normalized_authority["controller_schema"],
         "bucket": normalized_authority["controller_bucket"],
@@ -538,9 +501,7 @@ def validate_completed_runtime_operation_receipt(
         "evidence": normalized_authority["controller_evidence"],
     }
     if canonical_sha256(decision) != normalized_authority["decision_sha256"]:
-        raise EpistemicStateError(
-            "runtime operation completion decision digest differs"
-        )
+        raise EpistemicStateError("runtime operation completion decision digest differs")
     operation_payload = {
         "objective_sha256": normalized_authority["objective_sha256"],
         "decision_sha256": normalized_authority["decision_sha256"],
@@ -548,17 +509,10 @@ def validate_completed_runtime_operation_receipt(
         "budget_sha256": normalized_authority["budget_sha256"],
         "action_policy_sha256": normalized_authority["action_policy_sha256"],
         "controller": decision,
-        "external_execution_offer_sha256": normalized_authority[
-            "external_execution_offer_sha256"
-        ],
+        "external_execution_offer_sha256": normalized_authority["external_execution_offer_sha256"],
     }
-    if (
-        canonical_sha256(operation_payload)
-        != normalized_authority["input_payload_sha256"]
-    ):
-        raise EpistemicStateError(
-            "runtime operation completion payload digest differs"
-        )
+    if canonical_sha256(operation_payload) != normalized_authority["input_payload_sha256"]:
+        raise EpistemicStateError("runtime operation completion payload digest differs")
     expected_attempt = OperationRecord.compute_attempt_sha256(
         kind=operation_kind,
         operator_id=normalized_authority["operator_id"],
@@ -570,12 +524,9 @@ def validate_completed_runtime_operation_receipt(
     )
     if (
         expected_attempt != normalized_authority["attempt_sha256"]
-        or normalized_authority["operation_id"]
-        != f"rlc-op-{expected_attempt[:20]}-a1"
+        or normalized_authority["operation_id"] != f"rlc-op-{expected_attempt[:20]}-a1"
     ):
-        raise EpistemicStateError(
-            "runtime operation completion attempt lineage differs"
-        )
+        raise EpistemicStateError("runtime operation completion attempt lineage differs")
     raw_executors = action_policy_receipt.get("executors")
     try:
         executors = tuple(OperationKind(row) for row in raw_executors)
@@ -584,13 +535,12 @@ def validate_completed_runtime_operation_receipt(
             "runtime operation completion executor inventory is invalid"
         ) from exc
     if not executors or len(set(executors)) != len(executors):
-        raise EpistemicStateError(
-            "runtime operation completion executor inventory is invalid"
-        )
+        raise EpistemicStateError("runtime operation completion executor inventory is invalid")
     trace = validate_action_trace(
         cognitive_action_trace,
         evidence_snapshot=evidence,
         executors=executors,
+        action_intervention=action_intervention,
     )
     intent = OperationRecord.from_dict(receipt.get("intent"))
     terminal = OperationRecord.from_dict(receipt.get("terminal"))
@@ -607,8 +557,7 @@ def validate_completed_runtime_operation_receipt(
         or intent.operator_id != normalized_authority.get("operator_id")
         or intent.operator_version != normalized_authority.get("operator_version")
         or intent.attempt_sha256 != normalized_authority.get("attempt_sha256")
-        or intent.input_payload_sha256
-        != normalized_authority.get("input_payload_sha256")
+        or intent.input_payload_sha256 != normalized_authority.get("input_payload_sha256")
         or intent.input_state_sha256 != normalized_authority.get("input_state_sha256")
         or terminal.retry_of_operation_id != intent.operation_id
         or terminal.kind is not intent.kind
@@ -616,24 +565,18 @@ def validate_completed_runtime_operation_receipt(
         or terminal.operator_version != intent.operator_version
         or terminal.input_payload_sha256 != intent.input_payload_sha256
         or admitted_state.episode_id != normalized_authority["episode_id"]
-        or admitted_state.problem.objective_sha256
-        != normalized_authority["objective_sha256"]
-        or admitted_state.state_sha256
-        != normalized_authority["admitted_state_sha256"]
-        or admitted_state.version
-        != normalized_authority["admitted_state_version"]
+        or admitted_state.problem.objective_sha256 != normalized_authority["objective_sha256"]
+        or admitted_state.state_sha256 != normalized_authority["admitted_state_sha256"]
+        or admitted_state.version != normalized_authority["admitted_state_version"]
         or intent not in admitted_state.operations
     ):
         raise EpistemicStateError("runtime operation completion lineage differs")
     raw_action_operations = receipt.get("action_operations")
-    if (
-        not isinstance(raw_action_operations, list)
-        or len(raw_action_operations) != len(trace["rows"])
+    if not isinstance(raw_action_operations, list) or len(raw_action_operations) != len(
+        trace["rows"]
     ):
         raise EpistemicStateError("runtime operation action lineage differs")
-    action_operations = [
-        OperationRecord.from_dict(row) for row in raw_action_operations
-    ]
+    action_operations = [OperationRecord.from_dict(row) for row in raw_action_operations]
     compute = receipt.get("compute")
     if not isinstance(compute, Mapping):
         raise EpistemicStateError("runtime operation compute receipt is invalid")
@@ -676,19 +619,16 @@ def validate_completed_runtime_operation_receipt(
     ):
         raise EpistemicStateError("runtime operation compute receipt is invalid")
     action_cost_total = math.fsum(operation.cost for operation in action_operations)
-    if (
-        not math.isclose(
-            action_cost_total,
-            float(action_state_cost),
-            rel_tol=0.0,
-            abs_tol=1e-9,
-        )
-        or not math.isclose(
-            terminal.cost + action_cost_total,
-            float(state_cost),
-            rel_tol=0.0,
-            abs_tol=1e-9,
-        )
+    if not math.isclose(
+        action_cost_total,
+        float(action_state_cost),
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ) or not math.isclose(
+        terminal.cost + action_cost_total,
+        float(state_cost),
+        rel_tol=0.0,
+        abs_tol=1e-9,
     ):
         raise EpistemicStateError("runtime operation compute cost lineage differs")
     failed_outcome_markers = ("refused", "unavailable", "nonfinite")
@@ -697,12 +637,8 @@ def validate_completed_runtime_operation_receipt(
     ):
         decision = trace_row["decision"]
         transition = trace_row["transition"]
-        action_failed = any(
-            marker in transition["outcome"] for marker in failed_outcome_markers
-        )
-        expected_outcome = (
-            OperationOutcome.FAILED if action_failed else OperationOutcome.SUCCEEDED
-        )
+        action_failed = any(marker in transition["outcome"] for marker in failed_outcome_markers)
+        expected_outcome = OperationOutcome.FAILED if action_failed else OperationOutcome.SUCCEEDED
         expected_failure = "action_execution_failed" if action_failed else ""
         expected_detail = (
             f"step={transition['step_index']}; mode={transition['mode']}; "
@@ -717,8 +653,7 @@ def validate_completed_runtime_operation_receipt(
             != f"rlc-action-{decision['decision_sha256'][:20]}-{index:03d}"
             or operation.outcome is not expected_outcome
             or operation.failure_code != expected_failure
-            or operation.input_state_sha256
-            != normalized_authority["admitted_state_sha256"]
+            or operation.input_state_sha256 != normalized_authority["admitted_state_sha256"]
             or operation.input_claim_ids != intent.input_claim_ids
             or operation.input_hypothesis_ids != intent.input_hypothesis_ids
             or operation.input_evidence_ids != intent.input_evidence_ids
@@ -732,9 +667,7 @@ def validate_completed_runtime_operation_receipt(
         ):
             raise EpistemicStateError("runtime operation action lineage differs")
     current_version = receipt.get("current_state_version")
-    expected_current = EpistemicTransaction(admitted_state).add_operation(
-        terminal
-    )
+    expected_current = EpistemicTransaction(admitted_state).add_operation(terminal)
     for operation in action_operations:
         expected_current.add_operation(operation)
     reconstructed_current = expected_current.commit()
@@ -776,13 +709,9 @@ def validate_completed_runtime_operation_receipt(
         or type(journal.get("size_bytes")) is not int
         or journal["size_bytes"] <= 0
         or type(journal.get("repaired_torn_tail_bytes")) is not int
-        or not 0
-        <= journal["repaired_torn_tail_bytes"]
-        <= journal["size_bytes"]
-        or terminal.operation_id
-        != f"rlc-op-{normalized_authority['attempt_sha256'][:20]}-a2"
-        or terminal.input_state_sha256
-        != normalized_authority["admitted_state_sha256"]
+        or not 0 <= journal["repaired_torn_tail_bytes"] <= journal["size_bytes"]
+        or terminal.operation_id != f"rlc-op-{normalized_authority['attempt_sha256'][:20]}-a2"
+        or terminal.input_state_sha256 != normalized_authority["admitted_state_sha256"]
         or terminal.attempt_sha256 != intent.attempt_sha256
         or terminal.input_claim_ids != intent.input_claim_ids
         or terminal.input_hypothesis_ids != intent.input_hypothesis_ids
@@ -792,11 +721,7 @@ def validate_completed_runtime_operation_receipt(
         or terminal.evidence_gained
         or terminal.started_at != intent.started_at
         or terminal.completed_at < terminal.started_at
-        or terminal.detail
-        != (
-            "worker outcome=succeeded; "
-            f"cost basis={compute['basis']}"
-        )
+        or terminal.detail != (f"worker outcome=succeeded; cost basis={compute['basis']}")
     ):
         raise EpistemicStateError("runtime operation completion state is invalid")
     return {
@@ -906,9 +831,7 @@ class RuntimeOperationLease:
         )
         input_payload_sha256 = canonical_sha256(payload)
         input_claim_ids = tuple(claim.claim_id for claim in state.claims)
-        input_hypothesis_ids = tuple(
-            hypothesis.hypothesis_id for hypothesis in state.hypotheses
-        )
+        input_hypothesis_ids = tuple(hypothesis.hypothesis_id for hypothesis in state.hypotheses)
         input_evidence_ids = tuple(evidence.evidence_id for evidence in state.evidence)
         attempt_sha256 = OperationRecord.compute_attempt_sha256(
             kind=kind,
@@ -920,9 +843,7 @@ class RuntimeOperationLease:
             input_evidence_ids=input_evidence_ids,
         )
         journal = EpistemicStateJournal(Path(root) / f"{state.episode_id}.jsonl")
-        with local_internal_governed_scope(
-            "rlc_runtime_operation", domain="state_mutation"
-        ):
+        with local_internal_governed_scope("rlc_runtime_operation", domain="state_mutation"):
             recovered = journal.bootstrap(genesis)
             if (
                 recovered.state_sha256 == genesis.state_sha256
@@ -941,9 +862,7 @@ class RuntimeOperationLease:
                 and latest.failure_code == "execution_pending"
             ):
                 admission = recovered.operation_admission(attempt_sha256)
-                raise EpistemicStateError(
-                    f"runtime operation cannot resume: {admission.reason}"
-                )
+                raise EpistemicStateError(f"runtime operation cannot resume: {admission.reason}")
             intent = latest
             admitted_state = recovered
             admission_reason = "recovered_pending_operation"
@@ -975,9 +894,7 @@ class RuntimeOperationLease:
             )
             transaction = EpistemicTransaction(recovered).add_operation(intent)
             admitted_state = transaction.commit()
-            with local_internal_governed_scope(
-                "rlc_runtime_operation", domain="state_mutation"
-            ):
+            with local_internal_governed_scope("rlc_runtime_operation", domain="state_mutation"):
                 journal.append(expected_base=recovered, candidate=admitted_state)
             admission_reason = admission.reason
 
@@ -1060,16 +977,12 @@ class RuntimeOperationLease:
 
         try:
             normalized_transitions = tuple(
-                validate_action_transition(row, require_checked=False)
-                for row in action_transitions
+                validate_action_transition(row, require_checked=False) for row in action_transitions
             )
         except (TypeError, ValueError) as exc:
             raise EpistemicStateError("runtime action transition is invalid") from exc
         normalized_action_costs = tuple(float(item) for item in action_costs)
-        if any(
-            not math.isfinite(item) or item < 0.0
-            for item in normalized_action_costs
-        ):
+        if any(not math.isfinite(item) or item < 0.0 for item in normalized_action_costs):
             raise EpistemicStateError("runtime action cost is invalid")
         action_cost_total = math.fsum(normalized_action_costs)
         if action_cost_total > measured_cost + 1e-12:
@@ -1083,9 +996,7 @@ class RuntimeOperationLease:
             retry_of_operation_id=self.intent.operation_id,
         )
         if not admission.allowed:
-            raise EpistemicStateError(
-                f"runtime operation completion refused: {admission.reason}"
-            )
+            raise EpistemicStateError(f"runtime operation completion refused: {admission.reason}")
         terminal = OperationRecord.create(
             operation_id=f"rlc-op-{self.intent.attempt_sha256[:20]}-a2",
             kind=self.intent.kind,
@@ -1110,19 +1021,13 @@ class RuntimeOperationLease:
             zip(normalized_transitions, normalized_action_costs, strict=True)
         ):
             transition_outcome = transition["outcome"]
-            action_failed = any(
-                marker in transition_outcome for marker in failed_outcome_markers
-            )
+            action_failed = any(marker in transition_outcome for marker in failed_outcome_markers)
             action_operations.append(
                 OperationRecord.create(
-                    operation_id=(
-                        f"rlc-action-{transition['decision_sha256'][:20]}-{index:03d}"
-                    ),
+                    operation_id=(f"rlc-action-{transition['decision_sha256'][:20]}-{index:03d}"),
                     kind=OperationKind(transition["action"]),
                     outcome=(
-                        OperationOutcome.FAILED
-                        if action_failed
-                        else OperationOutcome.SUCCEEDED
+                        OperationOutcome.FAILED if action_failed else OperationOutcome.SUCCEEDED
                     ),
                     input_state_sha256=self.state.state_sha256,
                     cost=action_cost,
@@ -1145,9 +1050,7 @@ class RuntimeOperationLease:
         for action_operation in action_operations:
             transaction.add_operation(action_operation)
         candidate = transaction.commit()
-        with local_internal_governed_scope(
-            "rlc_runtime_operation", domain="state_mutation"
-        ):
+        with local_internal_governed_scope("rlc_runtime_operation", domain="state_mutation"):
             self.journal.append(expected_base=self.state, candidate=candidate)
         self.state = candidate
         self._completed = True
@@ -1159,17 +1062,13 @@ class RuntimeOperationLease:
         recovery = self.journal.last_recovery
         journal_receipt = recovery.to_dict() if recovery is not None else {}
         if journal_receipt:
-            journal_receipt["previous_head_sha256"] = (
-                self.journal_parent_sha256
-            )
+            journal_receipt["previous_head_sha256"] = self.journal_parent_sha256
         return {
             "schema": RUNTIME_OPERATION_SCHEMA,
             "authority": dict(self.authority),
             "intent": self.intent.to_dict(),
             "terminal": self._terminal.to_dict() if self._terminal is not None else None,
-            "action_operations": [
-                operation.to_dict() for operation in self._action_operations
-            ],
+            "action_operations": [operation.to_dict() for operation in self._action_operations],
             "completed": self._completed,
             "admitted_state": self.admitted_state.to_dict(),
             "current_state_sha256": self.state.state_sha256,
@@ -1190,8 +1089,10 @@ def measured_operation_cost(
     remaining = max(0.0, state.budget.total - state.budget.used)
     requested_max = requested_budget.get("max_layer_apps")
     worker_budget = receipt.get("budget") if isinstance(receipt, Mapping) else None
-    if type(requested_max) is not int or requested_max <= 0 or not isinstance(
-        worker_budget, Mapping
+    if (
+        type(requested_max) is not int
+        or requested_max <= 0
+        or not isinstance(worker_budget, Mapping)
     ):
         return 0.0, {
             "basis": "unmeasured",

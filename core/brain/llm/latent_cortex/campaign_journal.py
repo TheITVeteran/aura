@@ -34,8 +34,11 @@ ARM_RESULT = "ARM_RESULT"
 VERIFIED = "VERIFIED"
 COMMITTED = "COMMITTED"
 FAILED = "FAILED"
+ACTION_INTERVENTION_CLAIMED = "ACTION_INTERVENTION_CLAIMED"
 
-_CELL_EVENTS = frozenset({STARTED, ARM_RESULT, VERIFIED, COMMITTED, FAILED})
+_CELL_EVENTS = frozenset(
+    {STARTED, ACTION_INTERVENTION_CLAIMED, ARM_RESULT, VERIFIED, COMMITTED, FAILED}
+)
 _EVENT_KEYS = frozenset(
     {
         "schema",
@@ -319,6 +322,8 @@ class _Attempt:
     attempt_id: str
     attempt_number: int
     state: str = STARTED
+    intervention_claim_event_sha256: str | None = None
+    intervention_claim: dict[str, Any] | None = None
     arm_result_event_sha256: str | None = None
     verified_event_sha256: str | None = None
     commit_event_sha256: str | None = None
@@ -362,7 +367,12 @@ class CampaignJournal:
             if os.fstat(self._journal_fd).st_size == 0:
                 self._write_genesis()
             self._state = self._replay()
-            self._recovered_attempts = set(self._state.active_by_cell.values())
+            self._recovered_attempts = {
+                attempt_id
+                for attempt_id in self._state.active_by_cell.values()
+                if self._state.attempts[attempt_id].state
+                != ACTION_INTERVENTION_CLAIMED
+            }
         except BaseException:  # noqa: BLE001 - resource cleanup on any exit; original re-raised
             self.close()
             raise
@@ -570,10 +580,36 @@ class CampaignJournal:
         if state.active_by_cell.get(cell_id) != attempt_id:
             _fail("journal_attempt_not_active")
 
-        if event == ARM_RESULT:
+        if event == ACTION_INTERVENTION_CLAIMED:
+            if set(payload) != {
+                "intervention_sha256",
+                "request_payload_sha256",
+                "signed_journal_head_sha256",
+                "signed_journal_event_count",
+            }:
+                _fail("action_intervention_claim_payload_invalid")
+            if (
+                attempt.state != STARTED
+                or not all(
+                    _is_sha256(payload.get(name))
+                    for name in (
+                        "intervention_sha256",
+                        "request_payload_sha256",
+                        "signed_journal_head_sha256",
+                    )
+                )
+                or type(payload.get("signed_journal_event_count")) is not int
+                or payload["signed_journal_event_count"] != state.event_count
+                or payload["signed_journal_head_sha256"] != state.head_sha256
+            ):
+                _fail("action_intervention_claim_invalid")
+            attempt.state = ACTION_INTERVENTION_CLAIMED
+            attempt.intervention_claim_event_sha256 = event_sha256
+            attempt.intervention_claim = payload
+        elif event == ARM_RESULT:
             if set(payload) != {"result"} or not isinstance(payload["result"], dict):
                 _fail("arm_result_payload_invalid")
-            if attempt.state != STARTED:
+            if attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}:
                 _fail("journal_invalid_transition")
             attempt.state = ARM_RESULT
             attempt.arm_result_event_sha256 = event_sha256
@@ -604,6 +640,8 @@ class CampaignJournal:
             reason = payload.get("reason")
             if not isinstance(reason, str) or not reason or reason != reason.strip():
                 _fail("failed_reason_invalid")
+            if attempt.state == ACTION_INTERVENTION_CLAIMED:
+                _fail("claimed_attempt_requires_arm_result")
             attempt.state = FAILED
             del state.active_by_cell[cell_id]
         else:
@@ -672,7 +710,7 @@ class CampaignJournal:
                 or (
                     cell_id in self._state.active_by_cell
                     and self._state.attempts[self._state.active_by_cell[cell_id]].state
-                    in {ARM_RESULT, VERIFIED}
+                    in {ACTION_INTERVENTION_CLAIMED, ARM_RESULT, VERIFIED}
                 )
             )
         )
@@ -730,6 +768,70 @@ class CampaignJournal:
             _fail("attempt_not_active")
         return attempt
 
+    def claim_action_intervention(
+        self,
+        cell_id: str,
+        attempt_id: str,
+        *,
+        intervention_sha256: str,
+        request_payload_sha256: str,
+        expected_journal_head_sha256: str,
+        expected_journal_event_count: int,
+    ) -> str:
+        """Durably reserve an active attempt before worker dispatch.
+
+        The operation is idempotent only for the exact same signed claim.  A
+        claimed attempt is sealed against crash-recovery retry until the
+        runner records its result. An unresolved claim requires operator
+        reconciliation; it cannot be failed into a retry while its worker may
+        still execute.
+        """
+
+        attempt = self._active_attempt(cell_id, attempt_id)
+        claim = {
+            "intervention_sha256": intervention_sha256,
+            "request_payload_sha256": request_payload_sha256,
+            "signed_journal_head_sha256": expected_journal_head_sha256,
+            "signed_journal_event_count": expected_journal_event_count,
+        }
+        if (
+            not all(
+                _is_sha256(claim[name])
+                for name in (
+                    "intervention_sha256",
+                    "request_payload_sha256",
+                    "signed_journal_head_sha256",
+                )
+            )
+            or type(expected_journal_event_count) is not int
+            or expected_journal_event_count < 2
+        ):
+            _fail("action_intervention_claim_invalid")
+        if attempt.state == ACTION_INTERVENTION_CLAIMED:
+            if (
+                attempt.intervention_claim != claim
+                or attempt.intervention_claim_event_sha256 is None
+            ):
+                _fail("action_intervention_claim_conflict")
+            return attempt.intervention_claim_event_sha256
+        if (
+            attempt.state != STARTED
+            or self._state.head_sha256 != expected_journal_head_sha256
+            or self._state.event_count != expected_journal_event_count
+        ):
+            _fail("action_intervention_attempt_superseded")
+        event_sha256 = self._append_event(
+            ACTION_INTERVENTION_CLAIMED,
+            cell_id,
+            attempt_id,
+            claim,
+        )
+        attempt.state = ACTION_INTERVENTION_CLAIMED
+        attempt.intervention_claim_event_sha256 = event_sha256
+        attempt.intervention_claim = claim
+        self._recovered_attempts.discard(attempt_id)
+        return event_sha256
+
     def record_arm_result(
         self,
         cell_id: str,
@@ -739,7 +841,7 @@ class CampaignJournal:
         attempt = self._active_attempt(cell_id, attempt_id)
         if attempt.state == ARM_RESULT:
             _fail("duplicate_arm_result")
-        if attempt.state != STARTED:
+        if attempt.state not in {STARTED, ACTION_INTERVENTION_CLAIMED}:
             _fail("invalid_transition")
         event_sha256 = self._append_event(
             ARM_RESULT,
@@ -863,7 +965,7 @@ class CampaignJournal:
 
         attempt = self._state.attempts[active_attempt_id]
         resumed_from_state = attempt.state
-        if attempt.state == STARTED:
+        if attempt.state in {STARTED, ACTION_INTERVENTION_CLAIMED}:
             self.record_arm_result(
                 cell_id,
                 active_attempt_id,
@@ -953,7 +1055,7 @@ class CampaignJournal:
             _fail("import_attempt_id_conflict")
 
         attempt = self._state.attempts[active_attempt_id]
-        if attempt.state == STARTED:
+        if attempt.state in {STARTED, ACTION_INTERVENTION_CLAIMED}:
             self.record_arm_result(
                 cell_id,
                 active_attempt_id,
@@ -1040,6 +1142,8 @@ class CampaignJournal:
         details: Mapping[str, Any],
     ) -> str:
         attempt = self._active_attempt(cell_id, attempt_id)
+        if attempt.state == ACTION_INTERVENTION_CLAIMED:
+            _fail("claimed_attempt_requires_arm_result")
         if not isinstance(reason, str) or not reason or reason != reason.strip():
             _fail("failed_reason_invalid")
         event_sha256 = self._append_event(
@@ -1207,6 +1311,7 @@ class CampaignJournal:
 
 
 __all__ = [
+    "ACTION_INTERVENTION_CLAIMED",
     "ARM_RESULT",
     "COMMITTED",
     "FAILED",

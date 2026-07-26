@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from core.brain.llm.latent_cortex.campaign_journal import (
+    ACTION_INTERVENTION_CLAIMED,
     ARM_RESULT,
     COMMITTED,
     FAILED,
@@ -143,6 +144,92 @@ def test_journal_replay_returns_only_committed_cells(tmp_path: Path) -> None:
         VERIFIED,
         COMMITTED,
     ]
+
+
+def test_claimed_action_intervention_survives_restart_without_auto_retry(
+    tmp_path: Path,
+) -> None:
+    plan = _plan(1)
+    path = tmp_path / "claimed.jsonl"
+    cell_id = plan.cell_ids[0]
+    with CampaignJournal(path, plan) as journal:
+        attempt_id = journal.start_cell(cell_id)
+        head = journal.resume().journal_head_sha256
+        claim = journal.claim_action_intervention(
+            cell_id,
+            attempt_id,
+            intervention_sha256="a" * 64,
+            request_payload_sha256="b" * 64,
+            expected_journal_head_sha256=head,
+            expected_journal_event_count=2,
+        )
+        assert journal.claim_action_intervention(
+            cell_id,
+            attempt_id,
+            intervention_sha256="a" * 64,
+            request_payload_sha256="b" * 64,
+            expected_journal_head_sha256=head,
+            expected_journal_event_count=2,
+        ) == claim
+
+    with CampaignJournal(path, plan) as resumed:
+        assert resumed.resume().sealed_cell_ids == (cell_id,)
+        _assert_code("cell_attempt_already_active", lambda: resumed.start_cell(cell_id))
+        _assert_code(
+            "claimed_attempt_requires_arm_result",
+            lambda: resumed.fail_cell(
+                cell_id,
+                attempt_id,
+                reason="worker_timeout",
+            ),
+        )
+        _assert_code("cell_attempt_already_active", lambda: resumed.start_cell(cell_id))
+        staged = resumed.import_staged_arm_result(
+            cell_id=cell_id,
+            expected_attempt_id=attempt_id,
+            result={"score": 1},
+        )
+        assert staged["canonical_state"] == ARM_RESULT
+        resumed.record_verified(cell_id, attempt_id, {"accepted": True})
+        resumed.commit_cell(cell_id, attempt_id)
+
+    events = [json.loads(line)["event"] for line in path.read_bytes().splitlines()]
+    assert events == [
+        "PLAN",
+        STARTED,
+        ACTION_INTERVENTION_CLAIMED,
+        ARM_RESULT,
+        VERIFIED,
+        COMMITTED,
+    ]
+
+
+def test_replay_rejects_hash_valid_failed_transition_after_claim(tmp_path: Path) -> None:
+    plan = _plan(1)
+    path = tmp_path / "claimed-then-failed.jsonl"
+    cell_id = plan.cell_ids[0]
+    with CampaignJournal(path, plan) as journal:
+        attempt_id = journal.start_cell(cell_id)
+        snapshot = journal.resume()
+        journal.claim_action_intervention(
+            cell_id,
+            attempt_id,
+            intervention_sha256="a" * 64,
+            request_payload_sha256="b" * 64,
+            expected_journal_head_sha256=snapshot.journal_head_sha256,
+            expected_journal_event_count=2,
+        )
+        journal._append_event(  # noqa: SLF001 - inject a hash-valid invalid transition
+            FAILED,
+            cell_id,
+            attempt_id,
+            {"details": {}, "reason": "injected_timeout"},
+        )
+
+    _assert_code(
+        "claimed_attempt_requires_arm_result",
+        lambda: CampaignJournal(path, plan),
+    )
 
 
 def test_fsync_sealed_result_can_be_verified_after_worker_exit(tmp_path: Path) -> None:

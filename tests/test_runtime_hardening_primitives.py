@@ -212,7 +212,7 @@ def test_confine_path_refuses_symlink_out_of_root(tmp_path):
     try:
         link.symlink_to(outside)
     except (OSError, NotImplementedError):
-        pytest.skip("symlinks unavailable")
+        pytest.fail("security contract requires symlink support")
     with pytest.raises(ValueError, match="escapes"):
         confine_path(str(link), root)
 

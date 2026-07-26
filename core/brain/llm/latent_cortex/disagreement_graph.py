@@ -69,20 +69,24 @@ def _action_inventory(action_trace: Any) -> dict[int, dict[str, str]]:
     if not isinstance(action_trace, list):
         raise ValueError("cognitive action trace must be a list")
     inventory: dict[int, dict[str, str]] = {}
-    for expected_step, row in enumerate(action_trace):
+    previous_step = -1
+    for row in action_trace:
         if not isinstance(row, Mapping):
             raise ValueError("cognitive action row is invalid")
         transition = row.get("transition")
+        step_index = transition.get("step_index") if isinstance(transition, Mapping) else None
         if (
             not isinstance(transition, Mapping)
-            or transition.get("step_index") != expected_step
+            or type(step_index) is not int
+            or step_index <= previous_step
             or not isinstance(transition.get("action"), str)
             or not transition["action"]
             or not isinstance(transition.get("outcome"), str)
             or not transition["outcome"]
         ):
             raise ValueError("cognitive action transition is incomplete")
-        inventory[expected_step] = {
+        previous_step = step_index
+        inventory[step_index] = {
             "action": str(transition["action"]),
             "outcome": str(transition["outcome"]),
         }

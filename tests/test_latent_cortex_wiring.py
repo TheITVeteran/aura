@@ -105,8 +105,11 @@ def _identity_receipt_for_request(request, **overrides):
             cognitive_context=request.get("cognitive_context"),
             operation_authority=request.get("operation_authority"),
             action_policy_evidence=request.get("action_policy_evidence"),
+            action_intervention=request.get("action_intervention"),
             external_execution_offer=request.get("external_execution_offer"),
             response_contract=request.get("response_contract"),
+            verifier_guidance=(True if request.get("verifier_guidance") else None),
+            facet_reliability=request.get("facet_reliability"),
         )
     )
     receipt.update(overrides)
@@ -897,7 +900,7 @@ def test_config_from_job_rejects_out_of_band_requests():
             {
                 "uncertainty_head": {
                     "mode": "unavailable",
-                    "head_path": "/tmp/not-used",
+                    "head_path": "unused-head.json",
                 }
             }
         )
@@ -972,7 +975,7 @@ def test_config_from_job_rejects_out_of_band_requests():
             {
                 "contradiction_head": {
                     "mode": "unavailable",
-                    "head_path": "/tmp/not-used",
+                    "head_path": "unused-head.json",
                 }
             }
         )
@@ -983,7 +986,7 @@ def test_config_from_job_rejects_out_of_band_requests():
             {
                 "mistake_locator": {
                     "mode": "unavailable",
-                    "head_path": "/tmp/not-used",
+                    "head_path": "unused-head.json",
                 }
             }
         )
@@ -1181,6 +1184,96 @@ def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
     assert body["receipt"]["verifier_guidance"]["response_contract_required"] is True
 
 
+def test_handler_authenticates_and_binds_action_intervention(monkeypatch):
+    from core.brain.llm.latent_cortex import action_intervention as intervention_mod
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt, LatentReasoningResult
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    monkeypatch.delenv("AURA_LATENT_CORTEX", raising=False)
+    captured: dict = {}
+    evidence = build_evidence_snapshot(bucket="b", cells={})
+    request_sha256 = latent_request_payload_sha256(
+        prompt="reason",
+        messages=None,
+        domain="general",
+        config=None,
+        budget=None,
+        runtime_controls=None,
+        action_policy_evidence=evidence,
+    )
+    normalized = {
+        "schema": "aura.rlc.action_intervention.v3",
+        "authority_payload": {
+            "action": "formalize",
+            "arm": "forced_action",
+            "request_payload_sha256": request_sha256,
+        },
+        "intervention_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention",
+        lambda value, *, require_current_policy: (
+            normalized if value == {"wire": "signed"} and require_current_policy else None
+        ),
+    )
+    monkeypatch.setattr(
+        intervention_mod,
+        "consume_action_intervention_once",
+        lambda value: {
+            "event": "CONSUMED",
+            "intervention_sha256": value["intervention_sha256"],
+        },
+    )
+
+    class StubEngine:
+        def __init__(self, *args, **kwargs):
+            captured["constructed"] = True
+
+        def reason(self, **kwargs):
+            captured.update(kwargs)
+            return LatentReasoningResult(
+                ok=True,
+                text="bounded",
+                receipt=EpisodeReceipt(),
+            )
+
+    import core.brain.llm.latent_cortex.worker_handler as handler_mod
+
+    monkeypatch.setattr(handler_mod, "LatentCortexEngine", StubEngine)
+    body = handle_latent_reason(
+        {
+            "prompt": "reason",
+            "action_policy_evidence": evidence,
+            "action_intervention": {"wire": "signed"},
+        },
+        model=object(),
+        tokenizer=object(),
+        model_path="/models/test-32b",
+        worker_identity=dict(_WORKER_IDENTITY),
+    )
+
+    assert body["status"] == "ok"
+    assert captured["constructed"] is True
+    assert captured["action_intervention"] == normalized
+    assert captured["action_intervention_consumption"] == {
+        "event": "CONSUMED",
+        "intervention_sha256": normalized["intervention_sha256"],
+    }
+    assert body["receipt"]["request_payload_sha256"] == latent_request_payload_sha256(
+        prompt="reason",
+        messages=None,
+        domain="general",
+        config=None,
+        budget=None,
+        runtime_controls=None,
+        action_policy_evidence=evidence,
+        action_intervention=normalized,
+    )
+
+
 def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
     from core.brain.llm.latent_cortex.types import (
         EpisodeReceipt,
@@ -1349,9 +1442,7 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     answer_contract_args = {
         "output_tokens": body["tokens"],
         "output_text": body["text"],
-        "answer_replacement_private": body[
-            "answer_replacement_private"
-        ],
+        "answer_replacement_private": body["answer_replacement_private"],
         "expected_objective": "compose the deepest thought",
     }
     assert "answer_replacement_unproven" not in (
@@ -1567,6 +1658,258 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
     assert client._active_generations == 0
     assert client._current_request_id == ""
     assert client._request_lock.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_client_action_intervention_is_lab_only_and_bound_on_worker_wire(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.latent_cortex import action_intervention as intervention_mod
+    from core.brain.llm.latent_cortex import value_of_computation as value_mod
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    evidence = build_evidence_snapshot(bucket="b", cells={})
+    request_sha256 = latent_request_payload_sha256(
+        prompt="reason",
+        messages=None,
+        domain="general",
+        config=None,
+        budget=None,
+        runtime_controls=None,
+        action_policy_evidence=evidence,
+    )
+    normalized = {
+        "schema": "aura.rlc.action_intervention.v3",
+        "authority_payload": {
+            "action": "formalize",
+            "arm": "matched_no_action",
+            "request_payload_sha256": request_sha256,
+        },
+        "intervention_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention",
+        lambda value, *, require_current_policy: (
+            normalized if value == {"wire": "signed"} and require_current_policy else None
+        ),
+    )
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention_receipt",
+        lambda value, *, intervention, cognitive_action_trace: value,
+    )
+    monkeypatch.setattr(
+        value_mod,
+        "validate_action_trace",
+        lambda value, **kwargs: {"rows": [], "selected_actions": []},
+    )
+    client = MLXLocalClient(model_path="/models/test-32b")
+    assert (
+        await client.latent_reason_async(
+            prompt="reason",
+            action_policy_evidence=evidence,
+            action_intervention={"wire": "signed"},
+            foreground_request=True,
+        )
+    )["reason"] == "action_intervention_requires_lab_lane"
+
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason",
+            action_policy_evidence=evidence,
+            action_intervention={"wire": "signed"},
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    assert request["action_intervention"] == normalized
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "answer",
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-action-intervention",
+                cognitive_action_trace=[],
+                value_of_computation={
+                    "schema": evidence["schema"],
+                    "bucket": evidence["bucket"],
+                    "snapshot_sha256": evidence["snapshot_sha256"],
+                    "active": True,
+                    "calibration_intervention": {"receipt_sha256": "b" * 64},
+                    "executors": ["formalize", "answer"],
+                    "actions_selected": 0,
+                    "checked_transitions": 0,
+                    "selected_actions": [],
+                },
+            ),
+        },
+    )
+    assert (await task)["ok"] is True
+
+    rejected_task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason",
+            action_policy_evidence=evidence,
+            action_intervention={"wire": "signed"},
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    rejected_request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    mlx_client._set_shared_future_result(
+        client._pending_generations[rejected_request["id"]],
+        {
+            "id": rejected_request["id"],
+            "status": "ok",
+            "text": "unbound",
+            "receipt": _identity_receipt_for_request(
+                rejected_request,
+                episode_id="ep-action-intervention-unbound",
+            ),
+        },
+    )
+    rejected = await rejected_task
+    assert rejected["ok"] is False
+    assert rejected["reason"] == "action_intervention_receipt_invalid"
+
+
+@pytest.mark.asyncio
+async def test_client_requires_handoff_when_nonexecute_intervention_trace_selects_execute(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.latent_cortex import action_intervention as intervention_mod
+    from core.brain.llm.latent_cortex import epistemic_runtime as runtime_mod
+    from core.brain.llm.latent_cortex import value_of_computation as value_mod
+    from core.brain.llm.latent_cortex.external_execution import (
+        build_external_execution_offer,
+    )
+    from core.brain.llm.latent_cortex.value_of_computation import (
+        build_evidence_snapshot,
+    )
+
+    evidence = build_evidence_snapshot(bucket="b", cells={})
+    authority = {"wire": "runtime-operation-authority"}
+    offer = build_external_execution_offer(
+        action_id="nonexecute-intervention-later-execute",
+        domain="external_action",
+        action_name="write_note",
+        request_digest="sha256:" + "c" * 64,
+        will_receipt_id="will-nonexecute-intervention",
+        objective="Write the admitted note.",
+        expectation={"objective": "note exists"},
+    )
+    request_sha256 = latent_request_payload_sha256(
+        prompt="reason",
+        messages=None,
+        domain="general",
+        config=None,
+        budget=None,
+        runtime_controls=None,
+        operation_authority=authority,
+        action_policy_evidence=evidence,
+        external_execution_offer=offer,
+    )
+    normalized = {
+        "schema": "aura.rlc.action_intervention.v3",
+        "authority_payload": {
+            "action": "formalize",
+            "arm": "forced_action",
+            "request_payload_sha256": request_sha256,
+        },
+        "intervention_sha256": "d" * 64,
+    }
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention",
+        lambda value, *, require_current_policy: (
+            normalized if value == {"wire": "signed"} and require_current_policy else None
+        ),
+    )
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention_receipt",
+        lambda value, *, intervention, cognitive_action_trace: value,
+    )
+    monkeypatch.setattr(
+        runtime_mod,
+        "validate_runtime_operation_authority",
+        lambda value, **kwargs: authority if value == authority else None,
+    )
+    monkeypatch.setattr(
+        value_mod,
+        "validate_action_trace",
+        lambda value, **kwargs: {"rows": [], "selected_actions": ["execute"]},
+    )
+
+    client = MLXLocalClient(model_path="/models/test-32b")
+    client._process = _ResidentProcess()
+    client._init_done = True
+    client._req_q = queue.Queue()
+    _bind_test_client_identity(monkeypatch, client)
+    monkeypatch.setattr(
+        mlx_client,
+        "get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+    task = asyncio.create_task(
+        client.latent_reason_async(
+            prompt="reason",
+            operation_authority=authority,
+            action_policy_evidence=evidence,
+            action_intervention={"wire": "signed"},
+            external_execution_offer=offer,
+            timeout_s=5.0,
+            foreground_request=False,
+        )
+    )
+    request = await asyncio.to_thread(client._req_q.get, True, 2.0)
+    policy_receipt = {
+        "schema": evidence["schema"],
+        "bucket": evidence["bucket"],
+        "snapshot_sha256": evidence["snapshot_sha256"],
+        "active": True,
+        "calibration_intervention": {"receipt_sha256": "e" * 64},
+        "executors": ["formalize", "execute"],
+        "actions_selected": 0,
+        "checked_transitions": 0,
+        "selected_actions": ["execute"],
+    }
+    mlx_client._set_shared_future_result(
+        client._pending_generations[request["id"]],
+        {
+            "id": request["id"],
+            "status": "ok",
+            "text": "answer",
+            "receipt": _identity_receipt_for_request(
+                request,
+                episode_id="ep-nonexecute-intervention-later-execute",
+                cognitive_action_trace=[],
+                value_of_computation=policy_receipt,
+                external_execution_handoff={},
+            ),
+        },
+    )
+    result = await task
+    assert result["ok"] is False
+    assert result["reason"] == "action_intervention_receipt_invalid"
 
 
 @pytest.mark.asyncio
@@ -2625,14 +2968,14 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
                     },
-                        "prefix_stability": {
+                    "prefix_stability": {
                         "requested": True,
                         "available": False,
                         "reason": "stubbed_worker_has_no_generator",
                         "selection_effect": "none",
-                            "correctness_effect": "none",
-                        },
-                        **_verifier_fusion_fields(kwargs["config"]),
+                        "correctness_effect": "none",
+                    },
+                    **_verifier_fusion_fields(kwargs["config"]),
                     "latent_opt_applied": True,
                     "latent_opt_mode": "gradient",
                     "latent_opt_attempts": 2,

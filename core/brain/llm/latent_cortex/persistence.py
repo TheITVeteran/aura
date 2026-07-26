@@ -114,6 +114,18 @@ class LatentCortexPersistence:
             source="latent_cortex_lab_report",
         )
 
+    def save_action_intervention_replay_ledger(
+        self,
+        path: Path,
+        payload: bytes,
+    ) -> FileWriteBatchReceipt:
+        """Atomically replace the bounded, externally locked replay ledger."""
+
+        return self._commit(
+            (FileWriteBatchEntry(path, payload),),
+            source="latent_cortex_action_intervention_replay",
+        )
+
     def save_frontier_verification(
         self,
         path: Path,

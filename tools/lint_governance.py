@@ -169,6 +169,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # caller-selected file path and writes only from its named scope.
             "core/brain/external_execute_coordinator.py",
             "core/brain/llm/latent_cortex/persistence.py",
+            # Singleton owns one fixed boot-refusal marker under Aura's private
+            # run directory. It accepts no caller-selected path or payload and
+            # publishes/clears only that bounded launcher coordination record.
+            "core/utils/singleton.py",
             # Bus bags and cross-process leases are bounded internal evidence
             # stores. Their paths are runtime-derived, never user-selected,
             # and each write executes inside a named governed scope.

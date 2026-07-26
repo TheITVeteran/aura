@@ -254,12 +254,17 @@ def build_correlated_support_receipt(
         )
         weights[index] = 1.0 / (1.0 + burden)
     raw_count = len(branches)
+    structural_certified = structural_diversity.get("certified") is True
+    if not structural_certified:
+        weights = {index: 0.0 for index in weights}
+        exchange_weights = {index: 0.0 for index in exchange_weights}
     effective = sum(weights.values())
     payload = {
         "schema": CORRELATED_SUPPORT_SCHEMA,
         "correlation_snapshot_sha256": evidence["snapshot_sha256"],
         "evidence_state": evidence["evidence_state"],
         "raw_support_count": raw_count,
+        "structural_diversity_certified": structural_certified,
         "effective_support_count": round(effective, 8),
         "confidence_multiplier": round(min(1.0, effective / max(1, raw_count)), 8),
         "branch_weights": [
@@ -279,6 +284,11 @@ def build_correlated_support_receipt(
             row["enough_evidence"] is True
             and float(row["positive_shrunk_correlation"]) > 0.0
             for row in evidence["pairs"]
+        ),
+        "reason": (
+            "dependence_discounted_support"
+            if structural_certified
+            else "structural_diversity_unproven"
         ),
     }
     return {**payload, "receipt_sha256": _sha(payload)}

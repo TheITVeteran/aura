@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from core.brain.external_execute_coordinator import (
+    EXTERNAL_EXECUTE_TRANSACTION_SCHEMA,
     ExternalExecuteCoordinator,
     ExternalExecutionInProgressError,
 )
@@ -136,6 +137,24 @@ def _execute_trace() -> list[dict[str, Any]]:
             },
         }
     ]
+
+
+def _campaign_forced_execute_trace() -> list[dict[str, Any]]:
+    trace = _execute_trace()
+    state = CognitiveStateSignal.from_dict(trace[0]["state_signal"])
+    decision = ValueOfComputationPolicy(_action_policy()).choose_forced(
+        state,
+        executors=_executors(),
+        action=OperationKind.EXECUTE,
+    )
+    trace[0]["decision"] = decision
+    trace[0]["transition"].update(
+        {
+            "decision_sha256": decision["decision_sha256"],
+            "mode": decision["mode"],
+        }
+    )
+    return trace
 
 
 def _non_execute_trace() -> list[dict[str, Any]]:
@@ -477,6 +496,24 @@ def _record_handoff(
     )
 
 
+def _downgrade_transaction_envelope_to_v2(
+    coordinator: ExternalExecuteCoordinator,
+) -> Path:
+    import core.brain.external_execute_coordinator as coordinator_module
+
+    path = next(coordinator.root.glob("*.json"))
+    sealed = json.loads(path.read_text(encoding="utf-8"))
+    sealed.pop("transaction_sha256")
+    sealed.pop("action_intervention")
+    sealed["schema"] = "aura.rlc.external_execute_transaction.v2"
+    sealed["transaction_sha256"] = coordinator_module._canonical_sha256(sealed)
+    path.write_text(
+        json.dumps(sealed, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_offer_and_handoff_are_exact_digest_bound_contracts() -> None:
     offer = _offer()
     assert validate_external_execution_offer(offer) == offer
@@ -549,6 +586,64 @@ def test_coordinator_is_duplicate_resistant_and_replays_terminal_result(
     )
     with pytest.raises(ValueError, match="conflicts"):
         coordinator.prepare(conflicting)
+
+
+def test_campaign_forced_execute_reaches_durable_host_handoff(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from core.brain.llm.latent_cortex import action_intervention as intervention_mod
+
+    intervention = {
+        "schema": "aura.rlc.action_intervention.v2",
+        "authority_payload": {
+            "action": "execute",
+            "arm": "forced_action",
+            "intervention_ordinal": 0,
+        },
+        "intervention_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention",
+        lambda value, *, require_current_policy: (
+            intervention if value == intervention else None
+        ),
+    )
+    monkeypatch.setattr(
+        intervention_mod,
+        "validate_action_intervention_receipt",
+        lambda value, *, intervention, cognitive_action_trace: value,
+    )
+    coordinator = ExternalExecuteCoordinator(tmp_path / "transactions")
+    offer = _offer(action_id="action-campaign-forced")
+    coordinator.prepare(offer)
+    trace = _campaign_forced_execute_trace()
+    executors = list(_executors())
+    policy_receipt = {
+        **_policy_receipt(trace, executors),
+        "calibration_intervention": {"receipt_sha256": "b" * 64},
+    }
+    model_output = _readiness_output()
+    decided = coordinator.record_handoff(
+        offer=offer,
+        handoff=build_external_execution_handoff(offer, trace),
+        cognitive_action_trace=trace,
+        readiness=build_external_execution_readiness(offer, model_output),
+        model_output=model_output,
+        action_policy_evidence=_action_policy(),
+        executors=[item.value for item in executors],
+        action_policy_receipt=policy_receipt,
+        runtime_operation=_runtime_operation_receipt(
+            offer,
+            trace,
+            policy_receipt,
+        ),
+        action_intervention=intervention,
+    )
+    assert decided["state"] == "DECIDED"
+    assert decided["action_intervention"] == intervention
+    assert decided["handoff"]["requested"] is True
 
 
 def test_host_rejects_minimal_unvalidated_execute_trace(tmp_path: Path) -> None:
@@ -653,12 +748,57 @@ def test_recovered_dispatch_is_unknown_and_never_blindly_retried(
         authorization_receipt_id=offer["will_receipt_id"],
         task_id="test-task",
     )
+    transaction_path = _downgrade_transaction_envelope_to_v2(coordinator)
 
     recovered = coordinator.prepare(offer)
     assert recovered["state"] == "UNKNOWN_EFFECT"
     assert recovered["result"]["transport_succeeded"] is None
     assert recovered["result"]["manual_reconciliation_required"] is True
     assert "unknown_effect" in recovered["result"]["error"]
+    assert recovered["schema"] == EXTERNAL_EXECUTE_TRANSACTION_SCHEMA
+    assert json.loads(transaction_path.read_text(encoding="utf-8"))["schema"] == (
+        EXTERNAL_EXECUTE_TRANSACTION_SCHEMA
+    )
+
+
+def test_v2_terminal_transaction_is_atomically_migrated_and_replayed(
+    tmp_path: Path,
+) -> None:
+    coordinator = ExternalExecuteCoordinator(tmp_path / "transactions")
+    offer = _offer(action_id="action-v2-terminal-replay")
+    coordinator.prepare(offer)
+    _record_handoff(coordinator, offer, _execute_trace())
+    dispatch = coordinator.begin_dispatch(
+        offer,
+        authorization_receipt_id=offer["will_receipt_id"],
+        task_id="test-task",
+    )
+    completed = coordinator.complete(
+        offer=offer,
+        dispatch_attempt_id=dispatch["dispatch_owner"]["attempt_id"],
+        result={
+            "ok": True,
+            "status": "success_verified",
+            "transport_succeeded": True,
+            "effect_verified": True,
+            "retry_safe": False,
+        },
+    )
+    assert completed["state"] == "SUCCEEDED"
+    transaction_path = _downgrade_transaction_envelope_to_v2(coordinator)
+
+    replayed = coordinator.lookup(
+        action_id=offer["action_id"],
+        request_digest=offer["request_digest"],
+    )
+
+    assert replayed is not None
+    assert replayed["state"] == "SUCCEEDED"
+    assert replayed["result"] == completed["result"]
+    assert replayed["schema"] == EXTERNAL_EXECUTE_TRANSACTION_SCHEMA
+    persisted = json.loads(transaction_path.read_text(encoding="utf-8"))
+    assert persisted["schema"] == EXTERNAL_EXECUTE_TRANSACTION_SCHEMA
+    assert persisted["action_intervention"] == {}
 
 
 def test_live_dispatch_owner_blocks_duplicates_and_owner_token_is_required(

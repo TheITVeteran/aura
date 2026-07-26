@@ -1781,15 +1781,26 @@ class LatentCortexService:
                 by_step: dict[int, list[dict[str, Any]]] = {}
                 for row in operator_rows:
                     by_step.setdefault(row["action_step"], []).append(row)
-                if set(by_step) - set(range(len(raw_action_trace))):
-                    raise ValueError("cognitive operator step is orphaned")
-                for step, action_row in enumerate(raw_action_trace):
+                action_rows_by_step: dict[int, dict[str, Any]] = {}
+                for action_row in raw_action_trace:
                     if not isinstance(action_row, dict):
                         raise ValueError("cognitive action trace row is invalid")
                     transition = action_row.get("transition")
                     signal = action_row.get("state_signal")
-                    if not isinstance(transition, dict) or not isinstance(signal, dict):
+                    step = transition.get("step_index") if isinstance(transition, dict) else None
+                    if (
+                        type(step) is not int
+                        or step < 0
+                        or step in action_rows_by_step
+                        or not isinstance(signal, dict)
+                    ):
                         raise ValueError("cognitive action trace row is incomplete")
+                    action_rows_by_step[step] = action_row
+                if set(by_step) - set(action_rows_by_step):
+                    raise ValueError("cognitive operator step is orphaned")
+                for step, action_row in sorted(action_rows_by_step.items()):
+                    transition = action_row["transition"]
+                    signal = action_row["state_signal"]
                     action = transition.get("action")
                     rows = by_step.get(step, [])
                     if action not in neural_actions:
@@ -1867,13 +1878,13 @@ class LatentCortexService:
                 focus_by_step: dict[int, list[dict[str, Any]]] = {}
                 for row in focus_rows:
                     focus_by_step.setdefault(row["action_step"], []).append(row)
-                if set(focus_by_step) - set(range(len(raw_action_trace))):
+                if set(focus_by_step) - set(action_rows_by_step):
                     raise ValueError("context focus step is orphaned")
                 operator_by_step_branch = {
                     (row["action_step"], row["branch_index"]): row
                     for row in operator_rows
                 }
-                for step, action_row in enumerate(raw_action_trace):
+                for step, action_row in sorted(action_rows_by_step.items()):
                     transition = action_row["transition"]
                     signal = action_row["state_signal"]
                     action = OperationKind(transition["action"])

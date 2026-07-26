@@ -45,6 +45,20 @@ _Z95 = 1.959963984540054
 _EPSILON_COST = 1e-6
 
 ACTION_VOCABULARY: tuple[OperationKind, ...] = tuple(OperationKind)
+_ORDINARY_DECISION_MODES = frozenset(
+    {
+        "verified_stop",
+        "verified_execute",
+        "budget_stop",
+        "budget_abstain",
+        "budget_last_action",
+        "irreducible_abstain",
+        "bounded_explore",
+        "measured",
+        "bootstrap",
+    }
+)
+_CAMPAIGN_DECISION_MODE = "campaign_forced"
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -468,9 +482,7 @@ def _validate_certified_admission(
     policy_validated_at_unix = value.get("policy_validated_at_unix")
     final_attestation = value.get("final_verifier_attestation")
     signed_payload = (
-        final_attestation.get("signed_payload")
-        if isinstance(final_attestation, Mapping)
-        else None
+        final_attestation.get("signed_payload") if isinstance(final_attestation, Mapping) else None
     )
     if (
         type(policy_validated_at_unix) is not int
@@ -687,6 +699,7 @@ class CognitiveStateSignal:
     can_execute: bool
     answer_verified: bool
     irreducible_uncertainty: bool
+    omitted_action_count: int = 0
     previously_selected: tuple[OperationKind, ...] = ()
 
     def __post_init__(self) -> None:
@@ -745,7 +758,12 @@ class CognitiveStateSignal:
                 )
         if any(not isinstance(action, OperationKind) for action in self.previously_selected):
             raise ValueError("previously_selected contains an invalid action")
-        if len(self.previously_selected) != self.step_index:
+        if (
+            type(self.omitted_action_count) is not int
+            or not 0 <= self.omitted_action_count <= self.step_index
+        ):
+            raise ValueError("omitted_action_count is invalid")
+        if len(self.previously_selected) + self.omitted_action_count != self.step_index:
             raise ValueError("previously_selected must cover every prior action step")
 
     def to_dict(self) -> dict[str, Any]:
@@ -770,6 +788,7 @@ class CognitiveStateSignal:
             "can_execute": self.can_execute,
             "answer_verified": self.answer_verified,
             "irreducible_uncertainty": self.irreducible_uncertainty,
+            "omitted_action_count": self.omitted_action_count,
             "previously_selected": [action.value for action in self.previously_selected],
         }
 
@@ -796,19 +815,32 @@ class CognitiveStateSignal:
             "can_execute",
             "answer_verified",
             "irreducible_uncertainty",
+            "omitted_action_count",
             "previously_selected",
         }
-        if not isinstance(value, Mapping) or set(value) != fields:
+        legacy_fields = fields - {"omitted_action_count"}
+        actual_fields = frozenset(value) if isinstance(value, Mapping) else frozenset()
+        if not isinstance(value, Mapping) or actual_fields not in {
+            frozenset(fields),
+            frozenset(legacy_fields),
+        }:
             raise ValueError("cognitive state signal fields differ")
-        previous = value.get("previously_selected")
-        if not isinstance(previous, list) or len(previous) > int(value.get("max_steps") or 0):
+        normalized_value = dict(value)
+        normalized_value.setdefault("omitted_action_count", 0)
+        previous = normalized_value.get("previously_selected")
+        if not isinstance(previous, list) or len(previous) > int(
+            normalized_value.get("max_steps") or 0
+        ):
             raise ValueError("cognitive state previous actions are invalid")
         try:
             previous_actions = tuple(OperationKind(item) for item in previous)
         except (TypeError, ValueError) as exc:
             raise ValueError("cognitive state previous actions are invalid") from exc
         return cls(
-            **{name: value[name] for name in fields - {"previously_selected"}},
+            **{
+                name: normalized_value[name]
+                for name in fields - {"previously_selected"}
+            },
             previously_selected=previous_actions,
         )
 
@@ -1092,6 +1124,60 @@ class ValueOfComputationPolicy:
         decision["decision_sha256"] = _canonical_sha256(decision)
         return decision
 
+    def choose_forced(
+        self,
+        state: CognitiveStateSignal,
+        *,
+        executors: tuple[OperationKind, ...],
+        action: OperationKind,
+    ) -> dict[str, Any]:
+        """Construct the exact decision for an authenticated causal intervention.
+
+        Scientific interventions intentionally bypass the observational
+        feasibility policy, but never the executor inventory.  This method is
+        not reachable from ordinary policy selection; independent trace replay
+        only accepts its mode alongside a verified campaign intervention.
+        """
+
+        if not isinstance(action, OperationKind) or action not in executors:
+            raise ValueError("forced cognitive action has no resident executor")
+        if len(set(executors)) != len(executors):
+            raise ValueError("forced cognitive action executor inventory is invalid")
+        selected_cell = self.cells.get(action, ActionEvidence())
+        selected_estimate = selected_cell.estimate()
+        gain_used = (
+            float(selected_estimate["gain_lcb"])
+            if selected_estimate["measured"]
+            else _bootstrap_gain(action, state)
+        )
+        cost_used = (
+            float(selected_estimate["cost_ucb"])
+            if selected_estimate["measured"]
+            else _BASE_COST[action]
+        )
+        decision = {
+            "schema": VALUE_OF_COMPUTATION_SCHEMA,
+            "bucket": self.bucket,
+            "snapshot_sha256": self.snapshot["snapshot_sha256"],
+            "step_index": state.step_index,
+            "action": action.value,
+            "mode": "campaign_forced",
+            "feasible_actions": [action.value],
+            "evidence": {
+                **selected_estimate,
+                "basis": (
+                    "measured_lcb_per_cost_ucb"
+                    if selected_estimate["measured"]
+                    else "bootstrap_prior"
+                ),
+                "gain_used": round(gain_used, 8),
+                "cost_used": round(cost_used, 8),
+                "value": round(gain_used / max(_EPSILON_COST, cost_used), 8),
+            },
+        }
+        decision["decision_sha256"] = _canonical_sha256(decision)
+        return decision
+
 
 def transition_reward(
     *,
@@ -1189,17 +1275,7 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
     normalized["action"] = selected.value
     normalized["feasible_actions"] = [action.value for action in feasible]
     normalized["mode"] = _bounded_text(normalized.get("mode"), name="mode", limit=32)
-    if normalized["mode"] not in {
-        "verified_stop",
-        "verified_execute",
-        "budget_stop",
-        "budget_abstain",
-        "budget_last_action",
-        "irreducible_abstain",
-        "bounded_explore",
-        "measured",
-        "bootstrap",
-    }:
+    if normalized["mode"] not in _ORDINARY_DECISION_MODES | {_CAMPAIGN_DECISION_MODE}:
         raise ValueError("action decision mode is unsupported")
     evidence_fields = {
         "n",
@@ -1256,6 +1332,7 @@ def validate_action_transition(
     value: Any,
     *,
     require_checked: bool = True,
+    allow_campaign_forced: bool = False,
 ) -> dict[str, Any]:
     fields = {
         "schema",
@@ -1291,6 +1368,9 @@ def validate_action_transition(
         raise ValueError("action transition action is invalid") from exc
     normalized["action"] = action.value
     normalized["mode"] = _bounded_text(value.get("mode"), name="mode", limit=32)
+    if normalized["mode"] not in _ORDINARY_DECISION_MODES:
+        if not (allow_campaign_forced and normalized["mode"] == _CAMPAIGN_DECISION_MODE):
+            raise ValueError("action transition mode is unsupported")
     normalized["outcome"] = _bounded_text(value.get("outcome"), name="outcome", limit=64)
     if type(value.get("checked")) is not bool:
         raise ValueError("action transition checked flag is invalid")
@@ -1326,6 +1406,7 @@ def validate_action_trace_row(
     *,
     evidence_snapshot: Mapping[str, Any],
     executors: tuple[OperationKind, ...],
+    action_intervention: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Recompute one worker action from public state and transition signals."""
 
@@ -1385,21 +1466,46 @@ def validate_action_trace_row(
 
     signal = CognitiveStateSignal.from_dict(value.get("state_signal"))
     decision = validate_action_decision(value.get("decision"))
-    expected_decision = ValueOfComputationPolicy(evidence_snapshot).choose(
-        signal,
-        executors=executors,
-    )
+    policy = ValueOfComputationPolicy(evidence_snapshot)
+    if action_intervention is None:
+        expected_decision = policy.choose(signal, executors=executors)
+    else:
+        from core.brain.llm.latent_cortex.action_intervention import (
+            TREATMENT_ARM,
+            validate_action_intervention,
+        )
+
+        normalized_intervention = validate_action_intervention(
+            action_intervention,
+            require_current_policy=False,
+        )
+        authority = normalized_intervention["authority_payload"]
+        if (
+            authority["arm"] != TREATMENT_ARM
+            or authority["intervention_ordinal"] != signal.step_index
+        ):
+            raise ValueError("forced cognitive action intervention lineage differs")
+        expected_decision = policy.choose_forced(
+            signal,
+            executors=executors,
+            action=OperationKind(authority["action"]),
+        )
     if decision != expected_decision:
         raise ValueError("cognitive action decision does not match policy and state")
     transition = validate_action_transition(
         value.get("transition"),
         require_checked=False,
+        allow_campaign_forced=action_intervention is not None,
     )
     if (
         transition["decision_sha256"] != decision["decision_sha256"]
         or transition["step_index"] != decision["step_index"]
         or transition["action"] != decision["action"]
         or transition["mode"] != decision["mode"]
+        or transition["bucket"] != decision["bucket"]
+        or transition["bucket"] != policy.snapshot["bucket"]
+        or transition["snapshot_sha256"] != decision["snapshot_sha256"]
+        or transition["snapshot_sha256"] != policy.snapshot["snapshot_sha256"]
     ):
         raise ValueError("cognitive action transition differs from decision")
 
@@ -1660,15 +1766,41 @@ def validate_action_trace(
     *,
     evidence_snapshot: Mapping[str, Any],
     executors: tuple[OperationKind, ...],
+    action_intervention: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate one complete, ordered cognitive-action lineage."""
 
-    if not isinstance(value, list) or not value:
+    normalized_intervention: dict[str, Any] | None = None
+    intervention_action: OperationKind | None = None
+    intervention_arm = ""
+    is_control_intervention = False
+    if action_intervention is not None:
+        from core.brain.llm.latent_cortex.action_intervention import (
+            CONTROL_ARM,
+            validate_action_intervention,
+        )
+
+        normalized_intervention = validate_action_intervention(
+            action_intervention,
+            require_current_policy=False,
+        )
+        authority = normalized_intervention["authority_payload"]
+        intervention_action = OperationKind(authority["action"])
+        intervention_arm = authority["arm"]
+        is_control_intervention = intervention_arm == CONTROL_ARM
+        if intervention_action not in executors:
+            raise ValueError("intervened cognitive action has no resident executor")
+        if is_control_intervention:
+            executors = tuple(action for action in executors if action != intervention_action)
+            if not executors and value:
+                raise ValueError("matched control has no post-intervention executor")
+    if not isinstance(value, list) or (not value and normalized_intervention is None):
         raise ValueError("cognitive action trace must be a non-empty list")
     if len(value) > 256:
         raise ValueError("cognitive action trace exceeds its bounded length")
     rows: list[dict[str, Any]] = []
     selected: list[OperationKind] = []
+    omitted_action_count = 1 if is_control_intervention else 0
     previous_after: Mapping[str, Any] | None = None
     previous_budget = 1.0
     terminal_actions = {
@@ -1677,15 +1809,21 @@ def validate_action_trace(
         OperationKind.EXECUTE,
     }
     for index, raw_row in enumerate(value):
+        forced_intervention = (
+            normalized_intervention if index == 0 and intervention_arm == "forced_action" else None
+        )
         row = validate_action_trace_row(
             raw_row,
             evidence_snapshot=evidence_snapshot,
             executors=executors,
+            action_intervention=forced_intervention,
         )
         signal = CognitiveStateSignal.from_dict(row["state_signal"])
         decision_action = OperationKind(row["decision"]["action"])
-        if signal.step_index != index:
+        if signal.step_index != index + omitted_action_count:
             raise ValueError("cognitive action trace step lineage is discontinuous")
+        if signal.omitted_action_count != omitted_action_count:
+            raise ValueError("cognitive action trace omitted-opportunity lineage differs")
         if signal.previously_selected != tuple(selected):
             raise ValueError("cognitive action trace history is discontinuous")
         if index and selected[-1] in terminal_actions:
@@ -1702,6 +1840,13 @@ def validate_action_trace(
         previous_after = row["state_after"]
         selected.append(decision_action)
         rows.append(row)
+        if index == 0 and forced_intervention is not None:
+            executors = tuple(action for action in executors if action != intervention_action)
+    if normalized_intervention is not None:
+        expected_occurrences = 1 if intervention_arm == "forced_action" else 0
+        actual_occurrences = sum(action == intervention_action for action in selected)
+        if actual_occurrences != expected_occurrences:
+            raise ValueError("cognitive action intervention occurrence count differs")
     return {
         "rows": rows,
         "selected_actions": [action.value for action in selected],

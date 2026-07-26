@@ -52,6 +52,7 @@ def latent_request_payload_sha256(
     cognitive_context: Any = None,
     operation_authority: Any = None,
     action_policy_evidence: Any = None,
+    action_intervention: Any = None,
     external_execution_offer: Any = None,
     response_contract: Any = None,
     verifier_guidance: Any = None,
@@ -73,6 +74,8 @@ def latent_request_payload_sha256(
         payload["operation_authority"] = operation_authority
     if action_policy_evidence is not None:
         payload["action_policy_evidence"] = action_policy_evidence
+    if action_intervention is not None:
+        payload["action_intervention"] = action_intervention
     if external_execution_offer is not None:
         payload["external_execution_offer"] = external_execution_offer
     if response_contract is not None:

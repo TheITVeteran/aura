@@ -257,12 +257,8 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         decode_contract_grace_tokens=_typed_value(raw, "decode_contract_grace_tokens", 0, int),
         decode_min_tokens=_typed_value(raw, "decode_min_tokens", 0, int),
         verifier_probe_max_tokens=_typed_value(raw, "verifier_probe_max_tokens", 48, int),
-        generative_verifier_enabled=_typed_value(
-            raw, "generative_verifier_enabled", True, bool
-        ),
-        generative_verifier_max_atoms=_typed_value(
-            raw, "generative_verifier_max_atoms", 1, int
-        ),
+        generative_verifier_enabled=_typed_value(raw, "generative_verifier_enabled", True, bool),
+        generative_verifier_max_atoms=_typed_value(raw, "generative_verifier_max_atoms", 1, int),
         generative_verifier_max_tokens=_typed_value(
             raw, "generative_verifier_max_tokens", 160, int
         ),
@@ -278,40 +274,18 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
         counterfactual_verifier_max_tokens=_typed_value(
             raw, "counterfactual_verifier_max_tokens", 128, int
         ),
-        prefix_stability_enabled=_typed_value(
-            raw, "prefix_stability_enabled", True, bool
-        ),
-        prefix_stability_samples=_typed_value(
-            raw, "prefix_stability_samples", 3, int
-        ),
-        prefix_stability_max_tokens=_typed_value(
-            raw, "prefix_stability_max_tokens", 128, int
-        ),
-        prefix_stability_temperature=_typed_value(
-            raw, "prefix_stability_temperature", 0.35, float
-        ),
-        prefix_stability_top_p=_typed_value(
-            raw, "prefix_stability_top_p", 0.9, float
-        ),
-        prefix_stability_seed=_typed_value(
-            raw, "prefix_stability_seed", 104_729, int
-        ),
+        prefix_stability_enabled=_typed_value(raw, "prefix_stability_enabled", True, bool),
+        prefix_stability_samples=_typed_value(raw, "prefix_stability_samples", 3, int),
+        prefix_stability_max_tokens=_typed_value(raw, "prefix_stability_max_tokens", 128, int),
+        prefix_stability_temperature=_typed_value(raw, "prefix_stability_temperature", 0.35, float),
+        prefix_stability_top_p=_typed_value(raw, "prefix_stability_top_p", 0.9, float),
+        prefix_stability_seed=_typed_value(raw, "prefix_stability_seed", 104_729, int),
         prefix_stability_calibrator=raw.get("prefix_stability_calibrator"),
-        local_repair_enabled=_typed_value(
-            raw, "local_repair_enabled", True, bool
-        ),
-        local_repair_max_attempts=_typed_value(
-            raw, "local_repair_max_attempts", 1, int
-        ),
-        local_repair_max_tokens=_typed_value(
-            raw, "local_repair_max_tokens", 128, int
-        ),
-        answer_replacement_enabled=_typed_value(
-            raw, "answer_replacement_enabled", True, bool
-        ),
-        answer_replacement_margin=_typed_value(
-            raw, "answer_replacement_margin", 0.05, float
-        ),
+        local_repair_enabled=_typed_value(raw, "local_repair_enabled", True, bool),
+        local_repair_max_attempts=_typed_value(raw, "local_repair_max_attempts", 1, int),
+        local_repair_max_tokens=_typed_value(raw, "local_repair_max_tokens", 128, int),
+        answer_replacement_enabled=_typed_value(raw, "answer_replacement_enabled", True, bool),
+        answer_replacement_margin=_typed_value(raw, "answer_replacement_margin", 0.05, float),
         verifier_fusion_evidence=raw.get("verifier_fusion_evidence"),
         verifier_accept_non_regression=_typed_value(
             raw, "verifier_accept_non_regression", False, bool
@@ -447,6 +421,7 @@ def handle_latent_reason(
         }
     operation_authority = job.get("operation_authority")
     action_policy_evidence = job.get("action_policy_evidence")
+    action_intervention = job.get("action_intervention")
     external_execution_offer = job.get("external_execution_offer")
     if external_execution_offer is not None:
         if operation_authority is None or action_policy_evidence is None:
@@ -462,9 +437,7 @@ def handle_latent_reason(
                 validate_external_execution_offer,
             )
 
-            external_execution_offer = validate_external_execution_offer(
-                external_execution_offer
-            )
+            external_execution_offer = validate_external_execution_offer(external_execution_offer)
         except (ImportError, TypeError, ValueError) as exc:
             return {
                 "status": "error",
@@ -500,6 +473,27 @@ def handle_latent_reason(
             return {
                 "status": "error",
                 "message": f"latent_reason action policy rejected: {exc}",
+            }
+    action_intervention_consumption = None
+    if action_intervention is not None:
+        if action_policy_evidence is None:
+            return {
+                "status": "error",
+                "message": ("latent_reason action intervention requires action-policy evidence"),
+            }
+        try:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                validate_action_intervention,
+            )
+
+            action_intervention = validate_action_intervention(
+                action_intervention,
+                require_current_policy=True,
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": f"latent_reason action intervention rejected: {exc}",
             }
     if operation_authority is not None:
         try:
@@ -668,6 +662,43 @@ def handle_latent_reason(
                 ),
             )
             logger.error("Latent critic authority rejected: %s", exc)
+    if action_intervention is not None:
+        try:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                consume_action_intervention_once,
+            )
+            from core.brain.llm.latent_cortex.runtime_identity import (
+                latent_request_payload_sha256,
+            )
+
+            intervention_request_sha256 = latent_request_payload_sha256(
+                prompt=prompt,
+                messages=messages,
+                domain=str(job.get("domain", "general")),
+                config=job.get("config"),
+                budget=job.get("budget"),
+                runtime_controls=job.get("runtime_controls"),
+                cognitive_context=cognitive_context,
+                operation_authority=operation_authority,
+                action_policy_evidence=action_policy_evidence,
+                external_execution_offer=external_execution_offer,
+                response_contract=response_contract,
+                verifier_guidance=(True if job.get("verifier_guidance") else None),
+                facet_reliability=job.get("facet_reliability"),
+            )
+            if (
+                intervention_request_sha256
+                != action_intervention["authority_payload"]["request_payload_sha256"]
+            ):
+                raise ValueError("action intervention request payload differs")
+            action_intervention_consumption = consume_action_intervention_once(
+                action_intervention
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "message": (f"latent_reason action intervention replay admission rejected: {exc}"),
+            }
     result = engine.reason(
         prompt=prompt if isinstance(prompt, str) else None,
         messages=episode_messages,
@@ -676,6 +707,8 @@ def handle_latent_reason(
         verifier=task_verifier,
         cognitive_context=cognitive_context,
         action_policy_evidence=action_policy_evidence,
+        action_intervention=action_intervention,
+        action_intervention_consumption=action_intervention_consumption,
         external_execution_offer=external_execution_offer,
         cancel_check=cancel_check,
         progress=progress,
@@ -761,8 +794,11 @@ def handle_latent_reason(
         cognitive_context=cognitive_context,
         operation_authority=operation_authority,
         action_policy_evidence=action_policy_evidence,
+        action_intervention=action_intervention,
         external_execution_offer=external_execution_offer,
         response_contract=response_contract,
+        verifier_guidance=True if job.get("verifier_guidance") else None,
+        facet_reliability=job.get("facet_reliability"),
     )
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"

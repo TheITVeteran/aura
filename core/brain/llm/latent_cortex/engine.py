@@ -23,6 +23,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -598,6 +599,18 @@ class LatentCortexEngine:
             )
         return rows
 
+    @staticmethod
+    def _canonical_sha256(value: Any) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest()
+
     @classmethod
     def _ensemble_snapshot_identity(cls, snapshot: dict[str, Any]) -> tuple[str, str]:
         """Commit a complete private ensemble snapshot without disclosing tensors."""
@@ -607,6 +620,207 @@ class LatentCortexEngine:
         )
 
         return ensemble_identity_from_boundaries(cls._ensemble_snapshot_boundaries(snapshot))
+
+    @classmethod
+    def _action_intervention_state_components(
+        cls,
+        *,
+        ensemble: BranchEnsemble,
+        budget: ComputeBudget,
+        episode_context_items: list[dict[str, Any]],
+        action_policy_evidence: dict[str, Any],
+        state_signal: CognitiveStateSignal,
+        active_action_executors: tuple[OperationKind, ...],
+        action_intervention: dict[str, Any],
+    ) -> dict[str, str]:
+        """Commit every action-relevant resident state surface.
+
+        The worker directly measures six components. Durable host state and
+        the externally established RNG root remain runner-owned commitments
+        from the signed pre-execution capture; the public receipt labels that
+        ownership instead of pretending the worker observed those surfaces.
+        """
+
+        def commitment_value(value: Any) -> Any:
+            if value is None or isinstance(value, (bool, int, str)):
+                return value
+            if isinstance(value, float):
+                if not math.isfinite(value):
+                    return str(value)
+                return value
+            if isinstance(value, dict):
+                return {
+                    str(key): commitment_value(item)
+                    for key, item in sorted(value.items(), key=lambda row: str(row[0]))
+                }
+            if isinstance(value, (list, tuple)):
+                return [commitment_value(item) for item in value]
+            if isinstance(value, (set, frozenset)):
+                normalized = [commitment_value(item) for item in value]
+                return sorted(
+                    normalized,
+                    key=lambda item: json.dumps(
+                        item,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                )
+            enum_value = getattr(value, "value", None)
+            if isinstance(enum_value, (bool, int, float, str)):
+                return commitment_value(enum_value)
+            if hasattr(value, "shape") and hasattr(value, "dtype"):
+                return {
+                    "tensor_sha256": tensor_sha256(value),
+                    "shape": [int(item) for item in value.shape],
+                    "dtype": str(value.dtype),
+                }
+            raise ValueError(
+                f"action intervention state contains an unsupported value {type(value).__name__}"
+            )
+
+        snapshot = ensemble.snapshot_ensemble_runtime()
+        latent_rows = [
+            {
+                "index": branch.index,
+                "latent": commitment_value(branch.z),
+                "anchor": commitment_value(branch.anchor),
+                "workspace": commitment_value(branch.workspace.snapshot()),
+            }
+            for branch in ensemble.branches
+        ]
+        branch_rows = []
+        for branch in ensemble.branches:
+            branch_snapshot = dict(snapshot["branches"][branch.index])
+            branch_snapshot.pop("z", None)
+            branch_rows.append(
+                {
+                    "index": branch.index,
+                    "runtime_snapshot": commitment_value(branch_snapshot),
+                    "savepoint": commitment_value(branch.savepoint),
+                    "savepoint_steps": branch.savepoint_steps,
+                    "savepoint_kv_boundary_sha256": (branch.savepoint_kv_boundary_sha256),
+                    "seed_sha256": branch.seed_sha256,
+                    "rng_stream_sha256": branch.rng_stream_sha256,
+                    "candidate_sha256": branch.candidate_sha256,
+                    "candidate_step": branch.candidate_step,
+                    "update_gate": (
+                        {
+                            "mode": branch.update_gate.mode,
+                            "head_sha256": branch.update_gate.head_sha256,
+                        }
+                        if branch.update_gate is not None
+                        else None
+                    ),
+                    "verified_best_state": commitment_value(branch.verified_best_state),
+                    "verified_best_step": branch.verified_best_step,
+                    "verified_best_state_sha256": (branch.verified_best_state_sha256),
+                    "verified_best_observation": commitment_value(branch.verified_best_observation),
+                    "verified_best_trace": commitment_value(branch.verified_best_trace),
+                    "verified_finalization": commitment_value(branch.verified_finalization),
+                    "uncertainty_runtime": (
+                        {
+                            "mode": str(getattr(branch.uncertainty_runtime, "mode", "")),
+                            "head_sha256": str(
+                                getattr(
+                                    branch.uncertainty_runtime,
+                                    "head_sha256",
+                                    "",
+                                )
+                            ),
+                        }
+                        if branch.uncertainty_runtime is not None
+                        else None
+                    ),
+                    "mistake_locator_runtime": (
+                        {
+                            "mode": str(
+                                getattr(
+                                    branch.mistake_locator_runtime,
+                                    "mode",
+                                    "",
+                                )
+                            ),
+                            "head_sha256": str(
+                                getattr(
+                                    branch.mistake_locator_runtime,
+                                    "head_sha256",
+                                    "",
+                                )
+                            ),
+                        }
+                        if branch.mistake_locator_runtime is not None
+                        else None
+                    ),
+                    "recurrent_grounding_trace": commitment_value(branch.recurrent_grounding_trace),
+                    "loop_stability_trace": commitment_value(branch.loop_stability_trace),
+                    "update_acceptance_trace": commitment_value(branch.update_acceptance_trace),
+                    "uncertainty_trace": commitment_value(branch.uncertainty_trace),
+                    "mistake_locator_trace": commitment_value(branch.mistake_locator_trace),
+                    "reflector_trace": commitment_value(branch.reflector_trace),
+                }
+            )
+        ensemble_state = {
+            name: commitment_value(value) for name, value in snapshot.items() if name != "branches"
+        }
+        ensemble_state.update(
+            {
+                "context_sha256": str(ensemble._context_sha256),
+                "configured_role_lesion": bool(ensemble._configured_role_lesion),
+                "seed_alias_free": bool(ensemble._seed_alias_free),
+                "seed_states_unique": bool(ensemble._seed_states_unique),
+                "rng_streams_unique": bool(ensemble._rng_streams_unique),
+                "support_weights": commitment_value(ensemble._support_weights),
+                "branches": branch_rows,
+                "budget": {
+                    "max_layer_apps": budget.max_layer_apps,
+                    "spent_layer_apps": budget.spent_layer_apps,
+                    "remaining_layer_apps": budget.remaining_layer_apps,
+                    "resource_accounting": budget.resource_ledger.to_receipt(),
+                    "information_accounting": budget.information_receipt,
+                },
+            }
+        )
+        memory_items = [
+            item
+            for item in episode_context_items
+            if item.get("context_role") == "memory_observation"
+            or str(item.get("source") or "") in {"memory", "one_shot_memory"}
+        ]
+        evidence_items = [
+            item
+            for item in episode_context_items
+            if item not in memory_items
+            and (
+                item.get("context_role") == "evidence_observation"
+                or str(item.get("source") or "") in {"reference", "world_model"}
+                or str(item.get("source") or "").startswith(("evidence", "tool_observation"))
+            )
+        ]
+        expected = action_intervention["authority_payload"]["starting_state_components"]
+        components = {
+            "latent_slots_sha256": cls._canonical_sha256(latent_rows),
+            "branch_state_sha256": cls._canonical_sha256(ensemble_state),
+            "kv_cache_sha256": cls._ensemble_snapshot_identity(snapshot)[1],
+            "evidence_state_sha256": cls._canonical_sha256(
+                {
+                    "action_policy_evidence": action_policy_evidence,
+                    "context_items": evidence_items,
+                }
+            ),
+            "memory_state_sha256": cls._canonical_sha256(memory_items),
+            "public_action_state_sha256": cls._canonical_sha256(
+                {
+                    "state_signal": state_signal.to_dict(),
+                    "active_action_executors": [
+                        action.value for action in active_action_executors
+                    ],
+                }
+            ),
+            "durable_state_sha256": expected["durable_state_sha256"],
+            "rng_state_sha256": expected["rng_state_sha256"],
+        }
+        return {name: str(components[name]) for name in sorted(components)}
 
     @staticmethod
     def _policy_uncertainty(bucket: str) -> float:
@@ -1796,6 +2010,8 @@ class LatentCortexEngine:
         ablate_mode: str = "zero",
         cognitive_context: list | None = None,
         action_policy_evidence: dict[str, Any] | None = None,
+        action_intervention: dict[str, Any] | None = None,
+        action_intervention_consumption: dict[str, Any] | None = None,
         external_execution_offer: dict[str, Any] | None = None,
         cancel_check: Callable[[], bool] | None = None,
         progress: Callable[[dict], None] | None = None,
@@ -1842,9 +2058,62 @@ class LatentCortexEngine:
                 validate_external_execution_offer,
             )
 
-            normalized_execution_offer = validate_external_execution_offer(
-                external_execution_offer
+            normalized_execution_offer = validate_external_execution_offer(external_execution_offer)
+        normalized_action_intervention = None
+        action_intervention_execution_claim = None
+        if action_intervention is not None:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                action_intervention_engine_request_sha256,
+                claim_action_intervention_execution,
+                validate_action_intervention,
+                validate_action_intervention_objective,
             )
+
+            normalized_action_intervention = validate_action_intervention(
+                action_intervention,
+                require_current_policy=True,
+            )
+            validate_action_intervention_objective(
+                normalized_action_intervention,
+                prompt=prompt,
+                messages=messages,
+                token_ids=token_ids,
+            )
+            if (
+                decode_max_tokens is not None
+                or capture_decode_logprobs
+                or decode_sentence_grace_tokens is not None
+            ):
+                raise ValueError(
+                    "action intervention does not permit direct decode overrides"
+                )
+            engine_request_sha256 = action_intervention_engine_request_sha256(
+                prompt=prompt,
+                domain=str(domain),
+                config=self.config,
+                budget=budget,
+                cognitive_context=context_items,
+                action_policy_evidence=policy_evidence,
+                external_execution_offer=normalized_execution_offer,
+                verifier_present=verifier is not None,
+                ablate_slot=ablate_slot,
+                ablate_mode=ablate_mode,
+            )
+            if (
+                engine_request_sha256
+                != normalized_action_intervention["authority_payload"][
+                    "engine_request_sha256"
+                ]
+            ):
+                raise ValueError("action intervention engine request differs")
+            if not isinstance(action_intervention_consumption, dict):
+                raise ValueError("action intervention lacks a worker consumption event")
+            action_intervention_execution_claim = claim_action_intervention_execution(
+                normalized_action_intervention,
+                action_intervention_consumption,
+            )
+        elif action_intervention_consumption is not None:
+            raise ValueError("action intervention consumption lacks an intervention")
         tokens = self._encode(prompt, messages, token_ids)
         verification_objective = str(prompt or "")
         if not verification_objective and messages:
@@ -1903,6 +2172,10 @@ class LatentCortexEngine:
                     ablate_mode=ablate_mode,
                     cognitive_context_items=context_items,
                     action_policy_evidence=policy_evidence,
+                    action_intervention=normalized_action_intervention,
+                    action_intervention_execution_claim=(
+                        action_intervention_execution_claim
+                    ),
                     external_execution_offer=normalized_execution_offer,
                     information_encoded_tokens=encoded_tokens,
                     information_verifier=verifier,
@@ -1914,9 +2187,7 @@ class LatentCortexEngine:
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
                     transient_cleanup_registry=transient_cleanup_registry,
                 )
-                if (
-                    receipt.answer_replacement.get("decision") == "abstain"
-                ):
+                if receipt.answer_replacement.get("decision") == "abstain":
                     failure_reason = "answer_replacement_abstained"
             except _FastWeightCleanupError as exc:
                 record_degradation(
@@ -1931,18 +2202,25 @@ class LatentCortexEngine:
                 receipt.halting_reason = receipt.halting_reason or "soft_cancelled"
                 failure_reason = "soft_cancelled"
             except _LATENT_PHASE_ERRORS as exc:
+                fallback_permitted = (
+                    self.config.allow_vanilla_fallback and normalized_action_intervention is None
+                )
                 record_degradation(
                     "latent_cortex",
                     exc,
                     action=(
                         "served vanilla decode with honest fallback receipt"
-                        if self.config.allow_vanilla_fallback
+                        if fallback_permitted
                         else "failed the full-stack episode without replacing it with vanilla decode"
                     ),
                 )
                 receipt.halting_reason = receipt.halting_reason or "latent_phase_error"
-                if not self.config.allow_vanilla_fallback:
-                    receipt.flag("vanilla_fallback_disabled")
+                if not fallback_permitted:
+                    receipt.flag(
+                        "campaign_vanilla_fallback_forbidden"
+                        if normalized_action_intervention is not None
+                        else "vanilla_fallback_disabled"
+                    )
                     failure_reason = f"latent_phase_failed:{type(exc).__name__}:{exc}"
                 elif receipt.fast_weights_applied and receipt.fast_weights_erased is not True:
                     receipt.flag("fallback_refused_unproven_model_state")
@@ -2106,6 +2384,8 @@ class LatentCortexEngine:
         ablate_mode: str = "zero",
         cognitive_context_items: list[dict] | None = None,
         action_policy_evidence: dict[str, Any],
+        action_intervention: dict[str, Any] | None = None,
+        action_intervention_execution_claim: dict[str, Any] | None = None,
         external_execution_offer: dict[str, Any] | None = None,
         information_encoded_tokens: bytes,
         information_verifier: Callable[[str], float] | None,
@@ -2494,10 +2774,24 @@ class LatentCortexEngine:
             has_verifier=verifier is not None and self.tokenizer is not None,
             can_execute=external_execution_offer is not None,
         )
+        active_action_executors = action_executors
+        intervention_pending = action_intervention is not None
+        intervention_runtime: dict[str, Any] = {}
+        intervention_action: OperationKind | None = None
+        intervention_arm = ""
+        if action_intervention is not None:
+            intervention_authority = action_intervention["authority_payload"]
+            intervention_action = OperationKind(intervention_authority["action"])
+            intervention_arm = str(intervention_authority["arm"])
+            if intervention_action not in action_executors:
+                raise ValueError("authenticated action intervention has no resident executor")
+            if intervention_action is OperationKind.EXECUTE and external_execution_offer is None:
+                raise ValueError("execute intervention lacks a governed external execution offer")
         selected_actions: list[OperationKind] = []
         cognitive_operator_trace: list[dict[str, Any]] = []
         context_focus_trace: list[dict[str, Any]] = []
         action_index = 0
+        omitted_action_count = 0
         previous_residual = 1.0
         branch_verifier_scores: dict[int, float] = {}
         branch_verifier_deltas: dict[int, float] = {}
@@ -2662,12 +2956,82 @@ class LatentCortexEngine:
                         and not has_memory
                         and not has_evidence
                     ),
+                    omitted_action_count=omitted_action_count,
                     previously_selected=tuple(selected_actions),
                 )
-                decision = value_policy.choose(
-                    state_signal,
-                    executors=action_executors,
-                )
+                if intervention_pending:
+                    from core.brain.llm.latent_cortex.action_intervention import (
+                        CONTROL_ARM,
+                    )
+
+                    pre_components = self._action_intervention_state_components(
+                        ensemble=ensemble,
+                        budget=budget,
+                        episode_context_items=episode_context_items,
+                        action_policy_evidence=action_policy_evidence,
+                        state_signal=state_signal,
+                        active_action_executors=active_action_executors,
+                        action_intervention=action_intervention,
+                    )
+                    pre_state_sha256 = self._canonical_sha256(pre_components)
+                    pre_kv_sha256 = pre_components["kv_cache_sha256"]
+                    intervention_authority = action_intervention["authority_payload"]
+                    if (
+                        pre_components != intervention_authority["starting_state_components"]
+                        or pre_state_sha256 != intervention_authority["expected_pre_state_sha256"]
+                        or pre_kv_sha256 != intervention_authority["expected_pre_kv_sha256"]
+                    ):
+                        raise ValueError("action intervention resident starting state differs")
+                    intervention_runtime = {
+                        "pre_state_components": pre_components,
+                        "pre_state_sha256": pre_state_sha256,
+                        "pre_kv_sha256": pre_kv_sha256,
+                        "decision_sha256": "",
+                    }
+                    intervention_pending = False
+                    if intervention_arm == CONTROL_ARM:
+                        active_action_executors = tuple(
+                            action
+                            for action in active_action_executors
+                            if action != intervention_action
+                        )
+                        omitted_action_count += 1
+                        action_index += 1
+                        post_signal = replace(
+                            state_signal,
+                            step_index=min(state_signal.max_steps, action_index),
+                            omitted_action_count=omitted_action_count,
+                            previously_selected=tuple(selected_actions),
+                        )
+                        post_components = self._action_intervention_state_components(
+                            ensemble=ensemble,
+                            budget=budget,
+                            episode_context_items=episode_context_items,
+                            action_policy_evidence=action_policy_evidence,
+                            state_signal=post_signal,
+                            active_action_executors=active_action_executors,
+                            action_intervention=action_intervention,
+                        )
+                        intervention_runtime.update(
+                            {
+                                "post_state_components": post_components,
+                                "post_state_sha256": self._canonical_sha256(post_components),
+                                "post_kv_sha256": post_components["kv_cache_sha256"],
+                            }
+                        )
+                        previous_residual = before_residual
+                        continue
+                    decision = value_policy.choose_forced(
+                        state_signal,
+                        executors=active_action_executors,
+                        action=intervention_action,
+                    )
+                    intervention_runtime["decision_sha256"] = decision["decision_sha256"]
+                else:
+                    decision = value_policy.choose(
+                        state_signal,
+                        executors=active_action_executors,
+                    )
                 from core.brain.llm.latent_cortex.stop_gate import StopContext
 
                 stop_context = StopContext(
@@ -3458,8 +3822,63 @@ class LatentCortexEngine:
                     else:
                         outcome = "verifier_probe_budget_refused"
 
+                if decision["mode"] == "campaign_forced":
+                    active_action_executors = tuple(
+                        candidate
+                        for candidate in active_action_executors
+                        if candidate != intervention_action
+                    )
                 after_residual = self._mean_latest_residual(ensemble)
                 after_disagreement = ensemble.disagreement(budget=budget)
+                if decision["mode"] == "campaign_forced":
+                    post_signal = replace(
+                        state_signal,
+                        step_index=min(
+                            state_signal.max_steps,
+                            state_signal.step_index + 1,
+                        ),
+                        neural_steps=max(
+                            (branch.steps for branch in ensemble.branches),
+                            default=0,
+                        ),
+                        active_branches=len(ensemble.active()),
+                        residual=after_residual,
+                        residual_delta=max(
+                            -1.0,
+                            min(1.0, before_residual - after_residual),
+                        ),
+                        verifier_score=probe_score,
+                        verifier_delta=(
+                            probe_score - previous_verifier_score
+                            if probe_score is not None and previous_verifier_score is not None
+                            else None
+                        ),
+                        disagreement=after_disagreement,
+                        budget_remaining_fraction=max(
+                            0.0,
+                            min(
+                                1.0,
+                                budget.remaining_layer_apps / max(1, budget.max_layer_apps),
+                            ),
+                        ),
+                        previously_selected=tuple([*selected_actions, action]),
+                    )
+                    post_components = self._action_intervention_state_components(
+                        ensemble=ensemble,
+                        budget=budget,
+                        episode_context_items=episode_context_items,
+                        action_policy_evidence=action_policy_evidence,
+                        state_signal=post_signal,
+                        active_action_executors=active_action_executors,
+                        action_intervention=action_intervention,
+                    )
+                    intervention_runtime.update(
+                        {
+                            "post_state_components": post_components,
+                            "post_state_sha256": self._canonical_sha256(post_components),
+                            "post_kv_sha256": post_components["kv_cache_sha256"],
+                        }
+                    )
                 # The receipt carries eight-decimal public state. Reward
                 # metrics must be derived from that same state or a rounding
                 # boundary can make an honestly emitted transition fail its
@@ -3498,8 +3917,7 @@ class LatentCortexEngine:
                         -1.0,
                         min(
                             1.0,
-                            public_after_disagreement
-                            - public_before_disagreement,
+                            public_after_disagreement - public_before_disagreement,
                         ),
                     ),
                     unsupported_confidence=(
@@ -3591,6 +4009,27 @@ class LatentCortexEngine:
             receipt.bytecode_events = bytecode_events
         receipt.cognitive_operator_trace = cognitive_operator_trace
         receipt.context_focus_trace = context_focus_trace
+        if action_intervention is not None:
+            if intervention_pending or not intervention_runtime:
+                raise ValueError("action intervention was not consumed by the recurrent schedule")
+            from core.brain.llm.latent_cortex.action_intervention import (
+                build_action_intervention_receipt,
+            )
+
+            receipt.value_of_computation["calibration_intervention"] = (
+                build_action_intervention_receipt(
+                    intervention=action_intervention,
+                    execution_claim=action_intervention_execution_claim,
+                    pre_state_components=intervention_runtime["pre_state_components"],
+                    post_state_components=intervention_runtime["post_state_components"],
+                    pre_state_sha256=intervention_runtime["pre_state_sha256"],
+                    pre_kv_sha256=intervention_runtime["pre_kv_sha256"],
+                    post_state_sha256=intervention_runtime["post_state_sha256"],
+                    post_kv_sha256=intervention_runtime["post_kv_sha256"],
+                    decision_sha256=intervention_runtime["decision_sha256"],
+                    cognitive_action_trace=receipt.cognitive_action_trace,
+                )
+            )
         receipt.value_of_computation.update(
             {
                 "executors": [action.value for action in action_executors],
@@ -3768,9 +4207,7 @@ class LatentCortexEngine:
                 cognitive_slots=receipt.cognitive_slots,
                 operator_trace=receipt.cognitive_operator_trace,
                 action_trace=receipt.cognitive_action_trace,
-                branch_isolation=ensemble.isolation_receipt(
-                    runner.cache_discipline_receipt()
-                ),
+                branch_isolation=ensemble.isolation_receipt(runner.cache_discipline_receipt()),
             )
             if receipt.structural_diversity.get("certified") is not True:
                 receipt.flag("structural_diversity_unproven")
@@ -3809,14 +4246,12 @@ class LatentCortexEngine:
                 if candidate_decompositions
                 else {}
             )
-            receipt.diagnostic_action_selection = (
-                build_diagnostic_action_selector_receipt(
-                    disagreement_graph=receipt.disagreement_graph,
-                    candidate_routes=candidate_routes,
-                    action_policy_evidence=action_policy_evidence,
-                    value_policy=receipt.value_of_computation,
-                    action_trace=receipt.cognitive_action_trace,
-                )
+            receipt.diagnostic_action_selection = build_diagnostic_action_selector_receipt(
+                disagreement_graph=receipt.disagreement_graph,
+                candidate_routes=candidate_routes,
+                action_policy_evidence=action_policy_evidence,
+                value_policy=receipt.value_of_computation,
+                action_trace=receipt.cognitive_action_trace,
             )
             from core.brain.llm.latent_cortex.local_repair import (
                 build_local_repair_receipt,
@@ -3825,9 +4260,7 @@ class LatentCortexEngine:
             )
 
             repair_limit = (
-                self.config.local_repair_max_attempts
-                if self.config.local_repair_enabled
-                else 0
+                self.config.local_repair_max_attempts if self.config.local_repair_enabled else 0
             )
             prepared_repairs = prepare_local_repair_requests(
                 disagreement_graph=receipt.disagreement_graph,
@@ -3857,15 +4290,10 @@ class LatentCortexEngine:
                 receipt.counterfactual_verifier = run_counterfactual_verifier(
                     branch_probe_texts,
                     objective=verification_objective,
-                    task_scores={
-                        branch: round(score, 6)
-                        for branch, score in blind_scores.items()
-                    },
+                    task_scores={branch: round(score, 6) for branch, score in blind_scores.items()},
                     selected_branch=winner.index,
                     max_atoms=self.config.counterfactual_verifier_max_atoms,
-                    max_interventions=(
-                        self.config.counterfactual_verifier_max_interventions
-                    ),
+                    max_interventions=(self.config.counterfactual_verifier_max_interventions),
                     generate=lambda prompt: self._fresh_verifier_generation(
                         prompt,
                         budget,
@@ -3879,7 +4307,14 @@ class LatentCortexEngine:
                         branch for branch in ensemble.branches if branch.index == selected
                     )
                     selection_basis = f"{selection_basis}_counterfactual_tiebreak"
-            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+            except (
+                ImportError,
+                OSError,
+                OverflowError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 receipt.flag(f"counterfactual_verifier_abstained:{type(exc).__name__}")
                 receipt.counterfactual_verifier = {
                     "requested": True,
@@ -3950,7 +4385,14 @@ class LatentCortexEngine:
                             replacement_branch=None,
                         )
                         generative_only_branch_refuted = True
-            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+            except (
+                ImportError,
+                OSError,
+                OverflowError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 receipt.flag(f"generative_verifier_abstained:{type(exc).__name__}")
                 receipt.generative_verifier = {
                     "requested": True,
@@ -4009,7 +4451,14 @@ class LatentCortexEngine:
                         )
                     ),
                 )
-            except (ImportError, OSError, OverflowError, RuntimeError, TypeError, ValueError) as exc:
+            except (
+                ImportError,
+                OSError,
+                OverflowError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 receipt.flag(f"prefix_stability_abstained:{type(exc).__name__}")
                 receipt.prefix_stability = {
                     "requested": True,
@@ -4064,25 +4513,15 @@ class LatentCortexEngine:
                         "candidate": repaired_candidate,
                         "generation_context": {
                             "prompt_sha256": repair_request["prompt_sha256"],
-                            "generated_token_count": generated_context[
-                                "generated_token_count"
-                            ],
+                            "generated_token_count": generated_context["generated_token_count"],
                             "termination": generated_context["termination"],
-                            "initial_cache_offsets": generated_context[
-                                "initial_cache_offsets"
-                            ],
-                            "final_cache_offsets": generated_context[
-                                "final_cache_offsets"
-                            ],
+                            "initial_cache_offsets": generated_context["initial_cache_offsets"],
+                            "final_cache_offsets": generated_context["final_cache_offsets"],
                             "all_initial_offsets_zero": generated_context[
                                 "all_initial_offsets_zero"
                             ],
-                            "solver_context_imported": generated_context[
-                                "solver_context_imported"
-                            ],
-                            "parameter_relation": generated_context[
-                                "parameter_relation"
-                            ],
+                            "solver_context_imported": generated_context["solver_context_imported"],
+                            "parameter_relation": generated_context["parameter_relation"],
                         },
                     }
                 except RuntimeError as exc:
@@ -4940,27 +5379,23 @@ class LatentCortexEngine:
                     replacement_receipt,
                     accepted_tokens,
                     answer_replacement_private,
-                ) = (
-                    build_answer_replacement_receipt(
-                        disagreement_graph=receipt.disagreement_graph,
-                        diagnostic_selection=receipt.diagnostic_action_selection,
-                        local_repair=receipt.local_repair,
-                        selected_branch=winner.index,
-                        branch_candidates=branch_probe_texts,
-                        generated_repairs=generated_repairs,
-                        objective=verification_objective,
-                        baseline_text=baseline_text,
-                        baseline_tokens=out_tokens,
-                        encode=encode_replacement,
-                        decode=lambda values: (
-                            self.tokenizer.decode(list(values))
-                            if self.tokenizer is not None
-                            else ""
-                        ),
-                        enabled=self.config.answer_replacement_enabled,
-                        margin=self.config.answer_replacement_margin,
-                        max_output_tokens=replacement_output_limit,
-                    )
+                ) = build_answer_replacement_receipt(
+                    disagreement_graph=receipt.disagreement_graph,
+                    diagnostic_selection=receipt.diagnostic_action_selection,
+                    local_repair=receipt.local_repair,
+                    selected_branch=winner.index,
+                    branch_candidates=branch_probe_texts,
+                    generated_repairs=generated_repairs,
+                    objective=verification_objective,
+                    baseline_text=baseline_text,
+                    baseline_tokens=out_tokens,
+                    encode=encode_replacement,
+                    decode=lambda values: (
+                        self.tokenizer.decode(list(values)) if self.tokenizer is not None else ""
+                    ),
+                    enabled=self.config.answer_replacement_enabled,
+                    margin=self.config.answer_replacement_margin,
+                    max_output_tokens=replacement_output_limit,
                 )
                 receipt.answer_replacement = replacement_receipt
                 decision = replacement_receipt["decision"]

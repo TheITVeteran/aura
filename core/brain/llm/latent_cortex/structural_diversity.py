@@ -162,22 +162,26 @@ def _action_observations(action_trace: Any) -> dict[int, dict[str, str]]:
     if not isinstance(action_trace, list):
         raise ValueError("cognitive action trace must be a list")
     observations: dict[int, dict[str, str]] = {}
-    for expected_step, row in enumerate(action_trace):
+    previous_step = -1
+    for row in action_trace:
         if not isinstance(row, dict):
             raise ValueError("cognitive action row is invalid")
         transition = row.get("transition")
         before = row.get("state_before")
         after = row.get("state_after")
+        step_index = transition.get("step_index") if isinstance(transition, dict) else None
         if (
             not isinstance(transition, dict)
-            or transition.get("step_index") != expected_step
+            or type(step_index) is not int
+            or step_index <= previous_step
             or not isinstance(transition.get("action"), str)
             or not isinstance(transition.get("outcome"), str)
             or not isinstance(before, dict)
             or not isinstance(after, dict)
         ):
             raise ValueError("cognitive action evidence is incomplete")
-        observations[expected_step] = {
+        previous_step = step_index
+        observations[step_index] = {
             "action": transition["action"],
             "outcome": transition["outcome"],
             "residual_trend": _trend(before.get("residual"), after.get("residual")),
@@ -211,6 +215,35 @@ def _candidate_by_branch(branch_isolation: Any, n_branches: int) -> dict[int, st
     return result
 
 
+def _observed_candidates_by_branch(
+    branch_isolation: dict[str, Any], n_branches: int
+) -> dict[int, str]:
+    """Return only well-formed candidate commitments from uncertified evidence.
+
+    An incomplete isolation interval is an expected bounded-run outcome, not a
+    malformed episode.  Its partial commitments remain diagnostic, but they
+    cannot satisfy the positive structural-diversity certificate.
+    """
+
+    candidates = branch_isolation.get("candidates")
+    if not isinstance(candidates, list):
+        return {}
+    result: dict[int, str] = {}
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        index = row.get("index")
+        digest = row.get("candidate_sha256")
+        if (
+            type(index) is int
+            and 0 <= index < n_branches
+            and index not in result
+            and _is_sha256(digest)
+        ):
+            result[index] = digest
+    return result
+
+
 def build_structural_diversity_receipt(
     *,
     n_branches: int,
@@ -227,7 +260,15 @@ def build_structural_diversity_receipt(
         raise ValueError("operator trace is required for structural measurement")
     premises = _premise_commitments(cognitive_slots)
     observations = _action_observations(action_trace)
-    candidates = _candidate_by_branch(branch_isolation, n_branches)
+    if not isinstance(branch_isolation, dict):
+        raise ValueError("branch isolation evidence is missing")
+    isolation_certified = branch_isolation.get("certified") is True
+    candidates = (
+        _candidate_by_branch(branch_isolation, n_branches)
+        if isolation_certified
+        else _observed_candidates_by_branch(branch_isolation, n_branches)
+    )
+    candidate_commitments_complete = len(candidates) == n_branches
     by_branch: dict[int, list[dict[str, Any]]] = {index: [] for index in range(n_branches)}
     for raw in operator_trace:
         row = validate_operator_receipt(raw)
@@ -327,7 +368,8 @@ def build_structural_diversity_receipt(
                 "structural_sha256": structural_sha256,
                 "state_commitment_sha256": _canonical_sha256(
                     {
-                        "candidate": candidates[index],
+                        "candidate": candidates.get(index),
+                        "candidate_available": index in candidates,
                         "outputs": [row["output_sha256"] for row in rows],
                     }
                 ),
@@ -376,12 +418,23 @@ def build_structural_diversity_receipt(
         )
     support_classes = sorted(groups_by_fingerprint.values(), key=lambda group: group[0])
     duplicate_groups = [group for group in support_classes if len(group) > 1]
-    certified = not duplicate_groups and all(row["independent"] for row in pairwise)
+    structural_independence_observed = not duplicate_groups and all(
+        row["independent"] for row in pairwise
+    )
+    certified = (
+        isolation_certified
+        and candidate_commitments_complete
+        and structural_independence_observed
+    )
     payload = {
         "schema": STRUCTURAL_DIVERSITY_SCHEMA,
         "facet_names": list(_FACETS),
         "wording_counted": False,
         "n_branches": n_branches,
+        "branch_isolation_sha256": _canonical_sha256(branch_isolation),
+        "branch_isolation_certified": isolation_certified,
+        "candidate_commitments_complete": candidate_commitments_complete,
+        "structural_independence_observed": structural_independence_observed,
         "branches": branches,
         "pairwise": pairwise,
         "support_classes": support_classes,
@@ -391,6 +444,10 @@ def build_structural_diversity_receipt(
         "reason": (
             "certified_structurally_independent"
             if certified
+            else "branch_isolation_unproven"
+            if not isolation_certified
+            else "candidate_commitments_incomplete"
+            if not candidate_commitments_complete
             else "duplicate_or_insufficiently_distinct_structure"
         ),
     }

@@ -28069,3 +28069,123 @@ planning estimate of 78.7%. Next: publish CP373, implement the resident
 action-calibration runner and external campaign, then execute the bounded live
 action ablations and fresh CP371 visible-request campaign. Final multi-hour
 soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-374: Authenticated Resident Action Intervention
+
+The resident Recursive Latent Cortex now has the causal intervention primitive
+that CP373's calibration protocol required but did not implement. A strict
+authority payload binds the separately rooted current campaign policy and
+revision, protocol, complete canonical plan, exact cell definition, pair, task
+payload, execution ordinal, deterministic first-attempt identity, captured
+starting state, exact normalized worker request, target action, arm, and
+intervention ordinal. The campaign-runner key signs that payload. Current
+admission reads a separately configured policy document and rejects an
+otherwise-valid embedded policy when that document has been superseded or its
+revocation set changed. Client, worker, engine, and canonical request identity
+all reconstruct the same authority. Foreground/user requests cannot invoke the
+research override.
+
+Before the worker consumes a signed attempt, it must append and fsync an
+`ACTION_INTERVENTION_CLAIMED` event to the canonical campaign journal. The
+claim commits the intervention, normalized request, and current signed journal
+head/count. A delayed authority for a superseded retry is therefore rejected
+even when its embedded prefix is still internally valid. The exact claim
+lineage is then consumed before execution in a bounded, hash-chained,
+atomically replaced replay ledger under an interprocess lock and checked again
+before execution is recorded. A crash after consumption fails that attempt
+closed rather than replaying it. A claimed attempt survives restart without an
+automatic retry, while exact idempotent recovery and subsequent result,
+verification, and commit transitions remain available. A claimed attempt also
+cannot transition to `FAILED` while its worker may still execute: it must yield
+a sealed arm result or remain unresolved for operator reconciliation. Staged
+result import and final certificate replay both recognize and validate the exact
+claim transition. Prompt/messages,
+domain, config, budget, runtime controls, cognitive context, operation
+authority, action-policy evidence, external-execution offer, response contract,
+verifier guidance, and facet reliability are all request-bound.
+
+Treatment forces exactly one target action at the first recurrent action
+opportunity while retaining the resident executor requirement. Control consumes
+the same opportunity with no action, records that omitted opportunity in the
+state signal, then permits ordinary non-target policy actions on later recurrent
+steps. It remeasures the post-control state instead of copying its pre-state
+digest. Both arms remove the target from later selection. `EXECUTE` cannot be
+forced without the existing governed
+external-execution offer and remains a request for a host handoff, not worker
+dispatch authority. The parent validates that handoff, and the durable host
+coordinator preserves and revalidates the signed intervention through decision
+and dispatch. Existing version-2 durable transactions are digest-verified,
+narrowly migrated to version 3, validated, and atomically rewritten: terminal
+records remain replayable, while interrupted dispatches enter `UNKNOWN_EFFECT`
+for manual reconciliation and are never blindly repeated.
+
+Starting-state identity now commits eight components. The resident directly
+measures latent slots; complete branch/ensemble state including roles, scores,
+halting, savepoints, evidence lineage, isolation/exchange state, traces, budget,
+resource and information accounting; KV boundaries; evidence context; memory
+context; and the public action signal. Durable host state and the RNG root
+remain externally captured, runner-attested components and are labeled as such
+instead of falsely claimed as worker observations. Pre/post component maps,
+aggregate state hashes, KV hashes, the forced decision when present, exact
+target occurrence count, complete action-trace digest, attempt/request
+identity, and campaign authority are independently reconstructable. Parent
+replay rejects missing, altered, relabeled, rehashed, wrong-state,
+bucket/snapshot-substituted, repeated-action, or state-mutating control
+evidence.
+
+Campaign failure cannot silently fall back to ordinary vanilla decoding.
+Campaign-forced transitions are also rejected by the bare transition validator
+used by durable online learning; only complete signed-trace reconstruction can
+admit that mode. Experimental manipulation therefore cannot contaminate the
+ordinary observational action-value ledger.
+
+Seven dedicated intervention contracts pass, including one real tiny-Qwen/MLX recurrent
+episode that exercises the real complete-state serializer. The durable-host
+suite separately proves a campaign-forced `EXECUTE` reaches a persisted
+handoff and validates both safe v2 transaction-migration outcomes. The broader
+intervention, value policy, request identity,
+worker/client, execution-controller, epistemic-runtime, external-execution,
+preaction, verified-best, action-calibration, and frontier-task battery passes
+456 tests with the two inherited failures explicitly deselected. Publication
+passes the post-rebase production, enterprise, governance-ownership,
+model-load-ownership, resource-observation-ownership, Ruff, bytecode, and
+diff-hygiene gates. All 20 closeout-rubric criteria pass. Rebase also exposed
+four direct file mutations in the cooperative blocked-boot marker and one new
+security-test skip beyond the static ratchets. The marker now publishes and
+clears through a fixed-path canonical `FileWriteGateway` owner, retaining the
+1,788-call governance migration-debt count; the security contract now requires
+symlink support instead of silently skipping. Its launcher/lock contracts pass
+55 tests. Independent review found two final P1 lifecycle defects: a claimed
+worker could still be failed into a retry, and the final certificate/import
+paths did not understand the claim event. Both are repaired in API and replay,
+including a hash-valid invalid-transition regression and a complete claimed
+certificate campaign. The fresh post-fix external review could not start
+because the auxiliary-agent quota was exhausted, so this checkpoint records
+the prior findings, local post-fix review, and executable evidence rather than
+claiming an independent PASS that did not occur. Two additional
+real-tiny-model tests fail unchanged on a clean `origin/main`: an admitted
+transient constraint is not subsequently applied, and a verified latent-tree
+run unexpectedly enters answer replacement. They are now explicit blockers to
+repair before launching the resident calibration runner, not CP374 regressions
+and not accepted debt.
+
+CP374 does not claim a whole-host post-mutation capture/erasure receipt, a
+resident-32B campaign result, calibrated action values, capability gain, or
+frontier reasoning. The external campaign runner remains responsible for those
+whole-host observations. The next bounded work is to close those two baseline RLC defects,
+then implement the crash-resumable state-capture and resident campaign runner,
+obtain external custody, execute at least 20 unique pairs for every action,
+independently verify the certificate, and run selection/lesion/restoration
+ablations. The fresh CP371 visible-request campaign and every shorter release
+gate remain before final multi-hour soaks.
+
+Twenty-seven cooperative substrate, alignment, self-optimizer, verifier,
+phenomenal-integration, web, tool, prompt, actuator, launcher, and brand
+checkpoints (`ad705ed79` through `5ab23b598`) landed after CP373 and before this
+integration. Counting them and CP374 makes the total checkpoint record 563.
+The lower forecast is recalibrated rather than allowed to expire while the
+known runner, campaign, live-proof, release, and soak work remains: 575-840
+total records, leaving approximately 12-277 records after this checkpoint.
+Checkpoint-count completion is approximately 67.0%-97.9%, with a midpoint
+planning estimate of 79.6%. Final multi-hour soaks remain
+deferred until every shorter gate is green.

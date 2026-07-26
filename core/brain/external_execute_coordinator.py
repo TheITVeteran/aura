@@ -35,8 +35,9 @@ from core.runtime.file_read_gateway import read_stable_bytes
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.lease import Identity, _holder_is_live
 
-EXTERNAL_EXECUTE_TRANSACTION_SCHEMA = "aura.rlc.external_execute_transaction.v2"
-_MAX_TRANSACTION_BYTES = 512_000
+EXTERNAL_EXECUTE_TRANSACTION_SCHEMA = "aura.rlc.external_execute_transaction.v3"
+_EXTERNAL_EXECUTE_TRANSACTION_SCHEMA_V2 = "aura.rlc.external_execute_transaction.v2"
+_MAX_TRANSACTION_BYTES = 8 * 1024 * 1024
 _MAX_REPLAY_BYTES = 128_000
 _DISPATCH_LEASE_DURATION_S = 120.0
 _ABANDONED_ATTEMPT_TTL_S = 900.0
@@ -84,6 +85,7 @@ _TRANSACTION_FIELDS = frozenset(
         "cognitive_action_trace",
         "action_policy_evidence",
         "action_policy_receipt",
+        "action_intervention",
         "executors",
         "runtime_operation",
         "dispatch_owner",
@@ -94,6 +96,7 @@ _TRANSACTION_FIELDS = frozenset(
         "updated_at_unix",
     }
 )
+_TRANSACTION_FIELDS_V2 = _TRANSACTION_FIELDS - {"action_intervention"}
 _HANDOFF_FIELDS = frozenset(
     {
         "schema",
@@ -227,18 +230,14 @@ def _validate_post_action_receipt_outcome(
         return
     if (
         receipt.get("status") != result.get("status")
-        or str(receipt.get("error_status") or "")[:500]
-        != result.get("error")
+        or str(receipt.get("error_status") or "")[:500] != result.get("error")
         or receipt.get("effect_verified") is not result.get("effect_verified")
-        or receipt.get("transport_succeeded")
-        is not result.get("transport_succeeded")
+        or receipt.get("transport_succeeded") is not result.get("transport_succeeded")
         or receipt.get("retry_safe") is not result.get("retry_safe")
         or receipt.get("manual_reconciliation_required")
         is not result.get("manual_reconciliation_required")
     ):
-        raise ValueError(
-            "post-action receipt outcome contradicts terminal transaction"
-        )
+        raise ValueError("post-action receipt outcome contradicts terminal transaction")
 
 
 def _bounded_result(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -249,13 +248,9 @@ def _bounded_result(result: Mapping[str, Any]) -> dict[str, Any]:
         "error": str(result.get("error") or "")[:500],
         "transport_succeeded": result.get("transport_succeeded") is True,
         "effect_verified": result.get("effect_verified") is True,
-        "manual_reconciliation_required": bool(
-            result.get("manual_reconciliation_required")
-        ),
+        "manual_reconciliation_required": bool(result.get("manual_reconciliation_required")),
         "retry_safe": result.get("retry_safe") is True,
-        "post_action_receipt_id": str(
-            result.get("post_action_receipt_id") or ""
-        )[:192],
+        "post_action_receipt_id": str(result.get("post_action_receipt_id") or "")[:192],
         "replay_payload": replay_payload,
         "replay_payload_sha256": _canonical_sha256(replay_payload),
     }
@@ -317,19 +312,14 @@ def _bounded_replay_mapping(value: Mapping[str, Any]) -> dict[str, Any]:
                     child,
                     key=child_key,
                     depth=depth + 1,
-                    preserve_text=(
-                        depth > 0 or child_key in _REPLAY_TEXT_FIELDS
-                    ),
+                    preserve_text=(depth > 0 or child_key in _REPLAY_TEXT_FIELDS),
                 )
             return result
         if isinstance(item, (list, tuple, set, frozenset)):
             values = list(item)
             if len(values) > 128:
                 state["truncated"] = True
-            return [
-                bound(child, depth=depth + 1)
-                for child in values[:128]
-            ]
+            return [bound(child, depth=depth + 1) for child in values[:128]]
         return f"<{type(item).__module__}.{type(item).__qualname__}>"
 
     scrubbed = redact_value(dict(value))
@@ -392,12 +382,11 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
     cognitive_action_trace = value.get("cognitive_action_trace")
     action_policy_evidence = value.get("action_policy_evidence")
     action_policy_receipt = value.get("action_policy_receipt")
+    action_intervention = value.get("action_intervention")
     executors = value.get("executors")
     runtime_operation = value.get("runtime_operation")
     dispatch_owner = value.get("dispatch_owner")
-    dispatch_authorization_receipt_id = value.get(
-        "dispatch_authorization_receipt_id"
-    )
+    dispatch_authorization_receipt_id = value.get("dispatch_authorization_receipt_id")
     result = value.get("result")
     if (
         not isinstance(handoff, Mapping)
@@ -405,6 +394,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
         or not isinstance(cognitive_action_trace, list)
         or not isinstance(action_policy_evidence, Mapping)
         or not isinstance(action_policy_receipt, Mapping)
+        or not isinstance(action_intervention, Mapping)
         or not isinstance(executors, list)
         or not isinstance(runtime_operation, Mapping)
         or not isinstance(dispatch_owner, Mapping)
@@ -424,13 +414,10 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
     if handoff:
         if frozenset(handoff) != _HANDOFF_FIELDS:
             raise ValueError("external execution stored handoff fields differ")
-        handoff_payload = {
-            key: handoff[key] for key in handoff if key != "handoff_sha256"
-        }
-        if (
-            handoff.get("offer_sha256") != offer["offer_sha256"]
-            or handoff.get("handoff_sha256") != _canonical_sha256(handoff_payload)
-        ):
+        handoff_payload = {key: handoff[key] for key in handoff if key != "handoff_sha256"}
+        if handoff.get("offer_sha256") != offer["offer_sha256"] or handoff.get(
+            "handoff_sha256"
+        ) != _canonical_sha256(handoff_payload):
             raise ValueError("external execution stored handoff integrity failed")
     if readiness:
         validate_external_execution_readiness(readiness, offer=offer)
@@ -443,6 +430,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
         or cognitive_action_trace
         or action_policy_evidence
         or action_policy_receipt
+        or action_intervention
         or executors
         or runtime_operation
         or dispatch_owner
@@ -475,14 +463,20 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
         )
 
         normalized_evidence = validate_evidence_snapshot(action_policy_evidence)
-        try:
-            normalized_executors = tuple(
-                OperationKind(item) for item in executors
+        normalized_intervention = None
+        if action_intervention:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                validate_action_intervention,
             )
+
+            normalized_intervention = validate_action_intervention(
+                action_intervention,
+                require_current_policy=False,
+            )
+        try:
+            normalized_executors = tuple(OperationKind(item) for item in executors)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "external execution executor inventory is invalid"
-            ) from exc
+            raise ValueError("external execution executor inventory is invalid") from exc
         if (
             not normalized_executors
             or len(set(normalized_executors)) != len(normalized_executors)
@@ -493,6 +487,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             cognitive_action_trace,
             evidence_snapshot=normalized_evidence,
             executors=normalized_executors,
+            action_intervention=normalized_intervention,
         )
         policy_fields = {
             "schema",
@@ -504,28 +499,34 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             "checked_transitions",
             "selected_actions",
         }
+        if normalized_intervention is not None:
+            policy_fields.add("calibration_intervention")
         checked_transitions = sum(
-            int(row["transition"]["checked"])
-            for row in normalized_trace["rows"]
+            int(row["transition"]["checked"]) for row in normalized_trace["rows"]
         )
         if (
             set(action_policy_receipt) != policy_fields
-            or action_policy_receipt.get("schema")
-            != normalized_evidence["schema"]
-            or action_policy_receipt.get("bucket")
-            != normalized_evidence["bucket"]
+            or action_policy_receipt.get("schema") != normalized_evidence["schema"]
+            or action_policy_receipt.get("bucket") != normalized_evidence["bucket"]
             or action_policy_receipt.get("snapshot_sha256")
             != normalized_evidence["snapshot_sha256"]
             or action_policy_receipt.get("active") is not True
             or action_policy_receipt.get("executors") != list(executors)
-            or action_policy_receipt.get("actions_selected")
-            != len(cognitive_action_trace)
-            or action_policy_receipt.get("selected_actions")
-            != normalized_trace["selected_actions"]
-            or action_policy_receipt.get("checked_transitions")
-            != checked_transitions
+            or action_policy_receipt.get("actions_selected") != len(cognitive_action_trace)
+            or action_policy_receipt.get("selected_actions") != normalized_trace["selected_actions"]
+            or action_policy_receipt.get("checked_transitions") != checked_transitions
         ):
             raise ValueError("external execution policy summary differs")
+        if normalized_intervention is not None:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                validate_action_intervention_receipt,
+            )
+
+            validate_action_intervention_receipt(
+                action_policy_receipt["calibration_intervention"],
+                intervention=normalized_intervention,
+                cognitive_action_trace=cognitive_action_trace,
+            )
         validate_external_execution_handoff(
             handoff,
             offer=offer,
@@ -537,34 +538,30 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             action_policy_evidence=normalized_evidence,
             action_policy_receipt=action_policy_receipt,
             cognitive_action_trace=cognitive_action_trace,
+            action_intervention=normalized_intervention,
         )
     if decision_source == "host_fallback" and (
         handoff
         or cognitive_action_trace
         or action_policy_evidence
         or action_policy_receipt
+        or action_intervention
         or executors
         or runtime_operation
     ):
         raise ValueError("host fallback cannot claim RLC execution evidence")
     if state == "ABSTAINED" and (
-        decision_source != "rlc"
-        or dispatch_owner
-        or dispatch_authorization_receipt_id
+        decision_source != "rlc" or dispatch_owner or dispatch_authorization_receipt_id
     ):
         raise ValueError("abstained external execution state is inconsistent")
     if state in {"DISPATCHING", "SUCCEEDED", "FAILED", "UNKNOWN_EFFECT"}:
-        if (
-            frozenset(dispatch_owner)
-            != {
-                "attempt_id",
-                "identity",
-                "task_id",
-                "lease_renewed_at",
-                "lease_duration_s",
-            }
-            or not isinstance(dispatch_owner.get("identity"), Mapping)
-        ):
+        if frozenset(dispatch_owner) != {
+            "attempt_id",
+            "identity",
+            "task_id",
+            "lease_renewed_at",
+            "lease_duration_s",
+        } or not isinstance(dispatch_owner.get("identity"), Mapping):
             raise ValueError("dispatching external execution owner is invalid")
         attempt_id = dispatch_owner.get("attempt_id")
         identity = dispatch_owner.get("identity")
@@ -572,8 +569,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             not isinstance(attempt_id, str)
             or len(attempt_id) != 32
             or any(character not in "0123456789abcdef" for character in attempt_id)
-            or frozenset(identity)
-            != {"holder", "pid", "boot_id", "host", "started_at"}
+            or frozenset(identity) != {"holder", "pid", "boot_id", "host", "started_at"}
             or not isinstance(identity.get("holder"), str)
             or not identity["holder"]
             or type(identity.get("pid")) is not int
@@ -589,10 +585,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             or not isinstance(dispatch_owner.get("task_id"), str)
             or not dispatch_owner["task_id"]
             or len(dispatch_owner["task_id"]) > 192
-            or any(
-                ord(character) < 32
-                for character in dispatch_owner["task_id"]
-            )
+            or any(ord(character) < 32 for character in dispatch_owner["task_id"])
             or isinstance(dispatch_owner.get("lease_renewed_at"), bool)
             or not isinstance(
                 dispatch_owner.get("lease_renewed_at"),
@@ -613,9 +606,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("external execution lacks dispatch authorization")
     elif state not in {"SUCCEEDED", "FAILED", "UNKNOWN_EFFECT"} and dispatch_owner:
         raise ValueError("external execution carries a premature dispatch owner")
-    if state in {"PREPARED", "DECIDED", "ABSTAINED"} and (
-        dispatch_authorization_receipt_id
-    ):
+    if state in {"PREPARED", "DECIDED", "ABSTAINED"} and (dispatch_authorization_receipt_id):
         raise ValueError("external execution carries premature dispatch authorization")
     if state in _TERMINAL:
         if not result:
@@ -635,11 +626,9 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             if type(result.get(name)) is not bool:
                 raise ValueError(f"external execution {name} result is invalid")
         replay_payload = result.get("replay_payload")
-        if (
-            not isinstance(replay_payload, Mapping)
-            or result.get("replay_payload_sha256")
-            != _canonical_sha256(replay_payload)
-        ):
+        if not isinstance(replay_payload, Mapping) or result.get(
+            "replay_payload_sha256"
+        ) != _canonical_sha256(replay_payload):
             raise ValueError("external execution replay payload integrity failed")
         if state == "SUCCEEDED" and result.get("effect_verified") is not True:
             raise ValueError("successful external execution lacks verified effect")
@@ -655,9 +644,7 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
             or result.get("effect_verified") is not False
             or result.get("manual_reconciliation_required") is not False
         ):
-            raise ValueError(
-                "pre-dispatch external execution failure is inconsistent"
-            )
+            raise ValueError("pre-dispatch external execution failure is inconsistent")
         if state == "UNKNOWN_EFFECT" and (
             result.get("effect_verified") is not False
             or result.get("manual_reconciliation_required") is not True
@@ -686,6 +673,22 @@ def _validate_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value)
 
 
+def _migrate_v2_transaction(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Upgrade the pre-intervention envelope without rewriting its evidence."""
+
+    if (
+        frozenset(value) != _TRANSACTION_FIELDS_V2
+        or value.get("schema") != _EXTERNAL_EXECUTE_TRANSACTION_SCHEMA_V2
+    ):
+        raise ValueError("external execution v2 transaction fields differ")
+    migrated = {
+        **dict(value),
+        "schema": EXTERNAL_EXECUTE_TRANSACTION_SCHEMA,
+        "action_intervention": {},
+    }
+    return _validate_transaction(migrated)
+
+
 class ExternalExecuteCoordinator:
     """One durable transaction per host action identity."""
 
@@ -695,10 +698,7 @@ class ExternalExecuteCoordinator:
         *,
         owner_alive: Any = None,
     ) -> None:
-        self.root = Path(
-            root
-            or Path(DATA_DIR) / "latent_cortex" / "external_execution"
-        )
+        self.root = Path(root or Path(DATA_DIR) / "latent_cortex" / "external_execution")
         self._owner_alive = owner_alive or self._default_owner_alive
         self._abandoned_attempt_ids: dict[str, float] = {}
 
@@ -724,9 +724,7 @@ class ExternalExecuteCoordinator:
         ):
             raise ValueError("external execution dispatch attempt id is invalid")
         self._prune_abandoned_attempts()
-        self._abandoned_attempt_ids[attempt_id] = (
-            time.monotonic() + _ABANDONED_ATTEMPT_TTL_S
-        )
+        self._abandoned_attempt_ids[attempt_id] = time.monotonic() + _ABANDONED_ATTEMPT_TTL_S
         self._prune_abandoned_attempts()
 
     def _dispatch_owner_active(self, owner: Mapping[str, Any]) -> bool:
@@ -771,10 +769,11 @@ class ExternalExecuteCoordinator:
         if not isinstance(value, dict):
             raise ValueError("external execution transaction is not an object")
         digest = value.pop("transaction_sha256", None)
-        if (
-            value.get("schema") != EXTERNAL_EXECUTE_TRANSACTION_SCHEMA
-            or digest != _canonical_sha256(value)
-        ):
+        if digest != _canonical_sha256(value):
+            raise ValueError("external execution transaction integrity failed")
+        if value.get("schema") == _EXTERNAL_EXECUTE_TRANSACTION_SCHEMA_V2:
+            return self._write(path, _migrate_v2_transaction(value))
+        if value.get("schema") != EXTERNAL_EXECUTE_TRANSACTION_SCHEMA:
             raise ValueError("external execution transaction integrity failed")
         return {
             **_validate_transaction(value),
@@ -813,9 +812,7 @@ class ExternalExecuteCoordinator:
                 ):
                     raise ValueError("external execution action identity conflicts")
                 if existing.get("state") == "DISPATCHING":
-                    if self._dispatch_owner_active(
-                        existing.get("dispatch_owner") or {}
-                    ):
+                    if self._dispatch_owner_active(existing.get("dispatch_owner") or {}):
                         raise ExternalExecutionInProgressError(
                             "external execution is owned by a live dispatcher"
                         )
@@ -855,6 +852,7 @@ class ExternalExecuteCoordinator:
                     "cognitive_action_trace": [],
                     "action_policy_evidence": {},
                     "action_policy_receipt": {},
+                    "action_intervention": {},
                     "executors": [],
                     "runtime_operation": {},
                     "dispatch_owner": {},
@@ -880,10 +878,9 @@ class ExternalExecuteCoordinator:
             transaction = self._load(path)
             if transaction is None:
                 return None
-            if (
-                transaction.get("action_id") != str(action_id)
-                or transaction.get("request_digest") != str(request_digest)
-            ):
+            if transaction.get("action_id") != str(action_id) or transaction.get(
+                "request_digest"
+            ) != str(request_digest):
                 raise ValueError("external execution action identity conflicts")
             offer = validate_external_execution_offer(transaction.get("offer"))
             if offer["offer_sha256"] != transaction.get("offer_sha256"):
@@ -902,6 +899,7 @@ class ExternalExecuteCoordinator:
         executors: list[str],
         action_policy_receipt: Mapping[str, Any],
         runtime_operation: Mapping[str, Any],
+        action_intervention: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         from core.brain.llm.latent_cortex.epistemic_runtime import (
             validate_completed_runtime_operation_receipt,
@@ -913,17 +911,21 @@ class ExternalExecuteCoordinator:
         )
 
         normalized_offer = validate_external_execution_offer(offer)
-        normalized_evidence = validate_evidence_snapshot(
-            action_policy_evidence
-        )
-        try:
-            normalized_executors = tuple(
-                OperationKind(item) for item in executors
+        normalized_evidence = validate_evidence_snapshot(action_policy_evidence)
+        normalized_intervention = None
+        if action_intervention is not None:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                validate_action_intervention,
             )
+
+            normalized_intervention = validate_action_intervention(
+                action_intervention,
+                require_current_policy=False,
+            )
+        try:
+            normalized_executors = tuple(OperationKind(item) for item in executors)
         except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "external execution executor inventory is invalid"
-            ) from exc
+            raise ValueError("external execution executor inventory is invalid") from exc
         if (
             not normalized_executors
             or len(set(normalized_executors)) != len(normalized_executors)
@@ -934,6 +936,7 @@ class ExternalExecuteCoordinator:
             cognitive_action_trace,
             evidence_snapshot=normalized_evidence,
             executors=normalized_executors,
+            action_intervention=normalized_intervention,
         )
         policy_fields = {
             "schema",
@@ -945,37 +948,43 @@ class ExternalExecuteCoordinator:
             "checked_transitions",
             "selected_actions",
         }
+        if normalized_intervention is not None:
+            policy_fields.add("calibration_intervention")
         normalized_policy_receipt = dict(action_policy_receipt)
         checked_transitions = sum(
-            int(row["transition"]["checked"])
-            for row in normalized_trace["rows"]
+            int(row["transition"]["checked"]) for row in normalized_trace["rows"]
         )
         if (
             set(normalized_policy_receipt) != policy_fields
-            or normalized_policy_receipt.get("schema")
-            != normalized_evidence["schema"]
-            or normalized_policy_receipt.get("bucket")
-            != normalized_evidence["bucket"]
+            or normalized_policy_receipt.get("schema") != normalized_evidence["schema"]
+            or normalized_policy_receipt.get("bucket") != normalized_evidence["bucket"]
             or normalized_policy_receipt.get("snapshot_sha256")
             != normalized_evidence["snapshot_sha256"]
             or normalized_policy_receipt.get("active") is not True
             or normalized_policy_receipt.get("executors") != list(executors)
-            or normalized_policy_receipt.get("actions_selected")
-            != len(cognitive_action_trace)
-            or normalized_policy_receipt.get("checked_transitions")
-            != checked_transitions
+            or normalized_policy_receipt.get("actions_selected") != len(cognitive_action_trace)
+            or normalized_policy_receipt.get("checked_transitions") != checked_transitions
             or normalized_policy_receipt.get("selected_actions")
             != normalized_trace["selected_actions"]
         ):
             raise ValueError("external execution policy summary differs")
-        normalized_runtime_operation = (
-            validate_completed_runtime_operation_receipt(
-                runtime_operation,
-                external_execution_offer=normalized_offer,
-                action_policy_evidence=normalized_evidence,
-                action_policy_receipt=normalized_policy_receipt,
+        if normalized_intervention is not None:
+            from core.brain.llm.latent_cortex.action_intervention import (
+                validate_action_intervention_receipt,
+            )
+
+            validate_action_intervention_receipt(
+                normalized_policy_receipt["calibration_intervention"],
+                intervention=normalized_intervention,
                 cognitive_action_trace=cognitive_action_trace,
             )
+        normalized_runtime_operation = validate_completed_runtime_operation_receipt(
+            runtime_operation,
+            external_execution_offer=normalized_offer,
+            action_policy_evidence=normalized_evidence,
+            action_policy_receipt=normalized_policy_receipt,
+            cognitive_action_trace=cognitive_action_trace,
+            action_intervention=normalized_intervention,
         )
         normalized_handoff = validate_external_execution_handoff(
             handoff,
@@ -1010,15 +1019,14 @@ class ExternalExecuteCoordinator:
                 path,
                 {
                     **transaction,
-                    "state": (
-                        "DECIDED" if normalized_handoff["requested"] else "ABSTAINED"
-                    ),
+                    "state": ("DECIDED" if normalized_handoff["requested"] else "ABSTAINED"),
                     "decision_source": "rlc",
                     "handoff": normalized_handoff,
                     "readiness": normalized_readiness,
                     "cognitive_action_trace": normalized_trace["rows"],
                     "action_policy_evidence": normalized_evidence,
                     "action_policy_receipt": normalized_policy_receipt,
+                    "action_intervention": dict(normalized_intervention or {}),
                     "executors": list(executors),
                     "runtime_operation": normalized_runtime_operation,
                     "result": (
@@ -1028,9 +1036,7 @@ class ExternalExecuteCoordinator:
                             {
                                 "ok": False,
                                 "status": "blocked_by_policy",
-                                "error": (
-                                    "latent_cortex_declined_external_execution"
-                                ),
+                                "error": ("latent_cortex_declined_external_execution"),
                                 "transport_succeeded": False,
                                 "effect_verified": False,
                                 "manual_reconciliation_required": False,
@@ -1066,17 +1072,12 @@ class ExternalExecuteCoordinator:
         path = _transaction_path(self.root, normalized["action_id"])
         with interprocess_file_lock(path.with_suffix(".lock")):
             transaction = self._load(path)
-            if (
-                transaction is None
-                or transaction.get("offer_sha256") != normalized["offer_sha256"]
-            ):
+            if transaction is None or transaction.get("offer_sha256") != normalized["offer_sha256"]:
                 raise ValueError("external execution transaction was not prepared")
             if transaction.get("state") in _TERMINAL:
                 return transaction
             if transaction.get("state") != "PREPARED":
-                raise ValueError(
-                    "external execution preparation failure arrived after decision"
-                )
+                raise ValueError("external execution preparation failure arrived after decision")
             return self._write(
                 path,
                 {
@@ -1106,10 +1107,7 @@ class ExternalExecuteCoordinator:
         path = _transaction_path(self.root, normalized["action_id"])
         with interprocess_file_lock(path.with_suffix(".lock")):
             transaction = self._load(path)
-            if (
-                transaction is None
-                or transaction.get("offer_sha256") != normalized["offer_sha256"]
-            ):
+            if transaction is None or transaction.get("offer_sha256") != normalized["offer_sha256"]:
                 raise ValueError("external execution transaction was not prepared")
             if transaction.get("state") in _TERMINAL:
                 return transaction
@@ -1143,9 +1141,7 @@ class ExternalExecuteCoordinator:
         ):
             raise ValueError("external execution dispatch authorization is invalid")
         if bounded_authorization != normalized["will_receipt_id"]:
-            raise ValueError(
-                "external execution dispatch authorization differs from offer"
-            )
+            raise ValueError("external execution dispatch authorization differs from offer")
         bounded_task_id = str(task_id or "").strip()
         if (
             not bounded_task_id
@@ -1166,9 +1162,7 @@ class ExternalExecuteCoordinator:
                 )
             owner = {
                 "attempt_id": uuid.uuid4().hex,
-                "identity": Identity.current(
-                    f"rlc-external-{os.getpid()}"
-                ).to_dict(),
+                "identity": Identity.current(f"rlc-external-{os.getpid()}").to_dict(),
                 "task_id": bounded_task_id,
                 "lease_renewed_at": time.time(),
                 "lease_duration_s": _DISPATCH_LEASE_DURATION_S,
@@ -1221,10 +1215,7 @@ class ExternalExecuteCoordinator:
         if (
             not isinstance(dispatch_attempt_id, str)
             or len(dispatch_attempt_id) != 32
-            or any(
-                character not in "0123456789abcdef"
-                for character in dispatch_attempt_id
-            )
+            or any(character not in "0123456789abcdef" for character in dispatch_attempt_id)
         ):
             raise ValueError("external execution dispatch attempt id is invalid")
         attempt_id = dispatch_attempt_id
@@ -1258,11 +1249,7 @@ class ExternalExecuteCoordinator:
                 path,
                 {
                     **transaction,
-                    "state": (
-                        "UNKNOWN_EFFECT"
-                        if effect_may_have_occurred
-                        else "FAILED"
-                    ),
+                    "state": ("UNKNOWN_EFFECT" if effect_may_have_occurred else "FAILED"),
                     "result": bounded_result,
                     "terminal_reason": (
                         "dispatch_abandoned_effect_unknown"
@@ -1286,10 +1273,7 @@ class ExternalExecuteCoordinator:
         bounded = _bounded_result(result)
         with interprocess_file_lock(path.with_suffix(".lock")):
             transaction = self._load(path)
-            if (
-                transaction is None
-                or transaction.get("offer_sha256") != normalized["offer_sha256"]
-            ):
+            if transaction is None or transaction.get("offer_sha256") != normalized["offer_sha256"]:
                 raise ValueError("external execution transaction identity differs")
             if transaction.get("state") != "DISPATCHING":
                 raise ValueError("external execution completion has no dispatch intent")
@@ -1299,10 +1283,9 @@ class ExternalExecuteCoordinator:
             if bounded["effect_verified"]:
                 state = "SUCCEEDED"
                 reason = "effect_verified"
-            elif (
-                bounded["transport_succeeded"]
-                or not bounded["retry_safe"]
-            ) and not bounded["effect_verified"]:
+            elif (bounded["transport_succeeded"] or not bounded["retry_safe"]) and not bounded[
+                "effect_verified"
+            ]:
                 state = "UNKNOWN_EFFECT"
                 reason = "dispatched_effect_unverified"
                 bounded["manual_reconciliation_required"] = True
@@ -1340,9 +1323,7 @@ class ExternalExecuteCoordinator:
             receipt_store = get_post_action_receipt_store()
         stored_receipt = receipt_store.get_receipt(bounded_receipt_id)
         if stored_receipt is None or stored_receipt.to_dict() != contract:
-            raise ValueError(
-                "post-action receipt lacks matching durable store evidence"
-            )
+            raise ValueError("post-action receipt lacks matching durable store evidence")
         path = _transaction_path(self.root, normalized["action_id"])
         with interprocess_file_lock(path.with_suffix(".lock")):
             transaction = self._load(path)
@@ -1358,13 +1339,8 @@ class ExternalExecuteCoordinator:
                 raise ValueError("external execution post-action receipt conflicts")
             replay_payload = dict(result.get("replay_payload") or {})
             recovery_contract = replay_payload.get("_post_action_recovery_contract")
-            if (
-                not isinstance(recovery_contract, Mapping)
-                or dict(recovery_contract) != contract
-            ):
-                raise ValueError(
-                    "persisted post-action receipt differs from recovery contract"
-                )
+            if not isinstance(recovery_contract, Mapping) or dict(recovery_contract) != contract:
+                raise ValueError("persisted post-action receipt differs from recovery contract")
             _validate_post_action_receipt_outcome(
                 contract,
                 transaction=transaction,
@@ -1384,9 +1360,7 @@ class ExternalExecuteCoordinator:
                     "error": str(contract.get("error_status") or "")[:500],
                     "transport_succeeded": contract["transport_succeeded"],
                     "effect_verified": contract["effect_verified"],
-                    "manual_reconciliation_required": contract[
-                        "manual_reconciliation_required"
-                    ],
+                    "manual_reconciliation_required": contract["manual_reconciliation_required"],
                     "retry_safe": contract["retry_safe"],
                 }
             )
@@ -1397,9 +1371,7 @@ class ExternalExecuteCoordinator:
                     "error": result["error"],
                     "transport_succeeded": result["transport_succeeded"],
                     "effect_verified": result["effect_verified"],
-                    "manual_reconciliation_required": result[
-                        "manual_reconciliation_required"
-                    ],
+                    "manual_reconciliation_required": result["manual_reconciliation_required"],
                     "retry_safe": result["retry_safe"],
                     "post_action_receipt_id": bounded_receipt_id,
                     "post_action_receipt_sha256": receipt_sha256,
@@ -1413,11 +1385,7 @@ class ExternalExecuteCoordinator:
                 path,
                 {
                     **transaction,
-                    "state": (
-                        "SUCCEEDED"
-                        if reconciled_unknown
-                        else transaction["state"]
-                    ),
+                    "state": ("SUCCEEDED" if reconciled_unknown else transaction["state"]),
                     "terminal_reason": (
                         "effect_verified_by_durable_post_action_receipt"
                         if reconciled_unknown
@@ -1427,9 +1395,7 @@ class ExternalExecuteCoordinator:
                         **result,
                         "post_action_receipt_id": bounded_receipt_id,
                         "replay_payload": replay_payload,
-                        "replay_payload_sha256": _canonical_sha256(
-                            replay_payload
-                        ),
+                        "replay_payload_sha256": _canonical_sha256(replay_payload),
                     },
                 },
             )
@@ -1461,9 +1427,7 @@ class ExternalExecuteCoordinator:
             )
             result = dict(transaction.get("result") or {})
             if result.get("post_action_receipt_id"):
-                raise ValueError(
-                    "linked post-action receipt contract is immutable"
-                )
+                raise ValueError("linked post-action receipt contract is immutable")
             replay_payload = dict(result.get("replay_payload") or {})
             replay_payload.update(
                 {
@@ -1480,9 +1444,7 @@ class ExternalExecuteCoordinator:
                     "result": {
                         **result,
                         "replay_payload": replay_payload,
-                        "replay_payload_sha256": _canonical_sha256(
-                            replay_payload
-                        ),
+                        "replay_payload_sha256": _canonical_sha256(replay_payload),
                     },
                 },
             )

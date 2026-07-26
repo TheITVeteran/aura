@@ -31,6 +31,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, Final, Never, cast
 
 from core.brain.llm.latent_cortex.campaign_journal import (
+    ACTION_INTERVENTION_CLAIMED,
     ARM_RESULT,
     COMMITTED,
     EVENT_SCHEMA,
@@ -1027,10 +1028,35 @@ def _validate_journal_transcript(
                     "state": STARTED,
                     "attempt_id": attempt_id,
                 }
-            elif event_name == ARM_RESULT:
+            elif event_name == ACTION_INTERVENTION_CLAIMED:
+                claim_fields = {
+                    "intervention_sha256",
+                    "request_payload_sha256",
+                    "signed_journal_head_sha256",
+                    "signed_journal_event_count",
+                }
                 if (
                     cell_state is None
                     or cell_state["state"] != STARTED
+                    or set(payload) != claim_fields
+                    or not _is_sha256(payload.get("intervention_sha256"))
+                    or not _is_sha256(payload.get("request_payload_sha256"))
+                    or payload.get("signed_journal_head_sha256")
+                    != event["previous_event_sha256"]
+                    or payload.get("signed_journal_event_count") != sequence
+                ):
+                    _fail("action_calibration_journal_transition_invalid")
+                cell_state.update(
+                    {
+                        "state": ACTION_INTERVENTION_CLAIMED,
+                        "action_intervention_claim": dict(payload),
+                        "action_intervention_claim_event_sha256": event["event_sha256"],
+                    }
+                )
+            elif event_name == ARM_RESULT:
+                if (
+                    cell_state is None
+                    or cell_state["state"] not in {STARTED, ACTION_INTERVENTION_CLAIMED}
                     or set(payload) != {"result"}
                     or not isinstance(payload.get("result"), Mapping)
                 ):

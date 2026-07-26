@@ -2102,6 +2102,87 @@ before those dependencies close is not admissible.
   unique pairs per action, publish its certificate, and survive live
   selection/lesion/restoration ablations before calibrated value or capability
   gain can be claimed. The negative frontier verdict is unchanged.
+
+  CP374 closes the causal-intervention prerequisite that CP373's protocol
+  assumed but the resident engine did not yet possess. A campaign cell now
+  carries one strict intervention authority binding the separately configured
+  current campaign policy and revision, complete canonical plan and exact cell,
+  protocol, pair, task payload, execution ordinal, deterministic first-attempt
+  identity, runner-attested starting state, exact normalized worker request,
+  action, arm, and ordinal zero. A superseded embedded policy is rejected even
+  while still cryptographically valid. The external campaign runner signs the
+  payload under the separately configured Ed25519 root. Client, worker, engine,
+  and request digest independently validate and bind the intervention. The lane
+  is rejected on foreground/user requests.
+
+  At the first recurrent action opportunity, the worker commits the actual
+  complete state inventory and refuses a mismatch. Six components are directly
+  worker-measured: latent slots; branch/ensemble roles, scores, halting,
+  savepoints, evidence lineage, isolation/exchange state, traces, budget, and
+  accounting; KV state; evidence; memory; and public action state. Durable host
+  state and RNG root remain externally captured and runner-attested, with that
+  ownership explicit in the receipt. Treatment reconstructibly emits exactly
+  one `campaign_forced` decision even when the observational state policy would
+  not select it; control consumes the matched opportunity without an action
+  and remeasures the post-state rather than copying it. Both arms remove the
+  target action from the remaining executor inventory.
+
+  Before the worker may consume the request-bound attempt, it appends and
+  fsyncs one `ACTION_INTERVENTION_CLAIMED` event to the canonical campaign
+  journal. That event commits the intervention, normalized request, and signed
+  journal head/count. A delayed authority for a superseded retry therefore
+  fails against current journal state even if its embedded prefix remains
+  valid. The exact claim lineage is then consumed before execution in a
+  bounded, hash-chained, atomically replaced replay ledger under an
+  interprocess lock and rechecked before the worker records execution. A crash
+  after consumption fails that attempt closed. Claimed attempts survive
+  restart without being auto-retried and cannot transition to `FAILED` while a
+  worker may still execute; they must produce a sealed arm result or remain
+  unresolved for operator reconciliation. Exact idempotent journal recovery,
+  staged-result import, final transcript replay, and later
+  result/verification/commit remain available.
+
+  `EXECUTE` requires a real resident executor and governed offer; the parent
+  validates its handoff, and the durable host coordinator preserves and
+  revalidates the intervention through dispatch. Version-2 durable host
+  records are digest-verified, narrowly migrated to version 3, validated, and
+  atomically rewritten. A migrated terminal record replays; an interrupted
+  dispatch becomes `UNKNOWN_EFFECT` and requires reconciliation rather than
+  blind retry. The final receipt binds pre/post component maps, aggregate
+  state and KV identities, decision, complete action trace, exact occurrence
+  count, request/attempt identity, and plan authority. Parent-side replay
+  rejects missing, altered, relabeled, rehashed, wrong-bucket/snapshot, reused,
+  or state-mutating control evidence.
+  Bare campaign transitions are rejected by the ordinary transition validator,
+  so experimental manipulations cannot train the live observational policy.
+  Intervention failures may not silently become a vanilla decode even when
+  fallback is otherwise enabled.
+
+  Seven dedicated contracts include an actual tiny-Qwen/MLX recurrent episode
+  exercising the real complete-state serializer, signed-authority tampering,
+  current-policy and durable replay refusal, canonical-journal retry
+  supersession, an intentionally state-infeasible forced action,
+  missing-executor refusal, treatment/control occurrence counts, remeasured
+  control state after one explicitly omitted matched opportunity, worker
+  omission, and fallback refusal.
+  The durable-host suite separately proves campaign-forced `EXECUTE` reaches a
+  persisted handoff and both safe v2 migration outcomes. The broader
+  intervention, value-policy, request-identity, worker/client,
+  execution-controller, epistemic-runtime, external-execution, preaction,
+  verified-best, action-calibration, and frontier-task suite passes 456 tests
+  after two unrelated pre-existing real-tiny-model failures are deselected.
+  Both failures reproduce on a clean `origin/main`: transient
+  constraint application remains zero after admission, and the verified
+  latent-tree test receives an unexpected answer-replacement candidate. They
+  remain open defects and must close before the resident campaign.
+
+  CP374 does not create whole-host post-mutation capture or erasure receipts,
+  execute the
+  resident-32B campaign, calibrate a cell, demonstrate reasoning gain, or
+  change the negative frontier verdict. The crash-resumable resident runner,
+  external custody, at least 20 unique pairs per action, final independent
+  certificate, live selection/lesion/restoration ablations, and broader
+  frontier proof all remain required.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while
