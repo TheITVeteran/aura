@@ -1198,7 +1198,14 @@ def test_required_desktop_foreground_prompt_keeps_standard_mind_budget(monkeypat
     assert profile == "standard"
     assert history_limit == 6
     assert total_chars <= 12_000
-    assert len(compact[0]["content"]) > 5_200
+    # The mind budget is what SURVIVES compaction, not how much of it there is.
+    # "You with me?" is twelve characters; giving it 5,200 characters of
+    # self-description is the shape that produced, live on 2026-07-26,
+    # "Introspection: Optimization-driven events stabilize energy after state
+    # change management... CONFORMANCE Signal: PRIORITY 0" — the model
+    # continuing the scaffold instead of answering the person. The scaffold is
+    # now proportionate to the request; the grounding inside it is not lost.
+    assert len(compact[0]["content"]) == InferenceGate._SCAFFOLD_FLOOR_CHARS
     assert "LIVE MIND CONTEXT" in compact[0]["content"]
     assert "must_answer_from_full_mind_path" in compact[0]["content"]
     assert len([msg for msg in compact if msg["role"] in {"user", "assistant"}]) <= 6

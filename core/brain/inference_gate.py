@@ -5786,12 +5786,57 @@ class InferenceGate:
             return rendered
         return rendered[: limit - 1].rstrip() + "..."
 
+    # A foreground prompt is two different things wearing one number: the
+    # scaffold the model READS, and the answer the person WANTS. The profile
+    # governed both, so "this deserves a thorough answer" also meant "read
+    # 9,000 characters of self-description first".
+    #
+    # LIVE DEFECT, 2026-07-26, measured on the desktop surface. Two ordinary
+    # turns, both inside the 'extended' profile at scaffold=9000:
+    #
+    #   "A bag has 3 red, 4 blue and 5 green marbles... probability both the
+    #    same colour?"           (175 chars)
+    #     → "Do product of multiple exponent term simplify reflexion"
+    #
+    #   "Remember this for later: my project codename is HELIOTROPE... what
+    #    tools can you actually execute right now?"      (247 chars)
+    #     → "Introspection: Optimization-driven events stabilize energy after
+    #        state change management... CONFORMANCE Signal: PRIORITY 0
+    #        SEQUENCE SIGNATURE: [x_A_4521B_8A7C] Readiness State: FULL"
+    #
+    # The second is the diagnosis, not more noise: that is not a failed answer,
+    # it is a competent CONTINUATION of the scaffold. A prompt that is 97%
+    # self-description is most plausibly continued as more self-description.
+    #
+    # So the scaffold is now bounded by the size of the request that provoked
+    # it, independently of how long the ANSWER may be. Trimming goes through
+    # the existing head/critical-excerpt/tail path, so the identity anchor,
+    # the live-mind grounding and the response contract all survive.
+    _SCAFFOLD_TO_REQUEST_RATIO = 8
+    _SCAFFOLD_FLOOR_CHARS = 2_400
+
+    @classmethod
+    def _proportionate_scaffold_limit(
+        cls,
+        profile_limit: int,
+        visible_request_chars: int,
+    ) -> int:
+        """The system-block budget this request actually earns."""
+        if visible_request_chars <= 0:
+            return int(profile_limit)
+        proportionate = visible_request_chars * cls._SCAFFOLD_TO_REQUEST_RATIO
+        return max(
+            cls._SCAFFOLD_FLOOR_CHARS,
+            min(int(profile_limit), proportionate),
+        )
+
     @staticmethod
     def _compact_prebuilt_message_content(
         role: str,
         content: Any,
         *,
         budget_profile: str = "standard",
+        visible_request_chars: int = 0,
     ) -> str:
         clean = str(content or "").strip()
         if not clean:
@@ -5847,6 +5892,15 @@ class InferenceGate:
                 "user": min(7000, max(3200, int(prompt_budget_chars * 0.42))),
                 "assistant": min(3200, max(1600, int(prompt_budget_chars * 0.22))),
             }
+        if role == "system" and profile not in {
+            "contract",
+            "contract_grounding",
+            "deep_probe",
+        }:
+            limits["system"] = InferenceGate._proportionate_scaffold_limit(
+                limits["system"],
+                visible_request_chars,
+            )
         limit = limits.get(role, 8000)
         if profile == "contract" and role == "system":
             return InferenceGate._contract_foreground_system_content(
@@ -5951,6 +6005,14 @@ class InferenceGate:
                 profile = "standard"
             else:
                 latest_user_content = contract_user_content
+        # The person's own words for this turn — never the user-role message,
+        # which by this point also carries the grounding evidence the route
+        # injected. Measured live: a 175-char question arrived as a 2,783-char
+        # user block, so sizing the scaffold against the block would have
+        # measured the scaffold against other scaffold.
+        visible_request_chars = len(
+            str(current_user_content or latest_user_content or "").strip()
+        )
         system_message: dict[str, str] | None = None
         preserved_system_messages: list[dict[str, str]] = []
         convo: list[dict[str, str]] = []
@@ -5978,6 +6040,7 @@ class InferenceGate:
                     if profile == "contract" and grounding_system
                     else profile
                 ),
+                visible_request_chars=visible_request_chars,
             )
             if not content:
                 continue

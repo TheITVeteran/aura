@@ -171,12 +171,60 @@ def test_thin_coverage_requests_more_retrieval():
     firewall = EpistemicFirewall(min_coverage=0.5)
     verdict = firewall.review(
         "compare the scheduler arbitration redesign against the allostasis engine",
-        [_item("the cafeteria menu rotates weekly", "wiki")],
+        # On topic, but it answers only part of the question.
+        [_item("the scheduler redesign landed last week", "wiki")],
         now=NOW,
     )
+    assert verdict.admitted
     assert verdict.needs_more_retrieval is True
     assert "insufficient_coverage" in verdict.reasons
     assert verdict.uncovered_terms
+
+
+def test_off_topic_evidence_is_refused_not_merely_counted():
+    """Live 2026-07-26: passages about Wilmette, Illinois and Andy Warhol were
+    admitted as evidence for a marble-probability question. Coverage said
+    "insufficient" and admission proceeded anyway."""
+    firewall = EpistemicFirewall(min_coverage=0.5)
+    verdict = firewall.review(
+        "compare the scheduler arbitration redesign against the allostasis engine",
+        [_item("the cafeteria menu rotates weekly", "wiki")],
+        now=NOW,
+    )
+    assert not verdict.admitted
+    assert "no_relevant_evidence" in verdict.reasons
+    assert verdict.needs_more_retrieval is True
+    refusal = verdict.refused[0]
+    assert refusal["reason"] == "irrelevant_to_objective"
+    assert refusal["relevance"] < 0.12
+
+
+def test_a_single_shared_word_is_not_a_topic():
+    firewall = EpistemicFirewall()
+    verdict = firewall.review(
+        "a bag has 3 red, 4 blue and 5 green marbles drawn without replacement; "
+        "what is the probability both are the same colour",
+        [
+            _item(
+                "Andy Warhol was unresponsive and turning blue; he was "
+                "pronounced dead at 6:31 a.m. that morning at the hospital",
+                "local_corpus:Andy Warhol",
+            )
+        ],
+        now=NOW,
+    )
+    assert not verdict.admitted
+    assert verdict.refused[0]["reason"] == "irrelevant_to_objective"
+
+
+def test_a_short_on_point_fact_still_gets_in():
+    firewall = EpistemicFirewall()
+    verdict = firewall.review(
+        "what is my project codename",
+        [_item("the project codename is HELIOTROPE", "durable_memory")],
+        now=NOW,
+    )
+    assert [row["origin"] for row in verdict.admitted] == ["durable_memory"]
 
 
 def test_no_valid_evidence_fails_closed():
@@ -199,11 +247,12 @@ def test_item_overflow_is_clipped_and_receipted():
     firewall = EpistemicFirewall()
     items = [
         _item(
-        f"{chr(97 + index) * 3} {chr(97 + index) * 4} report", f"src_{index}"
+            f"topic report {chr(97 + index) * 3} {chr(97 + index) * 4}",
+            f"src_{index}",
         )
         for index in range(24)
     ]
-    verdict = firewall.review("topic", items, now=NOW)
+    verdict = firewall.review("topic report", items, now=NOW)
     assert "item_overflow_clipped" in verdict.reasons
     assert len(verdict.admitted) <= 4
     budget_refusals = [

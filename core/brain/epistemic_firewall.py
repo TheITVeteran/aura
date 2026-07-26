@@ -172,6 +172,61 @@ def _terms(text: str) -> set[str]:
     return {word.lower() for word in _WORD_RE.findall(text or "")}
 
 
+# Function words carry no topic. They are excluded from the RELEVANCE test
+# only — clustering and the polarity check keep the full term set, because
+# negation words are exactly what the polarity detector reads.
+_STOPWORDS = frozenset(
+    {
+        "the", "and", "but", "for", "not", "you", "your", "yours", "our", "ours",
+        "his", "her", "hers", "its", "their", "theirs", "this", "that", "these",
+        "those", "with", "without", "from", "into", "onto", "over", "under",
+        "about", "after", "before", "between", "during", "than", "then", "them",
+        "they", "was", "were", "are", "been", "being", "have", "has", "had",
+        "does", "did", "doing", "done", "will", "would", "could", "should",
+        "shall", "may", "might", "must", "can", "cannot", "one", "two", "any",
+        "all", "some", "each", "both", "few", "more", "most", "other", "such",
+        "only", "own", "same", "too", "very", "just", "here", "there", "when",
+        "where", "which", "who", "whom", "what", "why", "how", "also", "because",
+        "while", "since", "until", "upon", "out", "off", "again", "further",
+        "once", "now", "get", "got", "make", "made", "take", "taken", "give",
+        "given", "come", "came", "went", "say", "said", "see", "seen", "know",
+        "known", "want", "like", "need", "use", "used", "show", "tell", "let",
+        "put", "way", "thing", "things", "something", "anything", "everything",
+        "nothing", "me", "my", "mine", "him", "she", "hers", "it", "we", "us",
+    }
+)
+
+
+def _distinctive(text: str) -> set[str]:
+    """Topic-bearing terms only."""
+    return _terms(text) - _STOPWORDS
+
+
+def _relevance(objective_terms: set[str], item_terms: set[str]) -> float:
+    """How much this item and this objective are actually about each other.
+
+    Two readings, and an item passes on the better of them: the share of the
+    objective's distinctive terms it touches (a long, broad source), and the
+    share of its OWN distinctive terms that the objective asked for (a short,
+    precise fact). Either shape is real evidence; neither alone catches both.
+    """
+    if not objective_terms or not item_terms:
+        return 0.0
+    shared = objective_terms & item_terms
+    if not shared:
+        return 0.0
+    share = len(shared) / len(objective_terms)
+    containment = len(shared) / len(item_terms)
+    if len(shared) < 2 and containment < 0.5:
+        # One word in common is a coincidence, not a topic. The passage about
+        # Andy Warhol "turning blue" shared exactly one term with a question
+        # about blue marbles. The objective-share reading above still lets a
+        # short, on-point fact in on a single term when the objective is
+        # itself short — that is the case this must not break.
+        containment = 0.0
+    return max(share, containment)
+
+
 def _jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -194,6 +249,7 @@ class EpistemicFirewall:
         decisive_freshness_s: float = 24 * 3600.0,
         max_admitted: int = 4,
         min_coverage: float = 0.2,
+        min_item_relevance: float = 0.12,
     ) -> None:
         if not 0.0 < duplicate_jaccard <= 1.0:
             raise ValueError("duplicate_jaccard must be inside (0, 1]")
@@ -207,15 +263,22 @@ class EpistemicFirewall:
             raise ValueError("max_admitted must be inside [1, 8]")
         if not 0.0 <= min_coverage <= 1.0:
             raise ValueError("min_coverage must be inside [0, 1]")
+        if not 0.0 <= min_item_relevance <= 1.0:
+            raise ValueError("min_item_relevance must be inside [0, 1]")
         self.duplicate_jaccard = float(duplicate_jaccard)
         self.conflict_jaccard = float(conflict_jaccard)
         self.stale_after_s = float(stale_after_s)
         self.decisive_freshness_s = float(decisive_freshness_s)
         self.max_admitted = int(max_admitted)
         self.min_coverage = float(min_coverage)
+        self.min_item_relevance = float(min_item_relevance)
 
     # ── Clustering: independence, not repetition ────────────────────────
-    def _cluster(self, items: list[EvidenceItem]) -> list[list[int]]:
+    def _cluster(
+        self,
+        items: list[EvidenceItem],
+        eligible: set[int] | None = None,
+    ) -> list[list[int]]:
         parent = list(range(len(items)))
 
         def find(index: int) -> int:
@@ -229,9 +292,14 @@ class EpistemicFirewall:
             if root_left != root_right:
                 parent[root_right] = root_left
 
+        indices = [
+            index
+            for index in range(len(items))
+            if eligible is None or index in eligible
+        ]
         term_sets = [_terms(item.text) for item in items]
-        for i in range(len(items)):
-            for j in range(i + 1, len(items)):
+        for position, i in enumerate(indices):
+            for j in indices[position + 1 :]:
                 same_origin = items[i].origin == items[j].origin
                 near_duplicate = (
                     _jaccard(term_sets[i], term_sets[j]) >= self.duplicate_jaccard
@@ -244,7 +312,7 @@ class EpistemicFirewall:
                 ) is None:
                     union(i, j)
         clusters: dict[int, list[int]] = {}
-        for index in range(len(items)):
+        for index in indices:
             clusters.setdefault(find(index), []).append(index)
         return sorted(clusters.values(), key=lambda members: members[0])
 
@@ -320,7 +388,42 @@ class EpistemicFirewall:
             verdict.uncovered_terms = sorted(_terms(objective))[:8]
             return verdict
 
-        clusters = self._cluster(items)
+        # ── Relevance: is this item about the objective at all? ──────────
+        # LIVE DEFECT, 2026-07-26. Asked "a bag has 3 red, 4 blue and 5 green
+        # marbles... what's the probability both are the same colour", the
+        # desktop turn admitted two local-corpus passages — one about Wilmette,
+        # Illinois, one about Andy Warhol's death — as evidence, and served
+        # "Do product of multiple exponent term simplify reflexion".
+        #
+        # Nothing here was broken in isolation: the pair were not duplicates,
+        # did not conflict, and fit the slot budget. The gap is that admission
+        # never asked the first question. Coverage WAS measured, reported
+        # "insufficient_coverage", and then admitted the items anyway — a
+        # measurement standing in for a gate. Retrieval relevance is not this
+        # module's job, but "shares no topic with the objective" is not
+        # relevance ranking, it is the floor below which nothing is evidence.
+        objective_distinctive = _distinctive(objective)
+        eligible: set[int] = set(range(len(items)))
+        if objective_distinctive and self.min_item_relevance > 0.0:
+            for index, item in enumerate(items):
+                score = _relevance(objective_distinctive, _distinctive(item.text))
+                if score < self.min_item_relevance:
+                    eligible.discard(index)
+                    row = self._row(
+                        items[index],
+                        index,
+                        current_time,
+                        reason="irrelevant_to_objective",
+                    )
+                    row["relevance"] = round(score, 4)
+                    verdict.refused.append(row)
+            if not eligible:
+                verdict.needs_more_retrieval = True
+                verdict.reasons.append("no_relevant_evidence")
+                verdict.uncovered_terms = sorted(objective_distinctive)[:8]
+                return verdict
+
+        clusters = self._cluster(items, eligible)
         verdict.clusters = clusters
         representatives: list[int] = []
         for members in clusters:
@@ -404,7 +507,10 @@ class EpistemicFirewall:
 
         # Coverage: which distinctive objective terms the admitted evidence
         # actually touches. A bounded heuristic, receipted as such.
-        objective_terms = _terms(objective)
+        # Distinctive terms only: an admitted passage that shares "the" and
+        # "was" with the question has covered nothing, and a coverage number
+        # inflated by function words cannot tell anyone that.
+        objective_terms = objective_distinctive
         if objective_terms:
             covered: set[str] = set()
             for row in verdict.admitted:
