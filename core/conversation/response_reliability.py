@@ -5979,6 +5979,22 @@ def assess_conversation_learning_admission(
             hard_failure=True,
             retryable=False,
         )
+    # The chat route refuses to SERVE a reply that answers a quantity question
+    # with no quantity in it. Learning did not apply the same test, so a reply
+    # the route had already rejected still became durable experience — and was
+    # then retrieved as evidence the next time the same question was asked.
+    #
+    # Live 2026-07-26: "Do product of multiple exponent term simplify
+    # reflexion" was refused at the surface and stored anyway, and came back on
+    # the retry as admitted memory evidence, priming the model toward the same
+    # answer. A rejected reply must not become the ground for repeating itself.
+    if numeric_answer_missing(user_message, reply_text):
+        return ConversationReplyAssessment(
+            ok=False,
+            reasons=("numeric_answer_missing",),
+            hard_failure=True,
+            retryable=False,
+        )
     return assess_user_facing_reply(user_message, reply_text)
 
 
