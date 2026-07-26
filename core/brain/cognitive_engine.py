@@ -115,6 +115,12 @@ def _combine_advisory_token_factors(factors: list[float]) -> float:
 _REPLY_TERMINATOR_CHARS = ".!?…\"'”’)]}`"
 
 
+# Shortest trimmed reply still worth serving instead of losing the turn.
+# "The answer is 27." is seventeen characters and is the whole point of the
+# turn, so this floor only has to exclude a stub like "Hi." or "Sure.".
+_MIN_SALVAGEABLE_REPLY_CHARS = 12
+
+
 def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
     """Backstop for replies that stop mid-clause at the token budget.
 
@@ -131,8 +137,22 @@ def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
     if stripped[-1] in _REPLY_TERMINATOR_CHARS or stripped.endswith("```"):
         return stripped, False
     last_boundary = max(stripped.rfind(ch) for ch in ".!?…")
-    if last_boundary >= int(len(stripped) * 0.6):
-        return stripped[: last_boundary + 1], True
+    # Keep whatever complete sentences exist, measured in what SURVIVES rather
+    # than as a fraction of what was generated. The old rule required the
+    # boundary to fall in the last 40% of the text, so a reply that answered
+    # early and then ran into its token budget kept the dangling clause, failed
+    # the reliability gate as `truncated_tail`, and was discarded whole.
+    #
+    # Live 2026-07-26: "Cortex response received (len=366)" then
+    # "reply_reliability_gate_failed:truncated_tail" then "Skipping
+    # CognitiveEngine desktop repair retry" — and the person was handed "I
+    # couldn't get to an answer I'd stand behind" in place of the 366
+    # characters she had actually produced. Cutting to "The answer is 27." is
+    # worth far more than losing the turn, even when most of the draft goes
+    # with the unfinished clause.
+    salvaged = stripped[: last_boundary + 1] if last_boundary >= 0 else ""
+    if len(salvaged) >= _MIN_SALVAGEABLE_REPLY_CHARS:
+        return salvaged, True
     return stripped, False
 
 
