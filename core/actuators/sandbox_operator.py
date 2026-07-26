@@ -29,7 +29,6 @@ CP126 f52d8430 / 84fc4f9d / 0f681b67 / 688c0259.
 import logging
 import math
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +36,14 @@ import time
 from typing import Any
 
 from core.actuators.code_execution_actuator import code_is_ast_safe
+from core.runtime.constrained_exec import (  # noqa: F401 - _RLIMIT_OPEN_FILES is re-exported for tests
+    ISOLATION_LEVEL,
+    RLIMIT_OPEN_FILES as _RLIMIT_OPEN_FILES,
+    child_preexec as _child_preexec,
+    isolation_receipt,
+    reap_process_group as _reap_process_group,
+    scrubbed_env as _scrubbed_env,
+)
 from core.runtime.service_registry import get_runtime_service
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -51,120 +58,6 @@ _MAX_TIMEOUT_S = 300.0
 _DEFAULT_TIMEOUT_S = 10.0
 _SANDBOX_RETENTION_S = 3600.0
 _SANDBOX_MAX_FILES = 100
-
-#: What this module honestly provides. Not "sandboxed" (CP126 f52d8430).
-ISOLATION_LEVEL = "constrained_process"
-
-#: POSIX resource limits applied to the child. These are real kernel-enforced
-#: bounds, unlike the AST gate which only inspects source.
-_RLIMIT_CPU_S = 30
-_RLIMIT_ADDRESS_SPACE_BYTES = 2 * 1024 * 1024 * 1024   # 2 GiB
-_RLIMIT_FILE_SIZE_BYTES = 64 * 1024 * 1024             # 64 MiB
-_RLIMIT_OPEN_FILES = 128
-_RLIMIT_PROCESSES = 32
-
-#: Environment handed to the child: no inherited secrets, no proxy settings.
-_SAFE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TZ")
-
-
-def _child_preexec() -> None:
-    """Apply POSIX limits and start a new process group in the child.
-
-    Runs between fork and exec. A new process group (CP126 84fc4f9d) is what
-    makes it possible to reap the whole descendant tree on timeout rather than
-    only the direct child.
-    """
-    try:
-        os.setsid()
-    except (AttributeError, OSError):
-        pass
-    try:
-        import resource
-
-        for limit, value in (
-            (resource.RLIMIT_CPU, _RLIMIT_CPU_S),
-            (resource.RLIMIT_AS, _RLIMIT_ADDRESS_SPACE_BYTES),
-            (resource.RLIMIT_FSIZE, _RLIMIT_FILE_SIZE_BYTES),
-            (resource.RLIMIT_NOFILE, _RLIMIT_OPEN_FILES),
-            (getattr(resource, "RLIMIT_NPROC", resource.RLIMIT_NOFILE), _RLIMIT_PROCESSES),
-            (getattr(resource, "RLIMIT_CORE", resource.RLIMIT_FSIZE), 0),
-        ):
-            try:
-                soft, hard = resource.getrlimit(limit)
-                ceiling = value if hard in (resource.RLIM_INFINITY, -1) else min(value, hard)
-                resource.setrlimit(limit, (ceiling, ceiling))
-            except (OSError, ValueError):
-                continue
-    except ImportError:
-        pass
-
-
-def _scrubbed_env() -> dict[str, str]:
-    """A minimal environment, so the child inherits no ambient credentials."""
-    env = {key: os.environ[key] for key in _SAFE_ENV_KEYS if key in os.environ}
-    env.setdefault("PATH", "/usr/bin:/bin")
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["PYTHONNOUSERSITE"] = "1"
-    env["AURA_SANDBOX"] = "1"
-    return env
-
-
-def _reap_process_group(pgid: int | None, process: Any = None) -> dict[str, Any]:
-    """Terminate a process group and report whether it actually died.
-
-    CP126 84fc4f9d: the operator relied on gateway timeout behaviour and
-    recorded no process-group identity or evidence that spawned children were
-    terminated, so a timed-out script could leave descendants running.
-    """
-    receipt: dict[str, Any] = {"pgid": pgid, "attempted": False, "reaped": None}
-    if not pgid or not hasattr(os, "killpg"):
-        receipt["reason"] = "no process group recorded"
-        return receipt
-    # Never signal our own group: that would take Aura down with the script.
-    try:
-        if pgid == os.getpgrp():
-            receipt["reason"] = "refused to signal aura's own process group"
-            return receipt
-    except OSError:
-        pass
-    receipt["attempted"] = True
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pgid, sig)
-            receipt["signal"] = sig.name
-        except ProcessLookupError:
-            receipt["reaped"] = True
-            receipt["signal"] = sig.name
-            return receipt
-        except (OSError, PermissionError) as exc:
-            # On macOS a group whose members are zombies answers EPERM rather
-            # than ESRCH, so the signal result alone cannot decide this.
-            receipt["signal_error"] = f"{type(exc).__name__}: {exc}"
-            break
-        time.sleep(0.05)
-
-    # Confirm by STATE, not by the signal's return: the direct child having
-    # exited is the evidence that matters, and the group is then unaddressable.
-    if process is not None:
-        try:
-            process.wait(timeout=2)
-            receipt["reaped"] = True
-            receipt["confirmed_by"] = "child_exit"
-            return receipt
-        except Exception:  # noqa: BLE001 - any wait failure leaves it unconfirmed
-            pass
-    try:
-        os.killpg(pgid, 0)
-        receipt["reaped"] = False
-        receipt["confirmed_by"] = "group_still_addressable"
-    except ProcessLookupError:
-        receipt["reaped"] = True
-        receipt["confirmed_by"] = "group_gone"
-    except OSError as exc:
-        receipt["reaped"] = None
-        receipt["confirmed_by"] = f"indeterminate: {type(exc).__name__}"
-    return receipt
-
 
 def _clamp_timeout(value: Any) -> float:
     try:
@@ -306,6 +199,7 @@ class SandboxOperator:
             "sandbox_file": os.path.basename(temp_path),  # basename only, never the abs path
             # CP126 f52d8430: name what this actually is, so no caller reads
             # "sandbox" as containment.
+            "isolation": isolation_receipt(),
             "isolation_level": ISOLATION_LEVEL,
             # CP126 84fc4f9d: evidence about the descendant tree, not a hope.
             "process_group": pgid,

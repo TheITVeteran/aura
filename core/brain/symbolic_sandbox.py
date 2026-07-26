@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.atomic_writer import async_atomic_write_text
+from core.runtime.constrained_exec import ISOLATION_LEVEL, isolation_receipt, scrubbed_env
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SymbolicSandbox")
@@ -107,6 +108,9 @@ class SandboxResult:
     warnings: list[str] = field(default_factory=list)
     stdout_bytes: int = 0
     stderr_bytes: int = 0
+    #: CP126 d10e3cc5 / 64b318f6: what containment the caller actually got,
+    #: and that passing the AST gate is admission rather than proof.
+    isolation: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         stdout_slice = self.stdout[-500:]
@@ -125,6 +129,17 @@ class SandboxResult:
             "stderr_truncated": len(stderr_slice) < len(self.stderr),
             "stdout_sha256": hashlib.sha256(self.stdout.encode("utf-8", "replace")).hexdigest() if self.stdout else "",
             "warnings": self.warnings[:6],
+            # CP126 d10e3cc5: no caller may infer containment from the word
+            # "sandbox"; the real bound travels with every result.
+            "isolation": self.isolation or {"isolation_level": ISOLATION_LEVEL},
+            # CP126 93229cf5: the generated source and raw diagnostics stay OUT
+            # of the serialized form. `final_code` remains on the object for a
+            # repair round, but a logged/persisted result carries only its hash.
+            "final_code_sha256": (
+                hashlib.sha256(self.final_code.encode("utf-8", "replace")).hexdigest()
+                if self.final_code else ""
+            ),
+            "final_code_chars": len(self.final_code),
         }
 
 
@@ -182,13 +197,23 @@ class SymbolicSandbox:
             with tempfile.TemporaryDirectory(prefix="aura_sbx_", dir=str(workspace)) as td:
                 script = Path(td) / "scratch.py"
                 await async_atomic_write_text(script, body, encoding="utf-8")
-                env = {"PATH": "/usr/bin:/bin", "HOME": td, "TMPDIR": td}
+                # CP126 c77398cb: elapsed timeout was the ONLY hard control,
+                # so code could exhaust memory, fork descendants or burn CPU
+                # before it fired. The environment is scrubbed here and the
+                # interpreter starts in isolated + no-site mode. Kernel rlimits
+                # need a preexec hook the async gateway path does not expose;
+                # that gap is DECLARED in the isolation receipt rather than
+                # papered over — see resource_limits_enforced below.
+                env = scrubbed_env(HOME=td, TMPDIR=td)
                 res = await get_subprocess_gateway().run_async(
-                    (sys.executable, "-I", "-B", str(script)),
+                    (sys.executable, "-I", "-B", "-S", str(script)),
                     timeout=effective_timeout,
                     cwd=td,
                     env=env,
-                    read_only=True,
+                    # CP126 23199cb8: executing arbitrary Python is NOT a
+                    # read-only action. The authority label has to describe the
+                    # effect, not the intent.
+                    read_only=False,
                     source="symbolic_sandbox:exec",
                 )
             stdout, stdout_bytes = _bound_capture(res.stdout or "")
@@ -203,6 +228,7 @@ class SymbolicSandbox:
                 warnings=warnings,
                 stdout_bytes=stdout_bytes,
                 stderr_bytes=stderr_bytes,
+                isolation=isolation_receipt(resource_limits_enforced=False),
             )
         except TimeoutError:
             return SandboxResult(ok=False, timed_out=True, final_code=body, warnings=warnings)
