@@ -31,6 +31,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     generate_task,
     generate_task_battery,
     parse_final_answer,
+    reblind_frontier_task,
 )
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
 
@@ -193,8 +194,7 @@ def test_every_domain_scorer_accepts_only_the_exact_typed_answer(domain):
 
     wrong = _incorrect_answer(domain, _expected(task))
     rejected = task.score(
-        f"{FINAL_ANSWER_MARKER} "
-        + json.dumps(wrong, sort_keys=True, separators=(",", ":"))
+        f"{FINAL_ANSWER_MARKER} " + json.dumps(wrong, sort_keys=True, separators=(",", ":"))
     )
     assert rejected.parsed is True
     assert rejected.correct is False
@@ -257,6 +257,24 @@ def test_public_task_and_manifest_do_not_leak_seed_nonce_or_answer_payload():
         assert set(public).isdisjoint({"generation_seed", "blind_nonce", "expected"})
 
 
+def test_external_reblinding_changes_commitment_without_changing_task_answer():
+    task = generate_task("mathematics", seed=44_001, difficulty=2)
+    nonce = hashlib.sha256(b"external-issuer-csprng-fixture").digest()
+    reblinded = reblind_frontier_task(task, blind_nonce=nonce)
+
+    assert reblinded.task_id != task.task_id
+    assert reblinded.public.answer_commitment_sha256 != task.public.answer_commitment_sha256
+    assert reblinded.reveal_for_verifier()["blind_nonce"] == nonce.hex()
+    assert reblinded.score(_correct_response(task)).correct is True
+    assert b"blind_nonce" not in canonical_json_bytes(reblinded.public.to_dict())
+
+    with pytest.raises(
+        FrontierTaskError,
+        match="external_answer_blind_nonce_invalid",
+    ):
+        reblind_frontier_task(task, blind_nonce=b"\x00" * 32)
+
+
 def test_manifest_and_commitment_are_canonical_reproducible_and_complete():
     tasks = generate_task_battery([4, 8], difficulty=2)
     manifest = build_task_manifest(tasks)
@@ -279,20 +297,15 @@ def test_manifest_and_commitment_are_canonical_reproducible_and_complete():
 
     with pytest.raises(FrontierTaskError, match="task_manifest_task_order_invalid"):
         replace(manifest, tasks=tuple(reversed(manifest.tasks)))
-    with pytest.raises(
-        FrontierTaskError, match="task_commitment_domain_counts_invalid"
-    ):
+    with pytest.raises(FrontierTaskError, match="task_commitment_domain_counts_invalid"):
         replace(commitment, domain_counts=tuple(reversed(commitment.domain_counts)))
 
 
 def test_public_task_round_trip_rebuilds_manifest_without_answer_material():
-    tasks = generate_task_battery(
-        [11, 12], domains=("mathematics", "coding"), difficulty=2
-    )
+    tasks = generate_task_battery([11, 12], domains=("mathematics", "coding"), difficulty=2)
     full_manifest = build_task_manifest(tasks)
     public_tasks = tuple(
-        PublicTaskRecord.from_dict(record.to_dict())
-        for record in full_manifest.tasks
+        PublicTaskRecord.from_dict(record.to_dict()) for record in full_manifest.tasks
     )
 
     assert build_public_task_manifest(public_tasks).to_dict() == full_manifest.to_dict()
@@ -337,9 +350,7 @@ def test_contamination_fingerprints_are_stable_complete_and_answer_free():
     }
     assert all(len(item.sha256) == 64 for item in fingerprints)
     assert task.public.excluded_training_families == EXCLUDED_TRAINING_FAMILIES
-    assert task.public.answer_commitment_sha256 not in {
-        item.sha256 for item in fingerprints
-    }
+    assert task.public.answer_commitment_sha256 not in {item.sha256 for item in fingerprints}
 
 
 @pytest.mark.parametrize("domain", FRONTIER_DOMAINS)
@@ -376,9 +387,7 @@ def test_prompts_are_materially_disjoint_from_legacy_training_templates(domain):
         ('FINAL_ANSWER: {"x":1}\ntrailing', "final_answer_not_terminal_line"),
     ],
 )
-def test_final_answer_parser_rejects_ambiguous_or_adversarial_payloads(
-    response, reason
-):
+def test_final_answer_parser_rejects_ambiguous_or_adversarial_payloads(response, reason):
     task = generate_task("mathematics", seed=2, difficulty=1)
     result = task.score(response)
     assert result.parsed is False

@@ -5,12 +5,17 @@ from copy import deepcopy
 
 import pytest
 
+from core.brain.llm.latent_cortex.action_calibration import (
+    ACTION_RESOURCE_DIMENSIONS,
+    GLOBAL_BOUND_FAMILY_COUNT,
+)
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.value_of_computation import (
     ACTION_TRANSITION_SCHEMA,
     ACTION_VOCABULARY,
     MIN_ACTION_TRIALS,
     ActionEvidence,
+    CertifiedActionEvidence,
     CognitiveStateSignal,
     ValueOfComputationPolicy,
     build_evidence_snapshot,
@@ -22,6 +27,7 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     validate_evidence_snapshot,
 )
 from core.brain.llm.latent_cortex.verified_best import VerifierObservation
+from tests.fixtures.action_calibration import certified_action_snapshot
 
 
 def _state(**overrides):
@@ -126,7 +132,7 @@ def test_unavailable_execute_cannot_be_selected_even_with_strong_evidence():
     assert OperationKind.EXECUTE.value not in decision["feasible_actions"]
 
 
-def test_measured_lower_gain_per_upper_cost_controls_selection():
+def test_legacy_online_moments_never_claim_independent_measurement():
     weak = ActionEvidence()
     strong = ActionEvidence()
     for _ in range(MIN_ACTION_TRIALS):
@@ -143,9 +149,102 @@ def test_measured_lower_gain_per_upper_cost_controls_selection():
         executors=(OperationKind.BLIND_RESOLVE, OperationKind.FORMALIZE),
     )
     assert decision["action"] == OperationKind.FORMALIZE.value
+    assert decision["mode"] == "bootstrap"
+    assert decision["evidence"]["basis"] == "bootstrap_prior"
+    assert decision["evidence"]["n"] == MIN_ACTION_TRIALS
+
+
+def _certified_snapshot(cells):
+    return certified_action_snapshot(
+        bucket="general|none|short|s:mid|u:mid",
+        cells={
+            action: (
+                cell.gain_lcb,
+                cell.gain_mean,
+                cell.gain_ucb,
+                cell.cost_ucb,
+            )
+            for action, cell in cells.items()
+        },
+    )
+
+
+def _certified_cell(*, gain_lcb, gain_mean, gain_ucb, cost):
+    lower = {"numerator": int(gain_lcb * 10), "denominator": 10}
+    upper = {"numerator": int(gain_ucb * 10), "denominator": 10}
+    return CertifiedActionEvidence.from_dict(
+        {
+            "n": 20,
+            "unique_task_count": 20,
+            "measured": True,
+            "gain_mean": gain_mean,
+            "gain_lcb": gain_lcb,
+            "gain_ucb": gain_ucb,
+            "cost_mean": cost,
+            "cost_ucb": cost,
+            "gain_bounds": {
+                "method": ("simultaneous rational Clopper-Pearson contrast bounds"),
+                "family_count": GLOBAL_BOUND_FAMILY_COUNT,
+                "family_alpha": {"numerator": 1, "denominator": 20},
+                "component_alpha": {"numerator": 1, "denominator": 680},
+                "simultaneous_coverage_lower": {
+                    "numerator": 19,
+                    "denominator": 20,
+                },
+                "lower": lower,
+                "upper": upper,
+                "certified": True,
+            },
+            "cost_bounds": {
+                "method": "simultaneous Hoeffding upper bound",
+                "family_count": GLOBAL_BOUND_FAMILY_COUNT,
+                "family_alpha": {"numerator": 1, "denominator": 20},
+                "bounded_interval": [0.0, 1.0],
+                "normalization": ("max fraction of preregistered action-resource caps"),
+                "dimensions": list(ACTION_RESOURCE_DIMENSIONS),
+            },
+            "calibration_candidate_sha256": "a" * 64,
+            "policy_sha256": "b" * 64,
+        }
+    )
+
+
+def test_certified_positive_bounds_control_measured_selection(
+    tmp_path,
+    monkeypatch,
+):
+    weak = _certified_cell(
+        gain_lcb=0.1,
+        gain_mean=0.2,
+        gain_ucb=0.3,
+        cost=0.2,
+    )
+    strong = _certified_cell(
+        gain_lcb=0.4,
+        gain_mean=0.5,
+        gain_ucb=0.6,
+        cost=0.1,
+    )
+    snapshot, root_pem = _certified_snapshot(
+        {
+            OperationKind.BLIND_RESOLVE: weak,
+            OperationKind.FORMALIZE: strong,
+        }
+    )
+    root_path = tmp_path / "action-calibration-root.pem"
+    root_path.write_bytes(root_pem)
+    monkeypatch.setenv(
+        "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+        str(root_path),
+    )
+    policy = ValueOfComputationPolicy(snapshot)
+    decision = policy.choose(
+        _state(),
+        executors=(OperationKind.BLIND_RESOLVE, OperationKind.FORMALIZE),
+    )
+    assert decision["action"] == OperationKind.FORMALIZE.value
     assert decision["mode"] == "measured"
     assert decision["evidence"]["basis"] == "measured_lcb_per_cost_ucb"
-    assert decision["evidence"]["n"] == MIN_ACTION_TRIALS
 
 
 def test_sparse_exploration_is_named_and_never_claimed_as_measured():
@@ -314,11 +413,14 @@ def test_action_trace_recomputes_policy_and_public_transition_metrics():
             "restored": False,
         },
     }
-    assert validate_action_trace_row(
-        row,
-        evidence_snapshot=snapshot,
-        executors=executors,
-    )["transition"] == transition
+    assert (
+        validate_action_trace_row(
+            row,
+            evidence_snapshot=snapshot,
+            executors=executors,
+        )["transition"]
+        == transition
+    )
 
     tampered = deepcopy(row)
     tampered["state_after"]["disagreement"] = 0.2

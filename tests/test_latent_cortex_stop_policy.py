@@ -37,10 +37,6 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     RecurrenceConfig,
     WorkspaceConfig,
 )
-from core.brain.llm.latent_cortex.value_of_computation import (  # noqa: E402
-    ActionEvidence,
-    build_evidence_snapshot,
-)
 from core.learning.stop_policy import (  # noqa: E402
     MAX_STOP_ARTIFACT_BYTES,
     STOP_FEATURE_NAMES,
@@ -54,6 +50,9 @@ from core.learning.stop_policy import (  # noqa: E402
 from core.learning.update_acceptance import (  # noqa: E402
     VerifiedTransitionExample,
     fit_update_acceptance_head,
+)
+from tests.fixtures.action_calibration import (  # noqa: E402
+    certified_action_snapshot,
 )
 
 HIDDEN = 32
@@ -250,9 +249,7 @@ def test_heldout_workload_halts_easy_tasks_earlier_without_hard_regression(
     assert certificate["admitted"] is True
     assert certificate["easy_mean_step_reduction"] >= 1.0
     assert certificate["hard_premature_stops"] == 0
-    assert certificate["hard_selected_accuracy"] == certificate[
-        "hard_baseline_accuracy"
-    ]
+    assert certificate["hard_selected_accuracy"] == certificate["hard_baseline_accuracy"]
     overlapping = list(trajectories)
     overlapping[0] = replace(overlapping[0], task_id="train-task-0")
     with pytest.raises(ValueError, match="overlaps training"):
@@ -427,9 +424,7 @@ def test_stop_receipt_recomputes_probabilities_and_rejects_rehashed_lies(
 
     forged = copy.deepcopy(receipt)
     forged["branches"][0]["decisions"][0]["probability"] = 0.01
-    payload = {
-        key: value for key, value in forged.items() if key != "receipt_sha256"
-    }
+    payload = {key: value for key, value in forged.items() if key != "receipt_sha256"}
     forged["receipt_sha256"] = canonical_sha256(payload)
     with pytest.raises(ValueError, match="differs from its head"):
         validate_stop_gate_receipt(
@@ -441,9 +436,7 @@ def test_stop_receipt_recomputes_probabilities_and_rejects_rehashed_lies(
         )
 
     malformed_source = copy.deepcopy(update_acceptance)
-    del malformed_source["branches"][0]["transitions"][0]["features"][
-        "anchor_distance_improvement"
-    ]
+    del malformed_source["branches"][0]["transitions"][0]["features"]["anchor_distance_improvement"]
     with pytest.raises(ValueError, match="source values"):
         validate_stop_gate_receipt(
             receipt,
@@ -469,9 +462,7 @@ def _fitted_update_head(observed_rows):
                     example_id=f"{prefix}-{index}",
                     features=features,
                     improved=improved,
-                    verifier_receipt_sha256=_digest(
-                        f"{prefix}:update:{index}"
-                    ),
+                    verifier_receipt_sha256=_digest(f"{prefix}:update:{index}"),
                 )
             )
         return examples
@@ -508,9 +499,7 @@ def _evoc_stop_head():
                     task_id=f"{prefix}-task-{index}",
                     features=features,
                     should_stop=should_stop,
-                    verifier_receipt_sha256=_digest(
-                        f"{prefix}:stop:{index}"
-                    ),
+                    verifier_receipt_sha256=_digest(f"{prefix}:stop:{index}"),
                 )
             )
         return examples
@@ -519,13 +508,10 @@ def _evoc_stop_head():
 
 
 def _measured_negative_value_evidence():
-    cells = {}
-    for action in OperationKind:
-        cell = ActionEvidence()
-        for _ in range(8):
-            cell = cell.append(gain=-0.05, cost=0.20)
-        cells[action] = cell
-    return build_evidence_snapshot(bucket="test|none|short|s:mid|u:mid", cells=cells)
+    return certified_action_snapshot(
+        bucket="test|none|short|s:mid|u:mid",
+        cells={action: (-0.05, -0.04, -0.03, 0.20) for action in OperationKind},
+    )
 
 
 def _engine_config(*, update_gate, halting=None):
@@ -547,8 +533,15 @@ def _engine_config(*, update_gate, halting=None):
 def test_real_tiny_qwen_stop_policy_is_causal_under_measured_equal_evidence(
     tiny_model,
     tmp_path,
+    monkeypatch,
 ):
-    evidence = _measured_negative_value_evidence()
+    evidence, root_pem = _measured_negative_value_evidence()
+    root_path = tmp_path / "action-calibration-root.pem"
+    root_path.write_bytes(root_pem)
+    monkeypatch.setenv(
+        "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+        str(root_path),
+    )
     observed = LatentCortexEngine(
         tiny_model,
         config=_engine_config(update_gate=None),
@@ -558,9 +551,7 @@ def test_real_tiny_qwen_stop_policy_is_causal_under_measured_equal_evidence(
         action_policy_evidence=evidence,
     )
     assert observed.ok is True
-    observed_rows = observed.receipt.update_acceptance["branches"][0][
-        "transitions"
-    ]
+    observed_rows = observed.receipt.update_acceptance["branches"][0]["transitions"]
     assert len(observed_rows) >= 2
     update_head = _fitted_update_head(observed_rows)
     update_path = tmp_path / "update-head.npz"
@@ -603,10 +594,7 @@ def test_real_tiny_qwen_stop_policy_is_causal_under_measured_equal_evidence(
     assert learned.receipt.halting["learned_halts"] == 1
     assert learned.receipt.steps_taken < baseline.receipt.steps_taken
     assert learned.receipt.halting_reason.startswith("learned_stop")
-    assert (
-        learned.receipt.budget["spent_layer_apps"]
-        < baseline.receipt.budget["spent_layer_apps"]
-    )
+    assert learned.receipt.budget["spent_layer_apps"] < baseline.receipt.budget["spent_layer_apps"]
     assert (
         learned.receipt.recurrent_grounding["selected_transition_count"]
         < baseline.receipt.recurrent_grounding["selected_transition_count"]

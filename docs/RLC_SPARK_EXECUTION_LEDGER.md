@@ -2058,14 +2058,50 @@ before those dependencies close is not admissible.
   and self-consistent forged journal prefixes. An independent code review
   returned ACCEPT with no P0-P2 findings after the final anchor repair.
 
-  SPARK-051 is not accepted yet. The sixteen actions now have concrete internal
-  semantics, governed memory/reference acquisition, or a governed external
-  dispatch path as applicable, but their controller cells still lack the
-  preregistered task-disjoint paired evidence needed to leave bootstrap mode.
-  Calibration v2, complete cost evidence, simultaneous confidence bounds,
-  independent hidden-answer scoring, campaign replay protection, and
-  resident/live causal ablations must still establish calibrated value and
-  capability gain.
+  CP373 implements the calibration-v2 evidence system without manufacturing a
+  result. All sixteen actions must receive at least eight globally unique,
+  multi-domain paired tasks (256 total treatment/control executions) before an
+  acquisition certificate can exist. A cell remains explicitly unmeasured
+  until it reaches 20 unique pairs (640 total executions for complete
+  coverage). Treatment and matched no-action control begin from an identical
+  externally captured, runner-signed checkpoint/KV/latent/evidence/memory/RNG
+  state whose classifier and state-bucket evidence are also committed, run
+  under fixed continuation and budget policies, and preserve complete
+  available versus consumed information receipts.
+
+  Claim-eligible tasks are reblinded with distinct 256-bit external-issuer
+  nonces rather than the registry's reproducible seed-derived blind. A
+  blind-independent task identity prevents reblinding duplicates from
+  increasing effective sample size, and all actions receive the same committed
+  stratum distribution under external randomized assignment. The externally
+  rooted policy separates issuer, runner, contamination auditor, and evidence
+  verifier custody. Every output is globally sealed before hidden answers can
+  be revealed. The final candidate embeds the canonical append-only journal
+  transcript; independent replay verifies every event hash, predecessor, state
+  transition, attempt, pre-reveal seal prefix, manifest reference, final head,
+  byte size, result, verification, and commit. It reconstructs every
+  observation and statistic from the journal rather than trusting relabelable
+  candidate fields. A signed final-verifier candidate/cell commitment is
+  rechecked against the separately configured root inside the worker before
+  measured evidence can affect action selection. Live admission checks current
+  policy freshness, while immutable historical replay uses the committed
+  admission time.
+
+  Gain bounds use one exact simultaneous 34-family multiplicity budget. Cost
+  uses a conservative Hoeffding upper bound over the maximum normalized
+  fraction of every preregistered action-resource cap: structural FLOPs,
+  transformer/attention/head work, tensor traffic and scalar operations,
+  verifier work, tools, external models, and host operations. The independent
+  CLI recomputes statistics and vector costs through a separate kernel. Legacy
+  online transition moments remain bootstrap-only even after eight samples.
+
+  SPARK-051 is not accepted yet. CP373 proves the bounded campaign,
+  verification, admission, and fail-closed runtime machinery on generated
+  fixtures; it does not supply the missing resident evidence. A real,
+  externally custodied resident-32B campaign must still acquire at least 20
+  unique pairs per action, publish its certificate, and survive live
+  selection/lesion/restoration ablations before calibrated value or capability
+  gain can be claimed. The negative frontier verdict is unchanged.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

@@ -36,8 +36,9 @@ import re
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.value_of_computation import (
@@ -45,6 +46,7 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     build_evidence_snapshot,
     validate_action_transition,
 )
+from core.runtime.file_read_gateway import read_stable_bytes
 
 logger = logging.getLogger("Aura.LatentCortex.ExecutionController")
 
@@ -62,6 +64,9 @@ CONTROLLER_ROW_SCHEMA = "aura.latent_execution_controller.outcome.v2"
 #: The evidence in a cell is only comparable within one model + verifier
 #: generation. Rows from another provenance are quarantined rather than folded.
 _PROVENANCE_ENV = "AURA_CONTROLLER_EVIDENCE_PROVENANCE"
+_ACTION_CERTIFICATE_ENV = "AURA_RLC_ACTION_CALIBRATION_CERTIFICATE"
+_ACTION_POLICY_ENV = "AURA_RLC_ACTION_CALIBRATION_POLICY"
+_ACTION_TRUST_ROOT_ENV = "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT"
 
 
 # Bounded arm menu: every arm is a small, validated delta over the base
@@ -308,8 +313,113 @@ class ExecutionController:
         self._decisions_made = 0
         self._provenance = evidence_provenance()
         self._rows_on_disk = 0
+        self._certified_action_certificate: dict[str, Any] | None = None
+        self._certified_action_policy: Any | None = None
+        self._certified_action_load_error: str | None = None
         self._restore()
         self._restore_action_transitions()
+        self._restore_certified_action_evidence()
+
+    def _restore_certified_action_evidence(self) -> None:
+        """Admit a claim-grade action certificate through a pinned root."""
+
+        default_dir = self.root / "calibration"
+        configured = (
+            os.environ.get(_ACTION_CERTIFICATE_ENV),
+            os.environ.get(_ACTION_POLICY_ENV),
+            os.environ.get(_ACTION_TRUST_ROOT_ENV),
+        )
+        explicit = any(value for value in configured)
+        paths = (
+            Path(configured[0]).expanduser()
+            if configured[0]
+            else default_dir / "certificate.json",
+            Path(configured[1]).expanduser()
+            if configured[1]
+            else default_dir / "policy.json",
+            Path(configured[2]).expanduser()
+            if configured[2]
+            else None,
+        )
+        artifact_paths = tuple(path for path in paths if path is not None)
+        if not explicit and not any(path.exists() for path in artifact_paths):
+            return
+        if (
+            paths[2] is None
+            or not all(path.is_file() for path in artifact_paths)
+        ):
+            self._certified_action_load_error = (
+                "calibration_artifact_set_incomplete"
+            )
+            logger.warning(
+                "Certified action evidence not admitted: %s",
+                self._certified_action_load_error,
+            )
+            return
+        try:
+            from core.brain.llm.latent_cortex.action_calibration import (
+                verify_action_calibration_certificate,
+            )
+            from core.brain.llm.latent_cortex.campaign_trust import (
+                validate_campaign_trust_policy,
+            )
+
+            certificate = json.loads(
+                read_stable_bytes(
+                    cast(Path, paths[0]),
+                    max_bytes=64 * 1024 * 1024,
+                )
+            )
+            policy_document = json.loads(
+                read_stable_bytes(
+                    cast(Path, paths[1]),
+                    max_bytes=2 * 1024 * 1024,
+                )
+            )
+            trust_root = read_stable_bytes(
+                cast(Path, paths[2]),
+                max_bytes=64 * 1024,
+            )
+            if not isinstance(certificate, Mapping):
+                raise ValueError("calibration certificate must be an object")
+            candidate = certificate.get("candidate")
+            if not isinstance(candidate, Mapping):
+                raise ValueError("calibration certificate candidate must be an object")
+            campaign_name = candidate.get("campaign_name")
+            policy = validate_campaign_trust_policy(
+                policy_document,
+                trusted_root_public_key_pem=trust_root,
+                expected_campaign_name=campaign_name,
+                now_unix=int(time.time()),
+            )
+            verified = verify_action_calibration_certificate(
+                certificate,
+                policy=policy,
+            )
+        except (
+            ImportError,
+            AttributeError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            self._certified_action_load_error = (
+                f"{type(exc).__name__}:{str(exc)[:160]}"
+            )
+            logger.warning(
+                "Certified action evidence not admitted: %s",
+                self._certified_action_load_error,
+            )
+            return
+        self._certified_action_certificate = verified
+        self._certified_action_policy = policy
+        logger.info(
+            "Certified action evidence admitted: certificate=%s bucket=%s",
+            verified["certificate_sha256"][:12],
+            verified["candidate"]["calibration_bucket"],
+        )
 
     # ── Integrity ────────────────────────────────────────────────────────
     def integrity_ok(self) -> bool:
@@ -952,6 +1062,23 @@ class ExecutionController:
     def action_evidence_snapshot(self, *, bucket: str) -> dict[str, Any]:
         """Freeze measured per-action evidence for one worker episode."""
 
+        if (
+            self._certified_action_certificate is not None
+            and self._certified_action_policy is not None
+            and self._certified_action_certificate["candidate"][
+                "calibration_bucket"
+            ]
+            == bucket
+        ):
+            from core.brain.llm.latent_cortex.action_calibration import (
+                certified_evidence_snapshot,
+            )
+
+            return certified_evidence_snapshot(
+                self._certified_action_certificate,
+                policy=self._certified_action_policy,
+                bucket=bucket,
+            )
         return build_evidence_snapshot(
             bucket=bucket,
             cells={
@@ -1015,6 +1142,24 @@ class ExecutionController:
                     key=lambda item: (item[0][0], item[0][1].value),
                 )
             ][:400],
+            "certified_action_evidence": {
+                "admitted": self._certified_action_certificate is not None,
+                "certificate_sha256": (
+                    self._certified_action_certificate[
+                        "certificate_sha256"
+                    ]
+                    if self._certified_action_certificate is not None
+                    else None
+                ),
+                "calibration_bucket": (
+                    self._certified_action_certificate["candidate"][
+                        "calibration_bucket"
+                    ]
+                    if self._certified_action_certificate is not None
+                    else None
+                ),
+                "load_error": self._certified_action_load_error,
+            },
             "restore_errors": self._restore_errors,
         }
 

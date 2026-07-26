@@ -27969,3 +27969,103 @@ with a midpoint planning estimate of 78.0%. Next: publish CP372, implement
 SPARK-051 calibration v2, then run bounded resident/live causal ablations and
 the fresh CP371 visible-request campaign. Final multi-hour soaks remain
 deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-25-373: Externally Certified Action-Value Calibration
+
+SPARK-051 advances from an uncalibrated controller to an executable,
+claim-bounded calibration protocol without claiming that the resident cells
+are calibrated yet. The frozen plan covers all sixteen cognitive actions with
+at least eight globally unique, multi-domain task pairs per action. Each pair
+runs one forced-action treatment and one matched no-action control from the
+same externally captured and runner-signed checkpoint, latent/KV state,
+evidence and memory envelope, durable state, RNG state, continuation policy,
+and budget policy. The capture also commits the state-bucket classifier and
+its evidence, so equality is no longer inferred from synthetic label hashes.
+Arm order is counterbalanced. Eight pairs is only the 256-execution
+acquisition floor; an action remains unmeasured until at least 20 unique
+pairs, which requires 640 executions for complete sixteen-action coverage.
+
+Claim-eligible tasks now require distinct 256-bit external-issuer CSPRNG
+blinds. The public task commitment changes while the hidden expected answer
+and scorer remain stable. A second blind-independent sampling identity prevents
+reblinding the same underlying task from inflating effective sample size. All
+actions must receive the same committed stratum distribution under an
+external-issuer randomized-without-replacement assignment policy, making
+cross-action bounds comparable rather than artifacts of arbitrary task
+difficulty. Reproducible seed-derived blinds, repeated or degenerate nonces,
+duplicate underlying tasks, unbalanced strata, public answer material, and
+early answer reveal fail closed. The external trust policy separates task
+issuer, campaign runner, contamination auditor, and evidence verifier
+organizations and keys under a separately supplied Ed25519 root.
+
+The crash journal is evidence rather than decoration. The signed candidate
+contains its complete canonical transcript. Verification replays the genesis,
+sequence, hash chain, exact first attempt, STARTED -> ARM_RESULT -> VERIFIED ->
+COMMITTED state machine, pre-reveal global output-seal prefix, event payloads,
+manifest event references, final head, event count, and exact journal byte
+size. Supplied result records must equal the replayed records. Result,
+verification, and commit digests are bound; no retry or post-seal rerun can be
+hidden inside a successful certificate. Detached final verification rebuilds
+every observation field from those journal records, including outcome labels,
+action/task/pair identity, starting state, resource vectors, information
+receipts, and attestations; relabeling observations and recomputing the outer
+candidate hash is rejected.
+
+Resource accounting is complete and dimensioned. Every treatment action has a
+subledger bounded by preregistered caps for structural FLOPs, transformer and
+attention work, output-head tokens, tensor reads/writes/scalar operations,
+verifier calls and bytes, tool calls and bytes, external-model calls and
+tokens, and host scalar work. The scalar cost is the maximum normalized
+fraction across those dimensions, not a FLOP-only proxy. Controls require an
+exact zero action subledger. Available and consumed information are committed
+separately, host telemetry is independent, and transient mutation must erase
+back to the exact durable-state hash.
+
+The final evidence verifier recomputes hidden-answer scores only after every
+output is sealed, applies exact simultaneous gain bounds under one 34-family
+multiplicity budget, and applies a conservative Hoeffding action-cost upper
+bound. A separate CLI reconstructs the action coverage, paired effects, vector
+costs, and statistics without importing the production statistics builder.
+The runtime admits the full certificate only through the separately configured
+root and policy. The compact worker evidence carries the signed candidate/cell
+commitment and revalidates that external root before any measured cell can
+steer action selection. Live admission requires a currently valid policy,
+while later cryptographic replay validates at the committed final-admission
+time so an unchanged historical receipt does not become false merely because
+the policy subsequently expires. Malformed optional artifacts degrade to
+bootstrap evidence without crashing startup or the verifier CLI. Legacy
+online moments remain bootstrap-only regardless of sample count.
+
+The affected action-calibration, value policy, execution-controller,
+epistemic-runtime, external-execution, diagnostic-selector, stop-policy,
+slot-ingress, wiring, and blinded frontier-task battery passes 304 tests. The
+combined campaign and frontier-task registry boundary passes 95 tests,
+including full 8-pair and 20-pair campaigns, root substitution, missing-root,
+rehashed-cell substitution, transcript mutation, statistics, final
+attestation, nonce, reblind-duplicate, sampling-frame, signed state/bucket,
+vector-cap, observation-relabel, malformed-artifact, and historical-replay
+rejection. An independent review requested six material changes; all six were
+implemented before publication. Strict Ruff, bytecode compilation, diff
+hygiene, repository gates, and semantic receipts are recorded at publication.
+
+This checkpoint does not contain a resident-32B calibration result, a measured
+live action-value table, a causal capability gain, a frontier-reasoning result,
+or a long-duration reliability result. SPARK-051 remains open until a real
+externally custodied campaign reaches at least 20 unique pairs for every
+action, the resulting certificate is independently accepted, and live
+selection/lesion/restoration ablations show the expected causal behavior. The
+negative frontier verdict is unchanged. Final multi-hour soaks remain
+deferred.
+
+One cooperative MLX load-admission checkpoint (`83d294a86`) and fifteen
+conversation, governance, host-automation, research, and closeout checkpoints
+(`6e8ad6c49` through `ba3304c3e`) landed after CP372 and before this
+integration. Counting them and CP373 makes the total checkpoint record 535.
+Because cooperative work exceeded the former 531-record lower forecast while
+known implementation remains, the forecast is recalibrated to 547-812 total
+records, leaving approximately 12-277 records after this checkpoint.
+Checkpoint-count completion is approximately 65.9%-97.8%, with a midpoint
+planning estimate of 78.7%. Next: publish CP373, implement the resident
+action-calibration runner and external campaign, then execute the bounded live
+action ablations and fresh CP371 visible-request campaign. Final multi-hour
+soaks remain deferred until every shorter gate is green.

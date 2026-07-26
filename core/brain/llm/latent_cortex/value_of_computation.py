@@ -17,15 +17,27 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from core.brain.llm.latent_cortex.action_calibration import (
+    ACTION_CALIBRATION_EVIDENCE_SCHEMA,
+    ACTION_CALIBRATION_FINAL_VERIFIER_SCHEMA,
+    ACTION_CALIBRATION_WORKER_ADMISSION_SCHEMA,
+    ACTION_RESOURCE_DIMENSIONS,
+    GLOBAL_BOUND_FAMILY_COUNT,
+    MIN_CERTIFIED_TASKS_PER_ACTION,
+)
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
+from core.runtime.file_read_gateway import read_stable_bytes
 
 VALUE_OF_COMPUTATION_SCHEMA = "aura.rlc.value_of_computation.v1"
 ACTION_EVIDENCE_SCHEMA = "aura.rlc.value_of_computation.evidence.v1"
 ACTION_TRANSITION_SCHEMA = "aura.rlc.value_of_computation.transition.v1"
+_ACTION_CALIBRATION_TRUST_ROOT_ENV = "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT"
 
 MIN_ACTION_TRIALS = 8
 MAX_ACTION_TRIALS = 100_000
@@ -83,7 +95,7 @@ def _bounded_text(value: Any, *, name: str, limit: int) -> str:
 
 @dataclass(frozen=True, slots=True)
 class ActionEvidence:
-    """Sufficient statistics for independently measured action transitions."""
+    """Legacy online moments retained only for bounded bootstrap exploration."""
 
     n: int = 0
     gain_sum: float = 0.0
@@ -184,7 +196,7 @@ class ActionEvidence:
         cost_mean = self.cost_sum / self.n
         return {
             "n": self.n,
-            "measured": self.n >= MIN_ACTION_TRIALS,
+            "measured": False,
             "gain_mean": round(gain_mean, 8),
             "gain_lcb": round(
                 max(
@@ -217,6 +229,187 @@ class ActionEvidence:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class CertifiedActionEvidence:
+    """Externally certified paired evidence for one cognitive action."""
+
+    n: int
+    unique_task_count: int
+    measured: bool
+    gain_mean: float
+    gain_lcb: float
+    gain_ucb: float
+    cost_mean: float
+    cost_ucb: float
+    gain_bounds: dict[str, Any]
+    cost_bounds: dict[str, Any]
+    calibration_candidate_sha256: str
+    policy_sha256: str
+
+    @classmethod
+    def from_dict(cls, value: Any) -> CertifiedActionEvidence:
+        fields = {
+            "n",
+            "unique_task_count",
+            "measured",
+            "gain_mean",
+            "gain_lcb",
+            "gain_ucb",
+            "cost_mean",
+            "cost_ucb",
+            "gain_bounds",
+            "cost_bounds",
+            "calibration_candidate_sha256",
+            "policy_sha256",
+        }
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise ValueError("certified action evidence fields differ")
+        n = value.get("n")
+        unique = value.get("unique_task_count")
+        measured = value.get("measured")
+        if (
+            type(n) is not int
+            or not MIN_ACTION_TRIALS <= n <= MAX_ACTION_TRIALS
+            or unique != n
+            or type(measured) is not bool
+            or not _is_sha256(value.get("calibration_candidate_sha256"))
+            or not _is_sha256(value.get("policy_sha256"))
+        ):
+            raise ValueError("certified action evidence identity is invalid")
+        gain_mean = _finite(
+            value.get("gain_mean"),
+            name="certified gain mean",
+            minimum=-1.0,
+            maximum=1.0,
+        )
+        gain_lcb = _finite(
+            value.get("gain_lcb"),
+            name="certified gain lcb",
+            minimum=-1.0,
+            maximum=1.0,
+        )
+        gain_ucb = _finite(
+            value.get("gain_ucb"),
+            name="certified gain ucb",
+            minimum=-1.0,
+            maximum=1.0,
+        )
+        cost_mean = _finite(
+            value.get("cost_mean"),
+            name="certified cost mean",
+            minimum=0.0,
+            maximum=1.0,
+        )
+        cost_ucb = _finite(
+            value.get("cost_ucb"),
+            name="certified cost ucb",
+            minimum=_EPSILON_COST,
+            maximum=1.0,
+        )
+        gain_bounds = value.get("gain_bounds")
+        cost_bounds = value.get("cost_bounds")
+        gain_bound_fields = {
+            "method",
+            "family_count",
+            "family_alpha",
+            "component_alpha",
+            "simultaneous_coverage_lower",
+            "lower",
+            "upper",
+            "certified",
+        }
+        cost_bound_fields = {
+            "method",
+            "family_count",
+            "family_alpha",
+            "bounded_interval",
+            "normalization",
+            "dimensions",
+        }
+
+        def rational_number(raw: Any) -> float:
+            if (
+                not isinstance(raw, Mapping)
+                or set(raw) != {"numerator", "denominator"}
+                or type(raw.get("numerator")) is not int
+                or type(raw.get("denominator")) is not int
+                or raw["denominator"] <= 0
+            ):
+                raise ValueError("certified action evidence rational bound is invalid")
+            return raw["numerator"] / raw["denominator"]
+
+        if (
+            gain_lcb > gain_mean
+            or gain_mean > gain_ucb
+            or cost_mean > cost_ucb
+            or not isinstance(gain_bounds, Mapping)
+            or not isinstance(cost_bounds, Mapping)
+            or set(gain_bounds) != gain_bound_fields
+            or set(cost_bounds) != cost_bound_fields
+            or gain_bounds.get("certified") is not True
+            or gain_bounds.get("family_count") != GLOBAL_BOUND_FAMILY_COUNT
+            or cost_bounds.get("family_count") != GLOBAL_BOUND_FAMILY_COUNT
+            or gain_bounds.get("method") != "simultaneous rational Clopper-Pearson contrast bounds"
+            or cost_bounds.get("method") != "simultaneous Hoeffding upper bound"
+            or cost_bounds.get("bounded_interval") != [0.0, 1.0]
+            or cost_bounds.get("normalization")
+            != "max fraction of preregistered action-resource caps"
+            or cost_bounds.get("dimensions") != list(ACTION_RESOURCE_DIMENSIONS)
+        ):
+            raise ValueError("certified action evidence bounds are invalid")
+        bound_lower = rational_number(gain_bounds["lower"])
+        bound_upper = rational_number(gain_bounds["upper"])
+        rational_number(gain_bounds["family_alpha"])
+        rational_number(gain_bounds["component_alpha"])
+        rational_number(gain_bounds["simultaneous_coverage_lower"])
+        rational_number(cost_bounds["family_alpha"])
+        if abs(gain_lcb - bound_lower) > 2e-12 or abs(gain_ucb - bound_upper) > 2e-12:
+            raise ValueError("certified action evidence rounded bounds differ")
+        expected_measured = n >= MIN_CERTIFIED_TASKS_PER_ACTION
+        if measured is not expected_measured:
+            raise ValueError("certified action evidence measured status is invalid")
+        return cls(
+            n=n,
+            unique_task_count=unique,
+            measured=measured,
+            gain_mean=gain_mean,
+            gain_lcb=gain_lcb,
+            gain_ucb=gain_ucb,
+            cost_mean=cost_mean,
+            cost_ucb=cost_ucb,
+            gain_bounds=dict(gain_bounds),
+            cost_bounds=dict(cost_bounds),
+            calibration_candidate_sha256=value["calibration_candidate_sha256"],
+            policy_sha256=value["policy_sha256"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "n": self.n,
+            "unique_task_count": self.unique_task_count,
+            "measured": self.measured,
+            "gain_mean": self.gain_mean,
+            "gain_lcb": self.gain_lcb,
+            "gain_ucb": self.gain_ucb,
+            "cost_mean": self.cost_mean,
+            "cost_ucb": self.cost_ucb,
+            "gain_bounds": dict(self.gain_bounds),
+            "cost_bounds": dict(self.cost_bounds),
+            "calibration_candidate_sha256": self.calibration_candidate_sha256,
+            "policy_sha256": self.policy_sha256,
+        }
+
+    def estimate(self) -> dict[str, int | float | bool]:
+        return {
+            "n": self.n,
+            "measured": self.measured,
+            "gain_mean": self.gain_mean,
+            "gain_lcb": self.gain_lcb,
+            "cost_mean": self.cost_mean,
+            "cost_ucb": self.cost_ucb,
+        }
+
+
 def build_evidence_snapshot(
     *,
     bucket: str,
@@ -245,11 +438,208 @@ def build_evidence_snapshot(
     return {**payload, "snapshot_sha256": _canonical_sha256(payload)}
 
 
+def _validate_certified_admission(
+    value: Any,
+    *,
+    bucket: str,
+    candidate_sha256: str,
+    policy_sha256: str,
+    candidate_cells: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    fields = {
+        "schema",
+        "campaign_name",
+        "policy_validated_at_unix",
+        "policy_document",
+        "final_verifier_payload",
+        "final_verifier_attestation",
+    }
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != fields
+        or value.get("schema") != ACTION_CALIBRATION_WORKER_ADMISSION_SCHEMA
+    ):
+        raise ValueError("certified action evidence admission fields differ")
+    campaign_name = _bounded_text(
+        value.get("campaign_name"),
+        name="campaign_name",
+        limit=200,
+    )
+    policy_validated_at_unix = value.get("policy_validated_at_unix")
+    final_attestation = value.get("final_verifier_attestation")
+    signed_payload = (
+        final_attestation.get("signed_payload")
+        if isinstance(final_attestation, Mapping)
+        else None
+    )
+    if (
+        type(policy_validated_at_unix) is not int
+        or policy_validated_at_unix <= 0
+        or not isinstance(signed_payload, Mapping)
+        or signed_payload.get("signed_at_unix") != policy_validated_at_unix
+    ):
+        raise ValueError("certified action evidence admission time is invalid")
+    root_path = os.environ.get(_ACTION_CALIBRATION_TRUST_ROOT_ENV)
+    if not isinstance(root_path, str) or not root_path.strip():
+        raise ValueError("certified action evidence trust root is not configured")
+    try:
+        trusted_root = read_stable_bytes(
+            Path(root_path).expanduser(),
+            max_bytes=64 * 1024,
+        )
+        from core.brain.llm.latent_cortex.campaign_trust import (
+            EVIDENCE_VERIFIER,
+            validate_campaign_trust_policy,
+            verify_role_attestation,
+        )
+
+        policy = validate_campaign_trust_policy(
+            value.get("policy_document"),
+            trusted_root_public_key_pem=trusted_root,
+            expected_campaign_name=campaign_name,
+            expected_policy_sha256=policy_sha256,
+            now_unix=policy_validated_at_unix,
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError("certified action evidence trust admission failed") from exc
+    final_payload = value.get("final_verifier_payload")
+    final_fields = {
+        "schema",
+        "accepted",
+        "candidate_sha256",
+        "calibration_bucket",
+        "plan_sha256",
+        "policy_sha256",
+        "campaign_manifest_sha256",
+        "journal_head_sha256",
+        "journal_event_count",
+        "observations_sha256",
+        "cells_sha256",
+        "pair_count",
+        "execution_count",
+        "frontier_claim_eligible",
+    }
+    if (
+        not isinstance(final_payload, Mapping)
+        or set(final_payload) != final_fields
+        or final_payload.get("schema") != ACTION_CALIBRATION_FINAL_VERIFIER_SCHEMA
+        or final_payload.get("accepted") is not True
+        or final_payload.get("candidate_sha256") != candidate_sha256
+        or final_payload.get("calibration_bucket") != bucket
+        or final_payload.get("policy_sha256") != policy.policy_sha256
+        or final_payload.get("cells_sha256") != _canonical_sha256(candidate_cells)
+        or final_payload.get("frontier_claim_eligible") is not False
+        or type(final_payload.get("pair_count")) is not int
+        or final_payload["pair_count"] < len(ACTION_VOCABULARY) * MIN_ACTION_TRIALS
+        or final_payload.get("execution_count") != final_payload["pair_count"] * 2
+        or type(final_payload.get("journal_event_count")) is not int
+        or final_payload["journal_event_count"] < final_payload["execution_count"] * 2
+        or any(
+            not _is_sha256(final_payload.get(name))
+            for name in (
+                "candidate_sha256",
+                "plan_sha256",
+                "policy_sha256",
+                "campaign_manifest_sha256",
+                "journal_head_sha256",
+                "observations_sha256",
+                "cells_sha256",
+            )
+        )
+    ):
+        raise ValueError("certified action evidence final verdict is invalid")
+    try:
+        verify_role_attestation(
+            policy,
+            value.get("final_verifier_attestation"),
+            role=EVIDENCE_VERIFIER,
+            expected_payload=final_payload,
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError("certified action evidence verifier attestation failed") from exc
+    return {
+        "schema": ACTION_CALIBRATION_WORKER_ADMISSION_SCHEMA,
+        "campaign_name": campaign_name,
+        "policy_validated_at_unix": policy_validated_at_unix,
+        "policy_document": dict(policy.document),
+        "final_verifier_payload": dict(final_payload),
+        "final_verifier_attestation": dict(value["final_verifier_attestation"]),
+    }
+
+
 def validate_evidence_snapshot(value: Any) -> dict[str, Any]:
-    fields = {"schema", "bucket", "cells", "snapshot_sha256"}
-    if not isinstance(value, Mapping) or set(value) != fields:
+    if not isinstance(value, Mapping):
         raise ValueError("action evidence snapshot fields differ")
-    if value.get("schema") != ACTION_EVIDENCE_SCHEMA:
+    schema = value.get("schema")
+    if schema == ACTION_CALIBRATION_EVIDENCE_SCHEMA:
+        fields = {
+            "schema",
+            "bucket",
+            "candidate_sha256",
+            "policy_sha256",
+            "admission",
+            "cells",
+            "snapshot_sha256",
+        }
+        if set(value) != fields:
+            raise ValueError("certified action evidence snapshot fields differ")
+        bucket = _bounded_text(value.get("bucket"), name="bucket", limit=160)
+        candidate_sha256 = value.get("candidate_sha256")
+        policy_sha256 = value.get("policy_sha256")
+        raw_cells = value.get("cells")
+        if (
+            not _is_sha256(candidate_sha256)
+            or not _is_sha256(policy_sha256)
+            or not isinstance(raw_cells, Mapping)
+            or len(raw_cells) > len(ACTION_VOCABULARY)
+        ):
+            raise ValueError("certified action evidence snapshot is invalid")
+        certified_cells: dict[str, dict[str, Any]] = {}
+        candidate_cells: dict[str, dict[str, Any]] = {}
+        for raw_action, raw_cell in raw_cells.items():
+            try:
+                action = OperationKind(raw_action)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"unknown certified action evidence cell: {raw_action!r}") from exc
+            cell = CertifiedActionEvidence.from_dict(raw_cell)
+            if (
+                cell.calibration_candidate_sha256 != candidate_sha256
+                or cell.policy_sha256 != policy_sha256
+            ):
+                raise ValueError("certified action evidence lineage does not match snapshot")
+            certified_cells[action.value] = cell.to_dict()
+            candidate_cells[action.value] = {
+                name: item
+                for name, item in cell.to_dict().items()
+                if name
+                not in {
+                    "calibration_candidate_sha256",
+                    "policy_sha256",
+                }
+            }
+        admission = _validate_certified_admission(
+            value.get("admission"),
+            bucket=bucket,
+            candidate_sha256=candidate_sha256,
+            policy_sha256=policy_sha256,
+            candidate_cells=candidate_cells,
+        )
+        payload = {
+            "schema": ACTION_CALIBRATION_EVIDENCE_SCHEMA,
+            "bucket": bucket,
+            "candidate_sha256": candidate_sha256,
+            "policy_sha256": policy_sha256,
+            "admission": admission,
+            "cells": {name: certified_cells[name] for name in sorted(certified_cells)},
+        }
+        expected = _canonical_sha256(payload)
+        if value.get("snapshot_sha256") != expected:
+            raise ValueError("certified action evidence snapshot digest does not match")
+        return {**payload, "snapshot_sha256": expected}
+    fields = {"schema", "bucket", "cells", "snapshot_sha256"}
+    if set(value) != fields:
+        raise ValueError("action evidence snapshot fields differ")
+    if schema != ACTION_EVIDENCE_SCHEMA:
         raise ValueError("action evidence snapshot schema is invalid")
     bucket = _bounded_text(value.get("bucket"), name="bucket", limit=160)
     raw_cells = value.get("cells")
@@ -455,7 +845,12 @@ def action_cost_estimate(
     except (TypeError, ValueError) as exc:
         raise ValueError(f"unknown cognitive action: {action!r}") from exc
     raw = snapshot["cells"].get(operation.value)
-    cell = ActionEvidence() if raw is None else ActionEvidence.from_dict(raw)
+    if raw is None:
+        cell: ActionEvidence | CertifiedActionEvidence = ActionEvidence()
+    elif snapshot["schema"] == ACTION_CALIBRATION_EVIDENCE_SCHEMA:
+        cell = CertifiedActionEvidence.from_dict(raw)
+    else:
+        cell = ActionEvidence.from_dict(raw)
     estimate = cell.estimate()
     measured = bool(estimate["measured"])
     return {
@@ -464,9 +859,7 @@ def action_cost_estimate(
         "measured": measured,
         "basis": "measured_cost_ucb" if measured else "declared_bootstrap_cost",
         "gain_basis": "measured_gain_lcb" if measured else "unmeasured",
-        "gain_lower_bound": (
-            round(float(estimate["gain_lcb"]), 8) if measured else None
-        ),
+        "gain_lower_bound": (round(float(estimate["gain_lcb"]), 8) if measured else None),
         "cost_upper_bound": round(
             float(estimate["cost_ucb"]) if measured else _BASE_COST[operation],
             8,
@@ -576,8 +969,16 @@ class ValueOfComputationPolicy:
         snapshot = validate_evidence_snapshot(evidence_snapshot)
         self.snapshot = snapshot
         self.bucket = snapshot["bucket"]
-        self.cells = {
-            OperationKind(name): ActionEvidence.from_dict(cell)
+        cell_type = (
+            CertifiedActionEvidence
+            if snapshot["schema"] == ACTION_CALIBRATION_EVIDENCE_SCHEMA
+            else ActionEvidence
+        )
+        self.cells: dict[
+            OperationKind,
+            ActionEvidence | CertifiedActionEvidence,
+        ] = {
+            OperationKind(name): cell_type.from_dict(cell)
             for name, cell in snapshot["cells"].items()
         }
 
@@ -592,11 +993,7 @@ class ValueOfComputationPolicy:
             raise ValueError("no executable cognitive action is feasible")
 
         # Terminal rules are explicit, preregistered, and dominate exploration.
-        if (
-            OperationKind.EXECUTE in feasible
-            and state.can_execute
-            and state.answer_verified
-        ):
+        if OperationKind.EXECUTE in feasible and state.can_execute and state.answer_verified:
             chosen = OperationKind.EXECUTE
             mode = "verified_execute"
         elif OperationKind.ANSWER in feasible and state.answer_verified:
@@ -645,7 +1042,7 @@ class ValueOfComputationPolicy:
                     action
                     for action in feasible
                     if action not in {OperationKind.ANSWER, OperationKind.ABSTAIN}
-                    and self.cells.get(action, ActionEvidence()).n < MIN_ACTION_TRIALS
+                    and not bool(self.cells.get(action, ActionEvidence()).estimate()["measured"])
                 ),
                 key=lambda action: (
                     self.cells.get(action, ActionEvidence()).n,
@@ -658,7 +1055,7 @@ class ValueOfComputationPolicy:
             else:
                 _, _, chosen, _ = max(scored, key=lambda row: (row[0], row[1]))
                 chosen_cell = self.cells.get(chosen, ActionEvidence())
-                mode = "measured" if chosen_cell.n >= MIN_ACTION_TRIALS else "bootstrap"
+                mode = "measured" if chosen_cell.estimate()["measured"] else "bootstrap"
 
         selected_cell = self.cells.get(chosen, ActionEvidence())
         selected_estimate = selected_cell.estimate()
@@ -824,8 +1221,8 @@ def validate_action_decision(value: Any) -> dict[str, Any]:
         raise ValueError("action decision evidence count is invalid")
     if type(evidence.get("measured")) is not bool:
         raise ValueError("action decision measured flag is invalid")
-    if evidence["measured"] is not (evidence["n"] >= MIN_ACTION_TRIALS):
-        raise ValueError("action decision measured flag contradicts trial count")
+    if evidence["measured"] and evidence["n"] < MIN_CERTIFIED_TASKS_PER_ACTION:
+        raise ValueError("action decision measured flag lacks certified trial count")
     expected_basis = "measured_lcb_per_cost_ucb" if evidence["measured"] else "bootstrap_prior"
     if evidence.get("basis") != expected_basis:
         raise ValueError("action decision evidence basis is contradictory")
@@ -1296,16 +1693,8 @@ def validate_action_trace(
         current_before = row["state_before"]
         if previous_after is not None:
             for name in ("residual", "disagreement"):
-                if (
-                    abs(
-                        float(current_before[name])
-                        - float(previous_after[name])
-                    )
-                    > 1e-7
-                ):
-                    raise ValueError(
-                        "cognitive action public state lineage is discontinuous"
-                    )
+                if abs(float(current_before[name]) - float(previous_after[name])) > 1e-7:
+                    raise ValueError("cognitive action public state lineage is discontinuous")
         current_budget = float(current_before["budget_remaining_fraction"])
         if current_budget > previous_budget + 1e-7:
             raise ValueError("cognitive action budget lineage increased")
@@ -1327,6 +1716,7 @@ __all__ = [
     "MIN_ACTION_TRIALS",
     "VALUE_OF_COMPUTATION_SCHEMA",
     "ActionEvidence",
+    "CertifiedActionEvidence",
     "CognitiveStateSignal",
     "ValueOfComputationPolicy",
     "action_cost_estimate",

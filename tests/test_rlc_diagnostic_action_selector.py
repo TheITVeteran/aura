@@ -15,10 +15,10 @@ from core.brain.llm.latent_cortex.diagnostic_action_selector import (
 )
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.value_of_computation import (
-    ActionEvidence,
     action_cost_estimate,
     build_evidence_snapshot,
 )
+from tests.fixtures.action_calibration import certified_action_snapshot
 
 
 def _digest(label: str) -> str:
@@ -108,6 +108,7 @@ def _build(
     graph: dict | None = None,
     routes: dict | None = None,
     cells: dict | None = None,
+    snapshot: dict | None = None,
     executors: tuple[OperationKind, ...] = (
         OperationKind.SIMULATE,
         OperationKind.FALSIFY,
@@ -116,7 +117,10 @@ def _build(
     ),
     trace: list[dict] | None = None,
 ) -> dict:
-    snapshot = build_evidence_snapshot(bucket="diagnostic", cells=cells or {})
+    snapshot = snapshot or build_evidence_snapshot(
+        bucket="diagnostic",
+        cells=cells or {},
+    )
     return build_diagnostic_action_selector_receipt(
         disagreement_graph=graph or _graph(),
         candidate_routes=routes or {},
@@ -190,9 +194,7 @@ def test_two_individually_valid_exact_claims_do_not_fake_dispute_resolution():
         routes=routes,
     )
 
-    execute = next(
-        row for row in receipt["plans"][0]["candidates"] if row["method"] == "execute"
-    )
+    execute = next(row for row in receipt["plans"][0]["candidates"] if row["method"] == "execute")
     assert execute["already_executed"] is False
     assert execute["available"] is False
     assert receipt["plans"][0]["selected"]["method"] == "specialized_verifier"
@@ -227,9 +229,7 @@ def test_source_route_selects_real_available_evidence_reinspection():
     selected = receipt["plans"][0]["selected"]
     assert selected["method"] == "retrieve"
     assert selected["operation_kind"] == "retrieve_evidence"
-    assert selected["applicability_basis"] == (
-        "disputed_atom_requested_this_verifier_class"
-    )
+    assert selected["applicability_basis"] == ("disputed_atom_requested_this_verifier_class")
 
 
 def test_memory_only_retrieval_uses_search_memory_not_evidence_operation():
@@ -244,26 +244,26 @@ def test_memory_only_retrieval_uses_search_memory_not_evidence_operation():
     assert selected["operation_kind"] == "search_memory"
 
 
-def test_measured_cost_breaks_equal_capability_band_conservatively():
-    cells = {
-        OperationKind.CHECK_ASSUMPTION: ActionEvidence(
-            n=8,
-            gain_sum=6.4,
-            gain_sq_sum=5.12,
-            cost_sum=7.2,
-            cost_sq_sum=6.48,
-        ),
-        OperationKind.FALSIFY: ActionEvidence(
-            n=8,
-            gain_sum=6.4,
-            gain_sq_sum=5.12,
-            cost_sum=0.4,
-            cost_sq_sum=0.02,
-        ),
-    }
+def test_measured_cost_breaks_equal_capability_band_conservatively(
+    tmp_path,
+    monkeypatch,
+):
+    snapshot, root_pem = certified_action_snapshot(
+        bucket="diagnostic",
+        cells={
+            OperationKind.CHECK_ASSUMPTION: (0.7, 0.8, 0.9, 0.9),
+            OperationKind.FALSIFY: (0.7, 0.8, 0.9, 0.05),
+        },
+    )
+    root_path = tmp_path / "action-calibration-root.pem"
+    root_path.write_bytes(root_pem)
+    monkeypatch.setenv(
+        "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+        str(root_path),
+    )
     receipt = _build(
         graph=_graph(dispute_kind="assumption"),
-        cells=cells,
+        snapshot=snapshot,
         executors=(OperationKind.FALSIFY, OperationKind.CHECK_ASSUMPTION),
         trace=_trace(savepoint=False),
     )
@@ -281,41 +281,39 @@ def test_no_available_capable_executor_abstains_instead_of_inventing_one():
     )
 
     assert receipt["selected_plan_count"] == 0
-    assert receipt["plans"][0]["selected"]["status"] == (
-        "no_admissible_diagnostic_operation"
-    )
-    assert all(
-        row["available"] is False for row in receipt["plans"][0]["candidates"]
-    )
+    assert receipt["plans"][0]["selected"]["status"] == ("no_admissible_diagnostic_operation")
+    assert all(row["available"] is False for row in receipt["plans"][0]["candidates"])
 
 
-def test_nonpositive_measured_gain_cannot_win_as_expected_resolution():
-    cells = {
-        OperationKind.CHECK_ASSUMPTION: ActionEvidence(
-            n=8,
-            gain_sum=-6.4,
-            gain_sq_sum=5.12,
-            cost_sum=0.8,
-            cost_sq_sum=0.08,
-        )
-    }
+def test_nonpositive_measured_gain_cannot_win_as_expected_resolution(
+    tmp_path,
+    monkeypatch,
+):
+    snapshot, root_pem = certified_action_snapshot(
+        bucket="diagnostic",
+        cells={
+            OperationKind.CHECK_ASSUMPTION: (-0.9, -0.8, -0.7, 0.1),
+        },
+    )
+    root_path = tmp_path / "action-calibration-root.pem"
+    root_path.write_bytes(root_pem)
+    monkeypatch.setenv(
+        "AURA_RLC_ACTION_CALIBRATION_TRUST_ROOT",
+        str(root_path),
+    )
     receipt = _build(
         graph=_graph(dispute_kind="assumption"),
-        cells=cells,
+        snapshot=snapshot,
         executors=(OperationKind.CHECK_ASSUMPTION,),
         trace=_trace(savepoint=False),
     )
 
     candidate = next(
-        row
-        for row in receipt["plans"][0]["candidates"]
-        if row["method"] == "specialized_verifier"
+        row for row in receipt["plans"][0]["candidates"] if row["method"] == "specialized_verifier"
     )
     assert candidate["available"] is True
     assert candidate["expected_resolution_score"] == 0.0
-    assert receipt["plans"][0]["selected"]["status"] == (
-        "no_admissible_diagnostic_operation"
-    )
+    assert receipt["plans"][0]["selected"]["status"] == ("no_admissible_diagnostic_operation")
 
 
 def test_formalization_is_not_misrepresented_as_a_proof_executor():
@@ -325,9 +323,7 @@ def test_formalization_is_not_misrepresented_as_a_proof_executor():
         trace=_trace(savepoint=False),
     )
 
-    prove = next(
-        row for row in receipt["plans"][0]["candidates"] if row["method"] == "prove"
-    )
+    prove = next(row for row in receipt["plans"][0]["candidates"] if row["method"] == "prove")
     assert prove["available"] is False
     assert receipt["plans"][0]["selected"]["method"] == "specialized_verifier"
 
@@ -361,9 +357,7 @@ def test_validator_reconstructs_selection_and_rejects_authority_tampering():
             tampered,
             disagreement_graph=_graph(),
             value_policy={
-                "snapshot_sha256": receipt["action_policy_evidence"][
-                    "snapshot_sha256"
-                ],
+                "snapshot_sha256": receipt["action_policy_evidence"]["snapshot_sha256"],
                 "executors": receipt["capabilities"]["executors"],
             },
             action_trace=_trace(),

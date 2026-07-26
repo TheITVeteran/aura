@@ -5,6 +5,8 @@ graded verified outcomes, sparse exploration, bounded arm deltas, durable
 ledger with corrupt-line tolerance, and a kill switch tests default to.
 """
 
+import pytest
+
 from core.brain.latent_cortex_service import _controller_outcome
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
 from core.brain.llm.latent_cortex.execution_controller import (
@@ -16,9 +18,6 @@ from core.brain.llm.latent_cortex.value_of_computation import (
     ACTION_TRANSITION_SCHEMA,
     transition_reward,
 )
-
-
-import pytest
 
 
 @pytest.fixture(autouse=True)
@@ -304,7 +303,9 @@ def test_unchecked_and_fractional_scores_cannot_create_wilson_evidence(tmp_path)
     assert decision["mode"] != "exploit"
 
 
-def test_checked_action_transitions_persist_and_restore_as_policy_evidence(tmp_path):
+def test_checked_action_transitions_persist_as_bootstrap_not_certified_evidence(
+    tmp_path,
+):
     root = tmp_path / "controller"
     controller = ExecutionController(root=root)
     bucket = "general|none|short|s:mid|u:mid"
@@ -342,7 +343,7 @@ def test_checked_action_transitions_persist_and_restore_as_policy_evidence(tmp_p
         for item in restored.status()["action_cells"]
         if item["action"] == "falsify"
     )
-    assert cell["measured"] is True
+    assert cell["measured"] is False
 
 
 def test_unchecked_or_malformed_action_transition_never_enters_learning(tmp_path):

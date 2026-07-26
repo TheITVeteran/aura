@@ -370,8 +370,7 @@ class PublicTaskRecord:
         if (
             not isinstance(fingerprints, list)
             or any(
-                not isinstance(item, Mapping)
-                or set(item) != {"method", "sha256"}
+                not isinstance(item, Mapping) or set(item) != {"method", "sha256"}
                 for item in fingerprints
             )
             or not isinstance(exclusions, list)
@@ -1464,6 +1463,70 @@ def generate_task(
     return _registry(registry_version).generate(domain, seed=seed, difficulty=difficulty)
 
 
+def reblind_frontier_task(
+    task: FrontierTask,
+    *,
+    blind_nonce: bytes,
+) -> FrontierTask:
+    """Replace the seed-derived answer blind with an issuer CSPRNG nonce."""
+
+    if (
+        not isinstance(task, FrontierTask)
+        or not isinstance(blind_nonce, bytes)
+        or len(blind_nonce) != 32
+        or len(set(blind_nonce)) < 16
+    ):
+        _fail("external_answer_blind_nonce_invalid")
+    private_body = task.reveal_for_verifier()
+    private_body["blind_nonce"] = blind_nonce.hex()
+    answer_bytes = canonical_json_bytes(private_body)
+    if len(answer_bytes) > MAX_ANSWER_PAYLOAD_BYTES:
+        _fail("answer_payload_too_large")
+    blinded = BlindedAnswerPayload(
+        _sha256_bytes(answer_bytes),
+        answer_bytes,
+    )
+    prior = task.public
+    public_body = {
+        "schema": prior.schema,
+        "registry_version": prior.registry_version,
+        "domain": prior.domain,
+        "generator_id": prior.generator_id,
+        "generator_version": prior.generator_version,
+        "difficulty": prior.difficulty,
+        "prompt": prior.prompt,
+        "response_contract": prior.response_contract,
+        "scorer_id": prior.scorer_id,
+        "scorer_version": prior.scorer_version,
+        "answer_commitment_sha256": blinded.commitment_sha256,
+        "contamination_fingerprints": [item.to_dict() for item in prior.contamination_fingerprints],
+        "excluded_training_families": list(prior.excluded_training_families),
+    }
+    task_payload_sha256 = _sha256_json(public_body)
+    public = PublicTaskRecord(
+        schema=prior.schema,
+        registry_version=prior.registry_version,
+        task_id=f"rlc_frontier:{prior.domain}:{task_payload_sha256}",
+        task_payload_sha256=task_payload_sha256,
+        domain=prior.domain,
+        generator_id=prior.generator_id,
+        generator_version=prior.generator_version,
+        difficulty=prior.difficulty,
+        prompt=prior.prompt,
+        response_contract=prior.response_contract,
+        scorer_id=prior.scorer_id,
+        scorer_version=prior.scorer_version,
+        answer_commitment_sha256=blinded.commitment_sha256,
+        contamination_fingerprints=prior.contamination_fingerprints,
+        excluded_training_families=prior.excluded_training_families,
+    )
+    return FrontierTask(
+        schema=TASK_SCHEMA,
+        public=public,
+        blinded_answer=blinded,
+    )
+
+
 def generate_task_battery(
     seeds: Sequence[int],
     *,
@@ -1512,5 +1575,6 @@ __all__ = [
     "generate_task",
     "generate_task_battery",
     "parse_final_answer",
+    "reblind_frontier_task",
     "score_task",
 ]
