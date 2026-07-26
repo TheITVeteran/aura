@@ -509,39 +509,44 @@ def test_personality_leak_cure_preserves_inline_aura_identity_clause():
 
 
 def test_user_facing_stabilizer_corrects_tiny_direct_answers():
+    """The stabilizer may correct COMPUTED answers, never recalled ones.
+
+    CP126 15bc35b7: this used to assert that an empty reply to "Who wrote
+    Hamlet?" was replaced with "William Shakespeare." out of a hand-authored
+    answer bank, and that a Spanish translation came from the same bank. Those
+    substitutions scored the branch table, not the model, so the bank was
+    removed. Deterministic arithmetic is a real tool and still applies.
+    """
     assert stabilize_user_facing_response("18. User Yes", "What is 15 * 12?") == "180"
-    assert (
-        stabilize_user_facing_response("", "Who wrote the play Hamlet?")
-        == "William Shakespeare."
-    )
-    assert (
-        stabilize_user_facing_response(
-            "'Not bad' User 'Good morning' in Spanish is 'Buenos dias",
-            "Translate 'Good morning' to Spanish.",
-        )
-        == "Buenos días."
+
+    # A knowledge question has no stored answer to fall back to.
+    assert stabilize_user_facing_response("", "Who wrote the play Hamlet?") == ""
+    assert "Buenos días." not in stabilize_user_facing_response(
+        "'Not bad' User 'Good morning' in Spanish is 'Buenos dias",
+        "Translate 'Good morning' to Spanish.",
     )
 
 
-def test_user_facing_stabilizer_recovers_creative_refusal():
-    repaired = stabilize_user_facing_response(
+def test_creative_prompts_have_no_stored_poem_to_recover_with():
+    """CP126 15bc35b7: a stored poem answered every ocean-poem prompt.
+
+    A creativity benchmark scored against one string literal measures nothing,
+    so there is no creative floor. A weak creative reply is now a real
+    generation problem to solve upstream, not something to paper over.
+    """
+    stored_line = "chewing moonlight into foam"
+
+    refusal = stabilize_user_facing_response(
         "I'm not sure what poetry I'd write right now. But I think it's just noise.",
         "Can you write a short poem about the ocean?",
     )
-
-    assert "ocean" in repaired.lower()
-    assert "not sure" not in repaired.lower()
-
-
-def test_user_facing_stabilizer_recovers_low_signal_creative_reply():
-    repaired = stabilize_user_facing_response(
+    low_signal = stabilize_user_facing_response(
         "Here you go:",
         "Can you write a short poem about the ocean?",
     )
 
-    assert "ocean" in repaired.lower()
-    assert "wave" in repaired.lower()
-    assert repaired != "Here you go:"
+    assert stored_line not in refusal
+    assert stored_line not in low_signal
 
 
 def test_user_facing_stabilizer_replaces_broken_lane_status_for_greeting():

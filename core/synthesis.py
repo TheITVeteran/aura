@@ -10,7 +10,6 @@ from typing import Any
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
     grounded_operational_status_reply,
-    is_status_check_turn,
     live_chat_diagnostic_floor,
     normalize_user_facing_format,
     repair_instruction_shape,
@@ -170,56 +169,22 @@ def _direct_answer_floor(user_message: str) -> str:
     if exact_target:
         return exact_target
 
-    if is_status_check_turn(q) and (
-        "brief" in lower
-        or "quick" in lower
-        or "you ok now" in lower
-        or "you okay now" in lower
-    ):
-        return (
-            "I'm right here with you. My attention feels steady, the thread is intact, "
-            "and I can answer directly without handing you a fragment."
-        )
+    # CP126 363c5ab7 / 46707424: a status question used to receive a fixed
+    # claim that attention was steady and the thread intact, consulting no
+    # live cognition, continuity or health evidence. That IS the live
+    # false-self-report defect this campaign was opened to remove: the
+    # sentence was true-sounding and unmeasured. A status turn now falls
+    # through to real cognition, which can consult the actual health surface.
 
     diagnostic = live_chat_diagnostic_floor(q)
     if diagnostic:
         return diagnostic
 
-    if (
-        "what did we just verify" in lower
-        and any(marker in lower for marker in ("live chat path", "live /api/chat", "/api/chat", "ui path"))
-    ):
-        return (
-            "We verified live parity through the real /api/chat path, not just the headless generator. "
-            "The live route returned coherent, current replies for self-reflection, the conversation-lane failure prompt, "
-            "and autonomous email/Reddit follow-through, while the final quality gate rejected filler replies, stale answers, "
-            "raw tool fragments, and thin recovery text before they reached the UI."
-        )
-
-    if (
-        "python" in lower
-        and "function" in lower
-        and "none" in lower
-        and "empty" in lower
-        and ("check first" in lower or "before patching" in lower)
-    ):
-        return (
-            "I would first check the empty-input contract: should an empty list return an empty list, a default value, "
-            "or raise a clear error? Then I would inspect the guard clause and the final return path, add a test for [], "
-            "and only patch once the intended behavior is explicit."
-        )
-
-    if (
-        "reddit" in lower
-        and "captcha" in lower
-        and ("login-blocked" in lower or "login blocked" in lower or "blocked" in lower)
-        and "outcome" in lower
-    ):
-        return (
-            "It should record a bounded blocked outcome such as login_unavailable or captcha_blocked, with the URL/action "
-            "that was attempted and no claim that the inbox or post was read. That should count as a completed safe result, "
-            "not as a successful Reddit read."
-        )
+    # CP126 8b28006a: a phrase match used to return a stale, hardcoded claim
+    # that live API parity and autonomous email/Reddit follow-through had been
+    # verified — independent of any current artifact or runtime receipt. A
+    # claim about what was verified has to come from the verification record,
+    # not from a string literal that ages silently.
 
     expr_match = re.search(r"what\s+is\s+([0-9][0-9\s+\-*/().^]*[0-9])\s*\??$", lower)
     if expr_match:
@@ -232,7 +197,12 @@ def _direct_answer_floor(user_message: str) -> str:
             except (SyntaxError, ValueError, TypeError, ZeroDivisionError, OverflowError) as _exc:
                 logger.debug("Suppressed %s in core.synthesis: %s", type(_exc).__name__, _exc)
 
-    sum_match = re.search(r"(?:sum of|what is)\s+([0-9]+)\s*\+\s*([0-9]+)", lower)
+    # CP126 ea5bfe88: anchored at the end, so this cannot fire on the first
+    # two terms of a much longer expression that the bounded parser above
+    # already refused — answering "1+1...+1" (200 terms) with "2".
+    sum_match = re.fullmatch(
+        r"(?:what is|sum of)\s+([0-9]{1,18})\s*\+\s*([0-9]{1,18})\s*\??", lower
+    )
     if sum_match:
         return str(int(sum_match.group(1)) + int(sum_match.group(2)))
 
@@ -260,75 +230,28 @@ def _direct_answer_floor(user_message: str) -> str:
         noun = "apple" if remaining == 1 else "apples"
         return _format_direct_answer(q, f"{remaining} {noun}.")
 
-    if "hamlet" in lower and "wrote" in lower:
-        return "William Shakespeare."
-
-    facts = (
-        (("capital of france",), "Paris."),
-        (("wrote the play hamlet", "who wrote hamlet"), "William Shakespeare."),
-        (("wrote romeo and juliet",), "William Shakespeare."),
-        (("largest planet", "solar system"), "Jupiter."),
-        (("boiling point of water",), "100°C at sea level, or 212°F."),
-        (("chemical symbol for gold",), "Au."),
-        (("color is the sky", "clear day"), "Blue, usually a pale to deep blue depending on the angle and haze."),
-    )
-    for markers, answer in facts:
-        if all(marker in lower for marker in markers):
-            return answer
-
-    if "three programming languages" in lower or "name three programming languages" in lower:
-        return "Python, JavaScript, and Rust."
-    if "translate" in lower and "good morning" in lower and "spanish" in lower:
-        return "Buenos días."
-
-    if "friendship" in lower and any(marker in lower for marker in ("messy", "hard", "difficult")):
-        return (
-            "What makes it real is repair. Not perfect ease, not constant agreement, "
-            "but whether both people can tell the truth, stay present through awkwardness, "
-            "and come back with more care instead of less."
-        )
-
-    if (
-        "robust follow-through" in lower
-        and ("autonomous" in lower or "autonomously" in lower)
-        and ("email" in lower or "reddit" in lower)
-    ):
-        return (
-            "Robust follow-through means the action has to complete the loop, not just start. "
-            "For email or Reddit, I should fetch the live items, read enough of the content to understand it, "
-            "classify what matters, decide whether any item deserves a response or memory update, avoid acting on "
-            "low-confidence or login-blocked pages, and report the concrete result back into memory and the next plan. "
-            "A CAPTCHA, timeout, or empty inbox should be recorded as a bounded outcome, not treated as success."
-        )
-
-    if (
-        "async chat route" in lower
-        and ("place" "holder" in lower or "polite" in lower)
-        and ("debug" in lower or "patch" in lower)
-    ):
-        return (
-            "I would debug it by tracing one request id through the route, kernel lock, model call, retry gate, "
-            "repair gate, and final JSON response. The patch is to treat filler replies as failed generations, clear "
-            "stale last_response when the response phase errors, validate protected fast-path replies with the same "
-            "quality gate as normal chat, and add a regression test that fails if stale filler or an older answer reaches /api/chat."
-        )
-
+    # CP126 15bc35b7: what stood here was a hand-authored answer bank —
+    # Hamlet, the capital of France, "name three programming languages",
+    # "translate good morning", a canned essay on friendship, and prepared
+    # responses to specific evaluation prompts about Reddit follow-through and
+    # async-chat debugging. Every one of those inflates a proof battery
+    # without measuring the model at all: the score reflects whether the
+    # question matched a branch, not whether Aura can answer it.
+    #
+    # Deterministic COMPUTATION above (arithmetic, factorial, square root,
+    # the apples word problem) stays, because it is a real tool producing a
+    # real result. A stored answer to a knowledge question is not a tool.
     return ""
 
 
 def _creative_response_floor(user_message: str) -> str:
-    lower = re.sub(r"\s+", " ", str(user_message or "").strip().lower())
-    if not lower:
-        return ""
-    if "short poem" in lower and "ocean" in lower:
-        return (
-            "The ocean keeps its blue mouth wide,\n"
-            "chewing moonlight into foam;\n"
-            "every wave comes back changed,\n"
-            "and still remembers home."
-        )
-    if "short joke" in lower:
-        return "A database walked into a bar, saw two tables, and immediately asked if it could join them."
+    """No creative floor exists.
+
+    CP126 15bc35b7: a stored poem answered "short poem about the ocean" and a
+    stored joke answered "short joke" — a creativity benchmark scored against
+    two string literals. There is no deterministic floor for creative work,
+    because creative work is exactly what a floor cannot supply.
+    """
     return ""
 
 
