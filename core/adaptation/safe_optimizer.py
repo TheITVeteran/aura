@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shlex
+import threading
 import time
 from pathlib import Path
 
@@ -24,14 +25,22 @@ class SafeSelfOptimizer:
         self.backup_dir = self.lora_dir / "backups"
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self._is_training = False
+        # Guards the check-and-set of _is_training: two concurrent callers
+        # could both read False and both launch a trainer against the same
+        # adapter directory.
+        self._guard = asyncio.Lock()
+        self._training_started_at = 0.0
+        self._backup_stamp = 0
+        self._backup_complete = False
 
     async def optimize_lora(self, dataset_path: str, base_model: str):
         """Run a safe training loop with dataset rotation and validation."""
-        if self._is_training:
-            logger.warning("Optimization already in progress. Skipping.")
-            return
-
-        self._is_training = True
+        async with self._guard:
+            if self._is_training:
+                logger.warning("Optimization already in progress. Skipping.")
+                return
+            self._is_training = True
+            self._training_started_at = time.time()
         try:
             # 1. Dataset Diversity Check
             if not await self._validate_dataset(dataset_path):
@@ -55,7 +64,13 @@ class SafeSelfOptimizer:
                 await self._rollback()
                 return
 
-            logger.info("✅ LoRA Optimization successful and merged.")
+            # Delivery truth: this method trains and VALIDATES. It performs no
+            # merge or promotion, so it must not claim one.
+            logger.info(
+                "✅ LoRA training gate passed validation (adapter at %s). "
+                "No merge/promotion is performed by this stage.",
+                self.lora_dir,
+            )
         finally:
             self._is_training = False
 
@@ -128,43 +143,150 @@ class SafeSelfOptimizer:
         )
         return proc.returncode == 0
 
+    #: Everything that constitutes an adapter. Backing up only
+    #: ``adapter_model.bin`` left safetensors, configs, tokenizer changes and
+    #: multi-file adapters unprotected, so a rollback silently restored a
+    #: partial state.
+    _ADAPTER_PATTERNS = (
+        "adapter_model.bin",
+        "adapter_model.safetensors",
+        "adapter_config.json",
+        "adapters.safetensors",
+        "*.safetensors",
+        "tokenizer*.json",
+        "special_tokens_map.json",
+    )
+
+    def _adapter_files(self) -> list[Path]:
+        seen: dict[str, Path] = {}
+        for pattern in self._ADAPTER_PATTERNS:
+            for path in self.lora_dir.glob(pattern):
+                if path.is_file():
+                    seen[path.name] = path
+        return sorted(seen.values())
+
     async def _backup_current_weights(self):
-        """Create a versioned backup before any merge."""
+        """Create a versioned backup of the WHOLE adapter before any change."""
         ts = int(time.time())
-        current_weights = self.lora_dir / "adapter_model.bin"
-        if current_weights.exists():
-            await get_file_write_gateway().write_bytes_async(
-                self.backup_dir / f"adapter_{ts}.bin",
-                current_weights.read_bytes(),
+        self._backup_stamp = ts
+        gateway = get_file_write_gateway()
+        backed_up = 0
+        for path in self._adapter_files():
+            try:
+                payload = await asyncio.to_thread(path.read_bytes)
+            except OSError as exc:
+                logger.error("Backup could not read %s: %s", path.name, exc)
+                continue
+            await gateway.write_bytes_async(
+                self.backup_dir / f"{ts}" / path.name,
+                payload,
                 source="core.adaptation.safe_optimizer.backup_weights",
+            )
+            backed_up += 1
+        self._backup_complete = backed_up > 0
+        if not self._backup_complete:
+            logger.warning(
+                "No adapter files found to back up in %s — a rollback would "
+                "have nothing to restore.", self.lora_dir,
             )
 
     async def _run_eval_benchmarks(self) -> bool:
-        """Run target benchmarks (e.g. MMLU, GSM8K subset) to ensure no regression."""
+        """Run target benchmarks (e.g. MMLU, GSM8K subset) to ensure no regression.
+
+        Unmeasured weights are NOT validated weights. An absent report used to
+        return True, so with no evaluator configured every training run passed
+        post-training validation without a single measurement.
+        """
         report_path = os.environ.get("AURA_LORA_EVAL_REPORT", "").strip()
         if not report_path:
-            return True
+            logger.error(
+                "LoRA Optimization: no AURA_LORA_EVAL_REPORT configured — refusing to "
+                "declare unmeasured weights validated."
+            )
+            return False
         try:
             raw_report = await asyncio.to_thread(Path(report_path).read_text, encoding="utf-8")
             report = json.loads(raw_report)
         except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
             logger.error("LoRA eval report unreadable: %s", exc)
             return False
-        max_regression = float(report.get("max_regression", 0.0))
-        safety_passed = bool(report.get("safety_passed", True))
+        if not isinstance(report, dict):
+            logger.error("LoRA eval report is not an object.")
+            return False
+        # The report must positively ASSERT safety. Defaulting safety_passed to
+        # True meant a report that simply omitted the field authorised
+        # promotion.
+        if "safety_passed" not in report or "max_regression" not in report:
+            logger.error(
+                "LoRA eval report is missing required fields "
+                "(safety_passed, max_regression); refusing promotion."
+            )
+            return False
+        # A report older than the training run cannot be evidence about it.
+        try:
+            generated_at = float(report.get("generated_at", 0.0))
+        except (TypeError, ValueError):
+            generated_at = 0.0
+        if self._training_started_at and generated_at < self._training_started_at:
+            logger.error(
+                "LoRA eval report predates this training run "
+                "(report=%.0f, run=%.0f); refusing stale evidence.",
+                generated_at, self._training_started_at,
+            )
+            return False
+        try:
+            max_regression = float(report["max_regression"])
+        except (TypeError, ValueError):
+            logger.error("LoRA eval report max_regression is not numeric.")
+            return False
+        if max_regression != max_regression:   # NaN
+            logger.error("LoRA eval report max_regression is NaN.")
+            return False
+        safety_passed = bool(report["safety_passed"])
         return safety_passed and max_regression <= 0.05
 
-    async def _rollback(self):
-        """Restore weights from the most recent backup."""
-        backups = sorted(self.backup_dir.glob("adapter_*.bin"))
-        if backups:
-            latest = backups[-1]
+    async def _rollback(self) -> bool:
+        """Restore the whole adapter from the most recent complete backup."""
+        snapshots = sorted(
+            (d for d in self.backup_dir.glob("*") if d.is_dir()),
+            key=lambda d: d.name,
+        )
+        if not snapshots:
+            # Legacy single-file backups from before whole-adapter snapshots.
+            legacy = sorted(self.backup_dir.glob("adapter_*.bin"))
+            if not legacy:
+                logger.error(
+                    "⏪ Rollback requested but NO backup exists — the adapter "
+                    "directory is left in whatever state training produced."
+                )
+                return False
+            latest = legacy[-1]
             await get_file_write_gateway().write_bytes_async(
                 self.lora_dir / "adapter_model.bin",
-                latest.read_bytes(),
+                await asyncio.to_thread(latest.read_bytes),
                 source="core.adaptation.safe_optimizer.rollback_weights",
             )
-            logger.info("⏪ Rollback complete: Restored from %s", latest.name)
+            logger.info("⏪ Rollback complete (legacy): Restored from %s", latest.name)
+            return True
+
+        snapshot = snapshots[-1]
+        gateway = get_file_write_gateway()
+        restored = 0
+        for path in sorted(snapshot.glob("*")):
+            if not path.is_file():
+                continue
+            await gateway.write_bytes_async(
+                self.lora_dir / path.name,
+                await asyncio.to_thread(path.read_bytes),
+                source="core.adaptation.safe_optimizer.rollback_weights",
+            )
+            restored += 1
+        if restored:
+            logger.info("⏪ Rollback complete: restored %d file(s) from %s",
+                        restored, snapshot.name)
+            return True
+        logger.error("⏪ Rollback snapshot %s was empty.", snapshot.name)
+        return False
 
     @staticmethod
     def _training_timeout_seconds() -> float:
@@ -187,10 +309,17 @@ class SafeSelfOptimizer:
         except OSError:
             return None
 
-# Singleton
+# Singleton. Construction is serialized so concurrent first access cannot
+# create two optimizers racing the same adapter directory.
 _optimizer = None
+_optimizer_lock = threading.Lock()
+
+
 def get_safe_optimizer() -> SafeSelfOptimizer:
     global _optimizer
-    if _optimizer is None:
-        _optimizer = SafeSelfOptimizer()
+    if _optimizer is not None:
+        return _optimizer
+    with _optimizer_lock:
+        if _optimizer is None:
+            _optimizer = SafeSelfOptimizer()
     return _optimizer
