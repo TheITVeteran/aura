@@ -1517,7 +1517,14 @@ _QUESTION_BACK_NON_ANSWER_RE = re.compile(
     re.IGNORECASE,
 )
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-_JAMMED_NUMBERED_MARKER_RE = re.compile(r"(?<=[.!?])(?=\d+[.)]\s*)")
+# A numbered list marker jammed onto the previous sentence ("...steps.2. Then")
+# is a real local-model defect worth repairing. A decimal point is not that.
+# LIVE DEFECT, 2026-07-26: the desktop reply "...welfare 0.80, coherence 0.86."
+# reached the user as "...coherence 0." / newline / "86" — this rule matched the
+# decimal point in "0.86." because "86." looks exactly like a list marker. The
+# negative lookbehind requires that the sentence terminator not itself be a
+# decimal point, i.e. that it is not preceded by a digit.
+_JAMMED_NUMBERED_MARKER_RE = re.compile(r"(?<![0-9][.!?])(?<=[.!?])(?=\d+[.)]\s*)")
 _LIST_LINE_RE = re.compile(r"^\s*(?P<marker>(?:[-*+]|\d+[.)]))\s*(?P<body>.*)$")
 _EXACT_REPLY_CONDITIONAL_TAIL_RE = re.compile(
     r"(?:^|[,;]\s*|\s+)"
@@ -2436,14 +2443,41 @@ _RECTANGLE_AREA_RE = re.compile(
 # opinion or a chat turn a weaker lane's answer beats silence, but for a
 # question with a single correct answer a confident wrong one is worse than
 # saying you cannot do it right now.
+# Nouns whose answer is a quantity and nothing else. Asking for one of these
+# IS asking for a number, with or without an arithmetic operator in the text.
+# LIVE DEFECT, 2026-07-26: "A bag has 3 red, 4 blue and 5 green marbles... what's
+# the probability both are the same colour? Show the reasoning, then give the
+# exact fraction." classified as neither determinate nor reasoning-lane, because
+# it carries no +-*/ and says "show the reasoning" rather than "show your work".
+# Steering therefore never stood down, and the answer served to the user was
+# "Do product of multiple exponent term simplify reflexion".
+_DETERMINATE_QUANTITY_NOUN = (
+    r"probabilit(?:y|ies)|odds|chances?|likelihood|averages?|means?|medians?|"
+    r"totals?|sums?|products?|differences?|remainders?|quotients?|ratios?|"
+    r"proportions?|fractions?|percents?|percentages?|areas?|perimeters?|"
+    r"volumes?|speeds?|rates?|expected\s+values?|standard\s+deviations?"
+)
+_DETERMINATE_QUANTITY_REQUEST_RE = re.compile(
+    r"(?:\bwhat(?:'s|s| is| are)\s+the\s+(?:" + _DETERMINATE_QUANTITY_NOUN + r")\b"
+    r"|\b(?:what|which)\s+(?:fraction|proportion|percent|percentage|probability)\b"
+    r"|\bhow\s+likely\b"
+    r"|\bwhat\s+are\s+the\s+odds\b"
+    r"|\b(?:give|compute|calculate|work\s+out|find)\s+(?:me\s+)?the\s+(?:exact\s+)?"
+    r"(?:" + _DETERMINATE_QUANTITY_NOUN + r")\b)",
+    re.IGNORECASE,
+)
 _SINGLE_ANSWER_REQUEST_RE = re.compile(
-    r"\b(?:how many|how much|how long|how far|what time|which number|"
-    r"what percentage|how old|how fast)\b",
+    r"(?:\b(?:how many|how much|how long|how far|what time|which number|"
+    r"what percentage|how old|how fast|how likely)\b"
+    r"|" + _DETERMINATE_QUANTITY_REQUEST_RE.pattern + r")",
     re.IGNORECASE,
 )
 _WORK_IT_OUT_RE = re.compile(
-    r"\b(?:work through it|check your work|show your work|step by step|"
-    r"report the answer|just the number|give just the number)\b",
+    r"\b(?:work through it|check your work|show your work|show your working|"
+    r"show the work|show the working|show your reasoning|show the reasoning|"
+    r"walk me through (?:it|the|your)|explain your reasoning|step by step|"
+    r"report the answer|just the number|give just the number|"
+    r"exact fraction|exact value|exact answer|decimal places)\b",
     re.IGNORECASE,
 )
 _QUANTITY_RE = re.compile(r"\d")
@@ -2482,14 +2516,19 @@ def asks_for_a_number(user_message: Any) -> bool:
     text = str(user_message or "")
     if not text.strip():
         return False
-    if not _NUMERIC_REQUEST_CUE_RE.search(text):
-        return False
-    if not _NUMERIC_OPERATOR_RE.search(text):
-        return False
     quantities = len(_ARITHMETIC_NUMBER_RE.findall(text)) + len(
         _NUMBER_WORD_RE.findall(text)
     )
-    return quantities >= 2
+    if quantities < 2:
+        return False
+    # An operator is one way to be unambiguously numeric. Naming a quantity
+    # that has no non-numeric form — a probability, a fraction, an average —
+    # is the other, and it is the shape most word problems actually take.
+    if _DETERMINATE_QUANTITY_REQUEST_RE.search(text):
+        return True
+    if not _NUMERIC_REQUEST_CUE_RE.search(text):
+        return False
+    return bool(_NUMERIC_OPERATOR_RE.search(text))
 
 
 def numeric_answer_missing(user_message: Any, reply_text: Any) -> bool:

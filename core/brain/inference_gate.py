@@ -3829,12 +3829,36 @@ class InferenceGate:
         return floor, max(floor, cap), loops
 
     @classmethod
+    def _turn_is_determinate_task(cls, prompt: Any) -> bool:
+        """Whether the turn asks for a quantity this runtime must simply get right."""
+        try:
+            from core.conversation.response_reliability import asks_for_a_number
+        except ImportError:
+            return False
+        try:
+            return bool(asks_for_a_number(prompt))
+        except (RuntimeError, TypeError, ValueError):
+            return False
+
+    @classmethod
     def _foreground_prompt_profile(cls, prompt: str, context: dict[str, Any] | None = None) -> str:
         """Classify a live foreground turn for context and output budgeting."""
 
         context = context or {}
         if bool(context.get("deep_mind_probe", False)):
             return "deep_probe"
+        # A question with one right answer is answered from a lean prompt.
+        # Measured live 2026-07-26 on the desktop surface: a 78-character
+        # arithmetic question was sent as
+        #   chars=7542 (scaffold=5200 request=2342) origin=desktop_quick_user
+        # — the person's actual words about one percent of what the model read,
+        # under the 'standard' budget of ~15.6k that never trims any of it. The
+        # likeliest continuation of a prompt that is almost entirely
+        # self-description is more self-description, which is what came back:
+        # off-topic prose, and replies the gate rejected as runtime_boilerplate.
+        # The bare model answers this instantly; the scaffold is what buries it.
+        if cls._turn_is_determinate_task(prompt):
+            return "contract"
         if bool(context.get("desktop_quick_reply_contract", False)) and bool(
             context.get("memory_state_contract", False)
         ):
