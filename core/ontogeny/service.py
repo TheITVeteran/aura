@@ -35,13 +35,14 @@ import logging
 import threading
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from core.ontogeny import telemetry
 from core.ontogeny.authority import AuthorityLedger, AuthorityStage, get_authority_ledger
 from core.ontogeny.calibration import CalibrationMonitor, TrackRecord, TrackRecordIndex
 from core.ontogeny.experience import (
@@ -106,6 +107,13 @@ class ControlPoint:
     name: str
     schema: FeatureSchema
     actions: tuple[str, ...]
+    #: The subset a random-exploration episode may draw from. Exploration is
+    #: how the corpus gets its only causally clean evidence, but it is not a
+    #: licence to take any action at random: the explorable set holds the ones
+    #: whose worst case is a delay, and leaves out the ones that create
+    #: obligations or consequences somebody has to unwind. Empty means the
+    #: whole action set is explorable.
+    explorable: tuple[str, ...] = ()
     horizon_s: float = 900.0
     heads: dict[str, PredictionHead] = field(default_factory=dict)
     moments: RunningMoments | None = None
@@ -127,6 +135,10 @@ class ControlPoint:
         if self.moments is None:
             self.moments = RunningMoments(len(self.schema.names))
         return self.heads
+
+    @property
+    def explorable_actions(self) -> tuple[str, ...]:
+        return self.explorable or self.actions
 
     @property
     def scorable(self) -> tuple[str, ...]:
@@ -152,6 +164,9 @@ class Verdict:
     reservation: Reservation
     episode_id: str | None
     novelty: float
+    #: The world model's prediction error for this moment, when it is running.
+    #: Complements novelty: unfamiliar *state* versus unexpected *outcome*.
+    surprise: float | None = None
     #: P(success) per candidate action, when a head exists. The shadow record.
     scores: dict[str, float] = field(default_factory=dict)
     track: TrackRecord | None = None
@@ -172,6 +187,7 @@ class Verdict:
             "reservation": {"decider": str(self.reservation.decider), "reason": self.reservation.reason},
             "episode_id": self.episode_id,
             "novelty": round(self.novelty, 4),
+            "surprise": round(self.surprise, 4) if self.surprise is not None else None,
             "scores": {k: round(v, 4) for k, v in self.scores.items()},
             "track": self.track.as_dict() if self.track else None,
             "advice": self.advice,
@@ -218,6 +234,8 @@ class OntogenyCore:
         self._stopped = threading.Event()
         self._started_at = time.time()
         self._track = TrackRecordIndex()
+        #: The VRNN, or ``False`` once it has proved unavailable.
+        self._world_model: Any = None
         self._episode_buckets: OrderedDict[str, tuple[str, str]] = OrderedDict()
         self._spine.on_resolve(self._note_resolution)
 
@@ -226,6 +244,10 @@ class OntogenyCore:
                 name=EXECUTIVE_ADMISSION.control_point,
                 schema=EXECUTIVE_ADMISSION,
                 actions=("approved", "deferred", "degraded", "rejected"),
+                # Never explores by rejecting: a rejection records a failure
+                # obligation and cancels work outright, where a deferral or a
+                # constrained approval only costs time.
+                explorable=("approved", "deferred", "degraded"),
                 horizon_s=900.0,
             )
         )
@@ -259,6 +281,9 @@ class OntogenyCore:
     def authority(self) -> AuthorityLedger:
         return self._authority
 
+    def reservation_report(self) -> dict[str, Any]:
+        return self._reservation.report()
+
     def _state_for(self, schema: FeatureSchema) -> OntogeneticState:
         """The reservoir. Width is fixed by the first schema that asks for it.
 
@@ -267,7 +292,14 @@ class OntogenyCore:
         legitimately context for what happens in memory retrieval.
         """
         if self._state is None:
-            self._state = OntogeneticState(input_width=schema.width, units=self._units, seed=self._seed)
+            # Rooted at the spine, like the heads and for the same reason: a
+            # sandbox has to be total. A state grown from simulated episodes
+            # and checkpointed to the live path would be picked up by the real
+            # instance at next boot as though she had lived it.
+            self._state = OntogeneticState(
+                input_width=schema.width, units=self._units, seed=self._seed,
+                path=self._spine.db_path.parent / "state.npz",
+            )
             self._state.load()
         return self._state
 
@@ -364,10 +396,12 @@ class OntogenyCore:
         )
 
         if reservation.decider is Decider.RANDOM:
-            # Uniform over the whole action set, deterministically in the seed
-            # so a replay reproduces it. This slice exists to break the
-            # confound between what the situation was and what was done.
-            choice = cp.actions[_stable_index(f"{control_point}|{seed}", len(cp.actions))]
+            # Uniform over the *explorable* actions, deterministically in the
+            # seed so a replay reproduces it. This slice exists to break the
+            # confound between what the situation was and what was done, and it
+            # buys that evidence only with actions whose worst case is a delay.
+            pool = cp.explorable_actions
+            choice = pool[_stable_index(f"{control_point}|{seed}", len(pool))]
             decider = "explore:random"
         elif reservation.decider is Decider.CHALLENGER and cp.ready:
             choice = best
@@ -400,6 +434,7 @@ class OntogenyCore:
         episode_id = self._spine.record(episode)
         if episode_id:
             self._remember_bucket(episode_id, control_point, choice)
+        surprise = self._feed_world_model(base, cp.actions, choice)
 
         return Verdict(
             control_point=control_point,
@@ -409,11 +444,51 @@ class OntogenyCore:
             reservation=reservation,
             episode_id=episode_id,
             novelty=reading.novelty,
+            surprise=surprise,
             scores=scores,
             track=track,
             advice=advice,
             attribution=attribution,
         )
+
+    def _feed_world_model(
+        self, base: np.ndarray, actions: Sequence[str], choice: str
+    ) -> float | None:
+        """Give the VRNN a real observation stream, and take its surprise back.
+
+        The world model has existed for months without ever being fed: its
+        checkpoint directory was empty and its hidden state was reset to zeros
+        every boot. Every episode the organ handles is exactly the shape it
+        wanted — a standardised observation and the action actually taken — so
+        the two organs are wired together rather than each half-working alone.
+
+        The signal that comes back is different in kind from the reservoir's
+        novelty. Novelty asks "have I been in a state like this?"; surprise
+        asks "did what just happened match what I expected?" A familiar state
+        with a surprising outcome is the interesting case, and only having both
+        can tell them apart.
+        """
+        if self._world_model is False:
+            return None
+        try:
+            if self._world_model is None:
+                from core.world_model.learned_world_model import get_learned_world_model
+
+                model = get_learned_world_model()
+                model.start_training()
+                self._world_model = model
+            encoded = np.zeros(len(actions), dtype=np.float64)
+            if choice in actions:
+                encoded[list(actions).index(choice)] = 1.0
+            prediction = self._world_model.observe(base, encoded, learn=True)
+            return float(prediction.surprise)
+        except (ImportError, RuntimeError, ValueError, TypeError, AttributeError, MemoryError) as exc:
+            record_degradation(
+                "ontogeny", exc, severity="warning",
+                action="world model not fed; ontogeny continues without surprise",
+            )
+            self._world_model = False
+            return None
 
     def resolve(self, episode_id: str, outcome: Outcome) -> None:
         """Attach a real outcome. The only way a label enters the corpus."""
@@ -552,6 +627,7 @@ class OntogenyCore:
                 if self._state is not None and now - self._last_checkpoint >= CHECKPOINT_INTERVAL_S:
                     self._state.save()
                     self._last_checkpoint = now
+                telemetry.sample(self.report())
                 if cycles % 10 == 0:
                     # Slow, authoritative rebuild of the tallies from the
                     # ledger, so incremental counting cannot drift unnoticed.
@@ -575,12 +651,18 @@ class OntogenyCore:
     # ── head persistence ─────────────────────────────────────────────────
 
     def _heads_dir(self) -> Path:
-        try:
-            from core.config import config
+        """Head checkpoints live beside the corpus that produced them.
 
-            return Path(config.paths.data_dir) / "ontogeny" / "heads"
-        except (ImportError, AttributeError, RuntimeError, OSError):
-            return Path.home() / ".aura" / "data" / "ontogeny" / "heads"
+        Deriving this from the spine rather than from config is the whole
+        point. The provenance gate keeps test episodes out of the live corpus,
+        but a head is *derived* from a corpus, and a head fitted on simulated
+        episodes and written to the live directory is the same contamination
+        one level up — it would be loaded by the real instance at next boot and
+        would start scoring real decisions from things that never happened.
+        Tying every artefact to the store's own root makes a sandbox total
+        instead of partial.
+        """
+        return self._spine.db_path.parent / "heads"
 
     def _save_head(self, cp: ControlPoint) -> None:
         if not cp.heads:
@@ -668,6 +750,10 @@ class OntogenyCore:
             "episodes_seen": self._episodes_seen,
             "state": self._state.report() if self._state else None,
             "novelty": round(self.novelty(), 4),
+            "world_model": (
+                self._world_model.get_status()
+                if self._world_model not in (None, False) else None
+            ),
             "control_points": heads,
             "authority": self._authority.report(),
             "reservation": self._reservation.report(),

@@ -985,6 +985,11 @@ class ExecutiveCore:
         When the organ is absent, broken, or unpromoted, this is exactly the
         behaviour the executive has always had.
         """
+        # Gathered once and shared. These reach into other services, so
+        # computing them separately for the organ and for the ledger doubled
+        # the per-decision cost of a real-time path.
+        context = self._decision_context()
+
         final = outcome
         verdict: Dict[str, Any] | None = None
         try:
@@ -997,7 +1002,7 @@ class ExecutiveCore:
                 goal=intent.goal,
                 source=intent.source.value,
                 action_type=intent.action_type.value,
-                features=self._ontogeny_features(intent, coherence),
+                features=self._ontogeny_features(intent, coherence, context),
                 priority=intent.priority,
                 blocking=intent.blocking,
             )
@@ -1023,7 +1028,7 @@ class ExecutiveCore:
         self._decision_history.append(record)
         if verdict and verdict.get("episode_id"):
             self._ontogeny_episodes[intent.intent_id] = str(verdict["episode_id"])
-        self._append_decision_event(intent, record, ontogeny=verdict)
+        self._append_decision_event(intent, record, ontogeny=verdict, context=context)
 
         if final in (DecisionOutcome.REJECTED, DecisionOutcome.DEFERRED):
             self._record_failure_obligation(reason, intent)
@@ -1035,13 +1040,23 @@ class ExecutiveCore:
                         intent.goal[:50], record.constraints)
         return record
 
-    def _ontogeny_features(self, intent: Intent, coherence: float) -> Dict[str, float]:
+    def _decision_context(self) -> Dict[str, Any]:
+        """Temporal, epistemic and failure state, read once per decision."""
+        return {
+            "temporal": self._get_temporal_identity_context(),
+            "epistemic": self._get_epistemic_state(),
+            "failure": self._get_failure_state(),
+        }
+
+    def _ontogeny_features(
+        self, intent: Intent, coherence: float, context: Dict[str, Any]
+    ) -> Dict[str, float]:
         """The situation as the organ sees it — all of it already computed here."""
         from core.ontogeny.wiring import admission_features
 
-        temporal = self._get_temporal_identity_context()
-        epistemic = self._get_epistemic_state()
-        failure = self._get_failure_state()
+        temporal = context["temporal"]
+        epistemic = context["epistemic"]
+        failure = context["failure"]
         return admission_features(
             priority=intent.priority,
             confidence=intent.confidence,
@@ -1507,12 +1522,15 @@ class ExecutiveCore:
         return self._ledger
 
     def _append_decision_event(
-        self, intent: Intent, record: DecisionRecord, *, ontogeny: Dict[str, Any] | None = None
+        self, intent: Intent, record: DecisionRecord, *,
+        ontogeny: Dict[str, Any] | None = None,
+        context: Dict[str, Any] | None = None,
     ) -> None:
         try:
-            temporal = self._get_temporal_identity_context()
-            epistemic = self._get_epistemic_state()
-            failure = self._get_failure_state()
+            gathered = context or self._decision_context()
+            temporal = gathered["temporal"]
+            epistemic = gathered["epistemic"]
+            failure = gathered["failure"]
             self._get_ledger().append(
                 {
                     "event": "decision",

@@ -374,6 +374,15 @@ def _register_all_services_body(container, is_proxy: bool):
         lifetime=ServiceLifetime.SINGLETON,
         required=False,
     )
+    # The ontogenetic organ: the persistent learned state, the experience
+    # corpus, and the authority ledger that decides which of Aura's decisions
+    # a learned head is currently allowed to make.
+    container.register(
+        'ontogeny',
+        lambda: __import__('core.ontogeny.service', fromlist=['get_ontogeny']).get_ontogeny(),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     # Task-driven retrieval router over the typed memory taxonomy (intentional, not blind
     # similarity). Stores plug in as adapters; default sync stores wired best-effort.
     def _create_intentional_retriever():

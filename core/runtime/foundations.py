@@ -1227,6 +1227,36 @@ async def _activate_cognition(*, foreground_only: bool) -> ActivationResult:
 
 #: (name, activator) in dependency order. Later waves append here; the
 #: order is the boot order and is meaningful.
+async def _activate_ontogeny(*, foreground_only: bool) -> ActivationResult:
+    """Wave 8 — the organ that turns consequence into disposition.
+
+    It comes up at boot rather than lazily on first use, because the part that
+    matters most is the part that runs when nobody is asking: the resolver that
+    finds out what came of a decision, and the sweeper that closes episodes
+    nobody observed. Without those registered the organ still records, and
+    never learns a thing.
+    """
+    from core.ontogeny.wiring import install
+
+    installed = install()
+    if not installed:
+        return ActivationResult(
+            name="ontogeny", ok=True,
+            detail="ontogeny unavailable; every control point keeps its incumbent",
+        )
+    from core.ontogeny.service import get_ontogeny
+
+    core = get_ontogeny()
+    return ActivationResult(
+        name="ontogeny", ok=True,
+        detail=core.summary(),
+        data={
+            "control_points": list(core.control_points()),
+            "stages": {cp: str(core.authority.stage(cp)) for cp in core.control_points()},
+        },
+    )
+
+
 _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("kernel_discipline", _activate_kernel_discipline),
     ("verification", _activate_verification),
@@ -1235,6 +1265,7 @@ _ACTIVATORS: list[tuple[str, Callable[..., Any]]] = [
     ("observability", _activate_observability),
     ("flight_software", _activate_flight_software),
     ("cognition", _activate_cognition),
+    ("ontogeny", _activate_ontogeny),
 ]
 
 

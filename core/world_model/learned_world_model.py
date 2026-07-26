@@ -31,6 +31,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -39,10 +40,44 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from core.runtime.errors import record_degradation
+
 logger = logging.getLogger("Aura.LearnedWorldModel")
 
 _DATA_DIR = Path.home() / ".aura" / "data" / "world_model"
 _MODEL_PATH = _DATA_DIR / "vrnn_state.npz"
+
+#: Every parameter the model actually learns. Naming them here makes the list
+#: checkable: a weight missing from it is a weight that never moves, which is
+#: exactly the defect this file used to have.
+_TRAINABLE = (
+    "W_enc", "b_enc", "W_prior", "b_prior", "W_dec", "b_dec",
+    "W_z", "b_z", "W_r", "b_r", "W_h", "b_h",
+)
+
+#: Steps of truncated backpropagation through time. A single step gives the
+#: transition weights no gradient at all — the only thing that grades a hidden
+#: state is what the *next* step does with it — so this window is the
+#: difference between a learned recurrence and a random one.
+_BPTT_WINDOW = 8
+
+#: Free-bits floor, in nats per latent dimension. Below this a dimension stops
+#: being pushed toward the prior. Without it the cheapest way to reduce the
+#: loss is for the posterior to collapse onto the prior and encode nothing,
+#: which looks like excellent convergence and is total amnesia.
+_FREE_BITS_NATS = 0.02
+
+#: Global gradient-norm clip.
+_GRAD_CLIP_NORM = 5.0
+
+#: Training passes per background cycle. Bounded so a backlog costs many small
+#: cycles rather than one long one that starves the checkpoint.
+_TRAIN_PASSES_PER_CYCLE = 4
+
+#: Seconds between checkpoints. The previous cadence was every 500 steps, and
+#: on the live instance the model never reached 500 steps in a session — the
+#: checkpoint directory had been empty since the day it was created.
+_CHECKPOINT_INTERVAL_S = 120.0
 
 
 @dataclass
@@ -139,6 +174,18 @@ class LearnedWorldModel:
             maxlen=self.config.replay_buffer_size
         )
 
+        # Optimiser state, one moment pair per trainable parameter.
+        self._adam_m = {name: np.zeros_like(getattr(self, name)) for name in _TRAINABLE}
+        self._adam_v = {name: np.zeros_like(getattr(self, name)) for name in _TRAINABLE}
+        self._adam_t = 0
+        self._train_steps = 0
+        self._last_loss = 0.0
+        self._last_checkpoint = time.time()
+        self._pending_since_train = 0
+        self._trainer_thread: threading.Thread | None = None
+        self._trainer_stop = threading.Event()
+        self._train_interval = 2.0
+
         # Metrics
         self._step_count = 0
         self._total_surprise = 0.0
@@ -198,6 +245,7 @@ class LearnedWorldModel:
         reconstructed = np.tanh(self.W_dec @ dec_input + self.b_dec)
 
         # 5. GRU transition: h_t = GRU(z_t, a_t, h_t-1)
+        h_prev = self.h.copy()
         gru_input = np.concatenate([z, act])
         self.h = self._gru_step(gru_input, self.h)
 
@@ -211,9 +259,11 @@ class LearnedWorldModel:
 
         # 7. Online learning
         if learn:
-            self._replay.append((obs.copy(), act.copy(), self.h.copy()))
-            if self._step_count % 10 == 0 and len(self._replay) >= 10:
-                self._mini_batch_update()
+            # The state the step was *conditioned on*. Replaying from the
+            # post-transition state, as this once did, trains the model on a
+            # sequence it never actually saw.
+            self._replay.append((h_prev, obs.copy(), act.copy()))
+            self._pending_since_train += 1
 
         self._step_count += 1
         self._total_surprise += surprise
@@ -230,9 +280,10 @@ class LearnedWorldModel:
         )
         self._last_prediction = prediction
 
-        # Auto-persist periodically
-        if self._step_count % 500 == 0:
-            self._save()
+        # Checkpoint on wall-clock, not step count: a model that is stepped
+        # rarely still deserves to survive a restart.
+        if time.time() - self._last_checkpoint >= _CHECKPOINT_INTERVAL_S:
+            self.save()
 
         return prediction
 
@@ -316,38 +367,260 @@ class LearnedWorldModel:
         )
         return max(0.0, float(kl))
 
-    def _mini_batch_update(self) -> None:
-        """Simple online weight update using recent experiences."""
-        if len(self._replay) < 5:
+    # ── Learning: the real ELBO, backpropagated through time ─────────────
+    #
+    # What was here before updated ``W_dec`` and ``b_dec`` and nothing else.
+    # The encoder, the prior and all three GRU gates kept their random
+    # initialisation for the life of the process — so the "variational" model
+    # had no variational objective (no KL gradient reached either Gaussian),
+    # and the "recurrent" model had no learned recurrence. What it actually
+    # was, structurally, is a random-projection encoder feeding a random
+    # recurrent map with a trained decoder bolted on the end: a reservoir,
+    # arrived at by omission rather than design, and without any of the
+    # spectral-radius, leak or washout discipline that makes a reservoir work.
+    #
+    # This trains all of it, properly: the ELBO (reconstruction + KL) with
+    # gradients through the reparameterisation, truncated backpropagation
+    # through time so the transition weights get a signal at all, Adam because
+    # plain SGD on this loss surface is not stable, and free bits so the
+    # posterior cannot collapse onto the prior and quietly stop encoding
+    # anything.
+
+    def _forward_step(
+        self, h_prev: np.ndarray, obs: np.ndarray, act: np.ndarray
+    ) -> dict[str, np.ndarray]:
+        """One VRNN step, keeping every intermediate the backward pass needs."""
+        prior_params = self.W_prior @ h_prev + self.b_prior
+        prior_mean, prior_logvar_raw = np.split(prior_params, 2)
+        prior_logvar = np.clip(prior_logvar_raw, -5.0, 2.0)
+
+        enc_input = np.concatenate([obs, h_prev])
+        post_params = self.W_enc @ enc_input + self.b_enc
+        post_mean, post_logvar_raw = np.split(post_params, 2)
+        post_logvar = np.clip(post_logvar_raw, -5.0, 2.0)
+
+        eps = self._rng.standard_normal(post_mean.shape).astype(np.float32)
+        std = np.exp(0.5 * post_logvar)
+        z = post_mean + eps * std
+
+        dec_input = np.concatenate([z, h_prev])
+        pre_dec = self.W_dec @ dec_input + self.b_dec
+        recon = np.tanh(pre_dec)
+
+        gru_in = np.concatenate([z, act])
+        xh = np.concatenate([gru_in, h_prev])
+        gate_z = self._sigmoid(self.W_z @ xh + self.b_z)
+        gate_r = self._sigmoid(self.W_r @ xh + self.b_r)
+        xrh = np.concatenate([gru_in, gate_r * h_prev])
+        h_cand = np.tanh(self.W_h @ xrh + self.b_h)
+        h_raw = (1 - gate_z) * h_prev + gate_z * h_cand
+        h_new = np.clip(h_raw, -5.0, 5.0)
+
+        return {
+            "h_prev": h_prev, "obs": obs, "act": act,
+            "prior_mean": prior_mean, "prior_logvar": prior_logvar,
+            "prior_clipped": ((prior_logvar_raw < -5.0) | (prior_logvar_raw > 2.0)).astype(np.float32),
+            "post_mean": post_mean, "post_logvar": post_logvar,
+            "post_clipped": ((post_logvar_raw < -5.0) | (post_logvar_raw > 2.0)).astype(np.float32),
+            "eps": eps, "std": std, "z": z,
+            "enc_input": enc_input, "dec_input": dec_input, "recon": recon,
+            "gru_in": gru_in, "xh": xh, "xrh": xrh,
+            "gate_z": gate_z, "gate_r": gate_r, "h_cand": h_cand,
+            # dtype is left as computed: forcing float32 here would quantise
+            # the state between steps and make the model's own gradients
+            # un-checkable against finite differences.
+            "h_new": h_new,
+            "h_clipped": ((h_raw < -5.0) | (h_raw > 5.0)).astype(np.float32),
+        }
+
+    def _backward_step(
+        self, cache: dict[str, np.ndarray], grads: dict[str, np.ndarray], d_h_next: np.ndarray
+    ) -> np.ndarray:
+        """Backprop one step. Returns the gradient flowing into ``h_prev``."""
+        obs_d = self.config.observation_dim
+        lat_d = self.config.latent_dim
+        act_d = self.config.action_dim
+        beta = self.config.kl_weight
+
+        h_prev = cache["h_prev"]
+        d_h_prev = np.zeros_like(h_prev)
+
+        # ── reconstruction ───────────────────────────────────────────────
+        recon = cache["recon"]
+        d_recon = -2.0 * (cache["obs"] - recon) / obs_d
+        d_pre_dec = d_recon * (1.0 - recon ** 2)
+        grads["W_dec"] += np.outer(d_pre_dec, cache["dec_input"])
+        grads["b_dec"] += d_pre_dec
+        d_dec_input = self.W_dec.T @ d_pre_dec
+        d_z = d_dec_input[:lat_d].copy()
+        d_h_prev += d_dec_input[lat_d:]
+
+        # ── GRU, carrying the future's gradient back into this step ──────
+        d_h = d_h_next * (1.0 - cache["h_clipped"])
+        gate_z, h_cand = cache["gate_z"], cache["h_cand"]
+        d_gate_z = d_h * (h_cand - h_prev)
+        d_h_cand = d_h * gate_z
+        d_h_prev += d_h * (1.0 - gate_z)
+
+        d_pre_h = d_h_cand * (1.0 - h_cand ** 2)
+        grads["W_h"] += np.outer(d_pre_h, cache["xrh"])
+        grads["b_h"] += d_pre_h
+        d_xrh = self.W_h.T @ d_pre_h
+        d_gru_in = d_xrh[: lat_d + act_d].copy()
+        d_rh = d_xrh[lat_d + act_d:]
+        d_gate_r = d_rh * h_prev
+        d_h_prev += d_rh * cache["gate_r"]
+
+        d_pre_z = d_gate_z * gate_z * (1.0 - gate_z)
+        grads["W_z"] += np.outer(d_pre_z, cache["xh"])
+        grads["b_z"] += d_pre_z
+        d_xh = self.W_z.T @ d_pre_z
+        d_gru_in += d_xh[: lat_d + act_d]
+        d_h_prev += d_xh[lat_d + act_d:]
+
+        gate_r = cache["gate_r"]
+        d_pre_r = d_gate_r * gate_r * (1.0 - gate_r)
+        grads["W_r"] += np.outer(d_pre_r, cache["xh"])
+        grads["b_r"] += d_pre_r
+        d_xh_r = self.W_r.T @ d_pre_r
+        d_gru_in += d_xh_r[: lat_d + act_d]
+        d_h_prev += d_xh_r[lat_d + act_d:]
+
+        d_z += d_gru_in[:lat_d]
+
+        # ── KL, with free bits so the posterior cannot collapse ──────────
+        post_mean, post_logvar = cache["post_mean"], cache["post_logvar"]
+        prior_mean, prior_logvar = cache["prior_mean"], cache["prior_logvar"]
+        inv_prior_var = np.exp(-prior_logvar)
+        delta = post_mean - prior_mean
+        kl_per_dim = 0.5 * (
+            prior_logvar - post_logvar
+            + (np.exp(post_logvar) + delta ** 2) * inv_prior_var
+            - 1.0
+        )
+        # Free bits: dimensions already carrying less than the floor stop
+        # being pushed toward the prior. Without this the cheapest way to
+        # lower the loss is for the encoder to stop encoding.
+        active = (kl_per_dim > _FREE_BITS_NATS).astype(np.float32)
+
+        d_post_mean = d_z + beta * active * delta * inv_prior_var
+        d_post_logvar = (
+            d_z * 0.5 * cache["eps"] * cache["std"]
+            + beta * active * 0.5 * (np.exp(post_logvar) * inv_prior_var - 1.0)
+        )
+        d_post_logvar *= (1.0 - cache["post_clipped"])
+        d_post_params = np.concatenate([d_post_mean, d_post_logvar])
+        grads["W_enc"] += np.outer(d_post_params, cache["enc_input"])
+        grads["b_enc"] += d_post_params
+        d_enc_input = self.W_enc.T @ d_post_params
+        d_h_prev += d_enc_input[obs_d:]
+
+        d_prior_mean = -beta * active * delta * inv_prior_var
+        d_prior_logvar = beta * active * 0.5 * (
+            1.0 - (np.exp(post_logvar) + delta ** 2) * inv_prior_var
+        )
+        d_prior_logvar *= (1.0 - cache["prior_clipped"])
+        d_prior_params = np.concatenate([d_prior_mean, d_prior_logvar])
+        grads["W_prior"] += np.outer(d_prior_params, h_prev)
+        grads["b_prior"] += d_prior_params
+        d_h_prev += self.W_prior.T @ d_prior_params
+
+        return d_h_prev
+
+    def _mini_batch_update(self) -> float:
+        """One truncated-BPTT update over a recent window. Returns the loss."""
+        if len(self._replay) < _BPTT_WINDOW:
+            return 0.0
+
+        window = list(self._replay)[-_BPTT_WINDOW:]
+        h_prev = window[0][0].copy()  # detached start state
+        caches: list[dict[str, np.ndarray]] = []
+        loss = 0.0
+        for _, obs, act in window:
+            cache = self._forward_step(h_prev, obs, act)
+            caches.append(cache)
+            loss += float(np.mean((obs - cache["recon"]) ** 2))
+            loss += self.config.kl_weight * self._kl_divergence(
+                cache["post_mean"], cache["post_logvar"],
+                cache["prior_mean"], cache["prior_logvar"],
+            )
+            h_prev = cache["h_new"]
+
+        grads = {name: np.zeros_like(getattr(self, name)) for name in _TRAINABLE}
+        d_h = np.zeros(self.config.hidden_dim, dtype=np.float32)
+        for cache in reversed(caches):
+            d_h = self._backward_step(cache, grads, d_h)
+
+        scale = 1.0 / len(caches)
+        total_norm = math.sqrt(sum(float(np.sum((g * scale) ** 2)) for g in grads.values()))
+        clip = min(1.0, _GRAD_CLIP_NORM / (total_norm + 1e-8))
+        self._adam_step({name: g * scale * clip for name, g in grads.items()})
+        self._last_loss = loss / len(caches)
+        self._train_steps += 1
+        return self._last_loss
+
+    # ── the training lane ────────────────────────────────────────────────
+    #
+    # ``observe`` runs inside Aura's live decision loop and must cost a forward
+    # pass and nothing else. Training happens on its own thread and applies its
+    # result by rebinding parameter arrays rather than mutating them in place.
+    # A rebind is atomic under the GIL, so a concurrent forward pass sees
+    # either the old array or the new one and never a half-written one — which
+    # means the real-time path never takes a lock. The price is that one step
+    # can straddle an update, and for a model that is continuously retrained
+    # that is not a price at all.
+
+    def start_training(self, *, interval_s: float = 2.0) -> None:
+        """Run the training lane in the background. Idempotent."""
+        if self._trainer_thread is not None:
             return
+        self._train_interval = float(interval_s)
+        self._trainer_thread = threading.Thread(
+            target=self._train_loop, name="vrnn-trainer", daemon=True
+        )
+        self._trainer_thread.start()
+        logger.info("World model training lane started (every %.1fs)", self._train_interval)
 
+    def stop_training(self) -> None:
+        self._trainer_stop.set()
+
+    def _train_loop(self) -> None:
+        while not self._trainer_stop.wait(self._train_interval):
+            try:
+                if self._pending_since_train <= 0:
+                    continue
+                self._pending_since_train = 0
+                for _ in range(_TRAIN_PASSES_PER_CYCLE):
+                    if len(self._replay) < _BPTT_WINDOW:
+                        break
+                    self._mini_batch_update()
+                if time.time() - self._last_checkpoint >= _CHECKPOINT_INTERVAL_S:
+                    self.save()
+            except (ValueError, FloatingPointError, MemoryError, RuntimeError) as exc:
+                record_degradation(
+                    "learned_world_model", exc, severity="warning",
+                    action="world-model training cycle failed; the model keeps its weights",
+                )
+
+    def train_now(self, passes: int = 1) -> float:
+        """Synchronous training, for tests and for dream-cycle consolidation."""
+        loss = 0.0
+        for _ in range(max(1, passes)):
+            loss = self._mini_batch_update()
+        return loss
+
+    def _adam_step(self, grads: dict[str, np.ndarray]) -> None:
+        """Adam. Plain SGD on a VRNN objective in float32 does not stay stable."""
+        self._adam_t += 1
         lr = self.config.learning_rate
-        # Sample recent experiences
-        recent = list(self._replay)[-10:]
-
-        for obs, act, h_target in recent:
-            # Forward pass to get gradients (simplified: finite-difference-free)
-            enc_input = np.concatenate([obs, self.h])
-            post_params = self.W_enc @ enc_input + self.b_enc
-            post_mean, post_logvar = np.split(post_params, 2)
-
-            z = self._reparameterize(post_mean, post_logvar)
-            dec_input = np.concatenate([z, self.h])
-            reconstructed = np.tanh(self.W_dec @ dec_input + self.b_dec)
-
-            # Reconstruction gradient (simplified)
-            error = obs - reconstructed
-            # Update decoder weights
-            grad_dec = np.outer(error, dec_input) * (1 - reconstructed ** 2)
-            self.W_dec += lr * np.clip(grad_dec, -1.0, 1.0)
-            self.b_dec += lr * np.clip(error * (1 - reconstructed ** 2), -1.0, 1.0)
-
-        # Clip all weights for stability
-        for attr in ('W_enc', 'W_prior', 'W_dec', 'W_z', 'W_r', 'W_h'):
-            w = getattr(self, attr)
-            norm = float(np.linalg.norm(w))
-            if norm > 50.0:
-                setattr(self, attr, w * (50.0 / norm))
+        b1, b2, eps = 0.9, 0.999, 1e-8
+        bias1 = 1.0 - b1 ** self._adam_t
+        bias2 = 1.0 - b2 ** self._adam_t
+        for name, grad in grads.items():
+            m = self._adam_m[name] = b1 * self._adam_m[name] + (1 - b1) * grad
+            v = self._adam_v[name] = b2 * self._adam_v[name] + (1 - b2) * (grad * grad)
+            update = lr * (m / bias1) / (np.sqrt(v / bias2) + eps)
+            setattr(self, name, (getattr(self, name) - update).astype(np.float32))
 
     def _pad_or_truncate(self, vec: np.ndarray, target_dim: int) -> np.ndarray:
         """Pad or truncate a vector to target dimension."""
@@ -361,11 +634,25 @@ class LearnedWorldModel:
 
     # ── Persistence ─────────────────────────────────────────────────────
 
-    def _save(self) -> None:
-        """Persist model weights and hidden state."""
+    def save(self) -> bool:
+        """Persist weights and hidden state through the governed write path.
+
+        The old version wrote with a bare ``np.savez_compressed`` every 500
+        steps, outside the write gateway and outside any governed scope. On the
+        live instance the directory had been empty since the day it was
+        created — the model had never survived a single restart, so every
+        session began from random weights and "online learning" learned
+        nothing that lasted an hour.
+        """
         try:
+            import io
+
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
+            buffer = io.BytesIO()
             np.savez_compressed(
-                str(_MODEL_PATH),
+                buffer,
                 W_enc=self.W_enc, b_enc=self.b_enc,
                 W_prior=self.W_prior, b_prior=self.b_prior,
                 W_dec=self.W_dec, b_dec=self.b_dec,
@@ -374,10 +661,28 @@ class LearnedWorldModel:
                 W_h=self.W_h, b_h=self.b_h,
                 h=self.h,
                 step_count=np.array([self._step_count]),
+                train_steps=np.array([self._train_steps]),
+                adam_t=np.array([self._adam_t]),
             )
-            logger.debug("World model saved (step %d)", self._step_count)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            logger.debug("World model save failed: %s", exc)
+            gateway = get_file_write_gateway()
+            with local_internal_governed_scope(
+                "learned_world_model", domain="state_mutation", receipt_prefix="vrnn-state"
+            ):
+                gateway.ensure_directory(_MODEL_PATH.parent, source="learned_world_model")
+                gateway.write_bytes(_MODEL_PATH, buffer.getvalue(), source="learned_world_model")
+            self._last_checkpoint = time.time()
+            logger.debug("World model saved (step %d, train %d)", self._step_count, self._train_steps)
+            return True
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "learned_world_model", exc, severity="warning",
+                action="world-model checkpoint failed; the model continues in memory",
+            )
+            return False
+
+    def _save(self) -> None:
+        """Backwards-compatible alias for existing callers."""
+        self.save()
 
     def _load(self) -> None:
         """Load persisted model weights."""
@@ -401,7 +706,14 @@ class LearnedWorldModel:
                 self.b_h = data['b_h']
                 self.h = data['h']
                 self._step_count = int(data['step_count'][0])
-                logger.info("World model restored (step %d)", self._step_count)
+                if 'train_steps' in data:
+                    self._train_steps = int(data['train_steps'][0])
+                if 'adam_t' in data:
+                    self._adam_t = int(data['adam_t'][0])
+                logger.info(
+                    "World model restored (step %d, %d training updates)",
+                    self._step_count, self._train_steps,
+                )
             else:
                 logger.warning("World model dimension mismatch — reinitializing")
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -429,6 +741,12 @@ class LearnedWorldModel:
             "last_surprise": round(self.get_surprise(), 6),
             "hidden_norm": round(float(np.linalg.norm(self.h)), 4),
             "replay_buffer_size": len(self._replay),
+            "train_steps": self._train_steps,
+            "last_loss": round(self._last_loss, 6),
+            "training_lane": "background" if self._trainer_thread is not None else "idle",
+            "pending_since_train": self._pending_since_train,
+            "checkpoint_age_s": round(time.time() - self._last_checkpoint, 1),
+            "trainable_parameters": int(sum(getattr(self, n).size for n in _TRAINABLE)),
             "config": {
                 "observation_dim": self.config.observation_dim,
                 "latent_dim": self.config.latent_dim,

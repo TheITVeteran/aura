@@ -276,6 +276,10 @@ def install(*, register_services: bool = True) -> bool:
     try:
         core = get_ontogeny()
         core.resolvers.register(get_executive_resolver())
+        from core.ontogeny import invariants, telemetry
+
+        telemetry.declare()
+        invariants.install()
         if register_services:
             _register_services(core)
         _installed = True
