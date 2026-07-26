@@ -118,6 +118,22 @@ from core.runtime.errors import FallbackClassification, record_degradation
 logger = logging.getLogger("Aura.AffectiveSteering")
 
 
+#: Completion-position masks, keyed by (shape, dtype-name).
+#
+# The mask is a constant for a given shape: zeros with a 1.0 at the final
+# position. It was being rebuilt from a fresh NumPy allocation and re-uploaded
+# to the GPU on EVERY forward pass of EVERY steered block — 64 layers per token,
+# with the allocation sized by the sequence length. During prefill of a few
+# thousand characters that is thousands of host allocations and uploads before
+# the first token can exist, which is why the desktop surface saw
+# "livelocked: heartbeats but zero tokens" on longer turns while short ones
+# answered fine (2026-07-26).
+#
+# Bounded so a pathological spread of shapes cannot grow without limit.
+_COMPLETION_MASK_CACHE: dict[tuple[tuple[int, ...], str], Any] = {}
+_COMPLETION_MASK_CACHE_MAX = 32
+
+
 def _emit_affective_fault(
     error: BaseException,
     *,
@@ -1167,16 +1183,30 @@ class AffectiveSteeringHook:
             import mlx.core as mx
 
             shape = tuple(getattr(h, "shape", ()) or ())
-            if len(shape) == 2 and shape[0] > 1:
-                mask_np = np.zeros((shape[0], 1), dtype=np.float32)
-                mask_np[-1, 0] = 1.0
-                self._last_mask_mode = "last_position_2d"
-                return mx.astype(mx.array(mask_np), h.dtype)
-            if len(shape) == 3 and shape[1] > 1:
-                mask_np = np.zeros((shape[0], shape[1], 1), dtype=np.float32)
-                mask_np[:, -1, 0] = 1.0
-                self._last_mask_mode = "last_position_3d"
-                return mx.astype(mx.array(mask_np), h.dtype)
+            is_2d = len(shape) == 2 and shape[0] > 1
+            is_3d = len(shape) == 3 and shape[1] > 1
+            if is_2d or is_3d:
+                # One mask per (shape, dtype), shared across all 64 blocks and
+                # reused for every token of the same width. Rebuilding it per
+                # forward pass cost a host allocation and a GPU upload sized by
+                # the sequence length, 64 times per token — the first-token
+                # stall on longer prompts.
+                self._last_mask_mode = "last_position_2d" if is_2d else "last_position_3d"
+                cache_key = (shape, str(h.dtype))
+                cached = _COMPLETION_MASK_CACHE.get(cache_key)
+                if cached is not None:
+                    return cached
+                if is_2d:
+                    mask_np = np.zeros((shape[0], 1), dtype=np.float32)
+                    mask_np[-1, 0] = 1.0
+                else:
+                    mask_np = np.zeros((shape[0], shape[1], 1), dtype=np.float32)
+                    mask_np[:, -1, 0] = 1.0
+                mask = mx.astype(mx.array(mask_np), h.dtype)
+                if len(_COMPLETION_MASK_CACHE) >= _COMPLETION_MASK_CACHE_MAX:
+                    _COMPLETION_MASK_CACHE.clear()
+                _COMPLETION_MASK_CACHE[cache_key] = mask
+                return mask
             self._last_mask_mode = "single_token"
         except (ImportError, AttributeError, RuntimeError) as exc:
             _emit_affective_fault(
@@ -1244,13 +1274,20 @@ class AffectiveSteeringHook:
                     h = result
                     rest = None
 
-                # Compute the affective addition directly in MLX
-                composite = hook.compute_composite_vector_mx(dtype=h.dtype)
+                # Ceiling + staleness derating happen HERE, at injection, not
+                # just in the sync thread that may have died. Evaluated BEFORE
+                # the composite: when steering has stood down there is nothing
+                # to add, and fetching + dtype-casting the vector on all 64
+                # blocks of every token to then multiply it by zero is pure
+                # cost on the path that decides whether a first token arrives.
+                effective_alpha = hook._effective_alpha()
+                composite = (
+                    hook.compute_composite_vector_mx(dtype=h.dtype)
+                    if effective_alpha > 0.0
+                    else None
+                )
 
                 if composite is not None:
-                    # Ceiling + staleness derating happen HERE, at injection,
-                    # not just in the sync thread that may have died.
-                    effective_alpha = hook._effective_alpha()
                     if effective_alpha > 0.0:
                         mask = hook._completion_position_mask(h)
                         if mask is not None:
