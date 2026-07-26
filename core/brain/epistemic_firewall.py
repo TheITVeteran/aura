@@ -371,7 +371,17 @@ class EpistemicFirewall:
         raw_items: list[EvidenceItem],
         *,
         now: float | None = None,
+        also_relevant_to: str | None = None,
     ) -> FirewallVerdict:
+        """Admit evidence for ``objective``.
+
+        ``also_relevant_to`` is the refined query that actually retrieved these
+        items, when it differs from the objective. Evidence is judged relevant
+        if it speaks to EITHER: "compare scheduler lock strategies" retrieved
+        via "find evidence about lease expiry after owner death" must not have
+        the lease record refused for failing to mention schedulers. Coverage is
+        still measured against the objective, which is what was asked.
+        """
         verdict = FirewallVerdict()
         current_time = float(now) if now is not None else time.time()
         items: list[EvidenceItem] = []
@@ -403,10 +413,15 @@ class EpistemicFirewall:
         # module's job, but "shares no topic with the objective" is not
         # relevance ranking, it is the floor below which nothing is evidence.
         objective_distinctive = _distinctive(objective)
+        query_distinctive = _distinctive(also_relevant_to or "")
         eligible: set[int] = set(range(len(items)))
         if objective_distinctive and self.min_item_relevance > 0.0:
             for index, item in enumerate(items):
-                score = _relevance(objective_distinctive, _distinctive(item.text))
+                item_distinctive = _distinctive(item.text)
+                score = max(
+                    _relevance(objective_distinctive, item_distinctive),
+                    _relevance(query_distinctive, item_distinctive),
+                )
                 if score < self.min_item_relevance:
                     eligible.discard(index)
                     row = self._row(

@@ -1,0 +1,3 @@
+probe_rc=1
+launch_log=/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/scratchpad/verify_launch_20260725_075728.log
+probe_log=/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/scratchpad/verify_probe_20260725_075728.log

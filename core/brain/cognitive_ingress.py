@@ -628,6 +628,7 @@ def _memory_signal_from_result(
     objective: str,
     result: Any,
     tracking: dict[str, Any],
+    retrieval_query: str | None = None,
 ) -> tuple[IngressSignal, Any, Any, Any]:
     """Firewall recalled content, then commit only admitted records."""
     from core.brain.epistemic_firewall import EpistemicFirewall, EvidenceItem
@@ -662,7 +663,11 @@ def _memory_signal_from_result(
     firewall_receipt: dict[str, Any]
     admitted_candidates: tuple[Any, ...] = ()
     try:
-        verdict = EpistemicFirewall(max_admitted=2).review(objective, evidence)
+        verdict = EpistemicFirewall(max_admitted=2).review(
+            objective,
+            evidence,
+            also_relevant_to=retrieval_query,
+        )
         firewall_receipt = verdict.to_receipt()
         admitted_content_sha256 = {
             hashlib.sha256(str(row.get("text") or "").encode("utf-8")).hexdigest()
@@ -767,7 +772,7 @@ def _resolve_memory_sync(
         retrieval_query=retrieval_query,
     )
     result = SelectiveMemoryBridge(specs).retrieve(query)
-    return _memory_signal_from_result(objective, result, tracking)
+    return _memory_signal_from_result(objective, result, tracking, retrieval_query)
 
 
 async def _resolve_memory_async(
@@ -790,7 +795,7 @@ async def _resolve_memory_async(
         retrieval_query=retrieval_query,
     )
     result = await SelectiveMemoryBridge(specs).retrieve_async(query)
-    return _memory_signal_from_result(objective, result, tracking)
+    return _memory_signal_from_result(objective, result, tracking, retrieval_query)
 
 
 def _signal_reference(
@@ -855,7 +860,11 @@ def _signal_reference(
     conflict_uncertainty = 0.0
     context_items: list[dict[str, Any]] = []
     try:
-        verdict = EpistemicFirewall(max_admitted=2).review(objective, evidence)
+        verdict = EpistemicFirewall(max_admitted=2).review(
+            objective,
+            evidence,
+            also_relevant_to=query,
+        )
         firewall_receipt = verdict.to_receipt()
         admitted = " ".join(verdict.admitted_texts())[:400]
         if admitted:

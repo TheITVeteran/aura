@@ -96,6 +96,57 @@ def _iter_production_files(root: Path) -> list[Path]:
     return sorted(set(files))
 
 
+# A guard has to name what it refuses. ``_PRIVATE_ANSWER_KEYS = {...,
+# "expected_answer", ...}`` in core/brain/llm/latent_cortex/action_state_capture.py
+# is the code that STRIPS answer-bearing keys from a payload, and a line-regex
+# read it as the contamination it exists to prevent. Declared denylists are
+# exempt; every other appearance of the token is not.
+_DENYLIST_NAME_MARKERS = (
+    "FORBIDDEN",
+    "DENY",
+    "DENIED",
+    "BLOCKED",
+    "BANNED",
+    "PROHIBITED",
+    "DISALLOWED",
+    "REFUSED",
+    "REDACT",
+    "STRIP",
+    "PRIVATE_ANSWER",
+    "ANSWER_KEYS",
+    "CONTAMINAT",
+)
+_BARE_STRING_LINE_RE = re.compile(r"""^\s*(?:'[^']*'|"[^"]*")\s*,?\s*(?:#.*)?$""")
+
+
+def _denylist_literal_lines(source: str) -> set[int]:
+    """Line numbers holding a string element of a declared denylist constant."""
+    try:
+        import ast
+
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return set()
+
+    exempt: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        names = [t.id.upper() for t in targets if isinstance(t, ast.Name)]
+        if not any(
+            marker in name for name in names for marker in _DENYLIST_NAME_MARKERS
+        ):
+            continue
+        value = node.value
+        if not isinstance(value, (ast.Set, ast.List, ast.Tuple)):
+            continue
+        for element in value.elts:
+            if isinstance(element, ast.Constant) and isinstance(element.value, str):
+                exempt.add(element.lineno)
+    return exempt
+
+
 def scan_file(path: Path, root: Path) -> list[Finding]:
     rel = path.relative_to(root).as_posix()
     try:
@@ -103,8 +154,11 @@ def scan_file(path: Path, root: Path) -> list[Finding]:
     except UnicodeDecodeError:
         source = path.read_text(encoding="utf-8", errors="replace")
 
+    exempt_lines = _denylist_literal_lines(source)
     findings: list[Finding] = []
     for line_no, line in enumerate(source.splitlines(), start=1):
+        if line_no in exempt_lines and _BARE_STRING_LINE_RE.match(line):
+            continue
         for kind, pattern in CONTAMINATION_PATTERNS.items():
             if pattern.search(line):
                 findings.append(

@@ -10984,10 +10984,15 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
         "pressed": "I'm a little pressed, but I'm still with you.",
         "warm": "I'm in a good place — let me think on that.",
     }
-    opener = _mood_phrases.get(
-        mood,
-        _build_degraded_live_reply(frame, user_message, reason="filtered_draft"),
-    )
+    opener = _mood_phrases.get(mood)
+    if opener is None:
+        # The degraded composer already names what it understood the question
+        # to be. Appending the anchor sentence on top of it said the same
+        # thing twice, in two different registers, in one breath:
+        #   "...I understood you to be asking about notes and hello. Ask me
+        #    again and I should have it. The anchor is your question about
+        #    notes and hello."
+        return _build_degraded_live_reply(frame, user_message, reason="filtered_draft")
 
     parts = [opener]
     if user_topics:

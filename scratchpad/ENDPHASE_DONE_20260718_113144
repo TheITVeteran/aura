@@ -1,0 +1,4 @@
+probe_rc=1
+rss_csv=/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/scratchpad/rss_trend_20260718_113144.csv
+growth_dir=/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/scratchpad/growth_20260718_113144
+probe_log=/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/scratchpad/probe_20260718_113144.log

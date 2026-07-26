@@ -1636,6 +1636,22 @@ def test_stateful_voice_reflex_stays_in_aura_voice():
     assert "How can I help" not in reply
 
 
+def _NO_PIPELINE_VOCABULARY(text: str) -> bool:
+    """A degraded turn may be honest without narrating its own machinery."""
+    lowered = str(text or "").lower()
+    return not any(
+        phrase in lowered
+        for phrase in (
+            "synthetic fallback",
+            "answer path",
+            "grounded anchor",
+            "clean enough draft",
+            "fallback path",
+            "composer",
+        )
+    )
+
+
 def test_stateful_voice_reflex_unknown_mood_is_not_random_stock_fallback(monkeypatch):
     from interface.routes import chat as chat_module
 
@@ -1653,9 +1669,16 @@ def test_stateful_voice_reflex_unknown_mood_is_not_random_stock_fallback(monkeyp
         "Can you open Notes and write Hello?",
     )
 
-    assert "synthetic fallback" in reply
+    # The degraded composer names what it understood the question to be, in
+    # plain speech. It used to narrate the pipeline instead — "a synthetic
+    # fallback as my real answer", "the grounded anchor is" — which is what
+    # Bryan answered with "I'm confused. What is this in reference to".
     assert "note" in reply.lower()
     assert "hello" in reply.lower()
+    assert _NO_PIPELINE_VOCABULARY(reply)
+    # And it says it once: the anchor sentence used to be appended on top of
+    # a composer that had already named the same topic.
+    assert reply.lower().count("hello") == 1
 
 
 def test_degraded_live_reply_is_grounded_in_user_topic():
@@ -1670,9 +1693,9 @@ def test_degraded_live_reply_is_grounded_in_user_topic():
         reason="repeated_reflex",
     )
 
-    assert "synthetic fallback" in reply
     assert "notes" in reply.lower() or "desktop" in reply.lower()
-    assert "verify" in reply.lower()
+    assert _NO_PIPELINE_VOCABULARY(reply)
+    assert "ask me again" in reply.lower()
 
 
 def test_confusion_override_uses_degraded_live_composer_not_scripted_apology():
@@ -1684,8 +1707,8 @@ def test_confusion_override_uses_degraded_live_composer_not_scripted_apology():
     )
 
     assert repair
-    assert "synthetic fallback" in repair
     assert "this exact turn" in repair
+    assert _NO_PIPELINE_VOCABULARY(repair)
     assert "I lost the thread on that answer" not in repair
 
 
