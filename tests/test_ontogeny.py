@@ -703,6 +703,11 @@ class TestNoveltyIsCausal:
 
         service = LatentCortexService.__new__(LatentCortexService)
         service._body_pressure = lambda: 0.1
+        service._runtime_pressure_snapshot = lambda: {
+            "observation_source": "test_probe",
+            "resource_observation_available": True,
+            "memory_percent": 40.0,
+        }
         return service
 
     def _allocate(self, service, novelty: float | None):

@@ -7,6 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.brain.llm.latent_cortex.adaptive_compute import (
+    build_adaptive_compute_plan,
+)
 from core.brain.llm.latent_cortex.cognitive_acquisition import (
     build_acquisition_receipt,
     build_acquisition_request,
@@ -49,6 +52,22 @@ def _episode_receipt(action: str = "search_memory") -> dict:
     }
 
 
+def _adaptive_plan(*, deadline_s: float) -> dict:
+    return build_adaptive_compute_plan(
+        objective=OBJECTIVE,
+        stakes=0.8,
+        uncertainty=0.8,
+        body_pressure=0.1,
+        deadline_s=deadline_s,
+        resource_snapshot={
+            "observation_source": "test_probe",
+            "resource_observation_available": True,
+            "memory_percent": 40.0,
+        },
+        foreground_request=True,
+        model_parameter_count=32_000_000_000,
+        requested_decode_tokens=256,
+    )
 def test_request_binds_problem_answer_action_and_existing_source_inventory():
     receipt = _episode_receipt()
 
@@ -238,10 +257,13 @@ async def test_service_runs_at_most_one_continuation_with_new_context(monkeypatc
 
     service = LatentCortexService()
     calls: list[dict] = []
+    first_receipt = _episode_receipt()
+    plan = _adaptive_plan(deadline_s=240.0)
+    first_receipt["adaptive_compute"] = {"plan": plan}
     first = {
         "ok": True,
         "text": FIRST_TEXT,
-        "receipt": _episode_receipt(),
+        "receipt": first_receipt,
     }
     second = {
         "ok": True,
@@ -297,6 +319,49 @@ async def test_service_runs_at_most_one_continuation_with_new_context(monkeypatc
     assert continuation["returned_round"] == 2
     assert continuation["acquisition_cap_exhausted"] is True
     assert continuation["continuation_cap_exhausted"] is True
+    assert result["receipt"]["adaptive_acquisition"]["authorized"] is True
+    assert result["receipt"]["adaptive_acquisition"]["attempted"] is True
+
+
+@pytest.mark.asyncio
+async def test_service_preserves_answer_when_adaptive_tool_budget_is_zero(monkeypatch):
+    from core.brain.latent_cortex_service import LatentCortexService
+
+    service = LatentCortexService()
+    receipt = _episode_receipt()
+    receipt["adaptive_compute"] = {"plan": _adaptive_plan(deadline_s=35.0)}
+    first = {"ok": True, "text": FIRST_TEXT, "receipt": receipt}
+    calls = 0
+
+    async def fake_deep_reason(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return first
+
+    broadcasts: list[str] = []
+
+    async def fake_broadcast(result, *, objective, stakes):
+        broadcasts.append(str(result["text"]))
+
+    monkeypatch.setattr(service, "deep_reason", fake_deep_reason)
+    monkeypatch.setattr(service, "_broadcast_conclusion", fake_broadcast)
+
+    result = await service.deep_reason_with_acquisition(
+        OBJECTIVE,
+        stakes=0.8,
+        uncertainty=0.8,
+        timeout_s=35.0,
+        foreground_request=True,
+        cognitive_context=[OLD_MEMORY],
+    )
+
+    assert result is first
+    assert calls == 1
+    assert broadcasts == [FIRST_TEXT]
+    authority = result["receipt"]["adaptive_acquisition"]
+    assert authority["authorized"] is False
+    assert authority["attempted"] is False
+    assert "cognitive_acquisition" not in result["receipt"]
 
 
 @pytest.mark.asyncio

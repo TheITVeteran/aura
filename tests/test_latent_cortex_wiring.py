@@ -2707,8 +2707,20 @@ def test_allocation_scales_with_stakes_and_uncertainty():
     assert high_cfg["fast_weights_max_layers"] >= low_cfg["fast_weights_max_layers"]
 
 
-def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget():
+def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget(
+    monkeypatch,
+):
     svc = LatentCortexService()
+    monkeypatch.setattr(svc, "_body_pressure", lambda: 0.1)
+    monkeypatch.setattr(
+        svc,
+        "_runtime_pressure_snapshot",
+        lambda: {
+            "observation_source": "test_probe",
+            "resource_observation_available": True,
+            "memory_percent": 40.0,
+        },
+    )
 
     cfg, budget = svc.allocate(
         stakes=0.7,
@@ -2720,7 +2732,8 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
 
     assert cfg["n_slots"] == 9
     assert cfg["n_branches"] == 2
-    assert cfg["max_steps"] == cfg["min_steps"] == 2
+    assert cfg["min_steps"] == 2
+    assert cfg["max_steps"] == 3
     assert cfg["exchange_interval"] == 1
     assert cfg["latent_opt"] is True and cfg["latent_opt_steps"] == 1
     assert cfg["fast_weights"] is True
@@ -2737,10 +2750,24 @@ def test_resident_32b_interactive_allocation_keeps_full_stack_inside_live_budget
         svc.get_status()["last_allocation"]["allocation_profile"]
         == "resident_32b_interactive_full_stack_v2"
     )
+    adaptive = svc.get_status()["last_allocation"]["adaptive_compute"]
+    assert adaptive["routing"]["recurrence"] == {"min_steps": 2, "max_steps": 3}
+    assert adaptive["answer_surface"]["minimum_decode_tokens"] == 256
+    assert adaptive["answer_surface"]["preserved"] is True
 
 
 def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch):
     svc = LatentCortexService()
+    monkeypatch.setattr(svc, "_body_pressure", lambda: 0.1)
+    monkeypatch.setattr(
+        svc,
+        "_runtime_pressure_snapshot",
+        lambda: {
+            "observation_source": "test_probe",
+            "resource_observation_available": True,
+            "memory_percent": 40.0,
+        },
+    )
     captured: dict = {}
 
     class Resident32Client:
@@ -2777,9 +2804,12 @@ def test_service_applies_resident_identity_profile_before_worker_ipc(monkeypatch
     assert captured["config"]["verifier_accept_non_regression"] is True
     assert captured["config"]["input_context_max_chars"] == 9000
     assert captured["config"]["allow_vanilla_fallback"] is False
-    assert captured["config"]["max_steps"] == 2
+    assert captured["config"]["max_steps"] == 3
     assert captured["config"]["exchange_interval"] == 1
     assert captured["budget"]["wall_clock_s"] <= 120.0
+    adaptive = svc._last_allocation["adaptive_compute"]
+    assert adaptive["routing"]["recurrence"]["max_steps"] == 3
+    assert svc._last_allocation["adaptive_compute_execution"] == "enforced"
 
 
 def test_compound_objective_expands_answer_surface(monkeypatch):
@@ -3010,7 +3040,7 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                 "ok": True,
                 "text": ("The deep answer explains the architecture and preserves its evidence."),
                 "receipt": {
-                    "steps_taken": 7,
+                        "steps_taken": kwargs["config"]["max_steps"],
                     "halting_reason": "converged",
                     "n_branches": kwargs["config"]["n_branches"],
                     "n_slots": kwargs["config"]["n_slots"],
@@ -3021,9 +3051,9 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "checkpoint_file_count": 8,
                     **_identity_receipt(),
                     **_branch_isolation_fields(kwargs["config"]),
-                    **_recurrent_grounding_fields(
-                        kwargs["config"],
-                        steps=7,
+                        **_recurrent_grounding_fields(
+                            kwargs["config"],
+                            steps=kwargs["config"]["max_steps"],
                         episode_id="abc",
                     ),
                     **_kv_state_tree_fields(
@@ -4351,7 +4381,7 @@ def _full_success_stub_client(captured):
                 "ok": True,
                 "text": "A deliberate conclusion that answers the question.",
                 "receipt": {
-                    "steps_taken": 7,
+                    "steps_taken": kwargs["config"]["max_steps"],
                     "halting_reason": "converged",
                     "n_branches": kwargs["config"]["n_branches"],
                     "n_slots": kwargs["config"]["n_slots"],
@@ -4364,7 +4394,7 @@ def _full_success_stub_client(captured):
                     **_branch_isolation_fields(kwargs["config"]),
                     **_recurrent_grounding_fields(
                         kwargs["config"],
-                        steps=7,
+                        steps=kwargs["config"]["max_steps"],
                         episode_id="ep-gwt",
                     ),
                     **_kv_state_tree_fields(

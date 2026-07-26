@@ -245,6 +245,42 @@ class LatentCortexService:
                 )
             return _UNKNOWN_BODY_PRESSURE
 
+    def _runtime_pressure_snapshot(self) -> dict[str, Any]:
+        """Read the canonical admission signal without creating new policy."""
+
+        try:
+            from core.runtime.control_plane import get_runtime_control_plane
+
+            snapshot = get_runtime_control_plane().admission.pressure_snapshot()
+            payload = snapshot.to_dict()
+            if not isinstance(payload, dict):
+                raise TypeError("runtime pressure snapshot is not a mapping")
+            return payload
+        except (
+            ImportError,
+            AttributeError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            if not getattr(self, "_runtime_pressure_unknown_reported", False):
+                self._runtime_pressure_unknown_reported = True
+                record_degradation(
+                    "latent_cortex_service",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "runtime pressure unavailable; adaptive compute uses "
+                        "conservative unknown-resource headroom"
+                    ),
+                )
+            return {
+                "observation_source": "unavailable",
+                "resource_observation_available": False,
+                "red_zones": ["pressure_provider_unavailable"],
+            }
+
     #: How much above-average novelty may add to effective uncertainty.
     #:
     #: Bounded on purpose. Novelty is a *measurement* — how far the current
@@ -335,6 +371,7 @@ class LatentCortexService:
         *,
         stakes: float,
         uncertainty: float,
+        objective: str = "",
         model_parameter_count: int = 0,
         foreground_request: bool = False,
         timeout_s: float | None = None,
@@ -365,6 +402,16 @@ class LatentCortexService:
             raise ValueError("model_parameter_count must be a non-negative integer")
         if type(foreground_request) is not bool:
             raise ValueError("foreground_request must be a boolean")
+        if not isinstance(objective, str):
+            raise ValueError("objective must be text")
+        owner_timeout_s: float | None = None
+        if timeout_s is not None:
+            try:
+                owner_timeout_s = float(timeout_s)
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise ValueError("timeout_s must be finite and positive") from exc
+            if not math.isfinite(owner_timeout_s) or owner_timeout_s <= 0.0:
+                raise ValueError("timeout_s must be finite and positive")
         headroom = 1.0 - 0.7 * pressure
 
         # The organ's effort choice scales depth inside the same hard bounds
@@ -478,17 +525,32 @@ class LatentCortexService:
                     "allow_vanilla_fallback": False,
                 }
             )
-            if timeout_s is not None:
-                try:
-                    owner_timeout_s = float(timeout_s)
-                except (TypeError, ValueError, OverflowError) as exc:
-                    raise ValueError("timeout_s must be finite and positive") from exc
-                if not math.isfinite(owner_timeout_s) or owner_timeout_s <= 0.0:
-                    raise ValueError("timeout_s must be finite and positive")
+            if owner_timeout_s is not None:
                 budget["wall_clock_s"] = min(
                     max(105.0, budget["wall_clock_s"]),
                     max(15.0, owner_timeout_s - 8.0),
                 )
+        from core.brain.llm.latent_cortex.adaptive_compute import (
+            apply_adaptive_compute_plan,
+            build_adaptive_compute_plan,
+        )
+
+        adaptive_plan = build_adaptive_compute_plan(
+            objective=objective,
+            stakes=stakes,
+            uncertainty=uncertainty,
+            body_pressure=pressure,
+            deadline_s=(
+                owner_timeout_s
+                if owner_timeout_s is not None
+                else float(budget["wall_clock_s"])
+            ),
+            resource_snapshot=self._runtime_pressure_snapshot(),
+            foreground_request=foreground_request,
+            model_parameter_count=model_parameter_count,
+            requested_decode_tokens=int(config["decode_max_tokens"]),
+        )
+        config, budget = apply_adaptive_compute_plan(config, budget, adaptive_plan)
         self._last_allocation = {
             "stakes": stakes,
             "uncertainty": uncertainty,
@@ -496,6 +558,7 @@ class LatentCortexService:
             "headroom": headroom,
             "allocation_profile": allocation_profile,
             "model_parameter_count": model_parameter_count,
+            "adaptive_compute": adaptive_plan,
             "config": dict(config),
             "budget": dict(budget),
         }
@@ -2745,6 +2808,40 @@ class LatentCortexService:
                 )
             return first
 
+        adaptive_acquisition: dict[str, Any] | None = None
+        if isinstance(first_receipt, dict):
+            execution = first_receipt.get("adaptive_compute")
+            plan = execution.get("plan") if isinstance(execution, dict) else None
+            if isinstance(plan, dict):
+                try:
+                    from core.brain.llm.latent_cortex.adaptive_compute import (
+                        build_adaptive_acquisition_receipt,
+                        validate_adaptive_acquisition_receipt,
+                    )
+
+                    tools = plan.get("routing", {}).get("tools", {})
+                    authorized = tools.get("max_acquisitions") == 1
+                    adaptive_acquisition = build_adaptive_acquisition_receipt(
+                        plan=plan,
+                        request_sha256=str(request["request_sha256"]),
+                        attempted=authorized,
+                    )
+                    validate_adaptive_acquisition_receipt(adaptive_acquisition)
+                    first_receipt["adaptive_acquisition"] = adaptive_acquisition
+                    if not authorized:
+                        self._last_receipt = first_receipt
+                        if foreground is True:
+                            await self._broadcast_conclusion(
+                                first,
+                                objective=objective,
+                                stakes=float(reason_kwargs.get("stakes", 0.5)),
+                            )
+                        return first
+                except (ImportError, AttributeError, TypeError, ValueError):
+                    return self._record_failure(
+                        "adaptive_acquisition_authority_invalid"
+                    )
+
         acquisition_started = time.monotonic()
         try:
             from core.brain.cognitive_ingress import (
@@ -2894,6 +2991,8 @@ class LatentCortexService:
         returned_receipt = returned.get("receipt")
         if isinstance(returned_receipt, dict):
             returned_receipt["cognitive_acquisition"] = continuation
+            if adaptive_acquisition is not None:
+                returned_receipt["adaptive_acquisition"] = adaptive_acquisition
             self._last_receipt = returned_receipt
         if returned_round == 1 and foreground is True:
             await self._broadcast_conclusion(
@@ -3155,9 +3254,11 @@ class LatentCortexService:
         except (TypeError, ValueError, OverflowError):
             model_parameter_count = 0
         try:
+            visible_objective = self._visible_objective(question, messages)
             config, budget = self.allocate(
                 stakes=stakes,
                 uncertainty=uncertainty,
+                objective=visible_objective,
                 model_parameter_count=max(0, model_parameter_count),
                 foreground_request=foreground_request,
                 timeout_s=timeout_s,
@@ -3165,8 +3266,16 @@ class LatentCortexService:
         except (TypeError, ValueError, OverflowError):
             return self._record_failure("invalid_cognitive_economy")
         allocation_profile = str(self._last_allocation.get("allocation_profile") or "")
+        adaptive_plan: dict[str, Any] | None = dict(
+            self._last_allocation.get("adaptive_compute") or {}
+        )
         if config_overrides is not None:
             config.update(dict(config_overrides))
+        if not _controller_accepts_overrides(config_overrides):
+            adaptive_plan = None
+            self._last_allocation["adaptive_compute_execution"] = (
+                "explicit_structural_override"
+            )
         # Learned execution controller: evidence-gated arm selection over
         # the base allocation (deeper recurrence / wider branches /
         # probe-guided bytecode / lean ΔW). Exploits only after Wilson
@@ -3241,6 +3350,16 @@ class LatentCortexService:
                 logger.debug("Execution controller unavailable: %s", exc)
                 controller_decision = None
                 action_policy_evidence = None
+        if adaptive_plan is not None:
+            try:
+                from core.brain.llm.latent_cortex.adaptive_compute import (
+                    enforce_adaptive_compute_limits,
+                )
+
+                config = enforce_adaptive_compute_limits(config, adaptive_plan)
+                self._last_allocation["adaptive_compute_execution"] = "enforced"
+            except (ImportError, TypeError, ValueError, OverflowError):
+                return self._record_failure("adaptive_compute_enforcement_failed")
         if external_execution_offer is not None and (
             controller_decision is None or action_policy_evidence is None
         ):
@@ -3899,6 +4018,23 @@ class LatentCortexService:
                 answer_replacement_private=private_answer_replacement,
                 expected_objective=visible_objective,
             )
+            if not contract_errors and adaptive_plan is not None:
+                try:
+                    from core.brain.llm.latent_cortex.adaptive_compute import (
+                        build_adaptive_execution_receipt,
+                        validate_adaptive_execution_receipt,
+                    )
+
+                    adaptive_execution = build_adaptive_execution_receipt(
+                            plan=adaptive_plan,
+                            config=config,
+                            budget=budget,
+                            worker_receipt=result_receipt,
+                    )
+                    validate_adaptive_execution_receipt(adaptive_execution)
+                    result_receipt["adaptive_compute"] = adaptive_execution
+                except (ImportError, TypeError, ValueError, OverflowError):
+                    contract_errors.append("adaptive_compute_execution_unproven")
             if not contract_errors:
                 quality_receipt = evaluate_latent_output(
                     result.get("text"),
@@ -4246,6 +4382,8 @@ class LatentCortexService:
                     "stage_timings_s",
                     "honest_flags",
                     "epistemic_state",
+                    "adaptive_compute",
+                    "adaptive_acquisition",
                 )
                 if key in self._last_failure_receipt
             },

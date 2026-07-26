@@ -28960,3 +28960,55 @@ then generate a fresh source-bound resident preflight. SPARK-051 remains open
 for answer-channel remediation, actual 32B training, preregistered equal-compute
 reasoning/frontier evidence, independent verification, and live selection,
 lesion, and restoration evidence. Final multi-hour soaks remain deferred.
+
+## Checkpoint 2026-07-26-387: Unified Adaptive Cognitive Economy
+
+SPARK-052 is complete at its bounded live-routing boundary. The latent cortex
+no longer allocates recurrence while leaving branch width, latent lookahead,
+verifier effort, and acquisition on unrelated fixed profiles. The new strict
+adaptive-compute policy derives structural objective difficulty from the
+visible request and combines it with caller uncertainty, stakes, allostatic
+body pressure, deadline, resident model scale, and the canonical runtime
+control-plane pressure snapshot.
+
+One admitted plan now causally sets recurrence minimum/maximum steps, branch
+count, UCT node/depth/branching limits, probe/generative/counterfactual/prefix
+verifier budgets, and whether a worker-selected memory/reference action may
+spend the single governed host acquisition and continuation round. Critical
+body pressure, critical runtime pressure, or a deadline under 45 seconds caps
+the plan at the lean tier. Unknown resource observation receives conservative
+pressure rather than maximum headroom. The answer decode allocation is a
+protected minimum and cannot be reduced by adaptive compute.
+
+The plan is versioned, strict, and SHA-256 committed. It is applied before
+resident worker IPC, enforced again after any learned execution-controller arm
+adjustment, and independently bound to actual worker steps, branches, verifier
+profile, decode allocation, and wall budget. Acquisition consumes that same
+plan: a zero budget preserves and broadcasts the first proven answer without
+performing I/O; a one budget remains constrained by the existing governed
+ingress, deduplication, provenance, and one-continuation contracts. Explicit
+structural experiment overrides remain identifiable and do not receive a false
+adaptive-execution certificate.
+
+Independent validators reject malformed nested plans, recomputed outer hashes,
+over-depth execution, excess branch width, reduced answer surfaces, and
+unauthorized acquisition attempts. Tests prove demand monotonicity, deadline/
+body/resource rationing, conservative unknown pressure, novelty causality,
+resident foreground caps, answer-surface preservation, service IPC wiring,
+workspace coupling isolation, tool-budget enforcement, and receipt tampering.
+
+The affected adaptive policy, latent service, cognitive acquisition,
+latent-tree, runtime control-plane, ontogeny, and surface matrix passes 284/284.
+Ruff, bytecode compilation, and diff hygiene pass. The enterprise ratchet finds
+zero issue in CP387-touched files; the unchanged repository still exceeds its
+baseline at `placeholder_stub_mock` 15 > 13 and high/critical 40 > 39. Neither
+baseline is raised.
+
+Counting CP387 makes the total checkpoint record 629. The 640-920 forecast
+remains, leaving approximately 11-291 records. Checkpoint-count completion is
+approximately 68.4%-98.3%, with a midpoint planning estimate of 80.6%.
+
+SPARK-052 does not claim reasoning gain. Next, generate the fresh resident
+preflight from this source state and begin SPARK-053 principled stop/abstain
+while the SPARK-051 answer-channel lane is remediated. Final multi-hour soaks
+remain deferred until every shorter gate is green.
