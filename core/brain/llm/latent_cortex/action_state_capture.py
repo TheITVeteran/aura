@@ -905,6 +905,12 @@ def _snapshot_binding(
 
 
 def _state_value_stream(value: Any) -> tuple[str, Iterator[bytes]]:
+    from core.brain.llm.latent_cortex.action_continuation import (
+        PortableStateComponent,
+    )
+
+    if isinstance(value, PortableStateComponent):
+        return "portable_state_v1", value.iter_encoded_chunks(chunk_bytes=_CHUNK_BYTES)
     if isinstance(value, (bytes, bytearray, memoryview)):
         view = memoryview(value)
 
@@ -2302,7 +2308,8 @@ class PrivateActionSnapshotStore:
                     "chunks",
                 }
                 or component["name"] not in _STATE_VALUE_NAMES
-                or component["value_type"] not in {"bytes", "canonical_json"}
+                or component["value_type"]
+                not in {"bytes", "canonical_json", "portable_state_v1"}
                 or type(component["byte_count"]) is not int
                 or not 0 <= component["byte_count"] <= _MAX_COMPONENT_BYTES
                 or not _is_sha256(component["value_sha256"])
@@ -2382,6 +2389,23 @@ class PrivateActionSnapshotStore:
             total += len(payload)
             if component["value_type"] == "bytes":
                 state[component["name"]] = bytes(payload)
+            elif component["value_type"] == "portable_state_v1":
+                from core.brain.llm.latent_cortex.action_continuation import (
+                    PortableStateComponent,
+                )
+
+                try:
+                    portable = PortableStateComponent.from_bytes(payload)
+                    canonical_digest = portable.sha256()
+                except (TypeError, ValueError) as exc:
+                    self._zeroize(payload)
+                    raise ActionStateCaptureError(
+                        "private_snapshot_portable_state_invalid"
+                    ) from exc
+                if canonical_digest != component["value_sha256"]:
+                    self._zeroize(payload)
+                    _fail("private_snapshot_structured_value_noncanonical")
+                state[component["name"]] = portable
             else:
                 try:
                     value = json.loads(payload)

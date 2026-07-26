@@ -28708,3 +28708,62 @@ runner/verifier lineage; and the resident-1.5B destructive integration gate.
 Resident-32B training and the preregistered reasoning/frontier campaign follow.
 No training, gain, or `WOW Signal` claim is made here. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-26-382: Serializable Resident First-Action Continuation
+
+SPARK-051 now has a real private continuation at the recurrent controller's
+first action opportunity. The new deterministic portable-state codec covers
+nested scalar/control state, bytes, mappings, sets, NumPy tensors, and MLX
+tensors without pickle or executable deserialization. It enforces depth, item,
+scalar, and tensor bounds; rejects malformed and noncanonical encodings; emits
+bounded chunks directly into the authenticated snapshot transaction; and
+round-trips MLX `bfloat16` through its exact uint16 bit representation.
+
+The engine, rather than a caller-side wrapper, owns the capture boundary.
+Immediately before opportunity one can select an action, it captures all eight
+required surfaces: branch runtime, runner durable state, admitted evidence,
+exact recurrent KV snapshots, latent/workspace tensors, memory state, public
+action state, and the runner RNG root. A capture-only episode terminates there
+with zero cognitive actions and zero decoded tokens. The existing public
+capture receipt can therefore attest to a private state that actually exists,
+rather than a collection of independently manufactured hashes.
+
+Restore starts from an equivalent fresh resident frame, installs the decoded KV
+and latent state, and rebinds private per-episode KV node capabilities to the
+fresh tree while preserving the exact cache bytes. It then re-encodes every
+component and requires equality before policy selection. Restore is
+transactional: any rejection attempts an exact rollback to the pre-install
+frame and verifies that rollback. If rollback cannot be proven, the engine
+propagates the existing `UNKNOWN_APPLICATION` terminal quarantine so the MLX
+worker cannot resume service.
+
+Real tiny-Qwen2 coverage proves the engine-owned stop before action/decode,
+exact capture/restore equality across all eight component byte streams,
+runner-state drift rejection, verified rollback, exact MLX `bfloat16`, and a
+complete real-continuation round trip through streamed AES-GCM snapshot
+publication and authenticated restore. The post-rebase affected continuation,
+snapshot, custody, intervention, engine, worker-origin, runtime-identity, MLX
+runtime/admission/cancellation/resilience, and strict-secret matrix passes
+334/334. Focused Ruff, bytecode compilation, and `git diff --check` pass.
+
+The repository-wide enterprise and governance ratchets are not called green.
+A clean `origin/main` worktree and this candidate both report the same two
+enterprise baseline regressions (`placeholder_stub_mock` 15 > 13 and
+high/critical 40 > 39) plus the same cooperative governance drift (three new
+raw file mutations and one stale bucket in hierarchical-planner/causal-world-
+model work). This checkpoint adds no finding or ownership drift and does not
+raise either baseline.
+
+Ten cooperative causal-model, hierarchical-planner, being/runtime, synthesis,
+alignment-auditor, and semantic-closeout records landed between CP381 and this
+integration. Counting them and CP382 makes the total checkpoint record 624.
+The 640-920 forecast remains, leaving approximately 16-296 records.
+Checkpoint-count completion is approximately 67.8%-97.5%, with a midpoint
+planning estimate of 80.0%.
+
+The fixed SPARK-051 pre-training burn-down now has two checkpoints: end-to-end
+worker/client/service/runner/verifier lineage, then the resident-1.5B
+destructive integration gate. Resident-32B training and the preregistered
+reasoning/frontier campaign follow. No training, reasoning gain, frontier gain,
+or `WOW Signal` is claimed here. Final multi-hour soaks remain deferred until
+every shorter gate is green.

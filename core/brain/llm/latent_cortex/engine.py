@@ -22,11 +22,14 @@ import logging
 import math
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from core.brain.llm.latent_cortex.action_state_capture import (
+    UnknownActionStateApplicationError,
+)
 from core.brain.llm.latent_cortex.branches import BranchEnsemble, BranchState
 from core.brain.llm.latent_cortex.capability_canaries import (
     CapabilityCanaries,
@@ -132,6 +135,10 @@ class _FastWeightCleanupError(RuntimeError):
 
 class _LatentEpisodeCancelledError(Exception):
     """Cooperative cancellation observed at a checkpoint-safe boundary."""
+
+
+class _ActionContinuationCapturedError(Exception):
+    """Capture-only execution stopped before selecting the first action."""
 
 
 def _logits_digest(logits) -> str:
@@ -2015,6 +2022,10 @@ class LatentCortexEngine:
         progress: Callable[[dict], None] | None = None,
         capture_decode_logprobs: bool = False,
         decode_sentence_grace_tokens: int | None = None,
+        action_continuation_capture: Callable[[Any], None] | None = None,
+        action_continuation_restore: Any | None = None,
+        action_continuation_runner_state: Mapping[str, Any] | None = None,
+        action_continuation_capture_only: bool = False,
     ) -> LatentReasoningResult:
         if type(capture_decode_logprobs) is not bool:
             raise TypeError("capture_decode_logprobs must be boolean")
@@ -2023,6 +2034,35 @@ class LatentCortexEngine:
             or not 0 <= decode_sentence_grace_tokens <= 4096
         ):
             raise ValueError("decode_sentence_grace_tokens must be null or inside [0, 4096]")
+        if type(action_continuation_capture_only) is not bool:
+            raise TypeError("action_continuation_capture_only must be boolean")
+        continuation_requested = (
+            action_continuation_capture is not None
+            or action_continuation_restore is not None
+            or action_continuation_runner_state is not None
+            or action_continuation_capture_only
+        )
+        if continuation_requested:
+            from core.brain.llm.latent_cortex.action_continuation import (
+                ActionOpportunityContinuation,
+            )
+
+            if action_continuation_capture is not None and not callable(
+                action_continuation_capture
+            ):
+                raise TypeError("action_continuation_capture must be callable")
+            if action_continuation_restore is not None and not isinstance(
+                action_continuation_restore,
+                ActionOpportunityContinuation,
+            ):
+                raise TypeError("action_continuation_restore has the wrong type")
+            if (
+                not isinstance(action_continuation_runner_state, Mapping)
+                or set(action_continuation_runner_state) != {"durable_state", "rng_state"}
+            ):
+                raise ValueError("action continuation requires exact runner state")
+            if action_continuation_capture_only and action_continuation_capture is None:
+                raise ValueError("capture-only continuation requires a capture callback")
         receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
@@ -2145,6 +2185,7 @@ class LatentCortexEngine:
         receipt.checkpoint_file_count = int(self.invariant.file_receipt.get("files", 0) or 0)
 
         failure_reason = ""
+        continuation_captured_only = False
         out_tokens: list[int] = []
         decode_token_logprobs: list[float] = []
         answer_replacement_private: dict[str, Any] = {}
@@ -2179,6 +2220,14 @@ class LatentCortexEngine:
                     token_logprobs_out=(decode_token_logprobs if capture_decode_logprobs else None),
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
                     transient_cleanup_registry=transient_cleanup_registry,
+                    action_continuation_capture=action_continuation_capture,
+                    action_continuation_restore=action_continuation_restore,
+                    action_continuation_runner_state=(
+                        dict(action_continuation_runner_state)
+                        if action_continuation_runner_state is not None
+                        else None
+                    ),
+                    action_continuation_capture_only=action_continuation_capture_only,
                 )
                 if receipt.answer_replacement.get("decision") == "abstain":
                     failure_reason = "answer_replacement_abstained"
@@ -2194,6 +2243,12 @@ class LatentCortexEngine:
                 receipt.flag("soft_cancelled")
                 receipt.halting_reason = receipt.halting_reason or "soft_cancelled"
                 failure_reason = "soft_cancelled"
+            except _ActionContinuationCapturedError:
+                continuation_captured_only = True
+                receipt.last_stage = "action_state_captured"
+                receipt.halting_reason = "action_state_captured_before_first_action"
+            except UnknownActionStateApplicationError:
+                raise
             except _LATENT_PHASE_ERRORS as exc:
                 fallback_permitted = (
                     self.config.allow_vanilla_fallback and normalized_action_intervention is None
@@ -2303,6 +2358,17 @@ class LatentCortexEngine:
             },
         )
         receipt.budget = budget.to_receipt()
+        if continuation_captured_only:
+            receipt.last_stage = "action_state_captured"
+            receipt.halting_reason = "action_state_captured_before_first_action"
+            return LatentReasoningResult(
+                ok=True,
+                text="",
+                receipt=receipt,
+                reason="action_state_captured",
+                decode_token_logprobs=decode_token_logprobs,
+                answer_replacement_private=answer_replacement_private,
+            )
         if not failure_reason and receipt.decode_termination not in {
             "eos",
             # The public answer contract completed: one FINAL_ANSWER JSON
@@ -2390,6 +2456,10 @@ class LatentCortexEngine:
         token_logprobs_out: list[float] | None = None,
         decode_sentence_grace_tokens: int | None = None,
         transient_cleanup_registry: list[Any] | None = None,
+        action_continuation_capture: Callable[[Any], None] | None = None,
+        action_continuation_restore: Any | None = None,
+        action_continuation_runner_state: dict[str, Any] | None = None,
+        action_continuation_capture_only: bool = False,
     ) -> tuple[list[int], EpisodeReceipt, dict[str, Any]]:
         import mlx.core as mx
 
@@ -2771,6 +2841,10 @@ class LatentCortexEngine:
         active_action_executors = action_executors
         intervention_pending = action_intervention is not None
         intervention_runtime: dict[str, Any] = {}
+        continuation_pending = (
+            action_continuation_capture is not None or action_continuation_restore is not None
+        )
+        active_action_continuation = None
         intervention_action: OperationKind | None = None
         intervention_arm = ""
         if action_intervention is not None:
@@ -2973,19 +3047,139 @@ class LatentCortexEngine:
                     omitted_action_count=omitted_action_count,
                     previously_selected=tuple(selected_actions),
                 )
+                if continuation_pending:
+                    from core.brain.llm.latent_cortex.action_continuation import (
+                        capture_action_opportunity_continuation,
+                        restore_action_opportunity_continuation,
+                    )
+
+                    if action_index != 0 or selected_actions or omitted_action_count:
+                        raise RuntimeError(
+                            "action continuation missed the first action opportunity"
+                        )
+                    if action_continuation_runner_state is None:
+                        raise RuntimeError("action continuation runner state is unavailable")
+
+                    def capture_current_action_frame(
+                        *,
+                        current_signal: CognitiveStateSignal,
+                        current_executors: tuple[OperationKind, ...],
+                        current_action_index: int,
+                        current_op_index: int,
+                        current_branch_index: int,
+                        current_layer_end: int,
+                    ):
+                        return capture_action_opportunity_continuation(
+                            ensemble=ensemble,
+                            cache=cache,
+                            budget=budget,
+                            episode_context_items=episode_context_items,
+                            action_policy_evidence=action_policy_evidence,
+                            state_signal=current_signal,
+                            active_action_executors=current_executors,
+                            durable_state=action_continuation_runner_state[
+                                "durable_state"
+                            ],
+                            rng_state=action_continuation_runner_state["rng_state"],
+                            episode_step=current_action_index,
+                            schedule_step=current_op_index,
+                            branch_id=f"branch-{current_branch_index}",
+                            layer_index=max(0, current_layer_end - 1),
+                            kv_position=max(
+                                self._cache_context_tokens(cache, layer_index)
+                                for layer_index in range(len(cache))
+                            ),
+                        )
+
+                    capture_frame_kwargs = {
+                        "current_signal": state_signal,
+                        "current_executors": active_action_executors,
+                        "current_action_index": action_index,
+                        "current_op_index": op_index,
+                        "current_branch_index": prospective_target.index,
+                        "current_layer_end": int(op.end),
+                    }
+                    rollback_continuation = capture_current_action_frame(
+                        **capture_frame_kwargs
+                    )
+                    active_action_continuation = rollback_continuation
+                    if action_continuation_restore is not None:
+                        try:
+                            restore_action_opportunity_continuation(
+                                action_continuation_restore,
+                                ensemble=ensemble,
+                                cache=cache,
+                                budget=budget,
+                            )
+                            active_action_continuation = capture_current_action_frame(
+                                **capture_frame_kwargs
+                            )
+                            if (
+                                active_action_continuation.state_components
+                                != action_continuation_restore.state_components
+                            ):
+                                differing = sorted(
+                                    name
+                                    for name, value in (
+                                        active_action_continuation.state_components.items()
+                                    )
+                                    if value
+                                    != action_continuation_restore.state_components.get(name)
+                                )
+                                raise RuntimeError(
+                                    "restored action continuation differs before action:"
+                                    + ",".join(differing)
+                                )
+                        except Exception as restore_exc:  # noqa: BLE001 - transactional rollback
+                            try:
+                                restore_action_opportunity_continuation(
+                                    rollback_continuation,
+                                    ensemble=ensemble,
+                                    cache=cache,
+                                    budget=budget,
+                                )
+                                if (
+                                    capture_current_action_frame(
+                                        **capture_frame_kwargs
+                                    ).state_components
+                                    != rollback_continuation.state_components
+                                ):
+                                    raise RuntimeError(
+                                        "action continuation rollback verification failed"
+                                    )
+                            except Exception as rollback_exc:  # noqa: BLE001 - fatal ambiguity
+                                raise UnknownActionStateApplicationError(
+                                    {
+                                        "operation_id": "engine-first-action-restore",
+                                        "arm": intervention_arm,
+                                        "worker_pid": None,
+                                        "request_sha256": "",
+                                        "snapshot_sha256": "",
+                                    }
+                                ) from rollback_exc
+                            raise restore_exc
+                    continuation_pending = False
+                    if action_continuation_capture is not None:
+                        action_continuation_capture(active_action_continuation)
+                    if action_continuation_capture_only:
+                        raise _ActionContinuationCapturedError
                 if intervention_pending:
                     from core.brain.llm.latent_cortex.action_intervention import (
                         CONTROL_ARM,
                     )
 
-                    pre_components = self._action_intervention_state_components(
-                        ensemble=ensemble,
-                        budget=budget,
-                        episode_context_items=episode_context_items,
-                        action_policy_evidence=action_policy_evidence,
-                        state_signal=state_signal,
-                        active_action_executors=active_action_executors,
-                        action_intervention=action_intervention,
+                    pre_components = (
+                        active_action_continuation.state_components
+                        if active_action_continuation is not None
+                        else self._action_intervention_state_components(
+                            ensemble=ensemble,
+                            budget=budget,
+                            episode_context_items=episode_context_items,
+                            action_policy_evidence=action_policy_evidence,
+                            state_signal=state_signal,
+                            active_action_executors=active_action_executors,
+                            action_intervention=action_intervention,
+                        )
                     )
                     pre_state_sha256 = self._canonical_sha256(pre_components)
                     pre_kv_sha256 = pre_components["kv_cache_sha256"]
@@ -3017,15 +3211,38 @@ class LatentCortexEngine:
                             omitted_action_count=omitted_action_count,
                             previously_selected=tuple(selected_actions),
                         )
-                        post_components = self._action_intervention_state_components(
-                            ensemble=ensemble,
-                            budget=budget,
-                            episode_context_items=episode_context_items,
-                            action_policy_evidence=action_policy_evidence,
-                            state_signal=post_signal,
-                            active_action_executors=active_action_executors,
-                            action_intervention=action_intervention,
-                        )
+                        if active_action_continuation is not None:
+                            post_components = capture_action_opportunity_continuation(
+                                ensemble=ensemble,
+                                cache=cache,
+                                budget=budget,
+                                episode_context_items=episode_context_items,
+                                action_policy_evidence=action_policy_evidence,
+                                state_signal=post_signal,
+                                active_action_executors=active_action_executors,
+                                durable_state=action_continuation_runner_state[
+                                    "durable_state"
+                                ],
+                                rng_state=action_continuation_runner_state["rng_state"],
+                                episode_step=action_index,
+                                schedule_step=op_index,
+                                branch_id=f"branch-{prospective_target.index}",
+                                layer_index=max(0, int(op.end) - 1),
+                                kv_position=max(
+                                    self._cache_context_tokens(cache, layer_index)
+                                    for layer_index in range(len(cache))
+                                ),
+                            ).state_components
+                        else:
+                            post_components = self._action_intervention_state_components(
+                                ensemble=ensemble,
+                                budget=budget,
+                                episode_context_items=episode_context_items,
+                                action_policy_evidence=action_policy_evidence,
+                                state_signal=post_signal,
+                                active_action_executors=active_action_executors,
+                                action_intervention=action_intervention,
+                            )
                         intervention_runtime.update(
                             {
                                 "post_state_components": post_components,
@@ -3925,15 +4142,38 @@ class LatentCortexEngine:
                         ),
                         previously_selected=tuple([*selected_actions, action]),
                     )
-                    post_components = self._action_intervention_state_components(
-                        ensemble=ensemble,
-                        budget=budget,
-                        episode_context_items=episode_context_items,
-                        action_policy_evidence=action_policy_evidence,
-                        state_signal=post_signal,
-                        active_action_executors=active_action_executors,
-                        action_intervention=action_intervention,
-                    )
+                    if active_action_continuation is not None:
+                        post_components = capture_action_opportunity_continuation(
+                            ensemble=ensemble,
+                            cache=cache,
+                            budget=budget,
+                            episode_context_items=episode_context_items,
+                            action_policy_evidence=action_policy_evidence,
+                            state_signal=post_signal,
+                            active_action_executors=active_action_executors,
+                            durable_state=action_continuation_runner_state[
+                                "durable_state"
+                            ],
+                            rng_state=action_continuation_runner_state["rng_state"],
+                            episode_step=state_signal.step_index + 1,
+                            schedule_step=op_index,
+                            branch_id=f"branch-{prospective_target.index}",
+                            layer_index=max(0, int(op.end) - 1),
+                            kv_position=max(
+                                self._cache_context_tokens(cache, layer_index)
+                                for layer_index in range(len(cache))
+                            ),
+                        ).state_components
+                    else:
+                        post_components = self._action_intervention_state_components(
+                            ensemble=ensemble,
+                            budget=budget,
+                            episode_context_items=episode_context_items,
+                            action_policy_evidence=action_policy_evidence,
+                            state_signal=post_signal,
+                            active_action_executors=active_action_executors,
+                            action_intervention=action_intervention,
+                        )
                     intervention_runtime.update(
                         {
                             "post_state_components": post_components,
@@ -4071,6 +4311,10 @@ class LatentCortexEngine:
             receipt.bytecode_events = bytecode_events
         receipt.cognitive_operator_trace = cognitive_operator_trace
         receipt.context_focus_trace = context_focus_trace
+        if continuation_pending:
+            raise RuntimeError(
+                "action continuation was not captured by the first recurrent action opportunity"
+            )
         if action_intervention is not None:
             if intervention_pending or not intervention_runtime:
                 raise ValueError("action intervention was not consumed by the recurrent schedule")

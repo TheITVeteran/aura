@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from core.brain.llm.latent_cortex import action_state_capture as capture_module
+from core.brain.llm.latent_cortex.action_continuation import PortableStateComponent
 from core.brain.llm.latent_cortex.action_state_capture import (
     CONTROL_ARM,
     TREATMENT_ARM,
@@ -73,6 +74,8 @@ def _sha(value) -> str:
 
 
 def _state_sha(value) -> str:
+    if isinstance(value, PortableStateComponent):
+        return value.sha256()
     payload = value if isinstance(value, bytes) else canonical_json_bytes(value)
     return hashlib.sha256(payload).hexdigest()
 
@@ -417,6 +420,153 @@ def _restore(store, handle, admission, *, arm: str, restored_at_unix: int):
         restored_at_unix=restored_at_unix,
         apply_state=apply_state,
     )
+
+
+def test_portable_resident_components_stream_through_encrypted_store(tmp_path):
+    raw_state = _private_state("PORTABLE")
+    private_state = {
+        name: PortableStateComponent.from_value(value) for name, value in raw_state.items()
+    }
+    _, root_pem, role_keys, policy = _trust_fixture()
+    worker_key = _private("worker-portable")
+    request = _build_request(
+        policy,
+        role_keys,
+        worker_key,
+        private_state=private_state,
+    )
+    admission = admit_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        current_policy_document=policy.document,
+        now_unix=NOW,
+    )
+    store = PrivateActionSnapshotStore(
+        tmp_path / "portable-resident-store",
+        key_custodian=_custodian(),
+    )
+    publication = store.publish(admission, private_state, created_at_unix=NOW + 1)
+
+    applied: list[dict] = []
+
+    def apply_state(state: dict) -> str:
+        applied.append(state)
+        return _sha(
+            {
+                f"{name}_sha256": value.sha256()
+                for name, value in sorted(state.items())
+            }
+        )
+
+    restored = store.restore_and_apply(
+        publication.handle,
+        admission,
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+        apply_state=apply_state,
+    )
+    assert restored.receipt["post_apply_state_sha256"] == _sha(
+        publication.state_components
+    )
+    assert len(applied) == 1
+    for name in private_state:
+        assert isinstance(applied[0][name], PortableStateComponent)
+        assert applied[0][name].to_bytes() == private_state[name].to_bytes()
+
+
+def test_real_qwen_continuation_survives_encrypted_snapshot_round_trip(tmp_path):
+    mx = pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    from mlx_lm.models.qwen2 import Model, ModelArgs
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        CortexConfig,
+        RecurrenceConfig,
+        WorkspaceConfig,
+    )
+
+    model = Model(
+        ModelArgs(
+            model_type="qwen2",
+            hidden_size=32,
+            num_hidden_layers=8,
+            intermediate_size=64,
+            num_attention_heads=4,
+            rms_norm_eps=1e-6,
+            vocab_size=64,
+            num_key_value_heads=2,
+            max_position_embeddings=128,
+            rope_theta=10000.0,
+        )
+    )
+    mx.eval(model.parameters())
+    engine = LatentCortexEngine(
+        model,
+        config=CortexConfig(
+            workspace=WorkspaceConfig(n_slots=2, seed=3),
+            recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
+            branches=BranchConfig(n_branches=1, isolation_steps=1),
+            prelude_frac=0.25,
+            coda_frac=0.25,
+            decode_max_tokens=2,
+            allow_vanilla_fallback=False,
+        ),
+    )
+    captured = []
+    result = engine.reason(
+        token_ids=[1, 2, 3, 4],
+        action_continuation_capture=captured.append,
+        action_continuation_runner_state={
+            "durable_state": {"conversation_epoch": 19},
+            "rng_state": {"root_seed": 104_729},
+        },
+        action_continuation_capture_only=True,
+    )
+    assert result.ok is True and len(captured) == 1
+    continuation = captured[0]
+
+    _, root_pem, role_keys, policy = _trust_fixture()
+    worker_key = _private("worker-real-continuation")
+    request = _build_request(
+        policy,
+        role_keys,
+        worker_key,
+        private_state=continuation.private_state,
+    )
+    admission = admit_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        current_policy_document=policy.document,
+        now_unix=NOW,
+    )
+    store = PrivateActionSnapshotStore(
+        tmp_path / "real-qwen-continuation-store",
+        key_custodian=_custodian(),
+    )
+    publication = store.publish(
+        admission,
+        continuation.private_state,
+        created_at_unix=NOW + 1,
+    )
+    restored = store.restore_and_apply(
+        publication.handle,
+        admission,
+        arm=TREATMENT_ARM,
+        restored_at_unix=NOW + 2,
+        apply_state=lambda state: _sha(
+            {
+                f"{name}_sha256": value.sha256()
+                for name, value in sorted(state.items())
+            }
+        ),
+    )
+    assert restored.receipt["state_components"] == continuation.state_components
+    for name, value in restored.state.items():
+        assert value.to_bytes() == continuation.private_state[name].to_bytes()
 
 
 def _restore_until_sigkill(store_root, handle, admission, started, custodian) -> None:

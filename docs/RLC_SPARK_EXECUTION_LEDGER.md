@@ -2335,6 +2335,40 @@ before those dependencies close is not admissible.
   lineage, and the resident-1.5B destructive integration gate remain the three
   fixed pre-training checkpoints. No resident training or reasoning/frontier
   gain is claimed.
+
+  CP382 closes the serializable resident-continuation and engine-owned first-
+  action checkpoint. `PortableStateComponent` is a strict, deterministic,
+  bounded binary format for nested scalar state, bytes, mappings, sets,
+  NumPy tensors, and MLX tensors. It streams directly into the authenticated
+  snapshot store, rejects malformed/noncanonical payloads, and preserves MLX
+  `bfloat16` through an exact uint16 bit view instead of an invalid NumPy
+  conversion. No pickle or executable deserializer enters the boundary.
+
+  The engine now owns the capture point immediately before opportunity one can
+  choose a cognitive action. It records complete branch runtime, latent slots,
+  exact recurrent KV snapshots, evidence, memory, public action state, and the
+  runner-supplied durable/RNG roots. Capture-only execution exits before policy
+  selection and decode. Restore installs those tensors and cache snapshots into
+  an equivalent fresh frame, rebinds per-episode KV capabilities to the fresh
+  worker's root, and re-encodes all eight components before action. Any mismatch
+  rolls the resident back and verifies the rollback; ambiguous rollback raises
+  the existing fatal `UNKNOWN_APPLICATION` quarantine.
+
+  Real tiny-Qwen2 tests prove zero action/decode leakage, exact eight-component
+  capture/restore identity, runner-state drift rejection, post-failure worker
+  usability, and a complete engine -> streamed encrypted store -> authenticated
+  restore round trip using actual latent and KV tensors. The post-rebase affected
+  engine/store/intervention/worker/client matrix passes 334 tests. Strict Ruff,
+  bytecode compilation, and diff hygiene pass. The candidate has no enterprise
+  or governance delta from clean `origin/main`; both share two pre-existing
+  enterprise ratchet regressions and the same three-new/one-stale governance
+  drift introduced by cooperative semantic-closeout commits. No baseline is
+  raised here.
+
+  CP382 does not claim end-to-end transport or a resident result. Worker/client/
+  service/runner/verifier lineage and the resident-1.5B destructive integration
+  gate remain the two fixed pre-training checkpoints. No resident-32B training,
+  reasoning gain, frontier gain, or `WOW Signal` is claimed.
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while
