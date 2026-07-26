@@ -29012,3 +29012,39 @@ SPARK-052 does not claim reasoning gain. Next, generate the fresh resident
 preflight from this source state and begin SPARK-053 principled stop/abstain
 while the SPARK-051 answer-channel lane is remediated. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-26-388: Resident Negative-Result Receipt Closure
+
+The CP388 detached, sleep-protected resident-32B answer-channel preflight ran
+from the frozen CP387 source contract and completed its intended bounded
+diagnostic in 841.51 seconds. The supervisor denied process forks, observed no
+restart, verified containment, and ended with an empty process group. Its exit
+code was the preregistered non-admission code `3`, not an infrastructure crash.
+
+The resident result reproduced the prior blocker on fresh disjoint prompts:
+the recurrent baseline scored 1/6 overall, and five calibration cells produced
+4 parseable and correct completions out of 20 (`0.20`). Calibration therefore
+denied training as `answer_channel_blocked`; no optimizer group or update ran,
+and the durable adapter remains at step zero.
+
+Unlike CP386, the repaired terminal reporter completed. `grpo_receipt.json`
+now carries `learning_signal=false`, zero groups, the explicit diagnosis
+`no_training_groups_observed`, and the required next gate instead of raising a
+`KeyError`. The detached receipt independently records return code `3`, no
+timeout, no descendant cleanup requirement, and verified process containment.
+The contract was source-current when launched from commit `3d28b2cae`; a later
+verification from the in-progress SPARK-053 worktree correctly reports source
+drift rather than pretending the frozen CP388 snapshots describe newer edits.
+
+CP388 closes the bounded reporter verification only. SPARK-051 remains open for
+answer-channel pretraining/repair, actual admitted resident optimization, and
+powered equal-compute selection/lesion/restoration evidence. It proves neither
+reasoning gain nor frontier performance and does not authorize `WOW Signal`.
+
+Counting CP388 makes the total checkpoint record 630. The 640-920 forecast
+remains, leaving approximately 10-290 records. Checkpoint-count completion is
+approximately 68.5%-98.4%, with a midpoint planning estimate of 80.8%.
+
+Next, complete SPARK-053's principled stop/abstain boundary, then continue the
+SPARK ledger in order while SPARK-051's answer-channel remediation remains a
+separate result lane. Final multi-hour soaks remain deferred.
