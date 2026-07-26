@@ -416,6 +416,18 @@ async def persist_revisions(
     revision with the constitutional BeliefAuthority (contest -> reconcile),
     so the change is first-class in the belief system, not an episodic blob."""
     receipts: list[dict[str, str]] = []
+    # A durable belief change requires BOTH a per-revision verification AND the
+    # ablation causal verdict with at least one actually-changed plan item.
+    # Persisting on rev.verified alone let a forged/injected revision (or a
+    # revision whose causal proof was FALSE) mutate durable self-belief.
+    if not proof.causal or not proof.changed_items:
+        record_degradation(
+            "web_interlocutor.revision_persist_gate",
+            RuntimeError("revision persistence refused: no causal verdict / no changed plan item"),
+            severity="info",
+            action="skipped durable belief revision because causal influence was not proven",
+        )
+        return receipts
     verified = [rev for rev in revisions if rev.verified]
     if not verified:
         return receipts
@@ -489,18 +501,15 @@ async def persist_revisions(
 
 
 def _get_belief_authority() -> Any | None:
+    # Only the REGISTERED authority is used. Constructing a fresh local
+    # BeliefAuthority when none is registered created a phantom store whose
+    # updates were invisible to the rest of the system — a belief change that
+    # nothing else can see is not a governed belief change. Absent authority
+    # means the revision is not registered (the caller records that honestly).
     try:
         from core.service_container import ServiceContainer
 
-        authority = ServiceContainer.get("belief_authority", default=None)
-        if authority is not None:
-            return authority
-    except (ImportError, AttributeError, RuntimeError):
-        pass
-    try:
-        from core.constitution import BeliefAuthority
-
-        return BeliefAuthority()
+        return ServiceContainer.get("belief_authority", default=None)
     except (ImportError, AttributeError, RuntimeError):
         return None
 
