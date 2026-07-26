@@ -50,6 +50,22 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def pytest_collection_modifyitems(config, items):
+    """Keep destructive resident-model gates opt-in without recording skips."""
+    if os.environ.get("AURA_RUN_RLC_RESIDENT_1P5B_GATE") == "1":
+        return
+    selected = []
+    deselected = []
+    for item in items:
+        if item.get_closest_marker("resident_model") is None:
+            selected.append(item)
+        else:
+            deselected.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 @dataclass(frozen=True)
 class _ResourceLeakSnapshot:
     child_identities: frozenset[tuple[int, float]]

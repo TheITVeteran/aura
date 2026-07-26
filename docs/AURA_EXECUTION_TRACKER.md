@@ -28827,3 +28827,60 @@ erasure, and independent verification. Resident-32B training and the
 preregistered reasoning/frontier campaign follow. No training, gain, or `WOW
 Signal` is claimed here. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+## Checkpoint 2026-07-26-384: Resident 1.5B Action-State Gate
+
+The fixed SPARK-051 pre-training burn-down is complete. The capture admission
+path now derives the resident model-weights identity from the loaded worker
+rather than trusting a self-consistent value supplied by a campaign request.
+The identity commits the canonical model path, logical and stored parameter
+counts and their basis, a full-content checkpoint SHA-256 fingerprint, ordered
+adapter stack, tokenizer artifact hashes, quantization configuration, and an
+empty unresolved-identity-gap inventory. Both admission and worker execution
+independently reconstruct the digest and reject any mismatch.
+
+The destructive gate loads the actual resident Qwen2.5-1.5B-Instruct-4bit
+checkpoint (`1,543,714,304` logical parameters), whose full checkpoint
+fingerprint is `d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d`
+and bound model-weights identity is
+`ee65f09c3b403d7a70420393ccb3bc71a1c147e74ea22a8fdfa01fa9370c07db`.
+One engine-owned first-action continuation exits with zero actions and zero
+decoded tokens. Its eight exact state components are streamed into the
+encrypted snapshot store, restored twice to identical state for treatment and
+matched-no-action control, sealed after one use per arm, and then erased with
+both ciphertext deletion and cryptographic key destruction proven. A second
+real-checkpoint gate restores one captured state into runner-signed treatment
+and control interventions: treatment executes exactly one `BLIND_RESOLVE`,
+control executes none, both begin from the same aggregate state, duplicate
+consumption is refused, and permanent model parameters remain unchanged.
+
+This is deliberately an integrated evidence boundary rather than an inflated
+claim about one monolithic test. CP383's spawned-process, worker/client/service,
+rotation, retry, quarantine, and independent-verifier contracts cover the
+resident transport and process-replacement path. CP384 executes the same state
+and intervention contracts against real model weights and real MLX tensors in
+fresh engine frames. It does not claim that a single spawned 1.5B IPC test
+exercised every layer simultaneously.
+
+The explicit resident gate passes 2/2 in 10.11 seconds. After the final nested
+identity hardening, the combined action-state, intervention, and worker-wiring
+suite passes 159/159 with resident gates enabled; ordinary runs pass 157/157
+and explicitly deselect those two model gates. Destructive model gates are now a registered
+`resident_model` category, deselected rather than counted as permanent skips
+unless `AURA_RUN_RLC_RESIDENT_1P5B_GATE=1` is set. Ruff, bytecode compilation,
+and diff hygiene pass. CP384 adds no enterprise finding or governance owner
+drift. The two inherited enterprise regressions and the unrelated cooperative
+three-new/one-stale governance drift remain open; neither baseline is raised.
+
+Counting CP384 makes the total checkpoint record 626. The 640-920 forecast
+remains, leaving approximately 14-294 records. Checkpoint-count completion is
+approximately 68.0%-97.8%, with a midpoint planning estimate of 80.3%.
+
+SPARK-051 remains open only for the result-bearing phase: resident-32B training,
+the preregistered equal-compute reasoning/frontier campaign, independent
+verification, and live selection/lesion/restoration evidence. No capability
+gain, frontier gain, or `WOW Signal` is claimed by this mechanical gate.
+SPARK-052 implementation begins after the resident campaign is launched or
+reconciled so the long-running model work and bounded initiative march can
+proceed concurrently. Final multi-hour soaks remain deferred until every
+shorter gate is green.

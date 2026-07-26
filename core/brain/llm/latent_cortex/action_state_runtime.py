@@ -11,6 +11,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import os
 from collections.abc import Mapping
 from contextlib import ExitStack
@@ -55,6 +56,7 @@ ACTION_STATE_RUNTIME_SCHEMA: Final = "aura.rlc.action_state_runtime.v1"
 ACTION_STATE_RESTORE_RECEIPT_SCHEMA: Final = (
     "aura.rlc.action_state_runtime.restore_receipt.v1"
 )
+RESIDENT_MODEL_IDENTITY_SCHEMA: Final = "aura.rlc.resident_model_identity.v1"
 RUNNER_DURABLE_STATE_SCHEMA: Final = "aura.rlc.action_state_runner.durable.v1"
 RUNNER_RNG_STATE_SCHEMA: Final = "aura.rlc.action_state_runner.rng_root.v1"
 _MODES: Final = frozenset({"capture", "restore"})
@@ -88,6 +90,14 @@ def _fail(code: str) -> Never:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _mapping(value: Any, *, role: str) -> dict[str, Any]:
@@ -173,6 +183,155 @@ def runner_state_commitments(payload: Mapping[str, Any]) -> dict[str, str]:
             state["rng_state"]
         ).sha256(),
     }
+
+
+def validate_resident_model_identity(value: Any) -> dict[str, Any]:
+    """Validate the stable compute identity shared by replacement workers."""
+
+    identity = _mapping(value, role="resident_model_identity")
+    expected_fields = {
+        "schema",
+        "worker_model_path",
+        "worker_model_parameter_count",
+        "worker_model_stored_parameter_element_count",
+        "worker_model_parameter_count_basis",
+        "checkpoint",
+        "worker_adapters",
+        "worker_adapter_stack_sha256",
+        "worker_tokenizer",
+        "worker_quantization",
+        "worker_stack_identity_gaps",
+    }
+    checkpoint = identity.get("checkpoint")
+    model_path = identity.get("worker_model_path")
+    adapters = identity.get("worker_adapters")
+    tokenizer = identity.get("worker_tokenizer")
+    quantization = identity.get("worker_quantization")
+    adapters_valid = isinstance(adapters, list) and all(
+        isinstance(adapter, dict)
+        and set(adapter) == {"name", "type", "rank", "scale"}
+        and isinstance(adapter.get("name"), str)
+        and bool(adapter["name"])
+        and isinstance(adapter.get("type"), str)
+        and bool(adapter["type"])
+        and type(adapter.get("rank")) is int
+        and adapter["rank"] >= 0
+        and not isinstance(adapter.get("scale"), bool)
+        and isinstance(adapter.get("scale"), (int, float))
+        and math.isfinite(float(adapter["scale"]))
+        for adapter in adapters or []
+    )
+    tokenizer_valid = isinstance(tokenizer, dict) and bool(tokenizer) and all(
+        isinstance(filename, str)
+        and bool(filename)
+        and Path(filename).name == filename
+        and _is_sha256(digest)
+        for filename, digest in tokenizer.items()
+    )
+    quantization_valid = (
+        isinstance(quantization, dict)
+        and set(quantization)
+        == {"bits", "group_size", "dtype", "model_type", "config_sha256"}
+        and type(quantization.get("bits")) is int
+        and quantization["bits"] >= 0
+        and type(quantization.get("group_size")) is int
+        and quantization["group_size"] >= 0
+        and isinstance(quantization.get("dtype"), str)
+        and bool(quantization["dtype"])
+        and isinstance(quantization.get("model_type"), str)
+        and bool(quantization["model_type"])
+        and _is_sha256(quantization.get("config_sha256"))
+    )
+    if (
+        set(identity) != expected_fields
+        or identity.get("schema") != RESIDENT_MODEL_IDENTITY_SCHEMA
+        or not isinstance(model_path, str)
+        or not model_path
+        or not Path(model_path).is_absolute()
+        or str(Path(model_path).resolve(strict=False)) != model_path
+        or type(identity.get("worker_model_parameter_count")) is not int
+        or identity["worker_model_parameter_count"] <= 0
+        or type(identity.get("worker_model_stored_parameter_element_count")) is not int
+        or identity["worker_model_stored_parameter_element_count"] <= 0
+        or identity.get("worker_model_parameter_count_basis")
+        not in {"architecture_config_logical", "stored_tensor_elements"}
+        or (
+            identity["worker_model_parameter_count_basis"]
+            == "architecture_config_logical"
+            and identity["worker_model_parameter_count"]
+            < identity["worker_model_stored_parameter_element_count"]
+        )
+        or (
+            identity["worker_model_parameter_count_basis"]
+            == "stored_tensor_elements"
+            and identity["worker_model_parameter_count"]
+            != identity["worker_model_stored_parameter_element_count"]
+        )
+        or not isinstance(checkpoint, dict)
+        or set(checkpoint) != {"fingerprint", "method", "files"}
+        or checkpoint.get("method") != "sha256"
+        or not _is_sha256(checkpoint.get("fingerprint"))
+        or type(checkpoint.get("files")) is not int
+        or checkpoint["files"] <= 0
+        or not adapters_valid
+        or not _is_sha256(identity.get("worker_adapter_stack_sha256"))
+        or _digest(adapters) != identity["worker_adapter_stack_sha256"]
+        or not tokenizer_valid
+        or not quantization_valid
+        or identity.get("worker_stack_identity_gaps") != []
+    ):
+        _fail("action_state_runtime_resident_model_identity_invalid")
+    return identity
+
+
+def resident_model_weights_identity_sha256(model_identity: Mapping[str, Any]) -> str:
+    """Commit the exact checkpoint and every attached computation modifier."""
+
+    identity = validate_resident_model_identity(model_identity)
+    return _digest(
+        {
+            "checkpoint": identity["checkpoint"],
+            "worker_adapters": identity["worker_adapters"],
+            "worker_adapter_stack_sha256": identity[
+                "worker_adapter_stack_sha256"
+            ],
+            "worker_tokenizer": identity["worker_tokenizer"],
+            "worker_quantization": identity["worker_quantization"],
+        }
+    )
+
+
+def resident_model_identity_for_worker(
+    worker_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Recompute claim-grade model identity from the loaded resident worker."""
+
+    worker = _mapping(worker_identity, role="worker_identity")
+    from core.brain.llm.latent_cortex.governance import (
+        checkpoint_file_fingerprint,
+    )
+
+    checkpoint = checkpoint_file_fingerprint(worker.get("worker_model_path", ""))
+    identity = {
+        "schema": RESIDENT_MODEL_IDENTITY_SCHEMA,
+        "worker_model_path": worker.get("worker_model_path"),
+        "worker_model_parameter_count": worker.get("worker_model_parameter_count"),
+        "worker_model_stored_parameter_element_count": worker.get(
+            "worker_model_stored_parameter_element_count"
+        ),
+        "worker_model_parameter_count_basis": worker.get(
+            "worker_model_parameter_count_basis"
+        ),
+        "checkpoint": checkpoint,
+        "worker_adapters": worker.get("worker_adapters"),
+        "worker_adapter_stack_sha256": worker.get(
+            "worker_adapter_stack_sha256"
+        ),
+        "worker_tokenizer": worker.get("worker_tokenizer"),
+        "worker_quantization": worker.get("worker_quantization"),
+        "worker_stack_identity_gaps": worker.get("worker_stack_identity_gaps"),
+    }
+    return validate_resident_model_identity(identity)
 
 
 def _expected_supervisor_key(
@@ -371,7 +530,7 @@ def admit_action_state_runtime(
         )
     ):
         _fail("action_state_runtime_resident_worker_mismatch")
-    model_identity = _mapping(wire.get("model_identity"), role="model_identity")
+    model_identity = validate_resident_model_identity(wire.get("model_identity"))
     execution_identity = _mapping(
         wire.get("execution_identity"), role="execution_identity"
     )
@@ -381,6 +540,8 @@ def admit_action_state_runtime(
     payload = admission.payload
     if (
         _digest(model_identity) != payload["model_identity_sha256"]
+        or resident_model_weights_identity_sha256(model_identity)
+        != payload["model_weights_identity_sha256"]
         or _digest(execution_identity) != payload["execution_identity_sha256"]
         or normalized_latent_reason_request_sha256(latent_request)
         != payload["latent_reason_request_sha256"]
@@ -783,6 +944,7 @@ def verify_action_state_pair_evidence(
 __all__ = [
     "ACTION_STATE_RUNTIME_SCHEMA",
     "ACTION_STATE_RESTORE_RECEIPT_SCHEMA",
+    "RESIDENT_MODEL_IDENTITY_SCHEMA",
     "ActionStateRuntimeError",
     "AdmittedActionStateRuntime",
     "admit_action_state_runtime",
@@ -792,8 +954,11 @@ __all__ = [
     "continuation_from_private_state",
     "open_action_state_store",
     "provision_action_state_store_custody",
+    "resident_model_identity_for_worker",
+    "resident_model_weights_identity_sha256",
     "runner_state_commitments",
     "runner_state_for_capture_payload",
     "validate_action_state_restore_receipt",
+    "validate_resident_model_identity",
     "verify_action_state_pair_evidence",
 ]

@@ -4170,6 +4170,11 @@ def test_worker_handler_capture_lane_exits_before_action_and_returns_public_rece
         lambda value, **kwargs: admitted,
     )
     monkeypatch.setattr(
+        runtime_mod,
+        "resident_model_identity_for_worker",
+        lambda value: admitted.model_identity,
+    )
+    monkeypatch.setattr(
         identity_mod,
         "collect_latent_runtime_identity",
         lambda *args, **kwargs: dict(_RUNTIME_IDENTITY),

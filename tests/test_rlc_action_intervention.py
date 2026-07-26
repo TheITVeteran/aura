@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import time
 from copy import deepcopy
 
@@ -166,6 +167,7 @@ def _intervention(
     engine_config=None,
     engine_budget=None,
     action_policy_evidence=None,
+    starting_state_components=None,
 ):
     policy, keys, now = _policy_fixture(tmp_path, monkeypatch)
     tasks_by_action = {
@@ -179,6 +181,8 @@ def _intervention(
         )
         for operation_ordinal, operation in enumerate(OperationKind)
     }
+    target_action = OperationKind(action)
+    target_task_id = tasks_by_action[target_action][0].task_id
     execution_config = {
         "worker_task_material": "public_manifest_only",
         "answer_reveal_protocol": "sealed_outputs_then_issuer_reveal_v1",
@@ -226,12 +230,18 @@ def _intervention(
     starting_states = {}
     for operation, tasks in tasks_by_action.items():
         for task in tasks:
-            components = {
-                name: hashlib.sha256(
-                    f"{task.task_id}:{operation.value}:{name}".encode()
-                ).hexdigest()
-                for name in _STATE_COMPONENT_NAMES
-            }
+            components = (
+                dict(starting_state_components)
+                if starting_state_components is not None
+                and operation == target_action
+                and task.task_id == target_task_id
+                else {
+                    name: hashlib.sha256(
+                        f"{task.task_id}:{operation.value}:{name}".encode()
+                    ).hexdigest()
+                    for name in _STATE_COMPONENT_NAMES
+                }
+            )
             payload = action_calibration_starting_state_payload(
                 campaign_name=policy.document["campaign_name"],
                 action=operation,
@@ -269,16 +279,17 @@ def _intervention(
         campaign_trust=campaign_trust,
         claim_eligible=False,
     )
-    target_action = OperationKind(action).value
+    target_action_value = target_action.value
     cell_id = next(
         candidate
         for candidate in plan.cell_ids
-        if plan.cell_definition(candidate)["action"] == target_action
+        if plan.cell_definition(candidate)["action"] == target_action_value
         and plan.cell_definition(candidate)["arm"] == arm
+        and plan.cell_definition(candidate)["task_id"] == target_task_id
     )
     definition = plan.cell_definition(cell_id)
     components = {name: definition["starting_state"][name] for name in _STATE_COMPONENT_NAMES}
-    journal_path = tmp_path / f"campaign-{arm}-{target_action}-{attempt_number}.jsonl"
+    journal_path = tmp_path / f"campaign-{arm}-{target_action_value}-{attempt_number}.jsonl"
     with CampaignJournal(journal_path, plan) as journal:
         attempt_id = journal.start_cell(cell_id)
         if attempt_number == 2:
@@ -315,7 +326,7 @@ def _intervention(
         starting_state_components=components,
         expected_pre_state_sha256=_sha({name: components[name] for name in sorted(components)}),
         expected_pre_kv_sha256=components["kv_cache_sha256"],
-        action=target_action,
+        action=target_action_value,
         arm=arm,
         execution_ordinal=definition["execution_ordinal"],
         attempt_number=attempt_number,
@@ -845,3 +856,134 @@ def test_tiny_resident_episode_executes_signed_intervention(
             action_intervention=intervention,
             action_intervention_consumption=consumption,
         )
+
+
+@pytest.mark.resident_model
+def test_real_1p5b_restores_one_capture_into_signed_treatment_and_control(
+    tmp_path,
+    monkeypatch,
+):
+    pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    from mlx_lm import load
+
+    model_path = os.environ.get("AURA_RLC_RESIDENT_GATE_MODEL", "").strip()
+    if not model_path:
+        pytest.fail("AURA_RLC_RESIDENT_GATE_MODEL is required")
+    raw_config = {
+        "n_slots": 2,
+        "n_branches": 1,
+        "max_steps": 2,
+        "decode_max_tokens": 2,
+        "allow_vanilla_fallback": False,
+    }
+    target_action = OperationKind.BLIND_RESOLVE
+    operation_ordinal = tuple(OperationKind).index(target_action)
+    task = generate_task(
+        FRONTIER_DOMAINS[operation_ordinal % 2],
+        seed=90_000 + operation_ordinal * 100,
+        difficulty=2,
+    )
+    evidence = build_evidence_snapshot(bucket="b", cells={})
+    runner_state = {
+        "durable_state": {
+            "campaign": "spark-051-resident-1p5b-gate",
+            "task_id": task.task_id,
+        },
+        "rng_state": {"root_seed": 104_729},
+    }
+    model, tokenizer = load(model_path)
+    config = config_from_job(raw_config)
+    capture_engine = LatentCortexEngine(
+        model,
+        tokenizer,
+        config,
+        model_path=model_path,
+    )
+    captured = []
+    capture = capture_engine.reason(
+        prompt=task.public.prompt,
+        action_policy_evidence=evidence,
+        action_continuation_capture=captured.append,
+        action_continuation_runner_state=runner_state,
+        action_continuation_capture_only=True,
+    )
+    assert capture.ok is True, capture.reason
+    assert len(captured) == 1
+    continuation = captured[0]
+    arm_evidence = {}
+
+    for arm in (TREATMENT_ARM, CONTROL_ARM):
+        arm_dir = tmp_path / arm
+        arm_dir.mkdir()
+        intervention = _intervention(
+            arm_dir,
+            monkeypatch,
+            arm=arm,
+            action=target_action.value,
+            engine_config=raw_config,
+            action_policy_evidence=evidence,
+            starting_state_components=continuation.state_components,
+        )
+        assert _task_prompt(intervention) == task.public.prompt
+        consumption = consume_action_intervention_once(intervention)
+        restore_verified = []
+        restored_engine = LatentCortexEngine(
+            model,
+            tokenizer,
+            config,
+            model_path=model_path,
+        )
+        result = restored_engine.reason(
+            prompt=task.public.prompt,
+            action_policy_evidence=evidence,
+            action_intervention=intervention,
+            action_intervention_consumption=consumption,
+            action_continuation_restore=continuation,
+            action_continuation_runner_state=runner_state,
+            action_continuation_restore_verified=restore_verified.append,
+        )
+        assert result.ok is True, result.reason
+        assert restore_verified == [
+            intervention["authority_payload"]["expected_pre_state_sha256"]
+        ]
+        calibration = result.receipt.value_of_computation[
+            "calibration_intervention"
+        ]
+        if arm == TREATMENT_ARM:
+            assert calibration["selection_mode"] == "campaign_forced"
+            assert calibration["selected_action"] == target_action.value
+            assert calibration["selected_action_occurrences"] == 1
+        else:
+            assert calibration["selection_mode"] == "matched_no_action_control"
+            assert calibration["selected_action"] is None
+            assert calibration["selected_action_occurrences"] == 0
+        with pytest.raises(ValueError, match="already consumed"):
+            consume_action_intervention_once(intervention)
+        arm_evidence[arm] = {
+            "intervention_sha256": intervention["intervention_sha256"],
+            "restored_state_sha256": restore_verified[0],
+            "selection_mode": calibration["selection_mode"],
+            "selected_action": calibration["selected_action"],
+            "selected_action_occurrences": calibration[
+                "selected_action_occurrences"
+            ],
+            "params_unchanged": result.receipt.params_unchanged,
+        }
+
+    print(
+        json.dumps(
+            {
+                "schema": "aura.rlc.resident_1p5b_action_gate.v1",
+                "model_path": model_path,
+                "task_id": task.task_id,
+                "capture_state_components": continuation.state_components,
+                "capture_action_count": len(
+                    capture.receipt.cognitive_action_trace
+                ),
+                "capture_decoded_token_count": 0,
+                "arms": arm_evidence,
+            },
+            sort_keys=True,
+        )
+    )

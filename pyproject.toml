@@ -135,6 +135,7 @@ markers = [
     "unit: marks fast dependency-free unit tests",
     "desktop: marks tests requiring GUI/desktop stack (pywebview, screen access)",
     "model: marks tests requiring local model weights or inference runtimes",
+    "resident_model: marks destructive gates that load Aura's resident model weights",
     "network: marks tests requiring network access",
     "macos: marks tests requiring macOS-specific facilities (AppleScript, Metal)",
     "longrun: marks soak/longevity tests measured in hours",

@@ -2416,6 +2416,35 @@ before those dependencies close is not admissible.
   erasure, and independent verification. Resident-32B training and the
   preregistered reasoning/frontier campaign follow. No gain or `WOW Signal` is
   claimed.
+
+  CP384 completes that fixed pre-training gate. Capture admission and worker
+  execution now independently derive the model-weights identity from the loaded
+  resident worker, binding full checkpoint content, parameter counts, adapter
+  stack, tokenizer artifacts, quantization, and identity gaps. A real
+  Qwen2.5-1.5B-Instruct-4bit continuation is captured before action or decode,
+  streamed through encrypted external custody, restored exactly into both arms,
+  sealed after one use each, and cryptographically erased. A second real-model
+  execution restores one state into runner-signed treatment and control:
+  treatment performs exactly one `BLIND_RESOLVE`, control performs none,
+  duplicate consumption fails, and permanent parameters remain identical.
+
+  The evidence boundary is explicit: CP383 proves spawned-process transport,
+  replacement, trust rotation, quarantine, and independent verification;
+  CP384 executes the corresponding state and intervention contracts on real
+  model weights and MLX tensors in fresh engine frames. It does not relabel that
+  composition as one all-layers spawned IPC test. The opt-in resident gate
+  passes 2/2; after final identity hardening, the combined state/intervention/
+  wiring suite passes 159/159 with those gates enabled and 157/157 with two
+  explicit deselections in ordinary runs. The registered `resident_model`
+  category does not increase skip debt. CP384 adds no enterprise or governance
+  drift and raises no baseline.
+
+  The five-checkpoint pre-training burn-down is now closed. SPARK-051 itself
+  remains open for resident-32B training, the preregistered equal-compute
+  reasoning/frontier campaign, independent verification, and live selection,
+  lesion, and restoration evidence. No gain or `WOW Signal` is claimed. This is
+  total checkpoint record 626; the 640-920 forecast leaves approximately
+  14-294 records, or 68.0%-97.8% checkpoint-count completion (80.3% midpoint).
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

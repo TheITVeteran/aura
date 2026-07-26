@@ -593,6 +593,7 @@ def handle_latent_reason(
         try:
             from core.brain.llm.latent_cortex.action_state_runtime import (
                 admit_action_state_runtime,
+                resident_model_identity_for_worker,
             )
             from core.brain.llm.latent_cortex.runtime_identity import (
                 collect_latent_runtime_identity,
@@ -603,6 +604,13 @@ def handle_latent_reason(
                 worker_launch_challenge=worker_capture_launch_challenge,
                 now_unix=int(time.time()),
             )
+            actual_model_identity = resident_model_identity_for_worker(
+                worker_identity
+            )
+            if actual_model_identity != action_state_runtime.model_identity:
+                raise ValueError(
+                    "action-state model identity differs from loaded resident"
+                )
             if (
                 action_state_runtime.resident_worker_origin_binding.get(
                     "worker_identity"

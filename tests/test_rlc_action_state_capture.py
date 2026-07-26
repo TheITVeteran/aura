@@ -9,6 +9,7 @@ import multiprocessing as mp
 import os
 import signal
 import stat
+import uuid
 from copy import deepcopy
 from pathlib import Path
 
@@ -41,8 +42,11 @@ from core.brain.llm.latent_cortex.action_state_runtime import (
     build_action_state_restore_receipt,
     build_action_state_runtime_frame,
     continuation_from_private_state,
+    resident_model_identity_for_worker,
+    resident_model_weights_identity_sha256,
     runner_state_for_capture_payload,
     validate_action_state_restore_receipt,
+    validate_resident_model_identity,
     verify_action_state_pair_evidence,
 )
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
@@ -54,6 +58,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     build_role_attestation,
     validate_campaign_trust_policy,
 )
+from core.brain.llm.latent_cortex.runtime_identity import build_worker_identity
 from core.brain.llm.latent_cortex.worker_capture_identity import (
     build_worker_capture_identity,
     build_worker_capture_launch_authority,
@@ -199,9 +204,23 @@ def _latent_request(*, prompt: str = "Find the invariant.") -> dict:
 
 
 MODEL_IDENTITY = {
-    "schema": "test.model_identity.v1",
-    "checkpoint_sha256": "1" * 64,
-    "logical_parameter_count": 32_763_876_352,
+    "schema": "aura.rlc.resident_model_identity.v1",
+    "worker_model_path": "/sealed/resident-32b",
+    "worker_model_parameter_count": 32_763_876_352,
+    "worker_model_stored_parameter_element_count": 4_200_000_000,
+    "worker_model_parameter_count_basis": "architecture_config_logical",
+    "checkpoint": {"fingerprint": "1" * 64, "method": "sha256", "files": 8},
+    "worker_adapters": [],
+    "worker_adapter_stack_sha256": _sha([]),
+    "worker_tokenizer": {"tokenizer.json": "3" * 64},
+    "worker_quantization": {
+        "bits": 4,
+        "group_size": 64,
+        "dtype": "float16",
+        "model_type": "qwen2",
+        "config_sha256": "4" * 64,
+    },
+    "worker_stack_identity_gaps": [],
 }
 EXECUTION_IDENTITY = {
     "schema": "test.execution_identity.v1",
@@ -231,6 +250,42 @@ CAMPAIGN_DESIGN_SHA256 = "d" * 64
 WORKER_BOOT_ID = "4" * 32
 
 
+def test_resident_model_identity_rejects_nested_and_cross_field_tampering():
+    assert validate_resident_model_identity(MODEL_IDENTITY) == MODEL_IDENTITY
+    invalid_identities = []
+
+    relative_path = deepcopy(MODEL_IDENTITY)
+    relative_path["worker_model_path"] = "models/resident-32b"
+    invalid_identities.append(relative_path)
+
+    contradictory_count = deepcopy(MODEL_IDENTITY)
+    contradictory_count["worker_model_parameter_count_basis"] = (
+        "stored_tensor_elements"
+    )
+    invalid_identities.append(contradictory_count)
+
+    nested_tokenizer_path = deepcopy(MODEL_IDENTITY)
+    nested_tokenizer_path["worker_tokenizer"] = {"../tokenizer.json": "3" * 64}
+    invalid_identities.append(nested_tokenizer_path)
+
+    malformed_quantization = deepcopy(MODEL_IDENTITY)
+    malformed_quantization["worker_quantization"].pop("config_sha256")
+    invalid_identities.append(malformed_quantization)
+
+    forged_adapter_stack = deepcopy(MODEL_IDENTITY)
+    forged_adapter_stack["worker_adapters"] = [
+        {"name": "adapter", "type": "LoRALinear", "rank": 8, "scale": 1.0}
+    ]
+    invalid_identities.append(forged_adapter_stack)
+
+    for identity in invalid_identities:
+        with pytest.raises(
+            ActionStateRuntimeError,
+            match="action_state_runtime_resident_model_identity_invalid",
+        ):
+            validate_resident_model_identity(identity)
+
+
 def _build_request(
     policy,
     role_keys,
@@ -244,6 +299,7 @@ def _build_request(
     expected_supervisor_public_key=None,
     challenge_lifetime_s: int = 600,
     worker_origin_binding_override: dict | None = None,
+    model_identity: dict | None = None,
 ):
     state = private_state or _private_state()
     authority = build_worker_capture_launch_authority(
@@ -268,6 +324,7 @@ def _build_request(
     )
     if worker_origin_binding_override is not None:
         origin_binding = worker_origin_binding_override
+    bound_model_identity = model_identity or MODEL_IDENTITY
     request = build_action_state_capture_request(
         policy=policy,
         runner_private_key=role_keys[CAMPAIGN_RUNNER],
@@ -282,8 +339,10 @@ def _build_request(
         task_id=task_id,
         task_payload_sha256="7" * 64,
         action="falsify",
-        model_identity=MODEL_IDENTITY,
-        model_weights_identity_sha256="8" * 64,
+        model_identity=bound_model_identity,
+        model_weights_identity_sha256=resident_model_weights_identity_sha256(
+            bound_model_identity
+        ),
         execution_identity=EXECUTION_IDENTITY,
         calibration_bucket="reasoning|falsify|medium",
         bucket_classifier_sha256="9" * 64,
@@ -578,6 +637,188 @@ def test_real_qwen_continuation_survives_encrypted_snapshot_round_trip(tmp_path)
     assert restored.receipt["state_components"] == continuation.state_components
     for name, value in restored.state.items():
         assert value.to_bytes() == continuation.private_state[name].to_bytes()
+
+
+@pytest.mark.resident_model
+def test_real_1p5b_continuation_is_encrypted_restored_twice_and_erased(
+    tmp_path,
+):
+    pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_lm")
+    from mlx_lm import load
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.types import (
+        BranchConfig,
+        CortexConfig,
+        RecurrenceConfig,
+        WorkspaceConfig,
+    )
+
+    model_path = os.environ.get("AURA_RLC_RESIDENT_GATE_MODEL", "").strip()
+    if not model_path:
+        pytest.fail("AURA_RLC_RESIDENT_GATE_MODEL is required")
+    model, tokenizer = load(model_path)
+    actual_signer = build_worker_capture_identity(worker_boot_id=uuid.uuid4().hex)
+    worker_identity = build_worker_identity(
+        model,
+        model_path=model_path,
+        worker_boot_id=actual_signer.public_identity["worker_boot_id"],
+        worker_source_path=Path(__file__),
+        worker_action_capture_identity=actual_signer.public_identity,
+    )
+    model_identity = resident_model_identity_for_worker(worker_identity)
+    config = CortexConfig(
+        workspace=WorkspaceConfig(n_slots=2, seed=29),
+        recurrence=RecurrenceConfig(max_steps=2, min_steps=1),
+        branches=BranchConfig(n_branches=1, isolation_steps=1),
+        prelude_frac=0.25,
+        coda_frac=0.25,
+        decode_max_tokens=2,
+        allow_vanilla_fallback=False,
+    )
+    prompt = "Return the integer after 41 in JSON."
+    _, root_pem, role_keys, policy = _trust_fixture()
+    capture_worker = _private("real-1p5b-capture-worker")
+    draft = _build_request(
+        policy,
+        role_keys,
+        capture_worker,
+        latent_request=_latent_request(prompt=prompt),
+        model_identity=model_identity,
+    )
+    runner_state = runner_state_for_capture_payload(draft["request_payload"])
+    engine = LatentCortexEngine(
+        model,
+        tokenizer,
+        config=config,
+        model_path=model_path,
+    )
+    captured = []
+    capture = engine.reason(
+        prompt=prompt,
+        action_continuation_capture=captured.append,
+        action_continuation_runner_state=runner_state,
+        action_continuation_capture_only=True,
+    )
+    assert capture.ok is True, capture.reason
+    assert len(captured) == 1
+    continuation = captured[0]
+    request = _build_request(
+        policy,
+        role_keys,
+        capture_worker,
+        latent_request=_latent_request(prompt=prompt),
+        private_state=continuation.private_state,
+        model_identity=model_identity,
+    )
+    admission = admit_action_state_capture_request(
+        request,
+        trusted_root_public_key_pem=root_pem,
+        expected_supervisor_public_key=SUPERVISOR_PUBLIC_KEY,
+        current_policy_document=policy.document,
+        now_unix=NOW,
+    )
+    assert runner_state_for_capture_payload(admission.payload) == runner_state
+    store = PrivateActionSnapshotStore(
+        tmp_path / "real-1p5b-store",
+        key_custodian=_custodian(),
+    )
+    publication = store.publish(
+        admission,
+        continuation.private_state,
+        created_at_unix=NOW + 1,
+    )
+    capture_receipt = build_action_state_capture_receipt(
+        admission=admission,
+        publication=publication,
+        worker_private_key=capture_worker,
+        captured_at_unix=NOW + 1,
+        latent_reason_request=_latent_request(prompt=prompt),
+        model_identity=model_identity,
+        execution_identity=EXECUTION_IDENTITY,
+        runtime_identity=RUNTIME_IDENTITY,
+        episode_step=continuation.episode_step,
+        schedule_step=continuation.schedule_step,
+        branch_id=continuation.branch_id,
+        layer_index=continuation.layer_index,
+        kv_position=continuation.kv_position,
+    )
+    restored_hashes = []
+
+    def apply_state(private_state):
+        restored_continuation = continuation_from_private_state(
+            private_state,
+            capture_receipt,
+        )
+        verified = []
+        restored = LatentCortexEngine(
+            model,
+            tokenizer,
+            config=config,
+            model_path=model_path,
+        ).reason(
+            prompt=prompt,
+            action_continuation_restore=restored_continuation,
+            action_continuation_runner_state=runner_state,
+            action_continuation_restore_verified=verified.append,
+        )
+        assert restored.ok is True, restored.reason
+        assert restored.receipt.params_unchanged is True
+        assert verified == [capture_receipt["state_sha256"]]
+        restored_hashes.append(verified[0])
+        return verified[0]
+
+    for offset, arm in enumerate((TREATMENT_ARM, CONTROL_ARM), start=2):
+        store.restore_and_apply(
+            publication.handle,
+            admission,
+            arm=arm,
+            restored_at_unix=NOW + offset,
+            apply_state=apply_state,
+        )
+    seal = store.seal(
+        publication.handle,
+        admission,
+        sealed_at_unix=NOW + 4,
+    )
+    erasure = store.erase(
+        publication.handle,
+        admission,
+        erased_at_unix=NOW + 5,
+    )
+    assert restored_hashes == [capture_receipt["state_sha256"]] * 2
+    assert seal["both_arms_used_exactly_once"] is True
+    assert erasure["cryptographic_key_destroyed"] is True
+    assert erasure["ciphertext_namespace_deleted"] is True
+    print(
+        json.dumps(
+            {
+                "schema": "aura.rlc.resident_1p5b_custody_gate.v1",
+                "model_identity_sha256": _sha(model_identity),
+                "model_weights_identity_sha256": (
+                    resident_model_weights_identity_sha256(model_identity)
+                ),
+                "capture_receipt_sha256": capture_receipt["receipt_sha256"],
+                "captured_state_sha256": capture_receipt["state_sha256"],
+                "restored_state_sha256": restored_hashes,
+                "both_arms_used_exactly_once": seal[
+                    "both_arms_used_exactly_once"
+                ],
+                "seal_receipt_sha256": seal["seal_receipt_sha256"],
+                "erasure_receipt_sha256": erasure["erasure_receipt_sha256"],
+                "cryptographic_key_destroyed": erasure[
+                    "cryptographic_key_destroyed"
+                ],
+                "ciphertext_namespace_deleted": erasure[
+                    "ciphertext_namespace_deleted"
+                ],
+            },
+            sort_keys=True,
+        )
+    )
+    with pytest.raises(ActionStateCaptureError, match="publication_not_found"):
+        store.publication_for_request(admission)
 
 
 def _restore_until_sigkill(store_root, handle, admission, started, custodian) -> None:
@@ -1158,7 +1399,7 @@ def test_runtime_rejects_binding_signature_and_private_transport_tampering(
 ):
     case = _runtime_case(tmp_path)
     attacked = deepcopy(case["frame"])
-    attacked["model_identity"]["checkpoint_sha256"] = "f" * 64
+    attacked["model_identity"]["checkpoint"]["fingerprint"] = "f" * 64
     with pytest.raises(ActionStateRuntimeError, match="public_binding_mismatch"):
         admit_action_state_runtime(
             attacked,
