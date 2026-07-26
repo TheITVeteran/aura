@@ -200,6 +200,21 @@ if [ "$OPEN_GUI_WINDOW" = "1" ]; then
 fi
 
 # 1. Cleanup Phase — use bounded Python cleanup so the launcher can't hang on pkill/lsof
+#
+# --reboot is documented as "Replace an existing Aura runtime", but the cleanup
+# refuses to touch a VERIFIED live runtime unless AURA_CLEANUP_FORCE is set, and
+# nothing was setting it. So --reboot logged
+#   "Verified live Aura runtime detected (PID: …); skipping aggressive
+#    pre-launch process cleanup"
+# and then started a SECOND desktop runtime beside the first: two 32B models,
+# ~20GB each, on a 64GB host. That is the duplicate-runtime memory cascade, and
+# it arrived through the one flag whose entire job was to prevent it.
+#
+# The guard itself is right — an unasked-for launch must never kill a healthy
+# instance. Explicitly asking to reboot is the authorization it was waiting for.
+if [ "$REBOOT_MODE" = "1" ]; then
+    export AURA_CLEANUP_FORCE=1
+fi
 echo "🧹 Cleaning up existing instances..."
 if ! "$PYTHON_CMD" aura_cleanup.py; then
     echo "⚠️  Cleanup reported an issue; continuing with launch."
