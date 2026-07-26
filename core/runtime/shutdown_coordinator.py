@@ -991,6 +991,37 @@ def _write_grace_flag(*, reason: str, created_at_unix: float) -> None:
     from pathlib import Path
 
     grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+
+    # A test process must never drop a shutdown-grace flag into the REAL
+    # ~/.aura/run: the live desktop runtime reads that directory, and a leaked
+    # flag (observed 2026-07-25: reason="unit_test", pid long dead) becomes a
+    # confusing artifact in the user's runtime state. Tests that genuinely
+    # exercise this path redirect HOME to a tmp dir; if HOME still points at the
+    # real home while pytest is running, refuse rather than pollute.
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        # The REAL home comes from the passwd entry, which $HOME cannot spoof —
+        # a test that correctly redirects HOME to a tmp dir writes outside it and
+        # is allowed through; only a test writing into the actual user's
+        # ~/.aura is refused.
+        try:
+            import pwd
+
+            real_home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
+        except (ImportError, KeyError, OSError):
+            real_home = None
+        try:
+            writing_into_real_home = bool(
+                real_home is not None
+                and grace_file.resolve().is_relative_to(real_home / ".aura")
+            )
+        except (OSError, ValueError):
+            writing_into_real_home = False
+        if writing_into_real_home and os.environ.get("AURA_ALLOW_LIVE_RUNTIME_WRITES") != "1":
+            logger.warning(
+                "Refusing to write a shutdown-grace flag into the live runtime "
+                "directory from a test process (reason=%s).", reason,
+            )
+            return
     write_shutdown_artifact(
         grace_file,
         json.dumps(

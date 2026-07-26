@@ -40,6 +40,82 @@ def instance_lock_path(lock_name: str = "singleton") -> Path:
     return Path.home() / ".aura" / "locks" / f"{lock_name}.lock"
 
 
+def boot_blocked_path() -> Path:
+    """Where a refused start publishes WHY, for the launcher/GUI to surface."""
+    return Path.home() / ".aura" / "run" / "boot_blocked.json"
+
+
+def clear_boot_blocked() -> None:
+    """Drop any stale blocked-boot notice (called once a lock is acquired)."""
+    try:
+        boot_blocked_path().unlink(missing_ok=True)
+    except OSError as exc:  # pragma: no cover - best effort
+        logger.debug("Could not clear boot-blocked notice: %s", exc)
+
+
+def read_boot_blocked() -> dict[str, Any]:
+    """The last refusal notice, or {} when the last start was not blocked."""
+    try:
+        payload = json.loads(boot_blocked_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    holder_pid = payload.get("holder_pid")
+    # A notice about a process that has since exited is not a live blocker.
+    try:
+        os.kill(int(holder_pid), 0)
+    except (OSError, TypeError, ValueError):
+        return {}
+    return payload
+
+
+def _publish_boot_blocked(lock_name: str, holder_pid: int) -> None:
+    """Record WHY this start was refused, so the GUI never just spins.
+
+    The refusal used to exist only as a print() on a stdout nobody reads: the
+    runtime exited immediately with EX_TEMPFAIL while the desktop boot monitor
+    sat on "Aura is waking up… waiting for boot health" forever. A start that
+    was positively refused must say so.
+    """
+    holder = read_instance_lock_metadata(lock_name)
+    cmdline = holder.get("cmdline") or []
+    cwd = str(holder.get("cwd") or "")
+    is_foreign = ".claude/worktrees" in cwd or "--headless" in cmdline
+    notice = {
+        "schema": "aura.boot_blocked.v1",
+        "blocked_at_unix": time.time(),
+        "lock_name": lock_name,
+        "holder_pid": int(holder_pid),
+        "holder_cmdline": cmdline,
+        "holder_cwd": cwd,
+        "holder_started_unix": holder.get("create_time"),
+        "holder_is_background_instance": bool(is_foreign),
+        "reason": (
+            f"Another Aura runtime (PID {holder_pid}) already holds the "
+            f"'{lock_name}' instance lock. Only one runtime may hold it — a second "
+            "would load a second copy of the resident model and exhaust host memory."
+        ),
+        "remedy": (
+            f"Stop the other instance first: kill {holder_pid}"
+            + (
+                "  (it is a background/headless instance, not your desktop app)"
+                if is_foreign
+                else "  (quit the other Aura window)"
+            )
+            + ", then relaunch. `./aura_cleanup.sh` also reclaims a stuck runtime."
+        ),
+    }
+    try:
+        path = boot_blocked_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(notice, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:  # pragma: no cover - best effort
+        logger.debug("Could not publish boot-blocked notice: %s", exc)
+
+
 def instance_lock_metadata_path(lock_name: str = "singleton") -> Path:
     return Path.home() / ".aura" / "locks" / f"{lock_name}.lock.meta.json"
 
@@ -165,7 +241,17 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
                 # Check if the process is actually running
                 try:
                     os.kill(pid, 0)
-                    message = f"⚠️  Aura ({lock_name}) is already running (PID: {pid})."
+                    # Publish the refusal where the launcher/GUI can see it, so a
+                    # positively-refused start is never rendered as "still waking
+                    # up". This is the difference between a 20-minute debug and a
+                    # one-line remedy.
+                    _publish_boot_blocked(lock_name, pid)
+                    holder = read_instance_lock_metadata(lock_name)
+                    message = (
+                        f"⚠️  Aura ({lock_name}) is already running (PID: {pid})"
+                        + (f" — {' '.join(holder.get('cmdline') or [])}" if holder.get("cmdline") else "")
+                        + f". Stop it first: kill {pid}"
+                    )
                     logger.error(message)
                     print(message)
                     # Exit 0 only under the launchd supervisor (it sets
@@ -230,7 +316,10 @@ def acquire_instance_lock(lock_name: str = "singleton", skip_lock: bool = False)
         os.fsync(_LOCK_FD)
         _LOCK_NAME = lock_name
         _write_instance_lock_metadata(lock_name, os.getpid())
-        
+        # This start was NOT blocked — retire any previous refusal notice so the
+        # launcher never shows a stale blocker.
+        clear_boot_blocked()
+
         logger.info("🔒 Instance lock acquired: %s (PID: %d)", lock_name, os.getpid())
         
     except OSError as e:
