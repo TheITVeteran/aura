@@ -879,9 +879,14 @@ private final class ScanlineWordmarkView: NSView {
     }
 }
 
-/// Aura's orbital mark. Each electron is driven along its ellipse by a
-/// CAKeyframeAnimation bound to that exact path, so it is always on the curve
-/// and never deformed — the failure mode of scaling a circle to fake an ellipse.
+/// Aura's neuron mark — a retro-arcade cell.
+///
+/// Chunky low-poly soma, dendrites that branch out to square terminal nodes,
+/// and a myelinated axon. Signal "spikes" are drawn as PIXELS (square, no
+/// corner radius) and are driven along the real dendrite/axon paths by
+/// CAKeyframeAnimations bound to those exact paths, so a spike is always on
+/// its fibre rather than approximated with offsets. A scanline overlay and a
+/// stepped soma pulse give it the CRT/arcade feel.
 private final class AuraSigilView: NSView {
     private let cage = CALayer()
 
@@ -901,100 +906,215 @@ private final class AuraSigilView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// A square "pixel" node — the arcade vocabulary. Round dots read as an
+    /// atom; squares read as a sprite.
+    private func pixel(size: CGFloat, color: NSColor, at point: CGPoint) -> CALayer {
+        let node = CALayer()
+        node.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        node.position = point
+        node.backgroundColor = color.cgColor
+        node.shadowColor = color.cgColor
+        node.shadowOpacity = 0.95
+        node.shadowRadius = size * 1.1
+        node.shadowOffset = .zero
+        return node
+    }
+
     private func build(diameter: CGFloat) {
         guard let root = layer else { return }
         let center = CGPoint(x: diameter / 2, y: diameter / 2)
-        let rx = diameter * 0.41
-        let ry = diameter * 0.155
+        let somaR = diameter * 0.135
 
         cage.frame = CGRect(x: 0, y: 0, width: diameter, height: diameter)
         root.addSublayer(cage)
 
-        let orbits: [(angle: CGFloat, color: NSColor, alpha: CGFloat, period: Double, dot: CGFloat)] = [
-            (0, .auraCyan, 0.72, 8.0, 4.2),
-            (62, .auraViolet, 0.64, 9.5, 3.6),
-            (-58, .auraCyan, 0.5, 11.0, 3.2),
+        // ── Dendrites: branching fibres reaching up/out from the soma ──────
+        // (angle, length, whether it forks)
+        let dendrites: [(angle: CGFloat, reach: CGFloat, fork: Bool)] = [
+            (128, 0.40, true),
+            (168, 0.34, false),
+            (96,  0.36, true),
+            (212, 0.32, true),
+            (58,  0.30, false),
         ]
 
-        for orbit in orbits {
-            let ellipse = CGMutablePath()
-            ellipse.addEllipse(in: CGRect(x: center.x - rx, y: center.y - ry,
-                                          width: rx * 2, height: ry * 2))
+        var spikePaths: [(path: CGPath, period: Double, color: NSColor)] = []
 
-            let container = CALayer()
-            container.frame = cage.bounds
-            let radians = orbit.angle * .pi / 180
-            container.transform = CATransform3DMakeRotation(radians, 0, 0, 1)
+        for dendrite in dendrites {
+            let radians = dendrite.angle * .pi / 180
+            let reach = diameter * dendrite.reach
+            // Step out from the soma edge in two segments so the fibre has a
+            // hand-drawn kink rather than a straight ray.
+            let root0 = CGPoint(x: center.x + cos(radians) * somaR,
+                                y: center.y + sin(radians) * somaR)
+            let mid = CGPoint(x: center.x + cos(radians - 0.16) * reach * 0.58,
+                              y: center.y + sin(radians - 0.16) * reach * 0.58)
+            let tip = CGPoint(x: center.x + cos(radians + 0.08) * reach,
+                              y: center.y + sin(radians + 0.08) * reach)
 
-            let ring = CAShapeLayer()
-            ring.frame = cage.bounds
-            ring.path = ellipse
-            ring.fillColor = nil
-            ring.strokeColor = orbit.color.withAlphaComponent(orbit.alpha).cgColor
-            ring.lineWidth = 1.6
-            ring.shadowColor = orbit.color.cgColor
-            ring.shadowOpacity = 0.75
-            ring.shadowRadius = 5
-            ring.shadowOffset = .zero
-            container.addSublayer(ring)
+            let fibre = CGMutablePath()
+            fibre.move(to: root0)
+            fibre.addLine(to: mid)
+            fibre.addLine(to: tip)
 
-            let electron = CALayer()
-            electron.bounds = CGRect(x: 0, y: 0, width: orbit.dot * 2, height: orbit.dot * 2)
-            // Seed the model position on the ellipse itself (its rightmost
-            // point, where addEllipse starts). Without this the layer's model
-            // position stays at (0,0) and any render that does not consult the
-            // presentation layer — a snapshot, reduced motion, a removed
-            // animation — puts the electron in the container's corner instead
-            // of on its orbit.
-            electron.position = CGPoint(x: center.x + rx, y: center.y)
-            electron.cornerRadius = orbit.dot
-            electron.backgroundColor = NSColor.white.cgColor
-            electron.shadowColor = orbit.color.cgColor
-            electron.shadowOpacity = 0.95
-            electron.shadowRadius = 6
-            electron.shadowOffset = .zero
-            container.addSublayer(electron)
+            let branch = CAShapeLayer()
+            branch.frame = cage.bounds
+            branch.path = fibre
+            branch.fillColor = nil
+            branch.strokeColor = NSColor.auraCyan.withAlphaComponent(0.62).cgColor
+            branch.lineWidth = 1.8
+            branch.lineJoin = .miter
+            branch.lineCap = .square
+            branch.shadowColor = NSColor.auraCyan.cgColor
+            branch.shadowOpacity = 0.7
+            branch.shadowRadius = 4
+            branch.shadowOffset = .zero
+            cage.addSublayer(branch)
 
-            // Binding position to the ellipse path is what guarantees the dot
-            // is on the curve rather than approximated with offsets.
-            let travel = CAKeyframeAnimation(keyPath: "position")
-            travel.path = ellipse
-            travel.duration = orbit.period
-            travel.repeatCount = .infinity
-            travel.calculationMode = .paced
-            travel.timeOffset = orbit.period * 0.37
-            travel.isRemovedOnCompletion = false
-            electron.add(travel, forKey: "orbit")
+            cage.addSublayer(pixel(size: diameter * 0.030, color: .auraCyan, at: tip))
 
-            cage.addSublayer(container)
+            if dendrite.fork {
+                let forkTip = CGPoint(x: center.x + cos(radians + 0.34) * reach * 0.88,
+                                      y: center.y + sin(radians + 0.34) * reach * 0.88)
+                let twig = CGMutablePath()
+                twig.move(to: mid)
+                twig.addLine(to: forkTip)
+                let twigLayer = CAShapeLayer()
+                twigLayer.frame = cage.bounds
+                twigLayer.path = twig
+                twigLayer.fillColor = nil
+                twigLayer.strokeColor = NSColor.auraCyan.withAlphaComponent(0.42).cgColor
+                twigLayer.lineWidth = 1.3
+                twigLayer.lineCap = .square
+                cage.addSublayer(twigLayer)
+                cage.addSublayer(pixel(size: diameter * 0.022, color: .auraCyan, at: forkTip))
+            }
+
+            // Spikes travel INWARD (tip -> soma), the direction a dendrite
+            // actually carries signal.
+            let inbound = CGMutablePath()
+            inbound.move(to: tip)
+            inbound.addLine(to: mid)
+            inbound.addLine(to: root0)
+            spikePaths.append((inbound, 2.2 + Double(dendrite.reach) * 2.4, .auraCyan))
         }
 
-        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-        spin.fromValue = 0
-        spin.toValue = 2 * Double.pi
-        spin.duration = 34
-        spin.repeatCount = .infinity
-        cage.add(spin, forKey: "cage")
+        // ── Axon: down-right, myelin-segmented, with terminal boutons ──────
+        let axonStart = CGPoint(x: center.x + somaR * 0.72, y: center.y - somaR * 0.72)
+        let axonKnee = CGPoint(x: center.x + diameter * 0.20, y: center.y - diameter * 0.26)
+        let axonEnd = CGPoint(x: center.x + diameter * 0.40, y: center.y - diameter * 0.33)
 
-        let core = CALayer()
-        let coreR = diameter * 0.11
-        core.bounds = CGRect(x: 0, y: 0, width: coreR * 2, height: coreR * 2)
-        core.position = center
-        core.cornerRadius = coreR
-        core.backgroundColor = NSColor.auraViolet.cgColor
-        core.shadowColor = NSColor.auraCyan.cgColor
-        core.shadowOpacity = 0.9
-        core.shadowRadius = 14
-        core.shadowOffset = .zero
-        root.addSublayer(core)
+        let axon = CGMutablePath()
+        axon.move(to: axonStart)
+        axon.addLine(to: axonKnee)
+        axon.addLine(to: axonEnd)
 
-        let coreGloss = CALayer()
-        coreGloss.bounds = CGRect(x: 0, y: 0, width: coreR * 0.8, height: coreR * 0.8)
-        coreGloss.position = CGPoint(x: center.x - coreR * 0.28, y: center.y + coreR * 0.3)
-        coreGloss.cornerRadius = coreR * 0.4
-        coreGloss.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
-        coreGloss.filters = [CIFilter(name: "CIGaussianBlur", parameters: ["inputRadius": coreR * 0.35])].compactMap { $0 }
-        root.addSublayer(coreGloss)
+        let axonLayer = CAShapeLayer()
+        axonLayer.frame = cage.bounds
+        axonLayer.path = axon
+        axonLayer.fillColor = nil
+        axonLayer.strokeColor = NSColor.auraViolet.withAlphaComponent(0.85).cgColor
+        axonLayer.lineWidth = 2.6
+        axonLayer.lineCap = .butt
+        axonLayer.lineJoin = .miter
+        // Myelin sheath, drawn as chunky dashes — reads as segmented armour.
+        axonLayer.lineDashPattern = [6, 3]
+        axonLayer.shadowColor = NSColor.auraViolet.cgColor
+        axonLayer.shadowOpacity = 0.8
+        axonLayer.shadowRadius = 5
+        axonLayer.shadowOffset = .zero
+        cage.addSublayer(axonLayer)
+
+        // Terminal boutons: three square pads at the axon end.
+        for offset in [CGPoint(x: 0, y: 0),
+                       CGPoint(x: diameter * 0.045, y: diameter * 0.050),
+                       CGPoint(x: diameter * 0.052, y: -diameter * 0.042)] {
+            let pad = CGPoint(x: axonEnd.x + offset.x, y: axonEnd.y + offset.y)
+            let stub = CGMutablePath()
+            stub.move(to: axonEnd)
+            stub.addLine(to: pad)
+            let stubLayer = CAShapeLayer()
+            stubLayer.frame = cage.bounds
+            stubLayer.path = stub
+            stubLayer.fillColor = nil
+            stubLayer.strokeColor = NSColor.auraViolet.withAlphaComponent(0.6).cgColor
+            stubLayer.lineWidth = 1.4
+            stubLayer.lineCap = .square
+            cage.addSublayer(stubLayer)
+            cage.addSublayer(pixel(size: diameter * 0.028, color: .auraViolet, at: pad))
+        }
+
+        spikePaths.append((axon, 1.7, .auraViolet))
+
+        // ── Travelling spikes ─────────────────────────────────────────────
+        for (index, spike) in spikePaths.enumerated() {
+            let dot = pixel(size: diameter * 0.034, color: .white, at: center)
+            dot.shadowColor = spike.color.cgColor
+            dot.shadowRadius = diameter * 0.05
+            cage.addSublayer(dot)
+
+            let travel = CAKeyframeAnimation(keyPath: "position")
+            travel.path = spike.path
+            travel.duration = spike.period
+            travel.repeatCount = .infinity
+            // Stepped, not paced: a spike should tick along its fibre like a
+            // sprite on a grid rather than glide.
+            travel.calculationMode = .discrete
+            travel.timeOffset = spike.period * (0.13 * Double(index + 1))
+            travel.isRemovedOnCompletion = false
+            dot.add(travel, forKey: "spike")
+        }
+
+        // ── Soma: chunky hexagon, not a sphere ────────────────────────────
+        let soma = CGMutablePath()
+        for corner in 0..<6 {
+            let a = (CGFloat(corner) * 60 - 90) * .pi / 180
+            let point = CGPoint(x: center.x + cos(a) * somaR, y: center.y + sin(a) * somaR)
+            if corner == 0 { soma.move(to: point) } else { soma.addLine(to: point) }
+        }
+        soma.closeSubpath()
+
+        let somaLayer = CAShapeLayer()
+        somaLayer.frame = cage.bounds
+        somaLayer.path = soma
+        somaLayer.fillColor = NSColor.auraViolet.cgColor
+        somaLayer.strokeColor = NSColor.auraCyan.withAlphaComponent(0.9).cgColor
+        somaLayer.lineWidth = 2.0
+        somaLayer.lineJoin = .miter
+        somaLayer.shadowColor = NSColor.auraCyan.cgColor
+        somaLayer.shadowOpacity = 0.9
+        somaLayer.shadowRadius = 13
+        somaLayer.shadowOffset = .zero
+        root.addSublayer(somaLayer)
+
+        // Nucleus pixel.
+        root.addSublayer(pixel(size: somaR * 0.52, color: NSColor.white.withAlphaComponent(0.92),
+                               at: CGPoint(x: center.x, y: center.y + somaR * 0.06)))
+
+        // Stepped "firing" pulse — discrete frames, like an arcade sprite
+        // cycling, rather than a smooth breath.
+        let fire = CAKeyframeAnimation(keyPath: "opacity")
+        fire.values = [0.62, 1.0, 0.78, 1.0, 0.66]
+        fire.keyTimes = [0, 0.18, 0.42, 0.63, 1.0]
+        fire.calculationMode = .discrete
+        fire.duration = 1.9
+        fire.repeatCount = .infinity
+        somaLayer.add(fire, forKey: "fire")
+
+        // ── CRT scanlines over the whole mark ─────────────────────────────
+        let scan = CAShapeLayer()
+        scan.frame = cage.bounds
+        let lines = CGMutablePath()
+        var y: CGFloat = 0
+        while y < diameter {
+            lines.move(to: CGPoint(x: 0, y: y))
+            lines.addLine(to: CGPoint(x: diameter, y: y))
+            y += 3
+        }
+        scan.path = lines
+        scan.strokeColor = NSColor.black.withAlphaComponent(0.22).cgColor
+        scan.lineWidth = 1
+        root.addSublayer(scan)
     }
 }
 
@@ -1266,6 +1386,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var logFile: URL!
     private var lockDirectory: URL!
     private var bootMarkerFile: URL!
+    private var bootBlockedFile: URL!
     private var terminalHandoffMarkerFile: URL!
     private var guiWindowMarkerFile: URL!
     private var spawnLockFile: URL!
@@ -1467,6 +1588,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         bootMarkerFile = lockDirectory.appendingPathComponent("desktop-app-launch.marker")
         terminalHandoffMarkerFile = lockDirectory.appendingPathComponent("desktop-terminal-launch.marker")
         guiWindowMarkerFile = lockDirectory.appendingPathComponent("desktop-gui-window.marker")
+        bootBlockedFile = auraHome.appendingPathComponent("run", isDirectory: true)
+            .appendingPathComponent("boot_blocked.json")
         spawnLockFile = lockDirectory.appendingPathComponent("desktop-app-launch.lock")
         appInstanceLockFile = lockDirectory.appendingPathComponent("desktop-app-instance.lock")
         let nativeBridgeDirectory = auraHome.appendingPathComponent("native_bridge", isDirectory: true)
@@ -1714,8 +1837,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         iconPlate.layer?.shadowOffset = .zero
         heroPanel.addSubview(iconPlate)
 
-        // Aura's own mark rather than the generic app icon: live orbits whose
-        // electrons ride real ellipse paths.
+        // Aura's own mark rather than the generic app icon: a neuron whose
+        // spikes ride real dendrite and axon paths.
         let iconView = AuraSigilView(diameter: 92)
         iconPlate.addSubview(iconView)
 
@@ -2372,7 +2495,57 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// A start that the runtime positively REFUSED, if one is live.
+    ///
+    /// The single-instance lock is correct — a second runtime would load a
+    /// second copy of the resident model and exhaust the host. What used to be
+    /// wrong is that the refusal was invisible: the runtime exited immediately
+    /// with EX_TEMPFAIL while this window sat on "waiting for boot health"
+    /// forever. acquire_instance_lock now writes the reason here.
+    struct BootBlockedNotice {
+        let holderPID: Int
+        let reason: String
+        let remedy: String
+        let isBackgroundInstance: Bool
+    }
+
+    private func readBootBlockedNotice() -> BootBlockedNotice? {
+        guard let file = bootBlockedFile,
+              let data = try? Data(contentsOf: file),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pid = json["holder_pid"] as? Int
+        else { return nil }
+
+        // A notice naming a process that has since exited is not a live
+        // blocker — otherwise stopping the other instance would look like it
+        // did nothing.
+        guard kill(pid_t(pid), 0) == 0 || errno == EPERM else { return nil }
+
+        return BootBlockedNotice(
+            holderPID: pid,
+            reason: (json["reason"] as? String) ?? "Another Aura runtime holds the instance lock.",
+            remedy: (json["remedy"] as? String) ?? "Stop the other instance, then relaunch.",
+            isBackgroundInstance: (json["holder_is_background_instance"] as? Bool) ?? false
+        )
+    }
+
+    private func renderBootBlocked(_ notice: BootBlockedNotice) {
+        renderTitle("Another Aura is already running")
+        renderStatus(
+            detail: notice.reason,
+            footer: notice.remedy,
+            progress: 100.0,
+            phase: notice.isBackgroundInstance ? "background instance holds the lock" : "instance conflict",
+            badgeStyle: .rose,
+        )
+    }
+
     private func renderPendingLaunch(waitingOnExisting: Bool) {
+        // Never spin on "waking up" when the start was positively refused.
+        if let blocked = readBootBlockedNotice() {
+            renderBootBlocked(blocked)
+            return
+        }
         let age = bootMarkerAge() ?? Date().timeIntervalSince(launchedAt)
         let progress = min(32.0, 10.0 + (age * 3.5))
         let terminalHandoffActive = terminalHandoffIsFresh()
