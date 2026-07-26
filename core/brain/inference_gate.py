@@ -72,6 +72,20 @@ _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_AT = 0.0
 _LAST_EXPLICIT_DEFERRED_PREWARM_REFUSAL_REASON = ""
 _EXPLICIT_DEFERRED_PREWARM_REFUSAL_LOG_INTERVAL_S = 60.0
 
+#: Lane failures that are TRANSIENT and must be re-armed rather than left
+#: terminal. A refused worker spawn is the clearest case: the runtime declined
+#: to load the 32B because the host was momentarily short of headroom, and host
+#: memory frees constantly. Parking the lane in `failed` over it meant she
+#: reported a broken mind for a condition that had already passed — live
+#: 2026-07-26, `memory_pressure_refused_worker_spawn:model_load_headroom:23.3GB
+#: < required 24.0GB`, short by 0.7GB, and the lane never retried on its own.
+_REARMABLE_LANE_FAILURE_PREFIXES = (
+    "mlx_runtime_unavailable",
+    "local_runtime_unavailable",
+    "memory_pressure_refused_worker_spawn",
+)
+
+
 _LONG_FORM_REQUEST_RE = re.compile(
     r"\b(?:"
     r"\d{3,5}\s*(?:-|to)?\s*(?:word|token)s?|"
@@ -2297,7 +2311,7 @@ class InferenceGate:
                         lane = self.get_conversation_status()
                         lane_state = str(lane.get("state", "") or "").lower()
                     elif str(lane.get("last_failure_reason", "") or "").startswith(
-                        ("mlx_runtime_unavailable", "local_runtime_unavailable")
+                        _REARMABLE_LANE_FAILURE_PREFIXES
                     ):
                         logger.info(
                             "⏸️ Deferred cortex prewarm postponing while runtime lane is still unavailable (%s).",
@@ -2414,7 +2428,7 @@ class InferenceGate:
         lane_state = str(lane.get("state", "") or "").lower()
         lane_reason = str(lane.get("last_failure_reason", "") or "")
         if lane_state != "failed" or not lane_reason.startswith(
-            ("mlx_runtime_unavailable", "local_runtime_unavailable")
+            _REARMABLE_LANE_FAILURE_PREFIXES
         ):
             return False
 
@@ -2522,7 +2536,7 @@ class InferenceGate:
         lane_state = str(lane.get("state", "") or "").lower()
         lane_reason = str(lane.get("last_failure_reason", "") or "")
         if lane_state == "failed" and lane_reason.startswith(
-            ("mlx_runtime_unavailable", "local_runtime_unavailable")
+            _REARMABLE_LANE_FAILURE_PREFIXES
         ):
             if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
                 lane = self.get_conversation_status()
@@ -2740,7 +2754,7 @@ class InferenceGate:
                 "warming",
             } or not bool(lane.get("warmup_attempted", False))
             if lane_state == "failed" and lane_reason.startswith(
-                ("mlx_runtime_unavailable", "local_runtime_unavailable")
+                _REARMABLE_LANE_FAILURE_PREFIXES
             ):
                 if await asyncio.to_thread(self._rearm_runtime_failed_lane, force_probe=True):
                     lane = self.get_conversation_status()
