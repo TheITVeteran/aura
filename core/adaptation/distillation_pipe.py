@@ -306,6 +306,15 @@ class DistillationPipe:
                         "teacher": teacher_name or self.teacher_target,
                         "teacher_source": teacher_source or "configured_deep_teacher",
                         "teacher_target": self.teacher_target,
+                        # CP126 6d40a898: the auditor returns a SCREEN, not a
+                        # safety verdict. Requiring `verified` here would block
+                        # all distillation while no verifier is wired, so the
+                        # row instead carries how it was cleared — a later
+                        # training run can filter on it rather than assuming
+                        # every accepted row was independently checked.
+                        "audit_verified": bool(audit_result.get("verified")),
+                        "audit_screen_only": bool(audit_result.get("screen_only", True)),
+                        "audit_groundedness": audit_result.get("groundedness", 0.0),
                     }
 
                     await asyncio.to_thread(
