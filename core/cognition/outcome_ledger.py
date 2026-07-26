@@ -17,8 +17,13 @@ On resolve it computes ``delay``, ``prediction_error = observed - expected`` and
 success flag, then distributes credit to each contributing source (weighted by its share)
 into the shared CreditAssignmentSystem, and records the outcome in the OutcomeLearner.
 Receipts persist in SQLite (WAL), so an action opened in one session can be resolved — or
-swept as an expired failure past its horizon — in another. That persistence is what makes
-the horizon genuinely long instead of in-process-only.
+swept past its horizon — in another. That persistence is what makes the horizon genuinely
+long instead of in-process-only.
+
+A swept receipt keeps the accountability convention (observed=0, so sources that promised
+an outcome nobody checked lose standing) while recording ``observation="unobserved"``, so
+nothing downstream mistakes an assumed zero for a measurement. Statistics — the ledger's
+own calibration included — use ``is_evidence``; credit assignment deliberately does not.
 
 Sources are the seam the critique asked for: credit flows back to *policy*, *memory*, and
 *tool* references, so the systems that produced a good (or bad) action are the ones whose
@@ -40,6 +45,13 @@ from core.config import config
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Cognition.OutcomeLedger")
+
+
+#: Identical (category, action) opens inside this window fold into the still-
+#: pending original instead of creating another row. Five minutes is long
+#: enough to absorb a stuck loop and short enough that genuinely repeated work
+#: an hour apart is still recorded separately.
+_DEFAULT_COLLAPSE_WINDOW_S = 300.0
 
 
 def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
@@ -72,6 +84,15 @@ class OutcomeReceipt:
     resolved_at: Optional[float] = None
     status: str = "pending"          # pending | resolved | expired
     prediction_error: Optional[float] = None
+    #: How ``observed`` was arrived at. ``"measured"`` means somebody actually
+    #: looked; ``"unobserved"`` means the horizon passed and the zero is an
+    #: accountability convention, not a fact about the world. Consumers doing
+    #: statistics must exclude the latter; consumers doing credit assignment
+    #: deliberately do not.
+    observation: str = "measured"
+    #: How many identical opens folded into this receipt. One stuck reflex is
+    #: one fact with a weight, not a million rows.
+    repeat_count: int = 1
 
     @property
     def delay(self) -> Optional[float]:
@@ -91,8 +112,15 @@ class OutcomeReceipt:
             "resolved_at": self.resolved_at,
             "status": self.status,
             "prediction_error": self.prediction_error,
+            "observation": self.observation,
+            "repeat_count": self.repeat_count,
             "delay": self.delay,
         }
+
+    @property
+    def is_evidence(self) -> bool:
+        """True when this receipt may be used as a training label or a statistic."""
+        return self.observation == "measured" and self.observed is not None
 
 
 class OutcomeLedger:
@@ -108,6 +136,10 @@ class OutcomeLedger:
         self._pending: Dict[str, OutcomeReceipt] = {}
         self._calib_err_sum = 0.0
         self._calib_n = 0
+        self._unobserved_n = 0
+        self._collapsed_opens = 0
+        self._collapse_window = _DEFAULT_COLLAPSE_WINDOW_S
+        self._open_index: dict[tuple[str, str], tuple[str, float]] = {}
         self._pending_db_count = 0
         self._startup_expired_count = 0
         self._pending_load_truncated = False
@@ -145,6 +177,26 @@ class OutcomeLedger:
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_receipts_status ON outcome_receipts(status)"
                 )
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(outcome_receipts)").fetchall()
+                }
+                if "observation" not in columns:
+                    # Backfill honestly: every historical 'expired' row is an
+                    # assumed zero, not a measurement, and there are a million
+                    # of them. Marking them retroactively is the difference
+                    # between a corpus that teaches and one that misleads.
+                    conn.execute(
+                        "ALTER TABLE outcome_receipts ADD COLUMN observation TEXT "
+                        "NOT NULL DEFAULT 'measured'"
+                    )
+                    migrated = conn.execute(
+                        "UPDATE outcome_receipts SET observation = 'unobserved' "
+                        "WHERE status = 'expired'"
+                    ).rowcount
+                    logger.info(
+                        "📒 [OutcomeLedger] marked %d expired receipts as unobserved "
+                        "(assumed zeros, not measurements)", int(migrated or 0),
+                    )
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             record_degradation("outcome_ledger", e)
@@ -155,13 +207,15 @@ class OutcomeLedger:
                 conn.execute(
                     """INSERT OR REPLACE INTO outcome_receipts
                        (receipt_id, action, category, expected, sources_json, opened_at,
-                        horizon_s, context_json, observed, resolved_at, status, prediction_error)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        horizon_s, context_json, observed, resolved_at, status,
+                        prediction_error, observation)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         r.receipt_id, r.action, r.category, r.expected,
                         json.dumps([s.as_dict() for s in r.sources]),
                         r.opened_at, r.horizon_s, json.dumps(r.context or {}),
                         r.observed, r.resolved_at, r.status, r.prediction_error,
+                        r.observation,
                     ),
                 )
                 conn.commit()
@@ -175,7 +229,7 @@ class OutcomeLedger:
                 expired = conn.execute(
                     "UPDATE outcome_receipts "
                     "SET observed = 0.0, resolved_at = ?, status = 'expired', "
-                    "prediction_error = (0.0 - expected) "
+                    "prediction_error = (0.0 - expected), observation = 'unobserved' "
                     "WHERE status = 'pending' AND (? - opened_at) >= horizon_s",
                     (now, now),
                 ).rowcount
@@ -260,9 +314,24 @@ class OutcomeLedger:
         horizon_s: Optional[float] = None,
         context: Optional[Dict[str, Any]] = None,
         now: Optional[float] = None,
+        collapse_window_s: float | None = None,
     ) -> str:
-        """Commit an action with its *expected* outcome; returns a receipt_id to resolve later."""
+        """Commit an action with its *expected* outcome; returns a receipt_id to resolve later.
+
+        An identical action re-opened while an identical receipt is still
+        pending folds into that receipt rather than creating another row. A
+        stuck reflex is one fact about the world, not a million; on this
+        machine one intrusion reflex had opened 990,653 receipts, which was 96%
+        of the entire ledger and would have drowned every real signal in it.
+        The returned id is still a valid, resolvable receipt — callers do not
+        have to know this happened.
+        """
         now = time.time() if now is None else now
+        window = self._collapse_window if collapse_window_s is None else float(collapse_window_s)
+        if window > 0:
+            collapsed = self._collapse_open(action, category, now, window)
+            if collapsed is not None:
+                return collapsed
         receipt = OutcomeReceipt(
             receipt_id=f"rcpt-{uuid.uuid4().hex[:12]}",
             action=action,
@@ -275,9 +344,34 @@ class OutcomeLedger:
         )
         with self._lock:
             self._pending[receipt.receipt_id] = receipt
+            self._open_index[(category, action)] = (receipt.receipt_id, now)
             self._persist(receipt)
             self._pending_db_count += 1
         return receipt.receipt_id
+
+    def _collapse_open(
+        self, action: str, category: str, now: float, window: float
+    ) -> str | None:
+        """Fold a repeat into its still-pending original, if there is one."""
+        key = (category, action)
+        with self._lock:
+            seen = self._open_index.get(key)
+            if seen is None:
+                return None
+            receipt_id, opened_at = seen
+            if now - opened_at > window:
+                self._open_index.pop(key, None)
+                return None
+            receipt = self._pending.get(receipt_id)
+            if receipt is None:
+                # Already resolved or swept: the next call opens a fresh one.
+                self._open_index.pop(key, None)
+                return None
+            receipt.repeat_count += 1
+            self._collapsed_opens += 1
+            if receipt.repeat_count % 100 == 0:
+                self._persist(receipt)
+            return receipt_id
 
     def resolve(
         self,
@@ -302,6 +396,7 @@ class OutcomeLedger:
             receipt.resolved_at = now
             receipt.prediction_error = receipt.observed - receipt.expected
             receipt.status = "resolved"
+            receipt.observation = "measured"
             if note:
                 receipt.context.setdefault("notes", []).append(note)
             self._persist(receipt)
@@ -313,11 +408,20 @@ class OutcomeLedger:
         return receipt
 
     def sweep(self, *, now: Optional[float] = None) -> List[OutcomeReceipt]:
-        """Expire pending receipts past their horizon, resolving them as failures.
+        """Expire pending receipts past their horizon.
 
-        This bounds the horizon: an action whose outcome was never observed is treated as
-        an unmet expectation (observed=0), so the sources that promised it lose standing
-        rather than the receipt lingering forever.
+        The accountability rule stands: an action whose outcome nobody ever
+        checked is treated as an unmet expectation (observed=0), so the sources
+        that promised it lose standing rather than the receipt lingering forever.
+
+        What does *not* stand is treating that assumed zero as a measurement.
+        The receipt records ``observation="unobserved"``, and the ledger's own
+        calibration statistic ignores it — an expectation cannot be graded
+        against an outcome that was never seen, and folding assumed zeros into
+        the error would make the ledger look badly calibrated in exact
+        proportion to how much of the world it failed to watch. On this machine
+        that was 1,000,553 of 1,031,132 receipts, so the distinction is not
+        academic.
         """
         now = time.time() if now is None else now
         expired: List[OutcomeReceipt] = []
@@ -328,11 +432,11 @@ class OutcomeLedger:
                     r.resolved_at = now
                     r.prediction_error = 0.0 - r.expected
                     r.status = "expired"
+                    r.observation = "unobserved"
                     self._persist(r)
                     self._pending.pop(rid, None)
                     self._pending_db_count = max(0, self._pending_db_count - 1)
-                    self._calib_err_sum += abs(r.prediction_error)
-                    self._calib_n += 1
+                    self._unobserved_n += 1
                     expired.append(r)
         for r in expired:
             self._distribute_credit(r)
@@ -395,11 +499,28 @@ class OutcomeLedger:
     # ── readout ──────────────────────────────────────────────────────────
 
     def expectation_calibration(self) -> float:
-        """Mean absolute prediction error across resolved receipts (lower = better calibrated)."""
+        """Mean absolute prediction error across *measured* receipts.
+
+        Deliberately excludes receipts that expired unobserved. Grading an
+        expectation against an outcome nobody looked at measures the observer,
+        not the expectation.
+        """
         with self._lock:
             if self._calib_n == 0:
                 return 0.0
             return self._calib_err_sum / self._calib_n
+
+    def observation_rate(self) -> float:
+        """Share of closed receipts whose outcome was actually seen.
+
+        The number worth watching. A ledger that closes thousands of receipts
+        and measures a handful of them is not doing credit assignment, it is
+        doing bookkeeping — and this makes that visible instead of letting it
+        hide inside a healthy-looking resolved count.
+        """
+        with self._lock:
+            closed = self._calib_n + self._unobserved_n
+            return (self._calib_n / closed) if closed else 0.0
 
     def pending(self) -> List[Dict[str, Any]]:
         with self._lock:
@@ -434,7 +555,10 @@ class OutcomeLedger:
                 "pending_db_count": self._pending_db_count,
                 "startup_expired_count": self._startup_expired_count,
                 "pending_load_truncated": self._pending_load_truncated,
-                "resolved_count": self._calib_n,
+                "measured_count": self._calib_n,
+                "unobserved_count": self._unobserved_n,
+                "observation_rate": round(self.observation_rate(), 4),
+                "collapsed_opens": self._collapsed_opens,
                 "expectation_calibration": round(self.expectation_calibration(), 4),
                 "db_path": self._db_path,
             }

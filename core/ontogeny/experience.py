@@ -14,9 +14,10 @@ zero. Not knowing is a fact about the *observer*, not about the action.
 
 **Repetition drowning signal.** 990,653 of those receipts were one reflex
 firing over and over. Ninety-six percent of the corpus was a single fact
-repeated. Identical episodes inside a window are collapsed into one row with a
+repeated. Bursts of identical episodes are rate-limited into one row with a
 ``repeat_count``, so a stuck reflex costs one row and one honest weight instead
-of a million rows and a wrecked prior.
+of a million rows and a wrecked prior — while ordinary traffic, where two
+similar-looking decisions may still turn out differently, is left alone.
 
 **Test data in the live corpus.** Thirty thousand synthetic benchmark rows sat
 in the live ledger, indistinguishable from lived experience. Provenance here is
@@ -63,8 +64,20 @@ _QUEUE_CAPACITY = 4096
 #: seconds of experience rather than minutes.
 _FLUSH_INTERVAL_S = 2.0
 
-#: Identical episodes arriving inside this window collapse into one row.
-_DEDUP_WINDOW_S = 300.0
+#: Window over which identical episodes are counted as a burst.
+_DEDUP_WINDOW_S = 60.0
+
+#: Identical episodes tolerated inside the window before the rest collapse.
+#:
+#: This is a rate limit, not deduplication, and the distinction matters. Two
+#: genuinely different intents can present identical features and get the same
+#: verdict, and they will be graded separately — merging them would throw away
+#: the disagreement between their outcomes, which is exactly the signal worth
+#: having. What must be clamped is the runaway case: one reflex firing
+#: thousands of times with nothing changing, which on this machine produced
+#: 990,653 identical receipts. Below the threshold every episode is its own
+#: row; above it, the loop costs one row and an honest count.
+_DEDUP_BURST_THRESHOLD = 5
 
 #: Feature quantisation for the dedup key. Two decimals: a reflex firing with
 #: bit-identical context collapses, a genuinely different situation does not.
@@ -254,6 +267,7 @@ class ExperienceSpine:
         self._repeat_increments: deque[str] = deque()
         self._resolve_callbacks: list[Callable[[str, Outcome], None]] = []
         self._dedup: dict[str, tuple[str, float]] = {}
+        self._burst: dict[str, int] = {}
         self._dropped = 0
         self._written = 0
         self._collapsed = 0
@@ -351,7 +365,7 @@ class ExperienceSpine:
                         self._dropped,
                     )
             self._queue.append(episode)
-            self._dedup[episode.dedup_key] = (episode.episode_id, episode.decided_at)
+            self._dedup.setdefault(episode.dedup_key, (episode.episode_id, episode.decided_at))
             return episode.episode_id
 
     def _accepts(self, provenance: Provenance) -> bool:
@@ -366,12 +380,24 @@ class ExperienceSpine:
         return True
 
     def _collapse_target(self, episode: Episode) -> str | None:
-        """Fold a repeat of an identical, still-unresolved episode into its original."""
+        """Clamp a runaway loop, without merging decisions that get graded apart.
+
+        The first few identical episodes in a window each get their own row —
+        two different intents can look identical to the organ and still have
+        different outcomes, and that disagreement is signal. Only once the same
+        key keeps arriving does it start folding.
+        """
         seen = self._dedup.get(episode.dedup_key)
         if seen is None:
+            self._burst[episode.dedup_key] = 1
             return None
         original_id, first_at = seen
         if episode.decided_at - first_at > _DEDUP_WINDOW_S:
+            self._burst[episode.dedup_key] = 1
+            return None
+        count = self._burst.get(episode.dedup_key, 0) + 1
+        self._burst[episode.dedup_key] = count
+        if count <= _DEDUP_BURST_THRESHOLD:
             return None
         for queued in reversed(self._queue):
             if queued.episode_id == original_id:
@@ -504,6 +530,7 @@ class ExperienceSpine:
         stale = [k for k, (_, seen_at) in self._dedup.items() if seen_at < cutoff]
         for key in stale:
             self._dedup.pop(key, None)
+            self._burst.pop(key, None)
 
     # ── reading ──────────────────────────────────────────────────────────
 

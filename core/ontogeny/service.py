@@ -250,6 +250,15 @@ class OntogenyCore:
         with self._lock:
             return tuple(self._control_points)
 
+    @property
+    def resolvers(self) -> ResolverRegistry:
+        """Where a subsystem registers how to find out what came of its decisions."""
+        return self._resolvers
+
+    @property
+    def authority(self) -> AuthorityLedger:
+        return self._authority
+
     def _state_for(self, schema: FeatureSchema) -> OntogeneticState:
         """The reservoir. Width is fixed by the first schema that asks for it.
 

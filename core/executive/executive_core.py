@@ -349,6 +349,9 @@ class ExecutiveCore:
         self._lock = asyncio.Lock()
         self._initialized = False
         self._ledger: Optional[ExecutiveLedger] = None
+        #: intent_id -> ontogeny episode, so a completion can grade the
+        #: admission that allowed it. Bounded by the active-intent lifetime.
+        self._ontogeny_episodes: Dict[str, str] = {}
         logger.info("🏛️ ExecutiveCore initialized — sovereign control plane active.")
 
     # ── Core Approval API ────────────────────────────────────────────────
@@ -948,68 +951,128 @@ class ExecutiveCore:
 
     def _approve(self, intent: Intent, reason: str,
                  coherence: float = 1.0) -> DecisionRecord:
-        record = DecisionRecord(
-            intent_id=intent.intent_id,
-            outcome=DecisionOutcome.APPROVED,
-            reason=reason,
-            coherence_at_decision=coherence,
-        )
-        self._active_intents[intent.intent_id] = intent
-        self._decision_history.append(record)
-        self._approval_count += 1
-        self._append_decision_event(intent, record)
-        return record
+        return self._commit(intent, DecisionOutcome.APPROVED, reason, coherence)
 
     def _reject(self, intent: Intent, reason: str,
                 coherence: float = 0.0) -> DecisionRecord:
-        record = DecisionRecord(
-            intent_id=intent.intent_id,
-            outcome=DecisionOutcome.REJECTED,
-            reason=reason,
-            coherence_at_decision=coherence,
-            identity_check=False,
-        )
-        self._decision_history.append(record)
-        self._rejection_count += 1
-        self._append_decision_event(intent, record)
-        self._record_failure_obligation(reason, intent)
-        logger.warning("🚫 Executive REJECTED: %s (reason: %s, coherence: %.2f)",
-                       intent.goal[:50], reason, coherence)
-        return record
+        return self._commit(intent, DecisionOutcome.REJECTED, reason, coherence)
 
     def _defer(self, intent: Intent, reason: str) -> DecisionRecord:
-        record = DecisionRecord(
-            intent_id=intent.intent_id,
-            outcome=DecisionOutcome.DEFERRED,
-            reason=reason,
-        )
-        self._decision_history.append(record)
-        self._append_decision_event(intent, record)
-        self._record_failure_obligation(reason, intent)
-        return record
+        return self._commit(intent, DecisionOutcome.DEFERRED, reason, 1.0)
 
     def _degrade(self, intent: Intent, reason: str,
                  coherence: float, constraints: Dict = None) -> DecisionRecord:
+        return self._commit(
+            intent, DecisionOutcome.DEGRADED, reason, coherence, constraints=constraints or {}
+        )
+
+    def _commit(
+        self,
+        intent: Intent,
+        outcome: DecisionOutcome,
+        reason: str,
+        coherence: float,
+        constraints: Dict | None = None,
+    ) -> DecisionRecord:
+        """The single point where an admission verdict becomes real.
+
+        Every rule in ``_evaluate`` converges here, which is what lets the
+        ontogeny organ see the decision, record it, and — once it has earned
+        the right at this control point — differ from it. Sealed reasons
+        (identity, coherence lockdown, governance) are recorded but never
+        contested: see ``core/ontogeny/wiring.SEALED_REASONS``.
+
+        When the organ is absent, broken, or unpromoted, this is exactly the
+        behaviour the executive has always had.
+        """
+        final = outcome
+        verdict: Dict[str, Any] | None = None
+        try:
+            from core.ontogeny.wiring import observe_admission
+
+            chosen, verdict = observe_admission(
+                incumbent_choice=outcome.value,
+                reason=reason,
+                intent_id=intent.intent_id,
+                goal=intent.goal,
+                source=intent.source.value,
+                action_type=intent.action_type.value,
+                features=self._ontogeny_features(intent, coherence),
+                priority=intent.priority,
+                blocking=intent.blocking,
+            )
+            if chosen != outcome.value:
+                final = DecisionOutcome(chosen)
+        except (ImportError, ValueError, RuntimeError, AttributeError, TypeError, KeyError) as exc:
+            record_degradation("executive_core", exc, severity="debug",
+                               action="ontogeny not consulted; executive rules stand")
+
         record = DecisionRecord(
             intent_id=intent.intent_id,
-            outcome=DecisionOutcome.DEGRADED,
-            reason=reason,
+            outcome=final,
+            reason=reason if final is outcome else f"{reason}|ontogeny:{final.value}",
             coherence_at_decision=coherence,
-            constraints=constraints or {},
+            identity_check=final is not DecisionOutcome.REJECTED,
+            constraints=dict(constraints or {}),
         )
-        self._active_intents[intent.intent_id] = intent
+        if final in (DecisionOutcome.APPROVED, DecisionOutcome.DEGRADED):
+            self._active_intents[intent.intent_id] = intent
+            self._approval_count += 1
+        elif final is DecisionOutcome.REJECTED:
+            self._rejection_count += 1
         self._decision_history.append(record)
-        self._approval_count += 1
-        self._append_decision_event(intent, record)
-        logger.info("Executive constrained %s (constraints: %s)",
-                    intent.goal[:50], constraints)
+        if verdict and verdict.get("episode_id"):
+            self._ontogeny_episodes[intent.intent_id] = str(verdict["episode_id"])
+        self._append_decision_event(intent, record, ontogeny=verdict)
+
+        if final in (DecisionOutcome.REJECTED, DecisionOutcome.DEFERRED):
+            self._record_failure_obligation(reason, intent)
+        if final is DecisionOutcome.REJECTED:
+            logger.warning("🚫 Executive REJECTED: %s (reason: %s, coherence: %.2f)",
+                           intent.goal[:50], record.reason, coherence)
+        elif final is DecisionOutcome.DEGRADED:
+            logger.info("Executive constrained %s (constraints: %s)",
+                        intent.goal[:50], record.constraints)
         return record
+
+    def _ontogeny_features(self, intent: Intent, coherence: float) -> Dict[str, float]:
+        """The situation as the organ sees it — all of it already computed here."""
+        from core.ontogeny.wiring import admission_features
+
+        temporal = self._get_temporal_identity_context()
+        epistemic = self._get_epistemic_state()
+        failure = self._get_failure_state()
+        return admission_features(
+            priority=intent.priority,
+            confidence=intent.confidence,
+            coherence=coherence,
+            failure_pressure=failure.get("pressure", 0.0),
+            active_goals=temporal.get("active_goal_count", 0),
+            beliefs_contested=epistemic.get("contested", 0),
+            pending_initiatives=temporal.get("pending_count", 0),
+            blocking=intent.blocking,
+            requires_tool=intent.requires_tool,
+            requires_memory_commit=intent.requires_memory_commit,
+            identity_check=True,
+            self_model_available=self._identity_integrity_available(),
+            source=intent.source.value,
+            action_type=intent.action_type.value,
+        )
 
     # ── Intent Lifecycle ─────────────────────────────────────────────────
 
     def complete_intent(self, intent_id: str, success: bool = True) -> None:
         """Mark an intent as completed. Frees capacity."""
         intent = self._active_intents.pop(intent_id, None)
+        episode_id = self._ontogeny_episodes.pop(intent_id, None)
+        if episode_id and intent is not None:
+            try:
+                from core.ontogeny.wiring import note_admission_completion
+
+                note_admission_completion(episode_id, success=success, goal=intent.goal)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation('executive_core', exc, severity="debug",
+                                   action="ontogeny completion not recorded")
         if intent is not None:
             try:
                 self._get_ledger().append(
@@ -1443,7 +1506,9 @@ class ExecutiveCore:
             self._ledger = ExecutiveLedger(path)
         return self._ledger
 
-    def _append_decision_event(self, intent: Intent, record: DecisionRecord) -> None:
+    def _append_decision_event(
+        self, intent: Intent, record: DecisionRecord, *, ontogeny: Dict[str, Any] | None = None
+    ) -> None:
         try:
             temporal = self._get_temporal_identity_context()
             epistemic = self._get_epistemic_state()
@@ -1472,6 +1537,15 @@ class ExecutiveCore:
                     "beliefs_contested": epistemic.get("contested", 0),
                     "failure_pressure": failure.get("pressure", 0.0),
                     "constraints": dict(record.constraints or {}),
+                    **(
+                        {
+                            "ontogeny_stage": ontogeny.get("stage"),
+                            "ontogeny_decider": ontogeny.get("decider"),
+                            "ontogeny_novelty": ontogeny.get("novelty"),
+                            "ontogeny_episode": ontogeny.get("episode_id"),
+                        }
+                        if ontogeny else {}
+                    ),
                 }
             )
         except (OSError, ConnectionError, TimeoutError) as exc:
