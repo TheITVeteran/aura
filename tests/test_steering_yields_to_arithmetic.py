@@ -55,7 +55,12 @@ def _ready_context(*, distress: float = 0.1, curiosity: float = 0.7) -> dict:
 def test_steering_stands_down_for_a_determinate_question(question: str) -> None:
     assert _turn_needs_undistorted_computation(question) is True
     controls = _live_mind_generation_controls(_ready_context(), user_message=question)
-    assert controls["clean_user_surface_steering_alpha"] == 0.0, (
+    # 0.01 is "off" — the floor of the range every consumer admits. The worker
+    # clamps with max(0.01, …) to keep the hook attached and the
+    # steering-liveness gate satisfied, and the Recursive Latent Cortex refuses
+    # runtime controls below 0.01 outright. A literal 0.0 meant the RLC
+    # declined every determinate turn with invalid_runtime_controls.
+    assert controls["clean_user_surface_steering_alpha"] == 0.01, (
         "steering must not sit in the path of a computation"
     )
     assert controls["clean_user_surface_recurrent_loops"] == 1

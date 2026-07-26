@@ -311,7 +311,19 @@ def _live_mind_generation_controls(
             "temperature": round(min(temperature, 0.30), 4),
             "top_p": round(min(top_p, 0.90), 4),
             "clean_user_surface_recurrent_loops": 1,
-            "clean_user_surface_steering_alpha": 0.0,
+            # 0.01, not 0.0, and the difference is a whole subsystem.
+            #
+            # The worker treats these as equivalent — _surface_control_alpha
+            # clamps with max(0.01, …) so the hook stays attached and the
+            # steering-liveness gate is satisfied. The Recursive Latent Cortex
+            # does not: its runtime-controls contract admits 0.01 ≤ alpha ≤ 1.0
+            # and refuses anything below. So every determinate turn was
+            # declined with latent_cortex_failure_reason=invalid_runtime_controls
+            # and fell back to an ordinary generation — observed live
+            # 2026-07-26 on every arithmetic and word-problem turn.
+            #
+            # Steering off is the floor of the admitted range, not outside it.
+            "clean_user_surface_steering_alpha": 0.01,
         }
 
     return {
