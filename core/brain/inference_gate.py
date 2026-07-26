@@ -5973,9 +5973,33 @@ class InferenceGate:
         compact: list[dict[str, str]] = []
         if system_message is not None:
             compact.append(system_message)
-        if not deep_probe:
-            compact.extend(preserved_system_messages[-1:])
         compact.extend(convo[-max(1, int(history_limit)) :])
+        if not deep_probe and preserved_system_messages:
+            # Grounding (LIVE MIND CONTEXT, phenomenal/body state, tool and skill
+            # results) is rebuilt every turn. Placed AHEAD of the history it made
+            # the prompt diverge at block two, so the reusable prefix ended after
+            # the system message and the whole conversation was re-prefilled from
+            # token zero on every turn — >80s to a first token by the time the
+            # history was real, which is the deadline that produced "I couldn't
+            # get to an answer I'd stand behind" (2026-07-26). Raising the KV
+            # cache budget could never help: the entries had no stable prefix to
+            # hit. Volatile content belongs last, so `system + history` stays
+            # byte-identical across turns and the cache actually reuses it.
+            #
+            # It still lands immediately before the newest user message, so the
+            # question is answered with the grounding in the most recent context.
+            newest_user = next(
+                (
+                    idx
+                    for idx in range(len(compact) - 1, -1, -1)
+                    if compact[idx].get("role") == "user"
+                ),
+                None,
+            )
+            compact.insert(
+                len(compact) if newest_user is None else newest_user,
+                preserved_system_messages[-1],
+            )
 
         context_window = self._foreground_prompt_context_window()
         if profile == "contract":
