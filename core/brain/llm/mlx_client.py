@@ -7168,9 +7168,10 @@ class MLXLocalClient:
                 # deadline because runtime progress exempted it forever.
                 # Past the hard ceiling, silence is wedged no matter how
                 # alive the worker claims to be.
-                hard_first_token_ceiling = self._first_token_hard_ceiling(
+                livelock_ceiling = self._first_token_hard_ceiling(
                     foreground_request=foreground_request
                 )
+                hard_first_token_ceiling = livelock_ceiling
                 request_hard_ceiling = float(
                     getattr(self, "_current_first_token_hard_ceiling_s", 0.0) or 0.0
                 )
@@ -7179,6 +7180,18 @@ class MLXLocalClient:
                         hard_first_token_ceiling,
                         request_hard_ceiling,
                     )
+                # Which ceiling is about to fire matters, because the two mean
+                # opposite things about the worker.
+                #
+                # The LIVELOCK ceiling is the formula above — heartbeats with
+                # zero tokens for far longer than any healthy generation. That
+                # is a wedged worker and recycling it is correct.
+                #
+                # The DEADLINE ceiling is the caller's remaining wall-clock
+                # minus a small reserve. Hitting it says nothing about the
+                # worker's health; it says this turn ran out of time. The
+                # abandonment branch below tests the two apart before it
+                # decides whether to throw away a warm 20GB model.
                 elapsed_without_token = time.time() - request_started_at
                 if (
                     req_id == self._current_request_id
@@ -7221,15 +7234,63 @@ class MLXLocalClient:
                     heartbeat_age = (
                         time.time() - self._last_heartbeat if self._last_heartbeat > 0 else 999.0
                     )
+                    # LIVE DEFECT, 2026-07-25. Bryan asked a follow-up and got
+                    # nothing back. The trace:
+                    #
+                    #   First-token HARD CEILING exceeded (82.5s, hard=82.0s)
+                    #   Cortex still sending heartbeats (1.8s ago). Recycling...
+                    #   Abort ... arrived after the generation finished;
+                    #     nothing to abort, leaving the worker up.
+                    #
+                    # The 82.0s ceiling was not the livelock formula — that
+                    # computes ~450s here. It was the caller's deadline minus
+                    # the reserve, from an 86s inference-gate budget. And the
+                    # generation FINISHED, a few seconds after we stopped
+                    # waiting. The worker was never wedged; the turn was
+                    # simply slower than its budget under 80% RAM.
+                    #
+                    # Recycling it cost a 20GB reload, which made the NEXT
+                    # turn slower, which made the next deadline likelier to
+                    # expire. That is the cascade, and the recycle was the
+                    # part of it we chose.
+                    #
+                    # Orphaned output is already fenced three ways below and
+                    # above: the pending generation is dropped, the request id
+                    # no longer matches, and the worker is soft-cancelled
+                    # between tokens. Destroying a warm 20GB model was never
+                    # what kept late text out of the next turn.
+                    livelocked = elapsed_without_token > livelock_ceiling
                     if heartbeat_age > 30.0:
                         self._deferred_reboot_reason = "first_token_sla_exceeded"
-                    else:
+                    elif livelocked:
                         logger.warning(
-                            "🛡️ [MLX] Cortex still sending heartbeats (%.1fs ago). "
-                            "Recycling after this abandoned foreground request so late text cannot bleed into the next turn.",
+                            "🛡️ [MLX] Cortex still sending heartbeats (%.1fs ago) but produced "
+                            "no token in %.1fs (livelock ceiling %.1fs). Recycling the lane.",
                             heartbeat_age,
+                            elapsed_without_token,
+                            livelock_ceiling,
                         )
                         self._deferred_reboot_reason = "recoverable_first_token_sla_exceeded"
+                    else:
+                        logger.warning(
+                            "⏱️ [MLX] Cortex ran past this turn's deadline (%.1fs elapsed, "
+                            "budget %.1fs) but is healthy (heartbeat %.1fs ago, livelock "
+                            "ceiling %.1fs). Cancelling the request and KEEPING the warm lane.",
+                            elapsed_without_token,
+                            hard_first_token_ceiling,
+                            heartbeat_age,
+                            livelock_ceiling,
+                        )
+                        self._record_degraded_event(
+                            "first_token_deadline_exceeded_worker_healthy",
+                            detail=(
+                                f"{os.path.basename(self.model_path)}"
+                                f">{hard_first_token_ceiling:.1f}s"
+                                f"{self._pressure_receipt_suffix()}"
+                            ),
+                            severity="warning",
+                            foreground_request=foreground_request,
+                        )
                     # Ask the worker to drop the orphaned generation between
                     # tokens — the abandoned output then never arrives at all,
                     # instead of relying solely on a worker recycle.
