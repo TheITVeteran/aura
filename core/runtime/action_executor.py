@@ -195,21 +195,28 @@ class ActionExecutor:
         build_rehearsal_objective: Any = None
         build_external_execution_offer: Any = None
         try:
+            # core/runtime is the foundation layer and may not depend on
+            # cognition (core/runtime/DEPS). This module is the one
+            # grandfathered exception, because the branch below is gated on
+            # deliberation_worthy() and means nothing without the pre-action
+            # cortex. Everything cognitive this function needs comes through
+            # that single seam — reaching past it into
+            # external_execute_coordinator and latent_cortex.external_execution
+            # added two more edges into the foundation, which the layering
+            # gate refuses and the grandfathered baseline may not grow to
+            # cover. Both are re-exported lazily by preaction_cortex, so the
+            # latent-cortex stack is still not imported until an action
+            # actually deliberates.
             from core.brain.preaction_cortex import (
                 PreActionCortexThread,
+                build_external_execution_offer,
                 build_rehearsal_objective,
                 deliberation_worthy,
+                get_external_execute_coordinator,
             )
 
             deliberation_worthy_action = deliberation_worthy(domain.value)
             if deliberation_worthy_action:
-                from core.brain.external_execute_coordinator import (
-                    get_external_execute_coordinator,
-                )
-                from core.brain.llm.latent_cortex.external_execution import (
-                    build_external_execution_offer,
-                )
-
                 external_execute_coordinator = get_external_execute_coordinator()
                 existing_transaction = await asyncio.to_thread(
                     external_execute_coordinator.lookup,

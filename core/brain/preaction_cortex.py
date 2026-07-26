@@ -566,11 +566,52 @@ def deliberation_worthy(domain: str) -> bool:
     return str(domain).lower() in CONSEQUENTIAL_DOMAINS
 
 
+# ── The runtime's single seam into cognition ────────────────────────────
+#
+# core/runtime is the foundation layer: "everything above depends on this;
+# it depends on nothing above" (core/runtime/DEPS). An import from a
+# cognitive module into the foundation makes the foundation un-bootable
+# without the very thing it is supposed to be able to run without.
+#
+# core/runtime/action_executor.py has one grandfathered exception to that —
+# this module — because its external-execution branch is gated on
+# deliberation_worthy() and is meaningless without the pre-action cortex.
+# Two further edges were then added straight into
+# core.brain.external_execute_coordinator and
+# core.brain.llm.latent_cortex.external_execution, which the layering gate
+# refuses and the baseline may not grow to accommodate.
+#
+# Re-exporting them here narrows the architecture rather than widening it:
+# the foundation reaches cognition through ONE named seam instead of three.
+# The bodies stay lazy so importing this module still costs nothing — the
+# latent-cortex stack is not pulled in until an action actually deliberates.
+
+
+def get_external_execute_coordinator() -> Any:
+    """The external-execution coordinator, imported on first use."""
+    from core.brain.external_execute_coordinator import (
+        get_external_execute_coordinator as _impl,
+    )
+
+    return _impl()
+
+
+def build_external_execution_offer(*args: Any, **kwargs: Any) -> Any:
+    """Build an external-execution offer, importing the builder on use."""
+    from core.brain.llm.latent_cortex.external_execution import (
+        build_external_execution_offer as _impl,
+    )
+
+    return _impl(*args, **kwargs)
+
+
 __all__ = [
     "CONSEQUENTIAL_DOMAINS",
     "PREACTION_SCHEMA",
     "PreActionCortexThread",
+    "build_external_execution_offer",
     "build_rehearsal_objective",
     "deliberation_worthy",
+    "get_external_execute_coordinator",
     "preaction_runtime_available",
 ]
