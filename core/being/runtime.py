@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import asdict
 from typing import Any
@@ -10,6 +11,7 @@ from core.governance.recovery_authority import (
     is_restorative_consolidation,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.numeric_safety import validated_unit
 
 from .affective_valence import AffectiveValenceEngine
 from .aura_now import (
@@ -37,6 +39,90 @@ from .workspace_ignition import WorkspaceIgnition
 logger = logging.getLogger("Aura.BeingRuntime")
 
 
+#: Single source of truth for which action domains are consequential.
+#: CP126 c62962b4: this was a duplicated inline allowlist, so a misspelled or
+#: newly added domain skipped body accounting and every consequential defer.
+CONSEQUENTIAL_ACTION_DOMAINS = frozenset({
+    "tool_execution",
+    "memory_write",
+    "state_mutation",
+    "initiative",
+    "exploration",
+    "semantic_weight_update",
+    "belief_update",
+    "environment_action",
+    "external_action",
+    "file_write",
+    "network_call",
+    "cloud_call",
+    "ci_cd",
+    "self_modification",
+    "cloud_fallback",
+})
+
+#: Domains that are known and NOT consequential. Anything outside the union of
+#: these two sets is unknown, and unknown fails closed to consequential.
+NON_CONSEQUENTIAL_ACTION_DOMAINS = frozenset({
+    "response",
+    "reflection",
+    "stabilization",
+    "observation",
+    "introspection",
+    "",
+})
+
+KNOWN_ACTION_DOMAINS = CONSEQUENTIAL_ACTION_DOMAINS | NON_CONSEQUENTIAL_ACTION_DOMAINS
+
+
+def is_consequential_domain(domain_name: str) -> bool:
+    """Whether this domain must pay body cost and honour consequential defers.
+
+    An unrecognized domain is treated as consequential: the failure mode of
+    guessing "harmless" is that a new sink bypasses the whole policy.
+    """
+    name = str(domain_name or "").strip().lower()
+    if name in CONSEQUENTIAL_ACTION_DOMAINS:
+        return True
+    return name not in NON_CONSEQUENTIAL_ACTION_DOMAINS
+
+
+def attested_context_flag(context: dict, flag: str, *, domain: str, action: str) -> bool:
+    """A context flag that is only true when a capability token backs it.
+
+    CP126 3b1a9177 / 310a67ee: the foreground-desktop exception and the
+    continuity defers were cleared by plain booleans in a caller-supplied
+    dictionary — no signed principal, capability lease, gesture nonce, target,
+    scope or expiry. A caller could therefore hand itself the authority the
+    policy was meant to withhold.
+
+    The flag must now be accompanied by a capability token that validates for
+    THIS domain and action. Without the token the flag is ignored, and the
+    refusal is recorded so an operator can see the attempt.
+    """
+    if not context.get(flag):
+        return False
+    token_str = str(context.get("capability_token") or "").strip()
+    if not token_str:
+        logger.warning(
+            "Context flag %r for %s/%s carried no capability token; ignoring it.",
+            flag, domain, action,
+        )
+        return False
+    try:
+        from core.agency.capability_token import get_token_store
+
+        get_token_store().validate(token_str, domain=domain, action=action)
+    except (PermissionError, ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "being_runtime",
+            exc,
+            severity="warning",
+            action=f"ignored unattested context flag {flag!r} for {domain}/{action}",
+        )
+        return False
+    return True
+
+
 class BeingRuntime:
     """Canonical LAMP/AuraNow runtime surface.
 
@@ -47,6 +133,13 @@ class BeingRuntime:
     """
 
     def __init__(self, *, field_dim: int = 32) -> None:
+        # CP126 c28972f3 / 5d2fe427: sample() mutated interoception, body,
+        # welfare, the semantic stream, the introspector, the field, ownership
+        # and every _last_* attribute with no lock, so action_policy could
+        # combine `now` from one request with welfare or felt state from
+        # another — and any mid-sequence exception left a partially advanced
+        # self-state. One reentrant lock serializes the whole sample.
+        self._sample_lock = threading.RLock()
         self.field = ContinuousSelfField(dim=field_dim)
         self.interoception = InteroceptiveModel()
         self.affect = AffectiveValenceEngine()
@@ -144,6 +237,31 @@ class BeingRuntime:
         external_override: bool = False,
         lesions: set[str] | None = None,
     ) -> AuraNow:
+        # One coherent, serialized sample (CP126 c28972f3 / 5d2fe427).
+        with self._sample_lock:
+            return self._sample_locked(
+                state,
+                objective=objective,
+                candidate_action=candidate_action,
+                predicted_outcome=predicted_outcome,
+                actual_outcome=actual_outcome,
+                tool_failed=tool_failed,
+                external_override=external_override,
+                lesions=lesions,
+            )
+
+    def _sample_locked(
+        self,
+        state: Any | None = None,
+        *,
+        objective: str = "",
+        candidate_action: str = "",
+        predicted_outcome: str = "",
+        actual_outcome: str = "",
+        tool_failed: bool = False,
+        external_override: bool = False,
+        lesions: set[str] | None = None,
+    ) -> AuraNow:
         lesions = set(lesions or set())
         monotonic_now = time.monotonic()
         idle_elapsed = max(0.0, monotonic_now - self._last_sample_monotonic)
@@ -180,7 +298,7 @@ class BeingRuntime:
             prediction_error=prediction.free_energy,
             memory_coherence=1.0 - memory_context.memory_conflict,
             tool_reliability=max(0.0, 1.0 - body.tool_failure_pressure),
-            model_stability=1.0,
+            model_stability=self._measure_model_stability(),
             continuity_risk=self_state.continuity_risk,
         )
         welfare_outputs = self.welfare.compute(welfare_inputs)
@@ -320,6 +438,46 @@ class BeingRuntime:
             )
             self._last_unified_felt = None
 
+    def _measure_model_stability(self) -> float:
+        """Live LLM availability/reliability, not a hardcoded perfect score.
+
+        CP126 7a841f23: this was pinned at 1.0, so welfare's integrity term
+        always read the model as perfectly stable — the substrate could be
+        failing every call and welfare would never notice.
+        """
+        try:
+            from core.runtime.service_registry import get_runtime_service
+
+            router = get_runtime_service("llm_router", default=None)
+            if router is None:
+                # Unknown is not perfect. Mid-scale, and say so.
+                return 0.5
+            for attribute in ("stability_score", "health_score", "reliability"):
+                value = getattr(router, attribute, None)
+                if callable(value):
+                    value = value()
+                if isinstance(value, (int, float)):
+                    return float(validated_unit(value, name="model_stability"))
+            health = getattr(router, "get_health", None)
+            if callable(health):
+                report = health() or {}
+                if isinstance(report, dict):
+                    for key in ("stability", "score", "availability"):
+                        if isinstance(report.get(key), (int, float)):
+                            return float(
+                                validated_unit(report[key], name="model_stability")
+                            )
+                    if report.get("healthy") is not None:
+                        return 1.0 if report.get("healthy") else 0.25
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "being_runtime",
+                exc,
+                severity="debug",
+                action="used a neutral model-stability reading after the probe failed",
+            )
+        return 0.5
+
     def action_policy(
         self,
         now: AuraNow,
@@ -339,23 +497,41 @@ class BeingRuntime:
         """
         domain_name = str(domain or "").strip().lower()
         context = dict(context or {})
+        # CP126 310a67ee: these converted qualifying writes from defer to
+        # constrain on the strength of caller-supplied booleans alone. The
+        # flags now require a capability token bound to this domain+action.
         continuity_memory_write = bool(
             domain_name == "memory_write"
             and (
-                context.get("conversation_continuity")
-                or context.get("explicit_observational_memory_write")
+                attested_context_flag(
+                    context, "conversation_continuity",
+                    domain=domain_name, action="continuity_memory_write",
+                )
+                or attested_context_flag(
+                    context, "explicit_observational_memory_write",
+                    domain=domain_name, action="continuity_memory_write",
+                )
             )
             and not context.get("high_risk_memory_write")
         )
         foreground_continuity_state = bool(
             domain_name == "state_mutation"
-            and context.get("foreground_continuity_state")
+            and attested_context_flag(
+                context, "foreground_continuity_state",
+                domain=domain_name, action="foreground_continuity_state",
+            )
         )
         explicit_foreground_desktop_tool = bool(
             domain_name in {"tool_execution", "environment_action", "external_action", "state_mutation"}
+            # CP126 3b1a9177: the foreground-desktop exception trusted six
+            # context booleans and cleared multiple defers. The two that
+            # actually assert USER AUTHORITY must now be attested.
             and context.get("desktop_execution_contract")
             and context.get("foreground_request")
-            and context.get("user_explicitly_authorized")
+            and attested_context_flag(
+                context, "user_explicitly_authorized",
+                domain=domain_name, action="foreground_desktop_action",
+            )
             and context.get("user_visible_desktop_action")
             and (
                 domain_name == "tool_execution"
@@ -364,29 +540,24 @@ class BeingRuntime:
             )
             and context.get("verification_required")
         )
-        consequential = domain_name in {
-            "tool_execution",
-            "memory_write",
-            "state_mutation",
-            "initiative",
-            "exploration",
-            "semantic_weight_update",
-            "belief_update",
-            "environment_action",
-            "external_action",
-            "file_write",
-            "network_call",
-            "cloud_call",
-            "ci_cd",
-            "self_modification",
-            "cloud_fallback",
-        }
-        repair_lane = domain_name in {"stabilization", "reflection"} or (
-            is_internal_recovery_context(domain_name, context)
-        )
+        # CP126 c62962b4: consequential status was a duplicated inline string
+        # allowlist, so a misspelled or newly added domain silently skipped
+        # body accounting and every consequential defer. It is now one
+        # module-level set, and an UNKNOWN domain is treated as consequential
+        # — the fail-closed direction.
         constraints: list[str] = []
         blocks: list[str] = []
         defers: list[str] = []
+
+        consequential = is_consequential_domain(domain_name)
+        unknown_domain = bool(domain_name) and domain_name not in KNOWN_ACTION_DOMAINS
+        if unknown_domain:
+            constraints.append(
+                f"unknown_action_domain_treated_as_consequential: {domain_name!r}"
+            )
+        repair_lane = domain_name in {"stabilization", "reflection"} or (
+            is_internal_recovery_context(domain_name, context)
+        )
 
         body_pressure = float(now.body.total_pressure)
         distress = float(now.affect.distress)
