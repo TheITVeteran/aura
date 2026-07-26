@@ -245,6 +245,26 @@ class ContextAssembler:
             "skills.reddit_adapter",
             "subconscious_dream",
             "system",
+            # LIVE DEFECT, 2026-07-25. The three below were missing, and
+            # their absence is what made Aura answer "Just checking in" with
+            # an unprompted monologue about ghosts, then invent
+            # "<dispatch a somatic probe>" as if it were speech.
+            #
+            # personhood_engine._emit_thought writes spontaneous thoughts
+            # into working_memory as role="assistant" with origin
+            # "spontaneous" — no colon — while the prefix list below only
+            # matched "spontaneous:". One character. So her private musings
+            # entered the conversational prompt as her own prior TURNS, the
+            # model read them as shared context, and continued that voice.
+            # somatic_noise and baseline_continuity are global-workspace
+            # winners and reached the prompt the same way.
+            #
+            # These are things Aura thinks, not things she said to anyone.
+            "spontaneous",
+            "somatic_noise",
+            "baseline_continuity",
+            "drive_growth",
+            "drive_social",
         }
         background_prefixes = (
             "agency_core_",
@@ -252,6 +272,8 @@ class ContextAssembler:
             "background",
             "recovery_",
             "spontaneous:",
+            "somatic_",
+            "drive_",
         )
         internal_message_types = {
             "action_result",

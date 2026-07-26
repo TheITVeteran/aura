@@ -218,7 +218,14 @@ class LatentCortexService:
             from core.being.aura_now import BodyState
 
             state = getattr(self.orchestrator, "state", None)
-            return float(BodyState.from_aura_state(state).total_pressure())
+            # total_pressure is a @property, not a method. Calling it raised
+            # TypeError: 'float' object is not callable on EVERY invocation,
+            # so this function has never once returned a real reading — it
+            # always fell into the handler below, which used to answer 0.0
+            # and hand the latent cortex undamped compute while reporting
+            # nothing. Found in a live log only after that handler was made
+            # to record itself.
+            return float(BodyState.from_aura_state(state).total_pressure)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             if not getattr(self, "_body_pressure_unknown_reported", False):
                 self._body_pressure_unknown_reported = True

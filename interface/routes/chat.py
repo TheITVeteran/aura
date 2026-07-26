@@ -10475,17 +10475,46 @@ def _is_architecture_self_assessment_request(user_message: str) -> bool:
     )
 
 
+def _looks_like_aura_state(candidate: Any) -> bool:
+    """Whether this object is a STATE rather than something holding one.
+
+    LIVE DEFECT, 2026-07-25. Whatever was registered under "aura_state" was
+    returned unchecked, and on a live boot that was a StateRepository. Every
+    caller then hit `.cognition` on it:
+
+        AttributeError: 'StateRepository' object has no attribute 'cognition'
+
+    which crashed the required-search contract, so "search for an article on
+    how LeBron James will fit in with the 76ers" never ran a search at all.
+    A resolver that can return the wrong TYPE has to check.
+    """
+    return candidate is not None and hasattr(candidate, "cognition")
+
+
+def _unwrap_state(candidate: Any) -> Any | None:
+    """Accept a state, or the state held by a repository-like object."""
+    if _looks_like_aura_state(candidate):
+        return candidate
+    for attribute in ("_current", "current", "state"):
+        inner = getattr(candidate, attribute, None)
+        if _looks_like_aura_state(inner):
+            return inner
+    return None
+
+
 def _resolve_live_aura_state() -> Any | None:
     """Best-effort access to the active runtime state for UI reflexes."""
-    state = ServiceContainer.get("aura_state", default=None)
+    state = _unwrap_state(ServiceContainer.get("aura_state", default=None))
     if state is not None:
         return state
 
     orch = ServiceContainer.get("orchestrator", default=None)
     if orch is not None:
-        state = getattr(getattr(orch, "state_repo", None), "_current", None)
+        state = _unwrap_state(getattr(orch, "state_repo", None))
         if state is None:
-            state = getattr(orch, "state", None) or getattr(orch, "_state", None)
+            state = _unwrap_state(getattr(orch, "state", None)) or _unwrap_state(
+                getattr(orch, "_state", None)
+            )
         if state is not None:
             return state
 
@@ -10493,7 +10522,7 @@ def _resolve_live_aura_state() -> Any | None:
         from core.runtime import service_access
 
         repo = service_access.resolve_state_repository(default=None)
-        return getattr(repo, "_current", None) if repo is not None else None
+        return _unwrap_state(repo) if repo is not None else None
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Live Aura state resolve failed: %s", exc)
