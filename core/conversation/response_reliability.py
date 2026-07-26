@@ -5080,6 +5080,91 @@ def _has_surface_nonsense_drift(user_message: Any, reply_text: Any) -> bool:
     return not _SURFACE_NONSENSE_DRIFT_RE.search(prompt_without_urls)
 
 
+# English prose is mostly connective tissue. Real sentences — terse technical
+# ones included — run 13-55% function words. Text that has almost none is not
+# a sentence about anything; it is content words strung on a grammar that was
+# never there.
+#
+# LIVE DEFECT, 2026-07-26, desktop surface. Two replies passed EVERY existing
+# gate — assess_user_facing_reply ok=true, off_topic=false,
+# response_confidence "high" — and reached the user:
+#
+#   "Do product of multiple exponent term simplify reflexion"      (0.00)
+#   "Introspection: Optimization-driven events stabilize energy after state
+#    change management. Probing recurrent somatic shadows flagged across ten
+#    semiotic spikes... CONFORMANCE Signal: PRIORITY 0"            (0.05)
+#
+# Measured against real replies from the same surface: a terse worked
+# arithmetic answer scores 0.13, ordinary speech 0.30-0.48. The separation is
+# wide and it does not depend on knowing the topic, which is what makes this
+# safe as a last net under every other detector.
+_PROSE_WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’-]*")
+_FUNCTION_WORDS = frozenset(
+    {
+        "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "for", "if",
+        "then", "than", "that", "this", "these", "those", "there", "here",
+        "when", "while", "where", "which", "who", "whom", "whose", "what",
+        "why", "how", "because", "since", "until", "unless", "although",
+        "though", "as", "at", "by", "in", "into", "of", "off", "on", "onto",
+        "out", "over", "under", "to", "from", "with", "within", "without",
+        "about", "after", "before", "between", "during", "through", "up",
+        "down", "again", "still", "just", "only", "also", "too", "very",
+        "not", "no", "nor", "any", "some", "all", "both", "each", "every",
+        "i", "me", "my", "mine", "myself", "you", "your", "yours", "we",
+        "us", "our", "ours", "he", "him", "his", "she", "her", "hers", "it",
+        "its", "they", "them", "their", "theirs", "am", "is", "are", "was",
+        "were", "be", "been", "being", "do", "does", "did", "doing", "done",
+        "have", "has", "had", "having", "will", "would", "can", "could",
+        "shall", "should", "may", "might", "must", "let", "get", "got",
+        "it's", "i'm", "you're", "that's", "there's", "don't", "doesn't",
+        "didn't", "isn't", "aren't", "wasn't", "won't", "can't", "i've",
+        "i'll", "we're", "they're", "here's", "what's", "he's", "she's",
+    }
+)
+_MIN_PROSE_WORDS_FOR_FUNCTION_TEST = 12
+_MIN_FUNCTION_WORD_RATIO = 0.10
+_LABELLED_LINE_RE = re.compile(r"^\s*[\w][\w .'’-]{0,40}:\s+\S")
+
+
+def _looks_like_structured_output(body: str) -> bool:
+    """Code, JSON and list-shaped answers are legitimately function-word poor."""
+    if "```" in body or "|---" in body:
+        return True
+    stripped = body.strip()
+    if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
+        return True
+    lines = [line for line in body.splitlines() if line.strip()]
+    if lines and sum(1 for line in lines if _LIST_LINE_RE.match(line)) * 2 >= len(lines):
+        return True
+    # Scripted dialogue and labelled records ("Mainframe: First statement.")
+    # are function-word poor by form, not by collapse. The discriminator is the
+    # line: genuine labelled text puts each label on its own, which is exactly
+    # what a single run-on line of "Introspection: ... CONFORMANCE Signal: ..."
+    # does not do.
+    if len(lines) >= 2:
+        labelled = sum(1 for line in lines if _LABELLED_LINE_RE.match(line))
+        if labelled >= 2 and labelled * 2 >= len(lines):
+            return True
+    return False
+
+
+def _has_function_word_starvation(reply_text: Any) -> bool:
+    body = str(reply_text or "").strip()
+    if not body or _looks_like_structured_output(body):
+        return False
+    prose = re.sub(r"`[^`]*`", " ", body)
+    # Identifiers, hashes and telemetry blobs are not prose in either
+    # direction. Left in, "[x_A_4521B_8A7C]" contributed two tokens that look
+    # exactly like the article "a" and pushed a starved reply back over the
+    # threshold on noise alone.
+    prose = re.sub(r"\S*[\d_]\S*", " ", prose)
+    words = [word.lower() for word in _PROSE_WORD_RE.findall(prose)]
+    if len(words) < _MIN_PROSE_WORDS_FOR_FUNCTION_TEST:
+        return False
+    ratio = sum(1 for word in words if word in _FUNCTION_WORDS) / len(words)
+    return ratio < _MIN_FUNCTION_WORD_RATIO
+
+
 def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
@@ -5441,6 +5526,8 @@ def _model_text_integrity_reasons(
         reasons.append("unexpected_cjk_intrusion")
     if user_facing and _has_surface_nonsense_drift(prompt, raw):
         reasons.append("surface_nonsense_drift")
+    if user_facing and _has_function_word_starvation(raw):
+        reasons.append("function_word_starvation")
     if user_facing and _UNSUPPORTED_AFFECTION_CLAIM_RE.search(raw):
         reasons.append("unsupported_affection_claim")
     if user_facing and _UNSUPPORTED_SELF_TELEMETRY_CLAIM_RE.search(raw):
@@ -5516,6 +5603,7 @@ def assess_model_text_integrity(
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
+        "function_word_starvation",
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
@@ -5599,6 +5687,7 @@ def assess_user_facing_reply(
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
+            "function_word_starvation",
             "unsupported_affection_claim",
             "unsupported_self_telemetry_claim",
             "host_telemetry_substituted_for_self_condition",
@@ -5792,6 +5881,7 @@ def assess_user_facing_reply(
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",
+        "function_word_starvation",
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
