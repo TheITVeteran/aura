@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.learning.grpo import GRPOConfig, GRPOTelemetry, group_advantages
 from core.learning.grpo_training_state import (
     GRPOCheckpointError,
     canonical_json_bytes,
@@ -18,23 +19,23 @@ from core.learning.grpo_training_state import (
 )
 from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
+    _advantage_report_with_verifier_rate,
+    _answer_channel_report_from_verdicts,
+    _answer_contract_instruction,
     _assert_exact_adapter_keys,
     _build_task_split,
     _calibration_admission_report,
     _calibration_token_budget,
     _dataset_payload,
-    _advantage_report_with_verifier_rate,
-    _answer_contract_instruction,
-    _answer_channel_report_from_verdicts,
     _load_execution_spec,
     _point_estimate_delta,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
     _render,
-    _signal_admission_report,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
+    _signal_admission_report,
     _stable_seed,
     _task_gold_answer_text,
     completion_logprob,
@@ -42,7 +43,6 @@ from tools.train_grpo import (
     evaluate_recurrent_heldout,
     sample_recurrent_group,
 )
-from core.learning.grpo import GRPOConfig, GRPOTelemetry, group_advantages
 
 
 @dataclass(frozen=True)
@@ -226,6 +226,18 @@ def test_training_halts_when_grpo_has_no_learning_signal():
     assert verdict is not None
     assert verdict["learning_signal"] is False
     assert "too_hard" in verdict["diagnosis"]
+
+
+def test_zero_group_signal_report_is_terminal_and_diagnostic():
+    report = _signal_admission_report(
+        GRPOTelemetry().verdict(GRPOConfig()),
+        step_receipts=[],
+    )
+
+    assert report["learning_signal"] is False
+    assert report["groups"] == 0
+    assert "no_training_groups_observed" in report["diagnosis"]
+    assert "calibration admission receipt" in report["required_next_gate"]
 
 
 def test_no_signal_halt_reports_answer_channel_blocker():

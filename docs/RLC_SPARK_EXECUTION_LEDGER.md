@@ -2458,6 +2458,20 @@ before those dependencies close is not admissible.
   leaves approximately 13-293 records, or 68.2%-98.0% checkpoint-count
   completion (80.4% midpoint). A new source-bound campaign contract and
   detached preflight must still run before any training or gain claim.
+
+  CP386 loaded the actual resident 32B and exercised the repaired split. Its
+  recurrent baseline scored 1/6. Calibration completed five probes before its
+  bounded time cap: 4/20 completions were parseable and correct, for a 0.20
+  answer-channel fraction. The calibration admission correctly refused
+  training as `answer_channel_blocked`; zero optimizer groups or updates ran.
+  The terminal reporter then raised `KeyError: diagnosis` because zero-group
+  telemetry intentionally had only `reason`. That failed receipt is retained.
+  `_signal_admission_report` is now total over zero groups and emits an
+  explicit diagnosis and required next gate; its focused trainer/curriculum/
+  preregistration matrix passes 45/45. No adapter, gain, or frontier claim is
+  available. This is total checkpoint record 628; the 640-920 forecast leaves
+  approximately 12-292 records, or 68.3%-98.1% checkpoint-count completion
+  (80.5% midpoint).
 - [ ] **SPARK-052 - Adaptive breadth/depth/tool routing.** Scale recurrence,
   branch count, lookahead, tools, and verifier effort from difficulty,
   uncertainty, stakes, body pressure, deadlines, and resource admission while

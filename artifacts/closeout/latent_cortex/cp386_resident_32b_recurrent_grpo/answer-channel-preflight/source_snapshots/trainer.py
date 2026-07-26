@@ -301,15 +301,6 @@ def _signal_admission_report(
             "restore discriminative trajectory credit or fall back to a task "
             "cell with verifier reward variance before launching long training"
         )
-    if not isinstance(report.get("diagnosis"), str) or not report["diagnosis"].strip():
-        report["diagnosis"] = (
-            "no_training_groups_observed: calibration or admission stopped the "
-            "run before an optimizer group executed"
-        )
-        report["required_next_gate"] = (
-            "inspect the calibration admission receipt and satisfy its required "
-            "next gate before launching resident training"
-        )
     return report
 
 
@@ -1523,7 +1514,6 @@ def main() -> int:
     deadline = started_monotonic + args.max_minutes * 60.0
 
     from mlx_lm import load
-
     from core.runtime.model_lane_control import standalone_model_lane
 
     with standalone_model_lane(
@@ -1763,8 +1753,6 @@ def main() -> int:
             if execution_spec is not None:
                 from core.learning.scope_reachability import (
                     assess as _assess_scope_reach,
-                )
-                from core.learning.scope_reachability import (
                     merge_reason_counts as _merge_reasons,
                 )
 

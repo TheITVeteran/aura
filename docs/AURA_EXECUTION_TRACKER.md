@@ -28919,3 +28919,44 @@ SPARK-051 remains open for actual resident-32B training, preregistered
 equal-compute reasoning/frontier evidence, independent verification, and live
 selection/lesion/restoration evidence. Final multi-hour soaks remain deferred
 until every shorter gate is green.
+
+## Checkpoint 2026-07-26-386: Resident Answer-Channel Diagnostic Closure
+
+The source-current CP386 preflight loaded the actual resident 32B under a
+detached, sleep-protected, no-fork supervisor and consumed the repaired
+disjoint curriculum. The six-task recurrent baseline scored 1/6 overall
+(`0.3333` at depth one, `0.0` at depth two). Calibration completed five probes
+before its bounded calibration cap: 4/20 completions were parseable and
+correct, for answer-channel parseability and correctness fractions of `0.20`.
+The measured cells included four at `0.25` and one at `0.0`.
+
+That is not sufficient verifier entry. Calibration correctly returned
+`training_admitted=false`, reason `answer_channel_blocked`, and required
+answer-channel repair or pretraining before resident GRPO. The durable pointer
+remains at step zero; no optimizer group or update ran, and no trained adapter
+was admitted. The detached process remained contained and exited with an empty
+process group after 840.48 seconds.
+
+The terminal reporter then failed while trying to publish the negative verdict:
+zero-group `GRPOTelemetry.verdict()` intentionally carries `reason` but no
+`diagnosis`, while the final receipt indexed `diagnosis` as mandatory.
+`_signal_admission_report` is now total over that state and emits the explicit
+diagnosis `no_training_groups_observed` plus a required next gate. The exact
+zero-group path is a contract test. The focused trainer, answer-channel, and
+resident-preregistration matrix passes 45/45; Ruff, bytecode compilation, and
+diff hygiene pass.
+
+CP386 is a useful negative diagnostic, not a reasoning result. It proves the
+resident recurrent path can produce occasional strict answers, but it does not
+prove trainability at adequate density, any adapter update, reasoning gain,
+frontier performance, or a `WOW Signal`.
+
+Counting CP386 makes the total checkpoint record 628. The 640-920 forecast
+remains, leaving approximately 12-292 records. Checkpoint-count completion is
+approximately 68.3%-98.1%, with a midpoint planning estimate of 80.5%.
+
+Next, publish the terminal-report repair, checkpoint SPARK-052 adaptive routing,
+then generate a fresh source-bound resident preflight. SPARK-051 remains open
+for answer-channel remediation, actual 32B training, preregistered equal-compute
+reasoning/frontier evidence, independent verification, and live selection,
+lesion, and restoration evidence. Final multi-hour soaks remain deferred.
