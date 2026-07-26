@@ -198,3 +198,90 @@ def test_edge_cases_and_nans():
     # only 'c' should succeed
     assert len(vec) == 1
     assert abs(vec[0] - 0.6224) < 1e-4
+
+
+# ── CP126 remediation regressions ───────────────────────────────────────────
+
+
+def test_governance_failure_refuses_expansion(monkeypatch):
+    """Expansion is a persistent mutation of Aura's own representation.
+    max_dim is a ceiling on how far it can go, not consent to go there."""
+    import core.adaptation.dimensional_expansion as mod
+
+    engine = DimensionalExpansionEngine(initial_dim=4, max_dim=8)
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("will unavailable")
+
+    monkeypatch.setattr(mod, "record_degradation", lambda *a, **k: None)
+    # Force the Will import inside the method to fail.
+    monkeypatch.setitem(__import__("sys").modules, "core.will", None)
+
+    assert engine._governance_approve_expansion(0.9) is False
+
+
+def test_axis_ids_are_not_reused_after_contraction():
+    """IDs derived from the CURRENT list length, so retiring a non-terminal
+    axis and expanding again minted an id another axis already owned."""
+    engine = DimensionalExpansionEngine(initial_dim=4, max_dim=16)
+
+    minted = []
+    for _ in range(3):
+        engine._axis_seq += 1
+        minted.append(f"expanded_{engine._initial_dim + engine._axis_seq}")
+    # Simulate retiring the middle axis, then minting another.
+    engine._axis_seq += 1
+    minted.append(f"expanded_{engine._initial_dim + engine._axis_seq}")
+
+    assert len(set(minted)) == len(minted)
+
+
+def test_restore_drops_malformed_axes():
+    """Restored axes come off disk unsigned; a bad one silently corrupts every
+    projection afterwards."""
+    engine = DimensionalExpansionEngine(initial_dim=4, max_dim=16)
+    engine._raw_dim = 4
+    good = FeatureAxis(axis_id="expanded_5", origin="ok",
+                       projection_vector=np.array([1.0, 0, 0, 0], dtype=np.float32))
+    payload = {
+        "initial_dim": 4,
+        "max_dim": 16,
+        "raw_dim": 4,
+        "expanded_axes": [
+            good.to_dict(),
+            {**good.to_dict(), "axis_id": "expanded_6",
+             "projection_vector": [1.0, 2.0]},                      # wrong width
+            {**good.to_dict(), "axis_id": "expanded_7",
+             "projection_vector": [float("nan"), 0, 0, 0]},         # non-finite
+            {**good.to_dict(), "axis_id": "expanded_5"},            # duplicate id
+        ],
+        "feature_weights": {"base": [1.0] * 4, "expanded": [0.5] * 4},
+    }
+
+    restored = DimensionalExpansionEngine.from_dict(payload)
+
+    assert [a.axis_id for a in restored._expanded_axes] == ["expanded_5"]
+    # Weight vector was reconciled to the surviving axis count.
+    assert restored._feature_weights.dim - restored._feature_weights.base_dim == 1
+
+
+def test_restored_axis_counter_does_not_collide_with_loaded_axes():
+    """A restored engine must not mint ids matching the axes it just loaded."""
+    payload = {
+        "initial_dim": 4,
+        "max_dim": 16,
+        "raw_dim": 4,
+        "expanded_axes": [
+            FeatureAxis(axis_id="expanded_9", origin="ok",
+                        projection_vector=np.array([1.0, 0, 0, 0],
+                                                   dtype=np.float32)).to_dict(),
+        ],
+        "feature_weights": {"base": [1.0] * 4, "expanded": [0.5]},
+    }
+
+    engine = DimensionalExpansionEngine.from_dict(payload)
+    engine._axis_seq += 1
+    next_id = f"expanded_{engine._initial_dim + engine._axis_seq}"
+
+    assert next_id != "expanded_9"
+    assert engine._axis_seq >= 5

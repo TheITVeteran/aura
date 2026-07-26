@@ -216,6 +216,11 @@ class DimensionalExpansionEngine:
         self._contraction_min_observations = max(50, contraction_min_observations)
 
         self._expanded_axes: list[FeatureAxis] = []
+        # Monotonic axis counter. IDs used to derive from the CURRENT list
+        # length, so retiring a non-terminal axis and later expanding minted an
+        # ID a surviving (or historical) axis already owned — two different
+        # axes sharing one identity in receipts and history.
+        self._axis_seq: int = 0
         self._expansion_history: deque[ExpansionEvent] = deque(maxlen=256)
         self._contraction_history: deque[ContractionEvent] = deque(maxlen=128)
 
@@ -558,7 +563,8 @@ class DimensionalExpansionEngine:
                 if norm > _EPSILON:
                     proj_vec /= norm
 
-                axis_id = f"expanded_{self._initial_dim + len(self._expanded_axes)}"
+                self._axis_seq += 1
+                axis_id = f"expanded_{self._initial_dim + self._axis_seq}"
                 origin = (
                     f"residual_pca_ev={ev:.4f}_ratio={ratio:.3f}_"
                     f"buf={len(residuals)}_obs={self._observation_count}"
@@ -634,9 +640,18 @@ class DimensionalExpansionEngine:
             )
             return bool(decision.is_approved())
         except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation("dimensional_expansion", exc)
-            logger.debug("Governance check unavailable; allowing expansion: %s", exc)
-            return True  # fail-open for expansion (bounded by max_dim anyway)
+            record_degradation(
+                "dimensional_expansion",
+                exc,
+                severity="warning",
+                action="refused dimensional expansion: governance unreachable",
+            )
+            # Fail CLOSED. Expansion is a persistent mutation of Aura's own
+            # representation, and max_dim is a ceiling on how far it can go —
+            # not consent to go there. An unreachable Will is an absent
+            # decision, not an approving one; expansion is deferred until
+            # governance can actually answer.
+            return False
 
     # -- persistence -----------------------------------------------------------
 
@@ -650,6 +665,7 @@ class DimensionalExpansionEngine:
             "contraction_min_observations": self._contraction_min_observations,
             "observation_count": self._observation_count,
             "raw_dim": self._raw_dim,
+            "axis_seq": self._axis_seq,
             "expanded_axes": [a.to_dict() for a in self._expanded_axes],
             "feature_weights": self._feature_weights.to_dict(),
             "expansion_history": [e.to_dict() for e in list(self._expansion_history)[-64:]],
@@ -676,15 +692,81 @@ class DimensionalExpansionEngine:
             ),
             base_weights=base_weights,
         )
-        engine._observation_count = int(data.get("observation_count", 0))
+        engine._observation_count = max(0, int(data.get("observation_count", 0)))
         engine._raw_dim = data.get("raw_dim")
-        engine._expanded_axes = [
-            FeatureAxis.from_dict(a) for a in data.get("expanded_axes", [])
-        ]
+
+        # Restored axes are untrusted input: this state comes off disk and was
+        # previously accepted with arbitrary projection sizes, duplicate ids,
+        # NaN weights, and counts inconsistent with the weight vector. A bad
+        # axis here silently corrupts every projection afterwards.
+        expected_dim = engine._raw_dim if isinstance(engine._raw_dim, int) else None
+        restored: list[FeatureAxis] = []
+        seen_ids: set[str] = set()
+        for raw in data.get("expanded_axes", []) or []:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                axis = FeatureAxis.from_dict(raw)
+            except (KeyError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "dimensional_expansion", exc, severity="warning",
+                    action="dropped a malformed persisted axis on restore",
+                )
+                continue
+            vector = np.asarray(axis.projection_vector, dtype=np.float32).ravel()
+            if vector.size == 0 or not np.all(np.isfinite(vector)):
+                logger.warning("Dropped restored axis %s: empty or non-finite projection.",
+                               axis.axis_id)
+                continue
+            if expected_dim is not None and vector.size != expected_dim:
+                logger.warning(
+                    "Dropped restored axis %s: projection width %d != raw dim %d.",
+                    axis.axis_id, vector.size, expected_dim,
+                )
+                continue
+            if axis.axis_id in seen_ids:
+                logger.warning("Dropped restored axis %s: duplicate id.", axis.axis_id)
+                continue
+            if not math.isfinite(float(axis.weight)):
+                axis.weight = 0.5
+            axis.weight = float(max(0.01, min(2.0, float(axis.weight))))
+            if not math.isfinite(float(axis.contribution_score)):
+                axis.contribution_score = 0.5
+            axis.projection_vector = vector
+            seen_ids.add(axis.axis_id)
+            restored.append(axis)
+            if len(restored) >= engine._max_dim:
+                logger.warning("Restored axis list truncated at max_dim=%d.", engine._max_dim)
+                break
+        engine._expanded_axes = restored
+
+        # The axis counter must never go backwards, or a restored engine mints
+        # ids that collide with the axes it just loaded.
+        try:
+            persisted_seq = int(data.get("axis_seq", 0))
+        except (TypeError, ValueError):
+            persisted_seq = 0
+        highest = 0
+        for axis in restored:
+            suffix = str(axis.axis_id).rsplit("_", 1)[-1]
+            if suffix.isdigit():
+                highest = max(highest, int(suffix) - engine._initial_dim)
+        engine._axis_seq = max(0, persisted_seq, highest, len(restored))
+
         # Restore feature weights from persisted expanded list
         fw_data = data.get("feature_weights")
         if fw_data:
             engine._feature_weights = DynamicFeatureWeights.from_dict(fw_data)
+        # The weight vector and the axis list must agree, or every indexed
+        # contraction afterwards targets the wrong dimension.
+        while engine._feature_weights.dim - engine._feature_weights.base_dim > len(restored):
+            engine._feature_weights.contract(
+                engine._feature_weights.dim - engine._feature_weights.base_dim - 1
+            )
+        while engine._feature_weights.dim - engine._feature_weights.base_dim < len(restored):
+            engine._feature_weights.expand(
+                restored[engine._feature_weights.dim - engine._feature_weights.base_dim].weight
+            )
         return engine
 
     # -- diagnostics -----------------------------------------------------------
