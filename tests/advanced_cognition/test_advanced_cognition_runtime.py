@@ -7,6 +7,7 @@ from core.advanced_cognition import (
     BenchmarkTask,
     ContinualLearningStabilityEngine,
     Episode,
+    ExternalEvidenceDeliberator,
     IndependentValidationLoop,
     Observation,
     OntologyInventionEngine,
@@ -15,7 +16,6 @@ from core.advanced_cognition import (
     SocialCognitionLayer,
     TieredActionController,
     ZeroShotTransferEngine,
-    ExternalEvidenceDeliberator,
 )
 
 
@@ -126,3 +126,133 @@ def test_world_model_social_tier_validation_and_architecture_surfaces(tmp_path):
     assert deliberation.claims
     assert deliberation.uncertainties
     assert deliberation.receipt_id.startswith("delib_")
+
+
+# ── CP126 remediation regressions (core/advanced_cognition/schemas.py) ──────
+
+
+def test_stable_hash_is_stable_for_sets():
+    """Sets were serialized in iteration order, so the same logical set could
+    produce different IDs across processes."""
+    from core.advanced_cognition.schemas import stable_hash
+
+    a = {"tags": {"gamma", "alpha", "beta"}}
+    b = {"tags": {"beta", "gamma", "alpha"}}
+    assert stable_hash(a) == stable_hash(b)
+
+
+def test_canonical_json_rejects_ambiguous_mapping_keys():
+    """Distinct keys with the same string form silently collapsed into one,
+    making identity ambiguous."""
+    import pytest
+
+    from core.advanced_cognition.schemas import canonical_json
+
+    with pytest.raises(ValueError, match="duplicate"):
+        canonical_json({1: "int key", "1": "str key"})
+
+
+def test_canonical_json_handles_incomparable_keys():
+    """sorted() over mixed key types raised TypeError before stringification."""
+    from core.advanced_cognition.schemas import canonical_json
+
+    out = canonical_json({1: "a", "b": "c", (2, 3): "d"})
+    assert isinstance(out, str) and out
+
+
+def test_nan_confidence_does_not_become_maximum_confidence():
+    """max(lo, min(hi, nan)) returns hi in CPython, so NaN telemetry was
+    promoted to the strongest possible signal."""
+    from core.advanced_cognition.schemas import Observation, clamp
+
+    assert clamp(float("nan")) == 0.0
+    assert clamp(float("inf")) == 0.0
+    assert Observation(domain="d", state={}, confidence=float("nan")).confidence == 0.0
+
+
+def test_forged_observation_id_is_rejected():
+    """A caller-supplied id was accepted verbatim, allowing identity reuse and
+    provenance substitution."""
+    import pytest
+
+    from core.advanced_cognition.schemas import Observation
+
+    with pytest.raises(ValueError, match="does not bind"):
+        Observation(domain="d", state={"x": 1}, observation_id="obs_deadbeef")
+
+
+def test_episode_identity_includes_the_prediction():
+    """Two different forecasts judged on the same event shared one receipt."""
+    from core.advanced_cognition.schemas import (
+        ActionCandidate,
+        Episode,
+        Observation,
+        Outcome,
+    )
+
+    obs = Observation(domain="d", state={"x": 1}, timestamp=1000.0)
+    act = ActionCandidate("a1", "do")
+    out = Outcome(success=True, reward=0.5)
+    first = Episode(obs, act, {"forecast": "rain"}, out, created_at=1000.0)
+    second = Episode(obs, act, {"forecast": "sun"}, out, created_at=1000.0)
+
+    assert first.episode_id != second.episode_id
+
+
+def test_empty_feature_sets_do_not_match_everything():
+    """Jaccard(∅, ∅) = 1.0 made a featureless principle a universal matcher."""
+    from core.advanced_cognition.schemas import jaccard
+
+    assert jaccard(set(), set()) == 0.0
+    assert jaccard(set(), {"a"}) == 0.0
+
+
+def test_unknown_actions_are_not_assumed_reversible():
+    """Assuming an unrecognised action is safe to undo is backwards for a
+    safety gate."""
+    from core.advanced_cognition.integration import AdvancedCognitionRuntime
+
+    runtime = AdvancedCognitionRuntime.__new__(AdvancedCognitionRuntime)
+    action = runtime._act("some totally unknown thing")
+
+    assert action.reversible is False
+    assert "unknown" in action.tags
+
+
+def test_outcome_rejects_nonfinite_and_unbounded_assertions():
+    """These drive utility, ranking, and learning; NaN poisons every mean."""
+    from core.advanced_cognition.schemas import Outcome
+
+    out = Outcome(success=True, reward=float("nan"), harm=float("inf"), surprise=99.0)
+
+    assert out.reward == 0.0
+    assert out.harm == 0.0
+    assert out.surprise == 1.0
+    assert out.utility == out.utility  # not NaN
+
+
+def test_replayed_episode_cannot_inflate_principle_support():
+    """Each replay incremented support, so one outcome could manufacture
+    arbitrary confidence."""
+    from core.advanced_cognition.schemas import (
+        ActionCandidate,
+        Episode,
+        Observation,
+        Outcome,
+        Principle,
+    )
+
+    episode = Episode(
+        Observation(domain="d", state={"x": 1}, timestamp=1000.0),
+        ActionCandidate("a1", "do"),
+        {},
+        Outcome(success=True, reward=0.5),
+        created_at=1000.0,
+    )
+    principle = Principle(name="p", condition_features={"a"}, action_features={"b"}, effect="e")
+
+    assert principle.update(episode) is True
+    for _ in range(50):
+        assert principle.update(episode) is False
+
+    assert principle.support == 1

@@ -265,12 +265,24 @@ class AdvancedCognitionRuntime:
                 str(value.action_id),
                 str(value.kind),
                 dict(getattr(value, "params", {}) or {}),
-                bool(getattr(value, "reversible", True)),
+                # An object that does not state its reversibility has not
+                # proven it is reversible.
+                bool(getattr(value, "reversible", False)),
                 int(getattr(value, "authority_tier", 1)),
                 float(getattr(value, "expected_cost", 0.1)),
                 tuple(getattr(value, "tags", ()) or ()),
             )
-        return ActionCandidate(stable_hash(str(value), prefix="act_"), str(value), tags=("unknown",))
+        # A wholly UNKNOWN action — coerced from an arbitrary value with no
+        # declared contract — must not inherit "reversible" by default. Assuming
+        # an unrecognised action is safe to undo is exactly backwards for a
+        # safety gate, so it is marked irreversible and left at the lowest
+        # authority tier until something states otherwise.
+        return ActionCandidate(
+            stable_hash(str(value), prefix="act_"),
+            str(value),
+            reversible=False,
+            tags=("unknown",),
+        )
 
 
 def _shared_state_dir() -> Path:

@@ -15,10 +15,36 @@ from typing import Any, Mapping, Sequence
 
 
 def canonical_json(value: Any) -> str:
+    """Deterministic serialization — the basis of every ID in this module.
+
+    Two properties this has to hold, both of which it previously did not:
+
+    * **Sets are unordered**, so serializing one in iteration order gave the
+      same logical set different JSON — and therefore different IDs — across
+      processes. Set elements are sorted by their canonical form.
+    * **Mapping keys are sorted BEFORE stringification**, which raised
+      TypeError for incomparable key types (``{1: ..., "a": ...}``) and let two
+      distinct keys with the same string form silently collapse into one.
+      Keys are stringified first, sorted on that, and a collision is an error
+      rather than a silent overwrite.
+    """
     def clean(v: Any) -> Any:
         if isinstance(v, Mapping):
-            return {str(k): clean(v[k]) for k in sorted(v)}
-        if isinstance(v, (list, tuple, set)):
+            cleaned: dict[str, Any] = {}
+            for key in v:
+                skey = str(key)
+                if skey in cleaned:
+                    raise ValueError(
+                        f"canonical_json: mapping keys collapse to duplicate "
+                        f"string form {skey!r}; identity would be ambiguous"
+                    )
+                cleaned[skey] = clean(v[key])
+            return {k: cleaned[k] for k in sorted(cleaned)}
+        if isinstance(v, (set, frozenset)):
+            # Sort by canonical form so element order cannot leak into the hash.
+            return sorted((clean(x) for x in v), key=lambda x: json.dumps(
+                x, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str))
+        if isinstance(v, (list, tuple)):
             return [clean(x) for x in v]
         if isinstance(v, float):
             if math.isnan(v) or math.isinf(v):
@@ -34,13 +60,31 @@ def stable_hash(value: Any, *, prefix: str = "") -> str:
 
 
 def clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, float(x)))
+    """Clamp to [lo, hi], rejecting non-finite input.
+
+    ``max(lo, min(hi, nan))`` returns **hi** in CPython, because every
+    comparison with NaN is False. A NaN confidence therefore became MAXIMUM
+    confidence — invalid telemetry promoted to the strongest possible signal,
+    and then baked into content hashes. Non-finite input now yields the low
+    bound: unknown is not certainty.
+    """
+    try:
+        value = float(x)
+    except (TypeError, ValueError):
+        return lo
+    if not math.isfinite(value):
+        return lo
+    return max(lo, min(hi, value))
 
 
 def jaccard(a: set[str] | Sequence[str], b: set[str] | Sequence[str]) -> float:
+    """Jaccard similarity, with empty-vs-empty scored as NO evidence.
+
+    Returning 1.0 for two empty feature sets made a principle with no features
+    match every action and observation it was ever compared against — a
+    universal matcher created by an absence of information.
+    """
     aa, bb = set(a), set(b)
-    if not aa and not bb:
-        return 1.0
     if not aa or not bb:
         return 0.0
     return len(aa & bb) / len(aa | bb)
@@ -57,20 +101,25 @@ class Observation:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "confidence", clamp(self.confidence))
-        if not self.observation_id:
-            object.__setattr__(
-                self,
-                "observation_id",
-                stable_hash(
-                    {
-                        "domain": self.domain,
-                        "state": self.state,
-                        "ts": round(self.timestamp, 3),
-                        "source": self.source,
-                    },
-                    prefix="obs_",
-                ),
+        # An ID is a CONTENT BINDING, not a label. A caller-supplied id used to
+        # be accepted verbatim, so any record could claim another record's
+        # identity and substitute its provenance. The id is always recomputed;
+        # a supplied one must match or it is rejected outright.
+        computed = stable_hash(
+            {
+                "domain": self.domain,
+                "state": self.state,
+                "ts": round(self.timestamp, 3),
+                "source": self.source,
+            },
+            prefix="obs_",
+        )
+        if self.observation_id and self.observation_id != computed:
+            raise ValueError(
+                f"observation_id does not bind this content "
+                f"(supplied={self.observation_id!r}, computed={computed!r})"
             )
+        object.__setattr__(self, "observation_id", computed)
 
     def features(self) -> set[str]:
         out = {f"domain:{self.domain}", f"source:{self.source}"}
@@ -129,6 +178,33 @@ class ActionCandidate:
     expected_cost: float = 0.1
     tags: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        # Nothing validated these fields, so a malformed candidate reached the
+        # authority gate carrying whatever the caller happened to pass.
+        if not str(self.kind or "").strip():
+            raise ValueError("ActionCandidate.kind must be a non-empty string")
+        if not isinstance(self.params, Mapping):
+            raise TypeError("ActionCandidate.params must be a mapping")
+        try:
+            tier = int(self.authority_tier)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("ActionCandidate.authority_tier must be an integer") from exc
+        if tier < 0:
+            raise ValueError("ActionCandidate.authority_tier must be non-negative")
+        object.__setattr__(self, "authority_tier", tier)
+        # A non-finite or negative cost must not be able to make an expensive
+        # action look free to a cost-ranked selector.
+        cost = self.expected_cost
+        try:
+            cost = float(cost)
+        except (TypeError, ValueError):
+            cost = 1.0
+        if not math.isfinite(cost) or cost < 0.0:
+            cost = 1.0
+        object.__setattr__(self, "expected_cost", cost)
+        object.__setattr__(self, "reversible", bool(self.reversible))
+        object.__setattr__(self, "tags", tuple(str(t) for t in (self.tags or ())))
+
     def features(self) -> set[str]:
         out = {f"action:{self.kind}", f"tier:{self.authority_tier}"}
         out |= {f"tag:{t}" for t in self.tags}
@@ -157,6 +233,33 @@ class Outcome:
     terminal: bool = False
     notes: str = ""
     facts: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # These drive utility, ranking, and learning. Unbounded or non-finite
+        # caller assertions could make one episode dominate every comparison,
+        # and NaN would poison every mean it entered.
+        object.__setattr__(self, "success", bool(self.success))
+        object.__setattr__(self, "terminal", bool(self.terminal))
+        for name in ("reward", "harm", "surprise"):
+            raw = getattr(self, name)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                value = 0.0
+            if not math.isfinite(value):
+                value = 0.0
+            object.__setattr__(self, name, max(-1.0, min(1.0, value)))
+        deltas = self.resources_delta if isinstance(self.resources_delta, Mapping) else {}
+        cleaned: dict[str, float] = {}
+        for key, raw in deltas.items():
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value):
+                cleaned[str(key)] = value
+        object.__setattr__(self, "resources_delta", cleaned)
+        object.__setattr__(self, "notes", str(self.notes or "")[:2000])
 
     @property
     def utility(self) -> float:
@@ -189,20 +292,26 @@ class Episode:
     created_at: float = field(default_factory=time.time)
 
     def __post_init__(self) -> None:
-        if not self.episode_id:
-            object.__setattr__(
-                self,
-                "episode_id",
-                stable_hash(
-                    {
-                        "obs": self.observation.to_dict(),
-                        "action": self.action.to_dict(),
-                        "outcome": self.outcome.to_dict(),
-                        "ts": round(self.created_at, 3),
-                    },
-                    prefix="ep_",
-                ),
+        # `predicted` participates in the identity: the episode IS the
+        # evaluation of a specific forecast against a specific event, so two
+        # different forecasts judged on the same event are two different
+        # episodes and must not share one receipt id.
+        computed = stable_hash(
+            {
+                "obs": self.observation.to_dict(),
+                "action": self.action.to_dict(),
+                "predicted": self.predicted,
+                "outcome": self.outcome.to_dict(),
+                "ts": round(self.created_at, 3),
+            },
+            prefix="ep_",
+        )
+        if self.episode_id and self.episode_id != computed:
+            raise ValueError(
+                f"episode_id does not bind this content "
+                f"(supplied={self.episode_id!r}, computed={computed!r})"
             )
+        object.__setattr__(self, "episode_id", computed)
 
     def features(self) -> set[str]:
         return self.observation.features() | self.action.features()
@@ -231,8 +340,27 @@ class Principle:
     confidence: float = 0.0
     domains_seen: set[str] = field(default_factory=set)
     examples: list[str] = field(default_factory=list)
+    #: Episode ids already counted, so one outcome cannot be replayed into
+    #: unlimited support. Bounded so a long-lived principle does not grow
+    #: without limit; the bound is far above the support any real principle
+    #: accumulates before it is acted on.
+    counted_episodes: set[str] = field(default_factory=set)
+    max_counted_episodes: int = 10_000
 
-    def update(self, episode: Episode, matched: bool = True) -> None:
+    def update(self, episode: Episode, matched: bool = True) -> bool:
+        """Fold one episode in. Returns False if it was already counted.
+
+        Without deduplication the same episode could be submitted repeatedly
+        and each replay incremented support, so a single outcome could
+        manufacture arbitrary confidence in a principle.
+        """
+        episode_id = getattr(episode, "episode_id", "") or ""
+        if episode_id:
+            if episode_id in self.counted_episodes:
+                return False
+            self.counted_episodes.add(episode_id)
+            if len(self.counted_episodes) > self.max_counted_episodes:
+                self.counted_episodes.pop()
         if matched:
             self.support += 1
             n = max(1, self.support)
@@ -244,6 +372,7 @@ class Principle:
         else:
             self.contradictions += 1
         self.confidence = clamp((self.support + 1.0) / (self.support + self.contradictions + 3.0))
+        return True
 
     def applies_to(self, observation: Observation, action: ActionCandidate) -> float:
         return clamp(
