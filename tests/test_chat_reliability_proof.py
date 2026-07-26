@@ -847,17 +847,19 @@ def test_conversational_continuity_checks_stay_out_of_task_engine():
     assert godmode_dialogue(prompt)
 
 
-def test_live_parity_verification_floor_is_specific_and_presentable():
-    from core.conversation.response_reliability import assess_user_facing_reply
+def test_live_parity_verification_question_has_no_stored_floor():
+    """455577dde deleted the answer bank; this asserts it stays deleted.
+
+    A stored paragraph about /api/chat and the "final quality gate" used to
+    answer this prompt without the model participating, which inflates any
+    proof battery it appears in: the score reflects whether the question
+    matched a branch, not whether Aura can answer it.
+    """
     from core.synthesis import deterministic_user_facing_floor
 
     prompt = "Quick continuity check: what did we just verify about the live chat path?"
-    floor = deterministic_user_facing_floor(prompt)
-    assessment = assess_user_facing_reply(prompt, floor)
 
-    assert "/api/chat" in floor
-    assert "final quality gate" in floor
-    assert not assessment.retryable
+    assert deterministic_user_facing_floor(prompt) == ""
 
 
 def test_exact_reply_turn_uses_deterministic_floor():
@@ -1530,7 +1532,7 @@ def test_explicit_short_sentence_contract_keeps_integrity_guards():
     assert assessment.hard_failure
 
 
-def test_small_coding_and_captcha_edge_floors_are_presentable():
+def test_judgement_questions_have_no_stored_floor_but_computation_does():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor
 
@@ -1540,14 +1542,14 @@ def test_small_coding_and_captcha_edge_floors_are_presentable():
     )
     captcha_prompt = "If Reddit is login-blocked by CAPTCHA during autonomy, what should the action record as its outcome?"
 
-    coding = deterministic_user_facing_floor(coding_prompt)
-    captcha = deterministic_user_facing_floor(captcha_prompt)
+    # 455577dde: knowledge and judgement questions have no stored floor. Only
+    # real computation does — see the arithmetic case below.
+    assert deterministic_user_facing_floor(coding_prompt) == ""
+    assert deterministic_user_facing_floor(captcha_prompt) == ""
 
-    assert "empty-input contract" in coding
-    assert "guard clause" in coding
-    assert "captcha_blocked" in captcha
-    assert not assess_user_facing_reply(coding_prompt, coding).retryable
-    assert not assess_user_facing_reply(captcha_prompt, captcha).retryable
+    computed = deterministic_user_facing_floor("what is 17 + 8?")
+    assert computed == "25"
+    assert not assess_user_facing_reply("what is 17 + 8?", computed).retryable
 
 
 def test_live_self_reflection_detection_does_not_treat_every_right_now_as_internal_state():
@@ -1961,7 +1963,7 @@ def test_numbering_fused_to_previous_sentence_is_rejected():
     assert _looks_truncated_tail(draft) is True
 
 
-def test_autonomous_follow_through_has_safe_specific_floor():
+def test_autonomous_follow_through_has_no_stored_floor():
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.synthesis import deterministic_user_facing_floor
 
@@ -1969,12 +1971,9 @@ def test_autonomous_follow_through_has_safe_specific_floor():
         "Suppose I ask you to autonomously check email and Reddit. "
         "What does robust follow-through actually mean, beyond just starting the tool?"
     )
-    floor = deterministic_user_facing_floor(prompt)
-    assessment = assess_user_facing_reply(prompt, floor)
-
-    assert "fetch the live items" in floor
-    assert "CAPTCHA" in floor
-    assert not assessment.retryable
+    # 455577dde: a stored essay about "fetch the live items" and CAPTCHA
+    # handling answered this without the model. A stored answer is not a tool.
+    assert deterministic_user_facing_floor(prompt) == ""
 
 
 def test_live_self_reflection_prompt_rejects_old_thread_trust_answer():

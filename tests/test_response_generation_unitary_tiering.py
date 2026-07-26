@@ -174,10 +174,12 @@ def test_simple_foreground_floor_does_not_bypass_live_conversation_turns():
     assert UnitaryResponsePhase._simple_foreground_floor_reply("huh") == ""
     assert UnitaryResponsePhase._simple_foreground_floor_reply("im so confused") == ""
     assert UnitaryResponsePhase._simple_foreground_floor_reply("Actually? For real this time?") == ""
-    assert (
-        UnitaryResponsePhase._simple_foreground_floor_reply("Who wrote the play Hamlet?")
-        == "William Shakespeare."
-    )
+    # 455577dde deleted the stored answer bank ("William Shakespeare." for
+    # Hamlet, the capital of France, and so on). A knowledge question has no
+    # deterministic floor — answering it from a branch measures the branch,
+    # not the model. Real computation still has one.
+    assert UnitaryResponsePhase._simple_foreground_floor_reply("Who wrote the play Hamlet?") == ""
+    assert UnitaryResponsePhase._simple_foreground_floor_reply("what is 17 + 8?") == "25"
 
 
 def test_simple_foreground_floor_handles_live_headless_diagnosis():

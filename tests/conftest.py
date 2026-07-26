@@ -1070,3 +1070,26 @@ def orchestrator(mock_container):
                 RuntimeWarning,
                 stacklevel=2,
             )
+
+
+@pytest.fixture(autouse=True)
+def _reset_health_caches_between_tests():
+    """Health payloads are memoised for 5s; scenarios are not.
+
+    Without this, a test that installs a ready boot snapshot could read a
+    payload captured by an unrelated test moments earlier — passing alone and
+    failing in company, which is the signature of order dependence rather than
+    a defect in the code under test.
+    """
+
+    def _reset():
+        try:
+            from interface.routes.system import reset_health_caches
+
+            reset_health_caches()
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+
+    _reset()
+    yield
+    _reset()

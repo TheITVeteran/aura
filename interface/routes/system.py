@@ -514,6 +514,28 @@ _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
 }
+
+
+def reset_health_caches() -> None:
+    """Drop every memoised health/access payload.
+
+    These caches are correct in the runtime — a 5s TTL is what keeps a polling
+    desktop from re-probing the whole boot contract on every tick — and wrong
+    across a process that runs many independent scenarios in sequence. A test
+    that installs a ready boot snapshot and then reads a payload captured by
+    an unrelated test seconds earlier is reading the cache, not the code:
+    observed as ``status == "booting"`` in a test that passes alone and fails
+    in company.
+    """
+    with _boot_health_cache_lock:
+        for key in (False, True):
+            _boot_health_cache[key] = {
+                "captured_at": 0.0,
+                "payload": None,
+                "status_code": 503,
+            }
+    _desktop_access_cache["captured_at"] = 0.0
+    _desktop_access_cache["payload"] = None
 _DESKTOP_ACCESS_PROBE_TASKS: dict[
     asyncio.AbstractEventLoop,
     asyncio.Task[dict[str, Any]],
