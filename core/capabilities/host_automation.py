@@ -39,6 +39,21 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.HostAutomation")
 
+
+def _as_applescript_string(value: Any) -> str:
+    """Encode an arbitrary value as a safe quoted AppleScript string literal.
+
+    App names and menu-path components are caller-controlled and were
+    interpolated raw inside "..." in AppleScript source — a quote/backslash
+    could break out of the literal and inject script. This escapes backslashes
+    and quotes, strips control characters, and bounds the length so the value
+    can only ever be data inside its own string literal.
+    """
+    text = "".join(ch for ch in str(value or "") if ch == " " or ord(ch) >= 32)[:256]
+    text = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
 _HOST_AUTOMATION_ERRORS = (
     ImportError,
     OSError,
@@ -331,7 +346,7 @@ class HostAutomationProvider:
 
     async def launch_app(self, app_name: str) -> AutomationReceipt:
         """Launch an application by name. Uses AppleScript 'activate'."""
-        script = f'tell application "{app_name}" to activate'
+        script = f'tell application {_as_applescript_string(app_name)} to activate'
         receipt = await AppleScriptRunner.run(script, timeout=10.0)
         receipt.action = "launch_app"
         receipt.target = app_name
@@ -352,7 +367,7 @@ class HostAutomationProvider:
         """Bring an already-running application to front."""
         script = f'''
             tell application "System Events"
-                set frontProcess to first process whose name is "{app_name}"
+                set frontProcess to first process whose name is {_as_applescript_string(app_name)}
                 set frontmost of frontProcess to true
             end tell
         '''
@@ -379,7 +394,7 @@ class HostAutomationProvider:
     async def get_window_title(self, app_name: str = "") -> AutomationReceipt:
         """Get the title of the frontmost window of an app (or the frontmost app)."""
         if app_name:
-            script = f'tell application "System Events" to get name of front window of process "{app_name}"'
+            script = f'tell application "System Events" to get name of front window of process {_as_applescript_string(app_name)}'
         else:
             script = '''
                 tell application "System Events"
@@ -446,7 +461,7 @@ class HostAutomationProvider:
 
     async def close_app(self, app_name: str) -> AutomationReceipt:
         """Quit an application gracefully."""
-        script = f'tell application "{app_name}" to quit'
+        script = f'tell application {_as_applescript_string(app_name)} to quit'
         receipt = await AppleScriptRunner.run(script, timeout=5.0)
         receipt.action = "close_app"
         receipt.target = app_name
@@ -485,24 +500,24 @@ class HostAutomationProvider:
         if len(menu_path) == 1:
             script = f'''
                 tell application "System Events"
-                    tell process "{app_name}"
-                        click menu item "{menu_path[0]}" of menu bar 1
+                    tell process {_as_applescript_string(app_name)}
+                        click menu item {_as_applescript_string(menu_path[0])} of menu bar 1
                     end tell
                 end tell
             '''
         elif len(menu_path) == 2:
             script = f'''
                 tell application "System Events"
-                    tell process "{app_name}"
-                        click menu item "{menu_path[1]}" of menu 1 of menu bar item "{menu_path[0]}" of menu bar 1
+                    tell process {_as_applescript_string(app_name)}
+                        click menu item {_as_applescript_string(menu_path[1])} of menu 1 of menu bar item {_as_applescript_string(menu_path[0])} of menu bar 1
                     end tell
                 end tell
             '''
         elif len(menu_path) == 3:
             script = f'''
                 tell application "System Events"
-                    tell process "{app_name}"
-                        click menu item "{menu_path[2]}" of menu 1 of menu item "{menu_path[1]}" of menu 1 of menu bar item "{menu_path[0]}" of menu bar 1
+                    tell process {_as_applescript_string(app_name)}
+                        click menu item {_as_applescript_string(menu_path[2])} of menu 1 of menu item {_as_applescript_string(menu_path[1])} of menu 1 of menu bar item {_as_applescript_string(menu_path[0])} of menu bar 1
                     end tell
                 end tell
             '''
@@ -550,51 +565,59 @@ class HostAutomationProvider:
                     set_proc.communicate(input=text.encode("utf-8")),
                     timeout=2.0,
                 )
+                # From here the outbound text is on the clipboard and MUST be
+                # cleared/restored on every exit path — including paste failure.
+                clipboard_dirtied = True
 
-                # Paste
-                paste_script = '''
-                    tell application "System Events"
-                        keystroke "v" using command down
-                    end tell
-                '''
-                receipt = await AppleScriptRunner.run(paste_script, timeout=3.0)
-                receipt.action = "type_text"
-                receipt.target = f"[clipboard paste, {len(text)} chars]"
-                receipt.adapter = "clipboard+applescript"
-
-                # Restore old clipboard after a brief delay
-                await asyncio.sleep(0.3)
-                if old_clipboard:
-                    restore_proc = await get_subprocess_gateway().spawn_async(
-                        ["pbcopy"],
-                        stdin=asyncio.subprocess.PIPE,
-                        source="host_automation.clipboard_restore",
-                    )
-                    await asyncio.wait_for(
-                        restore_proc.communicate(input=old_clipboard),
-                        timeout=2.0,
-                    )
-
-                self._log_receipt(receipt)
-                return receipt
+                try:
+                    # Paste
+                    paste_script = '''
+                        tell application "System Events"
+                            keystroke "v" using command down
+                        end tell
+                    '''
+                    receipt = await AppleScriptRunner.run(paste_script, timeout=3.0)
+                    receipt.action = "type_text"
+                    receipt.target = f"[clipboard paste, {len(text)} chars]"
+                    receipt.adapter = "clipboard+applescript"
+                    await asyncio.sleep(0.3)
+                    self._log_receipt(receipt)
+                    return receipt
+                finally:
+                    if clipboard_dirtied:
+                        # Restore the prior clipboard — or CLEAR it when the
+                        # user's clipboard was empty, so the outbound text never
+                        # lingers for other apps / clipboard history.
+                        try:
+                            restore_proc = await get_subprocess_gateway().spawn_async(
+                                ["pbcopy"],
+                                stdin=asyncio.subprocess.PIPE,
+                                source="host_automation.clipboard_restore",
+                            )
+                            await asyncio.wait_for(
+                                restore_proc.communicate(input=old_clipboard or b""),
+                                timeout=2.0,
+                            )
+                        except (TimeoutError, OSError) as restore_exc:
+                            record_degradation("host_automation", restore_exc)
+                            logger.warning("Clipboard restore failed; outbound text may remain: %s", restore_exc)
 
             except (TimeoutError, OSError) as e:
                 logger.debug("Clipboard paste failed, falling back to keystroke: %s", e)
                 # Fall through to keystroke method
 
-        # Keystroke method — for short text or when clipboard fails
-        # Escape special chars for AppleScript
-        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-        # Split into chunks to avoid AppleScript string limits
+        # Keystroke method — for short text or when clipboard fails. Chunk the
+        # RAW text; _as_applescript_string() below does the escaping (a manual
+        # pre-escape here would double-escape backslashes/quotes).
         chunk_size = 200
-        chunks = [escaped[i:i + chunk_size] for i in range(0, len(escaped), chunk_size)]
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
 
         success = True
         errors = []
         for chunk in chunks:
             script = f'''
                 tell application "System Events"
-                    keystroke "{chunk}"
+                    keystroke {_as_applescript_string(chunk)}
                 end tell
             '''
             result = await AppleScriptRunner.run(script, timeout=5.0)
@@ -885,8 +908,35 @@ class HostAutomationProvider:
                     duration_ms=(time.time() - start) * 1000,
                 )
             save_path = str(save_dir / f"screenshot_{ts}_{unique}.png")
+        else:
+            # A caller-supplied path must resolve inside an allowed screenshot
+            # root and be an image file — otherwise screencapture would write an
+            # arbitrary host path (symlink/traversal) with no boundary.
+            try:
+                resolved = Path(save_path).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                resolved = None
+            allowed_roots = [
+                (Path.home() / ".aura" / "data").resolve(),
+                (Path.home() / "Desktop" / "Aura").resolve(),
+                (Path.home() / "Documents" / "Aura").resolve(),
+            ]
+            in_root = resolved is not None and any(
+                resolved == r or str(resolved).startswith(str(r) + os.sep) for r in allowed_roots
+            )
+            if not in_root or resolved.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+                return AutomationReceipt(
+                    action="take_screenshot",
+                    target=str(save_path),
+                    adapter="screencapture",
+                    success=False,
+                    error="Screenshot save_path is outside the allowed roots or not an image file.",
+                    duration_ms=(time.time() - start) * 1000,
+                )
+            save_path = str(resolved)
 
         try:
+            capture_started_at = time.time()
             cmd = ["screencapture", "-x"]  # -x = no sound
             if region:
                 x, y, w, h = region
@@ -900,8 +950,18 @@ class HostAutomationProvider:
                 source="host_automation.screenshot",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            output_exists = await asyncio.to_thread(Path(save_path).exists)
-            success = proc.returncode == 0 and output_exists
+
+            def _fresh_capture() -> bool:
+                p = Path(save_path)
+                if not p.exists():
+                    return False
+                st = p.stat()
+                # A pre-existing file satisfies mere existence — require a
+                # nonempty file written at/after this capture began.
+                return st.st_size > 0 and st.st_mtime >= (capture_started_at - 1.0)
+
+            fresh = await asyncio.to_thread(_fresh_capture)
+            success = proc.returncode == 0 and fresh
 
             receipt = AutomationReceipt(
                 action="take_screenshot", target=save_path,
