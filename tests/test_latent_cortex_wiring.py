@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from core.brain.latent_cortex_service import LatentCortexService
+from core.brain.llm.latent_cortex.loop_core import canonical_sha256
 from core.brain.llm.latent_cortex.resource_accounting import (
     ModelComputeProfile,
     ResourceLedger,
@@ -81,6 +82,7 @@ _RUNTIME_IDENTITY = {
 
 
 def _identity_receipt(**overrides):
+    integrity_digest = "e" * 64
     receipt = {
         **_WORKER_IDENTITY,
         "request_payload_sha256": "6" * 64,
@@ -89,6 +91,26 @@ def _identity_receipt(**overrides):
         "episode_affective_steering_applied": True,
         "episode_affective_steering_alpha": 0.30,
         "runtime_identity": dict(_RUNTIME_IDENTITY),
+        "weight_integrity": {
+            "algorithm": "sha256",
+            "version": 1,
+            "params_before": integrity_digest,
+            "params_after": integrity_digest,
+            "canary_before": integrity_digest,
+            "canary_after": integrity_digest,
+            "erased_layer_ids": ["layer-0"],
+            "unavailable_reason": "",
+            "params_unchanged_proven": True,
+            "fast_weights_erased_proven": True,
+        },
+        "integrity_verdicts": {
+            "params_unchanged": {"verdict": "proven", "asserted": True},
+            "fast_weights_erased": {"verdict": "proven", "asserted": True},
+            "algorithm": "sha256",
+            "version": 1,
+            "unavailable_reason": "",
+            "contradictions": [],
+        },
     }
     receipt.update(overrides)
     return receipt
@@ -1195,7 +1217,7 @@ def test_handler_wires_response_contract_into_config_and_verifier(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text='FINAL_ANSWER: {"answer":7}',
-                receipt=EpisodeReceipt(),
+                    receipt=EpisodeReceipt(episode_id="response-contract-test"),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1275,7 +1297,7 @@ def test_handler_authenticates_and_binds_action_intervention(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text="bounded",
-                receipt=EpisodeReceipt(),
+                    receipt=EpisodeReceipt(episode_id="action-intervention-test"),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1330,7 +1352,7 @@ def test_handler_compacts_messages_but_hashes_the_original_request(monkeypatch):
             return LatentReasoningResult(
                 ok=True,
                 text="bounded",
-                receipt=EpisodeReceipt(),
+                    receipt=EpisodeReceipt(episode_id="context-compaction-test"),
             )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
@@ -1432,6 +1454,19 @@ def test_handler_runs_full_episode_on_tiny_model(monkeypatch, tmp_path):
     assert policy["actions_selected"] <= 4
     assert "execute" not in policy["executors"]
     assert all(row["decision"]["action"] in policy["executors"] for row in trace)
+    worker_causal = body["receipt"]["causal_receipt"]
+    assert worker_causal["episode_id"] == body["receipt"]["episode_id"]
+    assert worker_causal["input_tokens_sha256"] == body["receipt"][
+        "input_tokens_sha256"
+    ]
+    assert body["receipt"]["request_payload_sha256"]
+    identity_commitments = worker_causal["nodes"][0]["source_commitments"]
+    assert next(
+        row for row in identity_commitments if row["field"] == "request_payload_sha256"
+    )["present"] is True
+    assert next(
+        row for row in identity_commitments if row["field"] == "runtime_identity"
+    )["present"] is False
     operators = body["receipt"]["cognitive_operator_trace"]
     assert operators
     assert {row["operator"] for row in operators} == {
@@ -1693,6 +1728,21 @@ async def test_client_latent_reason_owns_and_releases_resident_lane(monkeypatch)
     }
     assert request["response_contract"] == '{"answer":int}'
     assert result["ok"] is True and result["text"] == "answer"
+    from core.brain.llm.latent_cortex.causal_receipt import validate_causal_receipt
+
+    causal = result["receipt"]["causal_receipt"]
+    assert validate_causal_receipt(
+        causal,
+        worker_receipt=result["receipt"],
+        require_complete=False,
+    ) == causal
+    runtime_commitment = next(
+        row
+        for row in causal["nodes"][0]["source_commitments"]
+        if row["field"] == "runtime_identity"
+    )
+    assert runtime_commitment["present"] is True
+    assert runtime_commitment["value_sha256"] == canonical_sha256(_RUNTIME_IDENTITY)
     assert client._active_generations == 0
     assert client._current_request_id == ""
     assert client._request_lock.locked() is False
@@ -3162,6 +3212,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             receipt.update(
                 _terminal_disposition_fields(receipt, text=text, tokens=tokens)
             )
+            from core.brain.llm.latent_cortex.causal_receipt import (
+                build_causal_receipt,
+            )
+
+            receipt["causal_receipt"] = build_causal_receipt(receipt)
             return {
                 "ok": True,
                 "text": text,
@@ -3187,6 +3242,23 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     assert result["ok"]
     assert result["text"].startswith("The deep answer explains")
     assert result["receipt"]["output_quality"]["passed"] is True
+    assert result["receipt"]["causal_receipt"]["required_stages_complete"] is True
+    assert result["receipt"]["causal_receipt"]["integrity_proven"] is True
+    assert (
+        svc.get_status()["last_receipt"]["causal_receipt"]["receipt_sha256"]
+        == result["receipt"]["causal_receipt"]["receipt_sha256"]
+    )
+    tampered = copy.deepcopy(result["receipt"])
+    tampered["causal_receipt"]["privacy_contract"][
+        "hidden_state_values_included"
+    ] = True
+    assert "causal_receipt_unproven" in LatentCortexService._receipt_contract_errors(
+        tampered,
+        captured["config"],
+        output_tokens=list(range(12)),
+        output_text=result["text"],
+        expected_objective="hard question",
+    )
     assert captured["prompt"] == "hard question"
     assert captured["config"]["n_branches"] >= 2
     assert captured["config"]["latent_opt"] is True
@@ -4173,7 +4245,11 @@ def test_handler_builds_task_verifier_when_guided(monkeypatch):
             captured.update(kwargs)
             if kwargs.get("verifier") is not None:
                 kwargs["verifier"]("probe with 2 + 2 = 4")
-            return LatentReasoningResult(ok=True, text="ok", receipt=EpisodeReceipt())
+            return LatentReasoningResult(
+                ok=True,
+                text="ok",
+                receipt=EpisodeReceipt(episode_id="task-verifier-test"),
+            )
 
     import core.brain.llm.latent_cortex.worker_handler as handler_mod
 
@@ -4311,7 +4387,10 @@ def test_worker_handler_capture_lane_exits_before_action_and_returns_public_rece
             return LatentReasoningResult(
                 ok=True,
                 text="",
-                receipt=EpisodeReceipt(params_unchanged=True),
+                    receipt=EpisodeReceipt(
+                        episode_id="action-state-capture-test",
+                        params_unchanged=True,
+                    ),
                 reason="action_state_captured",
             )
 
@@ -4514,6 +4593,11 @@ def _full_success_stub_client(captured):
             receipt.update(
                 _terminal_disposition_fields(receipt, text=text, tokens=tokens)
             )
+            from core.brain.llm.latent_cortex.causal_receipt import (
+                build_causal_receipt,
+            )
+
+            receipt["causal_receipt"] = build_causal_receipt(receipt)
             return {
                 "ok": True,
                 "text": text,

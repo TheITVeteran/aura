@@ -1390,6 +1390,9 @@ class EpisodeReceipt:
     # irreducible uncertainty, then binds the disposition into model-generated
     # user language instead of selecting a canned response.
     terminal_disposition: dict[str, Any] = field(default_factory=dict)
+    # Ordered, hash-linked public commitments spanning the complete episode.
+    # The DAG carries no latent values or private reasoning text.
+    causal_receipt: dict[str, Any] = field(default_factory=dict)
     # Confidence-bound, branch-local best-state promotions and preservations.
     # Empty/default traces mean no verifier earned state-selection authority.
     verified_best_state: dict[str, Any] = field(default_factory=dict)
@@ -1657,6 +1660,7 @@ class EpisodeReceipt:
             "escape": dict(self.escape),
             "halting": dict(self.halting),
             "terminal_disposition": dict(self.terminal_disposition),
+            "causal_receipt": dict(self.causal_receipt),
             "verified_best_state": dict(self.verified_best_state),
             "transient_negative_constraints": dict(self.transient_negative_constraints),
             "virtual_quanta": dict(self.virtual_quanta),

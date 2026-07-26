@@ -29092,3 +29092,45 @@ SPARK-053 proves stopping/disclosure mechanics, not reasoning gain. Next is
 SPARK-054 complete causal receipts, while SPARK-051's answer-channel repair and
 eventual powered resident result remain a separate lane. Final multi-hour soaks
 remain deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-26-390: Complete Latent Causal Receipts
+
+SPARK-054 is complete. A latent episode now produces one fixed-order,
+hash-linked public causal envelope covering ingress identity, recurrent state
+lineage, cognitive operators, branch isolation and exchange, optional
+tool/memory evidence, verifier evidence, accepted and rejected updates,
+resource accounting, temporary and durable adaptation, stopping, final
+synthesis, and runtime/model integrity.
+
+The envelope commits source field names, presence, shape or count, canonical
+value hashes, and prior-node hashes. It does not copy latent values, private
+reasoning, or raw tool-secret values. Exact sentinel tests prove those values
+do not appear in serialized public receipts. Independent reconstruction rejects
+source mutations, internally rehashed node mutations, reordered stages,
+weakened privacy declarations, detached final-output identity, missing required
+stages, and unproven integrity.
+
+The implementation also closed a boundary-order defect found by adversarial
+testing. The engine cannot know request, worker, or app/runtime provenance, so
+it emits an honest partial envelope. The worker reconstructs after adding
+request and resident-worker identity. The MLX client reconstructs once more
+after collecting source/app/runtime provenance. Only that final form may pass
+the live service's complete-receipt gate. Failed or action-capture episodes
+remain explicitly partial rather than claiming a complete live lineage.
+
+The causal-envelope, terminal-disposition, tiny-Qwen engine, stop-policy,
+worker/client/service wiring, value-of-computation, runtime-identity, and
+integrity matrices pass 277/277. Ruff, bytecode compilation, and diff hygiene
+pass. The enterprise ratchet has no new CP390 finding and retains only the
+inherited repository excesses at `placeholder_stub_mock` 15 > 13 and
+high/critical 40 > 39; neither baseline was raised.
+
+Counting CP390 makes the total checkpoint record 632. The 640-920 forecast
+remains, leaving approximately 8-288 records. Checkpoint-count completion is
+approximately 68.7%-98.8%, with a midpoint planning estimate of 81.0%.
+
+SPARK-054 proves complete public episode lineage, not reasoning gain. Next is
+SPARK-055 query-scoped fast-weight learning. SPARK-051 remains separately open
+for answer-channel remediation, admitted resident training, and powered
+equal-compute reasoning/frontier evidence. Final multi-hour soaks remain
+deferred until all shorter gates are green.

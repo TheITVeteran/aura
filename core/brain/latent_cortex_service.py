@@ -1537,6 +1537,18 @@ class LatentCortexService:
                     raise ValueError("terminal language was not resident-model generated")
             except (ImportError, KeyError, TypeError, ValueError):
                 errors.append("terminal_disposition_unproven")
+            try:
+                from core.brain.llm.latent_cortex.causal_receipt import (
+                    validate_causal_receipt,
+                )
+
+                validate_causal_receipt(
+                    receipt.get("causal_receipt"),
+                    worker_receipt=receipt,
+                    require_complete=True,
+                )
+            except (ImportError, TypeError, ValueError):
+                errors.append("causal_receipt_unproven")
         try:
             from core.brain.llm.latent_cortex.verified_best import (
                 validate_verified_best_receipt,
@@ -4424,6 +4436,7 @@ class LatentCortexService:
                     "steps_taken",
                     "halting_reason",
                     "terminal_disposition",
+                    "causal_receipt",
                     "n_slots",
                     "n_branches",
                     "exchanges",

@@ -2401,6 +2401,11 @@ class LatentCortexEngine:
             },
         )
         receipt.budget = budget.to_receipt()
+        from core.brain.llm.latent_cortex.causal_receipt import (
+            build_causal_receipt,
+        )
+
+        receipt.causal_receipt = build_causal_receipt(receipt.to_dict())
         if continuation_captured_only:
             receipt.last_stage = "action_state_captured"
             receipt.halting_reason = "action_state_captured_before_first_action"

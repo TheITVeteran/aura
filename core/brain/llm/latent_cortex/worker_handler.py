@@ -1091,6 +1091,12 @@ def handle_latent_reason(
         verifier_guidance=True if job.get("verifier_guidance") else None,
         facet_reliability=job.get("facet_reliability"),
     )
+    # The engine can only emit an honest partial envelope. Rebind it after
+    # worker and request identity are known; the client performs the final
+    # reconstruction after capturing runtime/app provenance.
+    from core.brain.llm.latent_cortex.causal_receipt import build_causal_receipt
+
+    receipt.causal_receipt = build_causal_receipt(receipt.to_dict())
     body = result.to_dict()
     body["status"] = "ok" if result.ok else "error"
     if public_action_state_receipt is not None:

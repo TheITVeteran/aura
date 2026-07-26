@@ -5510,6 +5510,14 @@ class MLXLocalClient:
                         "receipt": receipt,
                         "reason": "runtime_identity_unbound",
                     }
+                # Runtime provenance is the final episode identity available
+                # outside the resident worker. Reconstruct, rather than patch,
+                # the public DAG so every commitment binds the live envelope.
+                from core.brain.llm.latent_cortex.causal_receipt import (
+                    build_causal_receipt,
+                )
+
+                receipt["causal_receipt"] = build_causal_receipt(receipt)
                 action_capture_receipt: dict[str, Any] | None = None
                 action_restore_receipt: dict[str, Any] | None = None
                 if admitted_action_state_runtime is not None:

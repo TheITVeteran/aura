@@ -20,6 +20,9 @@ pytest.importorskip("mlx_lm")
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 from core.brain.llm.latent_cortex.branches import BranchEnsemble  # noqa: E402
+from core.brain.llm.latent_cortex.causal_receipt import (  # noqa: E402
+    validate_causal_receipt,
+)
 from core.brain.llm.latent_cortex.engine import LatentCortexEngine  # noqa: E402
 from core.brain.llm.latent_cortex.fast_weights import EpisodicFastWeights  # noqa: E402
 from core.brain.llm.latent_cortex.governance import parameter_fingerprint  # noqa: E402
@@ -141,6 +144,26 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.terminal_disposition["language"]["source"] == "substrate_model_decode"
     assert r.terminal_disposition["language"]["model_generated"] is True
     assert r.terminal_disposition["language"]["instruction_applied"] is False
+    # A direct substrate engine has no worker/request/runtime provenance. It
+    # must still return a validated partial envelope, never invent a complete
+    # live identity that only outer boundaries can observe.
+    assert r.causal_receipt["required_stages_complete"] is False
+    assert r.causal_receipt["integrity_proven"] is False
+    assert "identity_and_ingress" in r.causal_receipt["missing_required_stages"]
+    assert "runtime_and_model_integrity" in r.causal_receipt[
+        "missing_required_stages"
+    ]
+    assert r.causal_receipt["privacy_contract"] == {
+        "representation": "public_commitments_counts_dispositions_only",
+        "private_chain_of_thought_included": False,
+        "hidden_state_values_included": False,
+        "raw_tool_secret_values_included": False,
+    }
+    assert validate_causal_receipt(
+        r.causal_receipt,
+        worker_receipt=r.to_dict(),
+        require_complete=False,
+    ) == r.causal_receipt
     assert r.schedule_hash
     assert r.budget["spent_layer_apps"] > 0
     assert r.decode_requested_tokens == 8

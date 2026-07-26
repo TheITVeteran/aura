@@ -2546,10 +2546,41 @@ before those dependencies close is not admissible.
   only inherited repository excesses (`placeholder_stub_mock` 15 > 13 and
   high/critical 40 > 39). This closes principled stop semantics and language
   causality; it does not claim a reasoning or frontier-performance gain.
-- [ ] **SPARK-054 - Complete causal receipts.** Record state lineage, operators,
+- [x] **SPARK-054 - Complete causal receipts.** Record state lineage, operators,
   branch isolation, tool evidence, verifier scores, accepted/rejected updates,
   compute, adaptations, stopping, final synthesis, and integrity proofs without
   exposing private chain-of-thought.
+
+  **CP390 implementation and evidence:** Every latent episode now carries one
+  ordered, hash-linked public causal envelope over twelve fixed stages:
+  ingress identity, recurrent state lineage, cognitive operators, branch
+  isolation/exchange, optional tool-memory evidence, verification,
+  accepted/rejected updates, compute, temporary/durable adaptation, stopping,
+  final synthesis, and runtime/model integrity. Each node commits only field
+  names, presence, shape/count, canonical value hashes, and the preceding node
+  hash. Raw latent values, private reasoning, and tool-secret values are never
+  copied into the envelope.
+
+  The envelope is reconstructed at every identity boundary instead of being
+  patched: the engine emits an honest partial receipt, the worker rebinds it
+  after request and resident-worker identity exist, and the client rebuilds
+  the final form only after capturing source/app/runtime provenance. The live
+  service independently reconstructs the complete DAG and rejects missing
+  stages, anonymous episodes, source drift, reordered or recomputed nodes,
+  mutated privacy declarations, detached final-output identity, and unproven
+  parameter or applicable fast-weight integrity. Action-capture and failed
+  episodes retain honest partial envelopes rather than inventing completion.
+
+  Dedicated tests prove exact ordering and hash lineage, optional-evidence
+  semantics, source and self-consistent envelope tampering resistance, strict
+  integrity completion, and absence of sentinel private reasoning/tool values.
+  Tiny-Qwen engine, worker, client, service, terminal, stop-policy,
+  value-of-computation, runtime-identity, and integrity matrices pass 277/277.
+  Strict Ruff, bytecode compilation, and diff hygiene pass. The enterprise
+  ratchet has no new finding attributable to CP390 and remains at its inherited
+  repository excesses (`placeholder_stub_mock` 15 > 13 and high/critical 40 >
+  39). This proves receipt completeness and provenance on the implemented
+  path; it is not a reasoning-gain or frontier-performance claim.
 
 ## G. Temporary and permanent learning
 
