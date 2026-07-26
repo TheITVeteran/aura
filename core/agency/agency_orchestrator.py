@@ -30,7 +30,7 @@ import math
 import subprocess
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -459,6 +459,142 @@ class AgencyOrchestrator:
             }
         return {"executed": False, "receipt": f"{proposal.primitive}:no_default_executor"}
 
+    # Authority provenance a proposal is allowed to carry into the Will.
+    #
+    # LIVE DEFECT, 2026-07-25. Bryan asked Aura to build him a checkers game
+    # and a 2048 clone and got back a governance sentence:
+    #
+    #   WILL REFUSED: agency_orchestrator/tool_execution --
+    #   denied_by_default: tool_execution requires validated scoped authority
+    #   (signed_standing_authority_lease_missing)
+    #
+    # The Will was right to refuse. The chat route had already established
+    # every fact needed to authorize the turn — origin "user",
+    # foreground_request, user_explicitly_authorized, user_requested_action,
+    # with untrusted authority keys stripped — and put them in
+    # proposal.payload["context"]. This method then built a Will context out
+    # of drive, primitive, expected_outcome, state and simulation, and threw
+    # the provenance away one frame later. Every proposal reaching the Will
+    # therefore looked like an unattributed autonomous drive, so an owner
+    # sitting at the keyboard asking for a game was indistinguishable from
+    # the runtime deciding to execute a tool by itself.
+    #
+    # Only these keys cross. Anything that would ASSERT authority rather
+    # than describe its origin is refused below, because payload is
+    # attacker-reachable in a way the chat route's own dict is not.
+    _AUTHORITY_CONTEXT_KEYS = (
+        "origin",
+        "source",
+        "authority_origin",
+        "route",
+        "foreground_request",
+        "user_explicit_action_request",
+        "user_explicitly_authorized",
+        "user_requested_action",
+        "requested_authority_scope",
+        "effect_scope",
+        "risk_level",
+        "tool",
+        "skill",
+        "skill_name",
+    )
+
+    # Keys that grant authority instead of describing it. A proposal payload
+    # may never carry these: a forged token in a payload would otherwise
+    # walk straight past the lease check it is supposed to satisfy.
+    _FORGEABLE_AUTHORITY_KEYS = (
+        "authority_args_digest",
+        "capability_token",
+        "capability_token_id",
+        "scoped_authority",
+        "standing_authority_grant_id",
+        "standing_authority_receipt_id",
+        "standing_authority_token",
+    )
+
+    @classmethod
+    def _proposal_authority_context(cls, proposal: Proposal) -> dict[str, Any]:
+        """Provenance the proposal's originating route established."""
+        payload_context = proposal.payload.get("context")
+        if not isinstance(payload_context, Mapping):
+            return {}
+        carried = {
+            key: payload_context[key]
+            for key in cls._AUTHORITY_CONTEXT_KEYS
+            if key in payload_context
+        }
+        for forgeable in cls._FORGEABLE_AUTHORITY_KEYS:
+            carried.pop(forgeable, None)
+        return carried
+
+    async def _mint_tool_authority(
+        self,
+        proposal: Proposal,
+        authority_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ask standing authority for a lease before asking the Will.
+
+        This is the same lease the tool-execution mixin issues; the agency
+        loop simply never asked for one, which is why its context could
+        never satisfy the Will's tool_execution gate.
+
+        An autonomous drive carries no user-facing origin, so it lands on
+        exactly the policy it lands on today — this restores the ability to
+        tell the two apart, it does not lower the bar for either.
+        """
+        try:
+            from core.executive.standing_authority import (
+                context_has_user_authority,
+                get_standing_authority_manager,
+            )
+        except (ImportError, AttributeError) as exc:
+            _record_agency_degradation(
+                exc,
+                action="proceeded to the Will without a standing-authority lease",
+                severity="warning",
+                extra={"primitive": proposal.primitive},
+            )
+            return {}
+
+        tool_name = (
+            authority_context.get("skill_name")
+            or authority_context.get("tool")
+            or authority_context.get("skill")
+            or proposal.payload.get("skill_name")
+            or proposal.primitive
+        )
+        origin = (
+            authority_context.get("authority_origin")
+            or authority_context.get("origin")
+            or authority_context.get("source")
+            or ""
+        )
+        arguments = proposal.payload.get("params")
+        try:
+            decision = await get_standing_authority_manager().issue_child_lease(
+                tool_name=tool_name,
+                arguments=arguments if isinstance(arguments, Mapping) else {},
+                origin=origin,
+                context=authority_context,
+                user_authorized=context_has_user_authority(origin, authority_context),
+                effect_scope=authority_context.get("effect_scope", ""),
+                risk_level=authority_context.get("risk_level", ""),
+            )
+        except (RuntimeError, TypeError, ValueError, OSError) as exc:
+            _record_agency_degradation(
+                exc,
+                action="proceeded to the Will without a standing-authority lease",
+                severity="warning",
+                extra={"primitive": proposal.primitive, "tool": str(tool_name)[:80]},
+            )
+            return {}
+
+        if not decision.approved:
+            # Not an error: the Will is about to refuse with this reason, and
+            # saying it here makes the refusal legible in the receipt.
+            return {"standing_authority_denial_reason": decision.reason}
+        return dict(decision.context or {})
+
     async def _authorize(
         self,
         proposal: Proposal,
@@ -467,21 +603,29 @@ class AgencyOrchestrator:
     ) -> dict[str, Any]:
         try:
             from core.governance.will_client import WillClient, WillRequest
+            from core.will import ActionDomain
 
             domain = self._primitive_to_domain(proposal.primitive)
+            will_context: dict[str, Any] = {
+                "drive": proposal.drive,
+                "primitive": proposal.primitive,
+                "expected_outcome": proposal.expected_outcome,
+                "state": state,
+                "simulation": simulation,
+            }
+            authority_context = self._proposal_authority_context(proposal)
+            will_context.update(authority_context)
+            if domain is getattr(ActionDomain, "TOOL_EXECUTION", None):
+                will_context.update(
+                    await self._mint_tool_authority(proposal, authority_context)
+                )
             decision = await WillClient().decide_async(
                 WillRequest(
                     content=proposal.intent,
                     source="agency_orchestrator",
                     domain=domain,
                     priority=proposal.priority,
-                    context={
-                        "drive": proposal.drive,
-                        "primitive": proposal.primitive,
-                        "expected_outcome": proposal.expected_outcome,
-                        "state": state,
-                        "simulation": simulation,
-                    },
+                    context=will_context,
                 )
             )
             approved = WillClient.is_approved(decision)

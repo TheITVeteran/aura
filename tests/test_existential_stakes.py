@@ -21,6 +21,36 @@ from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.inference_gate import InferenceGate
 
 
+@pytest.fixture(autouse=True)
+def _restore_existential_stakes():
+    """Put the shared container back the way this file found it.
+
+    ORDER-DEPENDENCE DEFECT, 2026-07-25. Several tests here register an
+    ExistentialStakes pinned at threat 1.0 into the process-wide
+    ServiceContainer and never take it out. Every test that runs afterwards
+    in the same process therefore sees a runtime under critical existential
+    threat, and the Unified Will vetoes every heavy domain — tool_execution,
+    file_write, self_modification — before any other gate is consulted.
+
+    The visible symptom was governance tests passing or failing on ordering
+    rather than on governance: test_canonical_organism_ablation's
+    default-deny test asserts "denied_by_default" and instead saw
+    "survival_inhibition: existential threat level critical (1.00)". The
+    worse case is silent — an authority gate that never gets reached still
+    reports a refusal, so a test can pass for entirely the wrong reason.
+
+    The registrations themselves are what these tests are FOR, so they stay;
+    what was missing is putting the container back.
+    """
+    previous = ServiceContainer.get("existential_stakes", default=None)
+    try:
+        yield
+    finally:
+        ServiceContainer.register_instance(
+            "existential_stakes", previous, required=False,
+        )
+
+
 def test_existential_stakes_init():
     stakes = ExistentialStakes(memory_limit_bytes=1000)
     status = stakes.get_status()
