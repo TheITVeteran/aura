@@ -345,6 +345,12 @@ class DreamerV2:
                 # Signal heartstone: dream insights raise Curiosity
                 try:
                     from core.affect.heartstone_values import get_heartstone_values
+
+                    # Provisional on purpose. The only gate above is
+                    # "NO_CONNECTION" not in content and len(content) > 10 —
+                    # eleven characters of anything. Curiosity is not
+                    # credited until something validates the connection;
+                    # the returned token is what a validator would confirm.
                     get_heartstone_values().on_dream_insight()
                     # Also run insight through epistemic filter
                     from core.world_model.epistemic_filter import get_epistemic_filter

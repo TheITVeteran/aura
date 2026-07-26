@@ -1039,6 +1039,9 @@ class AutonomousInitiativeLoop:
             try:
                 from core.affect.heartstone_values import get_heartstone_values
 
+                # len(content) is how MUCH was said, not how good it was.
+                # It no longer creates a reward on its own; it only damps
+                # one that evidence has already justified.
                 get_heartstone_values().on_research_success(len(content))
             except (ImportError, AttributeError, RuntimeError) as _exc:
                 _record_initiative_degradation(
