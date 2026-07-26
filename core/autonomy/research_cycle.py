@@ -472,9 +472,10 @@ class ResearchCycle:
         final_phi: float = float(phi_after_raw if phi_after_raw is not None else phi_before)
         phi_after = final_phi
 
-        # 11. Build record
+        # 11. Build record. Full uuid4 (not a truncated 8-hex/32-bit id) so an
+        # indefinite append-only history cannot collide.
         record = ResearchRecord(
-            record_id      = str(uuid.uuid4())[:8],
+            record_id      = uuid.uuid4().hex,
             drive          = drive,
             goal           = goal,
             findings       = findings,
@@ -752,11 +753,16 @@ class ResearchCycle:
             if kg:
                 for fact in findings:
                     content_str = str(fact)[:500]
+                    # These findings are extracted from model prose / sentence
+                    # splits WITHOUT citations or corroboration. They are
+                    # recorded at LOW confidence and as an explicitly-unverified
+                    # type so downstream reasoning cannot treat autonomous
+                    # research output as established fact (epistemic poisoning).
                     kg.add_knowledge(
                         content    = content_str,
-                        type       = "research_finding",
-                        source     = f"autonomous_research:{drive}",
-                        confidence = 0.75,
+                        type       = "unverified_research_finding",
+                        source     = f"autonomous_research_unverified:{drive}",
+                        confidence = 0.4,
                     )
                 logger.debug("ResearchCycle: %d facts written to knowledge graph.", len(findings))
 
@@ -765,8 +771,10 @@ class ResearchCycle:
             if state:
                 for fact in findings[:3]:
                     fact_str = str(fact)[:200]
+                    # Provenance-tagged as unverified so it reads as a research
+                    # lead, not an established fact, in later LLM context.
                     state.cognition.long_term_memory.append(
-                        f"[Research: {goal[:40]}] {fact_str}"
+                        f"[Unverified research: {goal[:40]}] {fact_str}"
                     )
                 # Trim long_term_memory to prevent unbounded growth
                 if len(state.cognition.long_term_memory) > 100:
