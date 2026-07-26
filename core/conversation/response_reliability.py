@@ -2427,6 +2427,48 @@ _RECTANGLE_AREA_RE = re.compile(
 )
 
 
+# A question with ONE right answer that this runtime CANNOT check itself.
+# Arithmetic gets a deterministic verdict; these do not — they need a lane that
+# can actually reason. Run 7 asked two of them and a small lane answered:
+#   "If I read 40 pages a day, how many days for a 520-page book?"
+#   "A train leaves at 60mph… how many hours until the second catches it?"
+# The distinction that matters is not difficulty, it is FALSIFIABILITY: for an
+# opinion or a chat turn a weaker lane's answer beats silence, but for a
+# question with a single correct answer a confident wrong one is worse than
+# saying you cannot do it right now.
+_SINGLE_ANSWER_REQUEST_RE = re.compile(
+    r"\b(?:how many|how much|how long|how far|what time|which number|"
+    r"what percentage|how old|how fast)\b",
+    re.IGNORECASE,
+)
+_WORK_IT_OUT_RE = re.compile(
+    r"\b(?:work through it|check your work|show your work|step by step|"
+    r"report the answer|just the number|give just the number)\b",
+    re.IGNORECASE,
+)
+_QUANTITY_RE = re.compile(r"\d")
+
+
+def requires_reasoning_lane(user_message: Any) -> bool:
+    """Whether this turn has one right answer that only real reasoning reaches.
+
+    Deliberately narrow. It must contain a quantity AND either ask a
+    single-answer question or demand worked reasoning, and it must not already
+    be answerable by the deterministic arithmetic verifier — that path has its
+    own, better check.
+    """
+    text = visible_user_request(user_message) or str(user_message or "")
+    if not text.strip():
+        return False
+    if not _QUANTITY_RE.search(text):
+        return False
+    if requested_arithmetic_result(text) is not None:
+        return False          # deterministic verdict available; use that
+    return bool(
+        _SINGLE_ANSWER_REQUEST_RE.search(text) or _WORK_IT_OUT_RE.search(text)
+    )
+
+
 def requested_arithmetic_result(user_message: Any) -> float | None:
     """The single correct answer to a computable arithmetic question, if any."""
     text = str(user_message or "")

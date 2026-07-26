@@ -31,7 +31,7 @@ _CHAT = Path(__file__).resolve().parents[1] / "interface" / "routes" / "chat.py"
 def _finalizer_source() -> str:
     src = _CHAT.read_text(encoding="utf-8")
     start = src.index("async def _finalize_fastpath(")
-    return src[start : start + 2600]
+    return src[start : start + 4600]
 
 
 class TestTheGateIsAtTheChokepoint:
@@ -106,3 +106,70 @@ class TestTheVerdictItself:
         from core.conversation.response_reliability import _arithmetic_answer_missing
 
         assert not _arithmetic_answer_missing(question, reply)
+
+
+class TestTheCompetenceFloor:
+    """Some questions have one right answer that no verifier can check.
+
+    Run 7 asked five — pages-per-day, train catch-up, reverse-percentage — and
+    scored reasoning 1/5, the wrong ones served from below the cortex.
+
+    The distinction is FALSIFIABILITY, not difficulty. For an opinion or a chat
+    turn a weaker lane beats silence and this must not fire at all. For a
+    question with a single correct answer, a confident wrong one is worse than
+    saying the reasoning path is down.
+    """
+
+    def test_the_floor_is_enforced_at_the_shared_finalizer(self):
+        block = _finalizer_source()
+        assert "requires_reasoning_lane" in block
+        assert "reasoning_lane_unavailable" in block
+
+    def test_it_only_refuses_when_the_lane_is_below_par(self):
+        block = _finalizer_source()
+        assert '{"ready", "serving", "warm"}' in block, (
+            "a ready primary lane must answer these normally"
+        )
+
+    def test_the_refusal_explains_itself_plainly(self):
+        block = _finalizer_source()
+        assert "confident wrong number" in block
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "If I read 40 pages a day, how many days for a 520-page book? Just the number.",
+            "A train leaves at 60 mph. Two hours later a second train leaves on the "
+            "same track at 90 mph. How many hours after ITS departure does the second "
+            "train catch the first?",
+            "A shirt costs 40 after a 20% discount. What was the original price? "
+            "Just the number.",
+        ],
+    )
+    def test_the_uncheckable_single_answer_questions_are_classified(self, question):
+        from core.conversation.response_reliability import requires_reasoning_lane
+
+        assert requires_reasoning_lane(question)
+
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "What do you think memory owes to identity?",
+            "How are you feeling right now?",
+            "I keep meaning to reread some Le Guin this summer.",
+            "Tell me about the Apollo program.",
+            "What is 17 * 23? Give just the number.",   # deterministic path owns this
+        ],
+    )
+    def test_chat_opinion_and_checkable_maths_do_not_trip_it(self, question):
+        from core.conversation.response_reliability import requires_reasoning_lane
+
+        assert not requires_reasoning_lane(question), (
+            "a weaker lane beats silence for anything without one right answer, "
+            "and arithmetic has its own deterministic verdict"
+        )
+
+    def test_a_question_with_no_quantity_is_never_gated(self):
+        from core.conversation.response_reliability import requires_reasoning_lane
+
+        assert not requires_reasoning_lane("How many ways can a person be kind?")

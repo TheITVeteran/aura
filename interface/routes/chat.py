@@ -18547,6 +18547,7 @@ async def api_chat(
             try:
                 from core.conversation.response_reliability import (
                     _arithmetic_answer_missing,
+                    requires_reasoning_lane,
                 )
 
                 if _arithmetic_answer_missing(_semantic_user_message, final_text):
@@ -18561,6 +18562,35 @@ async def api_chat(
                         "again and I'll take another run at it."
                     )
                     status = "arithmetic_answer_unverified"
+                elif requires_reasoning_lane(_semantic_user_message):
+                    # One right answer, and NOT one this runtime can check for
+                    # itself. Those need a lane that can actually reason, so
+                    # serving the smallest lane's guess is the worst option
+                    # available: confidently wrong beats nothing only when
+                    # nothing was possible.
+                    #
+                    # Run 7 asked five of these — pages-per-day, train catch-up,
+                    # reverse-percentage — and scored reasoning 1/5, with the
+                    # wrong answers coming from below the cortex.
+                    #
+                    # The distinction is falsifiability, not difficulty. For an
+                    # opinion or a chat turn a weaker lane beats silence and
+                    # this does not fire at all.
+                    _reasoning_lane = _collect_conversation_lane_status()
+                    _lane_state = str(_reasoning_lane.get("state") or "").lower()
+                    if _lane_state not in {"ready", "serving", "warm"}:
+                        logger.warning(
+                            "🧮 Refusing a single-answer reasoning turn served "
+                            "from below the primary lane (state=%s).",
+                            _lane_state or "unknown",
+                        )
+                        final_text = (
+                            "That one has a single right answer and I'd have to "
+                            "guess at it right now — my main reasoning path "
+                            "isn't up. I'd rather tell you that than hand you a "
+                            "confident wrong number. Ask again shortly."
+                        )
+                        status = "reasoning_lane_unavailable"
             except (ImportError, RuntimeError, TypeError, ValueError) as _arith_exc:
                 record_degradation(
                     "chat", _arith_exc, severity="warning",
