@@ -5220,7 +5220,41 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     if body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]")):
         return False
     if re.search(r"(?:^|\n)\s*\d+\.\s+\S+", body) or re.search(r"\*\*[^*\n]{2,80}:\*\*", body):
-        return True
+        # A structured answer legitimately ends on its last item with no full
+        # stop. This branch used to flag every one of them, so a well-formatted
+        # worked answer — numbered steps, or a "**Both Red:**" heading over
+        # bullets — was rejected as clipped no matter how complete it was.
+        # Live 2026-07-26 that turned a correct marble derivation into "I
+        # couldn't get to an answer I'd stand behind".
+        #
+        # What actually indicates a cut is ending mid-structure: on a bare
+        # marker, on a heading with nothing under it, or on a fragment.
+        structured_lines = [line for line in body.splitlines() if line.strip()]
+        last_line = structured_lines[-1].strip() if structured_lines else ""
+        marker_match = _LIST_LINE_RE.match(last_line)
+        ends_on_complete_item = bool(
+            marker_match and len((marker_match.group("body") or "").split()) >= 3
+        )
+        ends_on_bare_heading = bool(re.fullmatch(r"\*\*[^*\n]{2,80}:\*\*", last_line))
+        # …and on inconsistency. If the earlier items in this list close with a
+        # full stop and the final one does not, the list was cut, whatever the
+        # last item looks like on its own. A list that never punctuates its
+        # items is simply written that way.
+        earlier_items = [
+            match.group("body").strip()
+            for match in (
+                _LIST_LINE_RE.match(line) for line in structured_lines[:-1]
+            )
+            if match and (match.group("body") or "").strip()
+        ]
+        punctuated = [item for item in earlier_items if item.endswith((".", "!", "?"))]
+        inconsistent_tail = bool(
+            len(earlier_items) >= 2
+            and len(punctuated) * 2 >= len(earlier_items)
+            and marker_match
+        )
+        if ends_on_bare_heading or not ends_on_complete_item or inconsistent_tail:
+            return True
     if body.endswith(("-", "—", ":", ";", ",")):
         return True
     match = re.search(r"([A-Za-z]+)$", body)
@@ -5240,6 +5274,14 @@ def _has_truncated_tail(reply_text: Any) -> bool:
     # derivation truncated at 239 tokens, and "Red" is not a suspicious word.
     # A reply of real length that ends on any ordinary word with no terminal
     # punctuation was cut, not finished.
+    #
+    # Prose only. A list, a table or a worked derivation legitimately ends on
+    # its last item with no full stop, and flagging those turned a mostly
+    # complete answer into a refusal — which is a worse outcome than the
+    # clipped tail it was trying to prevent. The repair path in the worker
+    # handles list-shaped clipping by dropping the final item instead.
+    if _looks_like_structured_output(body):
+        return False
     return len(body) >= 80 and _word_count(body) >= 12
 
 

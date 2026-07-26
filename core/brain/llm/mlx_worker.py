@@ -1070,6 +1070,17 @@ def _repair_live_user_surface_truncated_tail(response_text: Any) -> str:
         if len(candidate) < 80 or len(candidate.split()) < 12:
             continue
         return candidate
+    # A worked derivation is not sentences. Live 2026-07-26, the marble answer
+    # came back as a bulleted derivation with no full stop after the opening
+    # line, so sentence-based trimming found exactly one candidate ("Let's
+    # break it down.", too short) and gave up — and a mostly complete, correct
+    # answer became a refusal. When the body is line-structured, drop the
+    # clipped final line and keep the complete ones.
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) >= 3:
+        candidate = "\n".join(lines[:-1]).strip()
+        if len(candidate) >= 80 and len(candidate.split()) >= 12:
+            return candidate
     return ""
 
 
