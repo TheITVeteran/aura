@@ -29048,3 +29048,47 @@ approximately 68.5%-98.4%, with a midpoint planning estimate of 80.8%.
 Next, complete SPARK-053's principled stop/abstain boundary, then continue the
 SPARK ledger in order while SPARK-051's answer-channel remediation remains a
 separate result lane. Final multi-hour soaks remain deferred.
+
+## Checkpoint 2026-07-26-389: Principled Stop and Abstain
+
+SPARK-053 is complete. The latent cortex now has one strict terminal taxonomy
+above the residual halter, learned stop head, value-of-computation actions,
+loop-stability proof, and resource budget. It distinguishes verified
+fixed-point convergence, measured non-positive value of further computation,
+wall/compute/recurrent budget exhaustion, irreducible uncertainty, verified
+answer or action readiness, contained instability, interruption, planned-depth
+completion, and an explicit unclassified boundary. Irreducible uncertainty has
+precedence over coincident resource exhaustion, and convergence is refused
+unless the selected loop transition proves a finite, anchor-bounded fixed-point
+candidate.
+
+Each reason maps to answer, bounded-answer, abstain, execute, or defer semantics
+and to an epistemic generation instruction, not a canned response. The engine
+reserves the maximum instruction cost before recurrence, then appends the exact
+selected instruction only to final synthesis after verifier and temporary-
+adaptation work. Aura's resident model still chooses every user-facing token in
+her own words.
+
+The terminal receipt binds the source halt, loop receipt, action trace,
+decision-time budget, reason precedence, disposition, instruction text/tokens,
+the complete decode bridge, and final model output. The service independently
+reconstructs the reason, checks monotonic budget lineage, proves that the
+instruction tokens are the applied bridge suffix, verifies final output
+identity, and rejects an unapplied or substrate-only language claim on the live
+path. The public receipt contains only fixed instruction and output identities;
+it exposes no private latent state or chain-of-thought.
+
+The affected terminal policy, tiny-Qwen engine, learned stop, service wiring,
+GWT coupling, and value-of-computation matrix passes 171/171. Strict Ruff,
+bytecode compilation, and diff hygiene pass. The enterprise ratchet reports no
+finding in touched files and retains only the inherited repository excesses at
+`placeholder_stub_mock` 15 > 13 and high/critical 40 > 39.
+
+Counting CP389 makes the total checkpoint record 631. The 640-920 forecast
+remains, leaving approximately 9-289 records. Checkpoint-count completion is
+approximately 68.6%-98.6%, with a midpoint planning estimate of 80.9%.
+
+SPARK-053 proves stopping/disclosure mechanics, not reasoning gain. Next is
+SPARK-054 complete causal receipts, while SPARK-051's answer-channel repair and
+eventual powered resident result remain a separate lane. Final multi-hour soaks
+remain deferred until all shorter gates are green.

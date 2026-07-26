@@ -1385,6 +1385,11 @@ class EpisodeReceipt:
     # learned run whose every stop came from the residual floor is the old
     # policy under a new name, and the receipt must say so.
     halting: dict[str, Any] = field(default_factory=dict)
+    # One strict terminal taxonomy above every low-level halt mechanism. It
+    # distinguishes convergence, non-positive value, budget exhaustion, and
+    # irreducible uncertainty, then binds the disposition into model-generated
+    # user language instead of selecting a canned response.
+    terminal_disposition: dict[str, Any] = field(default_factory=dict)
     # Confidence-bound, branch-local best-state promotions and preservations.
     # Empty/default traces mean no verifier earned state-selection authority.
     verified_best_state: dict[str, Any] = field(default_factory=dict)
@@ -1651,6 +1656,7 @@ class EpisodeReceipt:
             "verifier_guidance": dict(self.verifier_guidance),
             "escape": dict(self.escape),
             "halting": dict(self.halting),
+            "terminal_disposition": dict(self.terminal_disposition),
             "verified_best_state": dict(self.verified_best_state),
             "transient_negative_constraints": dict(self.transient_negative_constraints),
             "virtual_quanta": dict(self.virtual_quanta),

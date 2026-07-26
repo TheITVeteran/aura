@@ -133,6 +133,14 @@ def test_full_episode_produces_tokens_and_truthful_receipt(tiny_model):
     assert r.decoy_verification == {}
     assert r.residual_trail, "receipt must carry the residual trail"
     assert r.halting_reason
+    assert r.terminal_disposition["reason"] in {
+        "planned_depth_complete",
+        "recurrence_budget_exhausted",
+        "unclassified_termination",
+    }
+    assert r.terminal_disposition["language"]["source"] == "substrate_model_decode"
+    assert r.terminal_disposition["language"]["model_generated"] is True
+    assert r.terminal_disposition["language"]["instruction_applied"] is False
     assert r.schedule_hash
     assert r.budget["spent_layer_apps"] > 0
     assert r.decode_requested_tokens == 8

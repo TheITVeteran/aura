@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import json
 import queue
 from types import SimpleNamespace
 
@@ -199,6 +200,43 @@ def _verifier_fusion_fields(config: dict, *, selected_branch: int = 0) -> dict:
             selected_branch=selected_branch,
             evidence=config.get("verifier_fusion_evidence"),
         )
+    }
+
+
+def _terminal_disposition_fields(
+    receipt: dict,
+    *,
+    text: str,
+    tokens: list[int],
+) -> dict:
+    from core.brain.llm.latent_cortex.terminal_disposition import (
+        classify_terminal_disposition,
+        finalize_terminal_disposition_receipt,
+    )
+
+    instruction_tokens = [101, 102, 103]
+    bridge_tokens = [99, *instruction_tokens]
+    decision = classify_terminal_disposition(
+        halting_reason=receipt["halting_reason"],
+        halting=receipt["halting"],
+        loop_stability=receipt["loop_stability"],
+        cognitive_action_trace=receipt["cognitive_action_trace"],
+        budget=receipt["budget"],
+    )
+    bridge_raw = json.dumps(bridge_tokens, separators=(",", ":")).encode("ascii")
+    return {
+        "decode_bridge_applied": True,
+        "decode_bridge_token_count": len(bridge_tokens),
+        "decode_bridge_tokens_sha256": hashlib.sha256(bridge_raw).hexdigest(),
+        "decode_bridge_logits_digest": "d" * 64,
+        "terminal_disposition": finalize_terminal_disposition_receipt(
+            decision,
+            instruction_tokens=instruction_tokens,
+            full_bridge_tokens=bridge_tokens,
+            output_tokens=tokens,
+            output_text=text,
+            output_source="resident_model_decode",
+        ),
     }
 
 
@@ -3036,12 +3074,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
             captured["budget"] = kwargs.get("budget")
             captured["runtime_controls"] = kwargs.get("runtime_controls")
             captured["gate_snapshot"] = generation_gate_snapshot()
-            return {
-                "ok": True,
-                "text": ("The deep answer explains the architecture and preserves its evidence."),
-                "receipt": {
+            text = "The deep answer explains the architecture and preserves its evidence."
+            tokens = list(range(12))
+            receipt = {
                         "steps_taken": kwargs["config"]["max_steps"],
-                    "halting_reason": "converged",
+                    "halting_reason": "schedule_complete",
                     "n_branches": kwargs["config"]["n_branches"],
                     "n_slots": kwargs["config"]["n_slots"],
                     "episode_id": "abc",
@@ -3065,6 +3102,8 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "budget": {
                         "max_layer_apps": 1_000,
                         "spent_layer_apps": 100,
+                        "wall_clock_s": 120.0,
+                        "elapsed_s": 30.0,
                         "exhausted": False,
                         **_accounting_fields(),
                     },
@@ -3119,7 +3158,15 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
                     "fast_weight_accepted_step_sizes": [0.005, 0.0025],
                     "fast_weight_line_search_backtracks": 1,
                     "honest_flags": [],
-                },
+            }
+            receipt.update(
+                _terminal_disposition_fields(receipt, text=text, tokens=tokens)
+            )
+            return {
+                "ok": True,
+                "text": text,
+                "tokens": tokens,
+                "receipt": receipt,
                 "reason": "",
             }
 
@@ -3166,7 +3213,11 @@ def test_service_routes_through_client_and_records_receipt(monkeypatch):
     assert "latent_cortex_foreground:episode" in {
         item["owner"] for item in captured["gate_snapshot"]["active"].values()
     }
-    assert svc.get_status()["last_receipt"]["halting_reason"] == "converged"
+    assert svc.get_status()["last_receipt"]["halting_reason"] == "schedule_complete"
+    assert (
+        svc.get_status()["last_receipt"]["terminal_disposition"]["reason"]
+        == "planned_depth_complete"
+    )
 
 
 def test_service_rejects_nominal_full_stack_without_accepted_optimization():
@@ -4377,12 +4428,11 @@ def _full_success_stub_client(captured):
         async def latent_reason_async(self, prompt=None, **kwargs):
             captured["prompt"] = prompt
             captured["config"] = kwargs.get("config")
-            return {
-                "ok": True,
-                "text": "A deliberate conclusion that answers the question.",
-                "receipt": {
+            text = "A deliberate conclusion that answers the question."
+            tokens = list(range(12))
+            receipt = {
                     "steps_taken": kwargs["config"]["max_steps"],
-                    "halting_reason": "converged",
+                    "halting_reason": "schedule_complete",
                     "n_branches": kwargs["config"]["n_branches"],
                     "n_slots": kwargs["config"]["n_slots"],
                     "episode_id": "ep-gwt",
@@ -4406,6 +4456,8 @@ def _full_success_stub_client(captured):
                     "budget": {
                         "max_layer_apps": 1_000,
                         "spent_layer_apps": 100,
+                        "wall_clock_s": 120.0,
+                        "elapsed_s": 30.0,
                         "exhausted": False,
                         **_accounting_fields(),
                     },
@@ -4458,7 +4510,15 @@ def _full_success_stub_client(captured):
                     "fast_weight_accepted_step_sizes": [0.005, 0.0025],
                     "fast_weight_line_search_backtracks": 1,
                     "honest_flags": [],
-                },
+            }
+            receipt.update(
+                _terminal_disposition_fields(receipt, text=text, tokens=tokens)
+            )
+            return {
+                "ok": True,
+                "text": text,
+                "tokens": tokens,
+                "receipt": receipt,
                 "reason": "",
             }
 

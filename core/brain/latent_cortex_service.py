@@ -1507,6 +1507,36 @@ class LatentCortexService:
             )
         except (ImportError, OSError, TypeError, ValueError):
             errors.append("halting_unproven")
+        if receipt.get("last_stage") != "action_state_captured":
+            try:
+                from core.brain.llm.latent_cortex.terminal_disposition import (
+                    validate_terminal_disposition_receipt,
+                )
+
+                if not isinstance(output_text, str) or not isinstance(output_tokens, list):
+                    raise ValueError("terminal output is unavailable")
+                validate_terminal_disposition_receipt(
+                    receipt.get("terminal_disposition"),
+                    halting_reason=receipt.get("halting_reason"),
+                    halting=receipt.get("halting"),
+                    loop_stability=receipt.get("loop_stability"),
+                    cognitive_action_trace=receipt.get("cognitive_action_trace"),
+                    budget=receipt.get("budget"),
+                    output_tokens=output_tokens,
+                    output_text=output_text,
+                    full_bridge_tokens_sha256=receipt.get(
+                        "decode_bridge_tokens_sha256"
+                    ),
+                )
+                language = receipt["terminal_disposition"]["language"]
+                if (
+                    language.get("source")
+                    not in {"resident_model_decode", "resident_model_repair"}
+                    or language.get("instruction_applied") is not True
+                ):
+                    raise ValueError("terminal language was not resident-model generated")
+            except (ImportError, KeyError, TypeError, ValueError):
+                errors.append("terminal_disposition_unproven")
         try:
             from core.brain.llm.latent_cortex.verified_best import (
                 validate_verified_best_receipt,
@@ -4393,6 +4423,7 @@ class LatentCortexService:
                     "episode_id",
                     "steps_taken",
                     "halting_reason",
+                    "terminal_disposition",
                     "n_slots",
                     "n_branches",
                     "exchanges",

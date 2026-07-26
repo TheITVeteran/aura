@@ -288,6 +288,31 @@ class LatentCortexEngine:
             raise ValueError("assistant answer decode bridge produced invalid tokens")
         return tokens
 
+    def _encode_terminal_instruction(self, text: str) -> list[int]:
+        if self.tokenizer is None:
+            raise ValueError("terminal language instruction requires a tokenizer")
+        rendered = f"\nReasoning disposition:\n{text}\n"
+        try:
+            encoded = self.tokenizer.encode(rendered, add_special_tokens=False)
+        except TypeError:
+            encoded = self.tokenizer.encode(rendered)
+        tokens = list(encoded)
+        if not tokens or any(type(token) is not int or token < 0 for token in tokens):
+            raise ValueError("terminal language instruction produced invalid tokens")
+        return tokens
+
+    def _terminal_instruction_reserve(self) -> int:
+        if self.tokenizer is None:
+            return 0
+        from core.brain.llm.latent_cortex.terminal_disposition import (
+            terminal_instruction_texts,
+        )
+
+        return max(
+            len(self._encode_terminal_instruction(text))
+            for text in terminal_instruction_texts()
+        )
+
     @staticmethod
     def _cache_context_tokens(cache: Any, layer_index: int = 0) -> int:
         if not cache or not 0 <= layer_index < len(cache):
@@ -2495,6 +2520,9 @@ class LatentCortexEngine:
             decode_max_tokens if decode_max_tokens is not None else self.config.decode_max_tokens
         )
         bridge_tokens = self._decode_bridge_tokens()
+        terminal_instruction_reserve = self._terminal_instruction_reserve()
+        terminal_instruction_tokens: list[int] = []
+        terminal_decision = None
         prefill_cost = len(tokens) * self.n_layers
         contract_grace = (
             self.config.decode_contract_grace_tokens
@@ -2509,7 +2537,9 @@ class LatentCortexEngine:
             * self.n_layers
         )
         persist_cost = self.config.workspace.n_slots * self.n_layers
-        bridge_cost = len(bridge_tokens) * self.n_layers
+        bridge_cost = (
+            len(bridge_tokens) + terminal_instruction_reserve
+        ) * self.n_layers
         fast_weight_probe_cost = 8 * self.n_layers if self.config.fast_weights.enabled else 0
         canaries: CapabilityCanaries | None = None
         canary_pass_cost = 0
@@ -5221,6 +5251,21 @@ class LatentCortexEngine:
         )
         if stop_gate.mode == "learned" and not receipt.halting["head_was_causal"]:
             receipt.flag("learned_halting_not_causal")
+        from core.brain.llm.latent_cortex.terminal_disposition import (
+            classify_terminal_disposition,
+        )
+
+        terminal_decision = classify_terminal_disposition(
+            halting_reason=receipt.halting_reason,
+            halting=receipt.halting,
+            loop_stability=receipt.loop_stability,
+            cognitive_action_trace=receipt.cognitive_action_trace,
+            budget=budget.to_receipt(),
+        )
+        if self.tokenizer is not None:
+            terminal_instruction_tokens = self._encode_terminal_instruction(
+                terminal_decision.instruction
+            )
         from core.brain.llm.latent_cortex.verified_best import (
             build_verified_best_receipt,
         )
@@ -5503,6 +5548,8 @@ class LatentCortexEngine:
                 receipt.flag(f"slot_ablated:{int(ablate_slot)}:{ablate_mode}")
 
             # ── Commit the winner + decode the answer ────────────────────
+            if terminal_instruction_tokens:
+                bridge_tokens.extend(terminal_instruction_tokens)
             final_fusion_audit = None
             final_decode_transaction = None
             if heterogeneous_fusion_context is not None:
@@ -5833,6 +5880,27 @@ class LatentCortexEngine:
         receipt.latent_telemetry = telemetry.to_receipt()
         if self._episode_probe_cache is not None:
             receipt.probe_cache = self._episode_probe_cache.to_receipt()
+        if terminal_decision is None:
+            raise RuntimeError("terminal disposition was not classified")
+        from core.brain.llm.latent_cortex.terminal_disposition import (
+            finalize_terminal_disposition_receipt,
+        )
+
+        output_text = self.tokenizer.decode(out_tokens) if self.tokenizer is not None else ""
+        receipt.terminal_disposition = finalize_terminal_disposition_receipt(
+            terminal_decision,
+            instruction_tokens=terminal_instruction_tokens,
+            full_bridge_tokens=bridge_tokens,
+            output_tokens=out_tokens,
+            output_text=output_text,
+            output_source=(
+                "resident_model_repair"
+                if receipt.decode_termination == "confidence_bound_replacement"
+                else "resident_model_decode"
+                if self.tokenizer is not None
+                else "substrate_model_decode"
+            ),
+        )
         return out_tokens, receipt, answer_replacement_private
 
     def _finalize_fast_weights(
