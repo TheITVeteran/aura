@@ -18654,10 +18654,33 @@ async def api_chat(
             try:
                 from core.conversation.response_reliability import (
                     _arithmetic_answer_missing,
+                    numeric_answer_missing,
                     requires_reasoning_lane,
                 )
 
-                if _arithmetic_answer_missing(_semantic_user_message, final_text):
+                if numeric_answer_missing(_semantic_user_message, final_text):
+                    # The deterministic verdict below only speaks when this
+                    # runtime can compute the expected result, so word-form and
+                    # chained arithmetic went completely unguarded. Live
+                    # 2026-07-26, "What is 17 minus 8, and then times 3?" was
+                    # answered with "...ätze! I got chocolate on my shirt." and
+                    # every gate passed it: surface_quality_gate_passed=true,
+                    # assess_user_facing_reply ok=true, confidence "high".
+                    #
+                    # Knowing the right answer is not required to know that a
+                    # reply containing no number at all is not one.
+                    logger.warning(
+                        "🔢 Refusing a reply with no number to a question that "
+                        "can only be answered with one (status=%s, %d chars).",
+                        status, len(final_text),
+                    )
+                    final_text = (
+                        "I didn't actually work that out — what I had wasn't an "
+                        "answer, and I won't dress it up as one. Ask me again and "
+                        "I'll do the arithmetic properly."
+                    )
+                    status = "numeric_answer_missing"
+                elif _arithmetic_answer_missing(_semantic_user_message, final_text):
                     logger.warning(
                         "🔢 Refusing an arithmetic answer that does not contain "
                         "the correct result (status=%s, %d chars).",

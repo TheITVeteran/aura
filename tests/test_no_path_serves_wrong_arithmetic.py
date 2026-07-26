@@ -29,9 +29,18 @@ _CHAT = Path(__file__).resolve().parents[1] / "interface" / "routes" / "chat.py"
 
 
 def _finalizer_source() -> str:
+    """The whole body of _finalize_fastpath, to its next sibling definition.
+
+    This used to be a fixed `start + 4600` slice, which silently measured a
+    shrinking fraction of the function as the gate grew: adding a check at the
+    top pushed the later assertions out of the window and failed tests about
+    code that was still present and still correct. Bound it to the function.
+    """
     src = _CHAT.read_text(encoding="utf-8")
     start = src.index("async def _finalize_fastpath(")
-    return src[start : start + 4600]
+    body = src[start:]
+    sibling = re.search(r"\n        (?:async def |def )", body[1:])
+    return body[: sibling.start() + 1] if sibling else body
 
 
 class TestTheGateIsAtTheChokepoint:

@@ -2448,6 +2448,79 @@ _WORK_IT_OUT_RE = re.compile(
 )
 _QUANTITY_RE = re.compile(r"\d")
 
+# Operators in either notation. A question carrying one of these plus two
+# quantities is asking to be answered with a number, whatever else it says.
+_NUMERIC_OPERATOR_RE = re.compile(
+    r"(?:\b(?:plus|minus|times|multiplied\s+by|divided\s+by|divided\s+into|"
+    r"less|more\s+than|sum\s+of|product\s+of|difference\s+between|"
+    r"percent\s+of|square\s+of|squared|cubed)\b|[+\-*/×÷^]|%)",
+    re.IGNORECASE,
+)
+# Spelled-out results count as answers: "twenty-seven" is a number.
+_NUMBER_WORD_RE = re.compile(
+    r"\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|"
+    r"thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|"
+    r"billion|half|third|quarter|dozen)\b",
+    re.IGNORECASE,
+)
+_NUMERIC_REQUEST_CUE_RE = re.compile(
+    r"(?:\bwhat(?:'s| is)\b|\bhow (?:much|many)\b|\bcalculate\b|\bcompute\b|"
+    r"\bsolve\b|\bwork out\b|\bwhat do you get\b)",
+    re.IGNORECASE,
+)
+
+
+def asks_for_a_number(user_message: Any) -> bool:
+    """Whether this turn can only be answered with a quantity.
+
+    Deliberately narrow: an explicit request cue, an operator, and at least two
+    quantities to apply it to. That shape has no non-numeric right answer, so a
+    reply carrying no number at all cannot be one — which is the judgement
+    :func:`numeric_answer_missing` is allowed to make.
+    """
+    text = str(user_message or "")
+    if not text.strip():
+        return False
+    if not _NUMERIC_REQUEST_CUE_RE.search(text):
+        return False
+    if not _NUMERIC_OPERATOR_RE.search(text):
+        return False
+    quantities = len(_ARITHMETIC_NUMBER_RE.findall(text)) + len(
+        _NUMBER_WORD_RE.findall(text)
+    )
+    return quantities >= 2
+
+
+def numeric_answer_missing(user_message: Any, reply_text: Any) -> bool:
+    """Whether a question that needs a number came back without one.
+
+    The deterministic arithmetic verdict only fires when this runtime can
+    compute the expected result, which means it says nothing about questions
+    phrased in words ("17 minus 8, and then times 3") or chained past a single
+    operator. Those turns were completely unguarded, and the live desktop
+    surface served this as the answer to exactly that question on 2026-07-26:
+
+        "Not too broad. Some skills serve me better than others.Did you pay
+         attention in class? Hey, look at this - ätze! I got chocolate on my
+         shirt."
+
+    Every existing gate passed it: surface_quality_gate_passed=true,
+    assess_user_facing_reply ok=true, response_confidence "high".
+
+    This check does not need to know the right answer — only that an answer of
+    this KIND is absent. It fails OPEN everywhere else: unless the question is
+    unambiguously a request for a quantity, it says nothing at all.
+    """
+    if not asks_for_a_number(user_message):
+        return False
+    reply = str(reply_text or "")
+    if not reply.strip():
+        return True
+    if _ARITHMETIC_NUMBER_RE.search(reply):
+        return False
+    return not _NUMBER_WORD_RE.search(reply)
+
 
 def requires_reasoning_lane(user_message: Any) -> bool:
     """Whether this turn has one right answer that only real reasoning reaches.
