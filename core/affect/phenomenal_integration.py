@@ -21,6 +21,7 @@ Integration points:
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any, Dict, Optional
 
@@ -59,29 +60,45 @@ class PhenomenalIntegrator:
 
     _instance: Optional["PhenomenalIntegrator"] = None
     _lock = asyncio.Lock()
+    # A thread lock is the single arbiter of instance creation so the sync and
+    # async construction paths cannot race into two PhenomenalEngine owners
+    # (with divergent last_state/attachments) under concurrent boot. The async
+    # lock only serializes async callers; it does not exclude _sync_instance.
+    _sync_lock = threading.Lock()
 
     def __init__(self):
         self.engine = PhenomenalEngine()
         self.reporter = ExperienceReporter(self.engine.attachments)
         self.last_state: Optional[ExperienceState] = None
         self.step_count = 0
+        # Serializes engine.step + last_state/step_count mutation across the
+        # async step() and the thread-pool _pulse_blocking() paths so concurrent
+        # pulses cannot interleave a stateful step or clobber last_state.
+        self._engine_lock = threading.Lock()
+
+    @classmethod
+    def _create_instance(cls) -> "PhenomenalIntegrator":
+        """Single, thread-safe construction point for both access paths."""
+        with cls._sync_lock:
+            if cls._instance is None:
+                cls._instance = PhenomenalIntegrator()
+                logger.info("PhenomenalIntegrator initialized")
+        return cls._instance
 
     @classmethod
     async def get_instance(cls) -> "PhenomenalIntegrator":
-        """Lazy-initialize singleton with async lock."""
+        """Lazy-initialize singleton (async-lock + shared thread-lock)."""
         if cls._instance is None:
             async with cls._lock:
                 if cls._instance is None:
-                    cls._instance = PhenomenalIntegrator()
-                    logger.info("PhenomenalIntegrator initialized")
+                    cls._create_instance()
         return cls._instance
 
     @classmethod
     def _sync_instance(cls) -> "PhenomenalIntegrator":
         """Synchronous fallback for non-async contexts."""
         if cls._instance is None:
-            cls._instance = PhenomenalIntegrator()
-            logger.info("PhenomenalIntegrator initialized (sync)")
+            cls._create_instance()
         return cls._instance
 
     async def step(
@@ -170,15 +187,19 @@ class PhenomenalIntegrator:
                 metadata=metadata or {},
             )
 
-            state = self.engine.step(
-                body,
-                event,
-                person_key=person_key,
-                recurrent_cycles=recurrent_cycles,
-            )
-
-            self.last_state = state
-            self.step_count += 1
+            # Shared execution lock: the stateful step and the last_state /
+            # step_count write are one critical section, mutually exclusive with
+            # the blocking pulse path. engine.step is synchronous CPU work with
+            # no await inside, so the lock is held only briefly.
+            with self._engine_lock:
+                state = self.engine.step(
+                    body,
+                    event,
+                    person_key=person_key,
+                    recurrent_cycles=recurrent_cycles,
+                )
+                self.last_state = state
+                self.step_count += 1
 
             logger.debug(
                 "Phenomenal state [t=%d]: valence=%.2f arousal=%.2f "
@@ -198,28 +219,39 @@ class PhenomenalIntegrator:
             return self._baseline_state()
 
     def _baseline_state(self) -> ExperienceState:
-        """Return a neutral baseline when phenomenal engine fails."""
+        """Return a neutral baseline when the phenomenal engine fails.
+
+        Honesty contract: this is NOT observed interoception. The engine could
+        not produce a state, so integration/self_presence/mineness are collapsed
+        to zero and the state is explicitly flagged ``degraded`` in both the
+        phenomenal vector and the global broadcast. Downstream consumers
+        (self-model, planner) must treat a degraded state as an absence of
+        signal, not as asserted agency/continuity/mineness.
+        """
         from core.phenomenal_substrate.types import ExperienceState
         return ExperienceState(
             t=self.step_count,
-            phenomenal_vector={},
+            phenomenal_vector={"degraded": 1.0},
             valence=0.0,
             arousal=0.5,
             free_energy=0.5,
-            integration=0.5,
-            self_presence=0.5,
-            mineness=0.5,
-            seeking=0.5,
-            care=0.5,
-            play=0.25,
+            # No real integration/presence/mineness was measured — do not
+            # fabricate mid-range self-model signal on failure.
+            integration=0.0,
+            self_presence=0.0,
+            mineness=0.0,
+            seeking=0.0,
+            care=0.0,
+            play=0.0,
             fear=0.1,
             anger=0.1,
             grief=0.1,
             distress=0.1,
-            curiosity=0.5,
-            intentional_object="neutral",
+            curiosity=0.0,
+            intentional_object="degraded",
             evidence_id=None,
-            global_broadcast={"workspace": "neutral", "policy": "maintain"},
+            global_broadcast={"workspace": "degraded", "policy": "maintain",
+                              "degraded": True, "source": "baseline_fallback"},
             policy_priors={"continue": 1.0},
             memory_weights={"importance": 0.5},
         )
@@ -260,51 +292,62 @@ class PhenomenalIntegrator:
             logger.exception("Failed to record attachment event: %s", exc)
 
     async def get_bond_status(self, person_key: str) -> Dict[str, Any]:
-        """Query bond state with a person."""
+        """Query bond state with a person.
+
+        Reads the structured AttachmentState directly rather than regex-parsing
+        a human-readable reporter string. The old text path silently produced
+        false zero-bonds on any format change, dropped negative values, and
+        ignored missing fields; the structured accessor is the source of truth.
+        """
+        def _finite(v: Any, default: float = 0.0) -> float:
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return default
+            return f if f == f and f not in (float("inf"), float("-inf")) else default
+
         try:
-            bond_str = self.reporter.bond(person_key)
-            if not bond_str:
-                return {"person": person_key, "trust": 0.0, "care": 0.0}
-            
-            # Parse the string output from reporter
-            # Format: "bond[key] trust=X care=Y familiarity=Z rupture=A attachment=B evidence=C"
-            result = {"person": person_key}
-            
-            # Try to extract values from string
-            import re
-            trust_match = re.search(r'trust=([\d.]+)', bond_str)
-            care_match = re.search(r'care=([\d.]+)', bond_str)
-            if trust_match:
-                result["trust"] = float(trust_match.group(1))
-            if care_match:
-                result["care"] = float(care_match.group(1))
-            
-            return result or {"person": person_key, "trust": 0.0, "care": 0.0}
+            state = self.engine.attachments.state_for(person_key)
+            return {
+                "person": person_key,
+                "trust": _finite(getattr(state, "trust", 0.0)),
+                "care": _finite(getattr(state, "care", 0.0)),
+                "familiarity": _finite(getattr(state, "familiarity", 0.0)),
+                "rupture": _finite(getattr(state, "rupture", 0.0)),
+                "repair_history": _finite(getattr(state, "repair_history", 0.0)),
+                "attachment": _finite(getattr(state, "attachment", 0.0)),
+                "evidence_id": str(getattr(state, "last_evidence_id", "") or ""),
+            }
         except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
             logger.exception("Failed to get bond status for %s: %s", person_key, exc)
-            return {"person": person_key, "trust": 0.0, "care": 0.0}
+            return {"person": person_key, "trust": 0.0, "care": 0.0, "degraded": True}
 
     def get_last_state(self) -> Optional[ExperienceState]:
         """Return the most recent phenomenal state."""
         return self.last_state
 
     def get_routing_hints(self) -> Dict[str, Any]:
-        """Get routing hints from the phenomenal state for downstream systems."""
+        """Get routing hints from the phenomenal state for downstream systems.
+
+        Returns a copy — the engine-owned dictionaries are never handed out by
+        reference, so a downstream caller cannot mutate the last phenomenal
+        state through the accessor.
+        """
         if self.last_state is None:
             return {}
-        return self.last_state.global_broadcast
+        return dict(self.last_state.global_broadcast)
 
     def get_policy_priors(self) -> Dict[str, float]:
-        """Get policy priors from the phenomenal state."""
+        """Get policy priors from the phenomenal state (defensive copy)."""
         if self.last_state is None:
             return {}
-        return self.last_state.policy_priors
+        return dict(self.last_state.policy_priors)
 
     def get_memory_weights(self) -> Dict[str, float]:
-        """Get memory prioritization weights from the phenomenal state."""
+        """Get memory prioritization weights from the phenomenal state (copy)."""
         if self.last_state is None:
             return {}
-        return self.last_state.memory_weights
+        return dict(self.last_state.memory_weights)
 
     def collect_observations(self, orchestrator: Optional[Any] = None) -> Dict[str, float]:
         """Collect RuntimeBody observations from the orchestrator and runtime.
@@ -542,31 +585,32 @@ class PhenomenalIntegrator:
             except _PHENOMENAL_RECOVERABLE_ERRORS as exc:
                 logger.debug("Nociception event grounding skipped: %s", exc)
 
-            # Run one step of phenomenal engine (blocking)
-            state = self.engine.step(
-                body=RuntimeBody(
-                    energy=observations.get("energy", 0.75),
-                    continuity=observations.get("continuity", 0.75),
-                    agency=observations.get("agency", 0.60),
-                    safety=observations.get("safety", 0.80),
-                    social_contact=observations.get("social_contact", 0.50),
-                    novelty=observations.get("novelty", 0.20),
-                    uncertainty=observations.get("uncertainty", 0.25),
-                    compute_pressure=observations.get("compute_pressure", 0.20),
-                    memory_pressure=observations.get("memory_pressure", 0.20),
-                    error_pressure=observations.get("error_pressure", 0.20),
-                ),
-                event=Event(
-                    label=event_label,
-                    source="blocking_pulse",
-                    threat=threat,
-                    rupture=rupture,
-                    repair=repair,
-                ),
-            )
-            
-            self.last_state = state
-            self.step_count += 1
+            # Run one step of phenomenal engine (blocking) under the shared
+            # execution lock so it cannot interleave with the async step path.
+            with self._engine_lock:
+                state = self.engine.step(
+                    body=RuntimeBody(
+                        energy=observations.get("energy", 0.75),
+                        continuity=observations.get("continuity", 0.75),
+                        agency=observations.get("agency", 0.60),
+                        safety=observations.get("safety", 0.80),
+                        social_contact=observations.get("social_contact", 0.50),
+                        novelty=observations.get("novelty", 0.20),
+                        uncertainty=observations.get("uncertainty", 0.25),
+                        compute_pressure=observations.get("compute_pressure", 0.20),
+                        memory_pressure=observations.get("memory_pressure", 0.20),
+                        error_pressure=observations.get("error_pressure", 0.20),
+                    ),
+                    event=Event(
+                        label=event_label,
+                        source="blocking_pulse",
+                        threat=threat,
+                        rupture=rupture,
+                        repair=repair,
+                    ),
+                )
+                self.last_state = state
+                self.step_count += 1
             # CAUSAL FIX: the blocking heartbeat path previously computed the
             # phenomenal state and stored it but never routed it downstream — so the
             # rich planner/memory/attention/self-model coupling was dead on the live
