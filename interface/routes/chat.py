@@ -16957,7 +16957,8 @@ def _extract_program_dna_target(user_message: str) -> str | None:
             return candidate
     match = re.search(
         r"\b(?:program dna|reverse[ -]?engineer|reconstruct|clean[ -]?room)\s+"
-        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-][a-z0-9_.+/-]*(?:\s+[a-z0-9_.+/-]+){0,9})",
+        r"(?:\b(?:this|that|the|a|an)\s+)?"
+        r"([a-z0-9_.+/-][a-z0-9_.+/-]*(?:\s+[a-z0-9_.+/-]+){0,9})",
         lowered,
     )
     if not match:
@@ -16993,6 +16994,15 @@ _PROGRAM_DNA_GENERIC_NOUNS = frozenset(
     }
 )
 _PROGRAM_DNA_FILLER_WORDS = _PROGRAM_DNA_GENERIC_NOUNS | {
+    # Leading connectives, so "Use Program DNA to reconstruct a notes app"
+    # strips down to the noun instead of halting on "to" — which is also a
+    # stop word, and so ended the phrase before it began.
+    "to",
+    "use",
+    "using",
+    "please",
+    "can",
+    "you",
     "reverse-engineer",
     "reverse",
     "engineer",
@@ -17025,6 +17035,11 @@ _PROGRAM_DNA_FILLER_WORDS = _PROGRAM_DNA_GENERIC_NOUNS | {
     "your",
 }
 # Where the target's name ends and the rest of the sentence begins.
+# Words that mean the sentence is asking ABOUT the capability, not naming a
+# target for it.
+_PROGRAM_DNA_CONCEPTUAL_WORDS = frozenset(
+    {"how", "what", "why", "whether", "would", "could", "should", "help", "is", "does"}
+)
 _PROGRAM_DNA_STOP_WORDS = frozenset(
     {
         "and",
@@ -17057,9 +17072,15 @@ def _strip_program_dna_filler(candidate: str) -> str:
         tokens.pop(0)
     kept: list[str] = []
     for token in tokens:
-        if token.strip(" .,:;!?`'\"") in _PROGRAM_DNA_STOP_WORDS:
+        bare = token.strip(" .,:;!?`'\"")
+        if bare in _PROGRAM_DNA_STOP_WORDS or bare in _PROGRAM_DNA_CONCEPTUAL_WORDS:
             break
-        kept.append(token)
+        kept.append(bare)
+        # A target's name ends where its sentence does. Without this, "…a
+        # notes app. Research open source alternatives" made the following
+        # sentence part of the target.
+        if token.rstrip("`'\"").endswith((".", "!", "?", ",", ";", ":")):
+            break
         if len(kept) >= 4:
             break
     return " ".join(kept).strip(" .,:;!?`'\"")

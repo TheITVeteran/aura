@@ -24,6 +24,42 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
+def _repository_roots(repo_root: Path | None = None) -> tuple[Path, ...]:
+    """Every root that is this repository, including its main checkout.
+
+    A git worktree is the same repository under a different path, and large
+    artifacts — model weights especially — live once in the main checkout and
+    are reached from a worktree through a link. Resolving such a path lands
+    outside the worktree root and looked exactly like a traversal escape, so a
+    preregistration run from a worktree failed with model_path_invalid on a
+    perfectly legitimate model.
+
+    Confinement is still confinement: the declared path stays lexically
+    relative and free of "..", and the resolved path must land inside one of
+    the roots that *are* this repository. Nothing else is admitted.
+    """
+    # Resolved per call, not frozen at import: REPO_ROOT is monkeypatched by
+    # tests that build a whole contract tree in a temporary directory, and a
+    # cached root list silently ignores them.
+    base = Path(repo_root) if repo_root is not None else REPO_ROOT
+    roots = [base]
+    marker = base / ".git"
+    try:
+        if marker.is_file():
+            text = marker.read_text(encoding="utf-8").strip()
+            if text.startswith("gitdir:"):
+                gitdir = Path(text.split(":", 1)[1].strip())
+                # .../<main>/.git/worktrees/<name> -> <main>
+                for parent in gitdir.resolve().parents:
+                    if parent.name == ".git":
+                        roots.append(parent.parent)
+                        break
+    except OSError:
+        pass
+    return tuple(dict.fromkeys(root.resolve() for root in roots))
+
+
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
@@ -191,10 +227,15 @@ def _repo_path(value: str, *, role: str, must_exist: bool = True) -> Path:
     candidate = REPO_ROOT / pure
     try:
         resolved = candidate.resolve(strict=must_exist)
-        resolved.relative_to(REPO_ROOT)
-    except (OSError, ValueError) as exc:
+    except OSError as exc:
         raise PreregistrationError(f"{role}_path_invalid") from exc
-    return resolved
+    for root in _repository_roots(REPO_ROOT):
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return resolved
+    _fail(f"{role}_path_invalid")
 
 
 def _binding(relative: str) -> dict[str, Any]:
