@@ -58,6 +58,9 @@ __all__ = [
     "integrity_failures",
     "preserved_draft",
     "preserve_draft",
+    "begin_turn_tool_receipts",
+    "record_tool_receipt",
+    "turn_tool_receipts",
 ]
 
 # The turn's best servable draft, from whichever layer last held one.
@@ -94,6 +97,56 @@ def clear_preserved_draft() -> None:
     """Start a turn holding nothing."""
     _PRESERVED_DRAFT.set("")
     _RAW_MODEL_DRAFT.set("")
+    begin_turn_tool_receipts()
+
+
+# What this turn ACTUALLY executed.
+#
+# Live 2026-07-27, asked to run a tool for real and show the output, she
+# replied "Python code: 2 + 2 Output: 4". No tool ran. The only dispatches in
+# the log that minute were the autonomous curiosity and refactor loops; the
+# execution, and its result, were written by the language model.
+#
+# A claim about the world needs something in the world behind it, and for
+# "I ran it" that something is a receipt. The holder is a mutable list rather
+# than a scalar because asyncio copies the context into child tasks: a tool
+# executed inside the turn's task tree appends to the same list the route
+# reads afterwards, while the autonomous loops — whose tasks do not descend
+# from this turn — cannot reach it. That distinction is the whole point.
+_TURN_TOOL_RECEIPTS: contextvars.ContextVar[list[dict[str, Any]]] = (
+    contextvars.ContextVar("aura_turn_tool_receipts", default=[])
+)
+
+
+def begin_turn_tool_receipts() -> None:
+    """Start a turn having executed nothing."""
+    _TURN_TOOL_RECEIPTS.set([])
+
+
+def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
+    """Record that a tool really ran in this turn, and whether it worked."""
+    name = str(tool_name or "").strip()
+    if not name:
+        return
+    try:
+        receipts = _TURN_TOOL_RECEIPTS.get()
+    except LookupError:
+        return
+    if not isinstance(receipts, list):
+        return
+    # Bounded: a turn that fires hundreds of tools does not need all of them
+    # to answer the only question asked here — did anything run?
+    if len(receipts) < 64:
+        receipts.append({"tool": name, "ok": bool(ok)})
+
+
+def turn_tool_receipts() -> tuple[dict[str, Any], ...]:
+    """Tools that really executed during this turn."""
+    try:
+        receipts = _TURN_TOOL_RECEIPTS.get()
+    except LookupError:
+        return ()
+    return tuple(receipts) if isinstance(receipts, list) else ()
 
 
 # The bare model's own answer, before any of this runs.
@@ -260,6 +313,7 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         # something is worse than no answer, and saying so is the one thing a
         # person cannot check for themselves.
         "unfounded_voice_intrusion",
+    "unfounded_tool_execution_claim",
         "unsupported_embodiment_claim",
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",

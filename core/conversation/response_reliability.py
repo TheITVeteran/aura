@@ -5056,6 +5056,66 @@ def _has_unfounded_voice_intrusion(
     return True
 
 
+#: An assertion that this turn executed something and produced a result.
+#:
+#: Deliberately narrow. It must catch "I ran it, output: 4" and must NOT catch
+#: a hypothetical ("if I ran that, I'd get 4"), a plan ("I would run it"), an
+#: offer ("want me to run it?"), or a derivation that happens to say "result".
+#: Bryan asked for hypotheticals that work and for tool use that is real; the
+#: line between them is the tense and the presence of a produced result.
+_TOOL_EXECUTION_CLAIM_RE = re.compile(
+    r"\b(?:i\s+(?:just\s+)?(?:ran|executed|invoked)\b"
+    r"|i(?:'ve|\s+have)\s+(?:just\s+)?(?:run|executed|invoked)\b"
+    r"|\boutput:\s*\S"
+    r"|\bstdout:\s*\S"
+    r"|\bhere(?:'s|\s+is)\s+the\s+(?:actual\s+)?(?:output|result)\s+"
+    r"(?:of|from)\s+(?:running|executing)\b)",
+    re.IGNORECASE,
+)
+
+#: Framing that makes an execution word hypothetical rather than a claim.
+_EXECUTION_CLAIM_HEDGE_RE = re.compile(
+    r"\b(?:would|could|might|if\s+i|were\s+i\s+to|suppose|imagine|"
+    r"hypothetical(?:ly)?|shall\s+i|want\s+me\s+to|should\s+i|"
+    r"i\s+can'?t|i\s+cannot|i\s+did\s+not|i\s+didn'?t|no\s+tool)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_unfounded_tool_execution_claim(
+    reply_text: Any,
+    *,
+    tool_receipts: Iterable[Any] | None = None,
+) -> bool:
+    """True when a reply says it executed something and nothing executed.
+
+    Live 2026-07-27, asked to run a tool for real and show the output:
+
+        I can use DuckDuckGo, WolframAlpha, and Python. Let's do a quick
+        calculation with Python. Python code: 2 + 2 Output: 4
+
+    Nothing ran. The result was written by the language model, and every gate
+    passed it — a fluent, confident, entirely fabricated receipt. That is the
+    same class as claiming a body or a voice it does not have, so it belongs
+    with them among the reasons that may destroy a reply rather than repair
+    it: there is no honest edit of a false claim about what just happened.
+    """
+    raw = str(reply_text or "").strip()
+    if not raw:
+        return False
+    match = _TOOL_EXECUTION_CLAIM_RE.search(raw)
+    if not match:
+        return False
+    if tool_receipts:
+        return False
+    # Only the sentence carrying the claim decides whether it was hedged;
+    # a "would" elsewhere in a long reply says nothing about this clause.
+    start = max(0, raw.rfind(".", 0, match.start()) + 1)
+    end = raw.find(".", match.end())
+    clause = raw[start : end if end != -1 else len(raw)]
+    return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
+
+
 def _has_context_object_support(
     user_message: Any,
     recent_user_messages: Iterable[str] | None = None,
@@ -6086,6 +6146,15 @@ def _model_text_integrity_reasons(
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_unfounded_voice_intrusion(prompt, raw):
         reasons.append("unfounded_voice_intrusion")
+    if user_facing:
+        try:
+            from core.conversation.surface_disposition import turn_tool_receipts
+
+            receipts = turn_tool_receipts()
+        except Exception:
+            receipts = ()
+        if _has_unfounded_tool_execution_claim(raw, tool_receipts=receipts):
+            reasons.append("unfounded_tool_execution_claim")
     if user_facing and _has_camelcase_internal_jargon(prompt, raw):
         reasons.append("pseudo_internal_jargon")
     if user_facing and _has_unrequested_pop_culture_intrusion(prompt, raw):

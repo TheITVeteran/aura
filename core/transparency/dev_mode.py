@@ -186,6 +186,17 @@ class DevMode:
             if deferred or result.get("ok")
             else str(result.get("error") or result.get("reason") or "execution_failed")
         )
+
+        # A reply may claim "I ran it" only if something did. This is the
+        # receipt that entitles it; see the turn-scoped holder for why a
+        # deferred tool does not count as one.
+        if not deferred:
+            try:
+                from core.conversation.surface_disposition import record_tool_receipt
+
+                record_tool_receipt(trace.tool_name, ok=bool(result.get("ok", False)))
+            except Exception:  # never let bookkeeping break a tool result
+                pass
         
         if self.level != TransparencyLevel.SILENT:
             if deferred:
