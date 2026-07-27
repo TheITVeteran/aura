@@ -4761,11 +4761,54 @@ verified, stated so the march does not have to take any of it on trust:
   lane, reproduces on `b1101c5f5`, and belongs to another owner; it is recorded
   here rather than repaired out-of-band.
 
+- **Adversarial checks beyond the test suite**, because a test suite proves the
+  cases someone thought of:
+  * *Accumulator vs. an independent reference.* The MMR root was re-derived by
+    a separately written naive implementation over 85 log sizes (1-79, 128,
+    255, 256, 1000, 1023, 1024), every index's proof verified, and a swapped
+    leaf's proof rejected at every size. Clean.
+  * *Witness/prefix differential.* Over 40 randomized campaign shapes with
+    retries after failures — 1,072 comparisons at every checkpoint position —
+    the compact witness accepted **exactly** what the complete-prefix
+    validator accepted, and both rejected every tampered journal. Zero
+    disagreements.
+  * *Promotion fuzz.* 4,141 attempts to get an ADMIT out of a defective gate
+    report: every one of the 127 subsets of dropped gates, every single gate
+    graded zero, every single gate failing, and 4,000 randomized reports with
+    renamed rows, duplicates, and counts under the floors. **Zero admitted a
+    defective report.**
+  * *Contamination fuzz.* 3,832 STaR iterations across 1,500 randomized
+    lineages with leaks injected at ~26% of iterations: 1,012 contaminations
+    caught (613 same-iteration, 237 earlier-training, 162 reused-holdout) and
+    **zero contaminated lineages validated.**
+- **Blast radius of the live-path change.** `RecurrenceAdapterActivation.to_dict()`
+  gained two keys; a repository-wide search confirms its only callers are
+  tests. The receipt that production actually consumes —
+  `WindowRunner.adapter_receipt()`, validated by
+  `recurrent_grpo_adapter_identity.py` — is built from separate counters and is
+  byte-identical to before.
+
 Two live defects were found by the new instruments and are recorded with their
 repairs in F7-D and F7-E: `heldout_battery` has no cross-battery exclusion
 (15.5% of seed pairs share a prompt, so the flywheel's seed floor separates
 seeds rather than content), and the adapter activation counter could not
 distinguish a whole treatment from a fraction of one.
+
+**One finding handed to the march rather than acted on.** Two rows in
+`falsification_matrix.py` carry stale blocker lists: `verifier_arms` is
+`ROW_BLOCKED` on `(39, 40, 41, 42, 43, 44, 45, 46)` and `fast_weight_controls`
+on `(55, 56)`. All ten of those items are now `[x]` in this ledger, so both
+rows name machinery that has already landed. The effect is not cosmetic — it
+makes two of twelve rows look blocked on something that no longer blocks them,
+which hides what they are actually waiting on (the trained treatment and the
+acceptance run). Correcting a blocker list falls in the Fable lane's F5 half;
+*moving a row to `runnable`* does not, because that needs a producer which
+genuinely exercises the verifier mesh, and the generative/counterfactual arms
+cannot run model-free — a row marked runnable while only its exact-checker arms
+execute would be the same defect this lane spent the day removing. So the
+observation is recorded and the decision left where it belongs. The third
+blocked row, `adversarial_ood_variants`, is correctly blocked: its variants are
+generated fresh at acceptance precisely so the dry run cannot see them.
 
 No checkbox moved. No model of consequence ran. Nothing here is a reasoning,
 resident-32B, frontier, promotion, or `WOW Signal` result, and none of these
