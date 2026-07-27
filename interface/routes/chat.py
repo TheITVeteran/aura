@@ -5200,6 +5200,53 @@ def _absent_turn_organs(engaged: dict[str, bool] | None = None) -> list[str]:
     ]
 
 
+# A gap that persists is a different fact from a gap on one turn.
+#
+# Reporting alone changes nothing: if personality is absent on every turn, a
+# per-turn note is a per-turn note, and she goes on sounding flat while the
+# evidence scrolls past. But refusing the turn is worse — a warming organ would
+# silence a correct answer.
+#
+# So absence is counted. One turn without an organ is noise (boot, a restart, a
+# lane cycling). The same organ missing from turn after turn is a defect, and at
+# that point it escalates once — not once per turn, which is how a real signal
+# becomes a storm nobody reads.
+_ORGAN_ABSENCE_STREAKS: dict[str, int] = {}
+_CHRONIC_ABSENCE_TURNS = 12
+
+
+def _note_organ_engagement(engaged: dict[str, bool]) -> list[str]:
+    """Track absence across turns. Returns organs that just became chronic."""
+    became_chronic: list[str] = []
+    reasons = dict(_EXPECTED_TURN_ORGANS)
+    for name, present in engaged.items():
+        if present:
+            _ORGAN_ABSENCE_STREAKS.pop(name, None)
+            continue
+        streak = _ORGAN_ABSENCE_STREAKS.get(name, 0) + 1
+        _ORGAN_ABSENCE_STREAKS[name] = streak
+        # Exactly at the threshold, so a permanent gap escalates once.
+        if streak == _CHRONIC_ABSENCE_TURNS:
+            became_chronic.append(name)
+            record_degradation(
+                "chat.turn_engagement",
+                RuntimeError(
+                    f"{name} absent for {streak} consecutive turns: "
+                    f"{reasons.get(name, 'no stated purpose')}"
+                ),
+                severity="warning",
+                action=(
+                    "kept answering without it; a conversational organ missing "
+                    "this persistently is a defect, not a warm-up"
+                ),
+            )
+    return became_chronic
+
+
+def reset_organ_engagement_streaks_for_test() -> None:
+    _ORGAN_ABSENCE_STREAKS.clear()
+
+
 def _collect_live_chat_required_subsystems(
     lane: dict[str, Any] | None = None,
     *,
@@ -6050,6 +6097,8 @@ def _build_live_turn_contract_payload(
         lane,
         generation_proven=accepted_cognitive_path,
     )
+    _expected_organs = _collect_expected_turn_organs()
+    _note_organ_engagement(_expected_organs)
     required_subsystems_ok = all(subsystems.values())
     live_mind_required_subsystems_ok = required_subsystems_ok
     full_mind_path = bool(
@@ -6243,8 +6292,8 @@ def _build_live_turn_contract_payload(
         "required_subsystems_ok": required_subsystems_ok,
         # Reported, never fatal. A persistent absence here is why a reply can
         # be technically correct and not sound like her.
-        "expected_organs": _collect_expected_turn_organs(),
-        "absent_expected_organs": _absent_turn_organs(),
+        "expected_organs": _expected_organs,
+        "absent_expected_organs": _absent_turn_organs(_expected_organs),
         "recent_context_needed": bool(trace.get("recent_context_needed")),
         "recent_context_exchanges": int(trace.get("recent_context_exchanges") or 0),
         "compact_desktop_chat_contract": bool(trace.get("compact_desktop_chat_contract")),

@@ -139,8 +139,10 @@ def test_the_expected_tier_is_not_fatal() -> None:
 def test_the_turn_contract_carries_the_engagement() -> None:
     """Reported on the turn, or it is a probe nobody reads."""
     src = SOURCE.read_text(encoding="utf-8")
-    assert '"expected_organs": _collect_expected_turn_organs(),' in src
-    assert '"absent_expected_organs": _absent_turn_organs(),' in src
+    assert '"expected_organs": _expected_organs,' in src
+    assert '"absent_expected_organs": _absent_turn_organs(_expected_organs),' in src
+    # Counted once per turn, beside the required-subsystem collection.
+    assert "_note_organ_engagement(_expected_organs)" in src
 
 
 # ── Voice inherits it rather than reimplementing it ───────────────────────
@@ -164,3 +166,85 @@ def test_the_voice_surface_is_declared_not_disguised() -> None:
     turn = src[src.index("async def run_governed_voice_chat_turn") :][:4000]
     assert b"x-aura-surface" in turn.encode() or "x-aura-surface" in turn
     assert "x-aura-require-cognitiveengine" in turn
+
+
+# ── A gap that persists is a different fact from a gap on one turn ─────────
+
+def _engagement(**overrides: bool) -> dict[str, bool]:
+    engaged = dict.fromkeys(dict(_EXPECTED_TURN_ORGANS), True)
+    engaged.update(overrides)
+    return engaged
+
+
+@pytest.fixture(autouse=True)
+def _clean_streaks():
+    from interface.routes.chat import reset_organ_engagement_streaks_for_test
+
+    reset_organ_engagement_streaks_for_test()
+    yield
+    reset_organ_engagement_streaks_for_test()
+
+
+def test_one_missing_turn_is_not_escalated() -> None:
+    """Boot, a restart, a lane cycling — absence for a turn is noise."""
+    from interface.routes.chat import _note_organ_engagement
+
+    assert _note_organ_engagement(_engagement(personality_engine=False)) == []
+
+
+def test_a_persistent_gap_becomes_a_defect() -> None:
+    """Reporting alone changes nothing if she sounds flat on every turn."""
+    from interface.routes.chat import _CHRONIC_ABSENCE_TURNS, _note_organ_engagement
+
+    became = []
+    for _ in range(_CHRONIC_ABSENCE_TURNS):
+        became = _note_organ_engagement(_engagement(personality_engine=False))
+    assert became == ["personality_engine"]
+
+
+def test_a_permanent_gap_escalates_once_not_every_turn() -> None:
+    """A real signal repeated every turn is a storm nobody reads."""
+    from interface.routes.chat import _CHRONIC_ABSENCE_TURNS, _note_organ_engagement
+
+    escalations = 0
+    for _ in range(_CHRONIC_ABSENCE_TURNS * 3):
+        escalations += len(_note_organ_engagement(_engagement(personality_engine=False)))
+    assert escalations == 1
+
+
+def test_an_organ_coming_back_clears_its_streak() -> None:
+    from interface.routes.chat import _CHRONIC_ABSENCE_TURNS, _note_organ_engagement
+
+    for _ in range(_CHRONIC_ABSENCE_TURNS - 1):
+        _note_organ_engagement(_engagement(soul=False))
+    _note_organ_engagement(_engagement())
+    for _ in range(_CHRONIC_ABSENCE_TURNS - 1):
+        assert _note_organ_engagement(_engagement(soul=False)) == []
+
+
+def test_organs_are_tracked_independently() -> None:
+    from interface.routes.chat import _CHRONIC_ABSENCE_TURNS, _note_organ_engagement
+
+    for _ in range(_CHRONIC_ABSENCE_TURNS - 1):
+        _note_organ_engagement(_engagement(soul=False, soma=False))
+    became = _note_organ_engagement(_engagement(soul=False, soma=False))
+    assert set(became) == {"soul", "soma"}
+
+
+def test_a_fully_engaged_turn_escalates_nothing() -> None:
+    from interface.routes.chat import _CHRONIC_ABSENCE_TURNS, _note_organ_engagement
+
+    for _ in range(_CHRONIC_ABSENCE_TURNS * 2):
+        assert _note_organ_engagement(_engagement()) == []
+
+
+def test_escalation_never_refuses_the_turn() -> None:
+    """The whole point: chronic absence is loud, and still not a gate."""
+    from interface.routes.chat import _note_organ_engagement
+
+    src = SOURCE.read_text(encoding="utf-8")
+    fn = src[src.index("def _note_organ_engagement") :]
+    fn = fn[: fn.index("def reset_organ_engagement_streaks_for_test")]
+    assert "return" in fn
+    assert "raise" not in fn, "a reporting tier must not throw"
+    assert _note_organ_engagement(_engagement(soul=False)) == []
