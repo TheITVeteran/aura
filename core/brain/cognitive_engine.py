@@ -2743,7 +2743,25 @@ class CognitiveEngine:
 
                 present = present_moment_block()
                 if present:
-                    system_prompt = f"{system_prompt}\n\n{present}"
+                    # PREPENDED, not appended. The system prompt is compacted to
+                    # a 2,400-char scaffold floor before it reaches the worker,
+                    # keeping the head and a critical excerpt; anything at the
+                    # tail is the first thing cut. Attached at the tail, this
+                    # block was logged as attached and still never arrived —
+                    # "what time is it?" answered "my clock says 06:15 and the
+                    # ambient light sensors report low illumination" at 01:40,
+                    # from a runtime with no light sensor.
+                    system_prompt = f"{present}\n\n{system_prompt}"
+                    # Grounding that cannot be seen cannot be verified. Two
+                    # prompt builders and one of them ungrounded cost an hour
+                    # of reasoning about why a fix "did not work" when it had
+                    # simply never run.
+                    logger.info(
+                        "🧭 [GROUNDING] present-moment prepended to the desktop "
+                        "system prompt (+%d chars, total %d).",
+                        len(present),
+                        len(system_prompt),
+                    )
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -2756,7 +2774,7 @@ class CognitiveEngine:
 
                 actions = recent_actions_block()
                 if actions:
-                    system_prompt = f"{system_prompt}\n\n{actions}"
+                    system_prompt = f"{actions}\n\n{system_prompt}"
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -2772,7 +2790,7 @@ class CognitiveEngine:
 
                     instruments = runtime_self_report()
                     if instruments:
-                        system_prompt = f"{system_prompt}\n\n{instruments}"
+                        system_prompt = f"{instruments}\n\n{system_prompt}"
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
                 record_degradation(
                     "cognitive_engine",
