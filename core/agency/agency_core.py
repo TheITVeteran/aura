@@ -1818,7 +1818,19 @@ class AgencyCore:
             if kg and hasattr(kg, "get_sparse_nodes"):
                 sparse = kg.get_sparse_nodes(limit=3)
                 if sparse:
-                    topic = random.choice(sparse)[:100]
+                    # No mid-word slice here: research_query_for_goal trims on
+                    # a word boundary, and it cannot repair damage done before
+                    # it runs. Live 2026-07-27 a knowledge-graph node cut at
+                    # exactly 100 characters became the durable goal
+                    #   "Deconstruct and comprehensively research:
+                    #    Decentralization, adaptability, robust security, and
+                    #    ethical considerations are essential for effect"
+                    # — a sentence fragment ("for effect" was "for
+                    # effective..."). It set her FOCUS, spawned a swarm shard,
+                    # and surfaced in the chat window as an unprompted
+                    # paragraph about blockchain, mid-conversation about
+                    # something else entirely.
+                    topic = str(random.choice(sparse) or "")
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action="goal genesis sparse-node topic selection skipped")
             capture_and_log(e, {'module': __name__})

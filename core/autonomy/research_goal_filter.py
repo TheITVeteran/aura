@@ -137,6 +137,17 @@ def is_unresearchable_goal(value: Any) -> bool:
     return False
 
 
+#: Words a research topic cannot end on — the phrase was still going.
+_DANGLING_GOAL_TAIL_WORDS = frozenset(
+    {
+        "a", "an", "and", "are", "as", "at", "be", "because", "but", "by",
+        "for", "from", "in", "into", "is", "of", "on", "or", "our", "than",
+        "that", "the", "their", "these", "this", "to", "was", "were", "which",
+        "with", "essential", "important", "necessary", "useful", "critical",
+    }
+)
+
+
 def research_query_for_goal(value: Any, *, limit: int = 220) -> str:
     text = normalize_goal_text(value)
     if not text or is_unresearchable_goal(text):
@@ -153,6 +164,19 @@ def research_query_for_goal(value: Any, *, limit: int = 220) -> str:
         text = clauses[0]
     if len(text) > limit:
         text = text[:limit].rsplit(" ", 1)[0].strip(" -:;,.?!")
+    # A goal that ends mid-thought is not a goal. Whatever trimming happened
+    # above (or upstream, before this ever saw the text), the last word has to
+    # be able to end a phrase.
+    for _ in range(3):
+        parts = text.rsplit(" ", 1)
+        if len(parts) != 2:
+            break
+        if parts[1].strip(" -:;,.?!").casefold() in _DANGLING_GOAL_TAIL_WORDS:
+            text = parts[0].strip(" -:;,.?!")
+            continue
+        break
+    if not text:
+        return ""
     lowered = text.casefold()
     if not any(hint in lowered for hint in _RESEARCHABLE_HINTS) and len(text.split()) > 24:
         return ""
