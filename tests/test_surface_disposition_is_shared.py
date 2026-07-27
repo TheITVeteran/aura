@@ -49,20 +49,27 @@ class TestTheTwoKindsOfFailure:
         assert disposition_for(mixed) is SurfaceDisposition.DISCARD
         assert integrity_failures(mixed) == ("raw_lane_telemetry",)
 
-    def test_thinness_is_not_a_shortfall(self):
-        """A truncated derivation has content the person can use; a thin reply
-        has none, and downstream repair cannot invent the missing answer.
-        Those need another generation — the existing documented decision."""
+    def test_thinness_asks_for_repair_rather_than_destroying_the_turn(self):
+        """Thinness is an estimate that quality is absent, not an
+        identification of something unspeakable. It may ask for another
+        generation; it may not be the reason a person receives nothing."""
         for reason in (
             "too_thin_for_user_turn",
             "too_thin_for_operational_status_turn",
             "reliability_diagnostic_too_thin",
         ):
-            assert disposition_for((reason,)) is SurfaceDisposition.DISCARD, reason
+            assert disposition_for((reason,)) is SurfaceDisposition.REPAIR, reason
 
-    def test_an_unclassified_reason_fails_safe(self):
-        """A reason nobody has triaged is not assumed safe to speak."""
-        assert disposition_for(("a_reason_added_next_week",)) is SurfaceDisposition.DISCARD
+    def test_a_new_heuristic_cannot_silently_destroy_answers(self):
+        """The default runs toward the person, deliberately.
+
+        A detector written next week can ask for repair. To gain the power to
+        withhold an answer it has to be added to UNSPEAKABLE_REASONS on
+        purpose, with evidence it IDENTIFIES rather than estimates — which is
+        the property that makes the 2026-07-26 ratchet impossible to repeat.
+        """
+        assert disposition_for(("a_reason_added_next_week",)) is SurfaceDisposition.REPAIR
+        assert draft_is_servable(("a_reason_added_next_week",))
 
 
 class TestEveryGateConsultsIt:
@@ -108,3 +115,71 @@ class TestTheReasonsThatMatterAreClassified:
             "incomplete_code_response",
         ):
             assert reason in SHORTFALL_REASONS, reason
+
+
+class TestTheVanillaFloor:
+    """Aura must never answer worse than the bare model she is built around.
+
+    A pipeline of gates that can only subtract has an output quality of min()
+    over all of them, so this cannot hold by accident — the raw draft is kept
+    and is the floor nothing falls below.
+    """
+
+    def test_the_raw_model_answer_is_the_fallback(self):
+        from core.conversation.surface_disposition import (
+            best_available_reply,
+            clear_preserved_draft,
+            record_raw_model_draft,
+        )
+
+        clear_preserved_draft()
+        assert best_available_reply() == ""
+        record_raw_model_draft(
+            "Total marbles: 3 + 4 + 5 = 12, and the same-colour pairs number "
+            "nineteen out of sixty-six possible pairs."
+        )
+        assert best_available_reply()
+
+    def test_a_deliberately_preserved_draft_outranks_the_raw_one(self):
+        from core.conversation.surface_disposition import (
+            best_available_reply,
+            clear_preserved_draft,
+            preserve_draft,
+            record_raw_model_draft,
+        )
+
+        clear_preserved_draft()
+        record_raw_model_draft(
+            "A rougher answer that still says something real about the problem "
+            "and its three separate cases."
+        )
+        preserve_draft(
+            "The repaired answer, which a layer kept on purpose because it is "
+            "the better of the two available here."
+        )
+        assert best_available_reply().startswith("The repaired answer")
+
+    def test_the_floor_never_becomes_a_leak(self):
+        from core.conversation.surface_disposition import (
+            best_available_reply,
+            clear_preserved_draft,
+            record_raw_model_draft,
+        )
+
+        clear_preserved_draft()
+        record_raw_model_draft(
+            "ROUTER_ERROR: unknown (at all_failed) with plenty of extra words "
+            "here so the length floor is not what refuses it."
+        )
+        assert best_available_reply() == ""
+
+    def test_a_fragment_is_not_worth_serving(self):
+        from core.conversation.surface_disposition import (
+            best_available_reply,
+            clear_preserved_draft,
+            record_raw_model_draft,
+        )
+
+        clear_preserved_draft()
+        record_raw_model_draft("Both red.")
+        assert best_available_reply() == ""

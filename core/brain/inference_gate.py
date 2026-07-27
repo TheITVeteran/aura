@@ -661,6 +661,16 @@ class InferenceGate:
         if not is_user_facing:
             return str(text or "").strip()
         original = str(text or "").strip()
+        # The vanilla floor. This is the last point at which the model's own
+        # answer exists before a dozen layers get the chance to subtract from
+        # it, so it is recorded here — whatever happens downstream, the person
+        # should never receive less than the bare model would have given them.
+        try:
+            from core.conversation.surface_disposition import record_raw_model_draft
+
+            record_raw_model_draft(original)
+        except (ImportError, RuntimeError, TypeError, ValueError):
+            pass
         try:
             from core.synthesis import stabilize_user_facing_response
 

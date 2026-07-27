@@ -8394,6 +8394,28 @@ async def _run_cognitive_engine_chat_turn(
         else:
             retry_reply = await _attempt_repair_retry(text, (failure_reason,))
         if retry_reply:
+            # A repair has to earn the substitution. Most of these gates were
+            # written for a weaker model and encode style expectations from
+            # that period; a repair they trigger must not hand the person a
+            # blander or shorter answer than the one it replaces.
+            try:
+                from core.conversation.surface_disposition import (
+                    repair_is_an_improvement,
+                )
+
+                keep_retry = repair_is_an_improvement(text, retry_reply, visible)
+            except _CHAT_RECOVERABLE_ERRORS:
+                keep_retry = True
+            if not keep_retry:
+                logger.warning(
+                    "Kept the original draft (%d chars): the repair for %s was "
+                    "not an improvement on it (%d chars).",
+                    len(str(text or "")),
+                    failure_reason,
+                    len(str(retry_reply or "")),
+                )
+                retry_reply = None
+        if retry_reply:
             _mark_turn_trace(
                 cognitive_engine_reply_accepted=True,
                 cognitive_engine_reply_failed=False,
@@ -11070,15 +11092,22 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "") -> str:
         from core.conversation.surface_disposition import (
             draft_is_servable,
             preserved_draft,
+            raw_model_draft,
         )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Servable-draft check unavailable: %s", exc)
         return ""
 
-    # The draft handed to this site, or the best one any layer preserved during
-    # this turn. The second refusal site never receives one as an argument.
-    for candidate in (str(draft or "").strip(), preserved_draft()):
+    # In order of preference: the draft handed to this site, the best one any
+    # layer deliberately preserved, and finally the model's own raw answer —
+    # the vanilla floor. The second refusal site receives no argument at all,
+    # and the raw draft is the one thing every layer downstream can lose.
+    for candidate in (
+        str(draft or "").strip(),
+        preserved_draft(),
+        raw_model_draft(),
+    ):
         if len(candidate) < 80 or len(candidate.split()) < 12:
             continue
         try:
@@ -18882,6 +18911,26 @@ async def api_chat(
             # The one-generation bound is deliberate and stays. What changes is
             # that a draft everything agreed was servable is served, rather
             # than traded for an apology that says less.
+            # A veto is not a model failure, and reporting it as one is what
+            # kept this entire class invisible: a destroyed answer and a failed
+            # generation produce the same sentence, so every incident tightened
+            # the gates and nothing ever loosened them. Name it in the log.
+            try:
+                from core.conversation.surface_disposition import raw_model_draft
+
+                _raw = raw_model_draft()
+                if _raw:
+                    logger.warning(
+                        "🧱 Gate veto, not a generation failure: the model "
+                        "produced %d chars this turn and the pipeline is about "
+                        "to withhold them (path=%s reason=%s).",
+                        len(_raw),
+                        response_path,
+                        reason,
+                    )
+            except _CHAT_RECOVERABLE_ERRORS:
+                pass
+
             salvaged = _servable_draft_or_none(rejected_reply, _semantic_user_message)
             if salvaged:
                 logger.warning(

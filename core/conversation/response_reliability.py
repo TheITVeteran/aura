@@ -6568,7 +6568,34 @@ def assess_conversation_learning_admission(
             hard_failure=True,
             retryable=False,
         )
-    return assess_user_facing_reply(user_message, reply_text)
+    assessment = assess_user_facing_reply(user_message, reply_text)
+    # Serving a shortfall is right; LEARNING from one is not. A reply that only
+    # reached the person because nothing better arrived is a fallback, not
+    # experience, and storing it as experience closes a loop:
+    #
+    # Live 2026-07-27 — the previous turn's truncated answer came back as
+    # ADMITTED memory evidence for the identical question,
+    #   "conversation_reply -> Let's break it down into manageable parts:
+    #    1. Total number of marbles: 3 red + 4 blue + 5 green = 122. Draw two
+    #    without replacement…"
+    # and the model, primed with its own broken output as an example of what
+    # it says, produced the same truncated shape again. Turn after turn.
+    #
+    # Only a reply that needed no repair becomes durable experience.
+    if assessment.reasons:
+        from core.conversation.surface_disposition import (
+            SurfaceDisposition,
+            disposition_for,
+        )
+
+        if disposition_for(assessment.reasons) is SurfaceDisposition.REPAIR:
+            return ConversationReplyAssessment(
+                ok=False,
+                reasons=assessment.reasons,
+                hard_failure=False,
+                retryable=False,
+            )
+    return assessment
 
 
 def conversation_reliability_system_block(user_message: Any = "") -> str:

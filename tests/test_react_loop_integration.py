@@ -90,6 +90,14 @@ def tmp_episodic(tmp_path: Path):
     mem = EpisodicMemory(db_path=str(db_path))
     ServiceContainer.register_instance("episodic_memory", mem)
     yield mem
+    # Release this store's connections before the next test builds its own.
+    # Without it, in-flight async writes from one test are still landing while
+    # the next one queries, which is why these passed alone and failed in a
+    # large run — and failed on a DIFFERENT test each time.
+    try:
+        mem.close()
+    except (RuntimeError, OSError, AttributeError):
+        pass
     ServiceContainer.clear()
 
 
@@ -97,7 +105,7 @@ def tmp_episodic(tmp_path: Path):
 # 1. MEMORY_QUERY uses the correct recall API and returns episodes.
 # ---------------------------------------------------------------------------
 
-async def _recall_when_written(episodic, query: str, *, limit: int = 5, deadline_s: float = 5.0):
+async def _recall_when_written(episodic, query: str, *, limit: int = 5, deadline_s: float = 20.0):
     """Poll until the episode lands, or the deadline passes.
 
     The trace is recorded asynchronously, so a fixed sleep is a race: it holds
@@ -130,6 +138,12 @@ async def test_memory_query_returns_stored_episodes(tmp_episodic: EpisodicMemory
         importance=0.8,
     )
     assert episode_id, "record_episode_async must return a non-empty id"
+    # record_episode_async returns as soon as the write is queued, so the loop
+    # below can query before the episode is searchable. Same race as the two
+    # recall assertions further down: wait for the condition, not a duration.
+    assert await _recall_when_written(tmp_episodic, "Y combinator anonymous recursion"), (
+        "seeded episode must become recallable before the loop queries it"
+    )
 
     from core.brain.cognitive_engine import ThinkingMode
 

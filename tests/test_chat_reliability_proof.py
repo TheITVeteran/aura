@@ -738,20 +738,35 @@ def test_capability_inventory_gate_rejects_mid_sentence_tool_inventory():
     assert "truncated_tail" in assessment.reasons
 
 
-def test_inference_gate_does_not_pass_thin_reliability_downstream():
+def test_thin_reliability_drafts_go_downstream_rather_than_being_destroyed():
+    """Thinness asks for a better answer; it does not earn silence.
+
+    This asserted the opposite until 2026-07-27. "I don't know what caused
+    that timeout yet" is a poor answer and it is also an HONEST one, and the
+    alternative the pipeline actually produced when it refused was "I couldn't
+    get to an answer I'd stand behind" — which says strictly less. Only text
+    that is not language, or that claims something untrue, is withheld now;
+    everything else goes downstream to be repaired or served.
+    """
     from core.brain.inference_gate import _should_pass_user_facing_draft_downstream
 
     thin_text = "I don't know. I have no idea what caused that live timeout yet."
 
-    assert not _should_pass_user_facing_draft_downstream(
+    assert _should_pass_user_facing_draft_downstream(
         thin_text,
         {"too_thin_for_reliability_turn"},
         user_prompt="What the heck broke?",
     )
-    assert not _should_pass_user_facing_draft_downstream(
+    assert _should_pass_user_facing_draft_downstream(
         thin_text,
         {"too_thin_for_confusion_repair"},
         user_prompt="what?",
+    )
+    # A leak is still refused, whatever its length.
+    assert not _should_pass_user_facing_draft_downstream(
+        "ROUTER_ERROR: unknown (at all_failed) padding to clear the length floor",
+        {"raw_lane_telemetry"},
+        user_prompt="What the heck broke?",
     )
 
 
@@ -763,7 +778,12 @@ def test_inference_gate_memory_state_contract_can_pass_thin_status_downstream():
         "canonical session memory rather than older chat context."
     )
 
-    assert not _should_pass_user_facing_draft_downstream(
+    # Thinness is an estimate that quality is absent, not an identification of
+    # something unspeakable, so it no longer destroys a turn — it goes
+    # downstream to be repaired or, failing that, served. See
+    # core/conversation/surface_disposition.py for why the default runs toward
+    # the person now.
+    assert _should_pass_user_facing_draft_downstream(
         memory_state_text,
         {"too_thin_for_operational_status_turn"},
         user_prompt="What phrase did I ask you to remember?",

@@ -80,6 +80,26 @@ class DeterministicBrowser:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
+async def _recall_when_written(episodic, query: str, *, limit: int = 5, deadline_s: float = 20.0):
+    """Poll until the episode lands, or the deadline passes.
+
+    Retention runs as a fire-and-forget task, so a test cannot know when it is
+    done by waiting a fixed duration: that holds on an idle machine and loses
+    under load. Waiting on the CONDITION removes the race without slowing the
+    passing path.
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    recalled = []
+    while loop.time() - started < deadline_s:
+        recalled = await episodic.recall_similar_async(query, limit=limit)
+        if recalled:
+            return recalled
+        await asyncio.sleep(0.02)
+    return recalled
+
+
 @pytest.fixture
 def fresh_container(tmp_path: Path):
     """Clean ServiceContainer with a real per-test EpisodicMemory."""
@@ -87,6 +107,12 @@ def fresh_container(tmp_path: Path):
     mem = EpisodicMemory(db_path=str(tmp_path / "episodic.db"))
     ServiceContainer.register_instance("episodic_memory", mem)
     yield mem
+    # Release this store's connections before the next test builds its own;
+    # in-flight async writes otherwise land while the next test is querying.
+    try:
+        mem.close()
+    except (RuntimeError, OSError, AttributeError):
+        pass
     ServiceContainer.clear()
 
 
@@ -169,7 +195,7 @@ async def test_self_heal_within_single_run(fresh_container: EpisodicMemory, monk
 
     # Retention: episode must carry lessons covering both the error and fix.
     await asyncio.sleep(0.05)
-    episodes = await fresh_container.recall_similar_async("factorial python math", limit=5)
+    episodes = await _recall_when_written(fresh_container, "factorial python math")
     assert episodes, "Self-heal trace must persist an episode"
     ep = episodes[0]
     assert "python_sandbox" in ep.tools_used and "web_search" in ep.tools_used, (
@@ -303,7 +329,7 @@ async def test_stuck_loop_still_retains_episode(fresh_container: EpisodicMemory)
     )
 
     await asyncio.sleep(0.05)
-    episodes = await fresh_container.recall_similar_async("ponder indefinitely", limit=3)
+    episodes = await _recall_when_written(fresh_container, "ponder indefinitely", limit=3)
     assert episodes, "Even stuck runs should produce an episode (learning from getting stuck)"
     ep = episodes[0]
     assert ep.importance >= 0.7, (

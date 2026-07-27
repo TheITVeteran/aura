@@ -10,21 +10,32 @@ behind on that one" on 2026-07-26 — after two of the three had already been
 taught to pass it along.
 
 The distinction that actually matters is not per-gate. It is per-REASON, and
-there are only two kinds:
+the direction of the default is the whole design:
 
-  INTEGRITY  — the text must not be spoken at all. A prompt artefact, a lane
-               telemetry leak, corrupted language, a failure envelope, text
-               with no grammar in it. No amount of repair makes it servable
-               and serving it is worse than saying nothing.
+  UNSPEAKABLE — an ALLOWLIST. The text must not be said at all: a control
+                token, a prompt artefact, an internal label, corrupted
+                language, text with no grammar in it. Every entry is something
+                positively identified in the text, never an estimate that
+                quality is absent. Only these may destroy an answer.
 
-  SHORTFALL  — the text is real and the turn wanted more of it. Truncated,
-               thin, missing a requested count, a derivation that stopped one
-               step before its answer. Repair should try; and if repair has
-               nothing better, the draft is still what the person should get,
-               because it beats an apology.
+  EVERYTHING ELSE — at most a request for repair. Truncated, thin, missing a
+                requested count, one step short of its conclusion, or flagged
+                by a detector written next week. The draft still reaches the
+                person if nothing better arrives.
 
-Anything unrecognised is treated as INTEGRITY. A new reason that nobody has
-classified is not assumed safe to speak.
+The default used to run the other way: anything unclassified was discarded, on
+the theory that failing closed is safe. For a conversation it is not. A reply
+withheld is a certain loss; a reply served with a flaw is a partial one — and
+because a destroyed answer is indistinguishable from a model failure, the
+runtime reported its own vetoes as "I couldn't get to an answer I'd stand
+behind". Every incident therefore tightened the gates and nothing ever loosened
+them. On 2026-07-26 that ratchet destroyed six consecutive correct answers to
+the same question, each for a different heuristic.
+
+A pipeline of gates that can only subtract has an output quality of min() over
+all of them, which is why a system this large could answer worse than the bare
+model it is built around. Hence the second half of this module: the raw model
+draft is kept, and it is the floor nothing is allowed to fall below.
 """
 
 from __future__ import annotations
@@ -36,6 +47,11 @@ from typing import Any, Iterable
 __all__ = [
     "SurfaceDisposition",
     "SHORTFALL_REASONS",
+    "UNSPEAKABLE_REASONS",
+    "best_available_reply",
+    "raw_model_draft",
+    "record_raw_model_draft",
+    "repair_is_an_improvement",
     "clear_preserved_draft",
     "disposition_for",
     "draft_is_servable",
@@ -77,6 +93,101 @@ def preserved_draft() -> str:
 def clear_preserved_draft() -> None:
     """Start a turn holding nothing."""
     _PRESERVED_DRAFT.set("")
+    _RAW_MODEL_DRAFT.set("")
+
+
+# The bare model's own answer, before any of this runs.
+#
+# The vanilla floor: whatever the surrounding architecture does, the person
+# should never receive LESS than the model alone would have given them. A
+# dozen gates that can each only subtract make that guarantee impossible to
+# hold by accident — it has to be an explicit fallback, holding the one thing
+# every layer downstream is capable of losing.
+_RAW_MODEL_DRAFT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "aura_raw_model_draft", default=""
+)
+
+
+def record_raw_model_draft(text: Any) -> None:
+    """Remember what the model actually said, before the pipeline touched it."""
+    body = str(text or "").strip()
+    if body:
+        _RAW_MODEL_DRAFT.set(body)
+
+
+def raw_model_draft() -> str:
+    """What the model said this turn, or ""."""
+    try:
+        return _RAW_MODEL_DRAFT.get()
+    except LookupError:
+        return ""
+
+
+def repair_is_an_improvement(before: Any, after: Any, question: Any = "") -> bool:
+    """Whether a repair actually made the reply better, or merely different.
+
+    Most of the gates in this pipeline were written when Aura was a weaker
+    system, and they encode style expectations from that period — deflection,
+    generic-assistant phrasing, status-page tone. Since the disposition
+    inversion none of them can destroy an answer any more. What they could
+    still do is trigger a repair that REPLACES a good answer with a blander
+    one, which is the same loss arriving by a different route.
+
+    So a repair has to earn the substitution: it may not introduce an objection
+    the original did not have, and it may not be substantially shorter. If it
+    does neither, it is an improvement and it wins; otherwise the original
+    stands. A gate that cannot describe a better answer does not get to
+    replace this one.
+    """
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    original = str(before or "").strip()
+    replacement = str(after or "").strip()
+    if not replacement:
+        return False
+    if not original:
+        return True
+    try:
+        original_reasons = set(assess_user_facing_reply(question, original).reasons)
+        replacement_reasons = set(assess_user_facing_reply(question, replacement).reasons)
+    except (RuntimeError, TypeError, ValueError):
+        return False
+    if replacement_reasons - original_reasons:
+        return False
+    if replacement_reasons & UNSPEAKABLE_REASONS:
+        return False
+    # Losing a third of the answer is a downgrade even when it silences a
+    # complaint — unless the complaint was that the answer must be shorter.
+    if len(replacement.split()) * 3 < len(original.split()) * 2:
+        return bool(
+            original_reasons
+            and original_reasons - replacement_reasons
+            and any("count" in reason or "brev" in reason for reason in original_reasons)
+        )
+    return True
+
+
+def best_available_reply(*, minimum_words: int = 12) -> str:
+    """The best thing this turn produced that is safe to say, or "".
+
+    Checked in order of preference: a draft some layer deliberately preserved,
+    then the model's own raw output. Either is returned only if nothing in it
+    is unspeakable — a leak never becomes the fallback — and only if it is
+    substantial enough to be worth more than an honest "ask me again".
+    """
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    for candidate in (preserved_draft(), raw_model_draft()):
+        body = str(candidate or "").strip()
+        if not body or len(body.split()) < minimum_words:
+            continue
+        try:
+            reasons = assess_user_facing_reply("", body).reasons
+        except (RuntimeError, TypeError, ValueError):
+            continue
+        if not (set(reasons) & UNSPEAKABLE_REASONS):
+            return body
+    return ""
 
 
 class SurfaceDisposition(Enum):
@@ -92,9 +203,86 @@ class SurfaceDisposition(Enum):
     """Must not be spoken. Another generation, or an honest refusal."""
 
 
-#: Reasons that mean "the turn wanted more of this", not "this must not be
-#: said". Keep this list additive and explicit: the default for an unknown
-#: reason is DISCARD, so forgetting to classify one fails safe.
+#: The only reasons that may DESTROY a reply.
+#:
+#: This list is an allowlist, and that direction is the whole point. Every
+#: entry is something POSITIVELY IDENTIFIED in the text — a control token, a
+#: prompt artefact, an internal label, text with no grammar in it. None of them
+#: is an absence-of-quality judgement, because absence judgements are
+#: heuristics and heuristics are wrong on a fraction of good answers.
+#:
+#: Everything else — every quality heuristic, present and future — can at most
+#: ask for repair. A new detector therefore cannot silently start destroying
+#: answers; to gain that power it has to be added here, deliberately, with the
+#: evidence that it identifies rather than estimates.
+#:
+#: The old direction was the opposite: anything unclassified was DISCARD, on
+#: the theory that failing closed is safe. For a conversation it is not. A
+#: reply withheld is a certain loss; a reply served with a flaw is a partial
+#: one. On 2026-07-26 a dozen gates each failing closed on their own heuristic
+#: destroyed six consecutive correct answers to the same question, and every
+#: one of them was reported to the person as though the model had failed.
+UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
+    {
+        "empty_reply",
+        "empty_model_output",
+        "escaped_control_artifact",
+        "prompt_artifact",
+        "prompt_echo_contamination",
+        "protocol_artifact_leakage",
+        "runtime_boilerplate",
+        "raw_lane_telemetry",
+        "raw_tool_result_fragment",
+        "internal_live_gate_leak",
+        "cognitive_engine_failure_envelope",
+        "backend_symbolic_surface_leak",
+        "raw_model_identity_leak",
+        "corrupted_language",
+        "unexpected_cjk_intrusion",
+        # A measurement with a wide margin rather than a guess: English prose
+        # runs 13-48% function words and these collapses run 0-5%. It is here
+        # because it identifies text that is not language, without needing to
+        # know the topic — the one judgement no other gate can make safely.
+        "function_word_starvation",
+        # The question demanded a quantity and the reply contains none, so it
+        # answers a different question. Checkable, not estimated.
+        "numeric_answer_missing",
+        "arithmetic_answer_missing",
+        "surface_validation_prompt_binding_invalid",
+        "surface_quality_gate_unavailable",
+        # ── Claims the runtime cannot support ────────────────────────────
+        # These are not style. They are statements about reality that are
+        # false: having spoken aloud, having a body, having run a tool,
+        # remembering a conversation that did not happen, addressing a person
+        # who is not there, reciting host telemetry as felt state. Each is
+        # IDENTIFIED by the claim it makes rather than estimated from tone,
+        # which is what earns them a place here — an answer that invents
+        # something is worse than no answer, and saying so is the one thing a
+        # person cannot check for themselves.
+        "unfounded_voice_intrusion",
+        "unsupported_embodiment_claim",
+        "unsupported_affection_claim",
+        "unsupported_self_telemetry_claim",
+        "unsupported_external_provider_path_claim",
+        "unsupported_context_continuation_claim",
+        "unsupported_deployment_routing_claim",
+        "unsupported_runtime_limits_claim",
+        "host_telemetry_substituted_for_self_condition",
+        "ungrounded_person_narrative",
+        "ungrounded_person_address",
+        "template_telemetry_greeting",
+        "unfounded_alarm_derailment",
+        "unrequested_pop_culture_intrusion",
+        # An explicit instruction, checked by string comparison rather than
+        # judged: the person said "answer exactly: yes" and the reply is
+        # something else. Identification, not estimate.
+        "missing_requested_exact_reply",
+    }
+)
+
+#: Reasons that mean "the turn wanted more of this". Retained as the explicit
+#: record of what has been triaged; the disposition no longer depends on a
+#: reason appearing here, only on its absence from UNSPEAKABLE_REASONS.
 SHORTFALL_REASONS: frozenset[str] = frozenset(
     {
         # Content that exists and stopped short.
@@ -144,15 +332,19 @@ def _reason_set(reasons: Any) -> set[str]:
 
 def integrity_failures(reasons: Any) -> tuple[str, ...]:
     """The reasons in this set that make the text unspeakable."""
-    return tuple(sorted(_reason_set(reasons) - SHORTFALL_REASONS))
+    return tuple(sorted(_reason_set(reasons) & UNSPEAKABLE_REASONS))
 
 
 def disposition_for(reasons: Any) -> SurfaceDisposition:
-    """What should happen to a draft carrying these objections."""
+    """What should happen to a draft carrying these objections.
+
+    A quality heuristic may ask for repair. Only positively identified
+    unspeakable content may destroy the answer.
+    """
     found = _reason_set(reasons)
     if not found:
         return SurfaceDisposition.SERVE
-    if found - SHORTFALL_REASONS:
+    if found & UNSPEAKABLE_REASONS:
         return SurfaceDisposition.DISCARD
     return SurfaceDisposition.REPAIR
 
