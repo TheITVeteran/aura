@@ -427,7 +427,16 @@ class SubprocessGateway:
         input: str | None = None,
         check: bool = False,
         source: str = "unknown",
-    ) -> subprocess.CompletedProcess[str]:
+        # Byte-exact callers exist and must not be forced through a decode.
+        # The recurrent-SFT kernel probe hashes stdout to prove containment;
+        # decoding it to str first would launder the very bytes the receipt
+        # attests to. An owner that cannot serve that need pushes its callers
+        # back to a raw subprocess.run, which is how ownership erodes.
+        text: bool = True,
+        # A containment probe must not inherit the parent's stdin. Without
+        # this the only way to close it was to bypass the gateway.
+        stdin_devnull: bool = False,
+    ) -> subprocess.CompletedProcess[Any]:
         command = _coerce_argv(argv)
         _model_command_requires_async(command, source=source)
         if read_only and not offline_tooling:
@@ -462,7 +471,8 @@ class SubprocessGateway:
                 timeout=float(timeout),
                 capture_output=bool(capture_output),
                 input=input,
-                text=True,
+                stdin=subprocess.DEVNULL if (stdin_devnull and input is None) else None,
+                text=bool(text),
                 check=bool(check),
                 shell=False,
             )

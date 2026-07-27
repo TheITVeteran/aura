@@ -354,15 +354,27 @@ def execute_kernel_probe(
     validated = validate_kernel_probe_spec(spec)
     if not _is_sha256(contract_sha256):
         _fail("recurrent_sft_kernel_probe_contract_sha256_invalid")
+    # Through the gateway, which is the single declared owner of process
+    # execution. This probe held the last raw subprocess.run in the tree; it
+    # was a legitimate call and still the wrong shape, because an effect with
+    # no owner cannot be audited, rate-limited or refused during shutdown
+    # along with every other one. Bytes and a closed stdin are preserved
+    # exactly — the receipt hashes stdout, so a decode would launder the
+    # evidence this function exists to produce.
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
     try:
-        completed = subprocess.run(
+        completed = get_subprocess_gateway().run(
             validated["command"],
             cwd=str(cwd.resolve(strict=True)),
             env={str(key): str(value) for key, value in environment.items()},
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
             timeout=30.0,
+            capture_output=True,
             check=False,
+            text=False,
+            stdin_devnull=True,
+            read_only=True,
+            source="core.learning.recurrent_sft_kernel_probe",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise RecurrentSFTKernelProbeError(
