@@ -3259,13 +3259,28 @@ class _PromptCacheLRU:
         trim_prompt_cache: Any,
     ) -> tuple[list[Any] | None, list[int]]:
         result = self._search(model_key, tokens)
+        # Whether prefix reuse actually happens decides whether a conversation
+        # survives: every turn that misses re-prefills the entire history, and
+        # time-to-first-token climbs until it crosses the turn budget. Measured
+        # live 2026-07-26, turns 5-7 of one conversation died that way with the
+        # budget shrinking 81.1s -> 73.2s -> 55.8s against a first token that
+        # kept taking 58-82s. None of that was visible: there was no hit/miss
+        # signal anywhere, so reuse could only be inferred from latency.
         if result.exact is not None:
             cache_entry = self._extract(model_key, result.exact)
+            logger.info(
+                "🎯 [PROMPT CACHE] exact hit — reused %d/%d tokens, 0 to prefill.",
+                len(tokens), len(tokens),
+            )
             return cache_entry.prompt_cache, []
 
         if result.shorter is not None:
             cache_entry = self._extract(model_key, result.shorter)
             prefix_len = len(result.shorter)
+            logger.info(
+                "🎯 [PROMPT CACHE] prefix hit — reused %d/%d tokens, %d to prefill.",
+                prefix_len, len(tokens), len(tokens) - prefix_len,
+            )
             return cache_entry.prompt_cache, tokens[prefix_len:]
 
         if result.longer is not None:
@@ -3275,8 +3290,15 @@ class _PromptCacheLRU:
                 prefix = min(len(tokens) - 1, result.common_prefix)
                 num_to_trim = len(result.longer) - prefix
                 trim_prompt_cache(trimmed.prompt_cache, num_to_trim)
+                logger.info(
+                    "🎯 [PROMPT CACHE] trimmed hit — reused %d/%d tokens, %d to prefill.",
+                    prefix, len(tokens), len(tokens) - prefix,
+                )
                 return trimmed.prompt_cache, tokens[prefix:]
 
+        logger.info(
+            "🧊 [PROMPT CACHE] miss — prefilling all %d tokens.", len(tokens)
+        )
         return None, tokens
 
     def insert_cache(self, model_key: Any, tokens: list[int], prompt_cache: list[Any]) -> None:
