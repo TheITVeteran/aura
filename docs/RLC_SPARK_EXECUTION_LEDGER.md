@@ -3745,10 +3745,48 @@ before those dependencies close is not admissible.
   self-approval, a `requires_human` knob, an out-of-order stage, a canary
   carrying full traffic, a rollout with no admitted approval).
 
-  **The checkbox stays open**: the measurement inputs are still supplied by the
-  caller rather than read from a live expert/router/depth telemetry seam, and
-  no architecture change has been proposed, tried, or rolled out against the
-  resident model. This checkpoint runs no model and grants no capability claim.
+  **F7-B part two closes the measurement side** in
+  `core/learning/architecture_observations.py`, so the findings are derived
+  rather than typed. Two evidence streams that already exist per episode:
+  * **Depth** from `trajectory_dynamics` — the loop's own answer to whether it
+    converged, spun, or was still moving. `depth_saturation` counts episodes
+    that reached a fixed point (a loop that stopped moving stopped computing,
+    whatever the budget says); `depth_starvation` counts episodes still moving
+    hard at the last pass (the budget ended the loop, not the computation).
+    Both are always emitted together: they are opposite failures of one knob,
+    and reporting only the one over threshold would hide a depth change that
+    fixes one by causing the other.
+  * **Expert/router** from real `value_of_computation` action transitions. The
+    resident checkpoint is dense, so there is no MoE router to measure and
+    pretending otherwise would be theatre; `expert` and `router` mean what they
+    actually mean here — the cognitive-operator inventory and the policy
+    selecting among it. A never-selected operator is a dead expert, one taking
+    most of the traffic is overloaded, and `router_collapse` is *one minus*
+    normalized selection entropy so that, like every other mode in the
+    vocabulary, a larger statistic is worse.
+
+  Two rules make these findings rather than assertions: the **episode count is
+  derived from the evidence** and cannot be passed in (which is what makes the
+  controller's 64-episode floor mean anything), and **malformed evidence is
+  refused rather than skipped** — silently dropping a diverged or unmeasurable
+  episode would shrink the denominator and inflate every rate computed from it.
+
+  `router_misroute` is deliberately not produced. Nothing currently measures a
+  routing decision against a known-correct one, and emitting a zero for it
+  would report an unmeasured surface as a healthy one; it appears in
+  `surfaces_unmeasured` instead, which is the honest place for it.
+
+  17 further tests, including depth observations derived from a **real
+  recurrent loop over a real Qwen2 stack**, a diverged loop refused rather than
+  averaged in, an unmeasurable report refused rather than dropped, an unknown
+  action refused rather than bucketed, and a produced finding driving a real
+  bounded proposal whose `finding_evidence_sha256` matches the observation that
+  justified it. 50/50 across the SPARK-065 surface.
+
+  **The checkbox stays open**: no architecture change has been proposed, tried,
+  or rolled out against the resident model, and the trial/approval/rollout
+  legs have no live executor behind them yet. This checkpoint runs no model of
+  consequence and grants no capability claim.
 
 ## H. Whole-Aura causal integration
 

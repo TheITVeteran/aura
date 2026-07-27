@@ -84,8 +84,25 @@ class again.
 live one and all six invariants present; the approver must differ from the
 proposer; the rollback revision is required before the canary starts.
 
-Measurement inputs are still caller-supplied — wiring them to a live
-expert/router/depth telemetry seam is open work.
+**The measurement side is wired.** `core/learning/architecture_observations.py`:
+
+```python
+observations = observe_architecture(
+    dynamics_reports=[...],      # trajectory_dynamics, one per episode
+    action_transitions=[...],    # value_of_computation transitions
+)
+findings = architecture_findings(observations)
+```
+
+Depth comes from the loop's own convergence report; expert/router from real
+operator selections (the checkpoint is dense — there is no MoE router, so those
+words mean the operator inventory and the policy over it). The episode count is
+derived from the evidence and cannot be passed in, and malformed evidence is
+refused rather than skipped.
+
+`router_misroute` is not produced: nothing measures a routing decision against
+a known-correct one, so it shows up in `surfaces_unmeasured` rather than as a
+healthy zero. Wiring a misroute oracle is open work.
 
 ## SPARK-066 — proving the answer came out of the latent path
 
