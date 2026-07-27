@@ -10557,6 +10557,80 @@ async def test_compound_choice_reaches_engine_as_deep_self_contained_turn(monkey
     assert trace["single_owner_generation_exhausted"] is True
 
 
+@pytest.mark.asyncio
+async def test_ordinary_desktop_chat_turn_keeps_the_prompt_cache(monkeypatch):
+    """The conversation lane is the one lane that MUST reuse KV.
+
+    Its prompt is the whole conversation, so re-prefilling from token zero
+    makes turn latency climb until it crosses the turn budget — the measured
+    endurance wall. `compact_desktop_chat_contract` carried
+    `disable_prompt_cache` (and `clear_prompt_cache`, which wiped every other
+    lane's entry too) from an era when the 32B's cache budget was zero anyway.
+    """
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    user_message = "What's the weather like where you are?"
+    answer = "I don't have a window, but the host reports a warm chassis today."
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(dict(context or {}))
+            return SimpleNamespace(
+                content=answer, metadata=_bound_live_mind_controls_metadata()
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_recent_completed_conversation_exchanges",
+        AsyncCallFixture(return_value=[]),
+    )
+    for name in (
+        "_build_conversation_recall_reply",
+        "_build_retained_memory_evidence_context",
+        "_build_context_challenge_repair_reply",
+        "_fetch_deep_memory_context",
+    ):
+        monkeypatch.setattr(chat_routes, name, AsyncCallFixture(return_value=""))
+    engine = _FakeCognitiveEngine()
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    await chat_routes._run_cognitive_engine_chat_turn(
+        user_message,
+        visible_user_message=user_message,
+        origin="user",
+        timeout_s=120.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace={},
+    )
+
+    assert len(calls) == 1
+    context = calls[0]
+    assert context.get("compact_desktop_chat_contract") is True, (
+        "this test is only meaningful on the compact desktop chat path"
+    )
+    assert context.get("disable_prompt_cache") is not True, (
+        "the ordinary chat turn must reuse KV or long conversations time out"
+    )
+    assert context.get("clear_prompt_cache") is not True, (
+        "clearing on every chat turn wipes every lane's KV, not just this one"
+    )
+
+
 def test_compact_desktop_contract_does_not_hide_actual_tool_execution_requests():
     from interface.routes import chat as chat_routes
 

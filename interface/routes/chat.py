@@ -7564,8 +7564,18 @@ async def _run_cognitive_engine_chat_turn(
                 "skip_runtime_payload": True,
                 "live_runtime_payload_required": bool(require_engine),
                 "live_speech_grounding_frame": _build_aura_expression_frame(visible),
-                "disable_prompt_cache": True,
-                "clear_prompt_cache": True,
+                # The ordinary chat turn is the ONE lane that has to reuse KV:
+                # its prompt is the whole conversation, so re-prefilling from
+                # token zero is what makes turn latency climb until it crosses
+                # the turn budget and long conversations stop answering.
+                # `disable_prompt_cache`/`clear_prompt_cache` were set here in
+                # June 2026, when the 32B's cache budget was zero anyway, so
+                # they cost nothing then; the budget was later restored FOR
+                # endurance and these two were never lifted, which quietly kept
+                # the restore from reaching the conversation. Reuse is scoped to
+                # `user_surface`, so no internal lane can see this KV, and the
+                # only "contamination" within the scope is the conversation's
+                # own history as it was actually computed.
                 "response_style_contract": (
                     "Answer the user's live desktop chat turn directly and naturally. "
                     "Use live runtime state only as causal grounding; do not recite a telemetry card, "
