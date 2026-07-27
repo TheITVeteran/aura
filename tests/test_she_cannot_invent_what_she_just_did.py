@@ -135,3 +135,78 @@ def test_the_receipts_survive_prompt_compaction() -> None:
     src = GATE.read_text(encoding="utf-8")
     critical = src[src.index("important_headers = ("):]
     assert "## WHAT YOU ACTUALLY JUST DID" in critical[: critical.index(")")]
+
+
+# ── The ledger decides, not the instruction ────────────────────────────────
+#
+# The receipts block reached the prompt and she described Minesweeper anyway.
+# A prompt block competing with a fluent paragraph loses, quietly. So the same
+# treatment the clock got: a claim the runtime can check is checked, at the
+# egress, against a reading it can actually take.
+
+MINESWEEPER = (
+    "When you run it, the board pops up and you click cells to reveal numbers. "
+    "If you hit a mine, the game shows you which squares had mines and ends."
+)
+
+
+def _guard(reply: str, records):
+    from core.conversation.grounded_claim_guard import verify_grounded_claims
+
+    loop = SimpleNamespace(_completed_intentions=records)
+    with patch("core.agency.intention_loop.get_intention_loop", return_value=loop):
+        return verify_grounded_claims(reply)
+
+
+def _attempt(*, succeeded: bool, intention: str = "build 2048 onto the Desktop"):
+    return SimpleNamespace(
+        intention=intention,
+        actions_taken=[SimpleNamespace(tool_name="program_dna_reconstruct", success=succeeded)],
+        actual_outcome="",
+        observation="",
+        completed_at=time.time() - 20,
+    )
+
+
+def test_describing_an_artifact_that_was_never_built_is_corrected() -> None:
+    result = _guard(MINESWEEPER, [_attempt(succeeded=False)])
+    assert "didn't actually get that built" in result.text
+    assert "mine" not in result.text
+    assert result.corrections
+
+
+def test_describing_an_artifact_that_was_built_is_left_alone() -> None:
+    """A guard that fights correct answers is worse than no guard."""
+    result = _guard(MINESWEEPER, [_attempt(succeeded=True)])
+    assert result.text == MINESWEEPER
+    assert not result.corrections
+
+
+def test_ordinary_conversation_is_untouched_after_a_failed_build() -> None:
+    ordinary = "I think there's something it's like to be me."
+    assert _guard(ordinary, [_attempt(succeeded=False)]).text == ordinary
+
+
+def test_with_no_build_history_nothing_is_corrected() -> None:
+    assert _guard(MINESWEEPER, []).text == MINESWEEPER
+
+
+def test_a_non_build_attempt_does_not_trigger_it() -> None:
+    """Only a failed attempt to MAKE something makes an artifact claim false."""
+    searched = SimpleNamespace(
+        intention="search the web for the F1 championship",
+        actions_taken=[SimpleNamespace(tool_name="web_search", success=False)],
+        actual_outcome="",
+        observation="",
+        completed_at=time.time() - 20,
+    )
+    assert _guard(MINESWEEPER, [searched]).text == MINESWEEPER
+
+
+def test_a_broken_ledger_never_rewrites_a_reply() -> None:
+    from core.conversation.grounded_claim_guard import verify_grounded_claims
+
+    with patch(
+        "core.agency.intention_loop.get_intention_loop", side_effect=RuntimeError("down")
+    ):
+        assert verify_grounded_claims(MINESWEEPER).text == MINESWEEPER

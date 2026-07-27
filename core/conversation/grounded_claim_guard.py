@@ -128,6 +128,51 @@ _PHANTOM_PERCEPTION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
+# Describing an artifact that was never made.
+#
+# Live 2026-07-27: the 2048 build failed and she said so plainly. One turn
+# later, asked whether it was playable, she described Minesweeper — "you click
+# cells to reveal numbers; if you hit a mine, the game shows you which squares
+# had mines and ends." There was no file. The receipts were in the prompt by
+# then and lost to a fluent paragraph, which is what a prompt block does when
+# it competes with plausibility.
+#
+# So the ledger decides, not the instruction. If the most recent attempt to
+# build something DID NOT SUCCEED, a reply narrating how that artifact behaves
+# is contradicted by a reading the runtime can actually take.
+_ARTIFACT_BEHAVIOUR_RE = re.compile(
+    r"\b(?:when you (?:run|open|start|launch|play)|"
+    r"you(?:'ll| will) see|the (?:game|app|program|window|board) (?:opens|starts|shows|pops)|"
+    r"to play(?: it)?,|"
+    r"once (?:it(?:'s| is) )?(?:running|open|installed))\b",
+    re.IGNORECASE,
+)
+
+
+def _last_build_failed() -> tuple[bool, str]:
+    """Did the most recent build-shaped attempt fail? From the ledger."""
+    try:
+        from core.agency.intention_loop import get_intention_loop
+
+        completed = list(
+            getattr(get_intention_loop(), "_completed_intentions", None) or []
+        )
+    except _RECOVERABLE:
+        return False, ""
+    build_words = ("build", "reconstruct", "create", "write", "make", "generate", "place")
+    for record in reversed(completed):
+        intention = str(getattr(record, "intention", "") or "").lower()
+        if not any(word in intention for word in build_words):
+            continue
+        actions = list(getattr(record, "actions_taken", None) or [])
+        succeeded = bool(actions) and all(
+            bool(getattr(action, "success", False)) for action in actions
+        )
+        return (not succeeded), str(getattr(record, "intention", ""))[:80]
+    return False, ""
+
+
+
 def _real_time_text(stamp: datetime, sample: str) -> str:
     """Match the format she used, so the repair reads like the sentence."""
     if re.search(r"(?i)\b(?:am|pm)\b", sample):
@@ -216,6 +261,17 @@ def verify_grounded_claims(reply: str, *, now: datetime | None = None) -> Ground
         if count:
             corrections.append(reason)
             text = repaired
+
+    if _ARTIFACT_BEHAVIOUR_RE.search(text):
+        failed, what = _last_build_failed()
+        if failed:
+            corrections.append(
+                f"described how an artifact behaves after {what or 'the build'} did not succeed"
+            )
+            text = (
+                "I didn't actually get that built, so I can't tell you how it "
+                "behaves — I'd only be describing something that isn't there."
+            )
 
     if corrections:
         text = re.sub(r"[ \t]{2,}", " ", text)
