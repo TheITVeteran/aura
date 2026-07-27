@@ -392,6 +392,15 @@ def _score_response(task: Any, response: Any) -> dict[str, Any]:
     }
 
 
+def score_frontier_response_independently(
+    task: Any,
+    response: Any,
+) -> dict[str, Any]:
+    """Execute the standalone frontier scorer through a public proof surface."""
+
+    return dict(_score_response(task, response))
+
+
 def _ed25519_decode_point(encoded: bytes) -> tuple[int, int, int, int]:
     if len(encoded) != 32:
         _fail("independent_ed25519_point_invalid")

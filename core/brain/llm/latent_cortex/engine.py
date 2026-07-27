@@ -1179,9 +1179,9 @@ class LatentCortexEngine:
         if type(force_exact_tokens) is not bool:
             raise TypeError("force_exact_tokens must be boolean")
         if sample_seed is not None and (
-            type(sample_seed) is not int or not 0 <= sample_seed <= 0x7FFFFFFF
+            type(sample_seed) is not int or not 0 <= sample_seed <= 0xFFFFFFFF
         ):
-            raise ValueError("sample_seed must be null or an integer inside [0, 2^31-1]")
+            raise ValueError("sample_seed must be null or an integer inside [0, 2^32-1]")
         if final_answer_contract is not None and type(final_answer_contract) is not bool:
             raise TypeError("final_answer_contract must be boolean or null")
         if (
@@ -2072,6 +2072,7 @@ class LatentCortexEngine:
         progress: Callable[[dict], None] | None = None,
         capture_decode_logprobs: bool = False,
         decode_sentence_grace_tokens: int | None = None,
+        sample_seed: int | None = None,
         action_continuation_capture: Callable[[Any], None] | None = None,
         action_continuation_restore: Any | None = None,
         action_continuation_runner_state: Mapping[str, Any] | None = None,
@@ -2086,6 +2087,10 @@ class LatentCortexEngine:
             or not 0 <= decode_sentence_grace_tokens <= 4096
         ):
             raise ValueError("decode_sentence_grace_tokens must be null or inside [0, 4096]")
+        if sample_seed is not None and (
+            type(sample_seed) is not int or not 0 <= sample_seed <= 0xFFFFFFFF
+        ):
+            raise ValueError("sample_seed must be null or an integer inside [0, 2^32-1]")
         if type(action_continuation_capture_only) is not bool:
             raise TypeError("action_continuation_capture_only must be boolean")
         if type(nonparametric_memory_enabled) is not bool:
@@ -2287,6 +2292,7 @@ class LatentCortexEngine:
                     episode_started=episode_started,
                     token_logprobs_out=(decode_token_logprobs if capture_decode_logprobs else None),
                     decode_sentence_grace_tokens=decode_sentence_grace_tokens,
+                    sample_seed=sample_seed,
                     transient_cleanup_registry=transient_cleanup_registry,
                     action_continuation_capture=action_continuation_capture,
                     action_continuation_restore=action_continuation_restore,
@@ -2362,6 +2368,7 @@ class LatentCortexEngine:
                                 decode_token_logprobs if capture_decode_logprobs else None
                             ),
                             sentence_grace_tokens=decode_sentence_grace_tokens,
+                            sample_seed=sample_seed,
                         )
                         receipt.decode_requested_tokens = (
                             decode_max_tokens
@@ -2525,6 +2532,7 @@ class LatentCortexEngine:
         episode_started: float | None = None,
         token_logprobs_out: list[float] | None = None,
         decode_sentence_grace_tokens: int | None = None,
+        sample_seed: int | None = None,
         transient_cleanup_registry: list[Any] | None = None,
         action_continuation_capture: Callable[[Any], None] | None = None,
         action_continuation_restore: Any | None = None,
@@ -6051,6 +6059,7 @@ class LatentCortexEngine:
                     wall_reserve_s=(6.0 if fast_weights is not None else 0.0),
                     token_logprobs_out=token_logprobs_out,
                     sentence_grace_tokens=decode_sentence_grace_tokens,
+                    sample_seed=sample_seed,
                 )
                 final_decode_transaction.observe_mutation(cache)
                 winner.kv_boundary_sha256 = final_decode_transaction.commit(

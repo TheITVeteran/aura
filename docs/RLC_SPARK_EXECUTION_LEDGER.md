@@ -3563,6 +3563,26 @@ before those dependencies close is not admissible.
   separately bounded, receipted, and may act only when the verified group is
   degenerate. This does not yet implement the paired transition episode,
   structured delta reward, EIR, or a model experiment, so SPARK-060 stays open.
+  CP419 closes the immutable paired-transition prerequisite. Each pass now
+  binds canonical candidate input and token trace, the exact task and execution
+  manifest, actual component-file hashes, model/adapter/tokenizer/policy/
+  personality/runtime/source identities, the latent mechanism, non-candidate
+  evidence, process identity, resource limits, and nanosecond chronology. A
+  campaign-runner generation signature and a separately custodied
+  contamination-auditor process-observation signature are both mandatory. The
+  host observer binds each open component's kernel descriptor, device, inode,
+  size, modification time, and exact rehashed path, rejecting atomic path
+  replacement while a worker retains an older inode.
+  Oracle-derived positive and negative calibration controls must cover the
+  target domain/scorer pair; callers cannot supply labels or control responses.
+  The fixed six-event attempt ledger is owner-private, inode-pinned, OS
+  append-only, hash chained, opened by the task issuer before execution, and
+  terminally witnessed by the evidence verifier over its raw content hash and
+  chain head. Same-inode rewrites, omitted/reordered/extra attempts, runtime
+  scorer substitution, component substitution, latent-path drift, forged
+  observer evidence, and checkpoint-signature tampering all fail closed.
+  SPARK-060 remains open because the trainer does not yet admit this episode
+  schema or optimize structured delta reward and EIR.
 - [ ] **SPARK-061 - Progressive recurrent objective.** Train later latent states
   to improve over earlier states, not merely imitate long solutions; verify
   monotonic quality and useful gradients at the resident architecture.
@@ -4061,3 +4081,64 @@ right-to-wrong rejection before the small-checkpoint behavior campaign is
 repeated. Counting CP418 makes 664 total checkpoints. The 664-920 forecast
 leaves 0-256 records, or approximately 72.2%-100.0% checkpoint completion with
 an 86.1% midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP419 immutable verified-transition episode
+
+The pass-0/pass-1 training unit is now a reconstructable evidence object rather
+than a caller-authored reward claim. A private content-addressed store rejects
+symlink, hardlink, replacement, traversal, and overwrite attacks. The execution
+manifest rehashes every component file and binds the loaded base checkpoint,
+adapter stack, tokenizer, policy, personality, runtime, source closure, and
+generation worker. Verifier identity covers the live frontier scorer registry,
+same-module dependency closure, bytecode, defaults, closures, referenced
+globals, transitive module attributes, source files, and Python/runtime ABI.
+
+The candidate sees only the canonical blinded task input. Execution spec,
+latent path, tools, evidence, world state, process receipt, uncertainty,
+diversity, and resources are committed before generation and must be marked
+non-candidate-visible. The campaign runner signs the exact token-level
+generation trace. A separately custodied contamination auditor uses the host
+resource observer to independently collect the live PID, process start time,
+executable hash, and open files; it rejects the pass unless every manifest
+component is actually open and rehashes to the committed bytes. Its signed
+payload binds that host observation, loaded component roots, manifest, model,
+response, and runner trace. The verifier policy also pins the observer
+implementation identity. The evidence verifier independently replays the
+scorer and signs authority only after both passes.
+
+The same adversarial pass exposed an adjacent recurrent-GRPO reproducibility
+defect: final decoding used MLX's process-global RNG, so a previously evaluated
+gradient graph could change PPO admission despite the same declared seed and
+identical policy hash. The recurrent sampler now passes its full 32-bit seed
+into the engine's decode as a stateless key and performs no global RNG mutation.
+The previously failing randomized execution order is a fixed regression gate.
+
+Calibration is oracle constructed: callers choose only a supported control
+kind, while the implementation derives the positive answer, missing-marker
+negative, and same-shape parsed-wrong negative. Every evaluated domain/scorer
+pair requires all three controls. The attempt ledger has one fixed six-event
+state machine, cryptographic chaining, owner-private and inode-stable access,
+and the macOS append-only flag. It is opened before task disclosure. A task-
+issuer signature then commits the empty ledger identity and immutable episode
+before generation; an evidence-verifier signature commits the terminal raw-
+content hash and event-chain head. The journal and final episode require both
+external checkpoints and distinct, ordered signed seconds.
+
+The focused adversarial suite passes 50/50 in 21.55 seconds. Two disjoint
+adjacent matrices pass 290/290 in 36.86 seconds and 174/174 in 24.89 seconds,
+for 464 regression tests across transition, host-resource observation,
+frontier, campaign trust/journal, GRPO, resident preregistration/post-training,
+and recurrent-SFT contracts.
+Ruff, bytecode compilation, diff hygiene, and governance ownership review pass
+for CP419; governance still reports only unrelated concurrent-work deltas.
+Evidence is `artifacts/current/cp419_verified_transition_episode_evidence.json`.
+
+No model was loaded or trained. CP419 establishes no reasoning gain,
+resident-32B effect, frontier result, promotion, or `WOW Signal`. SPARK-060
+remains open. CP420 must make recurrent GRPO admit only validated transition
+episodes, independently reconstruct structured improvement reward and Error
+Introduction Ratio, and lexicographically reject right-to-wrong regressions
+before a fresh small-checkpoint behavior campaign. Counting CP419 makes 665
+total checkpoints. The 665-920 forecast leaves 0-255 records, or approximately
+72.3%-100.0% checkpoint completion with an 86.1% midpoint. Final multi-hour
+soaks remain deferred.

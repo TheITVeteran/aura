@@ -131,6 +131,13 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # private arm artifacts. Neither accepts arbitrary user paths.
             "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
             "core/brain/llm/latent_cortex/worker_attempt_import.py",
+            # Verified transition evidence owns one owner-private,
+            # content-addressed blob namespace plus an externally pinned,
+            # OS-append-only attempt ledger. Directory-descriptor-relative,
+            # no-follow opens provide create-once publication, inode-stable
+            # reads, and actual component-file rehashing; callers cannot
+            # choose blob names or mutate production paths.
+            "core/learning/verified_transition_episode.py",
             # Verified-replay SFT publication owns one fixed, owner-private
             # candidate/evaluator namespace. Its sole raw mutation is a
             # no-follow, single-link, inode-bound pair-publication lock; all
@@ -155,6 +162,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # under the operator-selected private run root. It cannot publish
             # adapters or mutate production state.
             "core/learning/structured_sft_research_state.py",
+            # Paired-transition receipts publish immutable, digest-named
+            # evidence blobs under one owner-private store. This owner accepts
+            # no caller-selected filename or production mutation surface.
+            "core/learning/verified_transition_episode.py",
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/post_action_receipt.py",
@@ -316,6 +327,7 @@ _BROWSER_ACTION_METHODS = frozenset(
 )
 _RAW_FILE_EXACT_CALLS = frozenset(
     {
+        "os.chflags",
         "os.chmod",
         "os.link",
         "os.makedirs",

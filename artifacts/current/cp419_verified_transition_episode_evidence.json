@@ -1,0 +1,141 @@
+{
+  "schema": "aura.closeout.cp419_verified_transition_episode_evidence.v1",
+  "checkpoint": "CP419",
+  "recorded_date": "2026-07-27",
+  "artifact_store": {
+    "content_addressed": true,
+    "create_once": true,
+    "directory_descriptor_relative": true,
+    "hardlink_rejected": true,
+    "owner_private": true,
+    "root_identity_pinned": true,
+    "symlink_rejected": true
+  },
+  "execution_identity": {
+    "actual_host_process_observation_collected": true,
+    "actual_component_files_rehashed": true,
+    "actual_open_descriptor_identity_bound": true,
+    "canonical_candidate_input_required": true,
+    "component_roles": [
+      "base_checkpoint",
+      "adapter_stack",
+      "tokenizer",
+      "policy",
+      "personality",
+      "runtime",
+      "source_closure",
+      "generation_worker"
+    ],
+    "contamination_auditor_implementation_pinned": true,
+    "manifest_component_files_observed_open": true,
+    "loaded_component_roots_bound": true,
+    "process_identity_bound": true,
+    "transitive_module_attribute_substitution_detected": true,
+    "verifier_callable_closure_bound": true,
+    "worker_executable_sha256_bound": true
+  },
+  "recurrent_sampling": {
+    "decode_seed_bits": 32,
+    "execution_order_regression_closed": true,
+    "process_global_rng_mutation": false,
+    "stateless_decode_key": true
+  },
+  "immutable_episode": {
+    "attempt_count": 2,
+    "candidate_side_channels_forbidden": true,
+    "exact_token_trace_bound": true,
+    "latent_path_precommitted": true,
+    "nanosecond_chronology_enforced": true,
+    "non_candidate_evidence_precommitted": true,
+    "pass_zero_and_pass_one_same_context": true,
+    "resource_budget_precommitted": true
+  },
+  "independent_authorities": {
+    "campaign_runner_generation_trace_required": true,
+    "contamination_auditor_process_observation_required": true,
+    "evidence_verifier_replay_required": true,
+    "task_issuer_commitment_required": true
+  },
+  "calibration": {
+    "caller_supplied_expected_labels_forbidden": true,
+    "caller_supplied_control_responses_forbidden": true,
+    "negative_controls": [
+      "missing_marker_negative",
+      "parsed_wrong_negative"
+    ],
+    "positive_control": "canonical_positive",
+    "target_domain_and_scorer_coverage_required": true
+  },
+  "attempt_ledger": {
+    "event_count": 6,
+    "event_hash_chain_required": true,
+    "evidence_verifier_terminal_content_checkpoint": true,
+    "inode_identity_pinned": true,
+    "os_append_only_required": true,
+    "same_inode_rewrite_rejected": true,
+    "task_issuer_open_checkpoint": true,
+    "task_issuer_open_checkpoint_precedes_task_disclosure": true
+  },
+  "adversarial_tests": [
+    "answer_injection",
+    "artifact_hardlink",
+    "artifact_root_replacement",
+    "artifact_symlink",
+    "calibration_control_tamper",
+    "calibration_coverage_omission",
+    "class_method_substitution",
+    "component_file_substitution",
+    "execution_observer_signature_forgery",
+    "hidden_third_attempt",
+    "latent_path_drift",
+    "ledger_checkpoint_signature_forgery",
+    "ledger_extra_event",
+    "ledger_omitted_event",
+    "ledger_reordered_event",
+    "ledger_same_inode_rewrite",
+    "module_attribute_substitution",
+    "open_component_path_replacement",
+    "parsed_wrong_calibration",
+    "preopen_hidden_attempt",
+    "process_receipt_component_substitution",
+    "runtime_scalar_substitution",
+    "rng_execution_order_contamination",
+    "simulated_process_observation",
+    "tokenizer_substitution",
+    "transitive_module_attribute_substitution"
+  ],
+  "validation": {
+    "adjacent_matrix_a_failures": 0,
+    "adjacent_matrix_a_tests": 290,
+    "adjacent_matrix_a_time_seconds": 36.86,
+    "adjacent_matrix_b_failures": 0,
+    "adjacent_matrix_b_tests": 174,
+    "adjacent_matrix_b_time_seconds": 24.89,
+    "bytecode_compilation_passed": true,
+    "diff_hygiene_passed": true,
+    "focused_failures": 0,
+    "focused_tests": 50,
+    "focused_time_seconds": 21.55,
+    "governance_new_cp419_regressions": 0,
+    "ruff_passed": true,
+    "total_adjacent_regression_tests": 464
+  },
+  "experiment": {
+    "capability_evaluation": false,
+    "model_loaded": false,
+    "training_run": false
+  },
+  "status": {
+    "next_checkpoint": "CP420",
+    "next_requirement": "verified episode trainer admission, structured delta reward, EIR, and lexicographic right-to-wrong rejection",
+    "spark_060_complete": false,
+    "spark_060a_complete": true
+  },
+  "claims_not_supported": [
+    "reasoning_gain",
+    "resident_32b_result",
+    "frontier_performance",
+    "production_promotion",
+    "wow_signal"
+  ]
+}

@@ -1382,6 +1382,12 @@ def score_task(task: FrontierTask, response: Any) -> ScoreResult:
     )
 
 
+def frontier_scorer_callables() -> tuple[tuple[str, Scorer], ...]:
+    """Expose the live immutable scorer table for proof-closure commitments."""
+
+    return tuple(sorted(_SCORERS.items()))
+
+
 @dataclass(frozen=True, slots=True)
 class FrontierTaskRegistry:
     schema: str = REGISTRY_SCHEMA
@@ -1572,6 +1578,7 @@ __all__ = [
     "build_task_commitment",
     "build_public_task_manifest",
     "build_task_manifest",
+    "frontier_scorer_callables",
     "generate_task",
     "generate_task_battery",
     "parse_final_answer",

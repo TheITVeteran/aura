@@ -30490,3 +30490,49 @@ right-to-wrong rejection. Counting CP418 makes 664 total checkpoints. The
 664-920 forecast leaves 0-256 records, or approximately 72.2%-100.0%
 checkpoint completion with an 86.1% midpoint. Final multi-hour soaks remain
 deferred.
+
+### 2026-07-27 - CP419 verified pass-to-pass transition custody
+
+SPARK-060's immutable episode prerequisite is implemented. The new transition
+contract binds canonical blinded candidate input, exact token traces, frozen
+execution and latent-path configuration, actual component-file hashes,
+model/adapter/tokenizer/policy/personality/runtime/source identity, process and
+resource evidence, and strict nanosecond chronology. Campaign-runner generation
+evidence is insufficient by itself: a separately custodied contamination
+auditor must collect the live process through the host resource observer,
+verify its PID/start time/executable hash and every manifest component among
+its open files, bind the actual descriptor's device/inode/size/modification
+identity, and attest the resulting evidence, model, response, and runner trace
+before the evidence verifier may issue authority. The policy pins the observer
+implementation identity. Atomic replacement of a component path while the
+worker retains an older open inode now fails closed.
+
+Calibration controls are implementation-derived and require a canonical
+positive, missing-marker negative, and same-shape parsed-wrong negative for
+every evaluated domain/scorer pair. The fixed six-event attempt ledger is
+private, inode pinned, OS append-only, hash chained, and open before task
+disclosure. The task issuer signs its empty identity and immutable context
+before generation; the evidence verifier signs its terminal content hash and
+chain head afterward. Adversarial tests reject same-inode rewrites, hidden
+pre-open attempts, omitted/reordered/extra events, forged observer and ledger
+signatures, simulated process evidence, runtime scorer substitution including
+a transitive `json.JSONDecoder.decode` replacement, component substitution,
+latent-path drift, answer leakage, and tokenizer or chronology drift.
+
+The closeout matrix also reproduced and fixed a recurrent-GRPO execution-order
+defect: process-global MLX RNG state let a prior gradient graph perturb final
+decode and PPO admission despite the same seed and policy hash. The sampler now
+uses an explicit stateless 32-bit decode key with no global RNG mutation.
+
+Validation passes 50/50 focused tests plus two disjoint adjacent matrices of
+290/290 and 174/174, totaling 464 regression tests. Ruff, bytecode compilation,
+diff hygiene, and CP419 governance ownership checks pass. Evidence is
+`artifacts/current/cp419_verified_transition_episode_evidence.json`.
+
+This is proof infrastructure only: no model was loaded or trained, and no
+reasoning, resident-32B, frontier, promotion, or `WOW Signal` result is claimed.
+SPARK-060 remains open for verified-episode trainer admission, structured delta
+reward, EIR, and lexicographic right-to-wrong rejection, followed by a fresh
+sealed behavior campaign. Counting CP419 makes 665 total checkpoints. The
+665-920 forecast leaves 0-255 records, or approximately 72.3%-100.0% checkpoint
+completion with an 86.1% midpoint. Final multi-hour soaks remain deferred.

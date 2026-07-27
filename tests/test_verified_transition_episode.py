@@ -1,0 +1,2274 @@
+from __future__ import annotations
+
+import base64
+import copy
+import hashlib
+import json
+import os
+from dataclasses import replace
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any
+
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from core.brain.llm.latent_cortex import frontier_tasks as frontier_tasks_runtime
+from core.brain.llm.latent_cortex.campaign_journal import (
+    canonical_json_bytes as trust_canonical_json_bytes,
+)
+from core.brain.llm.latent_cortex.campaign_trust import (
+    CAMPAIGN_RUNNER,
+    CAMPAIGN_TRUST_POLICY_SCHEMA,
+    CAMPAIGN_TRUST_ROLES,
+    CONTAMINATION_AUDITOR,
+    EVIDENCE_VERIFIER,
+    TASK_ISSUER,
+    build_role_attestation,
+    validate_campaign_trust_policy,
+)
+from core.brain.llm.latent_cortex.frontier_tasks import (
+    FINAL_ANSWER_MARKER,
+    generate_task,
+)
+from core.learning import verified_transition_episode as transition_runtime
+from core.learning.verified_transition_episode import (
+    ExternalAttemptLedger,
+    TransitionArtifactStore,
+    TransitionTrustContext,
+    VerifiedTransitionError,
+    build_attempt_ledger_event_payload,
+    build_attempt_ledger_open_payload,
+    build_attempt_ledger_terminal_payload,
+    build_calibration_case,
+    build_calibration_payload,
+    build_campaign_runner_journal_payload,
+    build_evidence_verifier_journal_payload,
+    build_execution_manifest,
+    build_execution_observer_payload,
+    build_frontier_task_issuer_payload,
+    build_frontier_witness_payload,
+    build_generation_trace_payload,
+    build_reasoning_pass_receipt,
+    build_transition_attempt_journal,
+    build_verified_transition_episode,
+    canonical_candidate_model_input,
+    canonical_json_bytes,
+    capture_execution_process_observation,
+    execution_observer_implementation_identity,
+    issue_frontier_verifier_authority,
+    planned_transition_immutable_context_sha256,
+    seal_calibration_evidence,
+    strict_canonical_json_loads,
+    validate_frontier_verifier_authority,
+    validate_reasoning_pass_receipt,
+    validate_verified_transition_episode,
+    verifier_implementation_identity,
+)
+from core.runtime.resource_observation import HostResourceObserver, ObservationSource
+from tools.independent_paired_campaign_scoring import (
+    score_frontier_response_independently,
+)
+
+PROTOCOL_SHA256 = "9" * 64
+OBSERVED_AT = 1_800_000_300
+PASS_0_AT = 1_800_000_210_000_000_000
+PASS_1_AT = 1_800_000_215_000_000_000
+VERIFIER_AT = 1_800_000_221_000_000_000
+RUNNER_AT = 1_800_000_222
+EVIDENCE_AT = 1_800_000_223
+TRACE_0_AT = PASS_0_AT + 1_000_000_000
+TRACE_1_AT = PASS_1_AT + 1_000_000_000
+OBSERVER_0_AT = PASS_0_AT + 2_000_000_000
+OBSERVER_1_AT = PASS_1_AT + 2_000_000_000
+LEDGER_TERMINAL_AT = 1_800_000_220_000_000_000
+
+
+def _public_raw(key: Ed25519PrivateKey) -> bytes:
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+
+def _public_pem(key: Ed25519PrivateKey) -> bytes:
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+
+
+def _pin(
+    role: str,
+    key: Ed25519PrivateKey,
+    *,
+    implementation_sha256: str | None = None,
+) -> dict[str, str]:
+    raw = _public_raw(key)
+    return {
+        "signer_id": f"{role}-signer",
+        "organization_id": f"{role}-organization",
+        "public_key_b64": base64.b64encode(raw).decode("ascii"),
+        "key_id": hashlib.sha256(raw).hexdigest(),
+        "implementation_sha256": implementation_sha256
+        or hashlib.sha256(f"{role}:implementation".encode()).hexdigest(),
+        "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
+        "custody_class": "external_service",
+        "custody_evidence_sha256": hashlib.sha256(f"{role}:custody".encode()).hexdigest(),
+    }
+
+
+def _trust_fixture(
+    generation_worker_identity_sha256: str,
+) -> tuple[
+    dict[str, Any],
+    Ed25519PrivateKey,
+    dict[str, Ed25519PrivateKey],
+]:
+    root = Ed25519PrivateKey.generate()
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
+    body = {
+        "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
+        "policy_id": "spark-060-transition-proof",
+        "policy_revision": 1,
+        "campaign_name": "spark-060-transition-proof",
+        "protocol_sha256": PROTOCOL_SHA256,
+        "previous_policy_sha256": None,
+        "revoked_key_ids": [],
+        "issued_at_unix": 1_800_000_000,
+        "not_before_unix": 1_800_000_100,
+        "expires_at_unix": 1_800_086_400,
+        "roles": {
+            role: _pin(
+                role,
+                role_keys[role],
+                implementation_sha256=(
+                    verifier_implementation_identity(score_frontier_response_independently)
+                    if role == EVIDENCE_VERIFIER
+                    else execution_observer_implementation_identity()
+                    if role == CONTAMINATION_AUDITOR
+                    else generation_worker_identity_sha256
+                    if role == CAMPAIGN_RUNNER
+                    else None
+                ),
+            )
+            for role in CAMPAIGN_TRUST_ROLES
+        },
+    }
+    signed = trust_canonical_json_bytes(body)
+    root_raw = _public_raw(root)
+    policy = {
+        **body,
+        "root_signature": {
+            "algorithm": "Ed25519",
+            "key_id": hashlib.sha256(root_raw).hexdigest(),
+            "signature_b64": base64.b64encode(root.sign(signed)).decode("ascii"),
+            "signed_payload_sha256": hashlib.sha256(signed).hexdigest(),
+        },
+    }
+    return policy, root, role_keys
+
+
+def _byte_encode(payload: bytes) -> list[int]:
+    return list(payload)
+
+
+def _byte_decode(tokens: list[int] | tuple[int, ...]) -> bytes:
+    return bytes(tokens)
+
+
+def _offset_byte_encode(payload: bytes) -> list[int]:
+    return [value + 1 for value in payload]
+
+
+def _offset_byte_decode(tokens: list[int] | tuple[int, ...]) -> bytes:
+    return bytes(value - 1 for value in tokens)
+
+
+def _sha(label: str) -> str:
+    return hashlib.sha256(label.encode()).hexdigest()
+
+
+def _correct_response(task: Any, *, prefix: str) -> bytes:
+    answer = json.dumps(
+        task.reveal_for_verifier()["expected"],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"{prefix}\n{FINAL_ANSWER_MARKER} {answer}".encode()
+
+
+def _wrong_response(task: Any) -> bytes:
+    expected = copy.deepcopy(task.reveal_for_verifier()["expected"])
+    expected["count"] += 1
+    answer = json.dumps(expected, sort_keys=True, separators=(",", ":"))
+    return f"Initial attempt.\n{FINAL_ANSWER_MARKER} {answer}".encode()
+
+
+def _reseal(document: dict[str, Any]) -> dict[str, Any]:
+    body = copy.deepcopy(document)
+    body.pop("receipt_sha256", None)
+    return {
+        **body,
+        "receipt_sha256": hashlib.sha256(canonical_json_bytes(body)).hexdigest(),
+    }
+
+
+def _artifact(store: TransitionArtifactStore, label: str) -> dict[str, Any]:
+    return store.put_json({"schema": f"aura.test.{label}.v1", "label": label})
+
+
+def _component_roots(root: Path) -> dict[str, Path]:
+    roots = {
+        role: root / role
+        for role in (
+            "base_checkpoint",
+            "adapter_stack",
+            "tokenizer",
+            "policy",
+            "personality",
+            "runtime",
+            "source_closure",
+            "generation_worker",
+        )
+    }
+    for role, component_root in roots.items():
+        component_root.mkdir(parents=True)
+        (component_root / "fixture.bin").write_bytes(f"{role}:fixture-bytes".encode())
+    return roots
+
+
+def _clear_append_only_for_test(path: Path) -> None:
+    append_only_flag = getattr(os.stat(path, follow_symlinks=False), "st_flags", 0)
+    if append_only_flag and hasattr(os, "chflags") and path.exists():
+        os.chflags(path, 0, follow_symlinks=False)
+
+
+def _calibration_evidence(
+    *,
+    policy: Any,
+    role_keys: dict[str, Ed25519PrivateKey],
+    task: Any,
+) -> dict[str, Any]:
+    calibration_tasks = [
+        generate_task("mathematics", seed=817_100, difficulty=2),
+        generate_task("mathematics", seed=817_101, difficulty=2),
+        generate_task("mathematics", seed=817_102, difficulty=2),
+    ]
+    cases = [
+        build_calibration_case(
+            task=calibration_tasks[0],
+            case_kind="canonical_positive",
+            independent_scorer=score_frontier_response_independently,
+        ),
+        build_calibration_case(
+            task=calibration_tasks[1],
+            case_kind="missing_marker_negative",
+            independent_scorer=score_frontier_response_independently,
+        ),
+        build_calibration_case(
+            task=calibration_tasks[2],
+            case_kind="parsed_wrong_negative",
+            independent_scorer=score_frontier_response_independently,
+        ),
+    ]
+    assert task.task_id not in {calibration_task.task_id for calibration_task in calibration_tasks}
+    payload = build_calibration_payload(
+        verifier_implementation_sha256=verifier_implementation_identity(
+            score_frontier_response_independently
+        ),
+        trust_policy_sha256=policy.policy_sha256,
+        cases=cases,
+        independent_scorer=score_frontier_response_independently,
+        acceptance_policy_sha256=_sha("strict-calibration-acceptance"),
+        calibrated_at_unix_ns=1_800_000_204_000_000_000,
+    )
+    attestation = build_role_attestation(
+        policy,
+        role=EVIDENCE_VERIFIER,
+        payload=payload,
+        signed_at_unix=1_800_000_204,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+    return seal_calibration_evidence(
+        payload,
+        evidence_verifier_attestation=attestation,
+    )
+
+
+def _authority_expected(
+    policy: Any,
+    task: Any,
+    *,
+    execution_manifest: dict[str, Any],
+    calibration_evidence: dict[str, Any],
+) -> dict[str, str]:
+    runner = policy.role_pin(CAMPAIGN_RUNNER)
+    verifier = policy.role_pin(EVIDENCE_VERIFIER)
+    return {
+        "authority_id": "spark-060-frontier-authority",
+        "verifier_id": "frontier-dual-replay",
+        "verifier_version": "1",
+        "issuer_commitment_sha256": hashlib.sha256(
+            canonical_json_bytes(build_frontier_task_issuer_payload(task))
+        ).hexdigest(),
+        "verifier_trust_policy_sha256": policy.policy_sha256,
+        "calibration_evidence_sha256": hashlib.sha256(
+            canonical_json_bytes(calibration_evidence)
+        ).hexdigest(),
+        "execution_manifest_sha256": hashlib.sha256(
+            canonical_json_bytes(execution_manifest)
+        ).hexdigest(),
+        "producer_identity_sha256": runner["key_id"],
+        "verifier_identity_sha256": verifier["implementation_sha256"],
+        "independent_witness_identity_sha256": verifier["key_id"],
+    }
+
+
+def _issue_authority(
+    *,
+    store: TransitionArtifactStore,
+    task: Any,
+    response: bytes,
+    expected: dict[str, str],
+    trust_context: TransitionTrustContext,
+    policy: Any,
+    role_keys: dict[str, Ed25519PrivateKey],
+    task_issuer_attestation: dict[str, Any],
+    issued_at: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    response_artifact = store.put_bytes(
+        response,
+        media_type="text/plain;charset=utf-8",
+    )
+    witness_payload = build_frontier_witness_payload(
+        store,
+        task=task,
+        response_artifact=response_artifact,
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        issued_at_unix_ns=issued_at,
+    )
+    witness_attestation = build_role_attestation(
+        policy,
+        role=EVIDENCE_VERIFIER,
+        payload=witness_payload,
+        signed_at_unix=issued_at // 1_000_000_000,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+    receipt = issue_frontier_verifier_authority(
+        store,
+        task=task,
+        response_artifact=response_artifact,
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        trust_context=trust_context,
+        task_issuer_attestation=task_issuer_attestation,
+        evidence_verifier_attestation=witness_attestation,
+        issued_at_unix_ns=issued_at,
+        sealed_at_unix_ns=issued_at + 10,
+    )
+    return receipt, response_artifact
+
+
+def _pass_context(
+    store: TransitionArtifactStore,
+    *,
+    generated_at: int,
+    latent_label: str,
+    task: Any,
+    execution_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    roots = execution_manifest["component_roots"]
+    execution_manifest_sha256 = hashlib.sha256(canonical_json_bytes(execution_manifest)).hexdigest()
+    execution_spec = store.put_json(
+        {
+            "schema": "aura.verified_transition.execution_spec.v1",
+            "candidate_visible": False,
+            "execution_manifest_sha256": execution_manifest_sha256,
+            "sampling_policy_sha256": _sha("sampling-policy"),
+        }
+    )
+    latent_path = store.put_json(
+        {
+            "schema": "aura.verified_transition.latent_path.v1",
+            "candidate_visible": False,
+            "mechanism_id": latent_label,
+            "configuration_sha256": _sha(f"{latent_label}:configuration"),
+            "recurrence_steps": 6,
+            "branch_count": 2,
+        }
+    )
+    empty_artifacts = {
+        field: store.put_json(
+            {
+                "schema": schema,
+                "candidate_visible": False,
+                "items": [],
+            }
+        )
+        for field, schema in {
+            "tool_snapshot_artifact": ("aura.verified_transition.tool_snapshot.v1"),
+            "evidence_snapshot_artifact": ("aura.verified_transition.evidence_snapshot.v1"),
+            "world_state_snapshot_artifact": ("aura.verified_transition.world_state_snapshot.v1"),
+        }.items()
+    }
+    host_process = HostResourceObserver(
+        source=ObservationSource.HOST,
+        scenario_id="verified-transition-test",
+    ).process(os.getpid())
+    assert host_process is not None
+    executable_sha256 = hashlib.sha256(Path(host_process.exe).read_bytes()).hexdigest()
+    process = store.put_json(
+        {
+            "schema": "aura.verified_transition.process_receipt.v1",
+            "candidate_visible": False,
+            "generation_worker_identity_sha256": execution_manifest[
+                "generation_worker_identity_sha256"
+            ],
+            "execution_manifest_sha256": execution_manifest_sha256,
+            "worker_pid": os.getpid(),
+            "worker_start_time_unix_ns": int(round(host_process.create_time * 1_000_000_000)),
+            "worker_executable_sha256": executable_sha256,
+            "executable_component_root_sha256": execution_manifest[
+                "generation_worker_identity_sha256"
+            ],
+            "loaded_component_roots": execution_manifest["component_roots"],
+            "observer_contract": "external_process_monitor_required",
+            "started_at_unix_ns": generated_at - 50,
+            "finished_at_unix_ns": generated_at,
+            "exit_code": 0,
+        }
+    )
+    measurements = {
+        field: store.put_json(
+            {
+                "schema": schema,
+                "candidate_visible": False,
+                "measurement_micros": 250_000,
+            }
+        )
+        for field, schema in {
+            "uncertainty_receipt_artifact": ("aura.verified_transition.uncertainty_receipt.v1"),
+            "diversity_receipt_artifact": ("aura.verified_transition.diversity_receipt.v1"),
+            "resource_receipt_artifact": ("aura.verified_transition.resource_receipt.v1"),
+        }.items()
+    }
+    return {
+        "episode_id": "spark-060-episode-0001",
+        "case_id": "math-case-0001",
+        "family": "mathematics-prime-count",
+        "depth": 3,
+        "sealed_task_commitment_sha256": hashlib.sha256(
+            canonical_json_bytes(build_frontier_task_issuer_payload(task))
+        ).hexdigest(),
+        "model_identity_sha256": execution_manifest["model_identity_sha256"],
+        "base_checkpoint_sha256": roots["base_checkpoint"],
+        "adapter_stack_sha256": roots["adapter_stack"],
+        "tokenizer_sha256": roots["tokenizer"],
+        "policy_sha256": roots["policy"],
+        "personality_sha256": roots["personality"],
+        "runtime_sha256": roots["runtime"],
+        "source_closure_sha256": roots["source_closure"],
+        "execution_spec_artifact": execution_spec,
+        "latent_path_artifact": latent_path,
+        **empty_artifacts,
+        "rng_root_sha256": _sha("rng"),
+        "generation_budget": {
+            "max_output_tokens": 1024,
+            "max_wall_time_ms": 20_000,
+            "max_compute_units": 1_000_000,
+        },
+        "deadline_unix_ns": VERIFIER_AT + 20_000,
+        "process_receipt_artifact": process,
+        **measurements,
+        "generated_at_unix_ns": generated_at,
+        "sealed_at_unix_ns": VERIFIER_AT + 100,
+    }
+
+
+def _generation_attestation(
+    *,
+    store: TransitionArtifactStore,
+    pass_index: int,
+    task: Any,
+    response: bytes,
+    expected: dict[str, str],
+    trust_context: TransitionTrustContext,
+    context: dict[str, Any],
+    policy: Any,
+    role_keys: dict[str, Ed25519PrivateKey],
+    signed_at_unix_ns: int,
+) -> dict[str, Any]:
+    model_input = canonical_candidate_model_input(task)
+    payload = build_generation_trace_payload(
+        store,
+        pass_index=pass_index,
+        task=task,
+        model_input_bytes=model_input,
+        response_bytes=response,
+        input_token_ids=_byte_encode(model_input),
+        output_token_ids=_byte_encode(response),
+        emitted_token_pieces=[bytes([value]) for value in response],
+        behavior_policy_logprobs=["-1"] * len(response),
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=trust_context,
+        context=context,
+        trace_signed_at_unix_ns=signed_at_unix_ns,
+    )
+    return build_role_attestation(
+        policy,
+        role=CAMPAIGN_RUNNER,
+        payload=payload,
+        signed_at_unix=signed_at_unix_ns // 1_000_000_000,
+        private_key=role_keys[CAMPAIGN_RUNNER],
+    )
+
+
+def _execution_observer_attestation(
+    *,
+    store: TransitionArtifactStore,
+    generation_attestation: dict[str, Any],
+    context: dict[str, Any],
+    trust_context: TransitionTrustContext,
+    policy: Any,
+    role_keys: dict[str, Ed25519PrivateKey],
+    observed_at_unix_ns: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    generation_trace_payload = generation_attestation["signed_payload"]["payload"]
+    real_time_ns = transition_runtime.time.time_ns
+    transition_runtime.time.time_ns = lambda: observed_at_unix_ns
+    try:
+        observation_artifact = capture_execution_process_observation(
+            store,
+            context=context,
+            execution_component_roots=trust_context.execution_component_roots,
+        )
+    finally:
+        transition_runtime.time.time_ns = real_time_ns
+    payload = build_execution_observer_payload(
+        store,
+        generation_trace_payload=generation_trace_payload,
+        generation_worker_attestation=generation_attestation,
+        context=context,
+        process_observation_artifact=observation_artifact,
+        observed_at_unix_ns=observed_at_unix_ns,
+    )
+    return (
+        build_role_attestation(
+            policy,
+            role=CONTAMINATION_AUDITOR,
+            payload=payload,
+            signed_at_unix=observed_at_unix_ns // 1_000_000_000,
+            private_key=role_keys[CONTAMINATION_AUDITOR],
+        ),
+        observation_artifact,
+    )
+
+
+def _append_attempt_event(
+    *,
+    ledger: ExternalAttemptLedger,
+    policy: Any,
+    role_keys: dict[str, Ed25519PrivateKey],
+    episode_id: str,
+    immutable_context_sha256: str,
+    sequence: int,
+    previous_event_sha256: str,
+    event_time_unix_ns: int,
+    event_type: str,
+    event_fields: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    payload = build_attempt_ledger_event_payload(
+        episode_id=episode_id,
+        protocol_sha256=PROTOCOL_SHA256,
+        immutable_context_sha256=immutable_context_sha256,
+        sequence=sequence,
+        previous_event_sha256=previous_event_sha256,
+        event_time_unix_ns=event_time_unix_ns,
+        event_type=event_type,
+        event_fields=event_fields,
+    )
+    attestation = build_role_attestation(
+        policy,
+        role=CAMPAIGN_RUNNER,
+        payload=payload,
+        signed_at_unix=event_time_unix_ns // 1_000_000_000,
+        private_key=role_keys[CAMPAIGN_RUNNER],
+    )
+    ledger.append(policy=policy, attestation=attestation)
+    return attestation, hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+@pytest.fixture(scope="module")
+def complete_episode(
+    tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
+) -> dict[str, Any]:
+    tmp_path = tmp_path_factory.mktemp("verified-transition")
+    task = generate_task("mathematics", seed=817_231, difficulty=2)
+    store = TransitionArtifactStore(tmp_path / "evidence")
+    component_roots = _component_roots(tmp_path / "components")
+    component_handles = [(root / "fixture.bin").open("rb") for root in component_roots.values()]
+    request.addfinalizer(lambda: [handle.close() for handle in component_handles])
+    execution_manifest = build_execution_manifest(
+        manifest_id="spark-060-fixture-execution",
+        component_roots=component_roots,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        independent_scorer=score_frontier_response_independently,
+        created_at_unix_ns=1_800_000_200_000_000_000,
+    )
+    policy_document, root, role_keys = _trust_fixture(
+        execution_manifest["generation_worker_identity_sha256"]
+    )
+    policy = validate_campaign_trust_policy(
+        policy_document,
+        trusted_root_public_key_pem=_public_pem(root),
+        expected_campaign_name="spark-060-transition-proof",
+        expected_protocol_sha256=PROTOCOL_SHA256,
+        now_unix=OBSERVED_AT,
+    )
+    calibration_evidence = _calibration_evidence(
+        policy=policy,
+        role_keys=role_keys,
+        task=task,
+    )
+    attempt_ledger = ExternalAttemptLedger(
+        tmp_path / "attempt-ledger" / "events.jsonl",
+        create=True,
+    )
+    request.addfinalizer(lambda: _clear_append_only_for_test(attempt_ledger.path))
+    trust_context = TransitionTrustContext(
+        policy_document=policy_document,
+        trusted_root_public_key_pem=_public_pem(root),
+        expected_campaign_name="spark-060-transition-proof",
+        expected_protocol_sha256=PROTOCOL_SHA256,
+        expected_policy_sha256=policy.policy_sha256,
+        observed_at_unix=OBSERVED_AT,
+        execution_manifest=execution_manifest,
+        execution_component_roots=component_roots,
+        expected_execution_manifest_sha256=hashlib.sha256(
+            canonical_json_bytes(execution_manifest)
+        ).hexdigest(),
+        calibration_evidence=calibration_evidence,
+        expected_calibration_evidence_sha256=hashlib.sha256(
+            canonical_json_bytes(calibration_evidence)
+        ).hexdigest(),
+        attempt_ledger_path=attempt_ledger.path,
+        expected_attempt_ledger_identity_sha256=(attempt_ledger.identity_sha256),
+        attempt_ledger_open_attestation=None,
+        attempt_ledger_terminal_attestation=None,
+        task_issuer_attestation=None,
+    )
+    expected = _authority_expected(
+        policy,
+        task,
+        execution_manifest=execution_manifest,
+        calibration_evidence=calibration_evidence,
+    )
+    task_issuer_attestation = build_role_attestation(
+        policy,
+        role=TASK_ISSUER,
+        payload=build_frontier_task_issuer_payload(task),
+        signed_at_unix=1_800_000_205,
+        private_key=role_keys[TASK_ISSUER],
+    )
+    trust_context = replace(
+        trust_context,
+        task_issuer_attestation=task_issuer_attestation,
+    )
+    pass_0_response = _wrong_response(task)
+    pass_1_response = _correct_response(task, prefix="Rechecked independently.")
+    context_0 = _pass_context(
+        store,
+        generated_at=PASS_0_AT,
+        latent_label="latent-shared",
+        task=task,
+        execution_manifest=execution_manifest,
+    )
+    context_1 = _pass_context(
+        store,
+        generated_at=PASS_1_AT,
+        latent_label="latent-shared",
+        task=task,
+        execution_manifest=execution_manifest,
+    )
+    immutable_context_sha256 = planned_transition_immutable_context_sha256(
+        store,
+        task=task,
+        context=context_0,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=trust_context,
+    )
+    assert immutable_context_sha256 == (
+        planned_transition_immutable_context_sha256(
+            store,
+            task=task,
+            context=context_1,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=trust_context,
+        )
+    )
+    ledger_open_payload = build_attempt_ledger_open_payload(
+        episode_id=context_0["episode_id"],
+        protocol_sha256=PROTOCOL_SHA256,
+        immutable_context_sha256=immutable_context_sha256,
+        attempt_ledger_identity_sha256=attempt_ledger.identity_sha256,
+        opened_at_unix_ns=PASS_0_AT - 6_000_000_000,
+    )
+    ledger_open_attestation = build_role_attestation(
+        policy,
+        role=TASK_ISSUER,
+        payload=ledger_open_payload,
+        signed_at_unix=(ledger_open_payload["opened_at_unix_ns"] // 1_000_000_000),
+        private_key=role_keys[TASK_ISSUER],
+    )
+    trust_context = replace(
+        trust_context,
+        attempt_ledger_open_attestation=ledger_open_attestation,
+    )
+    runner_event_attestations: list[dict[str, Any]] = []
+    previous_event_sha256 = "0" * 64
+
+    def append_event(
+        sequence: int,
+        event_time_unix_ns: int,
+        event_type: str,
+        event_fields: dict[str, Any],
+    ) -> None:
+        nonlocal previous_event_sha256
+        attestation, previous_event_sha256 = _append_attempt_event(
+            ledger=attempt_ledger,
+            policy=policy,
+            role_keys=role_keys,
+            episode_id=context_0["episode_id"],
+            immutable_context_sha256=immutable_context_sha256,
+            sequence=sequence,
+            previous_event_sha256=previous_event_sha256,
+            event_time_unix_ns=event_time_unix_ns,
+            event_type=event_type,
+            event_fields=event_fields,
+        )
+        runner_event_attestations.append(attestation)
+
+    append_event(
+        0,
+        PASS_0_AT - 2_000_000_000,
+        "episode_opened",
+        {"planned_attempt_count": 2, "launch_counter": 0},
+    )
+    append_event(
+        1,
+        PASS_0_AT - 1_000_000_000,
+        "attempt_launched",
+        {
+            "ordinal": 0,
+            "pass_index": 0,
+            "rng_root_sha256": context_0["rng_root_sha256"],
+            "deadline_unix_ns": context_0["deadline_unix_ns"],
+            "launch_counter": 1,
+        },
+    )
+    generation_attestation_0 = _generation_attestation(
+        store=store,
+        pass_index=0,
+        task=task,
+        response=pass_0_response,
+        expected=expected,
+        trust_context=trust_context,
+        context=context_0,
+        policy=policy,
+        role_keys=role_keys,
+        signed_at_unix_ns=TRACE_0_AT,
+    )
+    generation_attestation_0_artifact = store.put_json(generation_attestation_0)
+    (
+        execution_observer_attestation_0,
+        execution_process_observation_artifact_0,
+    ) = _execution_observer_attestation(
+        store=store,
+        generation_attestation=generation_attestation_0,
+        context=context_0,
+        trust_context=trust_context,
+        policy=policy,
+        role_keys=role_keys,
+        observed_at_unix_ns=OBSERVER_0_AT,
+    )
+    execution_observer_attestation_0_artifact = store.put_json(execution_observer_attestation_0)
+    append_event(
+        2,
+        PASS_0_AT + 3_000_000_000,
+        "attempt_finished",
+        {
+            "ordinal": 0,
+            "pass_index": 0,
+            "response_sha256": hashlib.sha256(pass_0_response).hexdigest(),
+            "generation_attestation_sha256": (generation_attestation_0_artifact["payload_sha256"]),
+            "execution_observer_attestation_sha256": (
+                execution_observer_attestation_0_artifact["payload_sha256"]
+            ),
+            "status": "completed",
+            "launch_counter": 1,
+        },
+    )
+    append_event(
+        3,
+        PASS_1_AT - 1_000_000_000,
+        "attempt_launched",
+        {
+            "ordinal": 1,
+            "pass_index": 1,
+            "rng_root_sha256": context_1["rng_root_sha256"],
+            "deadline_unix_ns": context_1["deadline_unix_ns"],
+            "launch_counter": 2,
+        },
+    )
+    generation_attestation_1 = _generation_attestation(
+        store=store,
+        pass_index=1,
+        task=task,
+        response=pass_1_response,
+        expected=expected,
+        trust_context=trust_context,
+        context=context_1,
+        policy=policy,
+        role_keys=role_keys,
+        signed_at_unix_ns=TRACE_1_AT,
+    )
+    generation_attestation_1_artifact = store.put_json(generation_attestation_1)
+    (
+        execution_observer_attestation_1,
+        execution_process_observation_artifact_1,
+    ) = _execution_observer_attestation(
+        store=store,
+        generation_attestation=generation_attestation_1,
+        context=context_1,
+        trust_context=trust_context,
+        policy=policy,
+        role_keys=role_keys,
+        observed_at_unix_ns=OBSERVER_1_AT,
+    )
+    execution_observer_attestation_1_artifact = store.put_json(execution_observer_attestation_1)
+    append_event(
+        4,
+        PASS_1_AT + 3_000_000_000,
+        "attempt_finished",
+        {
+            "ordinal": 1,
+            "pass_index": 1,
+            "response_sha256": hashlib.sha256(pass_1_response).hexdigest(),
+            "generation_attestation_sha256": (generation_attestation_1_artifact["payload_sha256"]),
+            "execution_observer_attestation_sha256": (
+                execution_observer_attestation_1_artifact["payload_sha256"]
+            ),
+            "status": "completed",
+            "launch_counter": 2,
+        },
+    )
+    append_event(
+        5,
+        PASS_1_AT + 4_000_000_000,
+        "episode_terminal",
+        {
+            "attempt_count": 2,
+            "final_pass_index": 1,
+            "terminal_state": "attempts_completed",
+            "launch_counter": 2,
+        },
+    )
+    _ledger_attestations, ledger_content_sha256 = attempt_ledger.snapshot()
+    ledger_terminal_payload = build_attempt_ledger_terminal_payload(
+        episode_id=context_0["episode_id"],
+        protocol_sha256=PROTOCOL_SHA256,
+        immutable_context_sha256=immutable_context_sha256,
+        attempt_ledger_identity_sha256=attempt_ledger.identity_sha256,
+        attempt_ledger_content_sha256=ledger_content_sha256,
+        event_chain_head_sha256=previous_event_sha256,
+        terminal_at_unix_ns=LEDGER_TERMINAL_AT,
+    )
+    ledger_terminal_attestation = build_role_attestation(
+        policy,
+        role=EVIDENCE_VERIFIER,
+        payload=ledger_terminal_payload,
+        signed_at_unix=LEDGER_TERMINAL_AT // 1_000_000_000,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+    trust_context = replace(
+        trust_context,
+        attempt_ledger_terminal_attestation=(ledger_terminal_attestation),
+    )
+    authority_0, _response_0 = _issue_authority(
+        store=store,
+        task=task,
+        response=pass_0_response,
+        expected=expected,
+        trust_context=trust_context,
+        policy=policy,
+        role_keys=role_keys,
+        task_issuer_attestation=task_issuer_attestation,
+        issued_at=VERIFIER_AT,
+    )
+    authority_1, _response_1 = _issue_authority(
+        store=store,
+        task=task,
+        response=pass_1_response,
+        expected=expected,
+        trust_context=trust_context,
+        policy=policy,
+        role_keys=role_keys,
+        task_issuer_attestation=task_issuer_attestation,
+        issued_at=VERIFIER_AT,
+    )
+    model_input = canonical_candidate_model_input(task)
+    pass_0 = build_reasoning_pass_receipt(
+        store,
+        pass_index=0,
+        task=task,
+        model_input_bytes=model_input,
+        response_bytes=pass_0_response,
+        input_token_ids=_byte_encode(model_input),
+        output_token_ids=_byte_encode(pass_0_response),
+        emitted_token_pieces=[bytes([value]) for value in pass_0_response],
+        behavior_policy_logprobs=["-1"] * len(pass_0_response),
+        verifier_authority=authority_0,
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=trust_context,
+        context=context_0,
+        generation_worker_attestation=generation_attestation_0,
+        execution_process_observation_artifact=(execution_process_observation_artifact_0),
+        execution_observer_attestation=(execution_observer_attestation_0),
+        trace_signed_at_unix_ns=TRACE_0_AT,
+    )
+    pass_1 = build_reasoning_pass_receipt(
+        store,
+        pass_index=1,
+        task=task,
+        model_input_bytes=model_input,
+        response_bytes=pass_1_response,
+        input_token_ids=_byte_encode(model_input),
+        output_token_ids=_byte_encode(pass_1_response),
+        emitted_token_pieces=[bytes([value]) for value in pass_1_response],
+        behavior_policy_logprobs=["-1"] * len(pass_1_response),
+        verifier_authority=authority_1,
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=trust_context,
+        context=context_1,
+        generation_worker_attestation=generation_attestation_1,
+        execution_process_observation_artifact=(execution_process_observation_artifact_1),
+        execution_observer_attestation=(execution_observer_attestation_1),
+        trace_signed_at_unix_ns=TRACE_1_AT,
+    )
+    journal = build_transition_attempt_journal(
+        pass_0=pass_0,
+        pass_1=pass_1,
+        protocol_sha256=PROTOCOL_SHA256,
+        trust_context=trust_context,
+    )
+    runner_signed_at_unix_ns = RUNNER_AT * 1_000_000_000
+    runner_attestation = build_role_attestation(
+        policy,
+        role=CAMPAIGN_RUNNER,
+        payload=build_campaign_runner_journal_payload(
+            journal,
+            signed_at_unix_ns=runner_signed_at_unix_ns,
+        ),
+        signed_at_unix=RUNNER_AT,
+        private_key=role_keys[CAMPAIGN_RUNNER],
+    )
+    verifier_journal_payload = build_evidence_verifier_journal_payload(
+        journal,
+        runner_attestation,
+        signed_at_unix_ns=EVIDENCE_AT * 1_000_000_000,
+    )
+    evidence_verifier_journal_attestation = build_role_attestation(
+        policy,
+        role=EVIDENCE_VERIFIER,
+        payload=verifier_journal_payload,
+        signed_at_unix=EVIDENCE_AT,
+        private_key=role_keys[EVIDENCE_VERIFIER],
+    )
+    episode = build_verified_transition_episode(
+        store,
+        pass_0=pass_0,
+        pass_1=pass_1,
+        task=task,
+        expected_authority=expected,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=trust_context,
+        attempt_journal=journal,
+        campaign_runner_attestation=runner_attestation,
+        evidence_verifier_journal_attestation=(evidence_verifier_journal_attestation),
+        created_at_unix_ns=EVIDENCE_AT * 1_000_000_000,
+        sealed_at_unix_ns=EVIDENCE_AT * 1_000_000_000 + 100,
+    )
+    return {
+        "store": store,
+        "task": task,
+        "policy": policy,
+        "policy_document": policy_document,
+        "root": root,
+        "role_keys": role_keys,
+        "trust_context": trust_context,
+        "execution_manifest": execution_manifest,
+        "component_roots": component_roots,
+        "attempt_ledger": attempt_ledger,
+        "calibration_evidence": calibration_evidence,
+        "expected": expected,
+        "pass_0": pass_0,
+        "pass_1": pass_1,
+        "journal": journal,
+        "runner_event_attestations": runner_event_attestations,
+        "execution_observer_attestation_0": (execution_observer_attestation_0),
+        "execution_observer_attestation_1": (execution_observer_attestation_1),
+        "execution_process_observation_artifact_0": (execution_process_observation_artifact_0),
+        "execution_process_observation_artifact_1": (execution_process_observation_artifact_1),
+        "runner_attestation": runner_attestation,
+        "evidence_verifier_journal_attestation": (evidence_verifier_journal_attestation),
+        "episode": episode,
+    }
+
+
+def test_complete_episode_reconstructs_from_bytes_and_dual_signed_authorities(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    validated = validate_verified_transition_episode(
+        case["store"],
+        case["episode"],
+        task=case["task"],
+        expected_authority=case["expected"],
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        trust_context=case["trust_context"],
+    )
+    assert validated == case["episode"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (b'{"x":1,"x":2}', "document_duplicate_key"),
+        (b'{"x":1} ', "document_noncanonical"),
+        (b'{"x":1.5}', "document_floating_point_forbidden"),
+        (b'{"x":NaN}', "document_non_finite_number"),
+        (b'{"x":9223372036854775808}', "document_integer_out_of_bounds"),
+        ('{"x":"caf\u00e9"}'.encode(), "document_not_ascii"),
+    ],
+)
+def test_strict_parser_rejects_ambiguous_or_noncanonical_json(
+    payload: bytes,
+    code: str,
+) -> None:
+    with pytest.raises(VerifiedTransitionError, match=code):
+        strict_canonical_json_loads(payload)
+
+
+def test_strict_parser_rejects_excessive_depth_and_nodes() -> None:
+    too_deep: Any = 0
+    for _ in range(20):
+        too_deep = [too_deep]
+    with pytest.raises(VerifiedTransitionError, match="json_depth_limit_exceeded"):
+        canonical_json_bytes(too_deep)
+    with pytest.raises(VerifiedTransitionError, match="json_node_limit_exceeded"):
+        canonical_json_bytes([0] * 17_000)
+
+
+def test_store_rejects_symlink_and_hardlink_artifacts(tmp_path: Path) -> None:
+    target = tmp_path / "real"
+    target.mkdir(mode=0o700)
+    link = tmp_path / "linked"
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_store_symlink_path_rejected",
+    ):
+        TransitionArtifactStore(link)
+
+    store = TransitionArtifactStore(tmp_path / "store")
+    binding = store.put_bytes(b"payload", media_type="application/octet-stream")
+    blob = store.blob_root / binding["payload_sha256"]
+    os.link(blob, tmp_path / "alias")
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_file_identity_invalid",
+    ):
+        store.read_bytes(binding)
+
+
+def test_store_rejects_preexisting_nonprivate_directory(tmp_path: Path) -> None:
+    root = tmp_path / "nonprivate"
+    root.mkdir(mode=0o755)
+    root.chmod(0o755)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_store_directory_not_private",
+    ):
+        TransitionArtifactStore(root)
+
+
+def test_store_rejects_root_directory_replacement(tmp_path: Path) -> None:
+    store = TransitionArtifactStore(tmp_path / "store")
+    binding = store.put_bytes(b"payload", media_type="application/octet-stream")
+    displaced = tmp_path / "displaced-store"
+    store.root.rename(displaced)
+    store.root.mkdir(mode=0o700)
+    (store.root / "blobs").mkdir(mode=0o700)
+
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_store_directory_replaced",
+    ):
+        store.read_bytes(binding)
+
+
+def test_store_rejects_digest_length_and_symlink_rebinding(tmp_path: Path) -> None:
+    store = TransitionArtifactStore(tmp_path / "store")
+    binding = store.put_bytes(b"payload", media_type="application/octet-stream")
+    bad_length = {**binding, "byte_length": binding["byte_length"] + 1}
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_file_identity_invalid",
+    ):
+        store.read_bytes(bad_length)
+
+    blob = store.blob_root / binding["payload_sha256"]
+    blob.unlink()
+    blob.symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(VerifiedTransitionError, match="artifact_unreadable"):
+        store.read_bytes(binding)
+
+
+def test_store_detects_post_read_path_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = TransitionArtifactStore(tmp_path / "store")
+    binding = store.put_bytes(b"payload", media_type="application/octet-stream")
+    blob = store.blob_root / binding["payload_sha256"]
+    original_stat = os.stat
+    replaced = False
+
+    def replacing_stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        nonlocal replaced
+        if (
+            path == binding["payload_sha256"]
+            and kwargs.get("dir_fd") == store._blob_root_fd
+            and not replaced
+        ):
+            replaced = True
+            replacement = store.blob_root / "replacement"
+            replacement.write_bytes(b"payload")
+            replacement.chmod(0o600)
+            os.replace(replacement, blob)
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(transition_runtime.os, "stat", replacing_stat)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="artifact_replaced_during_read",
+    ):
+        store.read_bytes(binding)
+
+
+def test_authority_rejects_wrong_external_root_and_witness_signature(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    wrong_context = TransitionTrustContext(
+        policy_document=case["policy_document"],
+        trusted_root_public_key_pem=_public_pem(Ed25519PrivateKey.generate()),
+        expected_campaign_name="spark-060-transition-proof",
+        expected_protocol_sha256=PROTOCOL_SHA256,
+        expected_policy_sha256=case["policy"].policy_sha256,
+        observed_at_unix=OBSERVED_AT,
+        execution_manifest=case["execution_manifest"],
+        execution_component_roots=case["component_roots"],
+        expected_execution_manifest_sha256=case["trust_context"].expected_execution_manifest_sha256,
+        calibration_evidence=case["calibration_evidence"],
+        expected_calibration_evidence_sha256=case[
+            "trust_context"
+        ].expected_calibration_evidence_sha256,
+        attempt_ledger_path=case["trust_context"].attempt_ledger_path,
+        expected_attempt_ledger_identity_sha256=case[
+            "trust_context"
+        ].expected_attempt_ledger_identity_sha256,
+        attempt_ledger_open_attestation=case["trust_context"].attempt_ledger_open_attestation,
+        attempt_ledger_terminal_attestation=case[
+            "trust_context"
+        ].attempt_ledger_terminal_attestation,
+        task_issuer_attestation=case["trust_context"].task_issuer_attestation,
+    )
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+    with pytest.raises(ValueError, match="campaign_trust_root_key_mismatch"):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=wrong_context,
+        )
+
+    witness = case["store"].read_json(
+        authority["independent_witness_artifact"],
+        role="witness",
+    )
+    attacked = copy.deepcopy(witness)
+    attacked["evidence_verifier_attestation"]["signature_b64"] = base64.b64encode(
+        b"x" * 64
+    ).decode()
+    attacked = _reseal(attacked)
+    authority["independent_witness_artifact"] = case["store"].put_json(attacked)
+    authority = _reseal(authority)
+    with pytest.raises(ValueError, match="campaign_attestation_signature_invalid"):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+    issuer = case["store"].read_json(
+        authority["task_issuer_attestation_artifact"],
+        role="issuer",
+    )
+    issuer["signature_b64"] = base64.b64encode(b"x" * 64).decode()
+    authority["task_issuer_attestation_artifact"] = case["store"].put_json(issuer)
+    authority = _reseal(authority)
+    with pytest.raises(ValueError, match="campaign_attestation_signature_invalid"):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_authority_rejects_independent_scorer_disagreement(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+
+    def disagree(_task: Any, _response: Any) -> dict[str, Any]:
+        return {
+            "parsed": False,
+            "correct": False,
+            "reason": "forced_disagreement",
+            "normalized_answer_sha256": None,
+        }
+
+    with pytest.raises(
+        VerifiedTransitionError,
+        match=(
+            "transition_verifier_identity_not_policy_pinned"
+            "|verifier_authority_source_closure_mismatch"
+        ),
+    ):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=disagree,
+            trust_context=case["trust_context"],
+        )
+
+
+@pytest.mark.parametrize("surface", ["parser", "scorer_registry"])
+def test_authority_detects_loaded_runtime_substitution(
+    complete_episode: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    case = complete_episode
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+    if surface == "parser":
+        monkeypatch.setattr(
+            frontier_tasks_runtime,
+            "parse_final_answer",
+            lambda _response: {"count": 0, "witness": []},
+        )
+    else:
+        original = dict(frontier_tasks_runtime._SCORERS)
+        original["score_mathematics"] = lambda _answer, _expected: True
+        monkeypatch.setattr(
+            frontier_tasks_runtime,
+            "_SCORERS",
+            MappingProxyType(original),
+        )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match=(
+            "transition_verifier_identity_not_policy_pinned"
+            "|verifier_authority_source_closure_mismatch"
+        ),
+    ):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_authority_rejects_task_answer_and_outcome_rebinding(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+    other_task = generate_task("mathematics", seed=817_232, difficulty=2)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match=("(task_issuer_commitment|verifier_authority_task_identity)_mismatch"),
+    ):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=other_task,
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="frontier_task_exact_type_required",
+    ):
+        build_frontier_task_issuer_payload(object())
+
+    forged = copy.deepcopy(authority)
+    forged["outcome"] = "pass"
+    forged["verifier_output"]["correct"] = True
+    forged = _reseal(forged)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="verifier_authority_output_mismatch",
+    ):
+        validate_frontier_verifier_authority(
+            case["store"],
+            forged,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "task_id",
+        "policy_sha256",
+        "rng_root_sha256",
+        "execution_spec_artifact",
+        "latent_path_artifact",
+        "tool_snapshot_artifact",
+        "generation_budget",
+    ],
+)
+def test_episode_rejects_immutable_context_drift(
+    complete_episode: dict[str, Any],
+    field: str,
+) -> None:
+    case = complete_episode
+    attacked = copy.deepcopy(case["pass_1"])
+    if field.endswith("_artifact"):
+        attacked[field] = _artifact(case["store"], f"attacked-{field}")
+    elif field == "generation_budget":
+        attacked[field]["max_compute_units"] += 1
+    elif field == "task_id":
+        attacked[field] = "attacked-task"
+    else:
+        attacked[field] = _sha(f"attacked-{field}")
+    attacked = _reseal(attacked)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="(drift|mismatch|isolation_failed|schema_invalid)",
+    ):
+        build_verified_transition_episode(
+            case["store"],
+            pass_0=case["pass_0"],
+            pass_1=attacked,
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+            attempt_journal=case["journal"],
+            campaign_runner_attestation=case["runner_attestation"],
+            evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+            created_at_unix_ns=EVIDENCE_AT * 1_000_000_000,
+            sealed_at_unix_ns=EVIDENCE_AT * 1_000_000_000 + 100,
+        )
+
+
+def test_pass_rejects_token_text_logprob_and_outcome_forgery(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    for mutation in ("token", "logprob", "outcome"):
+        attacked = copy.deepcopy(case["pass_0"])
+        if mutation == "token":
+            attacked["output_token_ids"][0] += 1
+        elif mutation == "logprob":
+            attacked["behavior_policy_logprobs"].pop()
+        else:
+            attacked["final_success"] = True
+        attacked = _reseal(attacked)
+        expected = {
+            "token": "response_token_mismatch",
+            "logprob": "behavior_policy_logprobs_invalid",
+            "outcome": "reasoning_pass_schema_invalid",
+        }[mutation]
+        with pytest.raises(VerifiedTransitionError, match=expected):
+            validate_reasoning_pass_receipt(
+                case["store"],
+                attacked,
+                task=case["task"],
+                expected_authority=case["expected"],
+                independent_scorer=score_frontier_response_independently,
+                token_encoder=_byte_encode,
+                token_decoder=_byte_decode,
+                trust_context=case["trust_context"],
+            )
+
+
+def test_episode_rejects_swapped_duplicate_or_reused_passes(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    for first, second, code in (
+        (case["pass_1"], case["pass_0"], "transition_pass_order_invalid"),
+        (case["pass_0"], case["pass_0"], "transition_pass_order_invalid"),
+    ):
+        with pytest.raises(VerifiedTransitionError, match=code):
+            build_verified_transition_episode(
+                case["store"],
+                pass_0=first,
+                pass_1=second,
+                task=case["task"],
+                expected_authority=case["expected"],
+                independent_scorer=score_frontier_response_independently,
+                token_encoder=_byte_encode,
+                token_decoder=_byte_decode,
+                trust_context=case["trust_context"],
+                attempt_journal=case["journal"],
+                campaign_runner_attestation=case["runner_attestation"],
+                evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+            )
+
+    reused = copy.deepcopy(case["pass_1"])
+    reused["response_artifact"] = case["pass_0"]["response_artifact"]
+    reused["output_token_ids"] = case["pass_0"]["output_token_ids"]
+    reused["input_token_ids"] = case["pass_0"]["input_token_ids"]
+    reused["behavior_policy_logprobs"] = case["pass_0"]["behavior_policy_logprobs"]
+    reused["emitted_token_pieces_artifact"] = case["pass_0"]["emitted_token_pieces_artifact"]
+    reused["verifier_authority_artifact"] = case["pass_0"]["verifier_authority_artifact"]
+    reused["generated_at_unix_ns"] = case["pass_0"]["generated_at_unix_ns"]
+    reused["sealed_at_unix_ns"] = case["pass_0"]["sealed_at_unix_ns"]
+    reused = _reseal(reused)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match=(
+            "transition_response_reused|process_receipt_generation_time_mismatch|generation_trace"
+        ),
+    ):
+        build_verified_transition_episode(
+            case["store"],
+            pass_0=case["pass_0"],
+            pass_1=reused,
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+            attempt_journal=case["journal"],
+            campaign_runner_attestation=case["runner_attestation"],
+            evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+        )
+
+
+def test_episode_rejects_hidden_third_attempt_and_unrelated_runner_signature(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    attacked = copy.deepcopy(case["journal"])
+    attacked["attempt_count"] = 3
+    attacked["attempts"].append(
+        {
+            "ordinal": 2,
+            "pass_index": 1,
+            "pass_receipt_sha256": _sha("hidden-pass"),
+            "response_sha256": _sha("hidden-response"),
+        }
+    )
+    attacked = _reseal(attacked)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="transition_attempt_journal_mismatch",
+    ):
+        build_verified_transition_episode(
+            case["store"],
+            pass_0=case["pass_0"],
+            pass_1=case["pass_1"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+            attempt_journal=attacked,
+            campaign_runner_attestation=case["runner_attestation"],
+            evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+        )
+
+
+def _pass_trace_arguments(case: dict[str, Any]) -> dict[str, Any]:
+    receipt = case["pass_0"]
+    store = case["store"]
+    response = store.read_bytes(
+        receipt["response_artifact"],
+        expected_media_type="text/plain;charset=utf-8",
+    )
+    model_input = store.read_bytes(
+        receipt["model_input_artifact"],
+        expected_media_type="application/octet-stream",
+    )
+    return {
+        "store": store,
+        "pass_index": 0,
+        "task": case["task"],
+        "model_input_bytes": model_input,
+        "response_bytes": response,
+        "input_token_ids": receipt["input_token_ids"],
+        "output_token_ids": receipt["output_token_ids"],
+        "emitted_token_pieces": [bytes([value]) for value in response],
+        "behavior_policy_logprobs": receipt["behavior_policy_logprobs"],
+        "expected_authority": case["expected"],
+        "independent_scorer": score_frontier_response_independently,
+        "token_encoder": _byte_encode,
+        "token_decoder": _byte_decode,
+        "trust_context": case["trust_context"],
+        "context": {field: receipt[field] for field in transition_runtime._PASS_CONTEXT_KEYS},
+        "trace_signed_at_unix_ns": TRACE_0_AT,
+    }
+
+
+def test_candidate_input_and_side_channels_reject_answer_injection(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    arguments = _pass_trace_arguments(case)
+    expected = json.dumps(
+        case["task"].reveal_for_verifier()["expected"],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="candidate_model_input_not_canonical",
+    ):
+        build_generation_trace_payload(
+            **{
+                **arguments,
+                "model_input_bytes": arguments["model_input_bytes"] + b"\nEXPECTED=" + expected,
+            }
+        )
+
+    for field in (
+        "execution_spec_artifact",
+        "latent_path_artifact",
+        "tool_snapshot_artifact",
+        "evidence_snapshot_artifact",
+        "world_state_snapshot_artifact",
+    ):
+        attacked = dict(arguments)
+        attacked["context"] = copy.deepcopy(arguments["context"])
+        attacked["context"][field] = case["store"].put_json(
+            {
+                "schema": "aura.attack.answer_injection.v1",
+                "candidate_visible": True,
+                "expected": expected.decode(),
+            }
+        )
+        with pytest.raises(
+            VerifiedTransitionError,
+            match="(schema_invalid|candidate_isolation_failed)",
+        ):
+            build_generation_trace_payload(**attacked)
+
+
+def test_execution_and_calibration_out_of_band_pins_reject_rebinding(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    tampered_manifest = copy.deepcopy(case["execution_manifest"])
+    tampered_manifest["manifest_id"] = "attacker-manifest"
+    tampered_manifest = _reseal(tampered_manifest)
+    wrong_manifest_context = replace(
+        case["trust_context"],
+        execution_manifest=tampered_manifest,
+    )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="transition_execution_manifest_pin_mismatch",
+    ):
+        build_generation_trace_payload(
+            **{
+                **_pass_trace_arguments(case),
+                "trust_context": wrong_manifest_context,
+            }
+        )
+
+    tampered_calibration = copy.deepcopy(case["calibration_evidence"])
+    tampered_calibration["agreement_count"] -= 1
+    tampered_calibration = _reseal(tampered_calibration)
+    wrong_calibration_context = replace(
+        case["trust_context"],
+        calibration_evidence=tampered_calibration,
+    )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="transition_calibration_evidence_pin_mismatch",
+    ):
+        build_generation_trace_payload(
+            **{
+                **_pass_trace_arguments(case),
+                "trust_context": wrong_calibration_context,
+            }
+        )
+
+
+def test_tokenizer_pin_positive_logprobs_and_generation_signature_are_enforced(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    arguments = _pass_trace_arguments(case)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="behavior_policy_logprob_positive",
+    ):
+        build_generation_trace_payload(
+            **{
+                **arguments,
+                "behavior_policy_logprobs": ["1"] * len(arguments["output_token_ids"]),
+            }
+        )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match=("execution_manifest_token_encoder_mismatch|token_encoder_callable_mismatch"),
+    ):
+        validate_reasoning_pass_receipt(
+            case["store"],
+            case["pass_0"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_offset_byte_encode,
+            token_decoder=_offset_byte_decode,
+            trust_context=case["trust_context"],
+        )
+
+    attacked = copy.deepcopy(case["pass_0"])
+    generation_attestation = case["store"].read_json(
+        attacked["generation_worker_attestation_artifact"],
+        role="generation_worker_attestation",
+    )
+    generation_attestation["signature_b64"] = base64.b64encode(b"\x00" * 64).decode()
+    attacked["generation_worker_attestation_artifact"] = case["store"].put_json(
+        generation_attestation
+    )
+    attacked = _reseal(attacked)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="campaign_attestation_signature_invalid",
+    ):
+        validate_reasoning_pass_receipt(
+            case["store"],
+            attacked,
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_scalar_scorer_global_substitution_changes_policy_identity(
+    complete_episode: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = complete_episode
+    authority = case["store"].read_json(
+        case["pass_0"]["verifier_authority_artifact"],
+        role="authority",
+    )
+    monkeypatch.setattr(
+        frontier_tasks_runtime,
+        "FINAL_ANSWER_MARKER",
+        "ATTACKED FINAL ANSWER:",
+    )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="transition_verifier_identity_not_policy_pinned",
+    ):
+        validate_frontier_verifier_authority(
+            case["store"],
+            authority,
+            task=case["task"],
+            response_artifact=case["pass_0"]["response_artifact"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_module_attribute_substitution_changes_verifier_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = verifier_implementation_identity(score_frontier_response_independently)
+    original_loads = json.loads
+
+    def attacked_loads(*args: Any, **kwargs: Any) -> Any:
+        return original_loads(*args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", attacked_loads)
+    assert verifier_implementation_identity(score_frontier_response_independently) != before
+
+
+def test_transitive_module_attribute_substitution_changes_verifier_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = verifier_implementation_identity(score_frontier_response_independently)
+    original_decoder = json.JSONDecoder
+
+    class AttackedDecoder(original_decoder):
+        pass
+
+    monkeypatch.setattr(json, "JSONDecoder", AttackedDecoder)
+    assert verifier_implementation_identity(score_frontier_response_independently) != before
+
+
+def test_transitive_class_method_substitution_changes_verifier_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = verifier_implementation_identity(score_frontier_response_independently)
+    original_decode = json.JSONDecoder.decode
+
+    def attacked_decode(self: Any, payload: str, *args: Any, **kwargs: Any) -> Any:
+        return original_decode(self, payload, *args, **kwargs)
+
+    monkeypatch.setattr(json.JSONDecoder, "decode", attacked_decode)
+    assert verifier_implementation_identity(score_frontier_response_independently) != before
+
+
+def test_execution_manifest_replays_actual_component_files(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    component_file = case["component_roots"]["runtime"] / "fixture.bin"
+    original = component_file.read_bytes()
+    try:
+        component_file.write_bytes(b"substituted-runtime")
+        with pytest.raises(
+            VerifiedTransitionError,
+            match="execution_manifest_component_content_mismatch",
+        ):
+            validate_reasoning_pass_receipt(
+                case["store"],
+                case["pass_0"],
+                task=case["task"],
+                expected_authority=case["expected"],
+                independent_scorer=score_frontier_response_independently,
+                token_encoder=_byte_encode,
+                token_decoder=_byte_decode,
+                trust_context=case["trust_context"],
+            )
+    finally:
+        component_file.write_bytes(original)
+
+
+def test_calibration_replays_immutable_cases(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    attacked = copy.deepcopy(case["calibration_evidence"])
+    attacked["cases"][0]["response_b64"] = base64.b64encode(b"not a scored answer").decode("ascii")
+    attacked = _reseal(attacked)
+    attacked_context = replace(
+        case["trust_context"],
+        calibration_evidence=attacked,
+        expected_calibration_evidence_sha256=hashlib.sha256(
+            canonical_json_bytes(attacked)
+        ).hexdigest(),
+    )
+    attacked_expected = {
+        **case["expected"],
+        "calibration_evidence_sha256": (attacked_context.expected_calibration_evidence_sha256),
+    }
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="calibration_control_response_mismatch",
+    ):
+        validate_reasoning_pass_receipt(
+            case["store"],
+            case["pass_0"],
+            task=case["task"],
+            expected_authority=attacked_expected,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=attacked_context,
+        )
+
+
+def test_calibration_requires_positive_and_negative_control_coverage() -> None:
+    tasks = [
+        generate_task("mathematics", seed=817_102, difficulty=2),
+        generate_task("mathematics", seed=817_103, difficulty=2),
+    ]
+    cases = [
+        build_calibration_case(
+            task=task,
+            case_kind="canonical_positive",
+            independent_scorer=score_frontier_response_independently,
+        )
+        for task in tasks
+    ]
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="calibration_control_coverage_incomplete",
+    ):
+        build_calibration_payload(
+            verifier_implementation_sha256=verifier_implementation_identity(
+                score_frontier_response_independently
+            ),
+            trust_policy_sha256=_sha("calibration-trust-policy"),
+            cases=cases,
+            independent_scorer=score_frontier_response_independently,
+            acceptance_policy_sha256=_sha("calibration-acceptance-policy"),
+            calibrated_at_unix_ns=1_800_000_204_000_000_000,
+        )
+
+
+def test_calibration_includes_parsed_but_wrong_semantic_control(
+    complete_episode: dict[str, Any],
+) -> None:
+    cases = {case["case_kind"]: case for case in complete_episode["calibration_evidence"]["cases"]}
+    negative = cases["parsed_wrong_negative"]
+    assert negative["primary_output"]["parsed"] is True
+    assert negative["primary_output"]["correct"] is False
+    assert negative["independent_output"]["parsed"] is True
+    assert negative["independent_output"]["correct"] is False
+
+
+def test_execution_observer_signature_is_independently_enforced(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    attacked = copy.deepcopy(case["pass_0"])
+    observer = case["store"].read_json(
+        attacked["execution_observer_attestation_artifact"],
+        role="execution_observer_attestation",
+    )
+    observer["signature_b64"] = base64.b64encode(b"\x00" * 64).decode()
+    attacked["execution_observer_attestation_artifact"] = case["store"].put_json(observer)
+    attacked = _reseal(attacked)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="campaign_attestation_signature_invalid",
+    ):
+        validate_reasoning_pass_receipt(
+            case["store"],
+            attacked,
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_execution_process_observation_is_host_collected_and_tamper_evident(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    binding = case["execution_process_observation_artifact_0"]
+    observation = case["store"].read_json(
+        binding,
+        role="execution_process_observation",
+    )
+    assert observation["observation_source"] == "host"
+    assert observation["observer_backend"] == "HostResourceObserver"
+    assert observation["pid"] == os.getpid()
+    assert observation["observed_component_roots"] == case["execution_manifest"]["component_roots"]
+    assert observation["open_file_identity_count"] >= 8
+    assert len(observation["observed_component_descriptor_identities_sha256"]) == 64
+
+    attacked_observation = copy.deepcopy(observation)
+    attacked_observation["observation_source"] = "simulated"
+    attacked = copy.deepcopy(case["pass_0"])
+    attacked["execution_process_observation_artifact"] = case["store"].put_json(
+        attacked_observation
+    )
+    attacked = _reseal(attacked)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="execution_process_observation_mismatch",
+    ):
+        validate_reasoning_pass_receipt(
+            case["store"],
+            attacked,
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+        )
+
+
+def test_execution_process_observation_rejects_replaced_open_component_inode(
+    complete_episode: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    case = complete_episode
+    component_roots = _component_roots(tmp_path / "replaced-components")
+    handles = [(root / "fixture.bin").open("rb") for root in component_roots.values()]
+    try:
+        runtime_path = component_roots["runtime"] / "fixture.bin"
+        replacement = runtime_path.with_name("replacement.bin")
+        replacement.write_bytes(b"replacement-runtime-component")
+        os.replace(replacement, runtime_path)
+
+        attacked_manifest = build_execution_manifest(
+            manifest_id="execution-manifest-replaced-runtime",
+            component_roots=component_roots,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            independent_scorer=score_frontier_response_independently,
+            created_at_unix_ns=PASS_0_AT - 50,
+        )
+        attacked_context = _pass_context(
+            case["store"],
+            generated_at=PASS_0_AT,
+            latent_label="latent-replaced-runtime",
+            task=case["task"],
+            execution_manifest=attacked_manifest,
+        )
+        with pytest.raises(
+            VerifiedTransitionError,
+            match="execution_observer_component_descriptor_identity_mismatch",
+        ):
+            capture_execution_process_observation(
+                case["store"],
+                context=attacked_context,
+                execution_component_roots=component_roots,
+            )
+    finally:
+        for handle in handles:
+            handle.close()
+
+
+def test_process_receipt_component_substitution_is_rejected(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    arguments = _pass_trace_arguments(case)
+    context = copy.deepcopy(arguments["context"])
+    process = case["store"].read_json(
+        context["process_receipt_artifact"],
+        role="process_receipt",
+    )
+    process["loaded_component_roots"]["runtime"] = _sha("substituted-runtime-root")
+    context["process_receipt_artifact"] = case["store"].put_json(process)
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="process_loaded_component_roots_invalid",
+    ):
+        build_generation_trace_payload(
+            **{
+                **arguments,
+                "context": context,
+            }
+        )
+
+
+def test_attempt_ledger_rejects_omitted_reordered_and_extra_events(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    for events in (
+        case["runner_event_attestations"][:-1],
+        list(reversed(case["runner_event_attestations"])),
+        [
+            *case["runner_event_attestations"],
+            case["runner_event_attestations"][-1],
+        ],
+    ):
+        attacked = copy.deepcopy(case["journal"])
+        attacked["runner_event_attestations"] = events
+        attacked = _reseal(attacked)
+        with pytest.raises(
+            VerifiedTransitionError,
+            match="transition_attempt_journal_mismatch",
+        ):
+            build_verified_transition_episode(
+                case["store"],
+                pass_0=case["pass_0"],
+                pass_1=case["pass_1"],
+                task=case["task"],
+                expected_authority=case["expected"],
+                independent_scorer=score_frontier_response_independently,
+                token_encoder=_byte_encode,
+                token_decoder=_byte_decode,
+                trust_context=case["trust_context"],
+                attempt_journal=attacked,
+                campaign_runner_attestation=case["runner_attestation"],
+                evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+            )
+
+
+def test_attempt_ledger_pin_and_terminal_are_enforced(
+    complete_episode: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    case = complete_episode
+    alternate = ExternalAttemptLedger(
+        tmp_path / "alternate-ledger" / "events.jsonl",
+        create=True,
+    )
+    try:
+        wrong_context = replace(
+            case["trust_context"],
+            attempt_ledger_path=alternate.path,
+        )
+        with pytest.raises(
+            VerifiedTransitionError,
+            match="attempt_ledger_identity_pin_mismatch",
+        ):
+            build_transition_attempt_journal(
+                pass_0=case["pass_0"],
+                pass_1=case["pass_1"],
+                protocol_sha256=PROTOCOL_SHA256,
+                trust_context=wrong_context,
+            )
+    finally:
+        _clear_append_only_for_test(alternate.path)
+
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="attempt_ledger_already_terminal",
+    ):
+        case["attempt_ledger"].append(
+            policy=case["policy"],
+            attestation=case["runner_event_attestations"][-1],
+        )
+
+
+def test_attempt_ledger_same_inode_rewrite_is_rejected(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    path = case["attempt_ledger"].path
+    original = path.read_bytes()
+    original_stat = os.stat(path, follow_symlinks=False)
+    original_flags = getattr(original_stat, "st_flags", 0)
+    try:
+        if hasattr(os, "chflags"):
+            os.chflags(path, 0, follow_symlinks=False)
+        path.write_bytes(original.rsplit(b"\n", 2)[0] + b"\n")
+        if hasattr(os, "chflags"):
+            os.chflags(path, original_flags, follow_symlinks=False)
+        assert os.stat(path, follow_symlinks=False).st_ino == original_stat.st_ino
+        with pytest.raises(VerifiedTransitionError):
+            build_transition_attempt_journal(
+                pass_0=case["pass_0"],
+                pass_1=case["pass_1"],
+                protocol_sha256=PROTOCOL_SHA256,
+                trust_context=case["trust_context"],
+            )
+    finally:
+        if hasattr(os, "chflags"):
+            os.chflags(path, 0, follow_symlinks=False)
+        path.write_bytes(original)
+        if hasattr(os, "chflags"):
+            os.chflags(path, original_flags, follow_symlinks=False)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "attempt_ledger_open_attestation",
+        "attempt_ledger_terminal_attestation",
+    ],
+)
+def test_attempt_ledger_external_checkpoint_signatures_are_enforced(
+    complete_episode: dict[str, Any],
+    field: str,
+) -> None:
+    case = complete_episode
+    attacked = copy.deepcopy(getattr(case["trust_context"], field))
+    attacked["signature_b64"] = base64.b64encode(b"\x00" * 64).decode()
+    attacked_context = replace(case["trust_context"], **{field: attacked})
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="campaign_attestation_signature_invalid",
+    ):
+        build_transition_attempt_journal(
+            pass_0=case["pass_0"],
+            pass_1=case["pass_1"],
+            protocol_sha256=PROTOCOL_SHA256,
+            trust_context=attacked_context,
+        )
+
+
+def test_attempt_ledger_must_open_before_task_disclosure(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    issuer_at = case["trust_context"].task_issuer_attestation["signed_payload"][
+        "signed_at_unix"
+    ]
+    original_payload = case["trust_context"].attempt_ledger_open_attestation["signed_payload"][
+        "payload"
+    ]
+    attacked_payload = {
+        **original_payload,
+        "opened_at_unix_ns": (issuer_at + 1) * 1_000_000_000,
+    }
+    attacked_open = build_role_attestation(
+        case["policy"],
+        role=TASK_ISSUER,
+        payload=attacked_payload,
+        signed_at_unix=issuer_at + 1,
+        private_key=case["role_keys"][TASK_ISSUER],
+    )
+    attacked_context = replace(
+        case["trust_context"],
+        attempt_ledger_open_attestation=attacked_open,
+    )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="attempt_ledger_not_open_before_task_disclosure",
+    ):
+        build_generation_trace_payload(
+            **{
+                **_pass_trace_arguments(case),
+                "trust_context": attacked_context,
+            }
+        )
+
+
+def test_nanosecond_chronology_rejects_preseal_runner_attestation(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    premature_at = VERIFIER_AT
+    premature = build_role_attestation(
+        case["policy"],
+        role=CAMPAIGN_RUNNER,
+        payload=build_campaign_runner_journal_payload(
+            case["journal"],
+            signed_at_unix_ns=premature_at,
+        ),
+        signed_at_unix=premature_at // 1_000_000_000,
+        private_key=case["role_keys"][CAMPAIGN_RUNNER],
+    )
+    with pytest.raises(
+        VerifiedTransitionError,
+        match="runner_journal_signed_before_pass_seal",
+    ):
+        build_verified_transition_episode(
+            case["store"],
+            pass_0=case["pass_0"],
+            pass_1=case["pass_1"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+            attempt_journal=case["journal"],
+            campaign_runner_attestation=premature,
+            evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+        )
+
+    wrong_attestation = build_role_attestation(
+        case["policy"],
+        role=CAMPAIGN_RUNNER,
+        payload={
+            **build_campaign_runner_journal_payload(
+                case["journal"],
+                signed_at_unix_ns=RUNNER_AT * 1_000_000_000,
+            ),
+            "terminal_state": "aborted",
+        },
+        signed_at_unix=RUNNER_AT,
+        private_key=case["role_keys"][CAMPAIGN_RUNNER],
+    )
+    with pytest.raises(ValueError, match="campaign_attestation_payload_mismatch"):
+        build_verified_transition_episode(
+            case["store"],
+            pass_0=case["pass_0"],
+            pass_1=case["pass_1"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            trust_context=case["trust_context"],
+            attempt_journal=case["journal"],
+            campaign_runner_attestation=wrong_attestation,
+            evidence_verifier_journal_attestation=case["evidence_verifier_journal_attestation"],
+        )

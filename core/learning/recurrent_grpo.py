@@ -358,7 +358,6 @@ def sample_recurrent_completion(
     if type(seed) is not int:
         raise ValueError("seed must be an integer")
     policy_sha256 = recurrent_policy_sha256(model, spec)
-    mx.random.seed(seed)
     engine = LatentCortexEngine(
         model,
         tokenizer=tokenizer,
@@ -372,6 +371,7 @@ def sample_recurrent_completion(
         capture_decode_logprobs=True,
         decode_sentence_grace_tokens=0,
         nonparametric_memory_enabled=False,
+        sample_seed=seed,
     )
     if not result.ok:
         raise RuntimeError(f"cached recurrent sampling failed: {result.reason}")

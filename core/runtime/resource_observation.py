@@ -17,6 +17,7 @@ cannot be mistaken for live evidence merely because its numbers look real.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import os
 import shutil
 import sys
@@ -270,10 +271,28 @@ class ConnectionTableObservation:
 
 
 @dataclass(frozen=True)
+class OpenFileIdentityObservation:
+    """Kernel-derived identity for one process-owned file descriptor."""
+
+    path: str
+    fd: int
+    device: int
+    inode: int
+    byte_length: int
+    mtime_ns: int
+    mode: int
+    provider: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class OpenFilesObservation:
     provenance: ObservationProvenance
     pid: int
     paths: tuple[str, ...]
+    identities: tuple[OpenFileIdentityObservation, ...] = ()
     available: bool = True
     error: str = ""
 
@@ -282,6 +301,7 @@ class OpenFilesObservation:
             "provenance": self.provenance.to_dict(),
             "pid": self.pid,
             "paths": list(self.paths),
+            "identities": [identity.to_dict() for identity in self.identities],
             "available": self.available,
             "error": self.error,
         }
@@ -409,6 +429,154 @@ class ResourceObserver(Protocol):
         path: str | os.PathLike[str] = "/",
         include_processes: bool = False,
     ) -> ResourceObservation: ...
+
+
+_DARWIN_MAXPATHLEN = 1024
+_DARWIN_PROC_PIDFDVNODEPATHINFO = 2
+
+
+class _DarwinProcFileInfo(ctypes.Structure):
+    _fields_ = [
+        ("fi_openflags", ctypes.c_uint32),
+        ("fi_status", ctypes.c_uint32),
+        ("fi_offset", ctypes.c_int64),
+        ("fi_type", ctypes.c_int32),
+        ("fi_guardflags", ctypes.c_uint32),
+    ]
+
+
+class _DarwinVInfoStat(ctypes.Structure):
+    _fields_ = [
+        ("vst_dev", ctypes.c_uint32),
+        ("vst_mode", ctypes.c_uint16),
+        ("vst_nlink", ctypes.c_uint16),
+        ("vst_ino", ctypes.c_uint64),
+        ("vst_uid", ctypes.c_uint32),
+        ("vst_gid", ctypes.c_uint32),
+        ("vst_atime", ctypes.c_int64),
+        ("vst_atimensec", ctypes.c_int64),
+        ("vst_mtime", ctypes.c_int64),
+        ("vst_mtimensec", ctypes.c_int64),
+        ("vst_ctime", ctypes.c_int64),
+        ("vst_ctimensec", ctypes.c_int64),
+        ("vst_birthtime", ctypes.c_int64),
+        ("vst_birthtimensec", ctypes.c_int64),
+        ("vst_size", ctypes.c_int64),
+        ("vst_blocks", ctypes.c_int64),
+        ("vst_blksize", ctypes.c_int32),
+        ("vst_flags", ctypes.c_uint32),
+        ("vst_gen", ctypes.c_uint32),
+        ("vst_rdev", ctypes.c_uint32),
+        ("vst_qspare", ctypes.c_int64 * 2),
+    ]
+
+
+class _DarwinVNodeInfo(ctypes.Structure):
+    _fields_ = [
+        ("vi_stat", _DarwinVInfoStat),
+        ("vi_type", ctypes.c_int),
+        ("vi_pad", ctypes.c_int),
+        ("vi_fsid", ctypes.c_int32 * 2),
+    ]
+
+
+class _DarwinVNodeInfoPath(ctypes.Structure):
+    _fields_ = [
+        ("vip_vi", _DarwinVNodeInfo),
+        ("vip_path", ctypes.c_char * _DARWIN_MAXPATHLEN),
+    ]
+
+
+class _DarwinVNodeFdInfoWithPath(ctypes.Structure):
+    _fields_ = [
+        ("pfi", _DarwinProcFileInfo),
+        ("pvip", _DarwinVNodeInfoPath),
+    ]
+
+
+def _darwin_open_file_identity(
+    *,
+    pid: int,
+    fd: int,
+) -> OpenFileIdentityObservation | None:
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidfdinfo = libproc.proc_pidfdinfo
+        proc_pidfdinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        proc_pidfdinfo.restype = ctypes.c_int
+        buffer = _DarwinVNodeFdInfoWithPath()
+        received = proc_pidfdinfo(
+            pid,
+            fd,
+            _DARWIN_PROC_PIDFDVNODEPATHINFO,
+            ctypes.byref(buffer),
+            ctypes.sizeof(buffer),
+        )
+        if received != ctypes.sizeof(buffer):
+            return None
+        vnode = buffer.pvip.vip_vi.vi_stat
+        raw_path = bytes(buffer.pvip.vip_path).split(b"\0", 1)[0]
+        path = os.fsdecode(raw_path)
+        if not path:
+            return None
+        return OpenFileIdentityObservation(
+            path=path,
+            fd=fd,
+            device=int(vnode.vst_dev),
+            inode=int(vnode.vst_ino),
+            byte_length=int(vnode.vst_size),
+            mtime_ns=(int(vnode.vst_mtime) * 1_000_000_000 + int(vnode.vst_mtimensec)),
+            mode=int(vnode.vst_mode),
+            provider="proc_pidfdinfo",
+        )
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _posix_open_file_identity(
+    *,
+    pid: int,
+    fd: int,
+    path: str,
+) -> OpenFileIdentityObservation | None:
+    try:
+        if sys.platform == "darwin":
+            return _darwin_open_file_identity(pid=pid, fd=fd)
+        if sys.platform.startswith("linux"):
+            descriptor_path = Path(f"/proc/{pid}/fd/{fd}")
+            metadata = descriptor_path.stat()
+            observed_path = os.readlink(descriptor_path)
+            return OpenFileIdentityObservation(
+                path=observed_path,
+                fd=fd,
+                device=int(metadata.st_dev),
+                inode=int(metadata.st_ino),
+                byte_length=int(metadata.st_size),
+                mtime_ns=int(metadata.st_mtime_ns),
+                mode=int(metadata.st_mode),
+                provider="procfs_fd",
+            )
+        if pid == os.getpid():
+            metadata = os.fstat(fd)
+            return OpenFileIdentityObservation(
+                path=path,
+                fd=fd,
+                device=int(metadata.st_dev),
+                inode=int(metadata.st_ino),
+                byte_length=int(metadata.st_size),
+                mtime_ns=int(metadata.st_mtime_ns),
+                mode=int(metadata.st_mode),
+                provider="self_fstat",
+            )
+    except (OSError, TypeError, ValueError):
+        return None
+    return None
 
 
 class HostResourceObserver:
@@ -729,15 +897,29 @@ class HostResourceObserver:
     def open_file_table(self, *, pid: int | None = None) -> OpenFilesObservation:
         target_pid = os.getpid() if pid is None else int(pid)
         try:
+            open_files = tuple(psutil.Process(target_pid).open_files())
             paths = tuple(
                 str(getattr(item, "path", "") or "")
-                for item in psutil.Process(target_pid).open_files()
+                for item in open_files
                 if str(getattr(item, "path", "") or "")
+            )
+            identities = tuple(
+                identity
+                for item in open_files
+                if (
+                    identity := _posix_open_file_identity(
+                        pid=target_pid,
+                        fd=int(getattr(item, "fd", -1)),
+                        path=str(getattr(item, "path", "") or ""),
+                    )
+                )
+                is not None
             )
             return OpenFilesObservation(
                 provenance=self.provenance,
                 pid=target_pid,
                 paths=paths,
+                identities=identities,
             )
         except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
             return OpenFilesObservation(
@@ -1541,6 +1723,7 @@ __all__ = [
     "NetworkConnectionObservation",
     "ObservationProvenance",
     "ObservationSource",
+    "OpenFileIdentityObservation",
     "OpenFilesObservation",
     "PowerObservation",
     "ProcessIdsObservation",

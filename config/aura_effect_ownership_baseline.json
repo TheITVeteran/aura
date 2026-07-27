@@ -1593,6 +1593,14 @@
       "scope": "<module>.SyntheticDataFlywheel.write_jsonl"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._ensure_private_store_directory"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -9945,6 +9953,78 @@
       "scope": "<module>._publication_lock"
     },
     {
+      "callee": "os.chflags",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>.ExternalAttemptLedger.__init__"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>.ExternalAttemptLedger.__init__"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>.ExternalAttemptLedger.append"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 2,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>.TransitionArtifactStore.__init__"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._hash_regular_file"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._read_regular_file"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._read_regular_file_at"
+    },
+    {
+      "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._write_regular_file_once_at"
+    },
+    {
+      "callee": "os.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/learning/verified_transition_episode.py",
+      "scope": "<module>._write_regular_file_once_at"
+    },
+    {
       "callee": "self.config.work_root.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -15282,6 +15362,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b3ef3c03638ca30efe6a0a08c8be62de5a6b224a7d0645ccce2cd7eeb5df43ac",
+  "inventory_sha256": "ca7a9101b54871de81a73648978691e2edbb26d0ae4cb2d98383d9ddb74c4fcc",
   "schema_version": 1
 }
