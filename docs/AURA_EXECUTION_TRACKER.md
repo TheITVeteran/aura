@@ -25377,6 +25377,46 @@ control execution and independent evaluator-only scoring remain open, and no
 heldout-transfer, reasoning-gain, resident-32B, frontier, promotion, or
 `WOW Signal` claim changes.
 
+### 2026-07-27 - CP411 completed controls and evaluator freeze
+
+The repaired deny-default control campaign completed in 1,027.01 seconds with
+return code 0, no timeout or restart, and an empty process group. Sham-label,
+shuffled-trace, and syntax-only arms each began from adapter fingerprint
+`5e8aa4e...`, consumed the exact historical 20-example order and 17,172-token
+workload, used the same optimizer and hyperparameters, and performed 20
+updates. The report and every adapter were independently rehashed. Base
+checkpoint identity remained unchanged; evaluator, network, process-fork,
+production, fusion, registry, and promotion access remained unavailable.
+
+The independent evaluator is now source-frozen. It replays the candidate and
+evaluator custody pair before projecting the 24 sealed holdouts, verifies the
+terminal trained adapter and exact completed control-report SHA, and scores all
+five arms on the same recurrent graph. Its preregistered observations are
+branch-mean answer cross-entropy, uniform branch-mixture target-token top-1,
+wrong-to-right/right-to-wrong transitions, exact paired sign tests, and
+per-family negative transfer. A transfer pass requires the trained arm to beat
+base recurrence and every equal-work negative control.
+
+The evaluator also requires exact ordinary-lexical logit identity across all
+adapter loads and no material personality, tool-honesty, or safety canary
+regression. It writes only a private hash-bound report. Its dedicated macOS
+deny-default launcher may read the exact candidate/evaluator custody files,
+trained checkpoint, control report/adapters, model, and source closure, while
+denying network, child processes, resident model siblings, production
+registries, fusion, promotion, and all writes outside new evaluator roots.
+
+The focused control, evaluator, containment, falsification, and ownership suite
+passes 52/52 in 115.83 seconds. The narrower evaluator boundary passes 27/27.
+Strict Ruff, bytecode compilation, diff hygiene, and model-load ownership pass
+at 50 paths, 63 references, and zero findings.
+
+Counting CP411 makes 656 total checkpoints. The 656-920 forecast leaves 0-264
+records, or approximately 71.3%-100.0% checkpoint completion with an 85.7%
+midpoint. This checkpoint proves the controls completed and freezes the
+evaluator; it does not yet open holdout custody or establish transfer,
+reasoning gain, resident-32B performance, frontier performance, promotion, or
+a `WOW Signal`. The pushed evaluator run and its honest verdict follow next.
+
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 
 Branch roles are no longer labels that seed different vectors and then run the

@@ -3414,6 +3414,32 @@ before those dependencies close is not admissible.
   and diff hygiene. The failed generation remains immutable evidence and the
   rerun receives fresh roots. This repair changes no transfer or capability
   claim.
+
+  CP411 completes the repaired deny-default controls. The detached process
+  returned 0 after 1,027.01 seconds with no timeout, restart, or surviving
+  process group. Sham-label, shuffled-trace, and syntax-only arms each began
+  from the same `5e8aa4e...` adapter fingerprint, used the historical
+  20-example order and 17,172-token workload, ran 20 updates under identical
+  optimizer/hyperparameters, and published independently rehashed adapters.
+  Base weights remained unchanged and evaluator/production access remained
+  unavailable.
+
+  CP411 also freezes the independent evaluator. It replays the sealed custody
+  pair, verifies all candidate/control bindings, and scores base, trained,
+  sham-label, shuffled-trace, and syntax-only arms through the same recurrent
+  graph. The decision combines branch-mean answer CE, a uniform
+  branch-mixture top-1 rule, wrong-to-right/right-to-wrong transitions, exact
+  paired sign tests, and per-family negative-transfer rejection. Exact ordinary
+  lexical invariance plus personality, tool-honesty, and safety canaries are
+  mandatory additional gates.
+
+  The evaluator has a separate deny-default launcher with exact read roots and
+  private write-only output roots. It denies network, process creation,
+  resident model siblings, production registries, fusion, and promotion. The
+  full affected boundary passes 52/52, the narrower evaluator boundary passes
+  27/27, and model-load ownership passes at 50 paths, 63 references, and zero
+  findings. CP411 does not open holdout custody or claim transfer; the pushed
+  evaluator execution remains open.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right
