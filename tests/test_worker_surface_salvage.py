@@ -238,3 +238,69 @@ class TestThinnessNeverKillsTheTurn:
             assert _has_reliability_diagnostic_substance(deflection) is False, (
                 f"widening the gate let a deflection through: {deflection!r}"
             )
+
+
+class TestMemoryPinDoesNotEatTheAnswer:
+    """A turn can pin a fact AND ask a question.
+
+    Live: "Remember for later: my favourite number is 4919. Now a real question
+    — is forgetting a loss or a mercy? Take a position, don't hedge." Two
+    substantive answers were both rejected as
+    `generic_memory_pin_acknowledgement` because neither echoed a write
+    receipt, and the user received no reply at all. A missing receipt on a turn
+    whose real question was answered is a coverage gap, not a generic
+    acknowledgement.
+    """
+
+    TURN = (
+        "Hi Aura, Bryan here. Remember for later: my favourite number is 4919. "
+        "Now a real question — is forgetting a loss or a mercy? Take a position, "
+        "don't hedge."
+    )
+
+    def test_answering_the_question_is_not_a_generic_acknowledgement(self):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        answer = (
+            "Forgetting is a mercy. The ability to let go of what's no longer needed "
+            "frees up space for new experience, and a mind that retained everything "
+            "would drown in detail it could never use. The loss is real but it is the "
+            "price of being able to think at all."
+        )
+        assessment = assess_user_facing_reply(self.TURN, answer)
+        assert "generic_memory_pin_acknowledgement" not in (assessment.reasons or ()), (
+            "a substantive answer to the turn's question was called a generic "
+            "memory-pin acknowledgement"
+        )
+
+    def test_a_bare_acknowledgement_still_fails(self):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assessment = assess_user_facing_reply(
+            "Remember for later: my favourite number is 4919.",
+            "Sure, I'll remember that!",
+        )
+        assert "generic_memory_pin_acknowledgement" in (assessment.reasons or ()), (
+            "the pin check must still catch what it was built for"
+        )
+
+    def test_a_real_write_receipt_passes(self):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assessment = assess_user_facing_reply(
+            "Remember for later: my favourite number is 4919.",
+            "Noted — your favourite number is 4919.",
+        )
+        assert "generic_memory_pin_acknowledgement" not in (assessment.reasons or ())
+
+    def test_a_long_reassurance_is_not_a_free_pass(self):
+        from core.conversation.response_reliability import (
+            _memory_pin_turn_answered_its_other_request,
+        )
+
+        # Length alone must not satisfy the escape hatch.
+        assert _memory_pin_turn_answered_its_other_request(
+            self.TURN,
+            "No problem at all, I'm happy to help with whatever you need next, "
+            "just let me know and I will be here ready to assist you further today.",
+        ) is False

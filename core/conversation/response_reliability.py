@@ -3984,6 +3984,48 @@ def _matches_memory_pin_confirmation(user_message: Any, reply_text: Any) -> bool
     return bool(payload_terms & reply_terms)
 
 
+def _memory_pin_turn_answered_its_other_request(user_message: Any, reply_text: Any) -> bool:
+    """True when a pin-carrying turn ALSO asked something and the reply answered it.
+
+    A single turn can pin a fact and ask a question: "Remember my favourite
+    number is 4919. Now — is forgetting a loss or a mercy? Take a position."
+    The pin check demands a write receipt and treats its absence as a generic
+    acknowledgement, which is exactly backwards here — measured live, two
+    substantive answers ("Forgetting is a mercy. The ability to let go of
+    what's no longer needed frees up space..." and "Forgetting is a loss. But
+    sometimes it's a necessary one...") were both rejected as generic
+    acknowledgements, and the user received no reply at all.
+
+    A missing receipt on a turn whose real question was answered is a coverage
+    gap, not a generic acknowledgement. The check still fires on what it was
+    built for — "Sure, I'll remember that!" does no other work.
+    """
+
+    prompt = _normalize(user_message)
+    if not prompt:
+        return False
+    # Did the turn ask for anything beyond the pin?
+    if "?" not in str(user_message or "") and not any(
+        marker in prompt for marker in _OPEN_ENDED_MARKERS
+    ):
+        return False
+    reply = _normalize(reply_text)
+    if _word_count(reply) < 20:
+        return False
+    # A long reply that is still only an acknowledgement must not pass.
+    if _LOW_SIGNAL_REASSURANCE_RE.match(reply):
+        return False
+    # Length is not engagement. The reply has to actually take up the turn's
+    # own subject matter — otherwise "No problem at all, I'm happy to help with
+    # whatever you need next..." would buy itself an exemption by being wordy.
+    # Two overlapping terms rather than one, so a single incidental word does
+    # not count as having answered anything.
+    subject_terms = _substantive_prompt_terms(user_message)
+    if not subject_terms:
+        return False
+    return len(subject_terms & set(_WORD_RE.findall(reply))) >= 2
+
+
 def _requires_substantive_reply(user_message: Any) -> bool:
     if _has_exact_reply_request(user_message):
         return False
@@ -5918,7 +5960,11 @@ def assess_user_facing_reply(
     # "okay, I'll remember it" is not a valid write receipt. This is a content
     # contract (independent of length), so it must be checked explicitly rather
     # than left to the brevity floor.
-    if _is_explicit_memory_pin_request(user_message) and not memory_pin_confirmation:
+    if (
+        _is_explicit_memory_pin_request(user_message)
+        and not memory_pin_confirmation
+        and not _memory_pin_turn_answered_its_other_request(user_message, raw)
+    ):
         reasons.append("generic_memory_pin_acknowledgement")
 
     reasons.extend(_instruction_coverage_reasons(user_message, raw))
