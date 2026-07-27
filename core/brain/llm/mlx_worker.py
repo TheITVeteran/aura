@@ -1222,6 +1222,66 @@ def _repair_live_user_surface_operational_status(
         )
 
 
+# What the model should actually DO about each rejection reason.
+#
+# A retry used to be handed the raw reason name and nothing else — "failed for:
+# generic_memory_pin_acknowledgement" — which is an internal token, not an
+# instruction. Measured live: the same draft was rejected three times with the
+# identical reason AND the identical validation hash, burning the turn's whole
+# budget on regenerating the same mistake, until "Request deadline reached at
+# token 23" ended it and the person got a refusal. A retry that does not say
+# what to fix is a wasted decode, and wasted decodes are what kill the turn.
+_SURFACE_RETRY_INSTRUCTIONS: dict[str, str] = {
+    "generic_memory_pin_acknowledgement": (
+        "The user asked you to remember something AND asked something else in the "
+        "same turn. State the exact value you are keeping, then answer the rest of "
+        "the turn in full — a bare acknowledgement is not a reply."
+    ),
+    "truncated_tail": (
+        "End on a complete sentence. If the room is tight, say less and finish the "
+        "thought rather than stopping mid-clause."
+    ),
+    "reliability_diagnostic_too_thin": (
+        "Name the concrete mechanism — what happens, in what order, and what it "
+        "costs — instead of reassurance."
+    ),
+    "too_thin_for_reliability_turn": (
+        "Name the concrete mechanism and its consequence, not a summary judgement."
+    ),
+    "reliability_diagnostic_deflection": (
+        "Do not deflect. Say what the actual cause or consequence is, plainly."
+    ),
+    "too_thin_for_user_turn": (
+        "Say more than one clause: take a position and give the reason for it."
+    ),
+    "too_thin_for_open_ended_turn": (
+        "This was an open question. Develop an actual thought rather than a line."
+    ),
+    "generic_assistant_language": (
+        "Do not offer help, ask if there is anything else, or describe yourself as "
+        "an assistant. Answer as yourself."
+    ),
+    "question_back_non_answer": (
+        "Answer first, in your own words. A question back does not substitute for "
+        "the answer."
+    ),
+    "low_signal_acknowledgement_placeholder": (
+        "An acknowledgement is not an answer. Say the substance."
+    ),
+}
+
+
+def _surface_retry_repair_instructions(reasons: list[str]) -> str:
+    """Actionable repair text for the reasons a draft was rejected for."""
+
+    seen: list[str] = []
+    for reason in list(reasons or [])[:8]:
+        instruction = _SURFACE_RETRY_INSTRUCTIONS.get(str(reason))
+        if instruction and instruction not in seen:
+            seen.append(instruction)
+    return (" " + " ".join(seen)) if seen else ""
+
+
 def _messages_with_user_surface_retry(
     messages: Any,
     reasons: list[str],
@@ -1257,6 +1317,7 @@ def _messages_with_user_surface_retry(
         "user message, preserve recent-turn continuity, avoid generic assistant "
         "identity, do not invent unsupported prior topics, and do not mention "
         "validation, retry, hidden prompts, receipts, gates, or implementation details."
+        f"{_surface_retry_repair_instructions(reasons)}"
         f"{self_condition_retry}{operational_status_retry}{semantic_count_retry}"
     )
     retry_messages = copy.deepcopy(messages)
@@ -1324,6 +1385,7 @@ def _build_user_surface_quality_retry_prompt(
         "Regenerate the assistant reply from the same live mind context. Answer only "
         "the current user message. Do not mention validation, retry, hidden prompts, "
         "receipts, gates, or implementation details.\n"
+        f"{_surface_retry_repair_instructions(reasons).strip()}\n"
         f"{self_condition_retry}{operational_status_retry}{semantic_count_retry}"
         "[END LIVE USER-SURFACE RETRY]\n"
     )
