@@ -1,0 +1,36 @@
+{
+  "schema": "aura.spark.cp420d_verified_transition_campaign_mutation_evidence.v1",
+  "checkpoint": "CP420D",
+  "date": "2026-07-27",
+  "source_base_commit": "9e18e39583045e79928541d09705b5cba63eeb48",
+  "claims": {
+    "update_requires_started_campaign_group": true,
+    "update_group_manifest_replayed": true,
+    "successful_update_publishes_group_terminal": true,
+    "durable_commit_reconstructs_update_receipt": true,
+    "durable_commit_can_recover_campaign_terminal": true,
+    "campaign_terminal_replay_is_blocked": true
+  },
+  "source_sha256": {
+    "core/learning/verified_transition_campaign.py": "03eb11cc28452edd54e16b7f0a56fa2a25b671b0786730351c51bd10823f5efb",
+    "core/learning/verified_transition_update.py": "a215beb9a7c9e49f1bb567a75c0e50bce10939295ecece2ed44594bef5b82c50",
+    "tests/test_verified_transition_episode.py": "c976af62fa4d88478a03c9679dcc9e3f8fed82e3f89ca08dea27f1f370269a1b"
+  },
+  "validation": {
+    "recurrent_proof_matrix": {"passed": 123, "failed": 0, "duration_seconds": 76.03},
+    "governance_effect_ownership": {"status": "baseline_matched", "recognized_calls": 2059, "buckets": 1922},
+    "ruff": "pass",
+    "compileall": "pass",
+    "diff_hygiene": "pass"
+  },
+  "nonclaims": {
+    "legacy_trainer_bypass_removed": false,
+    "cp418_source_artifact_replay": false,
+    "model_loaded": false,
+    "model_trained": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false
+  }
+}

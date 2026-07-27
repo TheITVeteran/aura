@@ -460,6 +460,40 @@ class VerifiedTransitionCampaignLedger:
             _fail("campaign_group_already_terminal")
         return receipt
 
+    def validate_started_group(
+        self,
+        *,
+        sequence: int,
+        group_manifest: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        campaign = self._manifest()
+        sequence = _integer(sequence, role="campaign_started_sequence")
+        if sequence >= cast(int, campaign["group_count"]):
+            _fail("campaign_group_not_planned")
+        start = self._read(self._group_name(sequence, "started"))
+        if start.get("schema") != CAMPAIGN_GROUP_START_SCHEMA:
+            _fail("campaign_group_start_schema_invalid")
+        _validate_seal(start, field="receipt_sha256", role="campaign_group_start")
+        manifest = validate_transition_group_manifest(group_manifest)
+        plan = cast(list[dict[str, Any]], campaign["groups"])[sequence]
+        if (
+            start.get("campaign_manifest_sha256") != campaign["manifest_sha256"]
+            or start.get("sequence") != sequence
+            or start.get("group_id") != plan["group_id"]
+            or start.get("group_manifest") != manifest
+            or manifest["manifest_sha256"] != plan["group_manifest_sha256"]
+        ):
+            _fail("campaign_group_start_reconstruction_mismatch")
+        if self.exists_group_terminal(sequence):
+            _fail("campaign_group_already_terminal")
+        return start
+
+    def exists_group_terminal(self, sequence: int) -> bool:
+        path = self.root / self._group_name(sequence, "terminal")
+        if path.is_symlink():
+            _fail("campaign_ledger_symlink_rejected")
+        return path.is_file()
+
     def close_payload(
         self,
         *,

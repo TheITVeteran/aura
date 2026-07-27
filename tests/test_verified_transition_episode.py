@@ -97,6 +97,7 @@ from core.learning.verified_transition_update import (
     VerifiedTransitionUpdateJournal,
     apply_verified_transition_group_update,
     reconcile_interrupted_verified_transition_update,
+    recover_committed_campaign_group,
     validate_verified_transition_reconciliation_receipt,
     validate_verified_transition_update_receipt,
 )
@@ -1269,6 +1270,43 @@ def _positive_admission_material(
     return {**material, "admission": admission}
 
 
+def _open_transition_campaign(
+    material: dict[str, Any], root: Path
+) -> VerifiedTransitionCampaignLedger:
+    issuer = material["cases"][0]
+    manifest = build_transition_campaign_manifest(
+        campaign_id=f"spark-060-{root.name}",
+        groups=(
+            campaign_group_from_manifest(
+                0, material["manifest"], material["manifest_attestation"]
+            ),
+        ),
+        trust_policy_sha256=issuer["policy"].policy_sha256,
+        planned_at_unix_ns=1_800_000_204_000_000_000,
+    )
+    attestation = build_role_attestation(
+        issuer["policy"],
+        role=TASK_ISSUER,
+        payload=manifest,
+        signed_at_unix=1_800_000_204,
+        private_key=issuer["role_keys"][TASK_ISSUER],
+    )
+    ledger = VerifiedTransitionCampaignLedger.create(
+        root,
+        campaign_manifest=manifest,
+        campaign_manifest_attestation=attestation,
+        policy=issuer["policy"],
+    )
+    ledger.start_group(
+        sequence=0,
+        group_manifest=material["manifest"],
+        group_manifest_attestation=material["manifest_attestation"],
+        policy=issuer["policy"],
+        started_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    return ledger
+
+
 def test_complete_episode_reconstructs_from_bytes_and_dual_signed_authorities(
     complete_episode: dict[str, Any],
 ) -> None:
@@ -2020,6 +2058,7 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     )
     times = iter((1_800_000_225_000_000_000, 1_800_000_226_000_000_000))
     journal = VerifiedTransitionUpdateJournal.open(tmp_path / "updates")
+    campaign_ledger = _open_transition_campaign(material, tmp_path / "campaign")
     spec = SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"])
 
     receipt = apply_verified_transition_group_update(
@@ -2038,6 +2077,8 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
         token_decoder=_byte_decode,
         spec=spec,
         journal=journal,
+        campaign_ledger=campaign_ledger,
+        campaign_sequence=0,
         now_unix_ns=lambda: next(times),
     )
 
@@ -2064,6 +2105,9 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
         validate_verified_transition_update_receipt(journal, forged)
 
     model.version = 0
+    replay_campaign = _open_transition_campaign(
+        material, tmp_path / "campaign-replay"
+    )
     with pytest.raises(
         VerifiedTransitionUpdateError,
         match="verified_transition_admission_already_reserved",
@@ -2084,6 +2128,8 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
             token_decoder=_byte_decode,
             spec=spec,
             journal=journal,
+            campaign_ledger=replay_campaign,
+            campaign_sequence=0,
             now_unix_ns=lambda: 1_800_000_227_000_000_000,
         )
     assert optimizer.update_count == 1
@@ -2132,6 +2178,7 @@ def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
         _drift_then_return,
     )
     journal = VerifiedTransitionUpdateJournal.open(tmp_path / "updates")
+    campaign_ledger = _open_transition_campaign(material, tmp_path / "campaign")
     spec = SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"])
     with pytest.raises(
         VerifiedTransitionUpdateError,
@@ -2153,12 +2200,60 @@ def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
             token_decoder=_byte_decode,
             spec=spec,
             journal=journal,
+            campaign_ledger=campaign_ledger,
+            campaign_sequence=0,
             now_unix_ns=lambda: 1_800_000_225_000_000_000,
         )
     assert optimizer.update_count == 0
     admission_sha256 = material["admission"]["receipt_sha256"]
     assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
     assert not (tmp_path / "updates" / f"{admission_sha256}.committed.json").exists()
+
+
+def test_durable_commit_recovers_update_receipt_and_campaign_terminal(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    material = _positive_admission_material(transition_outcome_episodes)
+    admission_sha256 = material["admission"]["receipt_sha256"]
+    policy_before = material["admission"]["policy_sha256"]
+    policy_after = _sha("recovered-policy-after")
+    objective_sha256 = _sha("recovered-objective")
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "recovery-updates")
+    reservation = journal.reserve(
+        admission_sha256=admission_sha256,
+        policy_before_sha256=policy_before,
+        reserved_at_unix_ns=1_800_000_225_000_000_000,
+    )
+    journal.commit(
+        admission_sha256=admission_sha256,
+        reservation_sha256=reservation["receipt_sha256"],
+        policy_before_sha256=policy_before,
+        policy_after_sha256=policy_after,
+        objective_receipt_sha256=objective_sha256,
+        committed_at_unix_ns=1_800_000_226_000_000_000,
+    )
+    campaign = _open_transition_campaign(
+        material, tmp_path / "recovery-campaign"
+    )
+
+    recovered = recover_committed_campaign_group(
+        journal,
+        campaign,
+        campaign_sequence=0,
+        admission_sha256=admission_sha256,
+    )
+
+    assert recovered["policy_before_sha256"] == policy_before
+    assert recovered["policy_after_sha256"] == policy_after
+    terminal = json.loads(
+        (tmp_path / "recovery-campaign/group-00000000.terminal.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert terminal["status"] == "updated"
+    assert terminal["update_receipt_sha256"] == recovered["receipt_sha256"]
+    assert terminal["terminal_reason"] == "optimizer_update_recovered_from_commit"
 
 
 @pytest.mark.parametrize(

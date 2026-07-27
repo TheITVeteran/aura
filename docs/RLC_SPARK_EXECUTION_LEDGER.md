@@ -4706,3 +4706,30 @@ to approximately 7-12 total checkpoints before resident-32B training launch,
 powered conditional `WOW Signal` decision. These are workload forecasts, not
 capability scores. Counting CP420C makes 668 total checkpoints. Final
 multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420D campaign-bound mutation and commit recovery
+
+The verified optimizer transaction can no longer run as an unattached group.
+It requires the matching campaign sequence to be durably started, replays the
+planned group manifest against that start, and refuses an already terminal
+group before constructing a gradient. A successful exactly-once update now
+publishes the campaign terminal record with the admitted-group and final-update
+digests as part of the same governed path.
+
+The remaining post-commit crash window is recoverable without re-running an
+optimizer. Reservation and commit bytes reconstruct the exact update receipt;
+that receipt can publish the missing campaign terminal as a recovered committed
+update. Recovery cannot rewrite a terminal or turn an uncommitted reservation
+into success.
+
+The combined verified-transition, recurrent objective, adapter identity, and
+trainer-contract matrix passes 123/123 in 76.03 seconds. Governance ownership,
+Ruff, compilation, and diff hygiene pass. Evidence is
+`artifacts/current/cp420d_verified_transition_campaign_mutation_evidence.json`.
+
+CP420/SPARK-060 remain open for the legacy trainer/raw-reward bypass removal and
+CP418 source-artifact replay. No model ran and no capability claim follows.
+Counting CP420D makes 669 total checkpoints. The planning range is now 6-11
+checkpoints to resident-32B training launch, 10-17 to a defensible preliminary
+live gain verdict, and 16-27 to a powered conditional `WOW Signal` decision.
+Final multi-hour soaks remain deferred.

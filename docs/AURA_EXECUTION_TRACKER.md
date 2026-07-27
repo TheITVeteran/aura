@@ -30633,3 +30633,18 @@ total checkpoints to resident-32B training launch, 11-18 to a defensible
 preliminary live gain verdict, and 17-28 to the powered conditional `WOW
 Signal` decision. Counting CP420C makes 668 total checkpoints; final multi-hour
 soaks remain deferred.
+
+### 2026-07-27 - CP420D campaign-bound optimizer mutation
+
+Verified recurrent updates now require and replay their started campaign group,
+publish the terminal group record on success, and recover a missing terminal
+from durable reservation/commit bytes without repeating the optimizer update.
+The 123/123 adjacent proof matrix, governance ownership, Ruff, compilation, and
+diff hygiene pass. Evidence is
+`artifacts/current/cp420d_verified_transition_campaign_mutation_evidence.json`.
+
+The legacy trainer bypass and CP418 source-artifact replay remain open. No model
+or capability result is claimed. Counting CP420D makes 669 total checkpoints;
+the current planning range is 6-11 to resident training launch, 10-17 to a
+defensible preliminary verdict, and 16-27 to the powered conditional `WOW
+Signal` decision. Final multi-hour soaks remain deferred.

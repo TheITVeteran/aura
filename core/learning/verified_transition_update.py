@@ -16,6 +16,9 @@ from core.learning.recurrent_grpo import (
     exact_adjoint_verified_transition_group_value_and_grad,
     recurrent_policy_sha256,
 )
+from core.learning.verified_transition_campaign import (
+    VerifiedTransitionCampaignLedger,
+)
 from core.learning.verified_transition_episode import (
     TransitionArtifactStore,
     canonical_json_bytes,
@@ -281,11 +284,18 @@ def apply_verified_transition_group_update(
     token_decoder: Callable[[Sequence[int]], bytes],
     spec: RLCExecutionSpec,
     journal: VerifiedTransitionUpdateJournal,
+    campaign_ledger: VerifiedTransitionCampaignLedger,
+    campaign_sequence: int,
     bridge_tokens: Sequence[int] = (),
     config: RecurrentGRPOConfig | None = None,
     now_unix_ns: Callable[[], int] = time.time_ns,
 ) -> dict[str, Any]:
     """Validate, reserve, rehash, update exactly once, and receipt the result."""
+
+    campaign_ledger.validate_started_group(
+        sequence=campaign_sequence,
+        group_manifest=group_manifest,
+    )
 
     admission = validate_verified_transition_group_admission(
         transition_store,
@@ -362,7 +372,7 @@ def apply_verified_transition_group_update(
         objective_receipt_sha256=objective_sha256,
         committed_at_unix_ns=committed_at,
     )
-    return _seal(
+    receipt = _seal(
         {
             "schema": VERIFIED_TRANSITION_UPDATE_SCHEMA,
             "group_admission_sha256": admission["receipt_sha256"],
@@ -376,6 +386,15 @@ def apply_verified_transition_group_update(
             "committed_at_unix_ns": committed_at,
         }
     )
+    campaign_ledger.finish_group(
+        sequence=campaign_sequence,
+        status="updated",
+        group_admission_sha256=cast_sha256(admission["receipt_sha256"]),
+        update_receipt_sha256=cast_sha256(receipt["receipt_sha256"]),
+        terminal_reason="optimizer_update_committed",
+        finished_at_unix_ns=committed_at,
+    )
+    return receipt
 
 
 def validate_verified_transition_update_receipt(
@@ -436,6 +455,59 @@ def validate_verified_transition_update_receipt(
     ):
         _fail("verified_transition_update_time_reversed")
     return dict(receipt)
+
+
+def recover_committed_verified_transition_update(
+    journal: VerifiedTransitionUpdateJournal,
+    admission_sha256: str,
+) -> dict[str, Any]:
+    """Reconstruct an update receipt after commit publication interrupted return."""
+
+    admission = cast_sha256(admission_sha256)
+    reservation = journal.read(admission, "reserved")
+    commit = journal.read(admission, "committed")
+    if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
+        _fail("verified_transition_reservation_schema_invalid")
+    if commit.get("schema") != VERIFIED_TRANSITION_COMMIT_SCHEMA:
+        _fail("verified_transition_commit_schema_invalid")
+    _validate_seal(reservation, role="verified_transition_reservation")
+    _validate_seal(commit, role="verified_transition_commit")
+    receipt = _seal(
+        {
+            "schema": VERIFIED_TRANSITION_UPDATE_SCHEMA,
+            "group_admission_sha256": admission,
+            "reservation_sha256": reservation["receipt_sha256"],
+            "commit_sha256": commit["receipt_sha256"],
+            "objective_receipt_sha256": commit["objective_receipt_sha256"],
+            "policy_before_sha256": commit["policy_before_sha256"],
+            "policy_after_sha256": commit["policy_after_sha256"],
+            "optimizer_update_count": 1,
+            "reserved_at_unix_ns": reservation["reserved_at_unix_ns"],
+            "committed_at_unix_ns": commit["committed_at_unix_ns"],
+        }
+    )
+    return validate_verified_transition_update_receipt(journal, receipt)
+
+
+def recover_committed_campaign_group(
+    journal: VerifiedTransitionUpdateJournal,
+    campaign_ledger: VerifiedTransitionCampaignLedger,
+    *,
+    campaign_sequence: int,
+    admission_sha256: str,
+) -> dict[str, Any]:
+    """Finish campaign custody from a durable update commit after process death."""
+
+    receipt = recover_committed_verified_transition_update(journal, admission_sha256)
+    campaign_ledger.finish_group(
+        sequence=campaign_sequence,
+        status="updated",
+        group_admission_sha256=cast_sha256(admission_sha256),
+        update_receipt_sha256=cast_sha256(receipt["receipt_sha256"]),
+        terminal_reason="optimizer_update_recovered_from_commit",
+        finished_at_unix_ns=cast(int, receipt["committed_at_unix_ns"]),
+    )
+    return receipt
 
 
 def reconcile_interrupted_verified_transition_update(
@@ -539,6 +611,8 @@ __all__ = [
     "VerifiedTransitionUpdateError",
     "VerifiedTransitionUpdateJournal",
     "apply_verified_transition_group_update",
+    "recover_committed_campaign_group",
+    "recover_committed_verified_transition_update",
     "reconcile_interrupted_verified_transition_update",
     "validate_verified_transition_reconciliation_receipt",
     "validate_verified_transition_update_receipt",
