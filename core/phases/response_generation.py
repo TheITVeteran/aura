@@ -2271,6 +2271,14 @@ class ResponseGenerationPhase(BasePhase):
                                 ",".join(reliability.reasons) or "unknown",
                                 len(response_text_s),
                             )
+                            try:
+                                from core.conversation.surface_disposition import (
+                                    preserve_draft,
+                                )
+
+                                preserve_draft(response_text_s)
+                            except (ImportError, RuntimeError, TypeError, ValueError):
+                                pass
                         else:
                             logger.warning(
                                 "🛡️ ResponseGeneration rejected unsafe user-facing draft (%s, len=%d).",

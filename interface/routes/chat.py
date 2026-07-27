@@ -11024,21 +11024,30 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "") -> str:
     Returns "" when the draft carries anything that must not be spoken, or
     when it is too slight to be worth more than an honest refusal.
     """
-    text = str(draft or "").strip()
-    if len(text) < 80 or len(text.split()) < 12:
-        return ""
     try:
         from core.conversation.response_reliability import assess_user_facing_reply
-        from core.conversation.surface_disposition import draft_is_servable
-
-        assessment = assess_user_facing_reply(user_message, text)
-        if not draft_is_servable(assessment.reasons):
-            return ""
+        from core.conversation.surface_disposition import (
+            draft_is_servable,
+            preserved_draft,
+        )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Servable-draft check unavailable: %s", exc)
         return ""
-    return text
+
+    # The draft handed to this site, or the best one any layer preserved during
+    # this turn. The second refusal site never receives one as an argument.
+    for candidate in (str(draft or "").strip(), preserved_draft()):
+        if len(candidate) < 80 or len(candidate.split()) < 12:
+            continue
+        try:
+            assessment = assess_user_facing_reply(user_message, candidate)
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat", exc)
+            continue
+        if draft_is_servable(assessment.reasons):
+            return candidate
+    return ""
 
 
 def _build_degraded_live_reply(
@@ -18060,6 +18069,13 @@ async def api_chat(
     foreground_lock_token: object | None = None
     foreground_lease = None
     kernel_task: asyncio.Task | None = None
+    # Start this turn holding no draft from any previous one.
+    try:
+        from core.conversation.surface_disposition import clear_preserved_draft
+
+        clear_preserved_draft()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        logger.debug("Preserved-draft reset skipped: %s", exc)
     _live_turn_trace: dict[str, Any] = {
         "desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine),
         "request_surface": request_surface or "",
@@ -20289,6 +20305,59 @@ async def api_chat(
                             response_confidence="bounded",
                             status="cognitive_engine_self_process_grounding",
                             reply_source="cognitive_engine_self_process_grounding",
+                        ),
+                    }
+                )
+
+            # Same contract as the other refusal site: a draft the layers
+            # below judged servable is served rather than traded for an
+            # apology. The engine produced no ACCEPTABLE reply, which is not
+            # the same as producing nothing.
+            salvaged_no_reply = _servable_draft_or_none("", _semantic_user_message)
+            if salvaged_no_reply:
+                logger.warning(
+                    "Serving the preserved repairable draft (%d chars) rather "
+                    "than refusing: the engine produced no acceptable reply.",
+                    len(salvaged_no_reply),
+                )
+                lane = _mark_conversation_lane_state(
+                    "cognitive_engine_served_repairable_draft",
+                    state="recovering",
+                )
+                _live_turn_trace.update(
+                    {
+                        "bounded_contract_used": True,
+                        "response_path": "cognitive_engine_served_repairable_draft",
+                    }
+                )
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        salvaged_no_reply,
+                        record_experience=False,
+                    )
+                    pending_exchange_id = None
+                await _emit_chat_output_receipt(
+                    salvaged_no_reply,
+                    cause="chat_response",
+                    metadata={
+                        "response_confidence": "bounded",
+                        "path": "cognitive_engine_served_repairable_draft",
+                        "status": "cognitive_engine_served_repairable_draft",
+                    },
+                )
+                return JSONResponse(
+                    {
+                        "response": salvaged_no_reply,
+                        "status": "cognitive_engine_served_repairable_draft",
+                        "conversation_lane": lane,
+                        "response_confidence": "bounded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=lane,
+                            response_confidence="bounded",
+                            status="cognitive_engine_served_repairable_draft",
+                            reply_source="cognitive_engine_served_repairable_draft",
                         ),
                     }
                 )

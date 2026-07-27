@@ -8356,11 +8356,22 @@ class InferenceGate:
                                 "🛡️ Preserving repairable Cortex draft for downstream response repair (len=%d).",
                                 len(repairable_draft),
                             )
-                            return self._stabilize_user_facing_text(
+                            stabilized = self._stabilize_user_facing_text(
                                 repairable_draft,
                                 visible_user_prompt,
                                 is_user_facing=True,
                             )
+                            # Reachable from the place that decides whether to
+                            # refuse, which is not on this call path.
+                            try:
+                                from core.conversation.surface_disposition import (
+                                    preserve_draft,
+                                )
+
+                                preserve_draft(stabilized)
+                            except (ImportError, RuntimeError, TypeError, ValueError):
+                                pass
+                            return stabilized
                         return self._stabilize_user_facing_text(
                             text,
                             visible_user_prompt,

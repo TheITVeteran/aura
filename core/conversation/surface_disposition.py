@@ -29,16 +29,54 @@ classified is not assumed safe to speak.
 
 from __future__ import annotations
 
+import contextvars
 from enum import Enum
 from typing import Any, Iterable
 
 __all__ = [
     "SurfaceDisposition",
     "SHORTFALL_REASONS",
+    "clear_preserved_draft",
     "disposition_for",
     "draft_is_servable",
     "integrity_failures",
+    "preserved_draft",
+    "preserve_draft",
 ]
+
+# The turn's best servable draft, from whichever layer last held one.
+#
+# A draft can be judged repairable deep in the stack — the inference gate and
+# the response-generation phase both log that they are preserving one — and
+# then be unreachable at the place that decides whether to refuse, because it
+# was never threaded that far. Live 2026-07-26 all three gates preserved a
+# 199-character draft and the route refused anyway, holding nothing.
+#
+# A context variable is the right shape: it is turn-scoped without changing any
+# signature between here and there, and it cannot leak across requests.
+_PRESERVED_DRAFT: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "aura_preserved_servable_draft", default=""
+)
+
+
+def preserve_draft(text: Any) -> None:
+    """Record a draft this turn could serve if nothing better arrives."""
+    body = str(text or "").strip()
+    if body:
+        _PRESERVED_DRAFT.set(body)
+
+
+def preserved_draft() -> str:
+    """The best draft preserved during this turn, or ""."""
+    try:
+        return _PRESERVED_DRAFT.get()
+    except LookupError:
+        return ""
+
+
+def clear_preserved_draft() -> None:
+    """Start a turn holding nothing."""
+    _PRESERVED_DRAFT.set("")
 
 
 class SurfaceDisposition(Enum):
