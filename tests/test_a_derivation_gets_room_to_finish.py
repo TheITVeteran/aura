@@ -101,11 +101,13 @@ def test_the_conversational_floor_is_unchanged_for_everything_else() -> None:
 def test_tight_contracts_still_win() -> None:
     """Status and inventory answers stay short; they are answered, not derived."""
     src = SOURCE.read_text(encoding="utf-8")
-    clamp = src[src.index("if memory_state_contract or runtime_fact_status_contract") :]
+    # Anchor on the clamp chain itself. The old anchor also matched the
+    # request_timeout chain further down, which silently moved the slice.
+    clamp = src[src.index("max_tokens = max(128, min(max_tokens, 256))") :]
     clamp = clamp[: clamp.index("request_timeout =")]
-    assert clamp.index("max_tokens = max(128, min(max_tokens, 256))") < clamp.index(
+    assert clamp.index("elif capability_inventory_contract") < clamp.index(
         "elif shape_wants_room:"
-    )
+    ), "a status or inventory answer must clamp before the derivation band widens it"
 
 
 # ── The reason for the budget travels with it ──────────────────────────────

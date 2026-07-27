@@ -38,6 +38,10 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 
+# How long the activity watcher waits for a telemetry event before
+# re-checking whether it has been asked to stop. Silence is normal.
+_ACTIVITY_POLL_TIMEOUT_S = 1.0
+
 logger = logging.getLogger("Aura.Voice.MindBridge")
 
 # Voice-lane topics on the event bus. Namespaced so subscribers can take the
@@ -322,7 +326,17 @@ class MindBridge:
                 bus = get_event_bus()
                 queue = await bus.subscribe("telemetry")
                 while not self._activity_stop.is_set():
-                    item = await queue.get()
+                    # Bounded: an unbounded queue.get() cannot notice the stop
+                    # event, so a quiet telemetry bus wedges this watcher for
+                    # the life of the process and the task never retires. The
+                    # timeout is a poll interval, not a failure — nothing
+                    # arriving is the normal state between turns.
+                    try:
+                        item = await asyncio.wait_for(
+                            queue.get(), timeout=_ACTIVITY_POLL_TIMEOUT_S
+                        )
+                    except TimeoutError:
+                        continue
                     # The bus delivers (priority, seq, payload) tuples.
                     payload = (
                         item[2]
