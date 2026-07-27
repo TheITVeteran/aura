@@ -3288,6 +3288,44 @@ before those dependencies close is not admissible.
   1.5B training run; CP407 is its independent fresh-task falsification and
   first SPARK-059 verdict. Receipt:
   `artifacts/current/cp405_synthetic_recurrent_sft_containment_evidence.json`.
+
+  CP406 completes the authorized bounded 1.5B training run. Two pre-optimizer
+  failures remain part of the evidence: the first exposed nested macOS sandbox
+  application, and the second exposed missing metadata authority for the exact
+  model-lane parent. The detached supervisor now verifies and executes an
+  already deny-default target without nesting another sandbox. The final
+  profile permits metadata operations on the exact lane parent while an
+  in-kernel regression proves arbitrary sibling writes remain denied.
+
+  The accepted third attempt ran 20 real optimizer updates through the
+  recurrent latent-slot adjoint in 183.24 seconds. Candidate-validation loss
+  moved from 1.36386188 to 1.24238472, an 8.91% reduction. The trainer
+  full-hashed the 1.5B base before and after and found it byte-identical;
+  ordinary lexical adapter activation stayed false; the quarantine adapter,
+  optimizer state, cursor, deterministic order, validation trail, and terminal
+  receipt are immutable and hash-bound. The supervisor left no child process
+  group. An exact-source checkout independently reconstructed the complete
+  checkpoint and eight-event journal and classified it `already_completed`.
+  All 11 authority-bound source files match pushed commit `96b91cbbd`.
+
+  The containment/research/tokenizer matrix passes 167/167 in 358.37 seconds.
+  A stale loaded-code `co_filename` found by that matrix is now tolerated
+  without weakening identity: runtime bytecode, defaults, closure state, and
+  current module artifact remain mandatory, while only an unavailable
+  per-callable source-file facet becomes null. Its focused matrix passes
+  16/16. Strict Ruff, bytecode compilation, diff hygiene, and model-load
+  ownership pass at 48 paths, 61 references, and zero findings. Governance
+  remains red only on two unrelated `program_materialization.py` calls, with
+  zero CP406 regression.
+
+  This is real contained training and candidate-validation learnability, not
+  heldout transfer, negative-transfer safety, reasoning gain, resident-32B
+  improvement, frontier performance, promotion, or a `WOW Signal`. CP407 must
+  run fresh evaluator-only reconstruction, transfer, right-to-wrong,
+  personality/tool/safety, sham-label, shuffled-trace, syntax-only,
+  equal-token, and equal-compute controls before the first SPARK-059 verdict.
+  Receipt:
+  `artifacts/current/cp406_synthetic_recurrent_sft_training_evidence.json`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

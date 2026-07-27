@@ -29979,10 +29979,68 @@ This proves containment and strict admission, not training or gain. No
 small-checkpoint or resident-32B training occurred; no transfer,
 reasoning-gain, frontier, promotion, or `WOW Signal` claim exists. CP406 is the
 bounded contained 1.5B run, CP407 is independent fresh-task falsification, and
-SPARK-060 through SPARK-071 remain separate required initiatives after that
+SPARK-060 through SPARK-072 remain separate required initiatives after that
 first verdict. Final multi-hour soaks remain deferred.
 
 Counting CP405 makes 647 total checkpoints. The 647-920 forecast leaves 0-273
 records, or approximately 70.3%-100.0% checkpoint completion with an 85.2%
 midpoint. This accounting cannot close, merge, or skip any open SPARK or
 whole-codebase requirement.
+
+### 2026-07-27 - CP406 contained synthetic recurrent-SFT execution
+
+The bounded SPARK-059 experiment completed on the real local
+Qwen2.5-1.5B-Instruct-4bit checkpoint. The evidence preserves two failed
+pre-optimizer attempts instead of erasing them. Attempt v4 exposed that the
+generic detached supervisor nested a no-fork sandbox around the already
+deny-default training sandbox; macOS rejected the nested application before
+the trainer started. Attempt v5 proved the single-sandbox repair reached the
+trainer, then exposed that the profile allowed exact lane files but not the
+parent-directory metadata operations required by the canonical interprocess
+lock. The final profile grants only the exact lane parent metadata operation;
+an in-kernel test proves arbitrary sibling writes remain denied.
+
+Attempt v6 passed in 183.24 seconds with 20 optimizer updates, four recurrent
+steps, two role-seeded branches, and only latent-slot recurrent-window
+`q_proj`, `v_proj`, and `o_proj` tensors trainable. Candidate-validation loss
+fell from 1.36386188 to 1.24238472, an 8.91% reduction. This is evidence that
+the admitted target is learnable on candidate validation, not that reasoning
+improved. The base checkpoint fingerprint remained
+`d6e4ecf7...` before and after, ordinary lexical activation stayed disabled,
+the adapter remains quarantined, and no production registry, fusion, or
+promotion path was available.
+
+The complete terminal state binds authority `f1dbfdf...`, dataset
+`b276537e...`, model `72407226...`, execution program `d79e3093...`, source
+closure `07058c2f...`, terminal checkpoint `32a78d5e...`, completion
+`9c04ccfd...`, and journal head `fd84ecd6...`. All 11 source files match
+pushed commit `96b91cbbd`. A separate exact-source reconstruction verifies the
+checkpoint bytes and eight-event journal and returns `already_completed`.
+The supervisor receipt proves the process group is empty and no cleanup was
+needed.
+
+The focused/integrated containment, trainer, state, authority, structured-SFT,
+admission, and tokenizer matrix passes 167/167 in 358.37 seconds. It surfaced
+and retired a stale loaded-code source-path defect: tokenizer callable identity
+now remains stable when `co_filename` points at a deleted worktree, while
+runtime bytecode, defaults, closure cells, and the current importable module
+artifact remain mandatory. Its focused matrix passes 16/16. Strict Ruff,
+bytecode compilation, diff hygiene, and model ownership pass at 48 paths, 61
+references, and zero findings. Governance has zero CP406 regression and
+remains globally red only on two unrelated in-flight
+`program_materialization.py` calls.
+
+CP406 does not establish heldout transfer, negative-transfer safety, a
+reasoning gain, a resident-32B effect, frontier performance, production
+promotion, or a `WOW Signal`. CP407 is still required to run exact
+reconstruction, heldout transfer, right-to-wrong, personality/tool/safety,
+sham-label, shuffled-trace, syntax-only, equal-token, and equal-compute
+controls on evaluator-only fresh tasks. SPARK-060 through SPARK-072 and every
+non-SPARK tracker requirement remain open after that verdict. Final multi-hour
+soaks remain deferred.
+
+Counting the provenance-preserving execution repair and CP406 makes 649 total
+checkpoints. The 649-920 forecast leaves 0-271 records, or approximately
+70.5%-100.0% checkpoint completion with an 85.3% midpoint. This is workload
+accounting, not a capability score, and cannot close, merge, or skip any open
+requirement.

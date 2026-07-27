@@ -1,0 +1,115 @@
+{
+  "campaign": "SPARK-059",
+  "checkpoint": "CP406",
+  "claims": {
+    "base_checkpoint_unchanged": true,
+    "candidate_validation_learnability_observed": true,
+    "frontier_performance_proven": false,
+    "heldout_transfer_proven": false,
+    "production_promotion_allowed": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_training_occurred": false,
+    "small_checkpoint_training_occurred": true,
+    "wow_signal": false
+  },
+  "failed_attempts": [
+    {
+      "attempt": "v4",
+      "duration_s": 0.72479,
+      "failure": "nested macOS sandbox application was rejected before trainer startup",
+      "optimizer_updates": 0,
+      "receipt_sha256": "5da5ea3f15c7ad345e44cd8c20a97b68a980b234a197a32dab6dfb3e4a2a6b8a",
+      "retired_by": "single precontained-sandbox supervisor mode",
+      "returncode": 71
+    },
+    {
+      "attempt": "v5",
+      "duration_s": 5.449835,
+      "failure": "deny-default profile omitted exact model-lane parent metadata authority",
+      "optimizer_updates": 0,
+      "receipt_sha256": "249ce02a153bc04907688e048588cf14382bdc048a47e67dfc6631efab1d06f0",
+      "retired_by": "exact lane-parent metadata rule with arbitrary sibling writes still kernel-denied",
+      "returncode": 2
+    }
+  ],
+  "next_gate": "CP407 independent fresh-task small-checkpoint falsification with sham, shuffled, syntax-only, negative-transfer, right-to-wrong, regression, equal-token, and equal-compute controls",
+  "provenance": {
+    "authority_sha256": "f1dbfdf84f9b0d2ac902799dc93b8165e7d9a57877f3d2c00b98ab9beb7ad764",
+    "command_sha256": "a20f7cf8da564046d542e96b985adf7c0b0cf1843c0723bd3b21ef01a5207d7a",
+    "contract_sha256": "cc84948560c965435fe2049e4383a3a5e5de287107f5667eeec550f4f3fa41ff",
+    "dataset_sha256": "b276537ee67747b60b8a30c1061d7097ebcf3ab4dd98e9c82594a260e97003a0",
+    "detached_plan_file_sha256": "d46a750d06779570c7b3ac4efe558786322d7681cf4951fd5308f9ec0316363a",
+    "detached_plan_sha256": "3c31cd862e5a5ff19991067ed9ed1dcd6fb2deef0356fe68e5a808a7ad4835ad",
+    "detached_receipt_file_sha256": "b287bdbffda2b4d7da4e5335f922bfe35a1f6bb8e0d568f945175e29eaca6352",
+    "detached_receipt_sha256": "8dbc75bbfe1b0f54bc6a3c56db476cc0b9d646f698202e12d628d44a4e555815",
+    "executed_source_commit": "96b91cbbda3288f0c93694f2bdd8020f905598e0",
+    "executed_source_files_matching_commit": 11,
+    "executed_source_files_total": 11,
+    "execution_spec_sha256": "d79e3093bd47d62cd2080146b9c437254548a6281fea1bc65cb885762ebc1a08",
+    "model_identity_sha256": "72407226f12f89a32a84252031a7b7a8545f4d0504d44018e1a315561c561140",
+    "profile_sha256": "7f215907df908bef86ad6760dba7e633786174854edabc2c883dd067f0343163",
+    "research_completion_file_sha256": "0166b7491dae7fa7ccc9eb52abdd2049ebb668020aa3d6a1a57e8c106bfe35c8",
+    "source_closure_sha256": "07058c2fcfd5dadbb817845a63d3976d97b242cb0aeec75ea32d46e8abc2cc2e",
+    "tokenization_identity_sha256": "a41d7bc6e66375c1ca8ff107399edd528672e2fae33d9193988b19781c3812da"
+  },
+  "schema": "aura.rlc.synthetic_recurrent_sft_training_evidence.v1",
+  "status": "passed_contained_bounded_training_and_candidate_validation_learnability",
+  "training": {
+    "adapter_scope": "latent_slots_only",
+    "base_weight_fingerprint_after": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+    "base_weight_fingerprint_before": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+    "base_weights_unchanged": true,
+    "baseline_candidate_validation_loss": 1.36386188,
+    "branch_roles": [
+      "constructive_solution",
+      "counterexample_search"
+    ],
+    "checkpoint_complete_sha256": "32a78d5eb26c018962837c3c1e0bd7be45bb9d77e88d5f029d2d1aa484deb724",
+    "completion_sha256": "9c04ccfd54e3608185cceb24975951c09312c46359172455e7cbfaf6c7f7e359",
+    "duration_s": 183.241459,
+    "final_candidate_validation_loss": 1.24238472,
+    "halt_reason": "max_steps",
+    "journal_head_sha256": "fd84ecd6136f96975009caf66ca187762e5cf8453bc4227fcae851a3fbfaea0a",
+    "journal_sequence": 8,
+    "loss_reduction_fraction": 0.089069,
+    "optimizer_updates": 20,
+    "ordinary_lexical_adapter_activation": false,
+    "output_disposition": "quarantined_research_only",
+    "process_group_empty": true,
+    "quarantine_adapter_sha256": "d5c08bed87fedeb2c63c04854b692aff925c4c282222fde44587d85cc0e8a3c5",
+    "recurrent_steps": 4,
+    "restart_count": 0,
+    "terminal_checkpoint": "step-00000020-d4d583428a614d9fb117d52842b30748",
+    "terminal_checkpoint_identity": "aeeeff8a907289c02dd48f4deff305109b434b3a2e4f7628a0531090690b10f5",
+    "terminal_state": "already_completed",
+    "timed_out": false,
+    "train_examples": 24,
+    "validation_examples_total": 12,
+    "validation_examples_measured": 8
+  },
+  "validation": {
+    "bytecode_compilation": "passed",
+    "focused_and_integrated_tests": {
+      "passed": 167,
+      "seconds": 358.37
+    },
+    "governance": {
+      "cp406_regressions": 0,
+      "inherited_unrelated_regressions": 2,
+      "repository_wide_status": "not_green"
+    },
+    "model_load_ownership": {
+      "findings": 0,
+      "paths": 48,
+      "references": 61,
+      "status": "passed"
+    },
+    "post_run_tokenizer_identity_regressions": {
+      "passed": 16,
+      "seconds": 5.0
+    },
+    "strict_ruff": "passed",
+    "terminal_reconstruction_evidence_sha256": "58190c2d349521a1302537dc624e65f8e3a07a42819cb04c9fb2a00f7ed39f65",
+    "terminal_reconstruction_verdict": "already_completed"
+  }
+}

@@ -520,22 +520,30 @@ def _callable_identity(
     except TypeError:
         source_path = None
     if source_path:
-        source = Path(source_path).resolve(strict=True)
-        payload = read_stable_bytes(
-            source,
-            max_bytes=_MAX_TOKENIZER_FILE_BYTES,
-        )
         try:
-            callable_source = inspect.getsource(effective).encode("utf-8")
-        except (OSError, TypeError):
-            callable_source = b""
-        source_identity = {
-            "distribution_relative_source": "/".join(source.parts[-3:]),
-            "source_file_sha256": hashlib.sha256(payload).hexdigest(),
-            "callable_source_sha256": hashlib.sha256(
-                callable_source
-            ).hexdigest(),
-        }
+            source = Path(source_path).resolve(strict=True)
+            payload = read_stable_bytes(
+                source,
+                max_bytes=_MAX_TOKENIZER_FILE_BYTES,
+            )
+        except OSError:
+            # Loaded code can retain a co_filename from a deleted build or
+            # worktree. The runtime code and current module artifact below
+            # remain mandatory identities; only this optional source facet is
+            # unavailable.
+            source_identity = None
+        else:
+            try:
+                callable_source = inspect.getsource(effective).encode("utf-8")
+            except (OSError, TypeError):
+                callable_source = b""
+            source_identity = {
+                "distribution_relative_source": "/".join(source.parts[-3:]),
+                "source_file_sha256": hashlib.sha256(payload).hexdigest(),
+                "callable_source_sha256": hashlib.sha256(
+                    callable_source
+                ).hexdigest(),
+            }
     module_artifact = _module_artifact_identity(module_name)
     return {
         "module": module_name,

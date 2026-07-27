@@ -310,6 +310,26 @@ def test_callable_identity_binds_loaded_code_not_only_changed_source(
     )
 
 
+def test_callable_identity_tolerates_stale_loaded_code_filename(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    missing_source = tmp_path / "removed-worktree" / "tokenizer.py"
+    monkeypatch.setattr(
+        validator.inspect,
+        "getsourcefile",
+        lambda _value: str(missing_source),
+    )
+
+    identity = validator._callable_identity(
+        validator._effective_chat_template_identity
+    )
+
+    assert identity["runtime_code_sha256"]
+    assert identity["module_artifact"]["artifact_sha256"]
+    assert identity["disk_source"] is None
+
+
 def test_effective_chat_template_identity_binds_override_closure() -> None:
     def template_for(label):
         def template(*_args, **_kwargs):
