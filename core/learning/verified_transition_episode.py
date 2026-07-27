@@ -3187,15 +3187,22 @@ def _validate_non_candidate_evidence(
         _validate_artifact_binding(context.get("execution_spec_artifact")),
         role="execution_spec",
     )
+    execution_spec_schema = execution_spec.get("schema")
+    expected_execution_spec_keys = {
+        "schema",
+        "candidate_visible",
+        "execution_manifest_sha256",
+        "sampling_policy_sha256",
+    }
+    if execution_spec_schema == "aura.verified_transition.execution_spec.v2":
+        expected_execution_spec_keys.add("recurrent_execution_spec_sha256")
     if (
-        set(execution_spec)
-        != {
-            "schema",
-            "candidate_visible",
-            "execution_manifest_sha256",
-            "sampling_policy_sha256",
+        set(execution_spec) != expected_execution_spec_keys
+        or execution_spec_schema
+        not in {
+            "aura.verified_transition.execution_spec.v1",
+            "aura.verified_transition.execution_spec.v2",
         }
-        or execution_spec.get("schema") != "aura.verified_transition.execution_spec.v1"
         or execution_spec.get("candidate_visible") is not False
         or execution_spec.get("execution_manifest_sha256") != execution_manifest_sha256
     ):
@@ -3204,6 +3211,11 @@ def _validate_non_candidate_evidence(
         execution_spec.get("sampling_policy_sha256"),
         role="execution_sampling_policy",
     )
+    if execution_spec_schema == "aura.verified_transition.execution_spec.v2":
+        _require_sha256(
+            execution_spec.get("recurrent_execution_spec_sha256"),
+            role="recurrent_execution_spec",
+        )
 
     latent_path = store.read_json(
         _validate_artifact_binding(context.get("latent_path_artifact")),

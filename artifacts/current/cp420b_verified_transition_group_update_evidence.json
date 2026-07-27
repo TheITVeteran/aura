@@ -1,0 +1,74 @@
+{
+  "schema": "aura.closeout.cp420b_verified_transition_group_update_evidence.v1",
+  "checkpoint": "CP420B",
+  "recorded_date": "2026-07-27",
+  "precommitted_group": {
+    "external_task_issuer_signature_required": true,
+    "signature_precedes_task_disclosure": true,
+    "signature_precedes_generation": true,
+    "ordered_episode_ids_bound": true,
+    "rng_roots_bound": true,
+    "policy_sha256_bound": true,
+    "recurrent_execution_spec_sha256_bound": true,
+    "producing_branch_bound": true,
+    "sample_seed_bound": true,
+    "sampling_configuration_bound": true,
+    "duplicate_episode_rejected": true,
+    "reorder_rejected": true,
+    "branch_substitution_rejected": true,
+    "seed_substitution_rejected": true,
+    "sampling_configuration_substitution_rejected": true
+  },
+  "mutation_transaction": {
+    "group_admission_replayed_before_reservation": true,
+    "durable_create_once_reservation": true,
+    "immediate_pre_update_policy_rehash": true,
+    "exact_optimizer_update_count": 1,
+    "policy_change_required": true,
+    "durable_commit_receipt": true,
+    "reservation_and_commit_independently_replayed": true,
+    "same_admission_replay_rejected": true,
+    "policy_drift_before_update_rejected": true,
+    "crash_after_reservation_behavior": "fail_closed_and_require_new_admission"
+  },
+  "execution_spec": {
+    "legacy_v1_still_readable": true,
+    "proof_grade_v2_recurrent_spec_binding": true
+  },
+  "validation": {
+    "focused_failures": 0,
+    "focused_tests": 67,
+    "focused_time_seconds": 60.0,
+    "adjacent_failures": 0,
+    "adjacent_tests": 111,
+    "adjacent_time_seconds": 70.21,
+    "governance_baseline_matched": true,
+    "ruff_passed": true,
+    "diff_hygiene_passed": true
+  },
+  "experiment": {
+    "capability_evaluation": false,
+    "model_loaded": false,
+    "optimizer_updated_in_production": false,
+    "training_run": false
+  },
+  "open_before_cp420_closure": [
+    "campaign_level append_only launch ledger proving no planned episode was discarded or rerun",
+    "exclusive production trainer entry point with legacy scalar reward bypass removed",
+    "CP418 adapter identity replay of group admission reservation commit and update receipts",
+    "crash reconciliation for reserved but uncommitted admissions",
+    "fresh small_checkpoint behavior campaign"
+  ],
+  "status": {
+    "spark_060_complete": false,
+    "cp420_complete": false,
+    "next_checkpoint": "CP420C"
+  },
+  "claims_not_supported": [
+    "reasoning_gain",
+    "resident_32b_result",
+    "frontier_performance",
+    "production_promotion",
+    "wow_signal"
+  ]
+}

@@ -4594,3 +4594,42 @@ reasoning, resident-32B, frontier, promotion, or `WOW Signal` claim follows.
 Counting CP420A makes 666 total checkpoints. The 666-920 forecast leaves 0-254
 records, or approximately 72.4%-100.0% checkpoint completion with an 86.2%
 midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420B signed group and exactly-once update
+
+The optimizer group is now a preregistered object rather than a favorable set
+assembled after generation. The external task issuer signs the exact ordered
+episode IDs, task, RNG roots, policy, recurrent execution spec, producing
+branch, sample seed, sampling configuration, and reward policy before task
+disclosure and before either pass runs. Independent admission rejects omitted,
+duplicate, reordered, branch-substituted, seed-substituted, configuration-
+substituted, late-signed, and forged groups. CP419 execution-spec evidence now
+supports a proof-grade v2 binding to the exact recurrent execution spec while
+remaining able to read legacy v1 episodes.
+
+An admitted group can mutate recurrent weights only through a journaled update
+transaction. It replays group admission, rehashes the current policy, publishes
+a governed create-once reservation keyed by the admission digest, constructs
+the gradient, rehashes immediately before mutation, calls `optimizer.update`
+exactly once, requires a changed policy digest, and publishes a create-once
+commit. The final receipt independently reopens and reconstructs both durable
+records. Replay remains blocked even after a simulated model rollback; policy
+drift during gradient construction leaves the optimizer untouched and burns
+the admission fail-closed.
+
+Focused validation passes 67/67 in 60.00 seconds. The adjacent recurrent,
+adapter, resident preregistration, and post-training matrix passes 111/111 in
+70.21 seconds. Ruff, diff hygiene, and the exact governance-effect baseline
+pass. Evidence is
+`artifacts/current/cp420b_verified_transition_group_update_evidence.json`.
+
+CP420 and SPARK-060 remain open. A campaign-level append-only launch ledger
+must still prove that a producer did not discard and rerun an entire planned
+episode. The legacy trainer and raw scalar-reward APIs can still bypass this
+transaction, CP418 adapter identity does not yet replay the new group/update
+evidence, and reserved-but-uncommitted crash recovery remains a manual
+fail-closed reconciliation. No production optimizer or model was run, so this
+establishes no reasoning, resident-32B, frontier, promotion, or `WOW Signal`
+result. Counting CP420B makes 667 total checkpoints. The 667-920 forecast
+leaves 0-253 records, or approximately 72.5%-100.0% checkpoint completion with
+an 86.3% midpoint. Final multi-hour soaks remain deferred.

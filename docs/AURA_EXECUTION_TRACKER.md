@@ -30574,3 +30574,35 @@ frontier, promotion, or `WOW Signal` result is claimed. Counting CP420A makes
 666 total checkpoints. The 666-920 forecast leaves 0-254 records, or
 approximately 72.4%-100.0% checkpoint completion with an 86.2% midpoint.
 Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420B signed transition group and exactly-once mutation
+
+Proof-grade recurrent optimization now requires a task-issuer-signed group
+manifest created before task disclosure and generation. It binds ordered
+episode IDs, RNG roots, the policy and recurrent execution spec, producing
+branches, sample seeds, sampling configuration, and the reward policy. Exact
+independent replay rejects omission, duplication, reordering, branch/seed/
+configuration substitution, late signatures, and forged signatures.
+
+The admitted path now owns a journaled exactly-once mutation. Validation and a
+policy hash precede a governed create-once reservation; gradient construction
+is followed by an immediate second policy hash; only an unchanged policy may
+receive one optimizer update. A changed post-update policy and create-once
+commit are mandatory, and the final receipt independently reconstructs the
+reservation/commit bytes. Replay and concurrent duplicate application are
+blocked by the admission-keyed reservation. Policy drift before mutation keeps
+the optimizer untouched.
+
+The focused signed-group/update suite passes 67/67 in 60.00 seconds and the
+adjacent recurrent proof matrix passes 111/111 in 70.21 seconds. Governance,
+ruff, and diff hygiene pass. Evidence is
+`artifacts/current/cp420b_verified_transition_group_update_evidence.json`.
+
+CP420 remains open for a campaign-level launch ledger that proves no whole
+episode was discarded and rerun, removal of the legacy trainer/raw-reward
+bypass, CP418 independent replay of the new receipts, and crash reconciliation
+for reserved-but-uncommitted updates. No model was loaded or trained and no
+reasoning, resident-32B, frontier, promotion, or `WOW Signal` claim follows.
+Counting CP420B makes 667 total checkpoints. The 667-920 forecast leaves 0-253
+records, or approximately 72.5%-100.0% checkpoint completion with an 86.3%
+midpoint. Final multi-hour soaks remain deferred.

@@ -1087,10 +1087,13 @@ def exact_adjoint_verified_transition_group_value_and_grad(
     model: Any,
     prompt_tokens: Sequence[int],
     samples: Sequence[RecurrentPolicySample],
+    group_admission_receipt: Mapping[str, Any],
     reward_receipt: Mapping[str, Any],
     transition_evidence: Sequence[Any],
     *,
     transition_store: Any,
+    group_manifest: Mapping[str, Any],
+    group_manifest_attestation: Mapping[str, Any],
     independent_scorer: Any,
     token_encoder: Any,
     token_decoder: Any,
@@ -1105,21 +1108,26 @@ def exact_adjoint_verified_transition_group_value_and_grad(
     scalar reward therefore has no path into this proof-grade objective.
     """
 
-    from core.learning.verified_transition_reward import (
-        rewards_for_recurrent_samples,
-        validate_verified_transition_reward_batch,
+    from core.learning.verified_transition_group_admission import (
+        validate_verified_transition_group_admission,
     )
+    from core.learning.verified_transition_reward import rewards_for_recurrent_samples
 
-    validated = validate_verified_transition_reward_batch(
+    validate_verified_transition_group_admission(
         transition_store,
+        group_admission_receipt,
         reward_receipt,
         transition_evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=group_manifest,
+        group_manifest_attestation=group_manifest_attestation,
         independent_scorer=independent_scorer,
         token_encoder=token_encoder,
         token_decoder=token_decoder,
     )
     rewards = rewards_for_recurrent_samples(
-        validated,
+        reward_receipt,
         samples,
         prompt_tokens,
     )

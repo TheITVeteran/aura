@@ -35,6 +35,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
 from core.learning import recurrent_grpo as recurrent_grpo_runtime
 from core.learning import verified_transition_episode as transition_runtime
 from core.learning import verified_transition_reward as reward_runtime
+from core.learning import verified_transition_update as update_runtime
 from core.learning.verified_transition_episode import (
     ExternalAttemptLedger,
     TransitionArtifactStore,
@@ -68,6 +69,14 @@ from core.learning.verified_transition_episode import (
     validate_verified_transition_episode,
     verifier_implementation_identity,
 )
+from core.learning.verified_transition_group_admission import (
+    TransitionGroupPlanEntry,
+    VerifiedTransitionGroupError,
+    build_transition_group_manifest,
+    build_verified_transition_group_admission,
+    sampling_config_sha256,
+    validate_verified_transition_group_admission,
+)
 from core.learning.verified_transition_reward import (
     TransitionRewardConfig,
     VerifiedTransitionEvidence,
@@ -76,6 +85,12 @@ from core.learning.verified_transition_reward import (
     build_verified_transition_reward_batch,
     require_optimizer_admission,
     validate_verified_transition_reward_batch,
+)
+from core.learning.verified_transition_update import (
+    VerifiedTransitionUpdateError,
+    VerifiedTransitionUpdateJournal,
+    apply_verified_transition_group_update,
+    validate_verified_transition_update_receipt,
 )
 from core.runtime.resource_observation import HostResourceObserver, ObservationSource
 from tools.independent_paired_campaign_scoring import (
@@ -396,10 +411,11 @@ def _pass_context(
     execution_manifest_sha256 = hashlib.sha256(canonical_json_bytes(execution_manifest)).hexdigest()
     execution_spec = store.put_json(
         {
-            "schema": "aura.verified_transition.execution_spec.v1",
+            "schema": "aura.verified_transition.execution_spec.v2",
             "candidate_visible": False,
             "execution_manifest_sha256": execution_manifest_sha256,
             "sampling_policy_sha256": _sha("sampling-policy"),
+            "recurrent_execution_spec_sha256": _sha("recurrent-execution-spec"),
         }
     )
     latent_path = store.put_json(
@@ -623,6 +639,7 @@ def _build_complete_episode(
     episode_id: str = "spark-060-episode-0001",
     pass_0_correct: bool = False,
     pass_1_correct: bool = True,
+    shared_policy_case: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     tmp_path = tmp_path_factory.mktemp(f"verified-transition-{episode_id[-4:]}")
     task = generate_task("mathematics", seed=817_231, difficulty=2)
@@ -638,16 +655,25 @@ def _build_complete_episode(
         independent_scorer=score_frontier_response_independently,
         created_at_unix_ns=1_800_000_200_000_000_000,
     )
-    policy_document, root, role_keys = _trust_fixture(
-        execution_manifest["generation_worker_identity_sha256"]
-    )
-    policy = validate_campaign_trust_policy(
-        policy_document,
-        trusted_root_public_key_pem=_public_pem(root),
-        expected_campaign_name="spark-060-transition-proof",
-        expected_protocol_sha256=PROTOCOL_SHA256,
-        now_unix=OBSERVED_AT,
-    )
+    if shared_policy_case is None:
+        policy_document, root, role_keys = _trust_fixture(
+            execution_manifest["generation_worker_identity_sha256"]
+        )
+        policy = validate_campaign_trust_policy(
+            policy_document,
+            trusted_root_public_key_pem=_public_pem(root),
+            expected_campaign_name="spark-060-transition-proof",
+            expected_protocol_sha256=PROTOCOL_SHA256,
+            now_unix=OBSERVED_AT,
+        )
+    else:
+        policy_document = shared_policy_case["policy_document"]
+        root = shared_policy_case["root"]
+        role_keys = shared_policy_case["role_keys"]
+        policy = shared_policy_case["policy"]
+        assert policy.role_pin(CAMPAIGN_RUNNER)["implementation_sha256"] == (
+            execution_manifest["generation_worker_identity_sha256"]
+        )
     calibration_evidence = _calibration_evidence(
         policy=policy,
         role_keys=role_keys,
@@ -1090,6 +1116,7 @@ def transition_outcome_episodes(
             episode_id="spark-060-episode-anchor",
             pass_0_correct=True,
             pass_1_correct=True,
+            shared_policy_case=complete_episode,
         ),
         "right_to_wrong": _build_complete_episode(
             tmp_path_factory,
@@ -1097,6 +1124,7 @@ def transition_outcome_episodes(
             episode_id="spark-060-episode-regression",
             pass_0_correct=True,
             pass_1_correct=False,
+            shared_policy_case=complete_episode,
         ),
     }
 
@@ -1117,10 +1145,120 @@ def _transition_sample(case: dict[str, Any], prompt_sha256: str) -> SimpleNamesp
         prompt_tokens_sha256=prompt_sha256,
         tokens=tuple(receipt["output_token_ids"]),
         policy_sha256=receipt["policy_sha256"],
+        execution_spec_sha256=_sha("recurrent-execution-spec"),
+        branch_index=0,
+        seed=817_231,
+        sampling_config={
+            "schema": "aura.recurrent_sampling_config.v1",
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "max_tokens": 1024,
+        },
         behavior_logprobs=tuple(
             float(value) for value in receipt["behavior_policy_logprobs"]
         ),
     )
+
+
+def _group_plan_entry(
+    case: dict[str, Any], sample: SimpleNamespace
+) -> TransitionGroupPlanEntry:
+    return TransitionGroupPlanEntry(
+        episode_id=case["episode"]["episode_id"],
+        task_id=case["episode"]["task_id"],
+        rng_root_sha256=case["pass_1"]["rng_root_sha256"],
+        policy_sha256=sample.policy_sha256,
+        recurrent_execution_spec_sha256=sample.execution_spec_sha256,
+        producing_branch_index=sample.branch_index,
+        sample_seed=sample.seed,
+        sampling_config_sha256=sampling_config_sha256(sample),
+    )
+
+
+def _signed_group_manifest(
+    cases: tuple[dict[str, Any], ...],
+    samples: tuple[SimpleNamespace, ...],
+    reward_receipt: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    reward_config_sha256 = hashlib.sha256(
+        canonical_json_bytes(reward_receipt["reward_config"])
+    ).hexdigest()
+    manifest = build_transition_group_manifest(
+        group_id="spark-060-group-0001",
+        task_id=cases[0]["episode"]["task_id"],
+        entries=tuple(
+            _group_plan_entry(case, sample)
+            for case, sample in zip(cases, samples, strict=True)
+        ),
+        reward_config_sha256=reward_config_sha256,
+        planned_at_unix_ns=1_800_000_204_000_000_000,
+    )
+    attestation = build_role_attestation(
+        cases[0]["policy"],
+        role=TASK_ISSUER,
+        payload=manifest,
+        signed_at_unix=1_800_000_204,
+        private_key=cases[0]["role_keys"][TASK_ISSUER],
+    )
+    return manifest, attestation
+
+
+def _positive_group_material(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    anchor = transition_outcome_episodes["right_to_right"]
+    evidence = (_transition_evidence(improved), _transition_evidence(anchor))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    assert prompt_tokens == tuple(anchor["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(anchor, prompt_sha256),
+    )
+    manifest, manifest_attestation = _signed_group_manifest(
+        (improved, anchor), samples, batch
+    )
+    return {
+        "store": improved["store"],
+        "cases": (improved, anchor),
+        "evidence": evidence,
+        "batch": batch,
+        "prompt_tokens": prompt_tokens,
+        "samples": samples,
+        "manifest": manifest,
+        "manifest_attestation": manifest_attestation,
+    }
+
+
+def _positive_admission_material(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    material = _positive_group_material(transition_outcome_episodes)
+    admission = build_verified_transition_group_admission(
+        material["store"],
+        material["batch"],
+        material["evidence"],
+        material["samples"],
+        material["prompt_tokens"],
+        group_manifest=material["manifest"],
+        group_manifest_attestation=material["manifest_attestation"],
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    return {**material, "admission": admission}
 
 
 def test_complete_episode_reconstructs_from_bytes_and_dual_signed_authorities(
@@ -1252,7 +1390,6 @@ def test_transition_reward_config_makes_correctness_lexicographically_dominant()
 
 def test_rejected_transition_batch_never_reaches_gradient_construction(
     complete_episode: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     case = complete_episode
     evidence = (
@@ -1272,27 +1409,25 @@ def test_rejected_transition_batch_never_reaches_gradient_construction(
         token_decoder=_byte_decode,
         created_at_unix_ns=1_800_000_224_000_000_000,
     )
+    prompt_tokens = tuple(case["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (_transition_sample(case, prompt_sha256),)
 
-    def _gradient_must_not_run(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("gradient construction ran before reward admission")
-
-    monkeypatch.setattr(
-        recurrent_grpo_runtime,
-        "exact_adjoint_sampled_group_value_and_grad",
-        _gradient_must_not_run,
-    )
     with pytest.raises(VerifiedTransitionRewardAdmissionError):
-        recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
-            None,
-            case["pass_1"]["input_token_ids"],
-            (),
+        build_verified_transition_group_admission(
+            case["store"],
             batch,
             evidence,
-            transition_store=case["store"],
+            samples,
+            prompt_tokens,
+            group_manifest={},
+            group_manifest_attestation={},
             independent_scorer=score_frontier_response_independently,
             token_encoder=_byte_encode,
             token_decoder=_byte_decode,
-            spec=None,
+            created_at_unix_ns=1_800_000_224_000_000_000,
         )
 
 
@@ -1396,6 +1531,22 @@ def test_signed_transition_group_replays_and_reaches_gradient_only_after_admissi
         _transition_sample(improved, prompt_sha256),
         _transition_sample(anchor, prompt_sha256),
     )
+    manifest, manifest_attestation = _signed_group_manifest(
+        (improved, anchor), samples, batch
+    )
+    admission = build_verified_transition_group_admission(
+        improved["store"],
+        batch,
+        evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
     observed: dict[str, Any] = {}
     sentinel = object()
 
@@ -1419,9 +1570,12 @@ def test_signed_transition_group_replays_and_reaches_gradient_only_after_admissi
             None,
             prompt_tokens,
             samples,
+            admission,
             batch,
             evidence,
             transition_store=improved["store"],
+            group_manifest=manifest,
+            group_manifest_attestation=manifest_attestation,
             independent_scorer=score_frontier_response_independently,
             token_encoder=_byte_encode,
             token_decoder=_byte_decode,
@@ -1447,11 +1601,23 @@ def test_signed_transition_group_replays_and_reaches_gradient_only_after_admissi
         token_encoder=_byte_encode,
         token_decoder=_byte_decode,
     ) == batch
+    assert validate_verified_transition_group_admission(
+        improved["store"],
+        admission,
+        batch,
+        evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+    ) == admission
 
 
 def test_signed_right_to_wrong_rejects_before_gradient_even_with_improvement(
     transition_outcome_episodes: dict[str, dict[str, Any]],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     improved = transition_outcome_episodes["wrong_to_right"]
     regressed = transition_outcome_episodes["right_to_wrong"]
@@ -1465,35 +1631,36 @@ def test_signed_right_to_wrong_rejects_before_gradient_even_with_improvement(
         created_at_unix_ns=1_800_000_224_000_000_000,
     )
 
-    def _gradient_must_not_run(*_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("gradient construction ran after a verified regression")
-
-    monkeypatch.setattr(
-        recurrent_grpo_runtime,
-        "exact_adjoint_sampled_group_value_and_grad",
-        _gradient_must_not_run,
-    )
     assert batch["wrong_to_right"] == 1
     assert batch["right_to_wrong"] == 1
     assert batch["eir_numerator"] == 1
     assert batch["eir_denominator"] == 1
     assert batch["eir_micros"] == 1_000_000
     assert batch["optimizer_admission_reason"] == "right_to_wrong_regression"
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(regressed, prompt_sha256),
+    )
     with pytest.raises(
         VerifiedTransitionRewardAdmissionError,
         match="right_to_wrong_regression",
     ):
-        recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
-            None,
-            improved["pass_1"]["input_token_ids"],
-            (),
+        build_verified_transition_group_admission(
+            improved["store"],
             batch,
             evidence,
-            transition_store=improved["store"],
+            samples,
+            prompt_tokens,
+            group_manifest={},
+            group_manifest_attestation={},
             independent_scorer=score_frontier_response_independently,
             token_encoder=_byte_encode,
             token_decoder=_byte_decode,
-            spec=None,
+            created_at_unix_ns=1_800_000_224_000_000_000,
         )
 
 
@@ -1513,6 +1680,312 @@ def test_transition_group_rejects_duplicate_signed_episode(
             token_decoder=_byte_decode,
             created_at_unix_ns=1_800_000_224_000_000_000,
         )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["entry_order", "branch_index", "sample_seed", "sampling_config"],
+)
+def test_signed_group_manifest_rejects_membership_and_execution_substitution(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    mutation: str,
+) -> None:
+    material = _positive_group_material(transition_outcome_episodes)
+    manifest = copy.deepcopy(material["manifest"])
+    samples = list(material["samples"])
+    if mutation == "entry_order":
+        manifest["entries"] = list(reversed(manifest["entries"]))
+    elif mutation == "branch_index":
+        manifest["entries"][0]["producing_branch_index"] = 1
+    elif mutation == "sample_seed":
+        manifest["entries"][0]["sample_seed"] += 1
+    else:
+        samples[0] = SimpleNamespace(
+            **{
+                **vars(samples[0]),
+                "sampling_config": {
+                    **samples[0].sampling_config,
+                    "max_tokens": 512,
+                },
+            }
+        )
+    if mutation != "sampling_config":
+        unsigned = dict(manifest)
+        unsigned.pop("manifest_sha256")
+        manifest["manifest_sha256"] = hashlib.sha256(
+            canonical_json_bytes(unsigned)
+        ).hexdigest()
+    issuer = material["cases"][0]
+    attestation = build_role_attestation(
+        issuer["policy"],
+        role=TASK_ISSUER,
+        payload=manifest,
+        signed_at_unix=1_800_000_204,
+        private_key=issuer["role_keys"][TASK_ISSUER],
+    )
+
+    with pytest.raises(
+        VerifiedTransitionGroupError,
+        match="group_manifest_membership_mismatch",
+    ):
+        build_verified_transition_group_admission(
+            material["store"],
+            material["batch"],
+            material["evidence"],
+            tuple(samples),
+            material["prompt_tokens"],
+            group_manifest=manifest,
+            group_manifest_attestation=attestation,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            created_at_unix_ns=1_800_000_224_000_000_000,
+        )
+
+
+def test_group_manifest_signature_must_precede_task_disclosure(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> None:
+    material = _positive_group_material(transition_outcome_episodes)
+    entries = tuple(
+        TransitionGroupPlanEntry(**entry)
+        for entry in material["manifest"]["entries"]
+    )
+    manifest = build_transition_group_manifest(
+        group_id="spark-060-group-late",
+        task_id=material["manifest"]["task_id"],
+        entries=entries,
+        reward_config_sha256=material["manifest"]["reward_config_sha256"],
+        planned_at_unix_ns=1_800_000_206_000_000_000,
+    )
+    issuer = material["cases"][0]
+    attestation = build_role_attestation(
+        issuer["policy"],
+        role=TASK_ISSUER,
+        payload=manifest,
+        signed_at_unix=1_800_000_206,
+        private_key=issuer["role_keys"][TASK_ISSUER],
+    )
+
+    with pytest.raises(ValueError, match="campaign_attestation_too_late"):
+        build_verified_transition_group_admission(
+            material["store"],
+            material["batch"],
+            material["evidence"],
+            material["samples"],
+            material["prompt_tokens"],
+            group_manifest=manifest,
+            group_manifest_attestation=attestation,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            created_at_unix_ns=1_800_000_224_000_000_000,
+        )
+
+
+def test_group_admission_rejects_rehashed_manifest_attestation_forgery(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> None:
+    material = _positive_group_material(transition_outcome_episodes)
+    attacked = copy.deepcopy(material["manifest_attestation"])
+    attacked["signature_b64"] = base64.b64encode(b"\x00" * 64).decode("ascii")
+    with pytest.raises(ValueError, match="campaign_attestation_signature_invalid"):
+        build_verified_transition_group_admission(
+            material["store"],
+            material["batch"],
+            material["evidence"],
+            material["samples"],
+            material["prompt_tokens"],
+            group_manifest=material["manifest"],
+            group_manifest_attestation=attacked,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            created_at_unix_ns=1_800_000_224_000_000_000,
+        )
+
+
+def test_verified_transition_update_is_exactly_once_and_durably_receipted(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    material = _positive_admission_material(transition_outcome_episodes)
+    policy_before = material["admission"]["policy_sha256"]
+    policy_after = _sha("verified-transition-policy-after")
+
+    class Model:
+        version = 0
+
+    class Optimizer:
+        def __init__(self) -> None:
+            self.update_count = 0
+
+        def update(self, model: Model, gradients: Any) -> None:
+            assert gradients == {"delta": 1}
+            self.update_count += 1
+            model.version += 1
+
+    class Objective:
+        gradients = {"delta": 1}
+
+        @staticmethod
+        def receipt() -> dict[str, Any]:
+            return {"schema": "aura.test.objective.v1", "loss_micros": 125_000}
+
+    model = Model()
+    optimizer = Optimizer()
+    monkeypatch.setattr(
+        update_runtime,
+        "recurrent_policy_sha256",
+        lambda observed, _spec: policy_before if observed.version == 0 else policy_after,
+    )
+    monkeypatch.setattr(
+        update_runtime,
+        "exact_adjoint_verified_transition_group_value_and_grad",
+        lambda *_args, **_kwargs: Objective(),
+    )
+    times = iter((1_800_000_225_000_000_000, 1_800_000_226_000_000_000))
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "updates")
+    spec = SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"])
+
+    receipt = apply_verified_transition_group_update(
+        model,
+        optimizer,
+        material["prompt_tokens"],
+        material["samples"],
+        material["admission"],
+        material["batch"],
+        material["evidence"],
+        transition_store=material["store"],
+        group_manifest=material["manifest"],
+        group_manifest_attestation=material["manifest_attestation"],
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        spec=spec,
+        journal=journal,
+        now_unix_ns=lambda: next(times),
+    )
+
+    assert optimizer.update_count == 1
+    assert model.version == 1
+    assert receipt["optimizer_update_count"] == 1
+    assert receipt["policy_before_sha256"] == policy_before
+    assert receipt["policy_after_sha256"] == policy_after
+    assert validate_verified_transition_update_receipt(journal, receipt) == receipt
+    admission_sha256 = material["admission"]["receipt_sha256"]
+    assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
+    assert (tmp_path / "updates" / f"{admission_sha256}.committed.json").is_file()
+
+    forged = _reseal(
+        {
+            **receipt,
+            "policy_after_sha256": _sha("forged-policy-after"),
+        }
+    )
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_update_reconstruction_mismatch",
+    ):
+        validate_verified_transition_update_receipt(journal, forged)
+
+    model.version = 0
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_admission_already_reserved",
+    ):
+        apply_verified_transition_group_update(
+            model,
+            optimizer,
+            material["prompt_tokens"],
+            material["samples"],
+            material["admission"],
+            material["batch"],
+            material["evidence"],
+            transition_store=material["store"],
+            group_manifest=material["manifest"],
+            group_manifest_attestation=material["manifest_attestation"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            spec=spec,
+            journal=journal,
+            now_unix_ns=lambda: 1_800_000_227_000_000_000,
+        )
+    assert optimizer.update_count == 1
+
+
+def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    material = _positive_admission_material(transition_outcome_episodes)
+    policy_before = material["admission"]["policy_sha256"]
+    policy_drifted = _sha("verified-transition-policy-drifted")
+
+    class Model:
+        version = 0
+
+    class Optimizer:
+        update_count = 0
+
+        def update(self, _model: Model, _gradients: Any) -> None:
+            self.update_count += 1
+
+    class Objective:
+        gradients = {"delta": 1}
+
+        @staticmethod
+        def receipt() -> dict[str, Any]:
+            return {"schema": "aura.test.objective.v1"}
+
+    model = Model()
+    optimizer = Optimizer()
+    monkeypatch.setattr(
+        update_runtime,
+        "recurrent_policy_sha256",
+        lambda observed, _spec: policy_before if observed.version == 0 else policy_drifted,
+    )
+
+    def _drift_then_return(*_args: Any, **_kwargs: Any) -> Objective:
+        model.version = 1
+        return Objective()
+
+    monkeypatch.setattr(
+        update_runtime,
+        "exact_adjoint_verified_transition_group_value_and_grad",
+        _drift_then_return,
+    )
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "updates")
+    spec = SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"])
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_policy_changed_before_update",
+    ):
+        apply_verified_transition_group_update(
+            model,
+            optimizer,
+            material["prompt_tokens"],
+            material["samples"],
+            material["admission"],
+            material["batch"],
+            material["evidence"],
+            transition_store=material["store"],
+            group_manifest=material["manifest"],
+            group_manifest_attestation=material["manifest_attestation"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            spec=spec,
+            journal=journal,
+            now_unix_ns=lambda: 1_800_000_225_000_000_000,
+        )
+    assert optimizer.update_count == 0
+    admission_sha256 = material["admission"]["receipt_sha256"]
+    assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
+    assert not (tmp_path / "updates" / f"{admission_sha256}.committed.json").exists()
 
 
 @pytest.mark.parametrize(
