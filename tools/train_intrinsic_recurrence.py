@@ -53,6 +53,7 @@ def attach_adapters(model, spec, *, rank, targets, depth_conditioned):
     total = len(model.model.layers)
     indices = adapted_layer_indices(spec, total)
     attached = 0
+    sites: list[str] = []
     for index in indices:
         layer = model.model.layers[index]
         for parent_name in ("self_attn", "mlp"):
@@ -63,10 +64,21 @@ def attach_adapters(model, spec, *, rank, targets, depth_conditioned):
                 projection = getattr(parent, target, None)
                 if projection is None or isinstance(projection, ScopedLoRALinear):
                     continue
+                site = f"model.layers.{index}.{parent_name}.{target}"
                 setattr(
-                    parent, target, ScopedLoRALinear.from_base(projection, r=rank)
+                    parent,
+                    target,
+                    # Identity travels with the projection. The gate's
+                    # aggregate call count proves SOMETHING fired; only the
+                    # per-site record can prove that everything which was
+                    # wrapped actually ran, and a treatment where half the
+                    # sites stayed dark is half a treatment reported as one.
+                    ScopedLoRALinear.from_base(
+                        projection, r=rank, block_index=index, site=site
+                    ),
                 )
                 attached += 1
+                sites.append(site)
     if not attached:
         raise RuntimeError("no projections were adapted; check --lora-targets")
 
@@ -85,6 +97,9 @@ def attach_adapters(model, spec, *, rank, targets, depth_conditioned):
         "depth_banks": len(banks),
         "window": [spec.prelude_end, spec.coda_start],
         "coda": [spec.coda_start, total],
+        # The exact set a downstream activation receipt must be able to match.
+        "adapted_sites": sorted(sites),
+        "adapted_block_indices": sorted({int(index) for index in indices}),
     }
 
 

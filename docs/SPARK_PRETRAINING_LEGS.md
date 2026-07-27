@@ -81,15 +81,32 @@ expert/router/depth telemetry seam is open work.
 ## SPARK-066 — proving the answer came out of the latent path
 
 `penultimate_execution_receipt(...)` per arm per episode, then
-`latent_execution_verdict(receipt, require_adapter=...)`. **The repaired
-accuracy gate should emit one of these per arm.** It would have caught CP227
-before that verdict was published: an adapter reporting `attached: true` with
-an empty `activated_blocks` is refused at construction rather than discovered
-in a post-mortem.
+`latent_execution_verdict(receipt, require_adapter=...)`.
 
-The producer side — emitting `activated_blocks`, per-pass `state_sha256`, and
-`decode_state_sha256` from the live worker's forward pass — is the work that
-remains, and it is the march's.
+**The producer for `activated_blocks` is wired.** `ScopedLoRALinear.from_base`
+takes `block_index` and `site`; both attachment sites supply them;
+`RecurrenceAdapterActivation` records `applied_blocks` / `applied_sites` per
+application; and `attach_adapters` returns `adapted_sites` and
+`adapted_block_indices` so a receipt can be built against measured values
+rather than asserted ones:
+
+```python
+adapter={
+    "attached": True,
+    "expected_blocks": wiring["adapted_block_indices"],
+    "activated_blocks": activation.activated_blocks(),   # measured
+    ...
+}
+```
+
+`tools/eval_intrinsic_accuracy.py`'s dark-adapter gate was upgraded with it,
+from *something fired* to *everything wrapped fired*: a block where any adapted
+site stayed dark stops with `instrument_partial_adapter` and names the first
+dark site. `calls > 0` was never proof the treatment ran — only that at least
+one projection did.
+
+What remains is the per-pass `state_sha256` and `decode_state_sha256` producers
+inside the live worker's forward pass.
 
 ## SPARK-067 — coupling that is not just a copied field
 

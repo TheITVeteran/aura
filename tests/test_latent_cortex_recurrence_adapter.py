@@ -51,6 +51,11 @@ def test_full_scope_applies_delta_and_receipts_every_position():
         "calls": 1,
         "adapted_positions": 3,
         "observed_positions": 3,
+        # This projection was built without attachment identity, so the
+        # application is counted but not attributable. Attachment sites that
+        # supply block_index/site populate these; see the identity tests below.
+        "applied_blocks": {},
+        "applied_sites": {},
     }
     assert current_recurrence_adapter_scope() is None
 
@@ -164,3 +169,93 @@ def test_episode_receipt_exposes_adapter_activation_evidence():
         }
     )
     assert receipt.to_dict()["recurrence_adapter"]["calls"] == 2
+
+
+# --- attributable activation (SPARK-066) ------------------------------------
+#
+# `calls` proves something fired. It cannot tell "all wrapped projections
+# fired" from "one did and the rest were never wrapped", and that difference
+# is a treatment that is really a fraction of a treatment -- the CP227 failure
+# one level down. These contracts cover the identity that closes it.
+
+
+def _identified(block_index: int, site: str) -> ScopedLoRALinear:
+    base = nn.Linear(4, 3, bias=False)
+    wrapped = ScopedLoRALinear.from_base(
+        base, r=2, scale=1.0, block_index=block_index, site=site
+    )
+    wrapped.lora_a = mx.ones_like(wrapped.lora_a)
+    wrapped.lora_b = mx.ones_like(wrapped.lora_b)
+    mx.eval(wrapped.parameters())
+    return wrapped
+
+
+def test_an_identified_projection_names_itself_when_it_applies():
+    wrapped = _identified(40, "model.layers.40.self_attn.o_proj")
+    x = mx.ones((1, 3, 4))
+    with recurrence_adapter_scope() as activation:
+        wrapped(x)
+    assert activation.activated_blocks() == [40]
+    assert activation.to_dict()["applied_sites"] == {
+        "model.layers.40.self_attn.o_proj": 1
+    }
+
+
+def test_a_projection_that_never_ran_is_named_as_unfired():
+    fired = _identified(40, "model.layers.40.self_attn.o_proj")
+    dark = _identified(41, "model.layers.41.self_attn.o_proj")
+    expected = [
+        "model.layers.40.self_attn.o_proj",
+        "model.layers.41.self_attn.o_proj",
+    ]
+    x = mx.ones((1, 3, 4))
+    with recurrence_adapter_scope() as activation:
+        fired(x)
+    assert activation.calls == 1  # the aggregate looks healthy
+    assert activation.unfired_sites(expected) == [
+        "model.layers.41.self_attn.o_proj"
+    ]
+    assert dark is not None
+
+
+def test_a_fully_dark_adapter_activates_no_block_at_all():
+    wrapped = _identified(40, "model.layers.40.self_attn.o_proj")
+    x = mx.ones((1, 3, 4))
+    # No scope open: this is exactly the CP227 shape, the projection passes
+    # through to the base weights.
+    wrapped(x)
+    with recurrence_adapter_scope() as activation:
+        with recurrence_adapter_disabled():
+            wrapped(x)
+    assert activation.calls == 0
+    assert activation.activated_blocks() == []
+    assert activation.unfired_sites(["model.layers.40.self_attn.o_proj"]) == [
+        "model.layers.40.self_attn.o_proj"
+    ]
+
+
+def test_repeated_applications_are_counted_per_site():
+    wrapped = _identified(40, "model.layers.40.self_attn.o_proj")
+    x = mx.ones((1, 3, 4))
+    with recurrence_adapter_scope() as activation:
+        for _ in range(4):
+            wrapped(x)
+    assert activation.applied_blocks == {40: 4}
+    assert activation.applied_sites == {"model.layers.40.self_attn.o_proj": 4}
+
+
+def test_a_span_scoped_application_is_attributed_too():
+    wrapped = _identified(7, "model.layers.7.mlp.down_proj")
+    x = mx.ones((1, 6, 4))
+    with recurrence_adapter_scope(start=2, stop=5) as activation:
+        wrapped(x)
+    assert activation.activated_blocks() == [7]
+    assert activation.adapted_positions == 3
+
+
+def test_attachment_identity_is_validated():
+    base = nn.Linear(4, 3, bias=False)
+    with pytest.raises(ValueError):
+        ScopedLoRALinear.from_base(base, r=2, block_index=-1)
+    with pytest.raises(ValueError):
+        ScopedLoRALinear.from_base(base, r=2, site="   ")

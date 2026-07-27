@@ -101,6 +101,16 @@ def _decode(
                 activation_totals.get("adapted_positions", 0)
                 + activation.adapted_positions
             )
+            # Per-site identity, not just the aggregate. A block that was
+            # wrapped and never fired is invisible in `calls` -- the same
+            # class of blindness that voided the first gate run, one level
+            # down.
+            fired = activation_totals.setdefault("applied_sites", {})
+            for site, count in activation.applied_sites.items():
+                fired[site] = fired.get(site, 0) + count
+            blocks = activation_totals.setdefault("applied_blocks", {})
+            for block, count in activation.applied_blocks.items():
+                blocks[str(block)] = blocks.get(str(block), 0) + count
         nxt = int(mx.argmax(logits[0, -1, :]))
         if eos is not None and nxt == eos:
             break
@@ -210,7 +220,11 @@ def main() -> int:
         print(f"loading {args.model} …", flush=True)
         model, tokenizer = load(args.model)
         eos = getattr(tokenizer, "eos_token_id", None)
-        attach_adapters(model, spec, rank=args.lora_rank, targets=targets, depth_conditioned=True)
+        wiring = attach_adapters(
+            model, spec, rank=args.lora_rank, targets=targets, depth_conditioned=True
+        )
+        expected_sites = list(wiring.get("adapted_sites") or [])
+        report["adapter_wiring"] = dict(wiring)
 
         loaded = mx.load(str(Path(args.adapter) / "adapters.safetensors"))
         # names in the file are the trainable (lora/delta) params
@@ -293,6 +307,28 @@ def main() -> int:
                 print(
                     f"FATAL: adapter scope never fired during {key} — "
                     "the arms would compare base against base",
+                    flush=True,
+                )
+                return 2
+            # A non-zero call count is not proof the treatment ran. It is
+            # proof that at least one projection ran. If any wrapped site
+            # stayed dark, the arms differ by a fraction of the adapter and
+            # the comparison measures something nobody designed.
+            unfired = sorted(
+                set(expected_sites) - set(activation_totals.get("applied_sites") or {})
+            )
+            report.setdefault("unfired_sites", {})[key] = unfired
+            if n and expected_sites and unfired:
+                report["error"] = (
+                    f"{len(unfired)} of {len(expected_sites)} adapted sites "
+                    f"never fired during {key}"
+                )
+                report["stop_reason"] = "instrument_partial_adapter"
+                write_report()
+                print(
+                    f"FATAL: {len(unfired)} of {len(expected_sites)} adapted "
+                    f"sites never fired during {key} — the treatment is partial; "
+                    f"first dark site: {unfired[0]}",
                     flush=True,
                 )
                 return 2

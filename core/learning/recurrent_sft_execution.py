@@ -160,6 +160,7 @@ def wrap_recurrent_window(
                 continue
             parent = getattr(layer, parent_name)
             base = getattr(parent, target)
+            site = f"model.layers.{layer_index}.{parent_name}.{target}"
             setattr(
                 parent,
                 target,
@@ -168,11 +169,16 @@ def wrap_recurrent_window(
                     r=lora_rank,
                     dropout=float(lora_dropout),
                     scale=float(lora_scale),
+                    # Identity travels with the projection so an activation
+                    # receipt can name the sites that fired. Without it, a
+                    # projection that was wrapped and never applied anything
+                    # is invisible inside the aggregate call count -- the
+                    # CP227 failure one level down.
+                    block_index=layer_index,
+                    site=site,
                 ),
             )
-            wrapped.append(
-                f"model.layers.{layer_index}.{parent_name}.{target}"
-            )
+            wrapped.append(site)
     if not wrapped:
         _fail("recurrent_sft_no_projections_wrapped")
     return wrapped

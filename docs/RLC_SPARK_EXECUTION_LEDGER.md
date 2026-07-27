@@ -3757,13 +3757,44 @@ before those dependencies close is not admissible.
   21/21 focused tests pass, including a direct reconstruction of the CP227
   shape asserted to be unable to produce a PROVEN verdict.
 
-  **The checkbox stays open**: this is the instrument, not the run. No
-  resident-32B execution has produced a receipt through it, and the producer
-  side — emitting these fields from the live worker's forward pass — is the
-  march's to wire. This checkpoint runs no model and grants no capability
-  claim. Note for the march: the repaired accuracy gate should emit one of
-  these per arm, which would have caught CP227 before its verdict was
-  published.
+  **F7-E part two wires the producer**, so this is no longer a validator with
+  nothing feeding it. The failure it closes is CP227's, one level down: the
+  repaired gate's aggregate `calls` counter proves *something* fired. It
+  cannot distinguish "all ten wrapped projections fired" from "nine did and
+  one was silently never wrapped", and that difference is a treatment that is
+  really nine tenths of a treatment, with the arms differing by a fraction of
+  the adapter nobody designed.
+  * `RecurrenceAdapterActivation` (live path, `recurrence_adapter.py`) now
+    records `applied_blocks` and `applied_sites` per application, with
+    `activated_blocks()` and `unfired_sites(expected)` on top. Identity is
+    optional and travels with the projection: `ScopedLoRALinear.from_base`
+    accepts `block_index` and `site`, validated at attach.
+  * Both attachment sites supply it — `attach_adapters`
+    (`tools/train_intrinsic_recurrence.py`, the one the accuracy gate imports)
+    and `recurrent_sft_execution.py` — and `attach_adapters` now returns
+    `adapted_sites` and `adapted_block_indices`: the exact set a downstream
+    activation receipt must match.
+  * **`tools/eval_intrinsic_accuracy.py`'s dark-adapter gate is upgraded from
+    "something fired" to "everything wrapped fired."** A block where any
+    adapted site stayed dark now stops the run with
+    `instrument_partial_adapter`, names the first dark site, and returns 2 —
+    the same fail-closed treatment the fully-dark case already got.
+  * `activated_blocks` in the receipt is therefore *measured*, not asserted:
+    the value comes off the forward pass that actually ran.
+
+  9/9 additional integration tests run the real `attach_adapters` against a
+  real MLX module tree (not a stub): every wrapped site fires on a healthy
+  forward; one projection reverted to a bare `nn.Linear` is named while
+  `calls` still looks healthy; a whole dark block is named site by site; the
+  no-scope CP227 shape leaves every site unfired while the model still
+  answers; and a partial activation is shown to be unable to construct a
+  latent receipt at all. 6/6 further contracts cover the identity recording
+  itself, and the existing adapter suites pass 34/34.
+
+  **The checkbox stays open**: no resident-32B execution has produced a
+  receipt through this yet, and the per-pass `state_sha256` /
+  `decode_state_sha256` producers in the live worker remain to be wired. This
+  checkpoint runs no model and grants no capability claim.
 - [ ] **SPARK-067 - Organism-wide bidirectional coupling.** Connect epistemic
   state and recurrent control causally with agency/Will, memory, tools,
   personality/self-model, affect/body, global workspace/consciousness,

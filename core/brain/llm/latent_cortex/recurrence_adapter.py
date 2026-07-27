@@ -12,10 +12,10 @@ Live RLC calls contain slots only and use the full-span scope.
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from mlx_lm.tuner.lora import LoRALinear
@@ -23,22 +23,57 @@ from mlx_lm.tuner.lora import LoRALinear
 
 @dataclass
 class RecurrenceAdapterActivation:
-    """Mutable receipt for one lexical or latent execution boundary."""
+    """Mutable receipt for one lexical or latent execution boundary.
+
+    ``calls`` and ``adapted_positions`` are aggregates: they prove *something*
+    fired, which is what the CP227 repair needed. They cannot distinguish "all
+    sixteen wrapped projections fired" from "one did and fifteen were silently
+    never wrapped", and that difference is a treatment that is really a
+    quarter of a treatment. ``applied_blocks`` and ``applied_sites`` record
+    identity per application so the caller can compare what fired against what
+    attachment claimed to wrap.
+    """
 
     start: int | None = None
     stop: int | None = None
     calls: int = 0
     adapted_positions: int = 0
     observed_positions: int = 0
+    applied_blocks: dict[int, int] = field(default_factory=dict)
+    applied_sites: dict[str, int] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, int | None]:
+    def record_application(self, *, block_index: int | None, site: str | None) -> None:
+        """Note that one identified projection actually applied its delta."""
+
+        if block_index is not None:
+            self.applied_blocks[block_index] = self.applied_blocks.get(block_index, 0) + 1
+        if site is not None:
+            self.applied_sites[site] = self.applied_sites.get(site, 0) + 1
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "start": self.start,
             "stop": self.stop,
             "calls": self.calls,
             "adapted_positions": self.adapted_positions,
             "observed_positions": self.observed_positions,
+            "applied_blocks": dict(sorted(self.applied_blocks.items())),
+            "applied_sites": dict(sorted(self.applied_sites.items())),
         }
+
+    def activated_blocks(self) -> list[int]:
+        """Block indices that actually applied a delta, in order."""
+
+        return sorted(self.applied_blocks)
+
+    def unfired_sites(self, expected_sites: Iterable[str]) -> list[str]:
+        """Attachment sites that were wrapped but never applied anything.
+
+        A non-empty result is the CP227 shape caught while it is still a
+        measurement rather than a published verdict.
+        """
+
+        return sorted(set(expected_sites) - set(self.applied_sites))
 
 
 _ACTIVE_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
@@ -114,8 +149,17 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
         r: int = 8,
         dropout: float = 0.0,
         scale: float = 20.0,
+        *,
+        block_index: int | None = None,
+        site: str | None = None,
     ) -> ScopedLoRALinear:
-        """Wrap ``linear`` without the base class factory erasing our subtype."""
+        """Wrap ``linear`` without the base class factory erasing our subtype.
+
+        ``block_index`` and ``site`` are optional identity. When an attachment
+        site supplies them, every application is attributable, so a projection
+        that was wrapped but never fired can be named instead of hiding inside
+        an aggregate call count.
+        """
 
         from core.brain.llm.latent_cortex.fast_weights import _linear_dims
 
@@ -128,6 +172,14 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
             scale=scale,
         )
         scoped.linear = linear
+        if block_index is not None:
+            if type(block_index) is not int or block_index < 0:
+                raise ValueError("recurrence adapter block index must be a non-negative int")
+            scoped.recurrence_block_index = block_index
+        if site is not None:
+            if not isinstance(site, str) or not site.strip():
+                raise ValueError("recurrence adapter site must be a non-empty string")
+            scoped.recurrence_site = site
         return scoped
 
     def __call__(self, x: Any) -> Any:
@@ -153,8 +205,11 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
 
             lora_a, lora_b = bank.factors_for(current_depth_index())
         z = (self.dropout(x) @ lora_a) @ lora_b
+        block_index = getattr(self, "recurrence_block_index", None)
+        site = getattr(self, "recurrence_site", None)
         if activation.start is None or activation.stop is None:
             activation.adapted_positions += sequence_length
+            activation.record_application(block_index=block_index, site=site)
             return y + (self.scale * z).astype(x.dtype)
 
         start = int(activation.start)
@@ -170,6 +225,7 @@ class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
         mask = ((positions >= start) & (positions < stop)).astype(x.dtype)
         shape = (1,) * max(0, x.ndim - 2) + (sequence_length, 1)
         activation.adapted_positions += stop - start
+        activation.record_application(block_index=block_index, site=site)
         return y + (self.scale * z * mx.reshape(mask, shape)).astype(x.dtype)
 
 
