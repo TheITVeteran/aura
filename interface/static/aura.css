@@ -3608,9 +3608,14 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 /* ── Screen container ─────────────────────────────── */
 .splash-screen {
     position: fixed; inset: 0; z-index: 99999;
+    /* The wordmark and the neuron should be the only light sources in the
+     * frame. The ambient haze was bright enough to compete with them, so their
+     * glow read as part of the background rather than as something emitting.
+     * Haze pulled down and its falloff tightened: near-black everywhere the
+     * mark is not. */
     background:
-        radial-gradient(ellipse at 50% 50%, rgba(154, 71, 255, 0.18) 0%, rgba(12, 0, 24, 0.76) 34%, #020104 74%),
-        linear-gradient(180deg, #000 0%, #050009 48%, #000 100%);
+        radial-gradient(ellipse at 50% 50%, rgba(140, 62, 236, 0.09) 0%, rgba(7, 0, 15, 0.88) 26%, #010003 62%),
+        linear-gradient(180deg, #000 0%, #030006 48%, #000 100%);
     display: flex; align-items: center; justify-content: center;
     overflow: hidden;
     transition: opacity 0.8s ease, visibility 0.8s ease;
@@ -3624,7 +3629,7 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 }
 .splash-screen::before {
     z-index: 2;
-    opacity: 0.22;
+    opacity: 0.14;
     background:
         repeating-linear-gradient(
             to bottom,
@@ -3638,8 +3643,8 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 .splash-screen::after {
     z-index: 1;
     background:
-        radial-gradient(ellipse at 50% 82%, rgba(0, 229, 255, 0.12), transparent 38%),
-        radial-gradient(ellipse at 50% 25%, rgba(178, 82, 255, 0.20), transparent 36%);
+        radial-gradient(ellipse at 50% 82%, rgba(0, 229, 255, 0.055), transparent 32%),
+        radial-gradient(ellipse at 50% 25%, rgba(178, 82, 255, 0.10), transparent 30%);
     filter: blur(8px);
 }
 .splash-screen.hidden {
@@ -3742,12 +3747,16 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     letter-spacing: 0.005em;
     text-transform: uppercase;
     font-variant-ligatures: none;
+    /* Sharper: a tight double core at 1px/4px carries the edge definition and
+     * the wide bloom comes in from 30/72px to 22/48px. A large soft halo reads
+     * as fog around the letters; a small bright one reads as neon in them. */
     filter:
         drop-shadow(0 1px 0 rgba(28, 8, 54, 0.9))
-        drop-shadow(0 0 2px var(--wordmark-glow-1))
-        drop-shadow(0 0 10px var(--wordmark-glow-2))
-        drop-shadow(0 0 30px var(--wordmark-glow-3))
-        drop-shadow(0 0 72px var(--wordmark-glow-4));
+        drop-shadow(0 0 1px var(--wordmark-glow-1))
+        drop-shadow(0 0 4px var(--wordmark-glow-1))
+        drop-shadow(0 0 11px var(--wordmark-glow-2))
+        drop-shadow(0 0 22px var(--wordmark-glow-3))
+        drop-shadow(0 0 48px var(--wordmark-glow-4));
     animation: neonTitleFlicker 5.5s ease-in-out infinite;
 }
 
@@ -3795,9 +3804,12 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     position: relative;
     width: clamp(96px, 11vw, 158px);
     aspect-ratio: 1;
+    /* Same treatment as the wordmark: a hard 3px core for edge definition,
+     * then two decreasing halos rather than one broad wash. */
     filter:
-        drop-shadow(0 0 10px rgba(0, 255, 225, 0.62))
-        drop-shadow(0 0 26px rgba(159, 75, 255, 0.44));
+        drop-shadow(0 0 3px rgba(120, 255, 240, 0.85))
+        drop-shadow(0 0 9px rgba(0, 255, 225, 0.6))
+        drop-shadow(0 0 22px rgba(159, 75, 255, 0.38));
 }
 .splash-sigil-svg {
     display: block;
