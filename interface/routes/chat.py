@@ -16851,8 +16851,8 @@ async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str,
     else:
         error = str(result.get("error") or result.get("status") or epistemic_status or "unknown failure").strip()
         response = (
-            f"I routed `{target}` through Program DNA, but I am not claiming a successful reconstruction: "
-            f"{error}. {summary}".strip()
+            f"I didn't get {target} rebuilt, and I'm not going to say I did. "
+            f"{_program_dna_failure_in_plain_words(error)} {summary}".strip()
         )
     return {
         "ok": ok,
@@ -16860,6 +16860,66 @@ async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str,
         "response": response,
         "result": result,
     }
+
+
+
+# What went wrong, said to a person.
+#
+# Live, 2026-07-27, this reached Bryan verbatim:
+#
+#     "I routed `version of the game` through Program DNA, but I am not
+#      claiming a successful reconstruction: ulysses_covenant: bound by my
+#      calmer self — No heavy compute while survival is threatened
+#      [seed-heavy-compute-under-threat]."
+#
+# Every clause of that is true and none of it is a sentence anyone speaks. A
+# skill's error string is a diagnostic; it is addressed to whoever reads the
+# logs. Being honest about a failed turn is right — narrating the plumbing
+# while doing it is a different thing, and it is what makes her sound broken
+# even when she is behaving correctly.
+_PROGRAM_DNA_PLAIN_FAILURES: tuple[tuple[str, str], ...] = (
+    (
+        "ulysses_covenant",
+        "I'm under a rule I set for myself that holds off heavy building work "
+        "while the machine is under pressure — it exists because doing this "
+        "kind of work under load has crashed me before. Ask me again once "
+        "things are quieter and I'll take a proper run at it.",
+    ),
+    (
+        "memory_pressure",
+        "There wasn't enough memory free to do it properly, and half of it "
+        "isn't worth having.",
+    ),
+    (
+        "blocked",
+        "The authorization for that didn't check out, so I stopped rather than "
+        "work around it.",
+    ),
+    (
+        "refuted",
+        "What I wrote didn't reproduce the behaviour on the cases I held back "
+        "to check it, so it isn't faithful and I'm not shipping it as if it "
+        "were.",
+    ),
+    (
+        "conjecture",
+        "I couldn't verify what I wrote against anything, so I'd only be "
+        "guessing that it works.",
+    ),
+    (
+        "not_verifiable",
+        "I couldn't find a way to check the result, and I won't claim "
+        "something works when nothing tested it.",
+    ),
+)
+
+
+def _program_dna_failure_in_plain_words(error: str) -> str:
+    lowered = str(error or "").lower()
+    for marker, sentence in _PROGRAM_DNA_PLAIN_FAILURES:
+        if marker in lowered:
+            return sentence
+    return "It didn't get far enough for me to stand behind the result."
 
 
 def _looks_like_rsi_self_improvement_request(user_message: str) -> bool:

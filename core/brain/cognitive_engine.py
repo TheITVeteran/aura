@@ -2725,6 +2725,44 @@ class CognitiveEngine:
             )
             if situation_directive:
                 system_prompt = f"{system_prompt}\n{situation_directive}"
+        # The desktop conversation lane builds its own system prompt, so the
+        # grounding wired into inference_gate never reached the turns people
+        # actually take: after that fix landed and the runtime restarted, "what
+        # is it actually like in there right now?" still answered "the sun's up
+        # ... clouds gathering in the east" at 00:53 in the morning, word for
+        # word. Two prompt builders, one of them ungrounded, and this is the one
+        # every real conversation goes through.
+        if not capability_inventory_contract:
+            try:
+                from core.brain.present_moment import present_moment_block
+
+                present = present_moment_block()
+                if present:
+                    system_prompt = f"{system_prompt}\n\n{present}"
+            except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+                record_degradation(
+                    "cognitive_engine",
+                    exc,
+                    severity="warning",
+                    action="continued desktop turn without present-moment grounding",
+                )
+            try:
+                from core.runtime.self_state_intent import asks_about_own_runtime
+
+                if asks_about_own_runtime(visible_user_message):
+                    from core.brain.self_state_report import runtime_self_report
+
+                    instruments = runtime_self_report()
+                    if instruments:
+                        system_prompt = f"{system_prompt}\n\n{instruments}"
+            except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+                record_degradation(
+                    "cognitive_engine",
+                    exc,
+                    severity="warning",
+                    action="continued desktop turn without runtime self-readings",
+                )
+
         if style_contract and not capability_inventory_contract:
             system_prompt = f"{system_prompt}\n{style_contract}"
         persona_contract = str(context.get("persona_system_prompt") or "").strip()

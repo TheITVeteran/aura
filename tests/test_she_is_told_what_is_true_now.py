@@ -168,3 +168,40 @@ def test_grounding_sorts_after_the_cacheable_prefix() -> None:
     src = GATE.read_text(encoding="utf-8")
     assert '("## PRESENT MOMENT", 2),' in src
     assert '("## YOUR OWN INSTRUMENTS", 2),' in src
+
+
+# ── Both prompt builders, not just the one I found first ───────────────────
+
+ENGINE = Path("core/brain/cognitive_engine.py")
+
+
+def test_the_desktop_conversation_lane_is_grounded_too() -> None:
+    """There are two system-prompt builders, and people only meet one of them.
+
+    The first fix wired grounding into inference_gate. After it landed and the
+    runtime restarted, "what's it actually like in there right now?" still
+    answered "the sun's up ... clouds gathering in the east" at 00:53 — word for
+    word the same sentence as before. The desktop conversation lane
+    (mode=compact_foreground_prebuilt, origin=desktop_quick_user) assembles its
+    own prompt and never saw it. That lane is the one every real conversation
+    goes through.
+    """
+    src = ENGINE.read_text(encoding="utf-8")
+    assert "from core.brain.present_moment import present_moment_block" in src
+    assert "from core.runtime.self_state_intent import asks_about_own_runtime" in src
+    assert "from core.brain.self_state_report import runtime_self_report" in src
+
+
+def test_grounding_is_added_before_the_style_contract() -> None:
+    """Order matters only in that both must survive to the same prompt."""
+    src = ENGINE.read_text(encoding="utf-8")
+    assert src.index("present_moment_block()") < src.index(
+        'system_prompt = f"{system_prompt}\\n{style_contract}"'
+    )
+
+
+def test_the_terse_inventory_contract_is_left_alone() -> None:
+    """That contract requires exactly four sentences under 80 words."""
+    src = ENGINE.read_text(encoding="utf-8")
+    block = src[src.index("if not capability_inventory_contract:") :]
+    assert "present_moment_block" in block[:1200]
