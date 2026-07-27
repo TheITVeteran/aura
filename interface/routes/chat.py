@@ -7379,6 +7379,21 @@ async def _run_cognitive_engine_chat_turn(
         else _extract_canonical_memory_state_evidence_block(effective_user_message)
     )
     memory_state_contract = bool(canonical_memory_state_evidence)
+    # Does that contract cover the whole turn, or only part of it?
+    #
+    # The token ladder caps a memory-state turn at 256 tokens because "what did
+    # I pin?" is a short factual answer. It is not short when the same message
+    # also asks something real. Live 2026-07-27: "Remember this: my project
+    # codename is HELIOTROPE, build 4471. Separately — do you think a system
+    # like you can actually prefer one thing over another?" was budgeted at 172
+    # tokens, cut off mid-sentence, flagged truncated_tail, and replaced with
+    # the pin confirmation. The philosophical half never had room to exist.
+    #
+    # The parser that found the pin is the part that knows what else is in the
+    # message, so it says so here rather than leaving the budgeter to guess.
+    memory_state_contract_covers_turn = memory_state_contract and not (
+        _turn_has_substance_beyond_memory_request(visible)
+    )
 
     engine = ServiceContainer.get("cognitive_engine", default=None)
     if engine is None or not hasattr(engine, "think"):
@@ -7513,6 +7528,7 @@ async def _run_cognitive_engine_chat_turn(
         "grounded_runtime_status_contract": runtime_fact_status_contract,
         "grounded_runtime_status_context": grounded_runtime_status_context,
         "memory_state_contract": memory_state_contract,
+        "memory_state_contract_covers_turn": memory_state_contract_covers_turn,
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
         "self_condition_contract": self_condition_contract,
         "canonical_self_condition_context": canonical_self_condition_context,

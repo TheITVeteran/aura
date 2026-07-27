@@ -2467,9 +2467,29 @@ class CognitiveEngine:
                 128,
                 int(max_tokens * _combine_advisory_token_factors(advisory_factors)),
             )
-        if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
+        # A narrow budget requires a narrow turn.
+        #
+        # These caps are right for what they were written for: "what did I
+        # pin?", "how much RAM?", "how are you feeling?" are short factual
+        # answers and 256 tokens is generous. They are wrong the moment such a
+        # request shares a message with something substantive — the cap then
+        # sizes the whole turn by its smallest part. Measured live 2026-07-27:
+        # a pin-plus-philosophy message drew 172 tokens, ran out mid-sentence,
+        # and the answer was discarded as a truncated tail.
+        #
+        # memory_state_contract_covers_turn is chat.py reporting what its own
+        # parser found; the other two narrow contracts defer to the same
+        # question-shape signal the comment above already establishes.
+        narrow_state_contract = bool(
+            runtime_fact_status_contract or self_condition_contract
+        )
+        if memory_state_contract and context.get(
+            "memory_state_contract_covers_turn", True
+        ):
+            narrow_state_contract = True
+        if narrow_state_contract and not shape_wants_room:
             max_tokens = max(128, min(max_tokens, 256))
-        elif capability_inventory_contract:
+        elif capability_inventory_contract and not shape_wants_room:
             max_tokens = max(160, min(max_tokens, 220))
         elif extended_full_mind_reply:
             max_tokens = max(1024, min(max_tokens, 2048))
