@@ -129,6 +129,32 @@ _MIN_SALVAGEABLE_REPLY_CHARS = 12
 _RUN_ON_SENTENCE_RE = re.compile(r"(?<=[a-z])([.!?])([A-Z][a-z])")
 
 
+
+# Questions whose honest answer is a derivation, not a sentence. Budget cut
+# these off mid-working, and a derivation without its conclusion is not a
+# partial answer — it is no answer, delivered confidently.
+_DERIVATION_CUE_RE = re.compile(
+    r"\b(?:step[- ]by[- ]step|show your work(?:ing)?|derive|derivation|prove|"
+    r"work (?:it|this) out|walk me through|how did you get|explain how|"
+    r"calculate|compute|how (?:far|long|many|much)|when does|what time)\b",
+    re.IGNORECASE,
+)
+_MULTI_PART_QUESTION_RE = re.compile(
+    r"\?[^?]*\?|\b(?:and|then)\b[^.?!]{0,80}\b(?:how|what|when|where|why|which)\b",
+    re.IGNORECASE,
+)
+
+
+def _turn_wants_a_derivation(user_message: str) -> bool:
+    """Does answering this honestly take working, or just a sentence?"""
+    text = " ".join(str(user_message or "").split())
+    if not text or len(text) > 1200:
+        return False
+    if _DERIVATION_CUE_RE.search(text):
+        return True
+    return bool(_MULTI_PART_QUESTION_RE.search(text))
+
+
 def _restore_sentence_spacing(text: str) -> str:
     """Put back the space between sentences the surface ran together.
 
@@ -2394,14 +2420,25 @@ class CognitiveEngine:
         prompt_shape = context.get("prompt_shape")
         if not isinstance(prompt_shape, dict):
             prompt_shape = {}
-        extended_full_mind_reply = bool(
-            context.get("require_full_foreground_mind_reply", False)
-            and (
-                context.get("bounded_planning_contract", False)
-                or prompt_shape.get("prefers_extended_answer", False)
-                or prompt_shape.get("requires_single_reply_coverage", False)
-                or int(prompt_shape.get("question_parts", 0) or 0) >= 2
+        # How much room an answer needs is a property of the question, not of
+        # the lane it arrived on. "When does the second train catch the first,
+        # and how far from the station?" is a two-part derivation either way;
+        # on the quick lane it got the 512 floor, ran out mid-derivation at
+        # "The first train has been traveling for 3:00pm + 2.25", and was
+        # trimmed back to the last complete sentence — so the answer was never
+        # given. Measured live 2026-07-27, along with a recall answer cut at
+        # "Probably just read".
+        shape_wants_room = bool(
+            context.get("bounded_planning_contract", False)
+            or prompt_shape.get("prefers_extended_answer", False)
+            or prompt_shape.get("requires_single_reply_coverage", False)
+            or int(prompt_shape.get("question_parts", 0) or 0) >= 2
+            or _turn_wants_a_derivation(
+                str(context.get("visible_user_message") or objective or "")
             )
+        )
+        extended_full_mind_reply = bool(
+            context.get("require_full_foreground_mind_reply", False) and shape_wants_room
         )
         canonical_memory_state_evidence = str(
             context.get("canonical_memory_state_evidence") or ""
@@ -2431,6 +2468,11 @@ class CognitiveEngine:
             max_tokens = max(160, min(max_tokens, 220))
         elif extended_full_mind_reply:
             max_tokens = max(1024, min(max_tokens, 2048))
+        elif shape_wants_room:
+            # The quick lane exists for latency, so this is a middle band
+            # rather than the full one — enough to finish a derivation, not
+            # enough to turn every two-part question into an essay.
+            max_tokens = max(896, min(max_tokens, 1536))
         else:
             # 512-token floor: a live conversational reply must have room to
             # finish its sentences even after advisory reductions.
