@@ -5116,6 +5116,57 @@ def _has_unfounded_tool_execution_claim(
     return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
 
 
+#: Words a sentence cannot end on: the model was mid-clause when it ran out.
+_DANGLING_TAIL_WORDS = frozenset(
+    {
+        "a", "an", "and", "as", "at", "because", "before", "but", "by",
+        "called", "create", "for", "from", "if", "in", "into", "is", "it",
+        "make", "of", "on", "or", "our", "since", "so", "than", "that",
+        "the", "their", "then", "there", "they", "this", "to", "was", "we",
+        "were", "when", "which", "while", "who", "with", "would", "you",
+        "your",
+    }
+)
+
+
+def complete_truncated_tail(text: Any) -> str:
+    """Cut a reply that stopped mid-clause back to where it last made sense.
+
+    A token budget runs out mid-sentence and the answer arrives ending on
+    "And". Live 2026-07-27 a four-part risk analysis reached the chat window
+    exactly that way — the analysis was good, the last word was "And".
+
+    The route has repaired this for a while; the kernel's own publish path
+    reaches the same window without passing through it, which is why this
+    lives here, in the module both sides already depend on, rather than
+    beside either one of them.
+
+    Returns the completed text, or the input unchanged when it was already
+    whole or when trimming would leave too little to be worth serving.
+    """
+    original = str(text or "").strip()
+    if len(original) < 24:
+        return original
+
+    repaired = re.sub(r"(?:\.{3,}|…)+$", "", original).rstrip()
+    repaired = re.sub(r"[\s,;:—–-]+$", "", repaired).rstrip()
+    for _ in range(3):
+        match = re.search(r"\s+([A-Za-z']+)$", repaired)
+        if not match:
+            break
+        tail = match.group(1).lower().strip("'")
+        if tail in _DANGLING_TAIL_WORDS or (len(tail) <= 2 and len(repaired) >= 40):
+            repaired = repaired[: match.start()].rstrip(" ,;:—–-")
+            continue
+        break
+
+    if len(repaired) < 24:
+        return original
+    if not repaired.endswith((".", "!", "?", '"', "'", "\u201d", "\u2019", ")", "]")):
+        repaired = f"{repaired}."
+    return repaired
+
+
 def _has_context_object_support(
     user_message: Any,
     recent_user_messages: Iterable[str] | None = None,

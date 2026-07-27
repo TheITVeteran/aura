@@ -73,6 +73,40 @@ def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
         return False
 
 
+def _complete_spoken_tail(ws_msg: Dict[str, Any]) -> None:
+    """Finish a sentence that a token budget cut off, in place.
+
+    The chat route repairs a mid-clause cutoff before serving. The kernel's
+    own publish path reaches the same window without passing through it, so a
+    reply could arrive here whole in substance and broken in its last three
+    characters. Live 2026-07-27 a four-part deploy-risk analysis — correct,
+    ordered, genuinely useful — ended on the word "And".
+
+    Same argument as the leak check above: this is the seam every publisher
+    passes through, so the repair belongs here rather than in each of them.
+    """
+    try:
+        if str(ws_msg.get("type", "")) not in _SPOKEN_WS_TYPES:
+            return
+        key = "message" if ws_msg.get("message") is not None else "content"
+        body = str(ws_msg.get(key) or "")
+        if not body.strip():
+            return
+        from core.conversation.response_reliability import complete_truncated_tail
+
+        repaired = complete_truncated_tail(body)
+        if repaired and repaired != body:
+            logger.info(
+                "EventBridge: completed a reply cut off mid-clause (%d -> %d chars).",
+                len(body),
+                len(repaired),
+            )
+            ws_msg[key] = repaired
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        # Fail open: a broken repair must not silence Aura.
+        logger.debug("EventBridge tail completion skipped: %s", exc)
+
+
 async def mycelial_ui_callback(message: str):
     """Direct, unblockable UI delivery via Mycelial Network.
     Bypasses EventBus/Queue infrastructure for emergency status.
@@ -192,6 +226,8 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                     ActionResultPayload=ActionResultPayload,
                 )
 
+                if ws_msg is not None:
+                    _complete_spoken_tail(ws_msg)
                 if ws_msg is not None and _suppress_internal_leak(ws_msg):
                     ws_msg = None
                 if ws_msg is not None:
