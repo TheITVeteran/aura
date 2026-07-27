@@ -71,7 +71,7 @@ def _receipt(**overrides) -> dict:
         "mechanism": RECURRENT_LATENT,
         "identity": _identity(),
         "adapter": _adapter(),
-        "layer_index": _LAYERS - 2,
+        "window": {"start": 1, "stop": _LAYERS - 1, "layer_count": _LAYERS},
         "passes": passes,
         "decode_state_sha256": (
             passes[-1]["state_sha256"] if passes else _d("no-passes")
@@ -232,10 +232,49 @@ def test_shallow_orchestration_is_named_rather_than_absorbed():
 # --- position, identity, and tampering --------------------------------------
 
 
-def test_penultimate_is_a_position_not_a_label():
+def test_a_window_with_nothing_before_it_is_not_embedded_execution():
     with pytest.raises(PenultimateReceiptError) as excinfo:
-        _receipt(layer_index=10)
-    assert "is_not_penultimate" in str(excinfo.value)
+        _receipt(window={"start": 0, "stop": _LAYERS - 1, "layer_count": _LAYERS})
+    assert "has_no_prelude" in str(excinfo.value)
+
+
+def test_a_window_with_nothing_after_it_is_shallow_orchestration():
+    # Nothing inside the checkpoint consumes the recurrent state; whatever
+    # reads it next is outside the model.
+    with pytest.raises(PenultimateReceiptError) as excinfo:
+        _receipt(window={"start": 1, "stop": _LAYERS, "layer_count": _LAYERS})
+    assert "has_no_coda" in str(excinfo.value)
+
+
+def test_a_window_spanning_the_whole_stack_is_an_ordinary_forward_pass():
+    with pytest.raises(PenultimateReceiptError):
+        _receipt(window={"start": 0, "stop": _LAYERS, "layer_count": _LAYERS})
+
+
+def test_an_inverted_or_empty_window_is_refused():
+    for start, stop in ((5, 5), (6, 3)):
+        with pytest.raises(PenultimateReceiptError):
+            _receipt(
+                window={"start": start, "stop": stop, "layer_count": _LAYERS}
+            )
+
+
+def test_a_window_describing_another_stack_is_refused():
+    with pytest.raises(PenultimateReceiptError) as excinfo:
+        _receipt(window={"start": 1, "stop": 5, "layer_count": _LAYERS + 8})
+    assert "layer_count_differs" in str(excinfo.value)
+
+
+def test_the_window_records_how_many_layers_consume_the_recurrent_state():
+    receipt = _receipt(
+        window={"start": 2, "stop": _LAYERS - 4, "layer_count": _LAYERS}
+    )
+    assert receipt["execution"]["window"] == {
+        "start": 2,
+        "stop": _LAYERS - 4,
+        "layer_count": _LAYERS,
+        "coda_layers": 4,
+    }
 
 
 def test_a_receipt_with_no_passes_is_refused():

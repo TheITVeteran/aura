@@ -114,8 +114,23 @@ site stayed dark stops with `instrument_partial_adapter` and names the first
 dark site. `calls > 0` was never proof the treatment ran — only that at least
 one projection did.
 
-What remains is the per-pass `state_sha256` and `decode_state_sha256` producers
-inside the live worker's forward pass.
+**The state producer is wired too.** `core/learning/intrinsic_recurrence_receipt.py`:
+
+```python
+hidden, receipt = run_and_receipt(
+    model, tokens, plan,
+    wiring=wiring, identity=identity,
+    answer_sha256=..., decoded_token_count=..., adapter_sha256=...,
+)
+```
+
+It opens the adapter scope itself (forgetting it is the CP227 failure),
+digests the per-iteration trajectory, and sets `decode_state_sha256` to the
+**window's** last output — not the post-coda hidden, which would make the
+"decode consumed the recurrent state" check true for any forward pass ever run.
+
+What remains is calling it from the live worker's decode path on the resident
+checkpoint.
 
 ## SPARK-067 — coupling that is not just a copied field
 

@@ -3786,8 +3786,17 @@ before those dependencies close is not admissible.
     claim `recurrent_latent`. An ordinary generation *refuses* the latent
     claim without erroring — that is the receipt correctly declining, not a
     failure.
-  "Penultimate" is checked as a position (`layer_count - 2`), not accepted as
-  a label a caller may reassign.
+  **A correction inside this checkpoint.** The first draft required the
+  execution to sit at `layer_count - 2`, reading "penultimate" as a fixed
+  layer index. That is wrong for this architecture and worse than wrong as a
+  check: the RLC's window is a *middle* band (prelude / window x T / coda), so
+  the only way a real producer could satisfy it was by reporting a position it
+  did not run at — a check that can only be passed by lying. It is replaced by
+  a structural `execution_window`: a non-empty band of real layers with
+  something before it (`window_has_no_prelude` otherwise) and something after
+  it (`window_has_no_coda`), and a window spanning the whole stack is refused
+  as an ordinary forward pass wearing the name. That is what actually
+  separates middle-layer latent execution from shallow orchestration.
 
   21/21 focused tests pass, including a direct reconstruction of the CP227
   shape asserted to be unable to produce a PROVEN verdict.
@@ -3826,10 +3835,35 @@ before those dependencies close is not admissible.
   latent receipt at all. 6/6 further contracts cover the identity recording
   itself, and the existing adapter suites pass 34/34.
 
+  **F7-E part three closes the state producer.**
+  `core/learning/intrinsic_recurrence_receipt.py` builds the receipt from the
+  tensors an actual pass produced. Three things there are load-bearing:
+  * **The decode state is the window's output, not the model's.** The stack is
+    prelude → window x T → coda → norm → head, and the state the coda consumed
+    is `trajectory[-1]`. Digesting the post-coda hidden instead would make
+    "decode consumed the recurrent state" trivially true for *any* forward
+    pass, including one that discarded the window's work — the check would
+    pass by construction. A test asserts the two digests differ.
+  * **Digests are canonical**: float32, contiguous bytes, with the shape
+    hashed in, so the same computation replays identically and two different
+    states of equal byte length cannot collide.
+  * **`run_and_receipt` opens the adapter scope itself.** Forgetting the scope
+    is precisely the CP227 failure; on this path it cannot be forgotten by a
+    caller.
+
+  14 further tests run a real Qwen2 stack through the real
+  `recurrent_hidden_states` loop: a reverted projection yields an `attached:
+  false` receipt that refuses the claim rather than an exception, a partially
+  dark adapter cannot produce a receipt at all, per-pass L2 deltas are
+  measured distances, and a changed weight changes every pass digest. The
+  SPARK-064/065/063/066/067/068 surface plus the touched adapter and
+  instrument suites pass 253/253.
+
   **The checkbox stays open**: no resident-32B execution has produced a
-  receipt through this yet, and the per-pass `state_sha256` /
-  `decode_state_sha256` producers in the live worker remain to be wired. This
-  checkpoint runs no model and grants no capability claim.
+  receipt through this yet — the producer is proven on a tiny real Qwen2, not
+  on the resident checkpoint — and the live worker's decode path still has to
+  call it. This checkpoint runs no model of consequence and grants no
+  capability claim.
 - [ ] **SPARK-067 - Organism-wide bidirectional coupling.** Connect epistemic
   state and recurrent control causally with agency/Will, memory, tools,
   personality/self-model, affect/body, global workspace/consciousness,

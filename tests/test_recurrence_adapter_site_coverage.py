@@ -242,7 +242,7 @@ def test_activation_identity_feeds_the_penultimate_receipt():
             # Measured, not asserted.
             "activated_blocks": activation.activated_blocks(),
         },
-        layer_index=_LAYERS,
+        window={"start": 1, "stop": _LAYERS - 1, "layer_count": _LAYERS + 2},
         passes=passes,
         decode_state_sha256=states[-1],
         decoded_token_count=3,
@@ -285,7 +285,7 @@ def test_a_partial_activation_cannot_build_a_latent_receipt():
                 "expected_blocks": wiring["adapted_block_indices"],
                 "activated_blocks": activation.activated_blocks(),
             },
-            layer_index=_LAYERS,
+            window={"start": 1, "stop": _LAYERS - 1, "layer_count": _LAYERS + 2},
             passes=[recurrent_pass(ordinal=0, state_sha256="e" * 64, delta_l2=1.0)],
             decode_state_sha256="e" * 64,
             decoded_token_count=3,

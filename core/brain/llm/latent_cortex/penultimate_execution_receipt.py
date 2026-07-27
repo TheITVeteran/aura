@@ -65,8 +65,9 @@ _ADAPTER_FIELDS: Final = frozenset(
 )
 _PASS_FIELDS: Final = frozenset({"ordinal", "state_sha256", "delta_l2"})
 _EXECUTION_FIELDS: Final = frozenset(
-    {"layer_index", "passes", "decode_state_sha256", "decoded_token_count"}
+    {"window", "passes", "decode_state_sha256", "decoded_token_count"}
 )
+_WINDOW_FIELDS: Final = frozenset({"start", "stop", "layer_count", "coda_layers"})
 _FALLBACK_FIELDS: Final = frozenset({"occurred", "reason"})
 _MAX_PASSES: Final = 256
 _MAX_BLOCKS: Final = 1024
@@ -201,12 +202,55 @@ def recurrent_pass(*, ordinal: int, state_sha256: str, delta_l2: float) -> dict[
     }
 
 
+def execution_window(
+    *, start: int, stop: int, layer_count: int
+) -> dict[str, Any]:
+    """Where inside the resident stack the recurrence actually ran.
+
+    An earlier draft of this receipt required the execution to sit at
+    ``layer_count - 2``, reading "penultimate" as a fixed layer index. That is
+    wrong for this architecture and worse than wrong as a check: the RLC's
+    recurrent window is a *middle* band (prelude / window x T / coda), so the
+    only way a real producer could have satisfied it was by reporting a
+    position it did not run at. A check that can only be passed by lying is
+    not a check.
+
+    What actually distinguishes middle-layer latent execution from shallow
+    orchestration around the model is structural, and that is what is verified
+    here: the window is a non-empty band of real layers, something runs before
+    it, and something runs after it. A "window" spanning the whole stack is an
+    ordinary forward pass wearing the name.
+    """
+
+    total = _count(layer_count, "penultimate_receipt_window_invalid", minimum=2)
+    begin = _count(start, "penultimate_receipt_window_invalid")
+    end = _count(stop, "penultimate_receipt_window_invalid", minimum=1)
+    if not begin < end <= total:
+        _fail("penultimate_receipt_window_invalid")
+    if begin == 0:
+        # Nothing ran before the window: the recurrence is not embedded in the
+        # checkpoint's computation, it *is* the computation from the top.
+        _fail("penultimate_receipt_window_has_no_prelude")
+    coda = total - end
+    if coda <= 0:
+        # Nothing consumes the recurrent state inside the model. Whatever
+        # reads it next is outside the checkpoint, which is the shallow
+        # orchestration case this receipt exists to separate.
+        _fail("penultimate_receipt_window_has_no_coda")
+    return {
+        "start": begin,
+        "stop": end,
+        "layer_count": total,
+        "coda_layers": coda,
+    }
+
+
 def penultimate_execution_receipt(
     *,
     mechanism: str,
     identity: Mapping[str, Any],
     adapter: Mapping[str, Any],
-    layer_index: int,
+    window: Mapping[str, Any],
     passes: Sequence[Mapping[str, Any]],
     decode_state_sha256: str,
     decoded_token_count: int,
@@ -246,10 +290,17 @@ def penultimate_execution_receipt(
         activated_blocks=adapter.get("activated_blocks"),
     )
 
-    index = _count(layer_index, "penultimate_receipt_layer_invalid")
-    if index != normalized_identity["layer_count"] - 2:
-        # "Penultimate" is a position, not a label a caller may reassign.
-        _fail("penultimate_receipt_layer_is_not_penultimate")
+    if not isinstance(window, Mapping) or not {"start", "stop"} <= set(window):
+        _fail("penultimate_receipt_window_invalid")
+    normalized_window = execution_window(
+        start=window.get("start"),
+        stop=window.get("stop"),
+        layer_count=window.get("layer_count", normalized_identity["layer_count"]),
+    )
+    if normalized_window["layer_count"] != normalized_identity["layer_count"]:
+        # The window must describe the model the receipt names, not some other
+        # stack that happens to have a band with those indices.
+        _fail("penultimate_receipt_window_layer_count_differs")
 
     if not isinstance(passes, Sequence) or isinstance(passes, (str, bytes)):
         _fail("penultimate_receipt_passes_invalid")
@@ -277,7 +328,7 @@ def penultimate_execution_receipt(
         "model_identity": normalized_identity,
         "adapter": normalized_adapter,
         "execution": {
-            "layer_index": index,
+            "window": normalized_window,
             "passes": rows,
             "decode_state_sha256": decode_state_sha256,
             "decoded_token_count": _count(
@@ -314,7 +365,7 @@ def validate_penultimate_receipt(value: Any) -> dict[str, Any]:
         mechanism=value.get("mechanism"),
         identity=value["model_identity"],
         adapter=value.get("adapter"),
-        layer_index=execution.get("layer_index"),
+        window=execution.get("window"),
         passes=[dict(row) if isinstance(row, Mapping) else row for row in passes],
         decode_state_sha256=execution.get("decode_state_sha256"),
         decoded_token_count=execution.get("decoded_token_count"),
@@ -408,6 +459,7 @@ __all__ = [
     "SHALLOW_ORCHESTRATION",
     "PenultimateReceiptError",
     "adapter_binding",
+    "execution_window",
     "latent_execution_verdict",
     "model_identity",
     "penultimate_execution_receipt",
