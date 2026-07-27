@@ -53,7 +53,19 @@ def _log_response_quality_metrics(
 
     Writes to a dedicated logger so these can be routed to a file/store
     independently of the main application log.
+
+    Also the point where the route records WHAT it served, so a second lane
+    finishing the same turn minutes later cannot publish a competing answer
+    into the conversation. Every delivered reply passes through here, which
+    is the reason the bookkeeping sits in a logging function.
     """
+    try:
+        from core.conversation.surface_delivery import note_route_delivered
+
+        note_route_delivered(reply_text)
+    except Exception:  # bookkeeping must never break a delivered reply
+        pass
+
     try:
         assessment_reasons: tuple[str, ...] = ()
         try:

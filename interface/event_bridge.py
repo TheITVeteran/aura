@@ -49,6 +49,16 @@ def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
         body = str(ws_msg.get("message") or ws_msg.get("content") or "")
         if not body.strip():
             return False
+        from core.conversation.surface_delivery import route_answer_supersedes
+
+        if route_answer_supersedes(body):
+            logger.warning(
+                "EventBridge: withheld a second answer to a turn the route "
+                "already answered: %r",
+                body[:160],
+            )
+            return True
+
         from core.conversation.response_reliability import internal_leak_reasons
 
         reasons = internal_leak_reasons(body)
