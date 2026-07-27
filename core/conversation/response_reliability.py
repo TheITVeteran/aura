@@ -4576,12 +4576,18 @@ def _has_operational_status_substance(user_message: Any, reply_text: Any) -> boo
     reply = _normalize(reply_text)
     if _word_count(reply) < 10:
         return False
-    if not is_operational_status_turn(user_message):
-        return False
     if _reply_has_pseudo_internal_jargon(reply_text):
         return False
+    # A capability request is judged by capability evidence, whether or not it
+    # also parses as an operational-status turn. This check sat BELOW the
+    # is_operational_status_turn guard, so "what tools can you actually execute
+    # right now?" — a capability request that is not a status turn — returned
+    # False before the capability branch could run, and a concrete tool answer
+    # was reported as off-topic self-reflection.
     if _CAPABILITY_STATUS_REQUEST_RE.search(str(user_message or "")):
         return _has_capability_inventory_substance(reply_text)
+    if not is_operational_status_turn(user_message):
+        return False
     if any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS):
         return True
     return _has_concrete_operational_telemetry(reply)
@@ -6030,6 +6036,14 @@ def _model_text_integrity_reasons(
         reasons.append("surface_nonsense_drift")
     if user_facing and _has_function_word_starvation(raw):
         reasons.append("function_word_starvation")
+    if user_facing and numeric_answer_missing(prompt, raw):
+        # The numeric floor lived only at the chat route, so every other
+        # consumer of this assessment — the worker gate, the inference gate,
+        # the response phase, the shared disposition policy — was blind to it.
+        # "Do product of multiple exponent term simplify reflexion" therefore
+        # read as a servable answer to a probability question everywhere
+        # except the one place that happened to check separately.
+        reasons.append("numeric_answer_missing")
     if user_facing and final_answer_missing(prompt, raw):
         # Retryable, not a hard failure: the derivation is real work and the
         # right move is to let the turn finish it, not to throw it away.
