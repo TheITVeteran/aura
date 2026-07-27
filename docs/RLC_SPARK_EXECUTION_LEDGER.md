@@ -251,7 +251,29 @@ as half a checkbox.
   a real instrument and require the preflight to notice — a probe suite that
   always passes is decoration.
 
-  The march keeps SPARK-060/061/062/063/069 and everything the CP419/CP420
+- **F8 lane claim (2026-07-27, Bryan-directed: "everything ahead of Codex").**
+  The F7 claim left SPARK-061 and SPARK-062 with the march. Bryan has since
+  reassigned them: the CP419/CP420 lane is fully occupied removing the raw
+  trainer bypass for SPARK-060, and 061/062 are the two objectives that must
+  exist *before* that trainer has anything correct to optimize. Both are bare
+  — no module, no test, no receipt — so this is new construction, not a
+  parallel re-implementation. The Fable session claims:
+  * **SPARK-061** — the progressive recurrent objective, and specifically the
+    instrument that decides whether "later states improve" is *real*. v4's own
+    docstring records the trap: on families where depth is destructive the
+    monotone hinge is unwinnable, and the cheapest way for an optimizer to
+    satisfy a constraint it cannot win is to drive the recurrent transform
+    toward the identity. An objective that trains recurrence inert while its
+    loss curve descends is the single most expensive failure available to the
+    32B run, and nothing currently detects it.
+  * **SPARK-062** — the auxiliary-objective composite and depth curriculum:
+    seven declared terms, each required to be *live* rather than merely
+    weighted, with stage advancement bound to measured competence and
+    train/inference depth parity carried through to the inference config.
+  This lane runs no model of consequence, opens no holdout custody, and
+  grants no capability claim.
+
+  The march keeps SPARK-060/063/069 and everything the CP419/CP420
   lane is touching (`core/learning/verified_transition_episode.py`,
   `core/runtime/resource_observation.py`, `core/brain/llm/latent_cortex/
   frontier_tasks.py`, `tools/independent_paired_campaign_scoring.py`,
