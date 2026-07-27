@@ -4733,3 +4733,40 @@ Counting CP420D makes 669 total checkpoints. The planning range is now 6-11
 checkpoints to resident-32B training launch, 10-17 to a defensible preliminary
 live gain verdict, and 16-27 to a powered conditional `WOW Signal` decision.
 Final multi-hour soaks remain deferred.
+### 2026-07-27 - F7 lane certification (Fable, out-of-band)
+
+The F7 pre-training legs (SPARK-063 through SPARK-068, entries F7-A through
+F7-G above) were built while the march ran CP419-CP420B. What was actually
+verified, stated so the march does not have to take any of it on trust:
+
+- **Focused**: 402 tests across the F7 surface, all green. Where an instrument
+  touches the model, the test runs a real MLX stack — a real Qwen2 through the
+  real `recurrent_hidden_states` loop, the real `attach_adapters` against a
+  real module tree, real `CapabilityRegressionGuard` / `BatteryResult` /
+  `MemoryBenchmarkResult` objects, real `generate_battery` tasks.
+- **Adjacent**: a 1,733-test sweep over every latent-cortex, recurrence,
+  campaign, journal, and distillation suite passed with zero failures. The
+  intervention and calibration suites specifically pass 22/22 across the
+  `journal_state` extraction, which is the change with the most reach.
+- **Gates**: `compile`, `lint`, `layering`, `smoke`, and `governance-lint`
+  green. The governance-effect baseline gained exactly the two file-write
+  gateway call sites the promotion registry legitimately introduced, and
+  nothing else.
+- **Enterprise ratchet**: 80 high/critical findings at `b1101c5f5` (before this
+  lane) and 80 at HEAD — **identical severity counts and zero findings in any
+  file this lane created**. The gate's red state against its 39-finding
+  baseline is inherited debt, unchanged by this work.
+- **`make security`** fails on a `secret_like_literal` in
+  `core/brain/llm/latent_cortex/action_state_capture.py`. This predates the
+  lane, reproduces on `b1101c5f5`, and belongs to another owner; it is recorded
+  here rather than repaired out-of-band.
+
+Two live defects were found by the new instruments and are recorded with their
+repairs in F7-D and F7-E: `heldout_battery` has no cross-battery exclusion
+(15.5% of seed pairs share a prompt, so the flywheel's seed floor separates
+seeds rather than content), and the adapter activation counter could not
+distinguish a whole treatment from a fraction of one.
+
+No checkbox moved. No model of consequence ran. Nothing here is a reasoning,
+resident-32B, frontier, promotion, or `WOW Signal` result, and none of these
+checkpoints is counted against the march's record.
