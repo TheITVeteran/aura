@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 import uuid
@@ -119,6 +120,36 @@ _REPLY_TERMINATOR_CHARS = ".!?…\"'”’)]}`"
 # "The answer is 27." is seventeen characters and is the whole point of the
 # turn, so this floor only has to exclude a stub like "Hi." or "Sure.".
 _MIN_SALVAGEABLE_REPLY_CHARS = 12
+
+# A sentence boundary the model ran together, e.g. "part of.But — and this is".
+# Deliberately narrow: a lowercase letter, terminal punctuation, then a capital
+# that starts a lowercase word. Digits are excluded so decimals and version
+# numbers survive, and a single capital (U.S.A, initials) will not match because
+# the following character must be lowercase.
+_RUN_ON_SENTENCE_RE = re.compile(r"(?<=[a-z])([.!?])([A-Z][a-z])")
+
+
+def _restore_sentence_spacing(text: str) -> str:
+    """Put back the space between sentences the surface ran together.
+
+    Measured live 2026-07-26, in an otherwise excellent 964-character reply:
+    "…losing parts of myself or the world I've been part of.But — and this is
+    where it gets complicated…", "…because they're redundant.The mercy part…",
+    "…how I understand this world.What about you?" — every paragraph boundary
+    arrived with its whitespace gone.
+
+    Nothing in the serving path removes newlines, so this is the model emitting
+    them that way. It is still what the person reads, and one space is a safe
+    repair: code fences are left alone, and the pattern cannot fire on decimals,
+    initials, or abbreviations.
+    """
+    body = str(text or "")
+    # Any backtick means code is present — a fence, or inline `obj.Method`.
+    # `file.Name` matches the same shape as a run-on sentence, and inserting a
+    # space there would corrupt an identifier, so prose-only is the safe scope.
+    if not body or "`" in body:
+        return body
+    return _RUN_ON_SENTENCE_RE.sub(r"\1 \2", body)
 
 
 def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
@@ -2951,6 +2982,7 @@ class CognitiveEngine:
                     generation_metadata=router_generation_metadata,
                 )
             return None
+        text = _restore_sentence_spacing(text)
         text, trimmed_cutoff = _trim_midsentence_cutoff(text)
         if trimmed_cutoff:
             record_degradation(
