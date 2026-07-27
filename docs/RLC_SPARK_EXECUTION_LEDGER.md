@@ -3597,6 +3597,42 @@ before those dependencies close is not admissible.
   correction policies through versioned adapters/base updates only after broad
   anti-interference, personality, tool, safety, memory, and frontier regressions
   pass; support exact rollback.
+
+  F7-A (2026-07-27, Fable lane) closes the promotion-transaction half.
+  `core/learning/permanent_distillation.py` is the strict, runtime-dependency-
+  free contract: a content-addressed artifact manifest (per-file digest, size,
+  base-model and adapter identity), a versioned hash-chained generation
+  lineage, and a promotion decision that is **complete by declaration**. The
+  gate set is the seven named families — anti-interference, capability
+  families, personality retention, tool-effect honesty, authority safety,
+  memory retention, frontier regression — and a report whose gate ids are not
+  exactly that set is *invalid*, not passing. Each gate must name the battery
+  schema that produced it, how many probes it actually graded, and an evidence
+  digest; a gate that graded fewer probes than its floor refuses the promotion
+  as `gate_did_not_measure`. This is the deliberate defense against the
+  recurring defect in this codebase: the absence of a check reported as a
+  passed check. There is no code path to ADMIT that skips a battery.
+
+  Rollback is exact. A rollback generation must name an earlier generation in
+  the same lineage and present an artifact manifest *read back off the restored
+  files* (`observed_artifact_manifest` re-hashes the bytes on disk); a restore
+  that lands one different byte is refused as `rollback_not_exact` rather than
+  recorded as a successful revert. `core/learning/permanent_distillation_
+  registry.py` gives the lineage a durable append-only home: the whole chain is
+  replayed including the new record before anything is written, the write goes
+  through the file-write gateway inside a governed scope, and a write that
+  would rewrite or truncate stored history is refused — a failed promotion
+  stays in the record.
+
+  33/33 focused tests pass, most of them refusals (each of the seven gates
+  dropped in turn, a substitute gate name, a zero-probe battery, a rollback to
+  unknown/head/different bytes, a reordered chain, a stripped gate digest, a
+  tampered artifact, an edited registry file).
+
+  **The checkbox stays open**: no campaign has yet produced a promotable
+  artifact through this transaction, so the live-caller half binds to the
+  SPARK-069 treatment. This checkpoint runs no model and grants no capability,
+  reasoning, or frontier claim.
 - [ ] **SPARK-065 - Architecture meta-controller.** Measure expert/router/depth
   failures, propose bounded architecture changes, test in isolated candidate
   runtimes, require machine-checkable invariants and evidence, canary rollout,
