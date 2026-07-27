@@ -5625,21 +5625,25 @@ def _is_code_response(text: str) -> bool:
     if raw.startswith(("def ", "import ", "class ", "from ", "print(", "#", "var ", "const ", "let ", "function ")):
         return True
 
-    # Check lines for code constructs
+    # One implementation of "does this look like code", not two.
+    #
+    # This used to carry its own inline copy of the same heuristic — any line
+    # containing "=", or a matched pair of brackets, counted as code. Fixing
+    # that in _looks_like_code_body left this copy untouched, and the
+    # consequence was worse than the original bug: classifying prose as code
+    # SHORT-CIRCUITS every prose check above, so a truncated answer was served
+    # as complete. Live 2026-07-26:
+    #
+    #   "Total number of marbles: 3 red + 4 blue + 5 green = 12
+    #    2. Draw two without replacement means the probability changes…
+    #    We need to calculate P(both red) + P(both blue) + P(both green)
+    #    Calculating for"
+    #
+    # — assessed ok, truncated mid-word, because "=" and "(...)" made it code
+    # and code is exempt from truncated_tail and final_answer_missing.
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if len(lines) > 2:
-        code_like_lines = 0
-        for line in lines:
-            if (line.startswith(("def ", "import ", "class ", "from ", "return ", "if ", "elif ", "else:", "for ", "while ", "try:", "except", "with ", "#", "print("))
-                or "=" in line
-                or ("(" in line and ")" in line)
-                or ("[" in line and "]" in line)
-                or ("{" in line and "}" in line)
-                or ";" in line
-            ):
-                code_like_lines += 1
-        if code_like_lines / len(lines) > 0.6:
-            return True
+    if len(lines) > 2 and _looks_like_code_body(raw):
+        return True
 
     return False
 
