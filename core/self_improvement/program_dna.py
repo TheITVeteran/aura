@@ -881,6 +881,10 @@ def reconstructed(case):
                     code_router = get_local_code_model()
                 except (ImportError, RuntimeError, OSError):
                     code_router = None
+                # An admission refusal means this lane cannot serve, which is
+                # the same situation as absent weights and reaches the same
+                # fallback. Refusing to build because the preferred tool is
+                # busy is not a safety property.
                 generator = LLMCodeGenerator(router=code_router) if code_router else LLMCodeGenerator()
                 raw = await generator.generate_async(
                     prompt,
@@ -901,6 +905,44 @@ def reconstructed(case):
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 generation_error = f"{type(exc).__name__}: {exc}"
                 self._record_degradation("program_dna_reconstruction.cognition", exc, severity="warning")
+                # The code lane failing is not the reconstruction failing.
+                # Live 2026-07-27, the un-steered code model was correctly
+                # refused admission — "cortex request 21.5GB + committed
+                # 25.3GB > budget 46.1GB" on a host already holding the
+                # resident 32B — and the whole build died with it, reporting
+                # 0/14 held-out positions as though the model had written
+                # something wrong. It had not written anything. The resident
+                # cortex was available the entire time.
+                if code_router is not None:
+                    try:
+                        raw = await LLMCodeGenerator().generate_async(
+                            prompt,
+                            context={
+                                "prefer_tier": "primary",
+                                "temperature": temperature,
+                                "max_tokens": max_tokens,
+                                "origin": "program_dna_reconstruction_resident_fallback",
+                                "system_prompt": (
+                                    "You are a clean-room reimplementation engine. Implement "
+                                    "the observed behavior from the specification and examples "
+                                    "ONLY. You are NOT given, and must NOT assume, the original "
+                                    "source. Standard library only."
+                                ),
+                            },
+                        )
+                        code = extract_python_code(raw) or str(raw or "")
+                        if code.strip():
+                            generation_error = ""
+                            synthesis_provenance = "llm_clean_room_generation_resident_fallback"
+                    except (
+                        ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError
+                    ) as fallback_exc:
+                        generation_error = f"{type(fallback_exc).__name__}: {fallback_exc}"
+                        self._record_degradation(
+                            "program_dna_reconstruction.cognition_fallback",
+                            fallback_exc,
+                            severity="warning",
+                        )
 
         if not code.strip():
             return {
@@ -977,6 +1019,10 @@ def reconstructed(case):
                     code_router = get_local_code_model()
                 except (ImportError, RuntimeError, OSError):
                     code_router = None
+                # An admission refusal means this lane cannot serve, which is
+                # the same situation as absent weights and reaches the same
+                # fallback. Refusing to build because the preferred tool is
+                # busy is not a safety property.
                 generator = LLMCodeGenerator(router=code_router) if code_router else LLMCodeGenerator()
                 raw = await generator.generate_async(
                     repair_prompt,

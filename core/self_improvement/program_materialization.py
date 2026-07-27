@@ -315,6 +315,55 @@ _PLAYABLE_WRAPPER_SYSTEM_PROMPT = (
 )
 
 
+# A lane that cannot be admitted is a lane that is not available.
+#
+# The un-steered code model exists because the steered persona cortex corrupts
+# symbolic tokens, so it is the right first choice. But it is a second set of
+# weights, and on a 64GB host with the resident 32B already holding ~25GB it is
+# correctly refused: "in_process_model_admission_refused:lane_budget_exceeded:
+# cortex request 21.5GB + committed 25.3GB > budget 46.1GB". Measured live
+# 2026-07-27, and it took the whole reconstruction down with it.
+#
+# Absent weights already fall back to the resident cortex. An admission refusal
+# is the same situation — the preferred lane cannot serve — and it should reach
+# the same fallback rather than failing the work. Refusing to build anything
+# because the nicer tool is busy is not a safety property.
+async def _generate_code_with_fallback(
+    prompt: str,
+    *,
+    context: dict[str, Any],
+) -> str:
+    """Generate through the code lane, falling back to the resident cortex."""
+    from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
+
+    code_router = None
+    try:
+        from core.brain.llm.local_code_model import get_local_code_model
+
+        code_router = get_local_code_model()
+    except (ImportError, RuntimeError, OSError):
+        code_router = None
+
+    if code_router is not None:
+        try:
+            raw = await LLMCodeGenerator(router=code_router).generate_async(
+                prompt, context=dict(context)
+            )
+            extracted = extract_python_code(raw) or str(raw or "")
+            if extracted.strip():
+                return extracted
+        except _RECOVERABLE as exc:
+            record_degradation(
+                "program_materialization",
+                exc,
+                severity="info",
+                action="fell back to the resident cortex after the code lane was unavailable",
+            )
+
+    raw = await LLMCodeGenerator().generate_async(prompt, context=dict(context))
+    return extract_python_code(raw) or str(raw or "")
+
+
 async def materialize_program(
     engine: Any,
     spec: ProgramSpec,
@@ -418,17 +467,7 @@ async def _write_playable_module(engine: Any, spec: ProgramSpec, core_code: str)
         "Return only the module source."
     )
     try:
-        from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
-
-        code_router = None
-        try:
-            from core.brain.llm.local_code_model import get_local_code_model
-
-            code_router = get_local_code_model()
-        except (ImportError, RuntimeError, OSError):
-            code_router = None
-        generator = LLMCodeGenerator(router=code_router) if code_router else LLMCodeGenerator()
-        raw = await generator.generate_async(
+        return await _generate_code_with_fallback(
             prompt,
             context={
                 "prefer_tier": "primary",
@@ -438,7 +477,6 @@ async def _write_playable_module(engine: Any, spec: ProgramSpec, core_code: str)
                 "system_prompt": _PLAYABLE_WRAPPER_SYSTEM_PROMPT,
             },
         )
-        return extract_python_code(raw) or str(raw or "")
     except _RECOVERABLE as exc:
         record_degradation(
             "program_materialization", exc, severity="warning", action="no playable module produced"
