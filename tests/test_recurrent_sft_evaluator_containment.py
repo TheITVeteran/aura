@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from pathlib import Path
 
 import pytest
 
+from core.learning.structured_sft import (
+    STRUCTURED_SFT_CANDIDATE_FILES,
+    STRUCTURED_SFT_EVALUATOR_FILES,
+)
 from tools import launch_recurrent_sft_falsification as containment
 
 
@@ -38,6 +43,102 @@ def test_artifact_files_require_exact_existing_names(tmp_path: Path) -> None:
             root,
             ("missing.json",),
             role="test",
+        )
+
+
+def test_artifact_files_reject_symlink_escape(tmp_path: Path) -> None:
+    root = tmp_path / "custody"
+    root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}")
+    (root / "one.json").symlink_to(outside)
+    with pytest.raises(
+        containment.RecurrentSFTEvaluatorContainmentError,
+        match="symlink_rejected",
+    ):
+        containment._artifact_files(root, ("one.json",), role="test")
+
+
+def test_custody_binding_is_authority_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    evaluator_root = tmp_path / "evaluator"
+    candidate_root.mkdir()
+    evaluator_root.mkdir()
+    candidate_files = []
+    evaluator_files = []
+    for name in STRUCTURED_SFT_CANDIDATE_FILES:
+        path = candidate_root / name
+        path.write_bytes(f"candidate:{name}".encode())
+        candidate_files.append(path)
+    for name in STRUCTURED_SFT_EVALUATOR_FILES:
+        path = evaluator_root / name
+        path.write_bytes(f"evaluator:{name}".encode())
+        evaluator_files.append(path)
+    custody = {
+        "candidate_package_sha256": "1" * 64,
+        "evaluator_package_sha256": "2" * 64,
+        "custody_root_sha256": "3" * 64,
+    }
+    monkeypatch.setattr(
+        containment,
+        "evaluator_holdout_rows",
+        lambda *_args: ([], custody),
+    )
+    authority = {
+        "candidate": {
+            "files": [
+                {
+                    "name": path.name,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    "size_bytes": path.stat().st_size,
+                }
+                for path in candidate_files
+            ],
+            **custody,
+        }
+    }
+    binding = containment._custody_binding(
+        candidate_files=candidate_files,
+        evaluator_files=evaluator_files,
+        authority=authority,
+    )
+    assert len(binding["binding_sha256"]) == 64
+
+    candidate_files[0].write_bytes(b"swapped")
+    with pytest.raises(
+        containment.RecurrentSFTEvaluatorContainmentError,
+        match="authority_custody_drift",
+    ):
+        containment._custody_binding(
+            candidate_files=candidate_files,
+            evaluator_files=evaluator_files,
+            authority=authority,
+        )
+
+
+def test_model_lane_is_canonical_private_path_only(tmp_path: Path) -> None:
+    approved = Path.home() / ".aura/run/model_lane_control.json"
+    assert containment._approved_model_lane_state(approved) == approved
+    with pytest.raises(
+        containment.RecurrentSFTEvaluatorContainmentError,
+        match="model_lane_path_invalid",
+    ):
+        containment._approved_model_lane_state(tmp_path / "lane.json")
+
+
+def test_model_lane_overlap_is_rejected() -> None:
+    lane = Path.home() / ".aura/run/model_lane_control.json"
+    with pytest.raises(
+        containment.RecurrentSFTEvaluatorContainmentError,
+        match="model_lane_overlap",
+    ):
+        containment._assert_model_lane_disjoint(
+            lane,
+            protected=(lane.parent / "protected",),
+            output_roots=(lane.parent / "output",),
         )
 
 

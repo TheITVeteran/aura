@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from core.learning.recurrent_sft_evaluation import (  # noqa: E402
     RecurrentSFTEvaluationError,
+    evaluator_holdout_rows,
 )
 from core.learning.structured_sft import (  # noqa: E402
     STRUCTURED_SFT_CANDIDATE_FILES,
@@ -102,11 +103,118 @@ def _forbidden_roots(*, model_dir: Path) -> tuple[Path, ...]:
 
 
 def _artifact_files(root: Path, names: Sequence[str], *, role: str) -> tuple[Path, ...]:
+    if root.expanduser().is_symlink():
+        _fail(f"evaluator_containment_{role}_root_symlink_rejected")
     directory = _existing_directory(root, role=role)
-    return tuple(
-        _existing_file(directory / name, role=f"{role}_{name}")
-        for name in names
+    files: list[Path] = []
+    for name in names:
+        lexical = directory / name
+        if lexical.is_symlink():
+            _fail(f"evaluator_containment_{role}_{name}_symlink_rejected")
+        path = _existing_file(lexical, role=f"{role}_{name}")
+        if path.parent != directory:
+            _fail(f"evaluator_containment_{role}_{name}_escape")
+        files.append(path)
+    return tuple(files)
+
+
+def _custody_binding(
+    *,
+    candidate_files: Sequence[Path],
+    evaluator_files: Sequence[Path],
+    authority: Mapping[str, Any],
+) -> dict[str, Any]:
+    candidate_artifacts = {
+        path.name: _read_bytes(path, role=f"candidate_{path.name}")
+        for path in candidate_files
+    }
+    evaluator_artifacts = {
+        path.name: _read_bytes(path, role=f"evaluator_{path.name}")
+        for path in evaluator_files
+    }
+    _rows, custody = evaluator_holdout_rows(
+        candidate_artifacts,
+        evaluator_artifacts,
     )
+    bindings = {
+        "candidate": {
+            path.name: {
+                "path": str(path),
+                "sha256": _sha256_bytes(candidate_artifacts[path.name]),
+                "size_bytes": len(candidate_artifacts[path.name]),
+            }
+            for path in candidate_files
+        },
+        "evaluator": {
+            path.name: {
+                "path": str(path),
+                "sha256": _sha256_bytes(evaluator_artifacts[path.name]),
+                "size_bytes": len(evaluator_artifacts[path.name]),
+            }
+            for path in evaluator_files
+        },
+        "custody": custody,
+    }
+    candidate_authority = authority.get("candidate")
+    observed_files = [
+        {
+            "name": name,
+            "sha256": bindings["candidate"][name]["sha256"],
+            "size_bytes": bindings["candidate"][name]["size_bytes"],
+        }
+        for name in STRUCTURED_SFT_CANDIDATE_FILES
+    ]
+    if (
+        not isinstance(candidate_authority, Mapping)
+        or observed_files != candidate_authority.get("files")
+        or custody.get("candidate_package_sha256")
+        != candidate_authority.get("candidate_package_sha256")
+        or custody.get("evaluator_package_sha256")
+        != candidate_authority.get("evaluator_package_sha256")
+        or custody.get("custody_root_sha256")
+        != candidate_authority.get("custody_root_sha256")
+    ):
+        _fail("evaluator_containment_authority_custody_drift")
+    return {
+        "bindings": bindings,
+        "binding_sha256": _sha256_json(bindings),
+    }
+
+
+def _approved_model_lane_state(path: Path) -> Path:
+    approved_parent = (Path.home() / ".aura/run").resolve(strict=True)
+    lexical = Path(os.path.abspath(os.fspath(path.expanduser())))
+    metadata = approved_parent.stat()
+    if (
+        lexical.is_symlink()
+        or lexical.parent.resolve(strict=True) != approved_parent
+        or lexical.name != "model_lane_control.json"
+        or metadata.st_uid != os.getuid()
+        or metadata.st_mode & 0o077
+    ):
+        _fail("evaluator_containment_model_lane_path_invalid")
+    return approved_parent / lexical.name
+
+
+def _assert_model_lane_disjoint(
+    model_lane_state: Path,
+    *,
+    protected: Sequence[Path],
+    output_roots: Sequence[Path],
+) -> None:
+    lane_paths = {
+        model_lane_state.parent,
+        model_lane_state,
+        model_lane_state.with_suffix(model_lane_state.suffix + ".lock"),
+    }
+    for lane in lane_paths:
+        for root in (*protected, *output_roots):
+            if (
+                lane == root
+                or lane.is_relative_to(root)
+                or root.is_relative_to(lane)
+            ):
+                _fail("evaluator_containment_model_lane_overlap")
 
 
 def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -130,11 +238,20 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         arguments.reference_checkpoint,
         role="evaluator_checkpoint",
     )
-    trained_adapter, _trained_binding = _reference_adapter(
+    trained_adapter, trained_binding = _reference_adapter(
         checkpoint_path,
         expected_checkpoint_sha256=arguments.expected_checkpoint_sha256,
         authority=authority,
     )
+    expected_trainer_config_sha256 = _sha256_json(authority["trainer"])
+    if (
+        type(trained_binding.get("optimizer_updates")) is not int
+        or trained_binding["optimizer_updates"] < 1
+        or trained_binding.get("step") != trained_binding["optimizer_updates"]
+        or trained_binding.get("trainer_config_sha256")
+        != expected_trainer_config_sha256
+    ):
+        _fail("evaluator_containment_reference_workload_invalid")
     control_report = _existing_file(
         arguments.control_report,
         role="evaluator_control_report",
@@ -144,6 +261,8 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         expected_report_sha256=arguments.expected_control_report_sha256,
         authority=authority,
         expected_reference_checkpoint_sha256=arguments.expected_checkpoint_sha256,
+        expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
+        expected_trainer_config_sha256=expected_trainer_config_sha256,
     )
     candidate_dir = _existing_directory(
         arguments.candidate_dir,
@@ -162,6 +281,11 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         evaluator_dir,
         STRUCTURED_SFT_EVALUATOR_FILES,
         role="evaluator_private",
+    )
+    custody_binding = _custody_binding(
+        candidate_files=candidate_files,
+        evaluator_files=evaluator_files,
+        authority=authority,
     )
     model_dir = _existing_directory(arguments.model_dir, role="evaluator_model")
     execution_spec = _existing_file(
@@ -209,18 +333,26 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
             runtime_root / relative,
             role="evaluator_runtime_child",
         )
-    model_lane_state = Path(
-        os.path.abspath(os.fspath(arguments.model_lane_state.expanduser()))
-    )
-    if model_lane_state.is_symlink():
-        _fail("evaluator_containment_model_lane_symlink_rejected")
-    lane_parent = _private_directory(
-        model_lane_state.parent,
-        role="evaluator_model_lane_parent",
-    )
-    model_lane_state = lane_parent / model_lane_state.name
-
     forbidden = _forbidden_roots(model_dir=model_dir)
+    model_lane_state = _approved_model_lane_state(arguments.model_lane_state)
+    protected = (
+        REPO_ROOT.resolve(strict=True),
+        authority_path,
+        checkpoint_path,
+        trained_adapter,
+        control_report,
+        *tuple(control_paths[arm] for arm in sorted(control_paths)),
+        *candidate_files,
+        *evaluator_files,
+        model_dir,
+        execution_spec,
+        *forbidden,
+    )
+    _assert_model_lane_disjoint(
+        model_lane_state,
+        protected=protected,
+        output_roots=(contract_dir, output_dir, detached_dir, runtime_root),
+    )
     reads = (
         Path("/System"),
         Path("/Library"),
@@ -275,6 +407,8 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         str(control_report),
         "--expected-control-report-sha256",
         arguments.expected_control_report_sha256,
+        "--expected-custody-binding-sha256",
+        custody_binding["binding_sha256"],
         "--candidate-dir",
         str(candidate_dir),
         "--evaluator-dir",
@@ -285,6 +419,8 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         str(execution_spec),
         "--expected-source-closure-sha256",
         sources["closure_sha256"],
+        "--containment-contract",
+        str(contract_dir / "containment_contract.json"),
         "--out-dir",
         str(output_dir),
     ]
@@ -301,6 +437,8 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         "authority_sha256": authority["authority_sha256"],
         "reference_checkpoint_sha256": arguments.expected_checkpoint_sha256,
         "control_report_file_sha256": arguments.expected_control_report_sha256,
+        "custody_binding_sha256": custody_binding["binding_sha256"],
+        "custody_bindings": custody_binding["bindings"],
         "candidate_files": {
             path.name: _sha256_bytes(_read_bytes(path, role="candidate_binding"))
             for path in candidate_files
@@ -340,6 +478,7 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
             "frontier_performance",
             "resident_32b_result",
             "production_promotion",
+            "generated_behavior_regression",
             "wow_signal",
         ],
     }

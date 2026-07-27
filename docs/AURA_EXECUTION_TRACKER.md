@@ -25410,12 +25410,69 @@ passes 52/52 in 115.83 seconds. The narrower evaluator boundary passes 27/27.
 Strict Ruff, bytecode compilation, diff hygiene, and model-load ownership pass
 at 50 paths, 63 references, and zero findings.
 
-Counting CP411 makes 656 total checkpoints. The 656-920 forecast leaves 0-264
-records, or approximately 71.3%-100.0% checkpoint completion with an 85.7%
+Counting the concurrently landed chat-reliability checkpoint and CP411 makes
+657 total checkpoints. The 657-920 forecast leaves 0-263 records, or
+approximately 71.4%-100.0% checkpoint completion with an 85.7%
 midpoint. This checkpoint proves the controls completed and freezes the
 evaluator; it does not yet open holdout custody or establish transfer,
 reasoning gain, resident-32B performance, frontier performance, promotion, or
 a `WOW Signal`. The pushed evaluator run and its honest verdict follow next.
+
+### 2026-07-27 - CP412 independent evaluator contract hardening
+
+The first contained evaluator generation is preserved as an inadmissible
+attempt rather than a result. It exited in 3.304 seconds with return code 2,
+no report, no timeout or restart, and an empty process group after macOS denied
+an operation. An independent review then invalidated that generation before
+any scientific verdict: custody was not bound to the authority or containment
+contract, equal-work facts were trusted from producer booleans, the model-lane
+path was too broad, scoring and containment source closure was incomplete,
+adapter symlinks could escape their roots, likelihood canaries were described
+as behavior, and critical switching/containment regressions were absent.
+
+The replacement contract closes those defects. It replays the sealed candidate
+and evaluator custody bundles and binds their exact files, package commitments,
+and custody root to the research authority and evaluator command. The trained
+checkpoint and all control arms independently reconcile the trainer-config
+hash, 20 optimizer updates, AdamW optimizer, common initial adapter, exact
+sample order, per-step token counts, and identical 17,172-token workload.
+Checkpoint, adapter, custody, contract, report, and source roots reject
+symlinks and path escapes. The only writable model-lane state is Aura's
+existing private canonical lane, proven disjoint from every protected and
+output root before profile construction.
+
+The source closure now binds 34 scoring, recurrence, custody, sandbox,
+supervisor, model-lane, and independent-verifier files. The verifier rehashes
+that closure, the sandbox executable/profile, command, environment, authority,
+model identity, custody replay, checkpoint/control workload, adapters, tensor
+fingerprints, decision statistics, kernel probe, and detached receipt. It
+rejects command substitution, restarts, residual lineage, and report content
+that exposes holdout prompts, answers, token projections, or seeds.
+
+The real sealed preflight exposed and retired one further evaluator defect:
+eight legitimate tool-result interpretation holdouts contain executed tool
+stdout as input evidence. The projector had confused that task-required
+evidence with oracle leakage. It now admits executed stdout only for the two
+interpretation target kinds while still rejecting target evidence on
+derivation/tool-call rows and any exported oracle field. The authoritative
+custody bytes and authority commitments remained unchanged.
+
+The focused evaluator/verifier/adapter boundary passes 38/38. The integrated
+recurrent-SFT, structured-SFT, admission, authority, containment, tokenizer,
+adapter-identity, and verifier matrix passes 207/207 in 509.41 seconds. Strict
+Ruff, bytecode compilation, diff hygiene, and model-load ownership pass at 50
+paths, 63 references, and zero findings. The final no-model-load replacement
+preflight prepared contract `9d57d980...` and profile `ec699ba1...` against
+the real CP406 checkpoint, CP410 controls, sealed custody, local model, and
+canonical lane.
+
+Counting CP412 makes 658 total checkpoints. The 658-920 forecast leaves 0-262
+records, or approximately 71.5%-100.0% checkpoint completion with an 85.8%
+midpoint. This is evaluator infrastructure and admissibility evidence, not a
+scientific capability result. Heldout transfer, generated behavior,
+resident-32B gain, frontier performance, promotion, and a `WOW Signal` remain
+open. The next generation must pass a fresh kernel probe, execute all five
+arms, and pass the independent verifier before an honest SPARK-059 verdict.
 
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 

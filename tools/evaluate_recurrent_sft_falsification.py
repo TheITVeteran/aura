@@ -139,9 +139,25 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
 
 def evaluation_source_paths() -> dict[str, Path]:
     return {
+        "atomic_writer": REPO_ROOT / "core/runtime/atomic_writer.py",
         "authority": (
             REPO_ROOT / "core/learning/structured_sft_research_authority.py"
         ),
+        "branch_exchange": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/branch_exchange.py"
+        ),
+        "branch_roles": REPO_ROOT / "core/brain/llm/latent_cortex/branches.py",
+        "code_repl": REPO_ROOT / "core/skills/code_repl.py",
+        "cognitive_operators": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/cognitive_operators.py"
+        ),
+        "control_containment": (
+            REPO_ROOT / "tools/launch_recurrent_sft_controls.py"
+        ),
+        "depth_conditioned_lora": (
+            REPO_ROOT / "core/learning/depth_conditioned_lora.py"
+        ),
+        "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
         "evaluation_contract": (
             REPO_ROOT / "core/learning/recurrent_sft_evaluation.py"
         ),
@@ -149,8 +165,14 @@ def evaluation_source_paths() -> dict[str, Path]:
         "evaluator_launcher": (
             REPO_ROOT / "tools/launch_recurrent_sft_falsification.py"
         ),
+        "independent_verifier": (
+            REPO_ROOT / "tools/verify_recurrent_sft_falsification.py"
+        ),
         "execution_spec": (
             REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"
+        ),
+        "fast_weights": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/fast_weights.py"
         ),
         "falsification": (
             REPO_ROOT / "core/learning/recurrent_sft_falsification.py"
@@ -158,6 +180,9 @@ def evaluation_source_paths() -> dict[str, Path]:
         "file_read_gateway": REPO_ROOT / "core/runtime/file_read_gateway.py",
         "memory_guard": REPO_ROOT / "core/runtime/mlx_memory_guard.py",
         "model_lane": REPO_ROOT / "core/runtime/model_lane_control.py",
+        "model_lane_admission": REPO_ROOT / "core/brain/lane_admission.py",
+        "natural_deduction": REPO_ROOT / "core/reasoning/natural_deduction.py",
+        "proof_kernel": REPO_ROOT / "core/reasoning/proof_kernel.py",
         "recurrence_adapter": (
             REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
         ),
@@ -165,33 +190,66 @@ def evaluation_source_paths() -> dict[str, Path]:
             REPO_ROOT
             / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
         ),
+        "recurrent_loop_core": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/loop_core.py"
+        ),
         "recurrence_objective": (
             REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
+        ),
+        "resource_accounting": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/resource_accounting.py"
         ),
         "recurrent_sft_execution": (
             REPO_ROOT / "core/learning/recurrent_sft_execution.py"
         ),
+        "sandbox_profile_builder": (
+            REPO_ROOT / "tools/launch_structured_sft_research.py"
+        ),
+        "sandbox_runner": REPO_ROOT / "core/sandbox/runner.py",
         "structured_sft": REPO_ROOT / "core/learning/structured_sft.py",
+        "subprocess_gateway": REPO_ROOT / "core/runtime/subprocess_gateway.py",
+        "types": REPO_ROOT / "core/brain/llm/latent_cortex/types.py",
+        "workspace": REPO_ROOT / "core/brain/llm/latent_cortex/workspace.py",
     }
 
 
 def evaluation_source_closure() -> dict[str, Any]:
     paths = evaluation_source_paths()
     expected = {
+        "atomic_writer",
         "authority",
+        "branch_exchange",
+        "branch_roles",
+        "code_repl",
+        "cognitive_operators",
+        "control_containment",
+        "depth_conditioned_lora",
+        "detached_supervisor",
         "evaluation_contract",
         "evaluator",
         "evaluator_launcher",
+        "independent_verifier",
         "execution_spec",
+        "fast_weights",
         "falsification",
         "file_read_gateway",
         "memory_guard",
         "model_lane",
+        "model_lane_admission",
+        "natural_deduction",
+        "proof_kernel",
         "recurrence_adapter",
         "recurrence_identity",
+        "recurrent_loop_core",
         "recurrence_objective",
+        "resource_accounting",
         "recurrent_sft_execution",
+        "sandbox_profile_builder",
+        "sandbox_runner",
         "structured_sft",
+        "subprocess_gateway",
+        "types",
+        "workspace",
     }
     if set(paths) != expected:
         _fail("recurrent_sft_evaluation_source_roles_invalid")
@@ -220,9 +278,16 @@ def evaluation_source_closure() -> dict[str, Any]:
 def _candidate_and_evaluator_artifacts(
     candidate_dir: Path,
     evaluator_dir: Path,
+    *,
+    authority: Mapping[str, Any],
+    expected_custody_binding_sha256: str,
 ) -> tuple[dict[str, bytes], dict[str, bytes], dict[str, Any]]:
-    candidate = candidate_dir.expanduser().resolve(strict=True)
-    evaluator = evaluator_dir.expanduser().resolve(strict=True)
+    candidate_lexical = candidate_dir.expanduser()
+    evaluator_lexical = evaluator_dir.expanduser()
+    if candidate_lexical.is_symlink() or evaluator_lexical.is_symlink():
+        _fail("recurrent_sft_evaluation_custody_root_symlink_rejected")
+    candidate = candidate_lexical.resolve(strict=True)
+    evaluator = evaluator_lexical.resolve(strict=True)
     if (
         candidate.is_symlink()
         or evaluator.is_symlink()
@@ -231,14 +296,24 @@ def _candidate_and_evaluator_artifacts(
         or candidate == evaluator
     ):
         _fail("recurrent_sft_evaluation_custody_roots_invalid")
-    candidate_artifacts = {
-        name: _read_bytes(candidate / name, role=f"candidate_{name}")
-        for name in STRUCTURED_SFT_CANDIDATE_FILES
-    }
-    evaluator_artifacts = {
-        name: _read_bytes(evaluator / name, role=f"evaluator_{name}")
-        for name in STRUCTURED_SFT_EVALUATOR_FILES
-    }
+    candidate_artifacts: dict[str, bytes] = {}
+    evaluator_artifacts: dict[str, bytes] = {}
+    for name in STRUCTURED_SFT_CANDIDATE_FILES:
+        lexical = candidate / name
+        if lexical.is_symlink():
+            _fail("recurrent_sft_evaluation_candidate_symlink_rejected")
+        path = lexical.resolve(strict=True)
+        if path.parent != candidate:
+            _fail("recurrent_sft_evaluation_candidate_path_escape")
+        candidate_artifacts[name] = _read_bytes(path, role=f"candidate_{name}")
+    for name in STRUCTURED_SFT_EVALUATOR_FILES:
+        lexical = evaluator / name
+        if lexical.is_symlink():
+            _fail("recurrent_sft_evaluation_evaluator_symlink_rejected")
+        path = lexical.resolve(strict=True)
+        if path.parent != evaluator:
+            _fail("recurrent_sft_evaluation_evaluator_path_escape")
+        evaluator_artifacts[name] = _read_bytes(path, role=f"evaluator_{name}")
     rows, custody = evaluator_holdout_rows(
         candidate_artifacts,
         evaluator_artifacts,
@@ -254,9 +329,37 @@ def _candidate_and_evaluator_artifacts(
         },
         "custody": custody,
     }
+    custody_binding_sha256 = sha256_json(bindings)
+    candidate_authority = authority.get("candidate")
+    candidate_files = (
+        candidate_authority.get("files")
+        if isinstance(candidate_authority, Mapping)
+        else None
+    )
+    observed_candidate_files = [
+        {
+            "name": name,
+            "sha256": bindings["candidate"][name]["sha256"],
+            "size_bytes": bindings["candidate"][name]["size_bytes"],
+        }
+        for name in STRUCTURED_SFT_CANDIDATE_FILES
+    ]
+    if (
+        custody_binding_sha256 != expected_custody_binding_sha256
+        or not isinstance(candidate_authority, Mapping)
+        or observed_candidate_files != candidate_files
+        or custody.get("candidate_package_sha256")
+        != candidate_authority.get("candidate_package_sha256")
+        or custody.get("evaluator_package_sha256")
+        != candidate_authority.get("evaluator_package_sha256")
+        or custody.get("custody_root_sha256")
+        != candidate_authority.get("custody_root_sha256")
+    ):
+        _fail("recurrent_sft_evaluation_authority_custody_drift")
     return candidate_artifacts, evaluator_artifacts, {
         "rows": rows,
         "bindings": bindings,
+        "custody_binding_sha256": custody_binding_sha256,
     }
 
 
@@ -266,6 +369,9 @@ def _reference_adapter(
     expected_checkpoint_sha256: str,
     authority: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
+    if checkpoint_path.is_symlink():
+        _fail("recurrent_sft_evaluation_reference_checkpoint_symlink_rejected")
+    checkpoint_path = checkpoint_path.resolve(strict=True)
     payload = _read_bytes(checkpoint_path, role="reference_checkpoint")
     if sha256_bytes(payload) != expected_checkpoint_sha256:
         _fail("recurrent_sft_evaluation_reference_checkpoint_sha256_mismatch")
@@ -289,7 +395,12 @@ def _reference_adapter(
         or adapter["size_bytes"] < 1
     ):
         _fail("recurrent_sft_evaluation_reference_checkpoint_invalid")
-    path = checkpoint_path.parent / adapter["path"]
+    lexical = checkpoint_path.parent / adapter["path"]
+    if lexical.is_symlink():
+        _fail("recurrent_sft_evaluation_trained_adapter_symlink_rejected")
+    path = lexical.resolve(strict=True)
+    if path.parent != checkpoint_path.parent.resolve(strict=True):
+        _fail("recurrent_sft_evaluation_trained_adapter_path_escape")
     adapter_payload = _read_bytes(path, role="trained_adapter")
     if (
         len(adapter_payload) != adapter["size_bytes"]
@@ -299,6 +410,9 @@ def _reference_adapter(
     return path, {
         "checkpoint": _artifact_binding(checkpoint_path, payload),
         "adapter": _artifact_binding(path, adapter_payload),
+        "optimizer_updates": checkpoint.get("optimizer_updates"),
+        "step": checkpoint.get("step"),
+        "trainer_config_sha256": checkpoint.get("trainer_config_sha256"),
     }
 
 
@@ -308,7 +422,12 @@ def _control_adapters(
     expected_report_sha256: str,
     authority: Mapping[str, Any],
     expected_reference_checkpoint_sha256: str,
+    expected_reference_optimizer_updates: int,
+    expected_trainer_config_sha256: str,
 ) -> tuple[dict[str, Path], dict[str, Any]]:
+    if report_path.is_symlink():
+        _fail("recurrent_sft_evaluation_control_report_symlink_rejected")
+    report_path = report_path.resolve(strict=True)
     payload = _read_bytes(report_path, role="control_report")
     report = strict_json_bytes(payload, role="control_report")
     bindings = validate_control_report(
@@ -319,12 +438,19 @@ def _control_adapters(
         expected_reference_checkpoint_sha256=expected_reference_checkpoint_sha256,
         expected_model_identity_sha256=authority["model"]["identity_sha256"],
         expected_execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
+        expected_reference_optimizer_updates=expected_reference_optimizer_updates,
+        expected_trainer_config_sha256=expected_trainer_config_sha256,
     )
     paths: dict[str, Path] = {}
     adapter_bindings: dict[str, Any] = {}
     for arm in CONTROL_ARMS:
         binding = bindings[arm]
-        path = report_path.parent / binding["filename"]
+        lexical = report_path.parent / binding["filename"]
+        if lexical.is_symlink():
+            _fail(f"recurrent_sft_evaluation_control_adapter_{arm}_symlink")
+        path = lexical.resolve(strict=True)
+        if path.parent != report_path.parent:
+            _fail(f"recurrent_sft_evaluation_control_adapter_{arm}_escape")
         payload = _read_bytes(path, role=f"control_adapter_{arm}")
         if (
             len(payload) != binding["size_bytes"]
@@ -451,6 +577,40 @@ def _ordinary_lexical_hash(model: Any, tokenizer: Any) -> str:
     return digest.hexdigest()
 
 
+def _validated_containment_contract(
+    path: Path,
+    *,
+    arguments: argparse.Namespace,
+    source_closure: Mapping[str, Any],
+) -> dict[str, Any]:
+    if path.is_symlink():
+        _fail("recurrent_sft_evaluation_contract_symlink_rejected")
+    contract = _read_json(path, role="containment_contract")
+    body = dict(contract)
+    observed = body.pop("contract_sha256", None)
+    if (
+        observed != sha256_json(body)
+        or contract.get("authority_sha256")
+        != arguments.expected_authority_sha256
+        or contract.get("reference_checkpoint_sha256")
+        != arguments.expected_reference_checkpoint_sha256
+        or contract.get("control_report_file_sha256")
+        != arguments.expected_control_report_sha256
+        or contract.get("custody_binding_sha256")
+        != arguments.expected_custody_binding_sha256
+        or contract.get("source_closure") != source_closure
+        or contract.get("network") != "kernel_denied"
+        or contract.get("process_fork") != "kernel_denied"
+        or contract.get("evaluator_access") is not True
+        or contract.get("training_write_access") is not False
+        or contract.get("resident_checkpoint_access") is not False
+        or contract.get("production_write_access") is not False
+        or contract.get("resume_contract") != "none"
+    ):
+        _fail("recurrent_sft_evaluation_containment_contract_invalid")
+    return contract
+
+
 def _run(arguments: argparse.Namespace) -> int:
     if not all(
         _is_sha256(value)
@@ -458,6 +618,7 @@ def _run(arguments: argparse.Namespace) -> int:
             arguments.expected_authority_sha256,
             arguments.expected_reference_checkpoint_sha256,
             arguments.expected_control_report_sha256,
+            arguments.expected_custody_binding_sha256,
             arguments.expected_source_closure_sha256,
         )
     ):
@@ -482,23 +643,43 @@ def _run(arguments: argparse.Namespace) -> int:
     sources = evaluation_source_closure()
     if sources["closure_sha256"] != arguments.expected_source_closure_sha256:
         _fail("recurrent_sft_evaluation_source_closure_drift")
-    _candidate, _evaluator, custody_material = _candidate_and_evaluator_artifacts(
-        arguments.candidate_dir,
-        arguments.evaluator_dir,
-    )
-    holdout_rows = custody_material["rows"]
     trained_adapter_path, trained_binding = _reference_adapter(
-        arguments.reference_checkpoint.expanduser().resolve(strict=True),
+        arguments.reference_checkpoint.expanduser(),
         expected_checkpoint_sha256=arguments.expected_reference_checkpoint_sha256,
         authority=authority,
     )
+    expected_trainer_config_sha256 = sha256_json(authority["trainer"])
+    if (
+        type(trained_binding.get("optimizer_updates")) is not int
+        or trained_binding["optimizer_updates"] < 1
+        or trained_binding.get("step") != trained_binding["optimizer_updates"]
+        or trained_binding.get("trainer_config_sha256")
+        != expected_trainer_config_sha256
+    ):
+        _fail("recurrent_sft_evaluation_reference_workload_invalid")
     control_paths, control_bindings = _control_adapters(
-        arguments.control_report.expanduser().resolve(strict=True),
+        arguments.control_report.expanduser(),
         expected_report_sha256=arguments.expected_control_report_sha256,
         authority=authority,
         expected_reference_checkpoint_sha256=(
             arguments.expected_reference_checkpoint_sha256
         ),
+        expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
+        expected_trainer_config_sha256=expected_trainer_config_sha256,
+    )
+    _candidate, _evaluator, custody_material = _candidate_and_evaluator_artifacts(
+        arguments.candidate_dir,
+        arguments.evaluator_dir,
+        authority=authority,
+        expected_custody_binding_sha256=(
+            arguments.expected_custody_binding_sha256
+        ),
+    )
+    holdout_rows = custody_material["rows"]
+    containment_contract = _validated_containment_contract(
+        arguments.containment_contract.expanduser().resolve(strict=True),
+        arguments=arguments,
+        source_closure=sources,
     )
     out_dir = ensure_private_directory(arguments.out_dir.expanduser())
     report_path = out_dir / "falsification_evaluation_report.json"
@@ -606,28 +787,32 @@ def _run(arguments: argparse.Namespace) -> int:
             _fail("recurrent_sft_evaluation_base_weights_changed")
 
     falsification = build_falsification_verdict(observations)
-    canary_verdict = regression_canary_verdict(
+    likelihood_canary_verdict = regression_canary_verdict(
         base_canaries,
         trained_canaries,
     )
     lexical_invariance = len(set(lexical_hashes.values())) == 1
     all_gates_passed = (
         falsification["heldout_transfer_proven"]
-        and canary_verdict["passed"]
+        and likelihood_canary_verdict["passed"]
         and lexical_invariance
     )
     body = {
         "schema": REPORT_SCHEMA,
         "status": (
-            "small_checkpoint_transfer_with_regression_gates_passed"
+            "small_checkpoint_transfer_with_likelihood_regression_gates_passed"
             if all_gates_passed
             else "small_checkpoint_transfer_not_proven"
         ),
         "authority_sha256": authority["authority_sha256"],
         "model_identity_sha256": model_identity["identity_sha256"],
         "execution_spec_sha256": authority["execution_spec"]["semantic_sha256"],
+        "containment_contract_sha256": containment_contract["contract_sha256"],
         "source_closure": sources,
         "custody": custody_material["bindings"],
+        "custody_binding_sha256": custody_material[
+            "custody_binding_sha256"
+        ],
         "trained_candidate": trained_binding,
         "controls": control_bindings,
         "wrapped_projections": wrapped,
@@ -636,11 +821,12 @@ def _run(arguments: argparse.Namespace) -> int:
         "canary_example_count": len(projected_canaries),
         "observations": observations,
         "falsification": falsification,
-        "regression_canary_observations": {
+        "regression_likelihood_canary_observations": {
             BASE_ARM: base_canaries,
             TRAINED_ARM: trained_canaries,
         },
-        "regression_canary_verdict": canary_verdict,
+        "regression_likelihood_canary_verdict": likelihood_canary_verdict,
+        "generated_behavior_regression_tested": False,
         "ordinary_lexical_hashes": lexical_hashes,
         "ordinary_lexical_invariance_proven": lexical_invariance,
         "base_weights_unchanged": True,
@@ -654,6 +840,7 @@ def _run(arguments: argparse.Namespace) -> int:
             "frontier_performance",
             "resident_32b_result",
             "production_promotion",
+            "generated_behavior_regression",
             "wow_signal",
         ],
     }
@@ -671,11 +858,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-reference-checkpoint-sha256", required=True)
     parser.add_argument("--control-report", type=Path, required=True)
     parser.add_argument("--expected-control-report-sha256", required=True)
+    parser.add_argument("--expected-custody-binding-sha256", required=True)
     parser.add_argument("--candidate-dir", type=Path, required=True)
     parser.add_argument("--evaluator-dir", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--execution-spec", type=Path, required=True)
     parser.add_argument("--expected-source-closure-sha256", required=True)
+    parser.add_argument("--containment-contract", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     return parser
 

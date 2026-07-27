@@ -13,8 +13,10 @@ from core.learning.recurrent_sft_falsification import (
     sha256_json,
 )
 from core.learning.structured_sft import (
+    REPAIR_INTERPRETATION_TARGET,
     STRUCTURED_SFT_CANDIDATE_FILES,
     STRUCTURED_SFT_EVALUATOR_FILES,
+    TOOL_INTERPRETATION_TARGET,
     validate_structured_sft_custody_pair,
 )
 
@@ -95,6 +97,11 @@ def evaluator_holdout_rows(
         messages = example.get("messages")
         tools = example.get("tools")
         projection = example.get("projection")
+        target_kind = example.get("target_kind")
+        evidence_expected = target_kind in {
+            TOOL_INTERPRETATION_TARGET,
+            REPAIR_INTERPRETATION_TARGET,
+        }
         if (
             not _is_sha256(example_id)
             or example_id in seen_ids
@@ -104,7 +111,9 @@ def evaluator_holdout_rows(
             or messages[-1].get("role") != "assistant"
             or not isinstance(tools, list)
             or not isinstance(projection, Mapping)
-            or projection.get("answer_evidence_in_input") is not False
+            or projection.get("answer_evidence_in_input") is not evidence_expected
+            or projection.get("answer_evidence_basis")
+            != ("executed_tool_stdout" if evidence_expected else "not_present")
             or projection.get("oracle_fields_exported_to_trainer") != []
         ):
             _fail("recurrent_sft_evaluation_holdout_example_invalid")
@@ -117,7 +126,7 @@ def evaluator_holdout_rows(
                     "example_id": example_id,
                     "case_fingerprint": example.get("case_fingerprint"),
                     "family": example.get("family"),
-                    "target_kind": example.get("target_kind"),
+                    "target_kind": target_kind,
                     "curriculum_version": example.get("curriculum_version"),
                     "loss_policy": example.get("loss_policy"),
                     "projection": projection,
@@ -136,6 +145,8 @@ def validate_control_report(
     expected_reference_checkpoint_sha256: str,
     expected_model_identity_sha256: str,
     expected_execution_spec_sha256: str,
+    expected_reference_optimizer_updates: int,
+    expected_trainer_config_sha256: str,
 ) -> dict[str, dict[str, Any]]:
     """Validate an equal-work control report and return adapter bindings."""
 
@@ -156,6 +167,8 @@ def validate_control_report(
         != expected_model_identity_sha256
         or report.get("execution_spec_sha256")
         != expected_execution_spec_sha256
+        or report.get("trainer_config_sha256")
+        != expected_trainer_config_sha256
         or report.get("equal_sample_order") is not True
         or report.get("equal_per_step_token_counts") is not True
         or report.get("equal_optimizer_and_hyperparameters") is not True
@@ -171,9 +184,18 @@ def validate_control_report(
     ):
         _fail("recurrent_sft_evaluation_control_report_invalid")
     reference_updates = report.get("reference_optimizer_updates")
-    if type(reference_updates) is not int or reference_updates < 1:
+    if (
+        type(reference_updates) is not int
+        or reference_updates < 1
+        or reference_updates != expected_reference_optimizer_updates
+    ):
         _fail("recurrent_sft_evaluation_control_workload_invalid")
     bindings: dict[str, dict[str, Any]] = {}
+    reference_indices: list[int] | None = None
+    reference_token_counts: list[int] | None = None
+    initial_adapter_sha256 = report.get("initial_adapter_sha256")
+    if not _is_sha256(initial_adapter_sha256):
+        _fail("recurrent_sft_evaluation_control_workload_invalid")
     for arm in CONTROL_ARMS:
         arm_report = arms[arm]
         if not isinstance(arm_report, Mapping):
@@ -181,11 +203,27 @@ def validate_control_report(
         arm_body = dict(arm_report)
         arm_sha256 = arm_body.pop("arm_report_sha256", None)
         adapter = arm_report.get("adapter")
+        sample_indices = arm_report.get("sample_indices")
+        sample_token_counts = arm_report.get("sample_token_counts")
         if (
             arm_report.get("arm") != arm
             or arm_sha256 != sha256_json(arm_body)
             or arm_report.get("optimizer_updates") != reference_updates
             or control_updates.get(arm) != reference_updates
+            or arm_report.get("optimizer") != "AdamW"
+            or arm_report.get("starting_adapter_sha256")
+            != initial_adapter_sha256
+            or not isinstance(sample_indices, list)
+            or len(sample_indices) != reference_updates
+            or any(type(value) is not int or value < 0 for value in sample_indices)
+            or not isinstance(sample_token_counts, list)
+            or len(sample_token_counts) != reference_updates
+            or any(
+                type(value) is not int or value < 1
+                for value in sample_token_counts
+            )
+            or arm_report.get("sample_token_budget")
+            != sum(sample_token_counts)
             or not isinstance(adapter, Mapping)
             or set(adapter) != {"filename", "sha256", "size_bytes"}
             or not isinstance(adapter.get("filename"), str)
@@ -197,6 +235,14 @@ def validate_control_report(
             or adapter["size_bytes"] < 1
         ):
             _fail("recurrent_sft_evaluation_control_arm_invalid")
+        if reference_indices is None:
+            reference_indices = list(sample_indices)
+            reference_token_counts = list(sample_token_counts)
+        elif (
+            sample_indices != reference_indices
+            or sample_token_counts != reference_token_counts
+        ):
+            _fail("recurrent_sft_evaluation_control_workload_invalid")
         bindings[arm] = dict(adapter)
     return bindings
 

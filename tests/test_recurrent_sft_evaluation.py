@@ -34,6 +34,7 @@ def _holdout() -> dict:
         ],
         "tools": [],
         "projection": {
+            "answer_evidence_basis": "not_present",
             "answer_evidence_in_input": False,
             "oracle_fields_exported_to_trainer": [],
         },
@@ -72,6 +73,7 @@ def test_holdout_projection_requires_replayed_disjoint_custody(monkeypatch) -> N
                 "curriculum_version": "v1",
                 "loss_policy": {"mask_prompt": True},
                 "projection": {
+                    "answer_evidence_basis": "not_present",
                     "answer_evidence_in_input": False,
                     "oracle_fields_exported_to_trainer": [],
                 },
@@ -114,6 +116,40 @@ def test_holdout_projection_rejects_answer_leakage(
         evaluation.evaluator_holdout_rows(candidate, evaluator)
 
 
+def test_holdout_projection_allows_executed_tool_evidence_for_interpretation(
+    monkeypatch,
+) -> None:
+    candidate = _artifacts(STRUCTURED_SFT_CANDIDATE_FILES)
+    evaluator = _artifacts(STRUCTURED_SFT_EVALUATOR_FILES)
+    holdout = _holdout()
+    example = holdout["examples"][0]
+    example["target_kind"] = "tool_result_interpretation"
+    example["projection"] = {
+        "answer_evidence_basis": "executed_tool_stdout",
+        "answer_evidence_in_input": True,
+        "oracle_fields_exported_to_trainer": [],
+    }
+    example["messages"].insert(
+        -1,
+        {"role": "tool", "content": "verified stdout"},
+    )
+    evaluator["holdout.private.json"] = json.dumps(holdout).encode()
+    monkeypatch.setattr(
+        evaluation,
+        "validate_structured_sft_custody_pair",
+        lambda *_args: {
+            "holdout_example_count": 1,
+            "example_id_overlap_count": 0,
+            "case_fingerprint_overlap_count": 0,
+            "candidate_contains_holdout_seed": False,
+        },
+    )
+
+    rows, _custody = evaluation.evaluator_holdout_rows(candidate, evaluator)
+
+    assert rows[0]["_meta"]["target_kind"] == "tool_result_interpretation"
+
+
 def _control_report() -> dict:
     arms = {}
     for arm in CONTROL_ARMS:
@@ -143,6 +179,8 @@ def _control_report() -> dict:
         "reference_checkpoint_sha256": "b" * 64,
         "model_identity_sha256": "c" * 64,
         "execution_spec_sha256": "d" * 64,
+        "trainer_config_sha256": "f" * 64,
+        "initial_adapter_sha256": "4" * 64,
         "equal_sample_order": True,
         "equal_per_step_token_counts": True,
         "equal_optimizer_and_hyperparameters": True,
@@ -169,6 +207,8 @@ def test_control_report_binds_equal_work_and_adapters() -> None:
         expected_reference_checkpoint_sha256="b" * 64,
         expected_model_identity_sha256="c" * 64,
         expected_execution_spec_sha256="d" * 64,
+        expected_reference_optimizer_updates=20,
+        expected_trainer_config_sha256="f" * 64,
     )
     assert set(bindings) == set(CONTROL_ARMS)
     assert bindings["syntax_only"]["filename"] == "syntax_only.safetensors"
@@ -203,6 +243,91 @@ def test_control_report_rejects_false_equal_work_claims(
             expected_reference_checkpoint_sha256="b" * 64,
             expected_model_identity_sha256="c" * 64,
             expected_execution_spec_sha256="d" * 64,
+            expected_reference_optimizer_updates=20,
+            expected_trainer_config_sha256="f" * 64,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (
+            lambda report: report["arms"]["shuffled_traces"].__setitem__(
+                "sample_indices",
+                list(reversed(range(20))),
+            ),
+            "control_workload_invalid",
+        ),
+        (
+            lambda report: report["arms"]["syntax_only"].__setitem__(
+                "sample_token_counts",
+                [99] + [100] * 19,
+            ),
+            "control_arm_invalid",
+        ),
+        (
+            lambda report: report["arms"]["sham_labels"].__setitem__(
+                "starting_adapter_sha256",
+                "9" * 64,
+            ),
+            "control_arm_invalid",
+        ),
+        (
+            lambda report: report["arms"]["sham_labels"].__setitem__(
+                "optimizer",
+                "SGD",
+            ),
+            "control_arm_invalid",
+        ),
+    ],
+)
+def test_control_report_reconstructs_equal_work(
+    mutation,
+    expected: str,
+) -> None:
+    report = _control_report()
+    mutation(report)
+    for arm in CONTROL_ARMS:
+        arm_body = dict(report["arms"][arm])
+        arm_body.pop("arm_report_sha256")
+        report["arms"][arm]["arm_report_sha256"] = sha256_json(arm_body)
+    body = dict(report)
+    body.pop("report_sha256")
+    report["report_sha256"] = sha256_json(body)
+
+    with pytest.raises(
+        evaluation.RecurrentSFTEvaluationError,
+        match=expected,
+    ):
+        evaluation.validate_control_report(
+            report,
+            report_file_sha256="e" * 64,
+            expected_report_file_sha256="e" * 64,
+            expected_authority_sha256="a" * 64,
+            expected_reference_checkpoint_sha256="b" * 64,
+            expected_model_identity_sha256="c" * 64,
+            expected_execution_spec_sha256="d" * 64,
+            expected_reference_optimizer_updates=20,
+            expected_trainer_config_sha256="f" * 64,
+        )
+
+
+def test_control_report_rejects_reference_workload_drift() -> None:
+    report = _control_report()
+    with pytest.raises(
+        evaluation.RecurrentSFTEvaluationError,
+        match="control_workload_invalid",
+    ):
+        evaluation.validate_control_report(
+            report,
+            report_file_sha256="e" * 64,
+            expected_report_file_sha256="e" * 64,
+            expected_authority_sha256="a" * 64,
+            expected_reference_checkpoint_sha256="b" * 64,
+            expected_model_identity_sha256="c" * 64,
+            expected_execution_spec_sha256="d" * 64,
+            expected_reference_optimizer_updates=21,
+            expected_trainer_config_sha256="f" * 64,
         )
 
 
@@ -247,7 +372,7 @@ def test_regression_canaries_require_every_family_to_hold() -> None:
 def test_evaluator_source_closure_is_exact_and_hash_bound() -> None:
     closure = evaluator_tool.evaluation_source_closure()
     assert closure["schema"].endswith("source_closure")
-    assert len(closure["files"]) == 14
+    assert len(closure["files"]) == 34
     assert [row["role"] for row in closure["files"]] == sorted(
         row["role"] for row in closure["files"]
     )
@@ -256,4 +381,66 @@ def test_evaluator_source_closure_is_exact_and_hash_bound() -> None:
             "schema": closure["schema"],
             "files": closure["files"],
         }
+    )
+
+
+def test_adapter_switch_replaces_every_recurrent_tensor(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mx = pytest.importorskip("mlx.core")
+    names = (
+        "model.layers.0.self_attn.q_proj.lora_a",
+        "model.layers.0.self_attn.q_proj.lora_b",
+    )
+    topology = {
+        names[0]: mx.zeros((2, 3), dtype=mx.float32),
+        names[1]: mx.zeros((3, 2), dtype=mx.float32),
+    }
+    adapter_a = {
+        names[0]: mx.ones((2, 3), dtype=mx.float32),
+        names[1]: mx.ones((3, 2), dtype=mx.float32),
+    }
+    adapter_b = {
+        names[0]: mx.full((2, 3), 2.0, dtype=mx.float32),
+        names[1]: mx.full((3, 2), 3.0, dtype=mx.float32),
+    }
+    path_a = tmp_path / "a.safetensors"
+    path_b = tmp_path / "b.safetensors"
+    mx.save_safetensors(str(path_a), adapter_a)
+    mx.save_safetensors(str(path_b), adapter_b)
+
+    class _Model:
+        current = dict(topology)
+
+        def load_weights(self, items, *, strict: bool) -> None:
+            assert strict is False
+            self.current = dict(items)
+
+        def trainable_parameters(self):
+            return self.current
+
+    model = _Model()
+    monkeypatch.setattr(
+        evaluator_tool,
+        "adapter_tensor_dict",
+        lambda observed_model: dict(observed_model.current),
+    )
+
+    first = evaluator_tool._load_adapter(
+        model,
+        path_a,
+        expected_topology=topology,
+    )
+    second = evaluator_tool._load_adapter(
+        model,
+        path_b,
+        expected_topology=topology,
+    )
+
+    assert first != second
+    assert second == evaluator_tool._tensor_fingerprint(adapter_b)
+    assert all(
+        bool(mx.array_equal(model.current[name], adapter_b[name]))
+        for name in names
     )

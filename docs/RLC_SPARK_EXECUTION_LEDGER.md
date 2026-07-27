@@ -3430,8 +3430,9 @@ before those dependencies close is not admissible.
   graph. The decision combines branch-mean answer CE, a uniform
   branch-mixture top-1 rule, wrong-to-right/right-to-wrong transitions, exact
   paired sign tests, and per-family negative-transfer rejection. Exact ordinary
-  lexical invariance plus personality, tool-honesty, and safety canaries are
-  mandatory additional gates.
+  lexical invariance plus teacher-forced personality, tool-honesty, and safety
+  likelihood canaries are mandatory additional gates. They do not establish
+  generated behavior.
 
   The evaluator has a separate deny-default launcher with exact read roots and
   private write-only output roots. It denies network, process creation,
@@ -3440,6 +3441,35 @@ before those dependencies close is not admissible.
   27/27, and model-load ownership passes at 50 paths, 63 references, and zero
   findings. CP411 does not open holdout custody or claim transfer; the pushed
   evaluator execution remains open.
+
+  CP412 preserves the first evaluator generation as an inadmissible failure:
+  return code 2 after 3.304 seconds, no report, and no surviving process group.
+  Independent review invalidated its contract before any scientific verdict.
+  The repaired generation now binds custody to the external authority and
+  command, reconstructs equal work from raw checkpoint/control records,
+  restricts model-lane writes to Aura's existing private canonical lane,
+  rejects root/file symlinks and path escapes, and commits 34 scoring,
+  recurrence, containment, supervisor, and verifier sources.
+
+  The independent verifier rehashes the sandbox executable/profile, command,
+  environment, source closure, authority, model identity, custody replay,
+  checkpoint/control workload, adapters, tensor fingerprints, decision
+  statistics, kernel probe, and detached receipt. It rejects command
+  substitution, restarts, residual lineage, and holdout-content leakage. The
+  sealed preflight also retired a real projection defect: executed tool stdout
+  is legitimate input evidence only for tool-result interpretation targets;
+  oracle export and target evidence on derivation/tool-call rows still fail
+  closed.
+
+  The focused boundary passes 38/38 and the integrated recurrent/structured-SFT
+  matrix passes 207/207 in 509.41 seconds. Strict Ruff, bytecode compilation,
+  diff hygiene, and model-load ownership at 50 paths, 63 references, and zero
+  findings pass. Replacement contract `9d57d980...` and profile `ec699ba1...`
+  prepare against the real immutable artifacts without loading model weights.
+  A fresh kernel probe, five-arm execution, and independent verification remain
+  required before the first honest SPARK-059 transfer verdict. Generated
+  behavior, resident-32B gain, frontier performance, promotion, and a
+  `WOW Signal` remain open.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right
