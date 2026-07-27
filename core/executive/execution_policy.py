@@ -7,6 +7,7 @@ scope and one conservative risk class without treating an unknown tool as safe.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 from pathlib import Path
@@ -170,6 +171,72 @@ def _auto_refactor_scope(params: dict[str, Any]) -> str:
     return "sandboxed_compute" if bool(params.get("run_tests")) else "read_only"
 
 
+
+# Effect scope belongs to what an invocation actually does, not to what its
+# skill is capable of. desktop_task is the composite case: it can write files,
+# drive AppleScript and read the screen, so its blanket declaration is the
+# widest thing any of its steps might do. Governing every invocation at that
+# width blocks a screen-reading objective as if it were a filesystem write, and
+# governing at the parent's width also misses a child that does more. The
+# honest scope of a plan is the widest scope among the steps it actually
+# contains — computed here, from the steps, at the layer that knows them.
+_DESKTOP_ACTION_SCOPES: dict[str, str] = {
+    "get_clipboard": "read_only",
+    "inspect_screen": "read_only",
+    "read_menu_clock": "read_only",
+    "read_screen_text": "read_only",
+    "wait": "read_only",
+    "click": "foreground_desktop_control",
+    "hotkey": "foreground_desktop_control",
+    "open_app": "foreground_desktop_control",
+    "open_url": "foreground_desktop_control",
+    "run_applescript": "foreground_desktop_control",
+    "scroll": "foreground_desktop_control",
+    "set_clipboard": "foreground_desktop_control",
+    "system_control": "foreground_desktop_control",
+    "type": "foreground_desktop_control",
+    "create_folder": "desktop_file_io",
+    "fetch_topic_image": "desktop_file_io",
+    "move_file": "desktop_file_io",
+    "render_text_pdf": "desktop_file_io",
+    "write_text_file": "desktop_file_io",
+}
+# Widest last: a plan is governed by the most consequential thing in it.
+_DESKTOP_SCOPE_RANK: tuple[str, ...] = (
+    "read_only",
+    "foreground_desktop_control",
+    "desktop_file_io",
+)
+
+
+def _desktop_task_scope(params: dict[str, Any]) -> str | None:
+    """The widest scope among a desktop plan's declared steps, or None."""
+    raw_steps = (params or {}).get("steps")
+    if isinstance(raw_steps, str):
+        try:
+            raw_steps = json.loads(raw_steps)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(raw_steps, list) or not raw_steps:
+        return None
+
+    widest = -1
+    for step in raw_steps:
+        action = ""
+        if isinstance(step, dict):
+            action = str(step.get("action") or "").strip().lower()
+        elif isinstance(step, str):
+            action = step.strip().lower()
+        scope = _DESKTOP_ACTION_SCOPES.get(action)
+        if scope is None:
+            # An unrecognised step could do anything; refuse to narrow.
+            return None
+        widest = max(widest, _DESKTOP_SCOPE_RANK.index(scope))
+    if widest < 0:
+        return None
+    return _DESKTOP_SCOPE_RANK[widest]
+
+
 def resolve_execution_effect_scope(
     tool_name: Any,
     params: dict[str, Any] | None = None,
@@ -186,6 +253,10 @@ def resolve_execution_effect_scope(
             return scoped
     elif name == "computer_use":
         scoped = _computer_use_scope(arguments)
+        if scoped:
+            return scoped
+    elif name == "desktop_task":
+        scoped = _desktop_task_scope(arguments)
         if scoped:
             return scoped
     elif name == "auto_refactor":
