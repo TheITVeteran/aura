@@ -437,6 +437,13 @@ def test_worker_memory_sentinel_uses_bounded_heavy_lane_limits(monkeypatch):
     assert sentinel_32b._worker_rss_limit_gb(64.0) <= 36.0
     assert sentinel_72b._worker_rss_limit_gb(64.0) <= 40.0
 
+    # The override is clamped to the default under the desktop resource
+    # guard, which reads AURA_SAFE_BOOT_DESKTOP / AURA_DESKTOP_RESOURCE_GUARD
+    # from the process environment. A test that leaves either set turned this
+    # assertion into a coin flip — passing alone, failing in company. Pin the
+    # guard state this case is about.
+    monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
+    monkeypatch.delenv("AURA_DESKTOP_RESOURCE_GUARD", raising=False)
     monkeypatch.setenv("AURA_MLX_WORKER_RSS_LIMIT_GB", "44")
     assert sentinel_32b._worker_rss_limit_gb(64.0) == 44.0
 

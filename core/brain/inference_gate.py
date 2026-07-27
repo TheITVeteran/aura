@@ -270,6 +270,14 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
         "missing_requested_word_count",
         "missing_requested_sentence_count",
         "missing_requested_followup_question",
+        # A worked derivation that stopped one step short of stating its
+        # answer. It is real content — the cases are computed correctly — and
+        # downstream repair can finish it or the person can read it as it
+        # stands. Discarding it costs a correct three-case derivation and
+        # returns an apology, which is what happened live on 2026-07-26:
+        #   Cortex produced an unsafe user-facing draft
+        #   (final_answer_missing, len=899). Treating it as failed generation.
+        "final_answer_missing",
     }
 )
 

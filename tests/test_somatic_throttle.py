@@ -134,7 +134,13 @@ def test_mlx_generation_throttle_hook_uses_typed_boundary():
     throttle_block = source.split("SomaticComputeSentinel", 1)[1].split("foreground_owner_cm", 1)[0]
 
     assert "except Exception" not in throttle_block
-    assert "continued generation without somatic parameter throttle" in throttle_block
+    # The handler no longer merely "continues unthrottled" — it applies a
+    # conservative ceiling instead, which is a stronger contract than the one
+    # this assertion was written against. What matters is that the failure is
+    # recorded rather than swallowed, and that something bounds the generation.
+    assert "_record_mlx_degradation(" in throttle_block
+    assert "_apply_unthrottled_fallback_ceiling(" in throttle_block
+    assert "severity=\"warning\"" in throttle_block
 
 
 def test_somatic_throttle_records_expected_probe_failures(monkeypatch, resource_observer):

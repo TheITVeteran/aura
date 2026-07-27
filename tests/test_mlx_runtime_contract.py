@@ -576,7 +576,15 @@ def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
     source = inspect.getsource(mlx_client._probe_mlx_runtime)
     assert "core/brain/llm/mlx_client.py" in ALLOW_SUBPROCESS
     assert "get_subprocess_gateway().run(" in source
-    assert "timeout=25.0" in source
+    # The probe timeout became an operator-configurable bound rather than a
+    # hardcoded 25.0: on a host whose page cache is thrashing, importing MLX
+    # alone can exceed a fixed budget and the probe reported
+    # "mlx_runtime_unavailable:exit_124" on a perfectly healthy machine. What
+    # this contract requires is that the call stays BOUNDED, and that the
+    # bound has a floor so it cannot be configured away.
+    assert "timeout=_MLX_RUNTIME_PROBE_TIMEOUT_S" in source
+    probe_timeout = float(mlx_client._MLX_RUNTIME_PROBE_TIMEOUT_S)
+    assert 5.0 <= probe_timeout <= 600.0
     assert "source=\"runtime_probe:mlx_runtime_probe\"" in source
     assert "read_only=True" in source
     assert "AURA_TEST_MODE" not in source
