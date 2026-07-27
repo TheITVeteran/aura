@@ -5649,6 +5649,15 @@ _INTERNAL_TASK_PROMPT_RE = re.compile(
     r"|\bDeconstruct and comprehensively research\b"
     r"|\bTo deconstruct and comprehensively research\b"
     r"|\[(?:ARCHITECT|CRITIC|SYNTHESIZER|RESEARCHER)\]"
+    # Governance verdicts are written for the audit trail, not for a person.
+    # Live 2026-07-27 the chat window received, as Aura speaking:
+    #   Standing authority denied: no_matching_standing_grant
+    # A refusal is worth saying out loud; its internal reason code is not.
+    r"|\bStanding authority denied\s*:"
+    r"|\bdenied_by_default\s*:"
+    r"|\bno_matching_standing_grant\b"
+    r"|\bsigned_standing_authority_lease_missing\b"
+    r"|\breply_reliability_gate_failed\b"
     r"|\[User Preference\]",
     re.IGNORECASE | re.MULTILINE,
 )

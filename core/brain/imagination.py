@@ -213,6 +213,80 @@ _WEAK_TOPIC_TOKENS = frozenset({
 })
 
 
+#: Sections that carry the real subject inside a scaffolded prompt.
+#:
+#: A swarm synthesis turn arrives as "You are the Master Synthesizer. Review
+#: the original problem... ORIGINAL PROBLEM:\n<the actual question>". The
+#: subject is in there, labelled; it is just not what the prompt opens with.
+_SCAFFOLD_SUBJECT_LABEL_RE = re.compile(
+    r"^\s*(?:ORIGINAL\s+PROBLEM|USER\s+MESSAGE|USER\s+REQUEST|QUESTION|"
+    r"OBJECTIVE|TOPIC|TASK|SUBJECT|PROMPT)\s*:\s*$",
+    re.IGNORECASE,
+)
+
+#: The opening of a prompt that is talking to Aura about her own role rather
+#: than about anything in the world.
+_SCAFFOLD_PREAMBLE_RE = re.compile(
+    r"^\s*(?:you\s+are\s+(?:the|a|an)\b|your\s+task\s+is\b|"
+    r"as\s+(?:the|a|an)\s+\w+\s+(?:agent|synthesizer|specialist|analyst)\b|"
+    r"act\s+as\b|review\s+the\s+original\s+problem\b)",
+    re.IGNORECASE,
+)
+
+
+def imagination_subject(text: Any, context: Any = None) -> str:
+    """The thing to imagine ABOUT, which is not always the prompt.
+
+    Live 2026-07-27 the workspace produced four novel thoughts and four
+    counterfactual probes, all of them about "master", because the frame was
+    seeded with "You are the Master Synthesizer. Review the original problem
+    and the analyses from your specialized swarm agents...". Demoting scaffold
+    vocabulary stopped that word winning; it did not make the seed right.
+
+    Order of preference: what the caller says the subject is, then what the
+    person actually wrote, then a labelled section inside the scaffold, then
+    the text itself with any role preamble removed.
+    """
+    if isinstance(context, dict):
+        for key in ("imagination_subject", "visible_user_message", "original_topic"):
+            candidate = str(context.get(key) or "").strip()
+            if candidate:
+                return candidate
+
+    body = str(text or "").strip()
+    if not body:
+        return ""
+
+    # A labelled section wins: everything under it, up to the next label.
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if not _SCAFFOLD_SUBJECT_LABEL_RE.match(line):
+            continue
+        collected: list[str] = []
+        for following in lines[index + 1:]:
+            if _SCAFFOLD_SUBJECT_LABEL_RE.match(following):
+                break
+            if following.strip() in {"---", "===", "FINAL SYNTHESIS:"}:
+                break
+            collected.append(following)
+        section = "\n".join(collected).strip()
+        if section:
+            return section
+
+    # No label: drop a role preamble so the sentence about her does not
+    # become the sentence she thinks about.
+    if _SCAFFOLD_PREAMBLE_RE.match(body):
+        sentences = re.split(r"(?<=[.!?])\s+", body)
+        remainder = " ".join(
+            sentence
+            for sentence in sentences
+            if not _SCAFFOLD_PREAMBLE_RE.match(sentence.strip())
+        ).strip()
+        if remainder:
+            return remainder
+    return body
+
+
 def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
     """Content words in the order Aura should care about them.
 
@@ -712,7 +786,9 @@ class ImaginationEngine:
         origin: str = "system",
         is_background: bool = False,
     ) -> ImaginationFrame:
-        text = _normalize_text(objective, 500)
+        # What she imagines about is the subject, not the scaffolding that
+        # happens to be wrapped around it.
+        text = _normalize_text(imagination_subject(objective, context), 500)
         lowered = text.lower()
         keywords = _extract_keywords(text)
         memories = _top_memory_fragments(state)
