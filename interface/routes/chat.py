@@ -1682,7 +1682,10 @@ def _schedule_chat_turn_memory_log(
 #: explicit new ask counts — a wordy preamble around the memory request does
 #: not, because that turn is still entirely about memory.
 _SECOND_REQUEST_AFTER_PIN_RE = re.compile(
-    r"[.!?;]\s*(?:(?:also|then|and\s+then|separately|secondly|next)\b[\s,—–-]*)?"
+    r"[,;]\s*(?:and|then|also|but)\s+(?:please\s+)?"
+    r"(?:tell|show|give|remind|explain|describe|answer|summarize|summarise|"
+    r"walk)\s+me\b"
+    r"|[.!?;]\s*(?:(?:also|then|and\s+then|separately|secondly|next)\b[\s,—–-]*)?"
     r"(?:tell|show|open|create|write|export|find|search|go|make|change|"
     r"summarize|summarise|explain|give|do|use|launch|click|describe|list|"
     r"compare|walk|think|answer)\b"
@@ -1769,9 +1772,27 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
             pinned_text,
             flags=re.IGNORECASE | re.DOTALL,
         )
-        # …as does a following question of any shape.
+        # A second request does not have to start a new sentence. "Please
+        # remember my dog is called Pixel, and tell me a joke" pinned the joke
+        # request as part of the dog's name — every trim above requires a
+        # sentence terminator, and a comma is not one.
         pinned_text = re.sub(
-            r"\s*[.!?]\s+(?:do|does|did|is|are|was|were|what|why|how|when|where|"
+            r"\s*[,;]\s*(?:and|then|also|but)\s+(?:please\s+)?"
+            r"(?:tell|show|give|remind|explain|describe|answer|summarize|"
+            r"summarise|walk)\s+me\b.*$",
+            "",
+            pinned_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        # …as does a following question of any shape.
+        # The question may arrive behind a discourse marker and a comma —
+        # "Remember: I prefer tea. Also, what do you make of the second law?"
+        # — which is why the marker is matched here rather than only the
+        # bare question word.
+        pinned_text = re.sub(
+            r"\s*[.!?]\s+"
+            r"(?:(?:also|then|next|separately|secondly|and|but|now)\b[\s,—–-]*)?"
+            r"(?:do|does|did|is|are|was|were|what|why|how|when|where|"
             r"which|who|should|shall|may|might|must)\b[^.!?]*\?.*$",
             "",
             pinned_text,
@@ -1799,8 +1820,11 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
         r"across sessions|between sessions))?"
     )
     memory_object = r"(?:(?:this|the)\s+)?(?:phrase|codeword|word|token|detail|note|fact)?"
+    # \s* not \s+: "Remember: I prefer tea" has no space before the colon, and
+    # requiring one meant that turn pinned nothing at all — silently, because a
+    # missing pin has no failure mode, it just never comes back later.
     patterns = (
-        rf"^(?:please\s+)?remember\s+{memory_object}{pin_scope}\s*:\s*(.+)$",
+        rf"^(?:please\s+)?remember\s*{memory_object}{pin_scope}\s*:\s*(.+)$",
         rf"^(?:please\s+)?remember\s+this{pin_scope}\s*:\s*(.+)$",
         rf"^don't forget(?:\s+this)?{pin_scope}\s*:\s*(.+)$",
         rf"^make note of this{pin_scope}\s*:\s*(.+)$",
@@ -21700,12 +21724,48 @@ async def api_chat(
                 grounded_memory_reply,
                 desktop_memory_state_evidence,
             ):
-                logger.warning(
-                    "Final desktop quality gate rebound reply to canonical memory/state "
-                    "evidence after CognitiveEngine invocation."
-                )
+                # Replace, or add?
+                #
+                # This rebound exists so a "what did I pin?" turn cannot drift
+                # off the canonical record. It fires whenever the reply does
+                # not repeat the pinned phrase — which, on a turn that pins a
+                # fact AND asks something real, is simply what a good answer
+                # looks like. Live 2026-07-27: "Remember this: my project
+                # codename is HELIOTROPE... Separately — do you think a system
+                # like you can actually prefer one thing over another?" came
+                # back as the pin confirmation alone, degraded with an EMPTY
+                # assessment and an EMPTY reason. Nothing was wrong with the
+                # answer. It just didn't recite the codename, so it was thrown
+                # away and the template took the turn.
+                #
+                # A person told "remember X, and also what do you think about
+                # Y" says both. So: when the turn is only the memory request,
+                # the canonical reply stands in. When there is more to it, the
+                # confirmation joins the answer instead of erasing it.
                 _pre_memory_grounding_reply = reply_text
-                reply_text = grounded_memory_reply
+                if (
+                    _turn_has_substance_beyond_memory_request(_semantic_user_message)
+                    and str(reply_text or "").strip()
+                ):
+                    # The whole canonical reply, not just its first sentence:
+                    # it is short, it is grounded, and its later sentences
+                    # carry real content ("right now I am keeping attention
+                    # on this live desktop thread") that answers the state
+                    # half of turns like "remember X, and tell me what you
+                    # are attending to".
+                    confirmation = str(grounded_memory_reply or "").strip()
+                    logger.info(
+                        "Memory/state evidence joined the CognitiveEngine answer "
+                        "instead of replacing it: the turn asked for more than "
+                        "the canonical record."
+                    )
+                    reply_text = f"{confirmation}\n\n{str(reply_text).strip()}"
+                else:
+                    logger.warning(
+                        "Final desktop quality gate rebound reply to canonical "
+                        "memory/state evidence after CognitiveEngine invocation."
+                    )
+                    reply_text = grounded_memory_reply
                 _append_turn_text_mutation(
                     _live_turn_trace,
                     stage="chat.final_memory_state_grounding",
