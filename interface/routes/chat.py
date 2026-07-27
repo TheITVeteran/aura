@@ -8867,6 +8867,48 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine desktop chat reply failed reliability gate (%s); evaluating governed repair path.",
                     ",".join(assessment_reasons),
                 )
+            # Assistant voice has a deterministic repair. Use it here, not only
+            # deeper in the stack.
+            #
+            # Live 2026-07-27 Bryan replied "I dont need assistance You arent an
+            # assistant" — the gate had caught generic_assistant_language, the
+            # bounded same-worker correction was exhausted, and the draft
+            # reached him anyway. repair_generic_assistant_language already
+            # existed and is applied by the worker and the response-generation
+            # phase; this route, the one the desktop actually uses, never
+            # called it. Detection without a reachable repair is how a caught
+            # defect still gets served.
+            if "generic_assistant_language" in assessment_reasons:
+                try:
+                    from core.conversation.response_reliability import (
+                        repair_generic_assistant_language,
+                    )
+                    from core.conversation.surface_disposition import (
+                        repair_is_an_improvement,
+                    )
+
+                    _devoiced = repair_generic_assistant_language(visible, reply_text)
+                except _CHAT_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat", exc)
+                    _devoiced = ""
+                if _devoiced and _devoiced != reply_text:
+                    _devoiced_assessment = assess_user_facing_reply(
+                        visible,
+                        _devoiced,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if "generic_assistant_language" not in set(
+                        getattr(_devoiced_assessment, "reasons", ()) or ()
+                    ) and repair_is_an_improvement(reply_text, _devoiced, visible):
+                        logger.info(
+                            "Stripped generic-assistant voice deterministically before "
+                            "the governed repair path."
+                        )
+                        reply_text = _devoiced
+                        assessment = _devoiced_assessment
+                        assessment_reasons = list(
+                            getattr(_devoiced_assessment, "reasons", ()) or ()
+                        )
             if require_engine and capability_inventory_contract:
                 grounded_inventory = _build_grounded_capability_inventory_reply(visible)
                 if grounded_inventory and not _capability_inventory_reply_is_inadequate(

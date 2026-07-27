@@ -4027,6 +4027,41 @@ class CapabilityEngine(AuraBaseModule):
                 constitution = get_constitutional_core(self.orchestrator)
                 constitutional_args = dict(params or {})
 
+                # Tell governance what this invocation actually does, before
+                # it decides whether to allow it.
+                #
+                # auto_refactor is registered as privileged_mutation because it
+                # CAN rewrite code. A scan ({"path": ".", "run_tests": False})
+                # does not — resolve_execution_effect_scope has said so all
+                # along, and the execution path below uses it. Authorization
+                # runs first and had no scope at all, so the standing grant
+                # written for exactly this case
+                # (aura.autonomous-read-only-maintenance: read_only, autonomous
+                # origins, auto_refactor) could never match. Live 2026-07-27
+                # every self-development scan died on
+                # no_matching_standing_grant -> signed_standing_authority_lease
+                # _missing, which is her autonomy dead-ended by a scope nobody
+                # computed rather than by a policy anyone chose.
+                #
+                # A mutating invocation still resolves to privileged_mutation
+                # and still needs the authority that demands.
+                try:
+                    _declared_scope = self._effect_scope_for_execution(
+                        skill_name, meta, params, ctx
+                    )
+                except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                    _declared_scope = ""
+                if _declared_scope and _declared_scope != "unknown":
+                    ctx.setdefault("effect_scope", _declared_scope)
+                    try:
+                        _declared_risk = self._edi_risk_for(
+                            skill_name, meta, params, _declared_scope
+                        )
+                    except (AttributeError, KeyError, RuntimeError, TypeError, ValueError):
+                        _declared_risk = ""
+                    if _declared_risk:
+                        ctx.setdefault("risk_level", _declared_risk)
+
                 tool_handle = await constitution.begin_tool_execution(
                     skill_name,
                     constitutional_args,
