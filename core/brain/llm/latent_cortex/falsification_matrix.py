@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Never
 
 from core.brain.llm.latent_cortex.epistemic_state import canonical_sha256
@@ -65,6 +66,20 @@ def _fail(code: str) -> Never:
     raise FalsificationMatrixError(code)
 
 
+# Why a row cannot run. The distinction matters because the three reasons
+# have completely different remedies, and collapsing them into an integer list
+# of SPARK ids is what let two rows drift into naming machinery that had
+# already landed — hiding what they were actually waiting on.
+BLOCKED_OPEN_SPARK_ITEMS = "open_spark_items"
+BLOCKED_PRODUCER_ABSENT = "producer_absent"
+BLOCKED_ACCEPTANCE_RUN_ONLY = "acceptance_run_only"
+BLOCKED_REASONS = (
+    BLOCKED_OPEN_SPARK_ITEMS,
+    BLOCKED_PRODUCER_ABSENT,
+    BLOCKED_ACCEPTANCE_RUN_ONLY,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class MatrixRow:
     """One required falsification arm and how it is produced today."""
@@ -75,6 +90,7 @@ class MatrixRow:
     producer: str
     blockers: tuple[int, ...]
     notes: str
+    blocked_reason: str = ""
 
     def __post_init__(self) -> None:
         if (
@@ -90,16 +106,31 @@ class MatrixRow:
                 or not 1 <= item <= 72
                 for item in self.blockers
             )
+            or len(set(self.blockers)) != len(self.blockers)
             or not isinstance(self.notes, str)
             or len(self.notes) < 12
+            or not isinstance(self.blocked_reason, str)
         ):
             _fail("falsification_matrix_row_invalid")
         if self.status == ROW_RUNNABLE and (not self.producer or self.blockers):
             _fail("falsification_matrix_row_invalid")
         if self.status == ROW_ENFORCED and not self.producer:
             _fail("falsification_matrix_row_invalid")
-        if self.status == ROW_BLOCKED and not self.blockers:
+        if self.status != ROW_BLOCKED and (
+            self.blocked_reason or self.blockers
+        ):
             _fail("falsification_matrix_row_invalid")
+        if self.status == ROW_BLOCKED:
+            if self.blocked_reason not in BLOCKED_REASONS:
+                _fail("falsification_matrix_row_invalid")
+            # Only the "waiting on an unlanded item" reason may carry ids, and
+            # under that reason it MUST carry them: a row blocked on nothing
+            # nameable is a row nobody can unblock.
+            if self.blocked_reason == BLOCKED_OPEN_SPARK_ITEMS:
+                if not self.blockers:
+                    _fail("falsification_matrix_row_invalid")
+            elif self.blocked_reason == BLOCKED_PRODUCER_ABSENT and self.blockers:
+                _fail("falsification_matrix_row_invalid")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -108,6 +139,7 @@ class MatrixRow:
             "status": self.status,
             "producer": self.producer,
             "blockers": list(self.blockers),
+            "blocked_reason": self.blocked_reason,
             "notes": self.notes,
         }
 
@@ -166,11 +198,15 @@ MATRIX_ROWS: tuple[MatrixRow, ...] = (
         ledger_clause="verifier arms",
         status=ROW_BLOCKED,
         producer="",
-        blockers=(39, 40, 41, 42, 43, 44, 45, 46),
+        blockers=(),
+        blocked_reason=BLOCKED_PRODUCER_ABSENT,
         notes=(
-            "In-episode verifier-mesh arms (deterministic router, process, "
-            "generative, adversarial, counterfactual, prefix-stability, "
-            "fusion) bind to the SPARK-039..046 machinery when it lands."
+            "SPARK-039..046 have all landed, so the verifier-mesh machinery "
+            "exists; what is missing is an experiment producer that drives "
+            "the arms end to end. Marking this runnable while only the "
+            "exact-checker arms execute would restate the defect the mesh "
+            "was built to remove, because the generative and counterfactual "
+            "arms cannot run model-free."
         ),
     ),
     MatrixRow(
@@ -204,6 +240,7 @@ MATRIX_ROWS: tuple[MatrixRow, ...] = (
         status=ROW_BLOCKED,
         producer="",
         blockers=(70,),
+        blocked_reason=BLOCKED_ACCEPTANCE_RUN_ONLY,
         notes=(
             "Adversarial renaming/reordering and genuinely out-of-"
             "distribution variants are generated fresh at the acceptance "
@@ -239,11 +276,13 @@ MATRIX_ROWS: tuple[MatrixRow, ...] = (
         ledger_clause="fast-weight controls",
         status=ROW_BLOCKED,
         producer="",
-        blockers=(55, 56),
+        blockers=(),
+        blocked_reason=BLOCKED_PRODUCER_ABSENT,
         notes=(
-            "Fast-weight on/off/sham arms with erasure proofs bind to the "
-            "SPARK-055/056 acceptance surface; run_latent_opt_control "
-            "covers the optimization-control half today."
+            "SPARK-055/056 have landed, so query-scoped fast weights and "
+            "their integrity proofs exist; what is missing is a producer "
+            "driving the on/off/sham arms as one comparison. "
+            "run_latent_opt_control covers the optimization-control half."
         ),
     ),
     MatrixRow(
@@ -517,7 +556,89 @@ def replay_falsification_matrix_receipt(
     }
 
 
+def open_ledger_items(ledger_path: Path | None = None) -> frozenset[int]:
+    """The SPARK ids still unchecked in the execution ledger.
+
+    Parsed from the ledger rather than mirrored in code, because a mirrored
+    copy is exactly what drifts. An unparseable or empty ledger raises: an
+    empty open set would silently make every blocker look stale.
+    """
+
+    path = (
+        Path(ledger_path)
+        if ledger_path is not None
+        else Path(__file__).resolve().parents[4]
+        / "docs"
+        / "RLC_SPARK_EXECUTION_LEDGER.md"
+    )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        _fail("falsification_matrix_ledger_unreadable")
+    open_items: set[int] = set()
+    closed_items: set[int] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        for marker, sink in (("- [ ] **SPARK-", open_items), ("- [x] **SPARK-", closed_items)):
+            if stripped.startswith(marker):
+                digits = stripped[len(marker) : len(marker) + 3]
+                if digits.isdigit():
+                    sink.add(int(digits))
+    if not open_items or not closed_items:
+        _fail("falsification_matrix_ledger_unparsed")
+    return frozenset(open_items)
+
+
+def validate_blockers_against_ledger(
+    *,
+    open_items: frozenset[int] | None = None,
+    ledger_path: Path | None = None,
+) -> dict[str, Any]:
+    """Refuse any row blocked on a SPARK item that has already closed.
+
+    The drift this prevents was real and survived several checkpoints: two
+    rows named SPARK-039..046 and SPARK-055/056 long after all ten of those
+    items closed. The effect was not cosmetic — it made two of twelve rows
+    look blocked on machinery that had landed, which hid what they were
+    actually waiting on (a producer, and the acceptance run).
+
+    Correcting a stale list by hand fixes one instance. This makes the class
+    of defect detectable, which is why it is wired into the pre-training
+    preflight rather than left as a convention.
+    """
+
+    resolved = (
+        open_items
+        if open_items is not None
+        else open_ledger_items(ledger_path)
+    )
+    stale: list[dict[str, Any]] = []
+    for row in MATRIX_ROWS:
+        closed = sorted(item for item in row.blockers if item not in resolved)
+        if closed:
+            stale.append({"row_id": row.row_id, "closed_blockers": closed})
+    if stale:
+        _fail(
+            "falsification_matrix_blocker_closed:"
+            + ",".join(
+                f"{row['row_id']}={row['closed_blockers']}" for row in stale
+            )
+        )
+    return {
+        "checked_rows": len(MATRIX_ROWS),
+        "blocked_rows": sorted(
+            row.row_id for row in MATRIX_ROWS if row.status == ROW_BLOCKED
+        ),
+        "open_items_considered": sorted(resolved),
+        "stale_blockers": [],
+    }
+
+
 __all__ = [
+    "BLOCKED_ACCEPTANCE_RUN_ONLY",
+    "BLOCKED_OPEN_SPARK_ITEMS",
+    "BLOCKED_PRODUCER_ABSENT",
+    "BLOCKED_REASONS",
     "FALSIFICATION_MATRIX_SCHEMA",
     "MATRIX_ROWS",
     "REQUIRED_ROW_IDS",
@@ -528,7 +649,9 @@ __all__ = [
     "FalsificationMatrixError",
     "MatrixRow",
     "assemble_falsification_matrix_receipt",
+    "open_ledger_items",
     "replay_falsification_matrix_receipt",
     "run_transition_matrix",
+    "validate_blockers_against_ledger",
     "validate_falsification_matrix",
 ]

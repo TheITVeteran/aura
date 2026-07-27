@@ -469,6 +469,134 @@ def _probe_journal_proof() -> dict[str, Any]:
     }
 
 
+
+def _probe_progressive_collapse_detector() -> dict[str, Any]:
+    """A flawless improvement curve from a dead operator must be refused.
+
+    This is the probe that matters most in the whole preflight, because the
+    input it supplies is one an unweakened instrument calls collapse and a
+    weakened one calls success — and success here means launching a campaign
+    that trains recurrence inert.
+    """
+    from core.learning.progressive_recurrent_objective import (
+        ProgressiveTrajectory,
+        build_progressive_report,
+    )
+
+    collapsed = ProgressiveTrajectory(
+        depth=4,
+        probe_steps=(1, 2, 3, 4),
+        step_losses=(2.4, 1.8, 1.2, 0.6),
+        displacements=(1e-7, 1e-7, 1e-7, 1e-7),
+        anchor_drifts=(0.5, 0.5, 0.5, 0.5),
+        answer_token_count=8,
+    )
+    return _must_report(
+        "SPARK-061 refuses a perfect curve from a collapsed operator",
+        lambda: build_progressive_report([collapsed]),
+        "degenerate_identity_collapse",
+    )
+
+
+def _probe_progressive_forged_verdict() -> dict[str, Any]:
+    from core.learning.progressive_recurrent_objective import (
+        ProgressiveTrajectory,
+        build_progressive_report,
+        canonical_sha256,
+        validate_progressive_report,
+    )
+
+    collapsed = ProgressiveTrajectory(
+        depth=2,
+        probe_steps=(1, 2),
+        step_losses=(2.4, 1.2),
+        displacements=(1e-7, 1e-7),
+        anchor_drifts=(0.5, 0.5),
+        answer_token_count=8,
+    )
+    report = build_progressive_report([collapsed])
+    forged = {k: v for k, v in report.items() if k != "receipt_sha256"}
+    forged["verdict"] = "real_progress"
+    forged["supports_training"] = True
+    forged["receipt_sha256"] = canonical_sha256(forged)
+    return _must_refuse(
+        "SPARK-061 rejects a resealed report relabelled as progress",
+        lambda: validate_progressive_report(forged),
+        "collapsed",
+    )
+
+
+def _probe_auxiliary_inert_term() -> dict[str, Any]:
+    """A declared, weighted term with no gradient path must not read as live."""
+    from core.learning.auxiliary_objective_curriculum import (
+        AuxiliaryTerm,
+        TermTarget,
+        build_liveness_report,
+    )
+
+    terms = [
+        AuxiliaryTerm(
+            name=name,
+            target=TermTarget.BASE_WEIGHTS,
+            weight=1.0,
+            source_module="core.learning.progressive_recurrent_objective",
+        )
+        for name in ("improvement", "diversity")
+    ]
+    return _must_report(
+        "SPARK-062 marks a gradientless declared term inert",
+        lambda: build_liveness_report(
+            terms,
+            shares={"improvement": 0.4, "diversity": 0.4},
+            gradient_norms={"improvement": 0.7, "diversity": 0.0},
+        ),
+        "inert_zero_gradient",
+    )
+
+
+def _probe_depth_parity_refusal() -> dict[str, Any]:
+    """A stage the inference configuration cannot execute must be refused."""
+    from core.learning.auxiliary_objective_curriculum import (
+        DepthStage,
+        parity_binding,
+        require_parity,
+    )
+
+    class _Spec:
+        recurrent_steps = 16
+        alpha_schedule = "constant"
+
+    binding = parity_binding(
+        DepthStage(depth=16, min_samples=4, competence_threshold=0.6),
+        spec=_Spec(),
+        inference_max_steps=8,
+        inference_fixed_depth=True,
+    )
+    return _must_refuse(
+        "SPARK-062 refuses a curriculum depth inference cannot run",
+        lambda: require_parity(binding),
+        "parity refused",
+    )
+
+
+def _probe_falsification_blockers_match_the_ledger() -> dict[str, Any]:
+    """A blocker naming an item that has already landed must be refused.
+
+    The stale-blocker drift this check exists for was real: two rows named
+    SPARK-039..046 and SPARK-055/056 long after all ten closed, which hid
+    what those rows were actually waiting on.
+    """
+    from core.brain.llm.latent_cortex.falsification_matrix import (
+        validate_blockers_against_ledger,
+    )
+
+    return _must_refuse(
+        "SPARK-070 refuses a blocker naming a closed ledger item",
+        lambda: validate_blockers_against_ledger(open_items=frozenset()),
+        "closed",
+    )
+
+
 PROBES: tuple[Callable[[], dict[str, Any]], ...] = (
     _probe_promotion_gate_set,
     _probe_promotion_empty_battery,
@@ -481,6 +609,11 @@ PROBES: tuple[Callable[[], dict[str, Any]], ...] = (
     _probe_latent_decode_binding,
     _probe_coupling_metadata,
     _probe_journal_proof,
+    _probe_progressive_collapse_detector,
+    _probe_progressive_forged_verdict,
+    _probe_auxiliary_inert_term,
+    _probe_depth_parity_refusal,
+    _probe_falsification_blockers_match_the_ledger,
 )
 
 

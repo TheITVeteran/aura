@@ -361,7 +361,7 @@ before those dependencies close is not admissible.
   stale tools, adaptation leakage, and unsafe self-modification with executable
   mitigations.
   Accepted at F3 (Fable lane, 2026-07-23): `threat_model.py` is a typed,
-  fail-closed registry binding all twelve named threat classes to their
+  fail-closed registry binding all thirteen named threat classes to their
   concrete mitigating modules and to 34 exact suite tests that prove each
   mitigation fires; `validate_threat_model` rejects a missing threat class,
   a moved mitigation module, or a check that no longer exists, so the model
@@ -5036,3 +5036,48 @@ under it, and SPARK-062's per-term gradient measurement has not been taken at
 the resident architecture. Nothing here is a reasoning, resident-32B, frontier,
 promotion, or `WOW Signal` result, and neither is counted against the march's
 checkpoint record.
+
+### 2026-07-27 - F8 integration: the instruments are wired, not adjacent
+
+The F8 modules computed on the real training path from the start — they import
+`_prepare_live_path` / `_advance_recurrent_states` / `_persist_and_score` and
+reuse v4's penalties, so the measurements are of real recurrence. But nothing
+*called* them: no preflight probed the new refusal surfaces and no registry knew
+they existed. An instrument with no caller is a correct orphan.
+
+Three wires close that, all inside the Fable lane's own F3/F5/F7-G surfaces:
+
+- **SPARK-003 threat model gains a thirteenth class, `recurrence_inertness`**,
+  bound to five executable checks across both new modules. The ledger's original
+  twelve-class enumeration is a floor, not a ceiling: a threat model that cannot
+  grow when a new failure is *measured* is a document rather than a registry.
+  Its residual-risk line states the real gap — `tools/train_grpo.py` does not
+  consult the detectors, so a campaign can still launch without a progressive
+  report, and the pricing constants have only been solved on the 1.5B.
+- **The pre-training preflight (F7-G) gains five probes**, taking it from 11 to
+  16. Each hands an instrument the input it must refuse: a flawless four-step
+  improvement curve from a dead operator, a resealed report relabelled as
+  progress, a declared term with no gradient path, a curriculum depth inference
+  cannot execute, and a falsification blocker naming a closed ledger item. All
+  16 fire.
+- **SPARK-070's stale blockers are repaired at the cause.** F7 handed this over
+  as an observation: `verifier_arms` was blocked on SPARK-039..046 and
+  `fast_weight_controls` on SPARK-055/056, all ten of which had closed. The
+  repair is not the list. `MatrixRow` now carries a typed `blocked_reason`
+  (`open_spark_items` / `producer_absent` / `acceptance_run_only`), because the
+  three have completely different remedies and collapsing them into an integer
+  list is what let the drift hide; and `validate_blockers_against_ledger` parses
+  the ledger's own checkboxes and refuses any blocker naming a closed item.
+  Both rows are now honestly `producer_absent` — the machinery landed, the
+  producer has not — which is what they were actually waiting on.
+
+  **Why the drift survived: a test was enforcing it.** The old
+  `test_blocked_rows_name_their_blockers` asserted the exact stale sets
+  `set(range(39, 47))` and `{55, 56}`. It has been replaced by contracts that
+  pin the *reason* rather than a frozen id list, plus the ledger cross-check,
+  so the class of defect is now detectable instead of one instance being fixed.
+
+Validation: 93 focused across the two new suites plus threat model, matrix and
+preflight; the 16-probe preflight returns READY. Two pre-existing tests were
+updated because they pinned contracts this change deliberately strengthened —
+stated here rather than left for someone to find in a diff.

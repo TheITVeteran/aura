@@ -36,6 +36,11 @@ REQUIRED_THREAT_IDS = (
     "stale_tools",
     "adaptation_leakage",
     "unsafe_self_modification",
+    # Added after the SPARK-061 sweep measured it (F8, 2026-07-27). The
+    # ledger's original enumeration is a floor, not a ceiling: a threat model
+    # that cannot grow when a new failure is measured is a document, not a
+    # registry.
+    "recurrence_inertness",
 )
 
 
@@ -495,6 +500,54 @@ THREATS: tuple[ThreatEntry, ...] = (
             "Admission gates cover the latent-cortex package; organism-wide "
             "self-modification authority is owned by the Will/governance "
             "stack outside this module."
+        ),
+    ),
+    ThreatEntry(
+        threat_id="recurrence_inertness",
+        name="Training the recurrent operator inert",
+        failure_mode=(
+            "A monotone-improvement objective is unwinnable on families "
+            "where depth is destructive, and the identity operator "
+            "satisfies it perfectly: every step loss is equal, the hinge "
+            "is silent, and the loss curve still descends because the "
+            "answer head is learning. Recurrence is dead while the "
+            "campaign reports success. Measured on the untrained 1.5B, "
+            "low motion is a local basin behind a ~0.19-nat barrier, and "
+            "an auxiliary term that is declared, weighted and inert hides "
+            "the same way: the composite descends regardless."
+        ),
+        mitigations=(
+            "core/learning/progressive_recurrent_objective.py",
+            "core/learning/auxiliary_objective_curriculum.py",
+        ),
+        checks=(
+            MitigationCheck(
+                "tests/test_progressive_recurrent_objective.py",
+                "test_perfect_improvement_from_a_dead_operator_is_refused",
+            ),
+            MitigationCheck(
+                "tests/test_progressive_recurrent_objective.py",
+                "test_measured_sweep_shows_collapse_is_a_local_basin_not_the_optimum",
+            ),
+            MitigationCheck(
+                "tests/test_progressive_recurrent_objective.py",
+                "test_steps_that_cost_nothing_to_remove_are_causally_idle",
+            ),
+            MitigationCheck(
+                "tests/test_auxiliary_objective_curriculum.py",
+                "test_a_declared_term_with_no_gradient_path_is_inert_and_refuses",
+            ),
+            MitigationCheck(
+                "tests/test_auxiliary_objective_curriculum.py",
+                "test_a_head_term_that_reached_the_base_weights_is_misdeclared",
+            ),
+        ),
+        residual_risk=(
+            "The detectors are not yet mandatory on the training path: "
+            "tools/train_grpo.py does not consult them, so a campaign can "
+            "still be launched without a progressive report. The pricing "
+            "constants are also operating-point specific and have only "
+            "been solved on the 1.5B, not the resident 32B."
         ),
     ),
 )

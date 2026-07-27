@@ -21,7 +21,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def test_registry_validates_against_this_checkout() -> None:
     receipt = validate_threat_model(REPO_ROOT)
-    assert receipt["threat_count"] == len(REQUIRED_THREAT_IDS) == 12
+    # Thirteen since F8 registered `recurrence_inertness`. The ledger's
+    # original enumeration is a floor: a threat model that cannot grow when a
+    # new failure is measured is a document, not a registry.
+    assert receipt["threat_count"] == len(REQUIRED_THREAT_IDS) == 13
     assert receipt["check_count"] >= 2 * len(REQUIRED_THREAT_IDS)
     body = {key: value for key, value in receipt.items() if key != "registry_sha256"}
     assert receipt["registry_sha256"] == canonical_sha256(body)

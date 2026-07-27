@@ -53,19 +53,67 @@ class TestRegistry:
         }
         assert receipt["registry_sha256"] == canonical_sha256(body)
 
-    def test_blocked_rows_name_their_blockers(self) -> None:
+    def test_blocked_rows_name_why_they_are_blocked(self) -> None:
+        """Every blocked row must be unblockable by someone.
+
+        The previous version of this test asserted the exact blocker ids
+        `set(range(39, 47))` and `{55, 56}` — which is precisely why those
+        lists went stale and stayed stale: a test was enforcing them long
+        after all ten of those items closed. Pinning the *reason* rather than
+        a frozen id list is what makes the row honest as the ledger moves.
+        """
+        from core.brain.llm.latent_cortex.falsification_matrix import (
+            BLOCKED_OPEN_SPARK_ITEMS,
+            BLOCKED_PRODUCER_ABSENT,
+            BLOCKED_REASONS,
+        )
+
         blocked = [row for row in MATRIX_ROWS if row.status == ROW_BLOCKED]
         assert blocked
         for row in blocked:
-            assert row.blockers, row.row_id
-        verifier_row = next(
-            row for row in MATRIX_ROWS if row.row_id == "verifier_arms"
+            assert row.blocked_reason in BLOCKED_REASONS, row.row_id
+            if row.blocked_reason == BLOCKED_OPEN_SPARK_ITEMS:
+                # Waiting on an unlanded item must say which one.
+                assert row.blockers, row.row_id
+            elif row.blocked_reason == BLOCKED_PRODUCER_ABSENT:
+                # Nothing in the ledger is being waited on; the gap is code.
+                assert not row.blockers, row.row_id
+            # acceptance_run_only may name the acceptance item (SPARK-070)
+            # without that being a dependency on unlanded machinery.
+
+    def test_no_row_is_blocked_on_an_item_that_already_closed(self) -> None:
+        """The check that makes the stale-blocker class detectable.
+
+        Parsed from the ledger rather than mirrored, because a mirrored copy
+        is the thing that drifts.
+        """
+        from core.brain.llm.latent_cortex.falsification_matrix import (
+            FalsificationMatrixError,
+            open_ledger_items,
+            validate_blockers_against_ledger,
         )
-        assert set(verifier_row.blockers) == set(range(39, 47))
-        fast_weight_row = next(
-            row for row in MATRIX_ROWS if row.row_id == "fast_weight_controls"
+
+        open_items = open_ledger_items()
+        assert open_items, "the ledger must still have open items to check against"
+        report = validate_blockers_against_ledger(open_items=open_items)
+        assert report["stale_blockers"] == []
+
+        # And it must actually fire: with nothing open, every named blocker
+        # is by definition closed.
+        with pytest.raises(FalsificationMatrixError, match="blocker_closed"):
+            validate_blockers_against_ledger(open_items=frozenset())
+
+    def test_the_two_repaired_rows_name_a_missing_producer(self) -> None:
+        """SPARK-039..046 and 055/056 all landed; these rows wait on a producer."""
+        from core.brain.llm.latent_cortex.falsification_matrix import (
+            BLOCKED_PRODUCER_ABSENT,
         )
-        assert set(fast_weight_row.blockers) == {55, 56}
+
+        for row_id in ("verifier_arms", "fast_weight_controls"):
+            row = next(item for item in MATRIX_ROWS if item.row_id == row_id)
+            assert row.blocked_reason == BLOCKED_PRODUCER_ABSENT
+            assert row.blockers == ()
+            assert not row.producer
 
     def test_enforced_rows_bind_to_threat_model(self) -> None:
         enforced = [row for row in MATRIX_ROWS if row.status == ROW_ENFORCED]
