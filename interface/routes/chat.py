@@ -1972,6 +1972,41 @@ def _is_session_memory_recall_request(user_message: str) -> bool:
     return any(marker in text for marker in markers)
 
 
+#: Words that carry no topic, so sharing them proves nothing about relevance.
+_RECALL_MATCH_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "my", "your", "our", "his", "her", "their", "its",
+        "what", "which", "who", "whom", "whose", "was", "were", "is", "are",
+        "did", "do", "does", "have", "has", "had", "i", "you", "we", "me",
+        "gave", "give", "given", "told", "tell", "said", "say", "earlier",
+        "before", "again", "that", "this", "it", "and", "or", "of", "to",
+        "for", "in", "on", "at", "with", "about", "number", "remember",
+        "quick", "check", "just", "back", "recall", "please", "thing",
+    }
+)
+
+
+def _content_recall_matches_pin(user_message: str, pinned_content: str) -> bool:
+    """Whether a durable pin is plausibly what this recall question is asking for.
+
+    A pin about tea must not answer a question about a codename. Topic words
+    shared between the question and the pin are the evidence; without at least
+    one, the honest miss is still the right reply.
+    """
+
+    def _topic_words(text: str) -> set[str]:
+        words = re.findall(r"[a-z0-9][a-z0-9'-]*", str(text or "").lower())
+        return {
+            word
+            for word in words
+            if len(word) > 2 and word not in _RECALL_MATCH_STOPWORDS
+        }
+
+    question_words = _topic_words(user_message)
+    pin_words = _topic_words(pinned_content)
+    return bool(question_words and pin_words and (question_words & pin_words))
+
+
 def _is_cross_session_memory_recall_request(user_message: str) -> bool:
     """True when the user explicitly asks for a pin from *before a restart* or a
     *previous session*.
@@ -4032,6 +4067,32 @@ async def _build_conversation_recall_reply(
             if ack:
                 reply += f' — and I acknowledged it: "{ack}"'
             return reply
+        # Before declaring a miss: is it in the durable ledger from before a
+        # restart?
+        #
+        # A pin is stored under the session id that made it, and a restart
+        # mints a new one, so cross-session recall is deliberately gated
+        # behind the user naming the restart — concurrent clients must stay
+        # isolated. But the person on the desktop does not know the process
+        # died. Live 2026-07-27: pinned "my project codename is HELIOTROPE,
+        # build 4471", the runtime was killed and relaunched, and "what was
+        # the codename I gave you earlier?" got this honest miss — while the
+        # fact sat in session_memory_pins.jsonl, written three times under
+        # three different session ids.
+        #
+        # Isolation is about who may READ a pin, and this changes nothing
+        # there: the answer names its own provenance rather than pretending
+        # the current session holds it. Losing a fact she demonstrably has,
+        # and calling that honesty, is the worse failure.
+        durable_pin = await _recall_durable_session_memory_pin(
+            session_id=session_id, cross_session=True
+        )
+        durable_content = str((durable_pin or {}).get("content") or "").strip()
+        if durable_content and _content_recall_matches_pin(user_message, durable_content):
+            return (
+                f'Not in this session\'s turns — but from before the last restart '
+                f'I still have it: "{durable_content}".'
+            )
         return (
             "I don't find that in this conversation's completed turns, so I "
             "won't guess. If you tell me again I'll hold onto it."
