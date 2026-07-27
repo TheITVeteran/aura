@@ -103,17 +103,24 @@ class TestRegistry:
         with pytest.raises(FalsificationMatrixError, match="blocker_closed"):
             validate_blockers_against_ledger(open_items=frozenset())
 
-    def test_the_two_repaired_rows_name_a_missing_producer(self) -> None:
-        """SPARK-039..046 and 055/056 all landed; these rows wait on a producer."""
+    def test_verifier_arms_waits_on_a_producer_not_a_ledger_item(self) -> None:
+        """SPARK-039..046 all landed; the gap is code, not a dependency.
+
+        fast_weight_controls was the other row in this state and has since
+        gained `experiments.run_fast_weight_controls`, so it is runnable.
+        verifier_arms stays blocked deliberately: its generative and
+        counterfactual arms cannot run model-free, and a row marked runnable
+        while only its exact-checker arms execute would restate the defect
+        the verifier mesh was built to remove.
+        """
         from core.brain.llm.latent_cortex.falsification_matrix import (
             BLOCKED_PRODUCER_ABSENT,
         )
 
-        for row_id in ("verifier_arms", "fast_weight_controls"):
-            row = next(item for item in MATRIX_ROWS if item.row_id == row_id)
-            assert row.blocked_reason == BLOCKED_PRODUCER_ABSENT
-            assert row.blockers == ()
-            assert not row.producer
+        row = next(item for item in MATRIX_ROWS if item.row_id == "verifier_arms")
+        assert row.blocked_reason == BLOCKED_PRODUCER_ABSENT
+        assert row.blockers == ()
+        assert not row.producer
 
     def test_enforced_rows_bind_to_threat_model(self) -> None:
         enforced = [row for row in MATRIX_ROWS if row.status == ROW_ENFORCED]
@@ -275,3 +282,108 @@ class TestReceipt:
         with pytest.raises(FalsificationMatrixError) as error:
             replay_falsification_matrix_receipt(tampered)
         assert error.value.code == "falsification_matrix_receipt_digest_mismatch"
+
+
+class TestFastWeightControls:
+    """SPARK-070's fast-weight row: the producer, and what it refuses to claim."""
+
+    @staticmethod
+    def _tasks():
+        from core.brain.llm.latent_cortex.experiments import Task
+
+        return {
+            "khop": [
+                Task(
+                    prompt=f"q{index}",
+                    answer=f"a{index}",
+                    family="khop",
+                    depth=2,
+                    seed=index,
+                )
+                for index in range(6)
+            ]
+        }
+
+    def test_row_is_runnable_and_names_its_producer(self) -> None:
+        row = next(
+            item for item in MATRIX_ROWS if item.row_id == "fast_weight_controls"
+        )
+        assert row.status == "runnable"
+        assert row.producer == "experiments.run_fast_weight_controls"
+        assert row.blockers == ()
+        assert row.blocked_reason == ""
+
+    def test_arms_are_counterbalanced_and_the_claim_is_on_versus_sham(self) -> None:
+        """Beating 'off' only shows a perturbation helped; direction needs sham."""
+        from core.brain.llm.latent_cortex.experiments import (
+            run_fast_weight_controls,
+        )
+
+        def solve(task, arm):
+            # 'on' genuinely helps; 'sham' matches 'off'. The claim must come
+            # from the on-vs-sham contrast.
+            success = arm == "on"
+            return success, 100, None if arm == "off" else True
+
+        report = run_fast_weight_controls(solve, self._tasks())
+        assert set(report["arms"]) == {"off", "on", "sham"}
+        assert report["erasure_integrity"]["integrity_proven"] is True
+        assert report["erasure_integrity"]["erase_proven"] == 12  # 6 tasks x 2 arms
+        # Every task ran all three arms, and not always in the same order.
+        orders = {tuple(row["arms"]) for row in report["execution_order"]}
+        assert len(orders) > 1, "arm order must be counterbalanced across tasks"
+        assert report["claim"]["tier"] != "REFUTED_INTEGRITY"
+
+    def test_an_unproven_erase_quarantines_the_task_rather_than_counting_it(
+        self,
+    ) -> None:
+        """An unproven erase is not a passed check, and not a failed one either."""
+        from core.brain.llm.latent_cortex.experiments import (
+            run_fast_weight_controls,
+        )
+
+        def solve(task, arm):
+            erased = None if arm == "off" else (None if task.seed == 0 else True)
+            return arm == "on", 100, erased
+
+        report = run_fast_weight_controls(solve, self._tasks())
+        integrity = report["erasure_integrity"]
+        assert integrity["quarantined_observations"] == 2  # both adapted arms
+        assert integrity["integrity_proven"] is False
+        assert report["claim"]["tier"] == "REFUTED_INTEGRITY"
+        # The quarantined task is dropped whole: counting part of it would
+        # silently unbalance the pairing.
+        assert report["arms"]["on"]["khop"]["n"] == 5
+
+    def test_a_refuted_erase_fails_the_whole_run(self) -> None:
+        from core.brain.llm.latent_cortex.experiments import (
+            run_fast_weight_controls,
+        )
+
+        def solve(task, arm):
+            erased = None if arm == "off" else (task.seed != 0)
+            return arm == "on", 100, erased
+
+        report = run_fast_weight_controls(solve, self._tasks())
+        assert report["erasure_integrity"]["erase_refuted"] == 2
+        assert report["erasure_integrity"]["integrity_proven"] is False
+        assert report["claim"]["tier"] == "REFUTED_INTEGRITY"
+
+    def test_the_off_arm_cannot_claim_an_erase(self) -> None:
+        from core.brain.llm.latent_cortex.experiments import (
+            run_fast_weight_controls,
+        )
+
+        def solve(task, arm):
+            return True, 100, True  # 'off' wrongly reports an erase
+
+        with pytest.raises(ValueError, match="no delta to erase"):
+            run_fast_weight_controls(solve, self._tasks())
+
+    def test_malformed_solver_outcomes_are_refused(self) -> None:
+        from core.brain.llm.latent_cortex.experiments import (
+            run_fast_weight_controls,
+        )
+
+        with pytest.raises(ValueError, match="must return"):
+            run_fast_weight_controls(lambda task, arm: True, self._tasks())

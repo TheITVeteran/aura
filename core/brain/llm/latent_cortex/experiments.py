@@ -1300,6 +1300,184 @@ def run_latent_opt_control(
     }
 
 
+# ── SPARK-070 row: fast-weight on/off/sham controls ─────────────────────
+
+
+def _fast_weight_arm_order(family: str, task: Task, index: int) -> tuple[str, str, str]:
+    """Counterbalanced arm order, committed to the task identity.
+
+    Same discipline as the latent-opt control: a fixed order lets ordering
+    effects (cache warmth, host thermal state) load onto one arm.
+    """
+    commitment = f"fast-weight-order-v1:{family}:{task.depth}:{task.seed}:{index}".encode()
+    digest = hashlib.sha256(commitment).digest()
+    family_offset = hashlib.sha256(f"{family}:fast-weight-order-v1".encode()).digest()[0] & 1
+    on_first = (index + family_offset) % 2 == 0
+    pair = ["on", "sham"] if on_first else ["sham", "on"]
+    pair.insert((index + digest[1]) % 3, "off")
+    return pair[0], pair[1], pair[2]
+
+
+def _coerce_fast_weight_outcome(value: Any) -> tuple[bool, int | None, bool | None]:
+    """(success, layer_apps, erased) — erasure is part of the observation.
+
+    ``erased`` is None only for the ``off`` arm, which applies no delta and so
+    has nothing to erase. For ``on`` and ``sham`` a None means the erase was
+    not proven, which is NOT the same as proven-false and is not the same as
+    proven-true: the observation is quarantined rather than counted either way.
+    """
+    if isinstance(value, tuple) and len(value) == 3:
+        success, layer_apps, erased = value
+        if not isinstance(success, bool):
+            raise ValueError("fast-weight solver success must be boolean")
+        if layer_apps is not None and (
+            type(layer_apps) is not int or layer_apps < 0
+        ):
+            raise ValueError("fast-weight layer-app receipt must be a non-negative integer")
+        if erased is not None and not isinstance(erased, bool):
+            raise ValueError("fast-weight erasure evidence must be boolean or None")
+        return success, layer_apps, erased
+    raise ValueError(
+        "fast-weight solver must return (success, layer_apps, erased)"
+    )
+
+
+def run_fast_weight_controls(
+    solve_arm: Callable[[Task, str], tuple[bool, int | None, bool | None]],
+    tasks_by_family: dict[str, list[Task]],
+) -> dict[str, Any]:
+    """Arms: 'off', 'on' (optimized delta), 'sham' (matched-magnitude random).
+
+    The SPARK-070 row asks for fast-weight on/off/sham arms *with erasure
+    proofs*, and both halves of that carry weight.
+
+    **Why the graded claim is on-versus-sham, not on-versus-off.** An
+    optimized delta beating no delta at all says only that perturbing the
+    function of this magnitude helped; it cannot separate learned adaptation
+    from the regularizing effect of any bounded change. The sham arm applies a
+    delta of matched magnitude in a random direction, so the claim that
+    survives is about DIRECTION. The 'off' arm is still run and reported,
+    because a case where sham also beats off is worth seeing — but it is not
+    what the claim rests on.
+
+    **Why erasure gates the observation.** Query-scoped fast weights are only
+    safe because they are erased afterwards. A task whose erase was not proven
+    may have contaminated every task after it, so its observation is
+    quarantined instead of counted — an unproven erase is not a passed check.
+    A run with any refuted erase is reported as integrity-failed outright,
+    because at that point the arm ordering no longer isolates anything.
+    """
+    arms = ("off", "on", "sham")
+    results: dict[str, dict[str, ArmResult]] = {arm: {} for arm in arms}
+    per_task: dict[str, dict[str, list[tuple[bool, int | None]]]] = {
+        arm: {} for arm in arms
+    }
+    execution_order: list[dict[str, Any]] = []
+    quarantined: list[dict[str, Any]] = []
+    refuted: list[dict[str, Any]] = []
+    erase_proven = 0
+    erase_expected = 0
+
+    for family, tasks in tasks_by_family.items():
+        family_results = {arm: ArmResult(name=arm) for arm in arms}
+        for index, task in enumerate(tasks):
+            order = _fast_weight_arm_order(family, task, index)
+            task_id = f"{family}:{task.depth}:{task.seed}:{index}"
+            execution_order.append({"task_id": task_id, "arms": list(order)})
+            observations: dict[str, tuple[bool, int | None]] = {}
+            task_clean = True
+            for arm in order:
+                success, cost, erased = _coerce_fast_weight_outcome(
+                    solve_arm(task, arm)
+                )
+                if arm != "off":
+                    erase_expected += 1
+                    if erased is True:
+                        erase_proven += 1
+                    elif erased is False:
+                        refuted.append({"task_id": task_id, "arm": arm})
+                        task_clean = False
+                    else:
+                        quarantined.append(
+                            {"task_id": task_id, "arm": arm, "reason": "erase_unproven"}
+                        )
+                        task_clean = False
+                elif erased is not None:
+                    raise ValueError("the off arm applies no delta to erase")
+                observations[arm] = (success, cost)
+            if not task_clean:
+                # The whole task is dropped, not just the offending arm: a
+                # partially counted task silently unbalances the pairing.
+                continue
+            for arm, (success, cost) in observations.items():
+                result = family_results[arm]
+                result.n += 1
+                result.successes += int(success)
+                result.layer_apps += int(cost or 0)
+                per_task[arm].setdefault(family, []).append((success, cost))
+        for arm, result in family_results.items():
+            results[arm][family] = result
+
+    paired: dict[str, list[PairedObservation]] = {}
+    for family in tasks_by_family:
+        treatment_rows = per_task["on"].get(family, [])
+        control_rows = per_task["sham"].get(family, [])
+        for index, (treatment, control) in enumerate(
+            zip(treatment_rows, control_rows, strict=True)
+        ):
+            paired.setdefault(family, []).append(
+                PairedObservation(
+                    task_id=f"{family}:fast-weight:{index}",
+                    family=family,
+                    treatment_success=treatment[0],
+                    control_success=control[0],
+                    treatment_layer_apps=treatment[1],
+                    control_layer_apps=control[1],
+                )
+            )
+    claim = grade_paired_treatment_vs_control(
+        "spark070_fast_weight_controls",
+        "an optimized episodic delta beats a matched-magnitude random delta",
+        paired,
+    )
+    integrity = {
+        "erase_expected": erase_expected,
+        "erase_proven": erase_proven,
+        "erase_refuted": len(refuted),
+        "quarantined_observations": len(quarantined),
+        "refuted_rows": refuted,
+        "quarantined_rows": quarantined,
+        # Every adapted arm proved its erase, and none was refuted. Anything
+        # less and the run cannot claim its arms were isolated from each other.
+        "integrity_proven": (
+            erase_expected > 0
+            and erase_proven == erase_expected
+            and not refuted
+            and not quarantined
+        ),
+    }
+    return {
+        "arms": {
+            arm: {family: result.to_dict() for family, result in families.items()}
+            for arm, families in results.items()
+        },
+        "execution_order": execution_order,
+        "erasure_integrity": integrity,
+        "claim": (
+            claim.to_dict()
+            if integrity["integrity_proven"]
+            else {
+                **claim.to_dict(),
+                "tier": "REFUTED_INTEGRITY",
+                "reason": (
+                    "fast-weight erasure was not proven for every adapted arm; "
+                    "no capability claim can rest on possibly-contaminated tasks"
+                ),
+            }
+        ),
+    }
+
+
 # ── Experiment 6: frontier comparison protocol ──────────────────────────
 
 
@@ -1682,6 +1860,7 @@ __all__ = [
     "record_claim_to_foundry",
     "run_depth_extrapolation",
     "run_factorial_ablations",
+    "run_fast_weight_controls",
     "run_latent_opt_control",
     "run_recurrence_sweep",
     "run_slot_causality",

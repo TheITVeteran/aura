@@ -165,7 +165,7 @@ as half a checkbox.
   (executable threat model), SPARK-002 at F4 (literature dossier).
 - **SPARK-070's pre-training half is RESOLVED in the Fable lane at F5
   (2026-07-23 22:15 PT)**: `falsification_matrix.py` is the typed,
-  fail-closed registry over all twelve ledger rows — 8 runnable (bound to
+  fail-closed registry over all twelve ledger rows — 9 runnable (bound to
   concrete executors over the existing experiment harness), 1 enforced
   (blind review, structural by construction, proven by threat-model
   checks), 3 blocked (verifier arms → SPARK-039-046; adversarial/OOD →
@@ -5148,3 +5148,37 @@ caller's hands entirely — a stronger guarantee than any amount of re-validatio
 Validation: 49 focused, 277 across the affected surface, preflight 16/16 READY.
 Three pre-existing expectations were updated because the refusals now fire at
 the rebuild rather than at a single rule.
+
+### 2026-07-27 - F8: the fast-weight row gets its producer (9 of 12 runnable)
+
+`experiments.run_fast_weight_controls` closes SPARK-070's `fast_weight_controls`
+row, which this lane had just re-labelled `producer_absent` after finding its
+blocker list stale. The row moves blocked → runnable; the matrix is now 9
+runnable, 1 enforced, 2 blocked.
+
+Two design points carry the checkpoint:
+
+- **The graded claim is on-versus-sham, not on-versus-off.** An optimized
+  episodic delta beating *no* delta shows only that a bounded perturbation of
+  the function helped; it cannot separate learned adaptation from the
+  regularizing effect of any change that size. The sham arm applies a delta of
+  matched magnitude in a random direction, so what survives is a claim about
+  DIRECTION. The `off` arm still runs and is reported — a case where sham also
+  beats off is worth seeing — but the claim does not rest on it.
+- **Erasure gates every observation.** Query-scoped fast weights are only safe
+  because they are erased afterwards, so a task whose erase was not proven may
+  have contaminated every task after it. An unproven erase quarantines the
+  whole task rather than counting it (and is distinguished from a *refuted*
+  erase, which fails the run outright); a partially counted task would silently
+  unbalance the pairing. Arms are counterbalanced per task against a committed
+  order, as the latent-opt control already does, so ordering effects cannot
+  load onto one arm.
+
+`verifier_arms` stays blocked deliberately. Its generative and counterfactual
+arms cannot run model-free, and a row marked runnable while only its
+exact-checker arms execute would restate the defect the verifier mesh was built
+to remove.
+
+20/20 matrix contracts including quarantine, refutation, an `off` arm that
+wrongly claims an erase, and a malformed solver outcome; 176 across the
+affected surface; preflight 16/16 READY.

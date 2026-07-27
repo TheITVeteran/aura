@@ -274,15 +274,17 @@ MATRIX_ROWS: tuple[MatrixRow, ...] = (
     MatrixRow(
         row_id="fast_weight_controls",
         ledger_clause="fast-weight controls",
-        status=ROW_BLOCKED,
-        producer="",
+        status=ROW_RUNNABLE,
+        producer="experiments.run_fast_weight_controls",
         blockers=(),
-        blocked_reason=BLOCKED_PRODUCER_ABSENT,
         notes=(
-            "SPARK-055/056 have landed, so query-scoped fast weights and "
-            "their integrity proofs exist; what is missing is a producer "
-            "driving the on/off/sham arms as one comparison. "
-            "run_latent_opt_control covers the optimization-control half."
+            "On/off/sham arms in one counterbalanced comparison. The graded "
+            "claim is on-versus-SHAM, not on-versus-off: beating no delta "
+            "shows only that a bounded perturbation helped, while beating a "
+            "matched-magnitude random delta is a claim about direction. "
+            "Erasure gates each observation — an unproven erase quarantines "
+            "the task rather than counting it, because a delta that outlived "
+            "its query may have contaminated every task after it."
         ),
     ),
     MatrixRow(
