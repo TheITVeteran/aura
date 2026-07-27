@@ -29795,3 +29795,63 @@ training, gain, frontier result, or `WOW Signal` exists. Counting CP401 makes
 643 total checkpoints. The 643-920 forecast leaves 0-277 records, or
 approximately 69.9%-100.0% checkpoint completion with an 82.4% midpoint. Long
 soaks remain deferred and no open requirement may be skipped.
+
+## Checkpoint 2026-07-26-402: Verified-Replay Resident Tokenizer Admission
+
+SPARK-059 now binds CP397/CP398 verified-replay candidates to an immutable
+trainer projection contract before any trainer can see them. Candidate schema
+v2 names the exact `mlx_lm.ChatDataset(mask_prompt=True)` implementation,
+final-assistant-only supervised region, 4,096-token maximum, and no-truncation
+policy. The validator accepts only a committed candidate publication, never
+opens evaluator custody, and reconstructs every trainer-visible train and
+validation row under a persistent content-addressed snapshot of the resident
+Aura-32B tokenizer.
+
+The proof now executes the installed MLX `ChatDataset.process` for every row,
+rather than merely reproducing what that processor is expected to do. Full
+tokens and masked-prefix offsets must be exactly equal. Tokenizer artifacts,
+effective chat template, Python callables, installed dependency versions,
+compiled native dependencies, and the loaded tokenizer implementation are
+identity-bound before and after projection. Runtime drift, snapshot mutation,
+custody substitution, a non-prefix mask, empty target, sequence truncation,
+partial row coverage, or a dataset-process mismatch fails closed. The output
+remains `trainer_ready=false` with no training authority.
+
+The actual resident Aura-32B tokenizer and installed MLX 0.31.3 path validated
+all 19 train/validation rows from a newly committed Horcrux-shaped replay
+fixture. There were zero truncations and zero MLX dataset-process mismatches;
+full rows measured 579-616 tokens and supervised targets 278-296 tokens.
+Candidate package `201ccddc...`, custody root `d5a576f3...`, tokenizer
+`859076ec...`, runtime `ebe7e3d0...`, projection receipts `b54cc41f...`, and
+validation bundle `50783027...` are bound. The evaluator was not accessed and
+model weights were not loaded.
+
+The focused adversarial matrix passes 10/10, including resealed trainer-policy
+mutation, prefix corruption, forced truncation, wrong MLX offsets, runtime and
+snapshot drift, custody mismatch, physically absent evaluator custody, and CLI
+non-authority. The integrated replay/publication/combined-lineage/audit/tokenizer
+family passes 86/86. Strict Ruff, bytecode compilation, and diff hygiene pass.
+The complete affected replay, structured-SFT, external-admission, campaign-
+trust, and combined-lineage compatibility family passes 203/203 in 1,195.00
+seconds.
+Governance remains baseline-matched at 2,029 recognized calls, 1,897 buckets,
+and 1,787 migration-debt calls. Model-load ownership passes 47 paths and 60
+references with zero findings. The enterprise scan remains honestly
+inherited-red at ten regression categories, 228 findings, and 58 high/critical
+findings, with no new CP402-file finding and no baseline increase. Evidence is
+`artifacts/current/cp402_verified_replay_sft_tokenizer_evidence.json`.
+
+This real resident-tokenizer result is over sealed replay fixture custody, not
+Aura's currently absent production verified-replay store. It proves the loader,
+template, masking, candidate-only custody, and exact installed-MLX admission
+path; it does not claim real user-replay privacy clearance, production corpus
+contamination clearance, external signatures, a monotonic witness, trainer
+authority, small-checkpoint training, resident-32B training, reasoning gain,
+frontier performance, or a `WOW Signal`. The next SPARK-059 checkpoint is the
+monotonic external witness and production audit packet, followed by bounded
+resumable trainer authority and small-checkpoint falsification.
+
+Counting CP402 makes 644 total checkpoints. The 644-920 forecast leaves 0-276
+records, or approximately 70.0%-100.0% checkpoint completion with an 82.5%
+midpoint. This is accounting, not permission to skip any open SPARK or
+whole-codebase requirement. Long soaks remain deferred.

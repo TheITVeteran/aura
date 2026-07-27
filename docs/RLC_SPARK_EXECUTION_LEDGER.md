@@ -3110,6 +3110,39 @@ before those dependencies close is not admissible.
   has been granted. Receipt:
   `artifacts/current/cp401_combined_sft_external_audit_evidence.json`.
 
+  CP402 closes the resident-tokenizer admission mechanics for the verified-
+  replay candidate. The candidate schema now immutably binds the exact
+  `mlx_lm.ChatDataset(mask_prompt=True)` trainer, final-assistant-only
+  supervision, a 4,096-token ceiling, and a no-truncation policy. Validation
+  opens only a committed CP398 candidate publication, loads a persistent
+  content-addressed snapshot of the resident Aura-32B tokenizer, and requires
+  every reconstructed full-token sequence and masked-prefix offset to equal
+  the installed MLX `ChatDataset.process` result. Runtime implementation and
+  compiled-dependency identities must remain stable across the run; tokenizer
+  snapshot drift, custody substitution, offset divergence, truncation, partial
+  coverage, or evaluator access fails closed.
+
+  The real resident-tokenizer execution covers all 19 train/validation rows in
+  a committed, Horcrux-shaped replay fixture. It reports zero truncation and
+  zero dataset-process mismatch; full rows span 579-616 tokens and supervised
+  targets span 278-296 tokens. Candidate `201ccddc...`, custody root
+  `d5a576f3...`, resident tokenizer `859076ec...`, runtime implementation
+  `ebe7e3d0...`, projection receipts `b54cc41f...`, and validation bundle
+  `50783027...` are bound. No model weights or evaluator package are loaded.
+  The focused adversarial matrix passes 10/10 and the integrated replay,
+  custody, combined-lineage, external-audit, and tokenizer family passes 86/86.
+  The complete affected replay, structured-SFT, external-admission, campaign-
+  trust, and combined-lineage family passes 203/203 in 1,195.00 seconds.
+  Governance matches baseline with 1,787 migration-debt calls; model ownership
+  passes 47 paths, 60 references, and zero findings. The enterprise scan
+  remains inherited-red at ten regression categories, 228 findings, and 58
+  high/critical findings, with no new CP402-file finding. This proves the real
+  resident tokenizer/MLX projection over sealed fixture custody, not that a
+  live production replay store supplied rows, an external auditor signed them,
+  a monotonic external witness exists, trainer authority was granted, training
+  occurred, or reasoning/frontier gains exist. Receipt:
+  `artifacts/current/cp402_verified_replay_sft_tokenizer_evidence.json`.
+
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording
   only commitments. This proves candidate noncontainment and candidate-only

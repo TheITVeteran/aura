@@ -23,7 +23,7 @@ import json
 import re
 import unicodedata
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Final, Never
 
@@ -52,13 +52,16 @@ VERIFIED_REPLAY_SFT_EXAMPLE_SCHEMA: Final = (
     "aura.rlc.verified_replay_sft_example.v1"
 )
 VERIFIED_REPLAY_SFT_CANDIDATE_SCHEMA: Final = (
-    "aura.rlc.verified_replay_sft_candidate_package.v1"
+    "aura.rlc.verified_replay_sft_candidate_package.v2"
 )
 VERIFIED_REPLAY_SFT_EVALUATOR_SCHEMA: Final = (
     "aura.rlc.verified_replay_sft_evaluator_package.v1"
 )
 VERIFIED_REPLAY_SFT_CUSTODY_SCHEMA: Final = (
     "aura.rlc.verified_replay_sft_custody_report.v1"
+)
+VERIFIED_REPLAY_SFT_TOKENIZATION_SCHEMA: Final = (
+    "aura.rlc.verified_replay_sft_tokenization.v1"
 )
 
 TRAIN_SPLIT: Final = "train"
@@ -93,6 +96,7 @@ _MIN_KEY_BYTES = 32
 _MAX_KEY_BYTES = 256
 _DEFAULT_TOKEN_SHINGLE_SIZE = 4
 _DEFAULT_CHARACTER_SHINGLE_SIZE = 12
+_DEFAULT_MAX_SEQ_LENGTH = 4096
 _TOKEN_NEAR_DUPLICATE_THRESHOLD = 0.82
 _CHARACTER_NEAR_DUPLICATE_THRESHOLD = 0.88
 
@@ -1024,6 +1028,7 @@ def validate_verified_replay_sft_candidate_artifacts(
         "semantic_dedup_manifest_sha256",
         "privacy_manifest_sha256",
         "holdout_artifact_sha256",
+        "trainer_contract",
         "trainer_ready",
         "training_authority",
         "required_next_gates",
@@ -1051,6 +1056,7 @@ def validate_verified_replay_sft_candidate_artifacts(
         artifacts[_CANDIDATE_VALIDATION_FILE],
         code="verified_replay_sft_candidate_validation_invalid",
     )
+    trainer_contract = manifest.get("trainer_contract")
     if (
         set(manifest) != fields
         or manifest.get("schema") != VERIFIED_REPLAY_SFT_CANDIDATE_SCHEMA
@@ -1070,6 +1076,22 @@ def validate_verified_replay_sft_candidate_artifacts(
                 "holdout_artifact_sha256",
             )
         )
+        or not isinstance(trainer_contract, Mapping)
+        or set(trainer_contract)
+        != {
+            "trainer",
+            "mask_prompt",
+            "supervised_region",
+            "max_seq_length",
+            "truncation_allowed",
+        }
+        or trainer_contract.get("trainer") != "mlx_lm.ChatDataset"
+        or trainer_contract.get("mask_prompt") is not True
+        or trainer_contract.get("supervised_region")
+        != "final_assistant_message_only"
+        or type(trainer_contract.get("max_seq_length")) is not int
+        or not 256 <= trainer_contract["max_seq_length"] <= _MAX_TEXT_CHARS
+        or trainer_contract.get("truncation_allowed") is not False
         or manifest.get("trainer_ready") is not False
         or manifest.get("training_authority") != "none_quarantined_projection"
         or manifest.get("required_next_gates") != required_gates
@@ -1084,6 +1106,128 @@ def validate_verified_replay_sft_candidate_artifacts(
     ):
         _fail("verified_replay_sft_candidate_rows_invalid")
     return {"manifest": manifest, "train_rows": train_rows, "validation_rows": validation_rows}
+
+
+def _token_sequence(value: Any) -> list[int]:
+    if (
+        not isinstance(value, Sequence)
+        or isinstance(value, (str, bytes, bytearray))
+        or not value
+        or any(type(token) is not int or token < 0 for token in value)
+    ):
+        _fail("verified_replay_sft_token_sequence_invalid")
+    return list(value)
+
+
+def validate_verified_replay_sft_tokenization(
+    candidate_artifacts: Mapping[str, bytes],
+    *,
+    tokenizer: Any,
+    chat_dataset_process: Callable[[Mapping[str, Any]], Any],
+) -> dict[str, Any]:
+    """Prove exact ChatDataset masking for every trainer-visible replay row."""
+
+    candidate = validate_verified_replay_sft_candidate_artifacts(candidate_artifacts)
+    manifest = candidate["manifest"]
+    contract = manifest["trainer_contract"]
+    apply_template = getattr(tokenizer, "apply_chat_template", None)
+    if not callable(apply_template):
+        _fail("verified_replay_sft_tokenizer_template_missing")
+    receipts: list[dict[str, Any]] = []
+    group_stats: dict[str, dict[str, int]] = {}
+    rows_by_split = {
+        TRAIN_SPLIT: candidate["train_rows"],
+        VALIDATION_SPLIT: candidate["validation_rows"],
+    }
+    for split, rows in rows_by_split.items():
+        for row in rows:
+            messages = row["messages"]
+            tools = row["tools"]
+            full = _token_sequence(
+                apply_template(messages, tools=tools, return_dict=False)
+            )
+            prefix = _token_sequence(
+                apply_template(
+                    messages[:-1],
+                    tools=tools,
+                    add_generation_prompt=True,
+                    return_dict=False,
+                )
+            )
+            if len(prefix) >= len(full) or full[: len(prefix)] != prefix:
+                _fail("verified_replay_sft_masked_prefix_not_exact")
+            processed = chat_dataset_process(row)
+            if (
+                not isinstance(processed, tuple)
+                or len(processed) != 2
+                or type(processed[1]) is not int
+                or _token_sequence(processed[0]) != full
+                or processed[1] != len(prefix)
+            ):
+                _fail("verified_replay_sft_chat_dataset_projection_mismatch")
+            if len(full) > contract["max_seq_length"]:
+                _fail("verified_replay_sft_sequence_would_truncate")
+            target = full[len(prefix) :]
+            error_class = row["_meta"]["error_class"]
+            stats = group_stats.setdefault(
+                error_class,
+                {
+                    "examples": 0,
+                    "min_full_tokens": len(full),
+                    "max_full_tokens": len(full),
+                    "min_prefix_tokens": len(prefix),
+                    "max_prefix_tokens": len(prefix),
+                    "min_target_tokens": len(target),
+                    "max_target_tokens": len(target),
+                },
+            )
+            stats["examples"] += 1
+            for name, size in (
+                ("full", len(full)),
+                ("prefix", len(prefix)),
+                ("target", len(target)),
+            ):
+                stats[f"min_{name}_tokens"] = min(stats[f"min_{name}_tokens"], size)
+                stats[f"max_{name}_tokens"] = max(stats[f"max_{name}_tokens"], size)
+            receipts.append(
+                {
+                    "example_sha256": row["example_sha256"],
+                    "lineage_root_sha256": row["_meta"]["lineage_root_sha256"],
+                    "split": split,
+                    "error_class": error_class,
+                    "full_tokens_sha256": _sha(full),
+                    "prefix_tokens_sha256": _sha(prefix),
+                    "target_tokens_sha256": _sha(target),
+                    "full_token_count": len(full),
+                    "masked_prefix_token_count": len(prefix),
+                    "supervised_target_token_count": len(target),
+                    "target_start_index": len(prefix),
+                    "prefix_exact": True,
+                    "chat_dataset_process_exact": True,
+                    "within_max_seq_length": True,
+                }
+            )
+    body = {
+        "schema": VERIFIED_REPLAY_SFT_TOKENIZATION_SCHEMA,
+        "candidate_package_sha256": manifest["candidate_package_sha256"],
+        "custody_root_sha256": manifest["custody_root_sha256"],
+        "source_store_sha256": manifest["source_store_sha256"],
+        "partition_manifest_sha256": manifest["partition_manifest_sha256"],
+        "privacy_manifest_sha256": manifest["privacy_manifest_sha256"],
+        "trainer_contract": dict(contract),
+        "tokenization_scope": "candidate_train_validation_only",
+        "rows_checked": len(receipts),
+        "expected_rows": sum(manifest["row_counts"].values()),
+        "rows_with_truncation": 0,
+        "chat_dataset_process_mismatches": 0,
+        "holdout_tokenized": False,
+        "groups": {name: group_stats[name] for name in sorted(group_stats)},
+        "projection_receipts_sha256": _sha(receipts),
+        "status": "passed_exact_masked_prefix",
+    }
+    if body["rows_checked"] != body["expected_rows"] or body["rows_checked"] < 1:
+        _fail("verified_replay_sft_tokenization_coverage_invalid")
+    return {**body, "report_sha256": _sha(body)}
 
 
 def validate_verified_replay_sft_custody_pair(
@@ -1423,6 +1567,7 @@ def build_verified_replay_sft_custody_bundles(
     reference_index: Mapping[str, Any],
     partition_ratios: Mapping[str, int] | None = None,
     minimum_rows_per_split: int = 1,
+    max_seq_length: int = _DEFAULT_MAX_SEQ_LENGTH,
 ) -> VerifiedReplaySFTCustodyBundles:
     """Project authenticated replay into quarantined split custody bundles."""
 
@@ -1443,6 +1588,8 @@ def build_verified_replay_sft_custody_bundles(
         or minimum_rows_per_split > 10_000
     ):
         _fail("verified_replay_sft_minimum_split_rows_invalid")
+    if type(max_seq_length) is not int or not 256 <= max_seq_length <= _MAX_TEXT_CHARS:
+        _fail("verified_replay_sft_max_seq_length_invalid")
     if not isinstance(privacy_clearances, Mapping):
         _fail("verified_replay_sft_privacy_inventory_invalid")
     references = validate_reference_index(reference_index, dedup_key=dedup_secret)
@@ -1616,6 +1763,13 @@ def build_verified_replay_sft_custody_bundles(
         "semantic_dedup_manifest_sha256": dedup_manifest["manifest_sha256"],
         "privacy_manifest_sha256": privacy_manifest["manifest_sha256"],
         "holdout_artifact_sha256": holdout_binding["sha256"],
+        "trainer_contract": {
+            "trainer": "mlx_lm.ChatDataset",
+            "mask_prompt": True,
+            "supervised_region": "final_assistant_message_only",
+            "max_seq_length": max_seq_length,
+            "truncation_allowed": False,
+        },
         "trainer_ready": False,
         "training_authority": "none_quarantined_projection",
         "required_next_gates": [
@@ -1712,6 +1866,7 @@ __all__ = [
     "projection_content_sha256",
     "validate_privacy_clearance",
     "validate_reference_index",
+    "validate_verified_replay_sft_tokenization",
     "validate_verified_replay_sft_candidate_artifacts",
     "validate_verified_replay_sft_custody_pair",
     "assert_semantic_signature_integrity",

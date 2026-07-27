@@ -1,0 +1,143 @@
+{
+  "schema": "aura.rlc.cp402_verified_replay_sft_tokenizer_evidence.v1",
+  "checkpoint": "CP402",
+  "scope": "verified_replay_candidate_resident_tokenizer_admission",
+  "claims": {
+    "candidate_schema_version": 2,
+    "trainer": "mlx_lm.ChatDataset",
+    "mask_prompt": true,
+    "supervised_region": "final_assistant_message_only",
+    "max_seq_length": 4096,
+    "truncation_allowed": false,
+    "actual_chat_dataset_process_executed_per_row": true,
+    "candidate_only_committed_publication_required": true,
+    "persistent_content_addressed_tokenizer_snapshot": true,
+    "runtime_identity_stable_across_projection": true,
+    "snapshot_identity_stable_across_projection": true,
+    "evaluator_filesystem_accessed": false,
+    "holdout_tokenized": false,
+    "trainer_ready": false,
+    "training_authority": "none_pending_external_audit_and_trainer_admission"
+  },
+  "resident_tokenizer_execution": {
+    "candidate_origin": "new_committed_horcrux_shaped_fixture_not_live_production_replay",
+    "candidate_package_sha256": "201ccddc9c4bb0215f44ee5499c536be6067648241e33eda773af195ea8e0669",
+    "custody_root_sha256": "d5a576f3ccf26098830f06de4421ad85b773f13733e560f8e95ff03b5e9f95ed",
+    "source_store_sha256": "a6c32cea540b0fff4dd1da7d6848ff0a4f09c13b815ae5369740281bc46fe5c3",
+    "publication_commit_sha256": "e202dd4a559d5bfcd80d4f2fcddf6231e70d2f2dba060c52f43ff3360aa2a8ef",
+    "tokenizer_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "tokenizer_identity_sha256": "859076ecfe915ff7d2d657b5fa97aec3e3fbec10f857d9b4312a7c0f9ff37bcd",
+    "tokenizer_runtime_identity_sha256": "ebe7e3d043246731bc641e9cd226d5c0f7eaedc29a86d147075cf23aeaa2fb68",
+    "tokenizer_snapshot_manifest_sha256": "6fe1fd14d05568876337afba8ec3391acbd738d494c4573b84c2c65971cf6370",
+    "mlx_lm_version": "0.31.3",
+    "transformers_version": "5.6.2",
+    "tokenizers_version": "0.22.2",
+    "rows_checked": 19,
+    "expected_rows": 19,
+    "rows_with_truncation": 0,
+    "chat_dataset_process_mismatches": 0,
+    "minimum_full_tokens": 579,
+    "maximum_full_tokens": 616,
+    "minimum_prefix_tokens": 301,
+    "maximum_prefix_tokens": 320,
+    "minimum_target_tokens": 278,
+    "maximum_target_tokens": 296,
+    "projection_receipts_sha256": "b54cc41fa180c7e8f3b40fdc6b75abebe9a7fc25b8346472ff23422a139d649b",
+    "projection_report_sha256": "d377105d1621125822c730abe9147207460e67bc63891db2d6008a807f5a228c",
+    "validation_bundle_sha256": "5078302703483293d840ac88f5d96f3fe6cd6f69d00b668ceea9ac2e4fb266b4",
+    "model_weights_loaded": false,
+    "status": "passed_exact_resident_tokenizer_and_mlx_chat_dataset_projection"
+  },
+  "source_files": [
+    {
+      "path": "core/learning/verified_replay_sft.py",
+      "line_count": 1873,
+      "sha256": "5924fc72bb6b16a681eb18d9aab4344d87c151b27b3048960969df955bee4012"
+    },
+    {
+      "path": "tools/validate_structured_sft_tokenization.py",
+      "line_count": 861,
+      "sha256": "2dd46c5fb3fdf13b17ffc57bf7d902e1fe08b56d5bc10a3b4e874a1f3f3d39e3"
+    },
+    {
+      "path": "tools/validate_verified_replay_sft_tokenization.py",
+      "line_count": 175,
+      "sha256": "208c9e6dc50d60ce2df986d6eedca2ede5ffedc662995e838b29a7507308f6e3"
+    },
+    {
+      "path": "tests/test_verified_replay_sft.py",
+      "line_count": 567,
+      "sha256": "e7b242a6f4befcd2886a5bc1c0db52d6f107febaf50971828598067cab71bdf5"
+    },
+    {
+      "path": "tests/test_validate_verified_replay_sft_tokenization.py",
+      "line_count": 534,
+      "sha256": "e29a3019d6b9048538eec568477902891a61470ebee326b72bb770a87a3e080f"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "pytest -q tests/test_validate_verified_replay_sft_tokenization.py",
+      "passed": 10,
+      "failed": 0,
+      "duration_seconds": 4.05
+    },
+    "integrated": {
+      "scope": "replay_publication_combined_lineage_external_audit_and_tokenizer",
+      "passed": 86,
+      "failed": 0,
+      "duration_seconds": 163.93
+    },
+    "broader_compatibility": {
+      "scope": "verified_replay_structured_sft_admission_campaign_trust_and_combined_lineage",
+      "passed": 203,
+      "failed": 0,
+      "duration_seconds": 1195.0
+    },
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "git_diff_check": "passed",
+    "governance_lint": {
+      "passed": true,
+      "recognized_calls": 2029,
+      "buckets": 1897,
+      "migration_debt_calls": 1787
+    },
+    "model_load_ownership": {
+      "passed": true,
+      "owned_paths": 47,
+      "load_references": 60,
+      "findings": 0
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "new_cp402_file_findings": 0,
+      "baseline_raised": false
+    }
+  },
+  "explicit_non_claims": [
+    "live_production_verified_replay_rows",
+    "real_external_privacy_or_contamination_signatures",
+    "externally_witnessed_monotonic_head",
+    "trainer_authority",
+    "small_checkpoint_training_or_transfer_gain",
+    "resident_32b_training",
+    "reasoning_gain",
+    "frontier_performance",
+    "WOW Signal"
+  ],
+  "next_required_gates": [
+    "production_corpus_external_audit_packet",
+    "externally_witnessed_monotonic_anti_rollback_head",
+    "bounded_resumable_trainer_authority",
+    "small_checkpoint_transfer_falsification",
+    "resident_32b_equal_compute_training_and_independent_promotion"
+  ],
+  "live_aura_touched": false,
+  "model_weights_touched": false,
+  "multi_hour_soak_deferred": true
+}

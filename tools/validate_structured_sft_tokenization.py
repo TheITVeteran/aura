@@ -58,6 +58,7 @@ _MAX_TOKENIZER_FILE_BYTES = 512 * 1024 * 1024
 _MAX_TOKENIZER_IDENTITY_BYTES = 1024 * 1024 * 1024
 _SNAPSHOT_MANIFEST_FILE = "tokenizer_snapshot_manifest.bin"
 _SNAPSHOT_SCHEMA = "aura.rlc.tokenizer_snapshot.v1"
+RESIDENT_TOKENIZER_SNAPSHOT_SCHEMA = _SNAPSHOT_SCHEMA
 _VALIDATION_BUNDLE_SCHEMA = (
     "aura.rlc.structured_sft_tokenizer_validation_bundle.v3"
 )
@@ -692,6 +693,33 @@ def _dependency_identity(tokenizer: Any) -> dict[str, Any]:
             ).encode("ascii")
         ).hexdigest(),
     }
+
+
+def resident_tokenizer_snapshot(
+    directory: Path,
+    snapshot_root: Path,
+):
+    """Return the shared no-follow, content-addressed tokenizer snapshot."""
+
+    return _tokenizer_snapshot(directory, snapshot_root)
+
+
+def load_resident_tokenizer(directory: Path) -> Any:
+    """Load a tokenizer only after binding its configured EOS contract."""
+
+    return _load_bound_tokenizer(directory)
+
+
+def resident_tokenizer_artifact_identity(directory: Path) -> dict[str, Any]:
+    """Recompute the complete loader-eligible tokenizer artifact identity."""
+
+    return _tokenizer_identity(directory)
+
+
+def resident_tokenizer_runtime_identity(tokenizer: Any) -> dict[str, Any]:
+    """Bind Python, native, template, and ChatDataset runtime behavior."""
+
+    return _dependency_identity(tokenizer)
 
 
 def validate(

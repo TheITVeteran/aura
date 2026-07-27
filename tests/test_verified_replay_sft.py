@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import hashlib
 import json
@@ -534,13 +535,33 @@ def test_partition_rejects_invalid_ratios_and_underpowered_inventory(tmp_path: P
 
 def test_projection_module_has_no_file_or_training_execution_surface():
     source = Path("core/learning/verified_replay_sft.py").read_text(encoding="utf-8")
-    forbidden = (
-        "subprocess",
-        "Path(",
-        ".write_text(",
-        ".write_bytes(",
-        "open(",
-        "mlx_lm",
-        "train(",
-    )
-    assert not any(token in source for token in forbidden)
+    tree = ast.parse(source)
+    imported_roots = set()
+    forbidden_calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_roots.add(node.module.split(".", 1)[0])
+        elif isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in {
+                "Path",
+                "__import__",
+                "eval",
+                "exec",
+                "open",
+                "train",
+            }:
+                forbidden_calls.append((node.func.id, node.lineno))
+            elif isinstance(node.func, ast.Attribute) and node.func.attr in {
+                "Popen",
+                "call",
+                "run",
+                "train",
+                "write_bytes",
+                "write_text",
+            }:
+                forbidden_calls.append((node.func.attr, node.lineno))
+
+    assert not ({"mlx_lm", "subprocess"} & imported_roots)
+    assert forbidden_calls == []
