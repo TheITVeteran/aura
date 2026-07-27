@@ -4741,6 +4741,30 @@ def _mlx_worker_loop(
 
                                     # [FRONTIER UPGRADE] KV Prompt Caching Injection
                                     tokens = tokenizer.encode(prompt)
+                                    # Prefill cost is the whole endurance story, and
+                                    # until now the only number anyone could see was
+                                    # the planner's CHARACTER count — measured live at
+                                    # 4,479 chars for a turn the worker then tokenized
+                                    # to 27,374 tokens. A 6x gap between what the
+                                    # planner budgets and what the GPU actually
+                                    # prefills is invisible without printing both.
+                                    if len(tokens) > 4096:
+                                        logger.info(
+                                            "📏 [WORKER] Prefill size: %d tokens from %d rendered "
+                                            "chars (%d messages, %d tool schemas, %d schema chars) "
+                                            "| per-message: %s",
+                                            len(tokens),
+                                            len(prompt or ""),
+                                            len(messages or ()),
+                                            len(tools or ()),
+                                            len(json.dumps(tools, default=str)) if tools else 0,
+                                            ", ".join(
+                                                f"{str(m.get('role', '?'))}="
+                                                f"{len(str(m.get('content', '') or ''))}"
+                                                for m in (messages or ())
+                                                if isinstance(m, dict)
+                                            ) or "none",
+                                        )
                                     # Context-window admission BEFORE any Metal
                                     # work: reject with a typed, correlated error
                                     # instead of overrunning the model. Headroom

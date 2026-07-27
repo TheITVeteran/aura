@@ -8024,6 +8024,30 @@ class InferenceGate:
                 budget_profile=foreground_profile,
                 current_user_content=visible_user_prompt,
             )
+            # The compacted message set is now AUTHORITATIVE, and it already
+            # carries the living-mind context and the reliability contract.
+            #
+            # `system_prompt` is a separate string that grew independently
+            # (identity, architecture excerpt, reliability block) and is never
+            # compacted. It is still handed to the client alongside these
+            # messages, and the client merges a separately-passed system_prompt
+            # into messages[0] — so it silently undid every compaction above.
+            # Measured live: a 2,399-char compacted system message reached the
+            # worker at 106,861 chars, turning a 278-char question into a
+            # 27,129-token prefill (a 384:1 scaffold-to-request ratio) that
+            # could not produce a first token inside the turn budget. None of
+            # it was visible, because the prompt plan logs the compacted
+            # messages and the re-inflation happens after that.
+            #
+            # Bound it through the SAME budget rather than dropping it: policy
+            # and safety instructions stay present, just no longer unbounded.
+            if system_prompt:
+                system_prompt = self._compact_prebuilt_message_content(
+                    "system",
+                    system_prompt,
+                    budget_profile=foreground_profile,
+                    visible_request_chars=len(str(visible_user_prompt or "")),
+                )
         prompt_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
         prompt_mode = "rich" if use_rich_context else "compact"
         if use_compact_foreground_context:
@@ -8042,15 +8066,21 @@ class InferenceGate:
             if str(msg.get("role", "")).strip().lower() == "system"
         )
         request_chars = max(0, prompt_chars - scaffold_chars)
+        # The separately-passed system_prompt is merged into messages[0] at the
+        # client boundary, so it is part of the prefill even though it is not in
+        # `messages` here. Leaving it out of this line is how a 106,861-char
+        # re-inflation stayed invisible behind a plan that reported 4,479.
         logger.info(
             "🧠 [ZENITH] Prompt plan: mode=%s messages=%d chars=%d "
-            "(scaffold=%d request=%d ratio=%.1fx) origin=%s max_tokens=%d",
+            "(scaffold=%d request=%d ratio=%.1fx sys_prompt=%d) "
+            "origin=%s max_tokens=%d",
             prompt_mode,
             len(messages),
             prompt_chars,
             scaffold_chars,
             request_chars,
             (scaffold_chars / request_chars) if request_chars else float("inf"),
+            len(str(system_prompt or "")),
             origin or "unknown",
             max_tokens,
         )
