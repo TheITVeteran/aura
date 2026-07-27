@@ -25,6 +25,54 @@ _EVENT_BRIDGE_RECOVERABLE_ERRORS = (
 )
 
 
+#: Message types that land in the chat window as Aura speaking.
+_SPOKEN_WS_TYPES = frozenset({"aura_message", "chat_response"})
+
+
+def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
+    """Drop an unsolicited message that is internal machinery, not speech.
+
+    The chat route runs the reliability gate against the user's question.
+    Everything that arrives unprompted — initiative, action results,
+    autonomous speech — reaches the same window through this bridge, and had
+    no gate at all. Live 2026-07-26 the chat window rendered, verbatim:
+
+        ROUTER_ERROR: unknown (at all_failed)
+
+    which is a diagnostic label meant for string consumers inside the runtime.
+    This is the one seam every such publisher passes through, so the check
+    belongs here rather than in each of them.
+    """
+    try:
+        if str(ws_msg.get("type", "")) not in _SPOKEN_WS_TYPES:
+            return False
+        body = str(ws_msg.get("message") or ws_msg.get("content") or "")
+        if not body.strip():
+            return False
+        from core.conversation.response_reliability import internal_leak_reasons
+
+        reasons = internal_leak_reasons(body)
+        if not reasons:
+            return False
+        record_degradation(
+            "event_bridge",
+            RuntimeError("internal_text_suppressed:" + ",".join(reasons)),
+            severity="warning",
+            action="withheld an unsolicited message that was internal machinery, not speech",
+        )
+        logger.warning(
+            "EventBridge: withheld %s carrying internal text (%s): %r",
+            ws_msg.get("type", "unknown"),
+            ",".join(reasons),
+            body[:160],
+        )
+        return True
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        # Fail open: a broken check must not silence Aura.
+        logger.debug("EventBridge leak check skipped: %s", exc)
+        return False
+
+
 async def mycelial_ui_callback(message: str):
     """Direct, unblockable UI delivery via Mycelial Network.
     Bypasses EventBus/Queue infrastructure for emergency status.
@@ -144,6 +192,8 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                     ActionResultPayload=ActionResultPayload,
                 )
 
+                if ws_msg is not None and _suppress_internal_leak(ws_msg):
+                    ws_msg = None
                 if ws_msg is not None:
                     p_val = 10
                     msg_type = ws_msg.get("type", "")

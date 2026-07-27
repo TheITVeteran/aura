@@ -5383,6 +5383,11 @@ def _is_code_response(text: str) -> bool:
     if not raw:
         return False
     fenced_blocks = list(_FENCED_BLOCK_RE.finditer(raw))
+    # Unfenced maths is prose about numbers, not a code response. With a fence
+    # present the block's own language wins, below — a code sample is allowed
+    # to sit beside an equation.
+    if not fenced_blocks and _LATEX_MATH_RE.search(raw):
+        return False
     if fenced_blocks:
         for block in fenced_blocks:
             lang = (block.group("lang") or "").strip().lower()
@@ -5410,6 +5415,34 @@ def _is_code_response(text: str) -> bool:
             return True
 
     return False
+
+
+# A line is code when it has code SYNTAX, not when it contains a character
+# that also appears in arithmetic.
+#
+# LIVE DEFECT, 2026-07-26: the old test counted any line containing "=", or a
+# matched pair of (), [] or {}, as code-like — so every line of a worked maths
+# answer qualified, the whole reply was classified as a code response, and the
+# incomplete-code check rejected it. A correct probability derivation reached
+# the user as "I couldn't get to an answer I'd stand behind on that one":
+#
+#   1. **Total number of marbles**: \(3 + 4 + 5 = 12\).
+#   2. **Probability both are red**: \(\frac{3}{12} = \frac{1}{4}\)…
+#
+# Every one of those lines has "=", parentheses and braces. None of them is code.
+_CODE_ASSIGNMENT_RE = re.compile(
+    r"^\s*(?:const |let |var )?[A-Za-z_][A-Za-z0-9_.]*"
+    r"(?:\[[^\]]*\])?"
+    r"(?:\s*:\s*[A-Za-z_][\w\[\], .]*)?"
+    r"\s*(?:\+|-|\*|/|//|%|\*\*|\|\||&&)?=(?!=)"
+)
+_CODE_CALL_RE = re.compile(r"^\s*[A-Za-z_][\w.]*\s*\([^)]*\)\s*;?\s*$")
+# Inline and display maths, TeX or dollar-delimited. Their presence says the
+# body is mathematical prose, which is the opposite of a code block.
+_LATEX_MATH_RE = re.compile(
+    r"\\\(|\\\)|\\\[|\\\]|\\frac|\\dfrac|\\times|\\cdot|\\binom|\\sqrt|"
+    r"\\begin\{|\$\$?[^$\n]{1,160}\$\$?"
+)
 
 
 def _looks_like_code_body(text: Any) -> bool:
@@ -5442,11 +5475,9 @@ def _looks_like_code_body(text: Any) -> bool:
                     "function ",
                 )
             )
-            or "=" in line
-            or ("(" in line and ")" in line)
-            or ("[" in line and "]" in line)
-            or ("{" in line and "}" in line)
-            or ";" in line
+            or _CODE_ASSIGNMENT_RE.match(line)
+            or _CODE_CALL_RE.match(line)
+            or line.endswith((";", "{", "}", "):", "->"))
         ):
             code_like_lines += 1
     threshold = 0.5 if len(lines) <= 3 else 0.6
@@ -6108,6 +6139,52 @@ def assess_user_facing_reply(
         reasons=unique,
         hard_failure=bool(set(unique) & hard_reasons),
         retryable=bool(set(unique) & retryable_reasons),
+    )
+
+
+#: Reasons that mean "this text is internal machinery, not speech". They are
+#: judged from the text alone, so they are safe to apply to an unsolicited
+#: message where there is no user question to assess against.
+_INTERNAL_LEAK_REASONS = frozenset(
+    {
+        "raw_lane_telemetry",
+        "internal_live_gate_leak",
+        "cognitive_engine_failure_envelope",
+        "runtime_boilerplate",
+        "prompt_artifact",
+        "escaped_control_artifact",
+        "raw_tool_result_fragment",
+        "backend_symbolic_surface_leak",
+        "raw_model_identity_leak",
+        "corrupted_language",
+        "function_word_starvation",
+    }
+)
+
+
+def internal_leak_reasons(text: Any) -> tuple[str, ...]:
+    """Why this text must not be spoken to a person, judged from the text alone.
+
+    The chat route runs the full reliability gate against the user's question.
+    Unsolicited messages — initiative, action results, autonomous speech —
+    reach the same chat window through the event bridge and had no gate at all.
+    Live 2026-07-26 the window rendered, verbatim and unprompted:
+
+        ROUTER_ERROR: unknown (at all_failed)
+
+    Empty tuple means nothing internal was detected; it is deliberately not a
+    quality judgement, because an autonomous message has no question to be
+    judged relevant to.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return ()
+    try:
+        reasons = _model_text_integrity_reasons(body, prompt="", user_facing=True)
+    except (RuntimeError, TypeError, ValueError):
+        return ()
+    return tuple(
+        dict.fromkeys(reason for reason in reasons if reason in _INTERNAL_LEAK_REASONS)
     )
 
 
