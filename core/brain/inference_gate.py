@@ -8194,6 +8194,24 @@ class InferenceGate:
         # client boundary, so it is part of the prefill even though it is not in
         # `messages` here. Leaving it out of this line is how a 106,861-char
         # re-inflation stayed invisible behind a plan that reported 4,479.
+        # Which grounding blocks actually survived to the worker. Attachment was
+        # already logged at the builder and the block still never arrived, so
+        # the only useful signal is presence in the final text.
+        _grounded = [
+            name
+            for name, marker in (
+                ("present", "## PRESENT MOMENT"),
+                ("instruments", "## YOUR OWN INSTRUMENTS"),
+                ("receipts", "## WHAT YOU ACTUALLY JUST DID"),
+            )
+            if marker in str(system_prompt or "")
+            or any(marker in str(msg.get("content", "") or "") for msg in messages)
+        ]
+        logger.info(
+            "🧭 [GROUNDING] survived to dispatch: %s (sys_prompt=%d)",
+            ",".join(_grounded) or "NONE",
+            len(str(system_prompt or "")),
+        )
         logger.info(
             "🧠 [ZENITH] Prompt plan: mode=%s messages=%d chars=%d "
             "(scaffold=%d request=%d ratio=%.1fx sys_prompt=%d) "

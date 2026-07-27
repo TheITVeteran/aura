@@ -8887,11 +8887,18 @@ async def _run_cognitive_engine_chat_turn(
                         repair_is_an_improvement,
                     )
 
-                    _devoiced = repair_generic_assistant_language(visible, reply_text)
+                    # The draft under assessment in this scope is
+                    # `assessment_text`. `reply_text` does not exist here, and
+                    # NameError is not in _CHAT_RECOVERABLE_ERRORS, so this did
+                    # not fail soft — it raised straight out of the turn. Every
+                    # reply the gate flagged as generic-assistant voice took
+                    # this branch, which is the exact case the branch was added
+                    # to repair.
+                    _devoiced = repair_generic_assistant_language(visible, assessment_text)
                 except _CHAT_RECOVERABLE_ERRORS as exc:
                     record_degradation("chat", exc)
                     _devoiced = ""
-                if _devoiced and _devoiced != reply_text:
+                if _devoiced and _devoiced != assessment_text:
                     _devoiced_assessment = assess_user_facing_reply(
                         visible,
                         _devoiced,
@@ -8899,12 +8906,13 @@ async def _run_cognitive_engine_chat_turn(
                     )
                     if "generic_assistant_language" not in set(
                         getattr(_devoiced_assessment, "reasons", ()) or ()
-                    ) and repair_is_an_improvement(reply_text, _devoiced, visible):
+                    ) and repair_is_an_improvement(assessment_text, _devoiced, visible):
                         logger.info(
                             "Stripped generic-assistant voice deterministically before "
                             "the governed repair path."
                         )
-                        reply_text = _devoiced
+                        text = _devoiced
+                        assessment_text = _devoiced
                         assessment = _devoiced_assessment
                         assessment_reasons = list(
                             getattr(_devoiced_assessment, "reasons", ()) or ()
@@ -22132,6 +22140,32 @@ async def api_chat(
             user_message=_semantic_user_message,
             reply_text=_final_reply,
         )
+
+        # Claims this process can measure are settled by the measurement, not
+        # by whether the model read the grounding it was handed. The prompt
+        # block is a prior and priors lose to fluent sentences; the clock is
+        # causal. Runs last, on the exact text about to be spoken.
+        try:
+            from core.conversation.grounded_claim_guard import verify_grounded_claims
+
+            _grounded = verify_grounded_claims(_final_reply)
+            if _grounded.changed:
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.grounded_claim_guard",
+                    method="measured_reading_overrides_stated_claim",
+                    reasons=list(_grounded.corrections),
+                    before=_final_reply,
+                    after=_grounded.text,
+                    deterministic=True,
+                )
+                logger.warning(
+                    "🧭 [GROUNDING] reconciled a spoken claim against a real reading: %s",
+                    "; ".join(_grounded.corrections)[:240],
+                )
+                _final_reply = _grounded.text or _final_reply
+        except _CHAT_RECOVERABLE_ERRORS as _exc:
+            record_degradation("chat.grounded_claim_guard", _exc)
         _bind_public_latent_output_quality(
             _live_turn_trace,
             user_message=_semantic_user_message,
