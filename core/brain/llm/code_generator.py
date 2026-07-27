@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from core.brain.llm.deferral_record import explain_empty_generation
 from core.runtime.errors import FallbackClassification, record_degradation
 
 logger = logging.getLogger("Aura.LLMCodeGenerator")
@@ -281,13 +282,16 @@ class LLMCodeGenerator:
         # the output clean-room — and it was being discarded here in favour of
         # the generic one, silently, on every call.
         system_prompt = str(context.get("system_prompt") or "").strip() or _CODE_GEN_SYSTEM_PROMPT
+        # A caller who says someone is waiting is telling the truth about
+        # priority, and is the only party that knows it.
+        is_background = bool(context.get("is_background", self.is_background))
         request = GenerationRequest(
             prompt=self._augment_prompt(prompt, context),
             system_prompt=system_prompt,
             prefer_tier=prefer_tier,
             max_tokens=max(64, min(max_tokens, self.max_tokens)),
             temperature=max(0.0, min(temperature, 2.0)),
-            is_background=self.is_background,
+            is_background=is_background,
         )
 
         try:
@@ -299,19 +303,27 @@ class LLMCodeGenerator:
             raw = _coerce_response_text(response)
             code = extract_python_code(raw)
             if not code:
-                # "LLM returned no Python source" is true and undiagnosable —
-                # it reads identically whether the model returned nothing, an
-                # apology, prose, or a truncated block. The reconstruction lane
-                # reported "0/14 held-out positions reproduced" off the back of
-                # it, blaming the verification for a generation that never
-                # produced anything to verify.
-                preview = " ".join(str(raw or "").split())[:200]
+                # The extractor only returns nothing when the response was
+                # blank, and a blank response means one of two very different
+                # things: a model that produced nothing, or a request that was
+                # never run at all. The reconstruction lane reported "0/14
+                # held-out positions reproduced" off the back of the second,
+                # blaming verification for a generation that never happened.
                 raise RuntimeError(
                     "LLM returned no Python source; "
-                    + (f"model said: {preview!r}" if preview else "the model returned nothing at all")
+                    + (explain_empty_generation() or "the model returned nothing at all")
                 )
 
-            ast.parse(code)
+            try:
+                ast.parse(code)
+            except SyntaxError as exc:
+                # A bare "invalid syntax" is the other undiagnosable ending: an
+                # apology or a prose answer reaches here intact, and what the
+                # model actually said is the entire diagnosis.
+                raise RuntimeError(
+                    f"LLM returned no valid Python source ({exc.msg}); "
+                    f"model said: {' '.join(code.split())[:200]!r}"
+                ) from exc
             logger.info(
                 "Generated reconstruction candidate for %s (%d chars)",
                 context.get("module_path", "<unknown>"),

@@ -25,6 +25,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from core.brain.llm.deferral_record import record_deferral
 from core.brain.llm.model_registry import (
     DEEP_ENDPOINT,
     audit_lane_assignments,
@@ -1462,6 +1463,10 @@ class IntelligentLLMRouter:
                     origin or "background",
                     background_deferral,
                 )
+                # The empty string is the whole of what the caller receives.
+                # Leave the reason somewhere it can be read, or the deferral
+                # gets reported downstream as "the model returned nothing".
+                record_deferral(origin=origin or "background", reason=background_deferral)
                 return ""
 
         state = kwargs.pop("state", None)

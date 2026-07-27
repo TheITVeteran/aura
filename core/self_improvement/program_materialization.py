@@ -474,6 +474,7 @@ async def _write_playable_module(engine: Any, spec: ProgramSpec, core_code: str)
                 "temperature": 0.1,
                 "max_tokens": 2600,
                 "origin": "program_materialization",
+                "is_background": False,
                 "system_prompt": _PLAYABLE_WRAPPER_SYSTEM_PROMPT,
             },
         )

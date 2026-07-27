@@ -100,12 +100,23 @@ def test_stale_attempts_are_not_presented_as_recent() -> None:
     block = _block(
         [_record(intention="hours ago", tool="a", success=True, ago=4 * 3600)]
     )
-    assert block == ""
+    assert "hours ago" not in block
+    assert "no tool actions" in block
 
 
-def test_no_actions_means_no_heading() -> None:
-    """An empty heading is an invitation to fill it in."""
-    assert _block([]) == ""
+def test_no_actions_means_a_stated_absence_not_silence() -> None:
+    """Silence about a period is what gets filled in with something plausible.
+
+    Asked for "one concrete thing that actually happened in your runtime in the
+    last hour" with nothing in front of her, she described processing a 45-page
+    PDF on neuromorphic computing, and on another run a user asking about
+    caffeine chemistry. Neither happened. She was answering a question about a
+    period she had no record of. "Nothing" is a fact, and stated, it is
+    answerable.
+    """
+    block = _block([])
+    assert "no tool actions" in block
+    assert "Do not describe an action you did not take" in block
 
 
 def test_a_broken_ledger_never_breaks_the_turn() -> None:

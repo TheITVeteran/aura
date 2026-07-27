@@ -893,6 +893,11 @@ def reconstructed(case):
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "origin": "program_dna_reconstruction",
+                        # A user is waiting on this build; background work is
+                        # deferred while a foreground turn is live, so a
+                        # background-tagged synthesis would wait on the very
+                        # turn that is waiting on it.
+                        "is_background": False,
                         "system_prompt": (
                             "You are a clean-room reimplementation engine. Implement the observed "
                             "behavior from the specification and examples ONLY. You are NOT given, "
@@ -922,6 +927,7 @@ def reconstructed(case):
                                 "temperature": temperature,
                                 "max_tokens": max_tokens,
                                 "origin": "program_dna_reconstruction_resident_fallback",
+                                "is_background": False,
                                 "system_prompt": (
                                     "You are a clean-room reimplementation engine. Implement "
                                     "the observed behavior from the specification and examples "
@@ -1031,6 +1037,7 @@ def reconstructed(case):
                         "temperature": max(0.0, min(float(temperature), 0.2)),
                         "max_tokens": max_tokens,
                         "origin": "program_dna_reconstruction_repair",
+                        "is_background": False,
                         "system_prompt": (
                             "You are repairing a clean-room implementation after sandboxed "
                             "behavioral verification failed. Generalize from the observed "

@@ -72,10 +72,11 @@ def _describe(record: Any, now: float) -> str:
 
 
 def recent_actions_block(*, now: float | None = None) -> str:
-    """The last few attempts and their real outcomes, or "" if there are none.
+    """The last few attempts and their real outcomes — or that there were none.
 
-    Returns "" rather than an empty heading: a heading with nothing under it is
-    an invitation to fill it in, which is the failure this exists to prevent.
+    Never returns an empty heading, and never returns nothing when it could say
+    "nothing". Silence about a period is what gets filled in with something
+    plausible; a stated absence is an answer she can give.
     """
     stamp = float(now if now is not None else time.time())
     try:
@@ -87,9 +88,6 @@ def recent_actions_block(*, now: float | None = None) -> str:
             "recent_actions", exc, severity="info", action="omitted recent-actions grounding"
         )
         return ""
-    if not completed:
-        return ""
-
     lines: list[str] = []
     for record in reversed(completed):
         try:
@@ -106,7 +104,26 @@ def recent_actions_block(*, now: float | None = None) -> str:
             break
 
     if not lines:
-        return ""
+        # A blank section is an invitation. Asked for "one concrete thing that
+        # actually happened in your runtime in the last hour", with nothing in
+        # front of her, she described processing a 45-page PDF on neuromorphic
+        # computing, and on another run a user asking about caffeine chemistry.
+        # Neither happened. She was not being dishonest — she was answering a
+        # question about a period she had no record of, and the honest answer
+        # was unavailable to her because nobody had written it down.
+        #
+        # "Nothing" is a fact. Stated, it is answerable; omitted, it is a gap
+        # that gets filled with something plausible.
+        return "\n".join(
+            [
+                RECENT_ACTIONS_HEADER,
+                "You have taken no tool actions in the last "
+                f"{int(_RECENCY_WINDOW_S // 60)} minutes. If you are asked what "
+                "you have been doing or what has happened recently, that is the "
+                "answer — say so plainly. Do not describe an action you did not "
+                "take.",
+            ]
+        )
     return "\n".join(
         [
             RECENT_ACTIONS_HEADER,
