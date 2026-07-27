@@ -8653,7 +8653,25 @@ class MLXLocalClient:
         try:
             _remaining_s = float(deadline.remaining or 0.0)
             if _remaining_s > 0.0:
-                req["deadline_unix"] = time.time() + _remaining_s
+                # Reserve a DELIVERY MARGIN. A cooperative stop is only worth
+                # anything if the partial answer can cross IPC and be consumed
+                # before the caller's own deadline. Handing the worker the
+                # caller's full remaining budget made the two expire together,
+                # so a decode that stopped politely at token 149 was abandoned
+                # by a gate that had already given up — measured live as
+                # "Cortex consumed 77.5s without usable text" immediately
+                # followed by "Abort arrived after the generation finished;
+                # nothing to abort, leaving the worker up". The tokens existed;
+                # nobody was left waiting for them.
+                #
+                # The floor keeps the margin from eating a short budget whole:
+                # a worker that gets less than half the request is worse than
+                # one that occasionally misses the handoff.
+                _delivery_margin_s = max(1.5, min(6.0, _remaining_s * 0.08))
+                _worker_budget_s = max(
+                    _remaining_s * 0.5, _remaining_s - _delivery_margin_s
+                )
+                req["deadline_unix"] = time.time() + _worker_budget_s
         except (AttributeError, TypeError, ValueError):
             logger.debug("Request deadline unavailable; worker decodes unbounded.")
         # CP126 a838a49b: this used to read

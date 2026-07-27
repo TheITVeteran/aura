@@ -7579,21 +7579,28 @@ class InferenceGate:
                 max_tokens = max(max_tokens, min(384, explicit_max_tokens_cap))
             context["max_tokens"] = max_tokens
 
-        if (
-            not is_background
-            and self._origin_is_user_facing(origin)
-            and requested_tier == "primary"
-            and not isolated_generation_contract
-            and not health_probe
-        ):
-            # Foreground chat prompts include high-churn state, memory, and
-            # reliability blocks. Reusing approximate KV caches across those
-            # prompts has been a major source of clipped or stale Cortex
-            # drafts. Keep cache acceleration for background/proof lanes, but
-            # make live primary conversation start from the exact prompt.
-            # Force-set (not setdefault): a caller-supplied False must not
-            # re-enable approximate cache reuse on the live primary path.
-            morpho_kwargs["disable_prompt_cache"] = True
+        # The live primary conversation lane USES the prompt cache. It used to
+        # force-set disable_prompt_cache=True here, on the premise that reuse
+        # was "approximate" and the cause of clipped or stale Cortex drafts.
+        #
+        # Reuse is not approximate. A cached entry is KV for a byte-identical
+        # token prefix; measured end to end on the same stack, three cached
+        # turns produced continuations byte-identical to an uncached control
+        # while reuse climbed 0 -> 34/53 -> 57/74 tokens. The clipped and stale
+        # drafts had three other causes, all since fixed: the trie stored one
+        # mutable cache object under every growing prefix, so old keys aliased
+        # later KV; the trim probe checked the wrong module and answered False
+        # forever, so a diverging prefix could never be trimmed to fit; and
+        # nothing partitioned lanes, so internal generations and the
+        # conversation shared entries. Reuse is now scoped to `user_surface`,
+        # inserted once after generation, and trimmed when prefixes diverge.
+        #
+        # Leaving it force-disabled is what the endurance wall is made of: this
+        # lane's prompt IS the whole conversation, so re-prefilling from token
+        # zero makes time-to-first-token climb until it crosses the turn budget
+        # and the conversation stops answering. Callers that genuinely need an
+        # exact cold prompt (strict/proof/operator contracts, health probes)
+        # still set the flag themselves and are bypassed in the worker.
 
         if deep_probe_request and not is_background:
             try:

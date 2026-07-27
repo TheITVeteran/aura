@@ -827,3 +827,32 @@ def test_stall_receipts_name_the_pressure_tier(monkeypatch):
         lambda **_kw: _fake_snapshot("nominal"),
     )
     assert client._pressure_receipt_suffix() == ""
+
+
+def test_worker_deadline_reserves_a_delivery_margin():
+    """A cooperative stop is worthless if nobody is still waiting for it.
+
+    The worker used to receive the caller's FULL remaining budget, so its
+    deadline and the gate's expired together: a decode that stopped politely at
+    token 149 was abandoned by a gate that had already timed out. Measured live
+    as "Cortex consumed 77.5s without usable text" followed immediately by
+    "Abort arrived after the generation finished; nothing to abort".
+    """
+
+    def worker_budget(remaining_s: float) -> float:
+        # Mirrors the computation in MLXClient.generate's deadline plumbing.
+        margin = max(1.5, min(6.0, remaining_s * 0.08))
+        return max(remaining_s * 0.5, remaining_s - margin)
+
+    for remaining in (10.0, 30.0, 77.3, 120.0, 300.0):
+        budget = worker_budget(remaining)
+        assert budget < remaining, (
+            f"worker must stop before the caller's deadline (remaining={remaining})"
+        )
+        assert remaining - budget >= 1.5, "delivery margin too small to cross IPC"
+        assert budget >= remaining * 0.5, (
+            f"margin ate more than half the budget (remaining={remaining})"
+        )
+
+    # A long budget must not surrender a proportionally huge margin.
+    assert 300.0 - worker_budget(300.0) <= 6.0
