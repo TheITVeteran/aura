@@ -30648,3 +30648,34 @@ or capability result is claimed. Counting CP420D makes 669 total checkpoints;
 the current planning range is 6-11 to resident training launch, 10-17 to a
 defensible preliminary verdict, and 16-27 to the powered conditional `WOW
 Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420E independently replayed mutation provenance
+
+Independent adapter validation now replays the complete closed transition
+campaign behind every optimizer update. It reconstructs each source-bound
+group admission from immutable episode, reward, sample, manifest, signature,
+scorer, and token-codec evidence; reconstructs the durable reservation,
+commit, and update receipt; verifies each campaign terminal; and requires one
+continuous before/after policy chain. The resulting proof-grade adapter
+identity cross-binds the replay receipt, optimizer-update count, and final
+policy hash to CP418's existing artifact, tensor, checkpoint, behavior,
+personality, and runtime identity.
+
+The immutable adapter-freeze boundary accepts that verified identity only when
+its proof fields are present and valid. Relabeling an ordinary receipt as
+verified, omitting the replay digest, admitting zero updates, or claiming the
+legacy scalar-reward path still fails closed. The combined SPARK proof,
+trainer-contract, adapter-freeze, and newly landed autonomous-brain routing
+matrix passes 233/233; the three async recovery contracts pass separately with
+the repository async plugin. Governance ownership, Ruff, compilation, and diff
+hygiene pass. Evidence is
+`artifacts/current/cp420e_verified_transition_training_evidence.json`.
+
+This closes CP418 source-artifact replay, not CP420 or SPARK-060. The production
+trainer still owns a raw recurrent reward/optimizer route that bypasses the
+verified campaign transaction; it must be replaced before any model run can be
+admitted as proof-grade. No model or capability result is claimed. Counting
+CP420E makes 670 total checkpoints. The evidence-adjusted planning range is
+5-10 checkpoints to resident-32B training launch, 9-16 to a defensible
+preliminary live gain verdict, and 15-26 to a powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

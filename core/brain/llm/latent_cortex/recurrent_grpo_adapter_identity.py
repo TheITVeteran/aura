@@ -37,6 +37,9 @@ from core.learning.recurrent_grpo_artifact_schema import (
 MANIFEST_FILE = "recurrence_adapter_manifest.json"
 MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v1"
 IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_adapter_identity_receipt.v1"
+VERIFIED_IDENTITY_RECEIPT_SCHEMA = (
+    "aura.recurrent_grpo_verified_adapter_identity_receipt.v1"
+)
 COMPLETION_SCHEMA = "aura.recurrent_grpo_training_completion.v1"
 TRAINING_PROTOCOL_SCHEMA = PROTOCOL_SCHEMA
 TRAINING_RECEIPT_SCHEMA = SHARED_TRAINING_RECEIPT_SCHEMA
@@ -912,6 +915,66 @@ def validate_recurrent_grpo_adapter_identity(
     }
 
 
+def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+    manifest: Mapping[str, Any] | bytes,
+    *,
+    adapter_id: str,
+    actual_base_checkpoint: Mapping[str, Any],
+    actual_model_behavior_bundle: Mapping[str, Any],
+    actual_personality_adapter: Mapping[str, Any],
+    actual_runtime_environment: Mapping[str, Any],
+    artifacts: Mapping[str, bytes],
+    tensor_metadata: Iterable[TensorIdentity | Mapping[str, Any]],
+    transition_campaign_ledger: Any,
+    transition_policy: Any,
+    transition_groups: Iterable[Any],
+) -> dict[str, Any]:
+    """Validate adapter identity and replay every verified mutation source."""
+
+    identity = validate_recurrent_grpo_adapter_identity(
+        manifest,
+        adapter_id=adapter_id,
+        actual_base_checkpoint=actual_base_checkpoint,
+        actual_model_behavior_bundle=actual_model_behavior_bundle,
+        actual_personality_adapter=actual_personality_adapter,
+        actual_runtime_environment=actual_runtime_environment,
+        artifacts=artifacts,
+        tensor_metadata=tensor_metadata,
+    )
+    from core.learning.verified_transition_training_evidence import (
+        validate_verified_transition_training_evidence,
+    )
+
+    evidence = validate_verified_transition_training_evidence(
+        transition_campaign_ledger,
+        policy=transition_policy,
+        groups=tuple(transition_groups),
+    )
+    if (
+        evidence.get("source_artifacts_replayed") is not True
+        or evidence.get("legacy_scalar_reward_path_used") is not False
+        or identity.get("optimizer_updates") != evidence.get("optimizer_update_count")
+        or identity.get("final_policy_sha256") != evidence.get("final_policy_sha256")
+    ):
+        _fail("verified_transition_identity_cross_binding_mismatch")
+    evidence_sha256 = _sha(evidence.get("receipt_sha256"), role="verified_evidence")
+    material = {
+        "base_identity_sha256": identity["composite_identity_sha256"],
+        "verified_transition_evidence_sha256": evidence_sha256,
+        "optimizer_update_count": evidence["optimizer_update_count"],
+        "final_policy_sha256": evidence["final_policy_sha256"],
+    }
+    return {
+        **identity,
+        "schema": VERIFIED_IDENTITY_RECEIPT_SCHEMA,
+        "base_identity_sha256": identity["composite_identity_sha256"],
+        "verified_transition_evidence_sha256": evidence_sha256,
+        "proof_grade_mutation": True,
+        "legacy_scalar_reward_path_used": False,
+        "composite_identity_sha256": sha256_bytes(canonical_json_bytes(material)),
+    }
+
+
 __all__ = [
     "BINDING_ROLES",
     "COMPLETION_SCHEMA",
@@ -925,6 +988,7 @@ __all__ = [
     "TRAINING_METHOD",
     "TRAINING_PROTOCOL_SCHEMA",
     "TRAINING_RECEIPT_SCHEMA",
+    "VERIFIED_IDENTITY_RECEIPT_SCHEMA",
     "RecurrentGRPOAdapterIdentityError",
     "artifact_binding",
     "canonical_json_bytes",
@@ -932,4 +996,5 @@ __all__ = [
     "sha256_bytes",
     "strict_json_loads",
     "validate_recurrent_grpo_adapter_identity",
+    "validate_recurrent_grpo_adapter_identity_with_verified_transitions",
 ]

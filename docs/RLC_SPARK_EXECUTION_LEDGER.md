@@ -4813,3 +4813,40 @@ generated fresh at acceptance precisely so the dry run cannot see them.
 No checkbox moved. No model of consequence ran. Nothing here is a reasoning,
 resident-32B, frontier, promotion, or `WOW Signal` result, and none of these
 checkpoints is counted against the march's record.
+
+### 2026-07-27 - CP420E source-replayed training identity and freeze
+
+CP418 adapter identity no longer accepts an optimizer count and final policy
+hash solely because the training receipt states them. The verified path opens
+the externally closed CP420 campaign, identifies the exact updated group set,
+and independently reconstructs every admitted group from its immutable paired
+episodes, reward evidence, samples, signed pre-generation manifest, scorer, and
+token codec. It then reconstructs every durable reservation, commit, and update
+receipt, binds those records to the corresponding campaign terminals, and
+requires a continuous policy hash chain across all mutations.
+
+That replay receipt is cross-bound to the existing CP418 adapter identity:
+optimizer count and final policy must agree, and the immutable freeze
+certificate preserves the verified identity schema and replay digest. The
+freeze boundary has a distinct strict contract for this schema; a relabeled
+ordinary identity or a verified identity missing proof-grade mutation, source
+replay, positive update count, or final-policy evidence is refused.
+
+The combined affected matrix passes 233/233 in split plugin-correct runs:
+230 synchronous contracts plus three repository-async recovery contracts. It
+includes verified-transition campaigns and updates, recurrent objectives,
+trainer contracts, adapter identity/freeze, and the newly merged CP126
+autonomous-brain routing contracts. Governance ownership remains at 2,059
+recognized calls in 1,922 buckets; Ruff, compilation, and diff hygiene pass.
+Evidence is
+`artifacts/current/cp420e_verified_transition_training_evidence.json`.
+
+CP418 source replay is closed. CP420 and SPARK-060 remain open because
+`tools/train_grpo.py` still directly grades scalar rewards, constructs the raw
+recurrent objective, and invokes the optimizer outside the verified campaign
+transaction. That is the next checkpoint. No model was loaded or trained, and
+no reasoning, resident-32B, frontier, promotion, or `WOW Signal` claim follows.
+Counting CP420E makes 670 total checkpoints. The current planning range is
+5-10 checkpoints to resident-32B training launch, 9-16 to a defensible
+preliminary live gain verdict, and 15-26 to a powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

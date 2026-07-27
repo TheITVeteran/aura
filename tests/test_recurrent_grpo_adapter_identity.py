@@ -9,8 +9,12 @@ from pathlib import Path
 
 import pytest
 
+from core.brain.llm.latent_cortex import (
+    recurrent_grpo_adapter_identity as identity_runtime,
+)
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.brain.llm.latent_cortex.campaign_launch_bundle import (
+    CampaignLaunchBundleError,
     build_adapter_freeze_certificate,
     verify_adapter_freeze,
 )
@@ -18,8 +22,13 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     IDENTITY_RECEIPT_SCHEMA,
     MANIFEST_FILE,
+    VERIFIED_IDENTITY_RECEIPT_SCHEMA,
     RecurrentGRPOAdapterIdentityError,
     sha256_bytes,
+    validate_recurrent_grpo_adapter_identity_with_verified_transitions,
+)
+from core.learning import (
+    verified_transition_training_evidence as transition_evidence_runtime,
 )
 from core.learning.grpo import GRPOConfig, group_advantages
 from core.learning.grpo_training_state import canonical_json_bytes as training_json_bytes
@@ -353,6 +362,71 @@ def test_recurrent_grpo_bundle_is_complete_distinct_and_idempotent(tmp_path):
     assert _validate(fixture) == identity
 
 
+def test_verified_identity_requires_source_replay_and_cross_binds_final_policy(
+    monkeypatch,
+):
+    base_identity = {
+        "schema": IDENTITY_RECEIPT_SCHEMA,
+        "composite_identity_sha256": "1" * 64,
+        "optimizer_updates": 3,
+        "final_policy_sha256": "2" * 64,
+    }
+    evidence = {
+        "receipt_sha256": "3" * 64,
+        "source_artifacts_replayed": True,
+        "legacy_scalar_reward_path_used": False,
+        "optimizer_update_count": 3,
+        "final_policy_sha256": "2" * 64,
+    }
+    monkeypatch.setattr(
+        identity_runtime,
+        "validate_recurrent_grpo_adapter_identity",
+        lambda *_args, **_kwargs: dict(base_identity),
+    )
+    monkeypatch.setattr(
+        transition_evidence_runtime,
+        "validate_verified_transition_training_evidence",
+        lambda *_args, **_kwargs: dict(evidence),
+    )
+
+    result = validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+        b"{}",
+        adapter_id="verified-adapter",
+        actual_base_checkpoint={},
+        actual_model_behavior_bundle={},
+        actual_personality_adapter={},
+        actual_runtime_environment={},
+        artifacts={},
+        tensor_metadata=(),
+        transition_campaign_ledger=object(),
+        transition_policy=object(),
+        transition_groups=(object(),),
+    )
+
+    assert result["proof_grade_mutation"] is True
+    assert result["legacy_scalar_reward_path_used"] is False
+    assert result["verified_transition_evidence_sha256"] == "3" * 64
+
+    evidence["final_policy_sha256"] = "4" * 64
+    with pytest.raises(
+        RecurrentGRPOAdapterIdentityError,
+        match="verified_transition_identity_cross_binding_mismatch",
+    ):
+        validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+            b"{}",
+            adapter_id="verified-adapter",
+            actual_base_checkpoint={},
+            actual_model_behavior_bundle={},
+            actual_personality_adapter={},
+            actual_runtime_environment={},
+            artifacts={},
+            tensor_metadata=(),
+            transition_campaign_ledger=object(),
+            transition_policy=object(),
+            transition_groups=(object(),),
+        )
+
+
 def test_recurrent_grpo_shaped_reward_bundle_round_trips_real_producer_format(
     tmp_path,
 ):
@@ -505,3 +579,51 @@ def test_recurrent_grpo_bundle_freezes_and_verifies_without_unplanned_files(tmp_
     assert verified["identity_receipt"]["schema"] == IDENTITY_RECEIPT_SCHEMA
     assert not (destination / "grpo_adapters.safetensors").exists()
     assert (destination / "campaign_adapter/adapters.safetensors").exists()
+
+
+def test_verified_recurrent_grpo_identity_freezes_only_with_proof_fields(tmp_path):
+    fixture = _fixture(tmp_path)
+    source = fixture["out"]
+    staging = tmp_path / ".verified-freeze.staging"
+    destination = tmp_path / "verified-freeze"
+    inventory = preparation.copy_adapter_snapshot(source, staging)
+    identity = {
+        **fixture["identity"],
+        "schema": VERIFIED_IDENTITY_RECEIPT_SCHEMA,
+        "base_identity_sha256": fixture["identity"]["composite_identity_sha256"],
+        "verified_transition_evidence_sha256": "9" * 64,
+        "proof_grade_mutation": True,
+        "legacy_scalar_reward_path_used": False,
+    }
+    model_identity = {
+        "fingerprint": "1" * 64,
+        "files": 1,
+        "model_behavior_bundle_sha256": "2" * 64,
+        "runtime_bundle_sha256": "6" * 64,
+        "runtime_environment_identity_sha256": "3" * 64,
+        "personality_adapter_bundle_sha256": "",
+        "effective_stack_sha256": "7" * 64,
+    }
+    certificate = build_adapter_freeze_certificate(
+        adapter_id=fixture["adapter_id"],
+        inventory=inventory,
+        identity_receipt=identity,
+        model_identity=model_identity,
+        validator_identity={"validator_sha256": "8" * 64},
+    )
+    preparation.seal_adapter_snapshot(staging, destination, certificate)
+
+    verified = verify_adapter_freeze(destination)
+    assert verified["identity_receipt"]["schema"] == VERIFIED_IDENTITY_RECEIPT_SCHEMA
+    assert verified["identity_receipt"]["proof_grade_mutation"] is True
+
+    incomplete = dict(identity)
+    incomplete.pop("verified_transition_evidence_sha256")
+    with pytest.raises(CampaignLaunchBundleError, match="adapter_identity_receipt_invalid"):
+        build_adapter_freeze_certificate(
+            adapter_id=fixture["adapter_id"],
+            inventory=inventory,
+            identity_receipt=incomplete,
+            model_identity=model_identity,
+            validator_identity={"validator_sha256": "8" * 64},
+        )

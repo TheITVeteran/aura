@@ -92,6 +92,10 @@ from core.learning.verified_transition_reward import (
     require_optimizer_admission,
     validate_verified_transition_reward_batch,
 )
+from core.learning.verified_transition_training_evidence import (
+    VerifiedTransitionReplayGroup,
+    validate_verified_transition_training_evidence,
+)
 from core.learning.verified_transition_update import (
     VerifiedTransitionUpdateError,
     VerifiedTransitionUpdateJournal,
@@ -2091,6 +2095,49 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     admission_sha256 = material["admission"]["receipt_sha256"]
     assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
     assert (tmp_path / "updates" / f"{admission_sha256}.committed.json").is_file()
+
+    close_payload = campaign_ledger.close_payload(
+        completed_at_unix_ns=1_800_000_227_000_000_000,
+        policy=material["cases"][0]["policy"],
+    )
+    close_attestation = build_role_attestation(
+        material["cases"][0]["policy"],
+        role=EVIDENCE_VERIFIER,
+        payload=close_payload,
+        signed_at_unix=1_800_000_227,
+        private_key=material["cases"][0]["role_keys"][EVIDENCE_VERIFIER],
+    )
+    campaign_ledger.close(
+        close_payload=close_payload,
+        evidence_verifier_attestation=close_attestation,
+        policy=material["cases"][0]["policy"],
+    )
+    training_evidence = validate_verified_transition_training_evidence(
+        campaign_ledger,
+        policy=material["cases"][0]["policy"],
+        groups=(
+            VerifiedTransitionReplayGroup(
+                sequence=0,
+                transition_store=material["store"],
+                group_admission_receipt=material["admission"],
+                reward_receipt=material["batch"],
+                transition_evidence=material["evidence"],
+                samples=material["samples"],
+                prompt_tokens=material["prompt_tokens"],
+                group_manifest=material["manifest"],
+                group_manifest_attestation=material["manifest_attestation"],
+                independent_scorer=score_frontier_response_independently,
+                token_encoder=_byte_encode,
+                token_decoder=_byte_decode,
+                update_journal=journal,
+                update_receipt=receipt,
+            ),
+        ),
+    )
+    assert training_evidence["source_artifacts_replayed"] is True
+    assert training_evidence["legacy_scalar_reward_path_used"] is False
+    assert training_evidence["optimizer_update_count"] == 1
+    assert training_evidence["final_policy_sha256"] == policy_after
 
     forged = _reseal(
         {

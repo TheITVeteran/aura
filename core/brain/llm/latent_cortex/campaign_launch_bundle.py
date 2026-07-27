@@ -35,6 +35,9 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     MANIFEST_SCHEMA as GRPO_MANIFEST_SCHEMA,
 )
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    VERIFIED_IDENTITY_RECEIPT_SCHEMA as VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
+)
 from core.runtime.file_read_gateway import open_stable_readonly_binary, read_stable_bytes
 
 ADAPTER_FREEZE_SCHEMA = "aura.latent_cortex.adapter_freeze.v1"
@@ -58,6 +61,11 @@ _BINDING_ROLES = (
 _MAX_JSON_BYTES = 256 * 1024 * 1024
 _MAX_ARTIFACT_BYTES = 1 << 40
 _MAX_ARTIFACTS = 128
+_SUPPORTED_IDENTITY_RECEIPT_SCHEMAS = {
+    IDENTITY_RECEIPT_SCHEMA_V2,
+    GRPO_IDENTITY_RECEIPT_SCHEMA,
+    VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
+}
 
 
 class CampaignLaunchBundleError(ValueError):
@@ -413,6 +421,31 @@ def _validated_model_identity(model_identity: Mapping[str, Any]) -> dict[str, An
     return dict(model_identity)
 
 
+def _valid_identity_receipt(
+    identity_receipt: Any,
+    *,
+    adapter_id: Any,
+) -> bool:
+    if (
+        not isinstance(identity_receipt, Mapping)
+        or identity_receipt.get("schema") not in _SUPPORTED_IDENTITY_RECEIPT_SCHEMAS
+        or identity_receipt.get("adapter_id") != adapter_id
+        or identity_receipt.get("complete") is not True
+    ):
+        return False
+    if identity_receipt.get("schema") != VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA:
+        return True
+    return (
+        identity_receipt.get("proof_grade_mutation") is True
+        and identity_receipt.get("legacy_scalar_reward_path_used") is False
+        and _is_sha256(identity_receipt.get("base_identity_sha256"))
+        and _is_sha256(identity_receipt.get("verified_transition_evidence_sha256"))
+        and type(identity_receipt.get("optimizer_updates")) is int
+        and identity_receipt["optimizer_updates"] > 0
+        and _is_sha256(identity_receipt.get("final_policy_sha256"))
+    )
+
+
 def build_adapter_freeze_certificate(
     *,
     adapter_id: str,
@@ -426,10 +459,7 @@ def build_adapter_freeze_certificate(
     if (
         not isinstance(adapter_id, str)
         or not adapter_id
-        or identity_receipt.get("schema")
-        not in {IDENTITY_RECEIPT_SCHEMA_V2, GRPO_IDENTITY_RECEIPT_SCHEMA}
-        or identity_receipt.get("adapter_id") != adapter_id
-        or identity_receipt.get("complete") is not True
+        or not _valid_identity_receipt(identity_receipt, adapter_id=adapter_id)
     ):
         _fail("adapter_identity_receipt_invalid")
     validated_model_identity = _validated_model_identity(model_identity)
@@ -492,13 +522,7 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
         _fail("adapter_freeze_model_identity_invalid")
     _validated_model_identity(model_identity)
     receipt = certificate.get("identity_receipt")
-    if (
-        not isinstance(receipt, Mapping)
-        or receipt.get("schema")
-        not in {IDENTITY_RECEIPT_SCHEMA_V2, GRPO_IDENTITY_RECEIPT_SCHEMA}
-        or receipt.get("adapter_id") != certificate.get("adapter_id")
-        or receipt.get("complete") is not True
-    ):
+    if not _valid_identity_receipt(receipt, adapter_id=certificate.get("adapter_id")):
         _fail("adapter_freeze_identity_invalid")
     return certificate
 

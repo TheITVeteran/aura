@@ -494,6 +494,30 @@ class VerifiedTransitionCampaignLedger:
             _fail("campaign_ledger_symlink_rejected")
         return path.is_file()
 
+    def group_records(
+        self,
+        *,
+        sequence: int,
+        policy: VerifiedCampaignTrustPolicy,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Return one independently checked start/terminal pair."""
+
+        receipt = self.validate_closed(policy=policy)
+        close_payload = cast(dict[str, Any], receipt["close_payload"])
+        sequence = _integer(sequence, role="campaign_records_sequence")
+        if sequence >= cast(int, close_payload["group_count"]):
+            _fail("campaign_group_not_planned")
+        start = self._read(self._group_name(sequence, "started"))
+        terminal = self._read(self._group_name(sequence, "terminal"))
+        if (
+            start.get("receipt_sha256")
+            != close_payload["group_start_sha256s"][sequence]
+            or terminal.get("receipt_sha256")
+            != close_payload["group_terminal_sha256s"][sequence]
+        ):
+            _fail("campaign_group_close_binding_mismatch")
+        return start, terminal
+
     def close_payload(
         self,
         *,

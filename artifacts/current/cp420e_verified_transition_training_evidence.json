@@ -1,0 +1,48 @@
+{
+  "schema": "aura.spark.cp420e_verified_transition_training_evidence.v1",
+  "checkpoint": "CP420E",
+  "date": "2026-07-27",
+  "source_base_commit": "c24eabad8d5cb37314146e89c1086835e4c57cfa",
+  "claims": {
+    "closed_campaign_replayed": true,
+    "updated_group_set_exact": true,
+    "group_admission_source_artifacts_replayed": true,
+    "reservation_and_commit_replayed": true,
+    "campaign_terminal_bindings_replayed": true,
+    "optimizer_policy_chain_replayed": true,
+    "adapter_identity_cross_bound_to_replay": true,
+    "verified_identity_freeze_supported": true,
+    "incomplete_verified_identity_freeze_rejected": true
+  },
+  "source_sha256": {
+    "core/brain/llm/latent_cortex/campaign_launch_bundle.py": "c62d0b5643a02f6b6d11efb182e0933ad06b6430f0de3f1046d46f92385e839e",
+    "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py": "1cf96394ad8ac7b81ef42f7dfb7a21b5dba69d37d4b128ebb193a9e52922af2c",
+    "core/learning/verified_transition_campaign.py": "abb646fe366bd189df00d4c5dfbd204d5413ea97e498edb7c4758c173d565d4b",
+    "core/learning/verified_transition_training_evidence.py": "dc866ba6a00444dc30c1c2cc6264e2612885ee39565938d891f9309a2b7b4faf",
+    "tests/test_recurrent_grpo_adapter_identity.py": "5fbc1315b00a304a7dfb6f8e2da8a78b926ae4f0b9aebdc5a37918ec448d7f52",
+    "tests/test_verified_transition_episode.py": "5b1f8ae4dcbf6162a8ef6921b54142dc5b37d090110d07cd8a15e150addf7196"
+  },
+  "validation": {
+    "synchronous_proof_and_routing_matrix": {"passed": 230, "failed": 0, "duration_seconds": 77.49},
+    "async_recovery_contracts": {"passed": 3, "failed": 0, "duration_seconds": 0.47},
+    "governance_effect_ownership": {"status": "baseline_matched", "recognized_calls": 2059, "buckets": 1922},
+    "ruff": "pass",
+    "compileall": "pass",
+    "diff_hygiene": "pass"
+  },
+  "nonclaims": {
+    "exclusive_production_mutation_path": false,
+    "legacy_trainer_bypass_removed": false,
+    "model_loaded": false,
+    "model_trained": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false
+  },
+  "next": [
+    "replace the legacy recurrent trainer optimizer path with the verified campaign transaction",
+    "run the fresh sealed small-checkpoint behavior campaign",
+    "execute the remaining SPARK-061 through SPARK-068 live acceptance legs before SPARK-069"
+  ]
+}
