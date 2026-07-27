@@ -1573,7 +1573,43 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 # decimal point in "0.86." because "86." looks exactly like a list marker. The
 # negative lookbehind requires that the sentence terminator not itself be a
 # decimal point, i.e. that it is not preceded by a digit.
-_JAMMED_NUMBERED_MARKER_RE = re.compile(r"(?<![0-9][.!?])(?<=[.!?])(?=\d+[.)]\s*)")
+_JAMMED_NUMBERED_MARKER_RE = re.compile(
+    r"(?<=[.!?:])(?P<marker>\d{1,2})(?P<close>[.)])(?=\s*[A-Za-z(\[*_\"'])"
+)
+
+
+def _split_jammed_numbered_markers(text: str) -> str:
+    """Put a jammed list marker on its own line without breaking decimals.
+
+    "Here are the steps.1. Do X.2. Do Y." and "...= 12.2. Drawing without..."
+    are both a list item welded to the previous sentence. "Score 4.5. Next
+    item." and "coherence 0.86." are decimals. All four are the same shape —
+    digit, terminator, digit, terminator — so shape alone cannot separate them.
+
+    Sequence can. A jammed marker N continues a list, so marker N-1 appears
+    earlier at a position a marker can legally start: the beginning, or just
+    after a terminator or a heading colon. A decimal's digits have no such
+    predecessor. "12.2." finds "1." after the colon in "down:1."; "4.5." finds
+    no marker "4." because the 4 in "Score 4.5" follows a space.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        marker, close = match.group("marker"), match.group("close")
+        preceding = text[: match.start()]
+        # preceding[-1] is the terminator the lookbehind matched; the decimal
+        # question is about the character before THAT.
+        if preceding[-2:-1].isdigit():
+            try:
+                previous = int(marker) - 1
+            except ValueError:
+                return match.group(0)
+            if previous < 1 or not re.search(
+                rf"(?:^|[.!?:])\s*{previous}[.)]", preceding
+            ):
+                return match.group(0)
+        return f"\n{marker}{close}"
+
+    return _JAMMED_NUMBERED_MARKER_RE.sub(_replace, text)
 _LIST_LINE_RE = re.compile(r"^\s*(?P<marker>(?:[-*+]|\d+[.)]))\s*(?P<body>.*)$")
 _EXACT_REPLY_CONDITIONAL_TAIL_RE = re.compile(
     r"(?:^|[,;]\s*|\s+)"
@@ -2189,7 +2225,7 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     text = str(reply_text or "").strip()
     if not text:
         return text
-    text = _JAMMED_NUMBERED_MARKER_RE.sub("\n", text)
+    text = _split_jammed_numbered_markers(text)
     text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
     return text.strip()
 
