@@ -24,14 +24,6 @@ from pathlib import Path
 from typing import Any, Final
 
 from core.brain.llm.latent_cortex.campaign_journal import (
-    ACTION_INTERVENTION_CLAIMED,
-    ARM_RESULT,
-    COMMITTED,
-    EVENT_SCHEMA,
-    FAILED,
-    PLAN_EVENT,
-    STARTED,
-    VERIFIED,
     CampaignJournal,
     CampaignPlan,
 )
@@ -44,6 +36,10 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     verify_role_attestation,
 )
 from core.brain.llm.latent_cortex.epistemic_state import OperationKind
+from core.brain.llm.latent_cortex.journal_state import (
+    assert_active_attempt,
+    replay_journal,
+)
 from core.runtime.file_read_gateway import read_stable_bytes
 
 ACTION_INTERVENTION_SCHEMA: Final = "aura.rlc.action_intervention.v3"
@@ -562,144 +558,26 @@ def _validate_journal_prefix(
     plan: CampaignPlan,
     authority: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
-    event_fields = {
-        "schema",
-        "sequence",
-        "plan_sha256",
-        "previous_event_sha256",
-        "event",
-        "cell_id",
-        "attempt_id",
-        "payload",
-        "event_sha256",
-    }
+    """Replay a complete genesis-to-head prefix and assert the live attempt.
+
+    The transition rules themselves live in `journal_state` so the compact
+    checkpointed proof folds exactly the same state machine this does. A second
+    copy of these rules would be free to drift, and a drifted copy would let an
+    envelope pass one validator while failing the other.
+    """
+
     if (
         not isinstance(value, Sequence)
         or isinstance(value, (str, bytes))
         or len(value) != authority["journal_event_count"]
     ):
         raise ValueError("action intervention campaign journal prefix is invalid")
-    previous = "0" * 64
-    attempts: dict[str, dict[str, Any]] = {}
-    active_by_cell: dict[str, str] = {}
-    start_counts: dict[str, int] = {}
-    committed_cells: set[str] = set()
-    transcript: list[dict[str, Any]] = []
-    for sequence, raw in enumerate(value):
-        if not isinstance(raw, Mapping) or set(raw) != event_fields:
-            raise ValueError("action intervention campaign journal event differs")
-        event = dict(raw)
-        body = {name: event[name] for name in event_fields - {"event_sha256"}}
-        if (
-            event.get("schema") != EVENT_SCHEMA
-            or event.get("sequence") != sequence
-            or event.get("plan_sha256") != plan.plan_sha256
-            or event.get("previous_event_sha256") != previous
-            or event.get("event_sha256") != _sha256(body)
-        ):
-            raise ValueError("action intervention campaign journal chain differs")
-        event_name = event.get("event")
-        cell_id = event.get("cell_id")
-        attempt_id = event.get("attempt_id")
-        payload = event.get("payload")
-        if sequence == 0:
-            if (
-                event_name != PLAN_EVENT
-                or cell_id is not None
-                or attempt_id is not None
-                or payload != {"plan": plan.to_dict()}
-            ):
-                raise ValueError("action intervention campaign journal genesis differs")
-        else:
-            if (
-                not isinstance(cell_id, str)
-                or cell_id not in plan.cell_ids
-                or not isinstance(attempt_id, str)
-                or not isinstance(payload, Mapping)
-            ):
-                raise ValueError("action intervention campaign journal identity differs")
-            if event_name == STARTED:
-                attempt_number = start_counts.get(cell_id, 0) + 1
-                if (
-                    payload != {"attempt_number": attempt_number}
-                    or cell_id in active_by_cell
-                    or cell_id in committed_cells
-                    or attempt_id in attempts
-                    or attempt_id
-                    != action_intervention_attempt_id(
-                        campaign_plan_sha256=plan.plan_sha256,
-                        cell_id=cell_id,
-                        attempt_number=attempt_number,
-                    )
-                ):
-                    raise ValueError("action intervention campaign journal attempt differs")
-                start_counts[cell_id] = attempt_number
-                attempts[attempt_id] = {
-                    "cell_id": cell_id,
-                    "attempt_number": attempt_number,
-                    "state": STARTED,
-                }
-                active_by_cell[cell_id] = attempt_id
-            else:
-                attempt = attempts.get(attempt_id)
-                if (
-                    attempt is None
-                    or attempt["cell_id"] != cell_id
-                    or active_by_cell.get(cell_id) != attempt_id
-                ):
-                    raise ValueError("action intervention campaign journal attempt is inactive")
-                state = attempt["state"]
-                if event_name == ACTION_INTERVENTION_CLAIMED:
-                    valid = (
-                        state == STARTED
-                        and set(payload)
-                        == {
-                            "intervention_sha256",
-                            "request_payload_sha256",
-                            "signed_journal_head_sha256",
-                            "signed_journal_event_count",
-                        }
-                        and _is_sha256(payload.get("intervention_sha256"))
-                        and _is_sha256(payload.get("request_payload_sha256"))
-                        and payload.get("signed_journal_head_sha256")
-                        == event.get("previous_event_sha256")
-                        and payload.get("signed_journal_event_count") == sequence
-                    )
-                elif event_name == ARM_RESULT:
-                    valid = state in {STARTED, ACTION_INTERVENTION_CLAIMED} and set(payload) == {
-                        "result"
-                    }
-                elif event_name == VERIFIED:
-                    valid = state == ARM_RESULT and set(payload) == {"verification"}
-                elif event_name == COMMITTED:
-                    valid = state == VERIFIED and set(payload) == {"commit"}
-                elif event_name == FAILED:
-                    valid = (
-                        set(payload) == {"details", "reason"}
-                        and isinstance(payload.get("details"), Mapping)
-                        and isinstance(payload.get("reason"), str)
-                        and bool(payload["reason"].strip())
-                    )
-                else:
-                    valid = False
-                if not valid:
-                    raise ValueError("action intervention campaign journal transition differs")
-                attempt["state"] = event_name
-                if event_name in {COMMITTED, FAILED}:
-                    del active_by_cell[cell_id]
-                if event_name == COMMITTED:
-                    committed_cells.add(cell_id)
-        previous = str(event["event_sha256"])
-        transcript.append(event)
-    target_attempt = attempts.get(str(authority["attempt_id"]))
-    if (
-        previous != authority["journal_head_sha256"]
-        or active_by_cell.get(authority["cell_id"]) != authority["attempt_id"]
-        or target_attempt is None
-        or target_attempt["state"] != STARTED
-        or target_attempt["attempt_number"] != authority["attempt_number"]
-    ):
-        raise ValueError("action intervention active journal attempt differs")
+    state, transcript = replay_journal(
+        value,
+        plan=plan,
+        attempt_id_for=action_intervention_attempt_id,
+    )
+    assert_active_attempt(state, authority=authority)
     return transcript
 
 

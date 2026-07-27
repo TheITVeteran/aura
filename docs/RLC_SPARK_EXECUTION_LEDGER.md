@@ -3593,6 +3593,43 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-063 - Verified STaR flywheel.** Generate, verify, filter, train,
   retest on fresh holdouts, and iterate with durable manifests; tool-assisted
   and latent traces enter only after evidence gates.
+
+  F7-D (2026-07-27, Fable lane) builds the honesty layer this loop needs before
+  it runs, in `core/learning/star_iteration_ledger.py`. The mechanics of a STaR
+  flywheel are easy; the failure that ruins one is silent and nobody has to
+  cheat to hit it: **iteration k's holdout becomes iteration k+1's training
+  data.** The curve rises, each step looks defensible, and memorization is
+  being scored as generalization. A flywheel that keeps verified traces and
+  keeps sampling holdouts from the same pool arrives there on its own.
+
+  So the ledger is arithmetic and set disjointness enforced across the whole
+  lineage rather than inside one iteration:
+  * A holdout must be disjoint from this iteration's training set, from
+    **every prior** iteration's training set, and from every holdout already
+    scored. A task ever trained on is not a holdout; a holdout scored before
+    is one the policy has already been selected against. Both refuse with a
+    typed `StarContaminationError` naming the scope, the iteration, and a
+    sample of the overlap.
+  * The funnel only narrows: trained ≤ filtered ≤ verified ≤ generated.
+  * Every trace lost between verification and training is attributed to a
+    named reason, and the reasons must sum to exactly the drop — "we filtered
+    400 and 250 remain" with 100 reasons given is refused, not rounded.
+  * Tool-assisted and latent traces are gated by default and cannot appear in
+    a training set until a gate is recorded as passed; a later failing gate
+    withdraws the class again. A direct trace has no gate to declare, since
+    the verifier that grades the answer already grades it.
+  * `lineage_trend` reports a score series only over a validated lineage, so
+    the number nobody should quote without its disjointness cannot be
+    computed without it.
+
+  17/17 focused tests pass, including a holdout leaked from three iterations
+  earlier, a holdout scored twice, a widened funnel, unattributed filter loss,
+  a reordered lineage, an edited iteration, an ungated tool-assisted class, a
+  gate withdrawal, and a trend attempted over a contaminated lineage.
+
+  **The checkbox stays open**: no flywheel iteration has run through this
+  ledger, and the generate/verify/train stages themselves remain the march's.
+  This checkpoint runs no model and grants no capability claim.
 - [ ] **SPARK-064 - Permanent distillation.** Promote successful recurrent and
   correction policies through versioned adapters/base updates only after broad
   anti-interference, personality, tool, safety, memory, and frontier regressions
@@ -3697,6 +3734,55 @@ before those dependencies close is not admissible.
   compact append-only proof (for example, checkpointed Merkle/MMR inclusion
   witnesses) that preserves independent replay and external signatures without
   quadratic JSON serialization, memory growth, or verification time.
+
+  F7-C (2026-07-27, Fable lane) builds the compact append-only proof named in
+  the second half of this item. Three modules, all additive — the existing
+  `campaign_journal_prefix` envelope is untouched and still authoritative:
+  * `journal_state.py` **extracts** the journal's transition function from
+    `action_intervention._validate_journal_prefix`, which now delegates to it.
+    The rules, ordering constraints, and refusal messages are unchanged. This
+    extraction is the point: the compact proof folds the *same* state machine,
+    and a second copy would have been free to drift into a witness that passes
+    one validator and fails the other. The folded state is serializable and
+    digestible, and is bounded by the plan's cell count rather than by journal
+    length.
+  * `journal_accumulator.py` is a Merkle Mountain Range over event digests:
+    append-only by construction, O(log n) inclusion, domain-separated node
+    tags, and the size hashed into the root so a proof valid at one length
+    cannot be replayed at another.
+  * `journal_witness.py` is the versioned v2 envelope — accumulator root, a
+    checkpoint (folded state + O(log n) inclusion proof of the checkpoint
+    event), and the bounded suffix the verifier folds itself.
+
+  **What the checkpoint is trusted for is stated, not hidden.** A witness
+  cannot prove its own checkpoint state; someone replayed genesis→k once to
+  compute it. So `verify_journal_witness` *requires* the caller to pass the
+  checkpoint digest it independently trusts and refuses on disagreement —
+  there is no "if omitted, trust the witness" path, and that argument being
+  mandatory is the safety property. A verifier that trusts nobody passes
+  `checkpoint_sequence=0`, which degenerates to exactly today's full replay.
+  In the checkpointed branch the witness's root is deliberately *not*
+  re-compared against itself: that check cannot fail, and a check that cannot
+  fail is the defect this ledger keeps naming. The suffix is bound instead by
+  the checkpoint event's proven inclusion plus the `previous_event_sha256`
+  chain, so substituting another log's suffix requires a SHA-256 collision.
+
+  54/54 focused tests pass: the accumulator verified against every index at
+  twelve log sizes plus a tamper battery (reordered, edited, truncated,
+  swapped leaf, forged path step, flipped side, shortened path, replayed at
+  another size, wrong peak), and the witness proved equivalent to the
+  complete-prefix validator at **every** checkpoint position, plus its own
+  refusals (untrusted checkpoint, disagreeing digest, genesis smuggling a
+  digest, tampered body, forged inclusion, wrong plan, lying size, edited
+  suffix, a journal whose live attempt already committed). At an 8-event
+  checkpoint cadence a 159-event campaign's envelopes carry under a tenth of
+  the events the prefix form carries.
+
+  **The checkbox stays open**: this closes only the compact-proof half. The
+  latency, memory, event-loop, cancellation, concurrency, worker-recovery,
+  health, degradation-taxonomy, privacy, audit-log and UI halves of SPARK-068
+  are untouched, and the v2 envelope has no campaign caller yet — adoption is
+  the march's call, since it owns the campaign protocol. No model runs here.
 
 ## I. Training admission and scientific proof
 
