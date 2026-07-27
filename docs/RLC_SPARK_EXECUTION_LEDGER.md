@@ -3769,6 +3769,40 @@ before those dependencies close is not admissible.
   personality/self-model, affect/body, global workspace/consciousness,
   reasoning amplifiers, goals, and learning; lesion each seam and test both
   directions instead of accepting metadata-only coupling.
+
+  F7-F (2026-07-27, Fable lane) makes "instead of accepting metadata-only
+  coupling" mechanical, in `core/brain/llm/latent_cortex/coupling_matrix.py`.
+  That phrase was doing a lot of work: a field copied from the epistemic state
+  into another subsystem's receipt is not a coupling, it is a field that was
+  copied — the subsystem behaved identically, nothing downstream can tell the
+  difference, and the receipt showing the field present reads exactly like
+  evidence. So:
+  * Every seam declares its evidence **kind**. `metadata` is legal to record
+    and illegal to count: a seam whose forward *or* reverse evidence is
+    metadata is refused by name as `metadata_only_coupling`.
+  * Every seam needs **both directions**, with the direction label checked
+    against the slot it was filed in. A controller that reads memory but
+    cannot change what memory keeps is coupled to memory the way a
+    thermometer is coupled to weather.
+  * Every seam needs a **lesion that removes the effect** — at least half of
+    the intact deviation from baseline must disappear when the seam is cut.
+    An effect that survives its own lesion was not flowing through that seam
+    (`lesion_did_not_remove_effect`), and a lesion with no intact effect to
+    remove is refused rather than counted as a clean cut.
+  * The nine subsystems are **complete by declaration**: a matrix missing one
+    is invalid, not partially passing on the seams someone bothered to
+    measure. Every uncoupled subsystem is named in the matrix verdict.
+
+  23/23 focused tests pass, including each of the nine subsystems dropped in
+  turn, metadata in either direction, a mislabeled direction, a direction that
+  measured nothing, an underpowered direction, an effect surviving its lesion,
+  a flat lesion, a duplicate seam, and an edited seam.
+
+  **The checkbox stays open**: this is the judge, not the measurement. No seam
+  has been instrumented to produce these observations from the live organism,
+  and the forward/reverse/lesion runs against a resident model are the march's.
+  This checkpoint runs no model and grants no coupling claim — an empty matrix
+  proves nothing and this module refuses to pretend otherwise.
 - [ ] **SPARK-068 - Production reliability and observability.** Bound latency,
   memory, event-loop work, cancellation, concurrency, worker recovery, health,
   degradation taxonomy, privacy, audit logs, and UI presentation; fix root

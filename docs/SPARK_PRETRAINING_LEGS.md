@@ -1,6 +1,6 @@
 # Spark pre-training legs (F7, Fable lane)
 
-Six surfaces built on 2026-07-27 so the resident-32B campaign has its
+Seven surfaces built on 2026-07-27 so the resident-32B campaign has its
 scaffolding waiting rather than blocking. None of them runs a model. All of
 them are strict, fail-closed validators over data with no Aura runtime imports
 where possible, so the independent verifier can replay them without booting
@@ -20,6 +20,7 @@ was in the forward pass.
 | SPARK-065 | `core/learning/architecture_meta_controller.py` | An architecture change with no finding, out of bounds, tried in the live runtime, self-approved, or bought with extra compute |
 | SPARK-063 | `core/learning/star_iteration_ledger.py` | A holdout that overlaps *any* prior iteration's training set, or a reused holdout |
 | SPARK-066 | `core/brain/llm/latent_cortex/penultimate_execution_receipt.py` | A latent claim whose adapter never activated, whose passes never diverged, or whose decode ignored the recurrent state |
+| SPARK-067 | `core/brain/llm/latent_cortex/coupling_matrix.py` | A seam whose only evidence is a copied field, a one-way read, or an effect that survives its own lesion |
 | SPARK-068 | `core/brain/llm/latent_cortex/journal_{state,accumulator,witness}.py` | A campaign envelope that costs O(n) per intervention |
 
 ## SPARK-064 — promoting anything the campaign produces
@@ -89,6 +90,17 @@ in a post-mortem.
 The producer side — emitting `activated_blocks`, per-pass `state_sha256`, and
 `decode_state_sha256` from the live worker's forward pass — is the work that
 remains, and it is the march's.
+
+## SPARK-067 — coupling that is not just a copied field
+
+`coupling_seam(...)` per subsystem, then `coupling_matrix(seams)` over all
+nine. Each seam needs forward evidence, reverse evidence, and a lesion that
+removes at least half the intact effect. Evidence declared `metadata` is
+recordable and uncountable — the seam builds, and the matrix refuses to call it
+coupling.
+
+Instrumenting the seams to produce these observations from the live organism is
+the work that remains.
 
 ## SPARK-068 — the campaign journal stops costing quadratically
 
