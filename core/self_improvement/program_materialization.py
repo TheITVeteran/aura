@@ -474,3 +474,176 @@ __all__ = [
     "materialize_program",
     "resolve_program_spec",
 ]
+
+
+# ── Checkers: the case that failed, and the bar that matters ───────────────
+#
+# Bryan asked for checkers and got a board whose pieces did not move. It is the
+# right bar precisely because it is not hard — if this lane cannot produce
+# checkers, nothing more complex is worth attempting — and it is unforgiving in
+# a useful way: mandatory capture, chained jumps, and promotion ending the move
+# are three things a plausible-looking implementation routinely gets wrong.
+
+def _random_checkers_case(rng: random.Random) -> dict[str, Any]:
+    """A position reached by real play, so the cases are positions that occur.
+
+    Random piece scatters produce boards no game ever visits and grade an
+    implementation on situations it will never meet. Playing a short random
+    game first gives openings, midgames, forced captures and kings.
+    """
+    from core.self_improvement import checkers_reference as ref
+
+    board = ref.initial_board()
+    side = ref.BLACK
+    for _ in range(rng.randrange(0, 40)):
+        moves = ref.legal_moves(board, side)
+        if not moves:
+            break
+        board = ref.apply_move(board, rng.choice(moves))
+        side = ref.WHITE if side == ref.BLACK else ref.BLACK
+    return {"board": board, "side": side}
+
+
+def _reference_checkers_moves(case: dict[str, Any]) -> list[list[list[int]]]:
+    """Every legal move for the side to move, as JSON-shaped square paths."""
+    from core.self_improvement import checkers_reference as ref
+
+    moves = ref.legal_moves(list(case["board"]), str(case["side"]))
+    return [[[int(r), int(c)] for r, c in path] for path in moves]
+
+
+def _play_checkers_headlessly(module: Any) -> tuple[bool, str]:
+    """The full quality gate, not merely "it ran"."""
+    from core.self_improvement import checkers_reference as ref
+    from core.self_improvement.artifact_quality import (
+        QualityReport,
+        check_it_can_end,
+        check_it_is_interactive,
+        check_it_refuses_the_illegal,
+        check_there_is_something_to_look_at,
+    )
+
+    namespace = {
+        name: getattr(module, name)
+        for name in dir(module)
+        if not name.startswith("__")
+    }
+    report = QualityReport()
+
+    def _initial(ns: dict[str, Any]) -> Any:
+        factory = ns.get("initial_board") or ns.get("new_board") or ns.get("starting_board")
+        if not callable(factory):
+            raise ValueError("no initial_board() to start from")
+        return {"board": factory(), "side": ref.BLACK}
+
+    def _legal(ns: dict[str, Any], state: Any) -> list[Any]:
+        fn = ns.get("legal_moves") or ns.get("get_legal_moves") or ns.get("valid_moves")
+        if not callable(fn):
+            raise ValueError("no legal_moves(board, side)")
+        return list(fn(state["board"], state["side"]) or [])
+
+    def _apply(ns: dict[str, Any], state: Any, action: Any) -> Any:
+        fn = ns.get("apply_move") or ns.get("make_move") or ns.get("move")
+        if not callable(fn):
+            raise ValueError("no apply_move(board, path)")
+        board = fn(state["board"], action)
+        other = ref.WHITE if state["side"] == ref.BLACK else ref.BLACK
+        return {"board": board, "side": other}
+
+    def _describe(state: Any) -> str:
+        return f"{state['side']}:" + "".join(
+            str(cell) for row in state["board"] for cell in row
+        )
+
+    def _illegal(ns: dict[str, Any], state: Any) -> list[Any]:
+        # Moving off the board, moving nothing, and moving the other side's
+        # piece: three refusals any real rule engine makes.
+        return [
+            [[0, 0], [9, 9]],
+            [[4, 4], [5, 5]],
+            [[0, 1], [0, 1]],
+        ]
+
+    def _to_completion(ns: dict[str, Any]) -> tuple[bool, str]:
+        state = _initial(ns)
+        for ply in range(400):
+            moves = _legal(ns, state)
+            if not moves:
+                return True, f"reached a terminal position after {ply} plies"
+            state = _apply(ns, state, moves[0])
+        return False, "no terminal position within 400 plies"
+
+    for findings, evidence in (
+        check_it_is_interactive(
+            namespace,
+            initial_state=_initial,
+            legal_actions=_legal,
+            apply_action=_apply,
+            describe_state=_describe,
+            min_effective_actions=12,
+        ),
+        check_it_refuses_the_illegal(
+            namespace,
+            initial_state=_initial,
+            illegal_actions=_illegal,
+            apply_action=_apply,
+            describe_state=_describe,
+        ),
+        check_it_can_end(namespace, play_to_completion=_to_completion),
+        check_there_is_something_to_look_at(
+            namespace, initial_state=lambda ns: _initial(ns)["board"]
+        ),
+    ):
+        report.findings.extend(findings)
+        report.evidence.extend(evidence)
+
+    return report.passed, report.summary
+
+
+CHECKERS = ProgramSpec(
+    name="checkers",
+    aliases=("checkers", "draughts", "english draughts", "the game checkers", "checkers game"),
+    fn_name="legal_moves_for",
+    spec_docs=(
+        "Checkers (English draughts) is played on an 8x8 board using only the "
+        "dark squares. Each side starts with twelve men on the three rows "
+        "nearest them.",
+        "Represent the board as 8 rows top to bottom, each of 8 cells: 0 for an "
+        "empty square, 'b' and 'w' for black and white men, 'B' and 'W' for "
+        "kings. Black starts on the top rows and moves down the board; white "
+        "starts on the bottom rows and moves up.",
+        "A man moves one square diagonally forward to an empty square. A king "
+        "moves one square diagonally in any direction.",
+        "A capture jumps an adjacent enemy piece to the empty square directly "
+        "beyond it, and removes the jumped piece.",
+        "Capturing is MANDATORY: if any capture is available to the side to "
+        "move, every non-capturing move is illegal.",
+        "Captures chain: if the piece that just jumped can jump again, it must, "
+        "and the whole chain is one move.",
+        "A man reaching the far rank is promoted to king, and promotion ENDS "
+        "the move — a man crowned mid-chain does not keep jumping as a king.",
+        "The side to move loses when it has no pieces or no legal move.",
+        "Implement legal_moves_for(state) taking {'board': the 8x8 grid, "
+        "'side': 'b' or 'w'} and returning every legal move as a list of square "
+        "paths, where a path is a list of [row, col] pairs starting with the "
+        "piece's square. Sort the returned list.",
+        "Also provide initial_board(), apply_move(board, path) returning the new "
+        "board, legal_moves(board, side), winner(board, side_to_move), and "
+        "render(board) returning a readable multi-line string.",
+    ),
+    oracle=_reference_checkers_moves,
+    case_generator=_random_checkers_case,
+    train_case_count=5,
+    held_out_case_count=12,
+    play_check=_play_checkers_headlessly,
+    default_filename="checkers.py",
+    objective="clean-room reconstruction of English draughts from its published rules",
+    playable_module_hint=(
+        "a playable command-line game on top of your verified rules: render the "
+        "board with row and column labels, list the legal moves, read the "
+        "player's choice from input(), play a simple opponent reply, and stop "
+        "when someone wins"
+    ),
+)
+
+KNOWN_PROGRAM_SPECS = (TWENTY_FORTY_EIGHT, CHECKERS)
