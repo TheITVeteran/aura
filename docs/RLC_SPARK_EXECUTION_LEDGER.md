@@ -2869,6 +2869,26 @@ before those dependencies close is not admissible.
     `evaluator_filesystem_accessed=false`.
   - [x] Keep the result quarantined. The manifest says `trainer_ready=false`
     and grants no training authority.
+  - [x] Build the source-level CP396 external-admission contract. It reuses the
+    root-signed four-role campaign policy and requires distinct signer, key,
+    and organization identities with externally declared custody for task
+    issuer, campaign runner, contamination auditor, and evidence verifier.
+    Producer provenance cannot grant training authority.
+  - [x] Bind the exact candidate/evaluator custody pair, complete committed
+    resident-tokenizer validation document, privacy report, multisurface
+    contamination report, semantic/tool/injection evidence report, and exact
+    model/adapter/recurrence/optimizer/scheduler/RNG/compute trainer contract.
+    Auditor implementation and release identities must match the policy pins.
+  - [x] Require caller-owned freshness state: exact policy digest, minimum
+    policy revision, exact admission sequence, prior admission root, verifier
+    observation time, independently supplied root key, bounded attestation
+    age, and complete deterministic reconstruction. A private-key-free CLI
+    emits exact detached-signature payloads and can assemble or reverify the
+    resulting admission without generating or loading role private keys.
+  - [x] Repair the shared detached-trust artifact boundary exposed during
+    CP396: duplicate JSON keys and non-finite constants fail before schema
+    validation, and lexical output symlinks can no longer evade the helper's
+    no-overwrite check through premature path resolution.
 
   **Remaining SPARK-059 acceptance work:**
 
@@ -2895,7 +2915,10 @@ before those dependencies close is not admissible.
   - [ ] Protect package metadata with authenticated associated data, a keyed
     commitment, externally signed monotonic root, anti-rollback sequence, and
     independent trust root. Role separation must prevent the producer from
-    signing its own admission.
+    signing its own admission. CP396's source contract enforces the trust,
+    role-separation, exact-policy, sequence, and prior-root predicate; real
+    separately operated credentials and an externally witnessed monotonic
+    head remain open and no fixture key earns production credit.
   - [ ] Build the verified-replay SFT projection and prove that private replay
     fields, hidden reasoning, user secrets, and holdout answers cannot leak
     into trainer-visible rows.
@@ -2925,6 +2948,26 @@ before those dependencies close is not admissible.
   references / zero findings) pass. The real resident-tokenizer proof loads no
   model weights. The sanitized durable evidence is
   `artifacts/current/cp395_structured_sft_evidence.json`.
+
+  CP396 adds a strict admission schema and private-key-free operator path.
+  Its tests use explicitly labeled ephemeral Ed25519 fixture keys to prove
+  enforcement behavior; they do not constitute a real external attestation.
+  The admission status is
+  `external_pretraining_evidence_verified_no_training_authority`, remains
+  `trainer_ready=false`, and preserves replay-transfer, external training
+  authority, resident execution, and independent promotion as mandatory next
+  gates. No resident model weights or live Aura process are touched.
+  The focused detached-trust/admission matrix passes 22/22 and the broader
+  structured-SFT, custody, tokenizer, campaign-policy, and operator family
+  passes 135/135. Strict Ruff, bytecode compilation, and diff hygiene pass.
+  The sanitized receipt is
+  `artifacts/current/cp396_structured_sft_admission_evidence.json`.
+  Model-load ownership passes with 47 owned paths, 60 references, and zero
+  findings. The enterprise ratchet remains red on ten inherited baseline
+  regressions and 59 high/critical findings, but no CP396 path appears in its
+  findings and no baseline is raised. Governance lint remains red only for the
+  newer upstream `core/runtime/runtime_relaunch.py` raw `Popen`; CP396 adds no
+  governance regression.
 
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording

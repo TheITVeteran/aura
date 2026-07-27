@@ -23,6 +23,8 @@ from core.brain.llm.latent_cortex.campaign_trust import (
 from tools.manage_campaign_trust import (
     CampaignTrustToolError,
     _atomic_create_or_verify,
+    _read_json,
+    _read_signature,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -59,9 +61,7 @@ def _unsigned_policy(role_keys: dict[str, Ed25519PrivateKey]) -> dict:
             "implementation_sha256": hashlib.sha256(f"{role}:impl".encode()).hexdigest(),
             "release_sha256": hashlib.sha256(f"{role}:release".encode()).hexdigest(),
             "custody_class": "external_service",
-            "custody_evidence_sha256": hashlib.sha256(
-                f"{role}:custody".encode()
-            ).hexdigest(),
+            "custody_evidence_sha256": hashlib.sha256(f"{role}:custody".encode()).hexdigest(),
         }
     return {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
@@ -169,9 +169,7 @@ def test_detached_cli_policy_and_role_round_trip(tmp_path: Path):
     assert role_request.returncode == 0, role_request.stdout + role_request.stderr
     request = json.loads(role_request_path.read_bytes())
     role_signature_path.write_bytes(
-        role_keys[TASK_ISSUER].sign(
-            base64.b64decode(request["signed_payload_b64"])
-        )
+        role_keys[TASK_ISSUER].sign(base64.b64decode(request["signed_payload_b64"]))
     )
     role_assemble = _run(
         "role-assemble",
@@ -210,15 +208,18 @@ def test_detached_cli_rejects_wrong_signature_without_output(tmp_path: Path):
     output_path = tmp_path / "policy.json"
     _write_json(unsigned_path, _unsigned_policy(role_keys))
     root_path.write_bytes(_public_pem(root))
-    assert _run(
-        "policy-request",
-        "--unsigned-policy",
-        str(unsigned_path),
-        "--root",
-        str(root_path),
-        "--out",
-        str(request_path),
-    ).returncode == 0
+    assert (
+        _run(
+            "policy-request",
+            "--unsigned-policy",
+            str(unsigned_path),
+            "--root",
+            str(root_path),
+            "--out",
+            str(request_path),
+        ).returncode
+        == 0
+    )
     signature_path.write_bytes(b"x" * 64)
 
     rejected = _run(
@@ -264,3 +265,33 @@ def test_artifact_publish_never_overwrites_a_racing_writer(
 
     assert destination.read_bytes() == b"independent-writer\n"
     assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_trust_tool_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    document = tmp_path / "duplicate.json"
+    document.write_text('{"policy_id":"first","policy_id":"second"}')
+
+    with pytest.raises(CampaignTrustToolError, match="not valid JSON"):
+        _read_json(document, role="policy")
+
+
+def test_artifact_publish_rejects_output_symlink(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_text("independent\n")
+    output = tmp_path / "output.json"
+    output.symlink_to(target)
+
+    with pytest.raises(CampaignTrustToolError, match="symlink output rejected"):
+        _atomic_create_or_verify(output, {"payload": "ours"})
+
+    assert target.read_text() == "independent\n"
+
+
+def test_trust_tool_rejects_duplicate_signature_wrapper_keys(
+    tmp_path: Path,
+) -> None:
+    signature = tmp_path / "signature.json"
+    signature.write_text('{"signature_b64":"first","signature_b64":"second"}')
+
+    with pytest.raises(CampaignTrustToolError, match="signature must be"):
+        _read_signature(signature)

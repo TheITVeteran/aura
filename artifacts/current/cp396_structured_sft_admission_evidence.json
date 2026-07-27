@@ -1,0 +1,98 @@
+{
+  "artifact_policy": {
+    "contains_candidate_plaintext": false,
+    "contains_evaluator_plaintext": false,
+    "contains_private_keys": false,
+    "contains_test_fixture_private_keys": false,
+    "contains_user_content": false
+  },
+  "claims_not_supported": [
+    "real_external_organization_attestation",
+    "real_hsm_or_nonexportable_key_custody",
+    "externally_witnessed_transparency_head",
+    "verified_replay_privacy_or_contamination_clearance",
+    "training_authority",
+    "resident_32b_training_or_inference_gain",
+    "frontier_reasoning_gain",
+    "wow_signal"
+  ],
+  "claims_supported": [
+    "source_bound_external_admission_protocol",
+    "four_role_signer_key_and_organization_separation",
+    "producer_provenance_without_training_authority",
+    "strict_privacy_contamination_evidence_and_trainer_contracts",
+    "auditor_implementation_and_release_policy_pinning",
+    "caller_pinned_root_policy_sequence_prior_head_and_time",
+    "private_key_free_detached_signature_operator_workflow",
+    "real_custody_directory_cli_assembly_and_reconstruction",
+    "duplicate_key_nonfinite_json_and_output_symlink_rejection"
+  ],
+  "enterprise_gate": {
+    "baseline_regressions": 10,
+    "cp396_path_findings": 0,
+    "high_or_critical_findings": 59,
+    "passed": false
+  },
+  "protocol": {
+    "post_admission_gates": [
+      "replay_transfer_noninferiority_evaluation",
+      "external_replay_sft_authority",
+      "resident_training_execution_receipt",
+      "independent_heldout_promotion_protocol"
+    ],
+    "sha256": "b0e2f3c85e568ce9f1f34198dd88f9aa6daa8f5a2ff9c50060d09236399e8475",
+    "source_count": 7,
+    "sources": [
+      {
+        "path": "core/learning/structured_sft_admission.py",
+        "sha256": "55c1c4a5737423f429a595f9dd802f0ff3fa1bd0af7c86cb6f422dda0f872864"
+      },
+      {
+        "path": "core/learning/structured_sft.py",
+        "sha256": "27a5b7d19b1477659cdcf437e4d65a70fe919c7025df934709e43f2e0feef64e"
+      },
+      {
+        "path": "core/brain/llm/latent_cortex/campaign_trust.py",
+        "sha256": "3160a763c786d4a64c1ce3d27dd9b37debca5572da44359b4fb8a8aa76801d7e"
+      },
+      {
+        "path": "tools/build_structured_sft_dataset.py",
+        "sha256": "c6042dc6070c311af52b2d46020ff3924dfc52d56af728138077197dacc81c36"
+      },
+      {
+        "path": "tools/manage_campaign_trust.py",
+        "sha256": "72cc5b824583947cbb676209464664c1e467a4f28336dac6c4c5b1079e060ec9"
+      },
+      {
+        "path": "tools/manage_structured_sft_admission.py",
+        "sha256": "2ed231fbe4b5dc36632be981e62d8ef61e0789e73aa9ad63928319d1dd61d4f3"
+      },
+      {
+        "path": "tools/validate_structured_sft_tokenization.py",
+        "sha256": "f80d6c08e1eaa563f16290ad55adbfd8fb90e4699ba0aa1ac507bb2f94d63695"
+      }
+    ],
+    "version": "2026.07.26.1"
+  },
+  "real_external_attestation_present": false,
+  "schema": "aura.rlc.cp396.structured_sft_admission_evidence.v1",
+  "status": "source_green_external_admission_contract_no_training_authority",
+  "tests": {
+    "broader_structured_sft_and_campaign_trust": {
+      "passed": 135,
+      "seconds": 403.12,
+      "warnings": 0
+    },
+    "focused_admission_and_detached_trust": {
+      "passed": 22,
+      "warnings": 0
+    },
+    "operator_path": "journaled_real_custody_generation_subprocess_assemble_and_verify",
+    "py_compile": "passed",
+    "ruff": "passed",
+    "test_signature_custody": "ephemeral_test_fixture_only_no_production_credit",
+    "whitespace": "passed"
+  },
+  "trainer_ready": false,
+  "training_authority": "none_pending_transfer_external_authority_resident_execution_and_promotion"
+}

@@ -29280,6 +29280,81 @@ remains, leaving approximately 3-283 records. Checkpoint-count completion is
 approximately 69.2%-99.5%, with a midpoint planning estimate of 81.7%. Final
 multi-hour soaks remain deferred until all shorter gates are green.
 
+## Checkpoint 2026-07-26-396: Externally Rooted SFT Admission Contract
+
+SPARK-059 now has a source-level admission authority between the quarantined
+structured curriculum and any future trainer. The producer cannot authorize
+its own output. A separately supplied Ed25519 root authenticates a revisioned,
+time-bounded policy for four distinct signer, key, and organization identities:
+task issuer, campaign runner, contamination auditor, and evidence verifier.
+Every role must declare externally evidenced custody; the root key cannot be a
+role key; revocations, validity windows, implementation identities, release
+identities, and exact payload signatures are enforced by the existing campaign
+trust spine.
+
+Admission reconstructs the complete candidate/evaluator custody pair and the
+complete committed resident-tokenizer validation bundle. Strict committed
+reports cover synthetic-data privacy, PII, secrets, consent, license, tenant,
+retention, revocation, deletion, remote sync, every declared contamination
+surface and method, pre-augmentation and semantic-dedup commitments,
+independent semantic/proof/program/tool replay, prompt injection, poisoning,
+verifier gaming, and split lineage. The exact model, adapter base, recurrence
+program, tokenizer snapshot and runtime, chat masking contract, optimizer,
+scheduler, RNG, and compute budget are bound in a non-executable trainer
+contract. Auditor implementation and release hashes must equal their policy
+pins.
+
+Freshness is caller-owned rather than bundle-selected. Verification requires
+the independently supplied root, exact policy digest, minimum policy revision,
+exact admission sequence, exact prior admission root, and current observation
+time. Every attestation must be within policy and freshness windows. The bundle
+is canonical, hash committed, strictly shaped, and deterministically rebuilt;
+unknown fields, rehashed authority escalation, substitutions, rollback, forks
+against the caller's head, stale or future attestations, and policy/root drift
+fail closed.
+
+`tools/manage_structured_sft_admission.py` contains no private-key,
+key-generation, training, or candidate-renaming operation. It emits exact role
+payloads for independently operated signers, assembles detached attestations,
+and reverifies the result against caller pins. The operator-path test publishes
+a real journaled custody generation, invokes the CLI in subprocesses, and
+proves assembly and independent reconstruction return the same bundle. During
+this work the shared campaign-trust tool was hardened to reject duplicate JSON
+keys, non-finite constants, and lexical output symlinks before trust decisions
+or publication.
+
+All signatures in automated tests are explicitly test fixtures. CP396 does not
+claim real external organizations, HSM custody, a transparency-log witness,
+privacy or contamination clearance of verified replay, training authority,
+resident-32B execution, reasoning gain, frontier performance, or a `WOW
+Signal`. Every admitted bundle says
+`external_pretraining_evidence_verified_no_training_authority`, remains
+`trainer_ready=false`, and preserves replay-transfer noninferiority, external
+replay-SFT authority, resident execution, and independent held-out promotion
+as mandatory gates. Final multi-hour soaks remain deferred until every shorter
+gate is green.
+
+Validation passes 22/22 focused admission and detached-trust tests plus 135/135
+broader structured-SFT, custody, tokenizer, campaign-policy, and operator
+tests. The operator path uses a real journal-published custody generation and
+subprocess CLI assembly/reverification, while all signer keys remain ephemeral
+test fixtures. Strict Ruff, bytecode compilation, and diff hygiene pass. The
+sanitized source-only receipt is
+`artifacts/current/cp396_structured_sft_admission_evidence.json`.
+
+Model-load ownership passes with 47 owned paths, 60 references, and zero
+findings. The enterprise ratchet remains correctly non-green at ten inherited
+baseline regressions and 59 high/critical findings; CP396 contributes no
+finding and raises no baseline. Governance lint remains non-green only for the
+newer upstream `core/runtime/runtime_relaunch.py` raw `Popen`, with no CP396
+regression.
+
+Counting CP396 makes the total checkpoint record 638. The 640-920 forecast
+remains, leaving approximately 2-282 records. Checkpoint-count completion is
+approximately 69.3%-99.7%, with a midpoint planning estimate of 81.8%. This is
+checkpoint accounting, not a claim that the remaining SPARK or whole-codebase
+work can be skipped.
+
 ## Checkpoint 2026-07-26-392: Measured Runtime Integrity
 
 SPARK-056 is complete. A latent episode now produces one schema-exact,

@@ -45,11 +45,30 @@ class CampaignTrustToolError(RuntimeError):
     """Stable operator-facing trust workflow error."""
 
 
+def _lexical_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, child in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = child
+    return value
+
+
 def _read_json(path: Path, *, role: str) -> dict[str, Any]:
-    payload = read_stable_bytes(path.expanduser().resolve(strict=True), max_bytes=_MAX_JSON_BYTES)
+    payload = read_stable_bytes(_lexical_path(path), max_bytes=_MAX_JSON_BYTES)
     try:
-        value = json.loads(payload)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(
+            payload,
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda constant: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant: {constant}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise CampaignTrustToolError(f"{role} is not valid JSON") from exc
     if not isinstance(value, dict):
         raise CampaignTrustToolError(f"{role} must be a JSON object")
@@ -57,17 +76,21 @@ def _read_json(path: Path, *, role: str) -> dict[str, Any]:
 
 
 def _read_key(path: Path) -> bytes:
-    return read_stable_bytes(path.expanduser().resolve(strict=True), max_bytes=_MAX_KEY_BYTES)
+    return read_stable_bytes(_lexical_path(path), max_bytes=_MAX_KEY_BYTES)
 
 
 def _read_signature(path: Path) -> str:
-    raw = read_stable_bytes(
-        path.expanduser().resolve(strict=True), max_bytes=_MAX_SIGNATURE_BYTES
-    )
+    raw = read_stable_bytes(_lexical_path(path), max_bytes=_MAX_SIGNATURE_BYTES)
     signature_b64: str
     try:
-        document = json.loads(raw)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        document = json.loads(
+            raw,
+            object_pairs_hook=_strict_object,
+            parse_constant=lambda constant: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant: {constant}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
         document = None
     if isinstance(document, dict) and set(document) == {"signature_b64"}:
         signature_b64 = str(document["signature_b64"])
@@ -100,7 +123,7 @@ def _read_signature(path: Path) -> str:
 
 def _atomic_create_or_verify(path: Path, document: dict[str, Any]) -> None:
     payload = canonical_json_bytes(document) + b"\n"
-    destination = path.expanduser().resolve()
+    destination = _lexical_path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
         raise CampaignTrustToolError("symlink output rejected")
