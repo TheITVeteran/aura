@@ -30460,3 +30460,33 @@ next, followed by a fresh sealed SPARK-059 behavior rerun. Counting CP417
 makes 663 total checkpoints. The 663-920 forecast leaves 0-257 records, or
 approximately 72.1%-100.0% checkpoint completion with an 86.1% midpoint.
 Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP418 recurrent-GRPO shared reward evidence
+
+Recurrent GRPO training and independent adapter validation now use one strict
+step-artifact schema. An accepted step binds the task and sample seed,
+execution identity, generated samples, answer-channel counts and reasons,
+verified rewards, effective shaped rewards, both advantage reports,
+trajectory-credit evidence, step kind, optimizer update, and resulting policy
+digest. The validator independently reconstructs fractions, reward domains,
+advantages, trajectory cross-entropy scores, shaping, and frozen
+configuration/protocol bindings.
+
+Verified rewards remain in [0, 1]. Optional trajectory shaping is separately
+bounded and receipted, is rejected when disabled, and can affect a step only
+when verifier rewards are degenerate. The frozen resident command now includes
+the preregistered minimum-signal-group gate. The real producer-to-validator
+path and negative mutations pass in a 196/196 matrix spanning recurrent GRPO,
+recurrence objectives, trainer state, resident preregistration, and
+post-training contracts. Ruff, bytecode compilation, and diff hygiene pass.
+
+No model was loaded or trained. This checkpoint proves only the reward
+artifact boundary and does not establish reasoning gain, a resident-32B
+effect, frontier performance, promotion, or a `WOW Signal`. Evidence is
+`artifacts/current/cp418_recurrent_grpo_artifact_schema_evidence.json`.
+SPARK-060 remains open. CP419 is the immutable verifier-backed pass-0/pass-1
+episode, followed by structured delta reward, EIR, and lexicographic
+right-to-wrong rejection. Counting CP418 makes 664 total checkpoints. The
+664-920 forecast leaves 0-256 records, or approximately 72.2%-100.0%
+checkpoint completion with an 86.1% midpoint. Final multi-hour soaks remain
+deferred.

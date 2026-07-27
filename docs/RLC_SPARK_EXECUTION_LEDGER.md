@@ -3533,6 +3533,14 @@ before those dependencies close is not admissible.
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right
   and right-to-wrong separately.
+  CP418 closes the prerequisite producer/verifier reward-artifact boundary.
+  Recurrent GRPO now emits one exact shared step schema whose answer counts,
+  verifier rewards, shaped rewards, advantage reports, trajectory evidence,
+  execution identity, and policy transition are independently replayable.
+  Verifier rewards remain bounded to [0, 1]; optional trajectory shaping is
+  separately bounded, receipted, and may act only when the verified group is
+  degenerate. This does not yet implement the paired transition episode,
+  structured delta reward, EIR, or a model experiment, so SPARK-060 stays open.
 - [ ] **SPARK-061 - Progressive recurrent objective.** Train later latent states
   to improve over earlier states, not merely imitate long solutions; verify
   monotonic quality and useful gradients at the resident architecture.
@@ -3997,3 +4005,37 @@ Those mechanisms must drive a fresh SPARK-059 rerun; they do not erase this
 negative result. Counting CP417 makes 663 total checkpoints. The 663-920
 forecast leaves 0-257 records, or approximately 72.1%-100.0% checkpoint
 completion with an 86.1% midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP418 recurrent-GRPO reward artifact boundary
+
+The recurrent GRPO producer and its independent adapter-identity validator now
+share one executable artifact contract. Every accepted step binds the exact
+task and sample seed, execution-spec digest, response set, answer-channel
+counts and reasons, verifier rewards, effective rewards, verifier and shaped
+advantages, trajectory-credit evidence, step classification, optimizer update,
+and resulting policy digest. The validator reconstructs every fraction,
+advantage, trajectory cross-entropy score, shaping term, and protocol-to-
+training configuration binding rather than trusting producer summaries.
+
+The verified reward domain remains [0, 1]. Optional trajectory shaping has a
+separate bounded domain and receipt, cannot appear when disabled, and can
+affect optimization only when the verifier group is degenerate. The resident
+campaign preregistration now passes its minimum-signal-group requirement
+explicitly on the frozen trainer command. Producer-to-validator tests exercise
+the real step artifact, malformed reward domains, answer-count drift,
+unreceipted shaping, trajectory replay mismatch, and configuration drift.
+
+The complete recurrent-GRPO, recurrence-objective, trainer-state, resident
+preregistration, and post-training contract matrix passes 196/196. Ruff,
+bytecode compilation, and diff hygiene pass. No model was loaded or trained,
+and this checkpoint establishes no reasoning, resident-32B, frontier,
+promotion, or `WOW Signal` result. Sanitized evidence is
+`artifacts/current/cp418_recurrent_grpo_artifact_schema_evidence.json`.
+
+SPARK-060 remains open. CP419 must implement the immutable verifier-backed
+pass-0/pass-1 transition episode; the following checkpoint must implement its
+structured delta reward, Error Introduction Ratio, and lexicographic
+right-to-wrong rejection before the small-checkpoint behavior campaign is
+repeated. Counting CP418 makes 664 total checkpoints. The 664-920 forecast
+leaves 0-256 records, or approximately 72.2%-100.0% checkpoint completion with
+an 86.1% midpoint. Final multi-hour soaks remain deferred.

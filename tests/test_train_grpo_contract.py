@@ -726,6 +726,10 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
     adapter_module.recurrence_adapter_disabled = __import__(
         "contextlib"
     ).nullcontext
+    adapter_module.current_recurrence_adapter_scope = lambda: None
+    adapter_module.recurrence_adapter_scope = (
+        lambda *_args, **_kwargs: __import__("contextlib").nullcontext()
+    )
     monkeypatch.setitem(
         sys.modules,
         "core.brain.llm.latent_cortex.recurrence_adapter",

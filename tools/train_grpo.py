@@ -68,6 +68,16 @@ from core.learning.grpo_training_state import (  # noqa: E402
     save_grpo_checkpoint,
     sha256_bytes,
 )
+from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
+    PROTOCOL_SCHEMA as GRPO_PROTOCOL_SCHEMA,
+)
+from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
+    STEP_RECEIPT_SCHEMA,
+    validate_step_reward_channels,
+)
+from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
+    TRAINING_RECEIPT_SCHEMA as GRPO_TRAIN_SCHEMA,
+)
 from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
@@ -80,9 +90,7 @@ from core.runtime.atomic_writer import (  # noqa: E402
 )
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 
-GRPO_TRAIN_SCHEMA = "aura.grpo_training.v4"
 GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
-GRPO_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
 RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 EXECUTION_MODES = ("standard", "recurrent")
 TASK_SOURCES = ("verifiable", "recurrence_curriculum", "answer_channel_curriculum")
@@ -463,6 +471,57 @@ def _advantage_report_with_verifier_rate(
         report["uniform_partial"] = verifier_report.get("uniform_partial")
     report["trajectory_shaped"] = True
     return report
+
+
+def _build_recurrent_step_receipt(
+    *,
+    step_number: int,
+    task_id: str,
+    sample_seed: int,
+    execution_spec_sha256: str,
+    samples: Sequence[Mapping[str, Any]],
+    effective_rewards: Sequence[float],
+    verifier_rewards: Sequence[float],
+    answer_channel: Mapping[str, Any],
+    verifier_advantage_report: Mapping[str, Any],
+    trajectory_credit: Mapping[str, Any] | None,
+    advantage_report: Mapping[str, Any],
+    step_kind: str,
+    update: Mapping[str, Any] | None,
+    policy_after_sha256: str,
+    trajectory_credit_enabled: bool,
+    trajectory_shaping_weight: float,
+    advantage_clip: float,
+) -> dict[str, Any]:
+    """Build one producer-format receipt and replay it before persistence."""
+
+    receipt = {
+        "schema": STEP_RECEIPT_SCHEMA,
+        "step": step_number,
+        "task_id": task_id,
+        "sample_seed": sample_seed,
+        "execution_spec_sha256": execution_spec_sha256,
+        "samples": [dict(sample) for sample in samples],
+        "rewards": [float(value) for value in effective_rewards],
+        "verifier_rewards": [float(value) for value in verifier_rewards],
+        "answer_channel": dict(answer_channel),
+        "verifier_advantage_report": dict(verifier_advantage_report),
+        "trajectory_credit": (
+            dict(trajectory_credit) if trajectory_credit is not None else None
+        ),
+        "advantage_report": dict(advantage_report),
+        "step_kind": step_kind,
+        "update": dict(update) if update is not None else None,
+        "policy_after_sha256": policy_after_sha256,
+    }
+    validate_step_reward_channels(
+        receipt,
+        group_size=len(samples),
+        trajectory_credit_enabled=trajectory_credit_enabled,
+        shaping_weight=trajectory_shaping_weight,
+        advantage_clip=advantage_clip,
+    )
+    return receipt
 
 
 def _build_task_split(
@@ -1421,6 +1480,9 @@ def main() -> int:
         "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
         "tasks": task_source_path,
         "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
+        "artifact_schema": (
+            REPO_ROOT / "core/learning/recurrent_grpo_artifact_schema.py"
+        ),
         "adapter": (
             REPO_ROOT
             / "core/brain/llm/latent_cortex/recurrence_adapter.py"
@@ -2118,28 +2180,30 @@ def main() -> int:
                         recurrent_policy_sha256,
                     )
 
-                    step_receipts.append(
-                        {
-                            "step": step_number,
-                            "task_id": task.task_id,
-                            "sample_seed": sample_seed,
-                            "execution_spec_sha256": execution_spec.sha256,
-                            "samples": [
-                                sample.receipt() for sample in recurrent_samples
-                            ],
-                            "rewards": [float(value) for value in effective_rewards],
-                            "verifier_rewards": [float(value) for value in rewards],
-                            "answer_channel": answer_channel,
-                            "verifier_advantage_report": verifier_advantage_report,
-                            "trajectory_credit": trajectory_credit_receipt,
-                            "advantage_report": advantage_report,
-                            "step_kind": step_kind,
-                            "update": update_receipt,
-                            "policy_after_sha256": recurrent_policy_sha256(
-                                model, execution_spec
-                            ),
-                        }
+                    step_receipt = _build_recurrent_step_receipt(
+                        step_number=step_number,
+                        task_id=task.task_id,
+                        sample_seed=sample_seed,
+                        execution_spec_sha256=execution_spec.sha256,
+                        samples=[
+                            sample.receipt() for sample in recurrent_samples
+                        ],
+                        effective_rewards=effective_rewards,
+                        verifier_rewards=rewards,
+                        answer_channel=answer_channel,
+                        verifier_advantage_report=verifier_advantage_report,
+                        trajectory_credit=trajectory_credit_receipt,
+                        advantage_report=advantage_report,
+                        step_kind=step_kind,
+                        update=update_receipt,
+                        policy_after_sha256=recurrent_policy_sha256(
+                            model, execution_spec
+                        ),
+                        trajectory_credit_enabled=args.trajectory_credit,
+                        trajectory_shaping_weight=args.trajectory_shaping_weight,
+                        advantage_clip=config.advantage_clip,
                     )
+                    step_receipts.append(step_receipt)
 
                 # State mutates only after a complete optimizer update or a
                 # fully graded degenerate group. The durable step is therefore

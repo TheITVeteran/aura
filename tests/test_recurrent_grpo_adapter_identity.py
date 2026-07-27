@@ -21,6 +21,7 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     RecurrentGRPOAdapterIdentityError,
     sha256_bytes,
 )
+from core.learning.grpo import GRPOConfig, group_advantages
 from core.learning.grpo_training_state import canonical_json_bytes as training_json_bytes
 from tests.fixtures.rlc_runtime_integrity import engine_runtime_integrity
 from tools import prepare_latent_cortex_campaign as preparation
@@ -28,7 +29,10 @@ from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
     GRPO_PROTOCOL_SCHEMA,
     GRPO_TRAIN_SCHEMA,
+    _advantage_report_with_verifier_rate,
+    _build_recurrent_step_receipt,
     _publish_recurrent_adapter_bundle,
+    _shape_recurrent_rewards_from_ce_trails,
     _validate_published_recurrent_bundle,
 )
 
@@ -38,6 +42,7 @@ SOURCE_ROLES = {
     "curriculum",
     "tasks",
     "checkpoint",
+    "artifact_schema",
     "adapter",
     "recurrent_grpo",
     "recurrent_objective",
@@ -51,7 +56,12 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
+def _fixture(
+    tmp_path: Path,
+    *,
+    mutate_receipt=None,
+    trajectory_credit: bool = False,
+) -> dict:
     mx = pytest.importorskip("mlx.core")
     out = tmp_path / "training"
     out.mkdir()
@@ -123,6 +133,8 @@ def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
         "max_tokens": 32,
         "kl_coefficient": 0.02,
         "format_credit": 0.0,
+        "trajectory_credit": trajectory_credit,
+        "trajectory_shaping_weight": 0.25,
         "lora_rank": 2,
         "lora_targets": "o_proj",
         "lora_layers": 1,
@@ -130,6 +142,7 @@ def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
         "max_steps": 1,
         "eval_every": 1,
         "checkpoint_every": 1,
+        "min_signal_groups": 8,
         "calibrate": False,
         "calibrate_samples": 1,
         "calibrate_group": 2,
@@ -176,13 +189,68 @@ def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
         },
         "policy_sha256": "4" * 64,
     }
+    verifier_rewards = [0.0, 0.0] if trajectory_credit else [1.0, 0.0]
+    verifier_advantage = group_advantages(verifier_rewards)
+    trajectory = (
+        _shape_recurrent_rewards_from_ce_trails(
+            verifier_rewards,
+            [[2.0, 1.0, 0.5], [0.5, 1.0, 2.0]],
+            shaping_weight=0.25,
+        )
+        if trajectory_credit
+        else None
+    )
+    effective_rewards = (
+        list(trajectory["shaped_rewards"])
+        if trajectory is not None
+        else list(verifier_rewards)
+    )
+    advantage = (
+        _advantage_report_with_verifier_rate(
+            group_advantages(effective_rewards),
+            verifier_advantage,
+        )
+        if trajectory is not None
+        else verifier_advantage
+    )
+    step_receipt = _build_recurrent_step_receipt(
+        step_number=1,
+        task_id="train-1",
+        sample_seed=41,
+        execution_spec_sha256=spec.sha256,
+        samples=[dict(sample), dict(sample)],
+        effective_rewards=effective_rewards,
+        verifier_rewards=verifier_rewards,
+        answer_channel={
+            "completions": 2,
+            "parseable": 2,
+            "unparseable": 0,
+            "correct": 0 if trajectory_credit else 1,
+            "parseable_fraction": 1.0,
+            "correct_fraction": 0.0 if trajectory_credit else 0.5,
+            "grade_reasons": (
+                {"incorrect": 2}
+                if trajectory_credit
+                else {"correct": 1, "incorrect": 1}
+            ),
+        },
+        verifier_advantage_report=verifier_advantage,
+        trajectory_credit=trajectory,
+        advantage_report=advantage,
+        step_kind="optimizer_update",
+        update={"schema": "aura.recurrent_grpo.v1", "has_gradient": True},
+        policy_after_sha256="5" * 64,
+        trajectory_credit_enabled=trajectory_credit,
+        trajectory_shaping_weight=0.25,
+        advantage_clip=4.0,
+    )
     receipt = {
         "schema": GRPO_TRAIN_SCHEMA,
         "adapter_id": adapter_id,
         "protocol_sha256": _sha(protocol_bytes),
         "dataset_sha256": _sha(dataset_bytes),
         "model": {"path": "/model", "base_checkpoint": base, "behavior": behavior},
-        "config": {},
+        "config": GRPOConfig(group_size=2, kl_coefficient=0.02).to_receipt(),
         "execution_mode": "recurrent",
         "execution_spec": spec.to_dict(),
         "execution_spec_sha256": spec.sha256,
@@ -199,20 +267,7 @@ def _fixture(tmp_path: Path, *, mutate_receipt=None) -> dict:
         "calibration": None,
         "baseline": {},
         "history": [],
-        "step_receipts": [
-            {
-                "step": 1,
-                "task_id": "train-1",
-                "sample_seed": 41,
-                "execution_spec_sha256": spec.sha256,
-                "rewards": [1, 0],
-                "advantage_report": {},
-                "samples": [dict(sample), dict(sample)],
-                "step_kind": "optimizer_update",
-                "update": {"schema": "aura.recurrent_grpo.v1", "has_gradient": True},
-                "policy_after_sha256": "5" * 64,
-            }
-        ],
+        "step_receipts": [step_receipt],
         "final": {},
         "adapter_decode_delta": 0.0,
         "adapter_standard_decode_delta": None,
@@ -296,6 +351,71 @@ def test_recurrent_grpo_bundle_is_complete_distinct_and_idempotent(tmp_path):
     assert identity["optimizer_updates"] == 1
     assert identity["causal_gain_proven"] is False
     assert _validate(fixture) == identity
+
+
+def test_recurrent_grpo_shaped_reward_bundle_round_trips_real_producer_format(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path, trajectory_credit=True)
+    identity = _validate(fixture)
+    receipt = json.loads(
+        (
+            fixture["out"] / "campaign_adapter/grpo_receipt.json"
+        ).read_text(encoding="ascii")
+    )
+    rewards = receipt["step_receipts"][0]["rewards"]
+
+    assert identity == fixture["identity"]
+    assert min(rewards) < 0.0
+    assert receipt["step_receipts"][0]["trajectory_credit"] is not None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason"),
+    [
+        (
+            lambda step: step["rewards"].__setitem__(
+                0, step["rewards"][0] + 0.01
+            ),
+            "step_trajectory_effective_reward_mismatch",
+        ),
+        (
+            lambda step: step["verifier_rewards"].__setitem__(0, 1.1),
+            "step_verifier_rewards_invalid",
+        ),
+        (
+            lambda step: step["answer_channel"].update({"correct": 2}),
+            "step_answer_channel_fraction_mismatch",
+        ),
+    ],
+)
+def test_recurrent_grpo_identity_rejects_reward_channel_rebinding(
+    tmp_path,
+    mutation,
+    reason,
+):
+    fixture = _fixture(tmp_path, trajectory_credit=True)
+    _rebind_receipt(
+        fixture,
+        lambda receipt: mutation(receipt["step_receipts"][0]),
+    )
+
+    with pytest.raises(RecurrentGRPOAdapterIdentityError, match=reason):
+        _validate(fixture)
+
+
+def test_recurrent_grpo_identity_rejects_config_protocol_rebinding(tmp_path):
+    fixture = _fixture(tmp_path)
+    _rebind_receipt(
+        fixture,
+        lambda receipt: receipt["config"].update({"kl_coefficient": 0.03}),
+    )
+
+    with pytest.raises(
+        RecurrentGRPOAdapterIdentityError,
+        match="receipt_config_cross_binding_mismatch",
+    ):
+        _validate(fixture)
 
 
 def test_recurrent_grpo_identity_rejects_rebound_causal_gain_claim(tmp_path):

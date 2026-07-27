@@ -22,13 +22,24 @@ from core.brain.llm.latent_cortex.adapter_identity import (
     normalize_tensor_metadata,
 )
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.learning.grpo import GRPO_SCHEMA
+from core.learning.recurrent_grpo_artifact_schema import (
+    PROTOCOL_SCHEMA,
+    PROTOCOL_TRAINING_KEYS,
+    STEP_RECEIPT_KEYS,
+    RecurrentGRPOArtifactSchemaError,
+    validate_step_reward_channels,
+)
+from core.learning.recurrent_grpo_artifact_schema import (
+    TRAINING_RECEIPT_SCHEMA as SHARED_TRAINING_RECEIPT_SCHEMA,
+)
 
 MANIFEST_FILE = "recurrence_adapter_manifest.json"
 MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v1"
 IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_adapter_identity_receipt.v1"
 COMPLETION_SCHEMA = "aura.recurrent_grpo_training_completion.v1"
-TRAINING_PROTOCOL_SCHEMA = "aura.grpo_protocol.v3"
-TRAINING_RECEIPT_SCHEMA = "aura.grpo_training.v4"
+TRAINING_PROTOCOL_SCHEMA = PROTOCOL_SCHEMA
+TRAINING_RECEIPT_SCHEMA = SHARED_TRAINING_RECEIPT_SCHEMA
 DATASET_SCHEMA = "aura.grpo_dataset.v1"
 LOADER_CONFIG_SCHEMA = "aura.recurrent_grpo_scoped_lora_config.v1"
 TRAINING_METHOD = "recurrent_grpo"
@@ -50,6 +61,7 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "curriculum",
         "tasks",
         "checkpoint",
+        "artifact_schema",
         "adapter",
         "recurrent_grpo",
         "recurrent_objective",
@@ -331,6 +343,9 @@ def _validate_step_receipts(
     optimizer_updates: int,
     group_size: int,
     execution_spec_sha256: str,
+    trajectory_credit_enabled: bool,
+    trajectory_shaping_weight: float,
+    advantage_clip: float,
 ) -> dict[str, Any]:
     if not isinstance(value, list) or len(value) != steps:
         _fail("step_receipt_count_mismatch")
@@ -340,18 +355,7 @@ def _validate_step_receipts(
     for index, raw_step in enumerate(value, start=1):
         step = _exact(
             raw_step,
-            {
-                "step",
-                "task_id",
-                "sample_seed",
-                "execution_spec_sha256",
-                "rewards",
-                "advantage_report",
-                "samples",
-                "step_kind",
-                "update",
-                "policy_after_sha256",
-            },
+            set(STEP_RECEIPT_KEYS),
             role="step_receipt",
         )
         if (
@@ -363,22 +367,22 @@ def _validate_step_receipts(
             or step.get("step_kind") not in {"optimizer_update", "degenerate_group"}
         ):
             _fail("step_receipt_identity_invalid")
-        rewards = step.get("rewards")
         samples = step.get("samples")
         if (
-            not isinstance(rewards, list)
-            or len(rewards) != group_size
-            or any(
-                isinstance(reward, bool)
-                or not isinstance(reward, (int, float))
-                or not math.isfinite(float(reward))
-                or not 0.0 <= float(reward) <= 1.0
-                for reward in rewards
-            )
-            or not isinstance(samples, list)
+            not isinstance(samples, list)
             or len(samples) != group_size
         ):
             _fail("step_receipt_group_invalid")
+        try:
+            validate_step_reward_channels(
+                step,
+                group_size=group_size,
+                trajectory_credit_enabled=trajectory_credit_enabled,
+                shaping_weight=trajectory_shaping_weight,
+                advantage_clip=advantage_clip,
+            )
+        except RecurrentGRPOArtifactSchemaError as exc:
+            _fail(exc.code)
         policy_at_sampling: str | None = None
         for sample in samples:
             if not isinstance(sample, Mapping):
@@ -560,38 +564,12 @@ def validate_recurrent_grpo_adapter_identity(
     )
     training = _exact(
         protocol["training"],
-        {
-            "execution_mode",
-            "execution_spec",
-            "execution_spec_sha256",
-            "domains",
-            "depths",
-            "train_per_cell",
-            "holdout_per_cell",
-            "group_size",
-            "temperature",
-            "max_tokens",
-            "kl_coefficient",
-            "format_credit",
-            "lora_rank",
-            "lora_targets",
-            "lora_layers",
-            "learning_rate",
-            "max_steps",
-            "eval_every",
-            "checkpoint_every",
-            "calibrate",
-            "calibrate_samples",
-            "calibrate_group",
-            "calibrate_tokens",
-            "calibrate_minutes",
-            "cot",
-            "seed",
-            "memory_fraction",
-            "rng_strategy",
-        },
+        set(PROTOCOL_TRAINING_KEYS),
         role="training_parameters",
     )
+    trajectory_credit_enabled = training.get("trajectory_credit")
+    trajectory_shaping_weight = training.get("trajectory_shaping_weight")
+    min_signal_groups = training.get("min_signal_groups")
     if (
         protocol.get("schema") != TRAINING_PROTOCOL_SCHEMA
         or protocol.get("adapter_id") != adapter_id
@@ -604,6 +582,13 @@ def validate_recurrent_grpo_adapter_identity(
         or training.get("rng_strategy") != "stateless_sha256_step_seeded_v1"
         or training.get("execution_spec") != spec.to_dict()
         or training.get("execution_spec_sha256") != spec.sha256
+        or type(trajectory_credit_enabled) is not bool
+        or isinstance(trajectory_shaping_weight, bool)
+        or not isinstance(trajectory_shaping_weight, (int, float))
+        or not math.isfinite(float(trajectory_shaping_weight))
+        or not 0.0 <= float(trajectory_shaping_weight) <= 0.49
+        or type(min_signal_groups) is not int
+        or min_signal_groups < 1
     ):
         _fail("training_protocol_cross_binding_mismatch")
     protocol_sha256 = sha256_bytes(payloads["training_protocol"])
@@ -684,6 +669,40 @@ def validate_recurrent_grpo_adapter_identity(
         "elapsed_minutes",
     }
     _exact(receipt, receipt_keys, role="training_receipt")
+    config = _exact(
+        receipt.get("config"),
+        {
+            "schema",
+            "group_size",
+            "kl_coefficient",
+            "advantage_clip",
+            "max_degenerate_fraction",
+        },
+        role="receipt_config",
+    )
+    group_size = _integer(
+        training.get("group_size"), role="group_size", minimum=2, maximum=4096
+    )
+    advantage_clip = config.get("advantage_clip")
+    kl_coefficient = config.get("kl_coefficient")
+    max_degenerate_fraction = config.get("max_degenerate_fraction")
+    if (
+        config.get("schema") != GRPO_SCHEMA
+        or config.get("group_size") != group_size
+        or isinstance(kl_coefficient, bool)
+        or not isinstance(kl_coefficient, (int, float))
+        or not math.isfinite(float(kl_coefficient))
+        or float(kl_coefficient) != training.get("kl_coefficient")
+        or isinstance(advantage_clip, bool)
+        or not isinstance(advantage_clip, (int, float))
+        or not math.isfinite(float(advantage_clip))
+        or not 0.0 < float(advantage_clip) <= 100.0
+        or isinstance(max_degenerate_fraction, bool)
+        or not isinstance(max_degenerate_fraction, (int, float))
+        or not math.isfinite(float(max_degenerate_fraction))
+        or not 0.0 <= float(max_degenerate_fraction) <= 1.0
+    ):
+        _fail("receipt_config_cross_binding_mismatch")
     model = _exact(receipt.get("model"), {"path", "base_checkpoint", "behavior"}, role="receipt_model")
     termination = _exact(
         receipt.get("termination"),
@@ -736,10 +755,11 @@ def validate_recurrent_grpo_adapter_identity(
         receipt.get("step_receipts"),
         steps=steps,
         optimizer_updates=optimizer_updates,
-        group_size=_integer(
-            training.get("group_size"), role="group_size", minimum=2, maximum=4096
-        ),
+        group_size=group_size,
         execution_spec_sha256=spec.sha256,
+        trajectory_credit_enabled=trajectory_credit_enabled,
+        trajectory_shaping_weight=float(trajectory_shaping_weight),
+        advantage_clip=float(advantage_clip),
     )
 
     sources = _exact(parsed["sources"], set(REQUIRED_SOURCE_ROLES), role="sources")

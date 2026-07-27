@@ -1,0 +1,70 @@
+{
+  "schema": "aura.closeout.cp418_recurrent_grpo_artifact_schema_evidence.v1",
+  "checkpoint": "CP418",
+  "recorded_date": "2026-07-27",
+  "implementation_commit": "b6b9d4d4b",
+  "artifact_contract": {
+    "protocol_schema": "aura.grpo_protocol.v4",
+    "training_receipt_schema": "aura.grpo_training.v5",
+    "step_receipt_schema": "aura.recurrent_grpo_step.v1",
+    "shared_producer_validator_schema": true,
+    "exact_key_sets": true,
+    "exact_configuration_bindings": true,
+    "execution_spec_bound": true,
+    "policy_transition_bound": true
+  },
+  "reward_invariants": {
+    "verifier_reward_minimum": 0.0,
+    "verifier_reward_maximum": 1.0,
+    "verifier_advantages_replayed": true,
+    "answer_channel_counts_replayed": true,
+    "answer_channel_fractions_replayed": true,
+    "grade_reason_counts_replayed": true,
+    "trajectory_cross_entropy_replayed": true,
+    "trajectory_scores_replayed": true,
+    "trajectory_shaping_replayed": true,
+    "effective_rewards_replayed": true,
+    "shaped_advantages_replayed": true,
+    "unreceipted_shaping_rejected": true,
+    "shaping_disabled_means_absent": true,
+    "shaping_requires_degenerate_verifier_group": true,
+    "step_kind_matches_verified_reward_degeneracy": true
+  },
+  "resident_preregistration": {
+    "minimum_signal_groups_explicit_in_frozen_argv": true
+  },
+  "validation": {
+    "test_count": 196,
+    "test_failures": 0,
+    "ruff_passed": true,
+    "bytecode_compilation_passed": true,
+    "diff_hygiene_passed": true,
+    "real_producer_to_validator_path_tested": true,
+    "negative_mutations_tested": [
+      "verifier_reward_domain",
+      "answer_channel_counts",
+      "answer_channel_fractions",
+      "unreceipted_shaping",
+      "trajectory_replay",
+      "advantage_replay",
+      "configuration_binding"
+    ]
+  },
+  "experiment": {
+    "model_loaded": false,
+    "training_run": false,
+    "capability_evaluation": false
+  },
+  "status": {
+    "spark_060_complete": false,
+    "next_checkpoint": "CP419",
+    "next_requirement": "immutable verifier-backed pass-0/pass-1 transition episode"
+  },
+  "claims_not_supported": [
+    "reasoning_gain",
+    "resident_32b_result",
+    "frontier_performance",
+    "production_promotion",
+    "wow_signal"
+  ]
+}

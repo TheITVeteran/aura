@@ -63,6 +63,9 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
     assert contract["training"]["parameters"]["trajectory_credit"] is True
     assert "--trajectory-credit" in contract["training"]["argv"]
+    assert contract["training"]["argv"][
+        contract["training"]["argv"].index("--min-signal-groups") + 1
+    ] == str(prereg.TRAINING_PARAMETERS["min_signal_groups"])
     mechanism = contract["evaluation"]["mechanism_attribution"]
     assert mechanism["required"] is True
     assert mechanism["claim_eligible"] is False
