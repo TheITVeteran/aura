@@ -1,0 +1,42 @@
+{
+  "schema": "aura.rlc.cp400_combined_sft_lineage_publication_evidence.v1",
+  "checkpoint": "CP400",
+  "scope": "governed_crash_recoverable_combined_lineage_publication",
+  "claims": {
+    "owner_private_candidate_evaluator_custody": true,
+    "preparing_state_blocks_readers": true,
+    "evaluator_published_before_candidate": true,
+    "durable_pair_revalidation_before_commit": true,
+    "identical_publication_idempotent": true,
+    "concurrent_publishers_converge": true,
+    "interrupted_preparing_generation_recoverable": true,
+    "hardlinked_lock_rejected_before_mode_mutation": true,
+    "trainer_ready": false
+  },
+  "source_files": [
+    {"path": "config/aura_effect_ownership_baseline.json", "line_count": 15183, "sha256": "597ea2c85dae739763295dad6ac8981c6db3a34153aac903ab5a352863b7b507"},
+    {"path": "core/learning/combined_sft_lineage_publication.py", "line_count": 355, "sha256": "8e19a2edabb071bfdc1abefb3be11aa68ff9163c2a9c5e04c2e5364f00b756f8"},
+    {"path": "tests/test_combined_sft_lineage_publication.py", "line_count": 137, "sha256": "c2606c4a3a652b5ecdc1110541041e99eb9cfdc87f40905df6ae82af1de198c5"},
+    {"path": "tools/lint_governance.py", "line_count": 1036, "sha256": "9ed887c556ddbab547cb30f2e0bb343769dc1bca189d998076b310dfc5dca3d7"}
+  ],
+  "verification": {
+    "focused": {"passed": 5, "failed": 0, "duration_seconds": 41.35},
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "governance_lint": {"passed": true, "migration_debt_calls": 1787},
+    "model_load_ownership": {"passed": true, "findings": 0},
+    "enterprise_gate": {"passed": false, "compile_ok": true, "baseline_regressions": 10, "finding_count": 228, "high_or_critical_findings": 58, "cp400_path_findings": 0}
+  },
+  "explicit_non_claims": [
+    "real complete evaluation inventory publication",
+    "external privacy or contamination signature",
+    "externally witnessed monotonic root",
+    "resident tokenizer admission",
+    "trainer authority",
+    "resident 32B training or gain",
+    "WOW Signal"
+  ],
+  "model_weights_touched": false,
+  "trainer_invoked": false,
+  "multi_hour_soak_deferred": true
+}

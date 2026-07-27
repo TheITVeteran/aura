@@ -212,6 +212,10 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # RLC root, inside named internal governance scopes. It grants no
             # trainer authority and accepts no arbitrary artifact filenames.
             "core/learning/verified_replay_sft_publication.py",
+            # Combined lineage publication owns one fixed candidate/evaluator
+            # custody namespace. All payload and commit bytes traverse
+            # FileWriteGateway and the result grants no training authority.
+            "core/learning/combined_sft_lineage_publication.py",
             # The safe optimizer writes only its configured adapter state and
             # byte-identical backup through FileWriteGateway; rollback restores
             # that same bounded artifact inside the optimizer's governed lane.

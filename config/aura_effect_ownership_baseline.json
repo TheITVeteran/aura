@@ -3705,6 +3705,30 @@
       "scope": "<module>.ExternalLedgerMirror.append"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/combined_sft_lineage_publication.py",
+      "scope": "<module>._private_directory"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/combined_sft_lineage_publication.py",
+      "scope": "<module>._write_commit"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 2,
+      "path": "core/learning/combined_sft_lineage_publication.py",
+      "scope": "<module>.publish_combined_sft_lineage_custody"
+    },
+    {
       "callee": "<file_write_gateway>.ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -15154,6 +15178,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "c35948083c1f31d02a5049cb1b508ea172f50f9d0c4c0559b87e566b1e091565",
+  "inventory_sha256": "f07112771cdc653ef8f509eda14f5cd676c16e1370e87ba58cd4bf83dfc9fb90",
   "schema_version": 1
 }

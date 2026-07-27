@@ -29736,3 +29736,28 @@ leaves approximately 0-279 records. Checkpoint-count completion is
 approximately 69.7%-100.0%, with a midpoint planning estimate of 82.2%. This
 accounting does not permit skipping any open SPARK or whole-codebase
 requirement.
+
+## Checkpoint 2026-07-26-400: Durable Combined-Lineage Publication
+
+SPARK-059 now publishes CP399's candidate commitment and evaluator-only keyed
+index through owner-private, crash-recoverable custody. A canonical
+interprocess lock serializes publishers; a digest-bound preparing record blocks
+consumers; transactional evaluator-first and candidate batches are reread and
+fully reconstructed before the committed record becomes visible. Identical
+and concurrent publishers converge, interrupted preparation recovers, exact
+inventories and modes are enforced, and a hardlinked lock is rejected before
+an external target's mode can change.
+
+The focused matrix passes 5/5 in 41.35 seconds. Ruff, bytecode compilation,
+governance ownership, and model-load ownership pass; migration debt remains
+1,787 calls. The enterprise scan remains inherited-red at ten regressions, 228
+findings, and 58 high/critical findings, with zero CP400 findings. Evidence is
+`artifacts/current/cp400_combined_sft_lineage_publication_evidence.json`.
+
+CP400 proves publication mechanics with sealed fixtures, not a real complete
+evaluation inventory, external privacy/contamination signatures, monotonic
+witness, resident tokenizer admission, trainer authority, resident training,
+gain, frontier performance, or a `WOW Signal`. Counting CP400 makes 642 total
+checkpoints. The 642-920 forecast leaves 0-278 records, or approximately
+69.8%-100.0% checkpoint completion with an 82.3% midpoint. Long soaks remain
+deferred and no open requirement may be skipped.

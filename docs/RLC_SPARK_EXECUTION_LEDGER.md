@@ -3075,6 +3075,19 @@ before those dependencies close is not admissible.
   published, or admitted for training. The receipt is
   `artifacts/current/cp399_combined_sft_lineage_evidence.json`.
 
+  CP400 adds governed durable custody for CP399's combined commitment and
+  evaluator-only keyed index. One owner-private root, canonical interprocess
+  lock, preparing record, evaluator-first transactional batch, candidate batch,
+  durable readback, complete custody reconstruction, and committed record make
+  interrupted state unreadable and recoverable. Identical and concurrent
+  publishers converge, and hardlinked locks are rejected before permissions
+  can mutate an outside target. The focused matrix passes 5/5. Governance and
+  model ownership pass without increasing 1,787-call migration debt; the
+  enterprise scan remains inherited-red with zero CP400 findings. This is
+  publication machinery, not a claim that real corpora or external attestations
+  have been supplied. Receipt:
+  `artifacts/current/cp400_combined_sft_lineage_publication_evidence.json`.
+
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording
   only commitments. This proves candidate noncontainment and candidate-only
