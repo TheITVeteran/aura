@@ -2752,6 +2752,19 @@ class CognitiveEngine:
                     action="continued desktop turn without present-moment grounding",
                 )
             try:
+                from core.brain.recent_actions import recent_actions_block
+
+                actions = recent_actions_block()
+                if actions:
+                    system_prompt = f"{system_prompt}\n\n{actions}"
+            except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+                record_degradation(
+                    "cognitive_engine",
+                    exc,
+                    severity="warning",
+                    action="continued desktop turn without recent-action receipts",
+                )
+            try:
                 from core.runtime.self_state_intent import asks_about_own_runtime
 
                 if asks_about_own_runtime(visible_user_message):

@@ -5738,6 +5738,7 @@ class InferenceGate:
         ("## FUNCTIONAL STATE SIGNALS", 2),
         ("## PRESENT MOMENT", 2),
         ("## YOUR OWN INSTRUMENTS", 2),
+        ("## WHAT YOU ACTUALLY JUST DID", 2),
         ("## SOMATIC STATE", 2),
         ("## STATE", 2),
         ("## LIVE TONE", 2),
@@ -5761,6 +5762,7 @@ class InferenceGate:
         important_headers = (
             "## PRESENT MOMENT",
             "## YOUR OWN INSTRUMENTS",
+            "## WHAT YOU ACTUALLY JUST DID",
             "[LIVE MIND CONTEXT]",
             "## DERIVED RUNTIME SIGNALS",
             "[LIVE SPEECH GROUNDING]",
@@ -7974,6 +7976,12 @@ class InferenceGate:
                 # Suppressing the web search is only half the fix; without the
                 # readings she still has to invent them, which is how "I
                 # processed a 45-page PDF on neuromorphic computing" happened.
+                from core.brain.recent_actions import recent_actions_block
+
+                _actions = recent_actions_block()
+                if _actions:
+                    system_prompt = f"{system_prompt}\n\n{_actions}"
+
                 from core.runtime.self_state_intent import asks_about_own_runtime
 
                 if asks_about_own_runtime(visible_user_prompt):
