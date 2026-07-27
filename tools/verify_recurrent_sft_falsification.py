@@ -16,8 +16,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.learning.recurrent_sft_behavior_canaries import (  # noqa: E402
+    RecurrentSFTBehaviorCanaryError,
+    build_generated_behavior_canaries,
+    build_generated_behavior_generation_contract,
+    generated_behavior_verdict,
+)
 from core.learning.recurrent_sft_evaluation import (  # noqa: E402
     EVALUATION_SCHEMA,
+    EVALUATION_SOURCE_ROLES,
     RecurrentSFTEvaluationError,
     regression_canary_verdict,
     sha256_bytes,
@@ -100,10 +107,7 @@ def _verify_binding(binding: Any, *, role: str) -> dict[str, Any]:
         _fail(f"recurrent_sft_verification_{role}_symlink_rejected")
     path = lexical.resolve(strict=True)
     payload = _read_bytes(path, role=role)
-    if (
-        len(payload) != binding["size_bytes"]
-        or sha256_bytes(payload) != binding["sha256"]
-    ):
+    if len(payload) != binding["size_bytes"] or sha256_bytes(payload) != binding["sha256"]:
         _fail(f"recurrent_sft_verification_{role}_binding_mismatch")
     return {"path": path, "payload": payload}
 
@@ -120,16 +124,12 @@ def _verify_contract(contract: Mapping[str, Any], report: Mapping[str, Any]) -> 
     observed = body.pop("contract_sha256", None)
     if (
         observed != sha256_json(body)
-        or contract.get("contract_sha256")
-        != report.get("containment_contract_sha256")
+        or contract.get("contract_sha256") != report.get("containment_contract_sha256")
         or contract.get("source_closure") != report.get("source_closure")
         or contract.get("authority_sha256") != report.get("authority_sha256")
-        or contract.get("model_identity_sha256")
-        != report.get("model_identity_sha256")
-        or contract.get("execution_spec_sha256")
-        != report.get("execution_spec_sha256")
-        or contract.get("custody_binding_sha256")
-        != report.get("custody_binding_sha256")
+        or contract.get("model_identity_sha256") != report.get("model_identity_sha256")
+        or contract.get("execution_spec_sha256") != report.get("execution_spec_sha256")
+        or contract.get("custody_binding_sha256") != report.get("custody_binding_sha256")
         or contract.get("custody_bindings") != report.get("custody")
         or contract.get("network") != "kernel_denied"
         or contract.get("process_fork") != "kernel_denied"
@@ -138,10 +138,8 @@ def _verify_contract(contract: Mapping[str, Any], report: Mapping[str, Any]) -> 
         or contract.get("resident_checkpoint_access") is not False
         or contract.get("production_write_access") is not False
         or contract.get("resume_contract") != "none"
-        or sha256_json(contract.get("command"))
-        != contract.get("command_sha256")
-        or sha256_json(contract.get("environment"))
-        != contract.get("environment_sha256")
+        or sha256_json(contract.get("command")) != contract.get("command_sha256")
+        or sha256_json(contract.get("environment")) != contract.get("environment_sha256")
     ):
         _fail("recurrent_sft_verification_contract_invalid")
     profile_path = contract.get("profile_path")
@@ -157,10 +155,7 @@ def _verify_contract(contract: Mapping[str, Any], report: Mapping[str, Any]) -> 
         or command[1:3] != ["-f", profile_path]
         or sha256_bytes(_read_bytes(Path(profile_path), role="sandbox_profile"))
         != contract["profile_sha256"]
-        or sha256_bytes(
-            _read_bytes(Path(command[0]), role="sandbox_executable")
-        )
-        != sandbox_sha256
+        or sha256_bytes(_read_bytes(Path(command[0]), role="sandbox_executable")) != sandbox_sha256
     ):
         _fail("recurrent_sft_verification_contract_execution_invalid")
 
@@ -177,6 +172,7 @@ def _verify_source_closure(source_closure: Any) -> None:
     if observed != sha256_json(body):
         _fail("recurrent_sft_verification_source_closure_invalid")
     roles: set[str] = set()
+    ordered_roles: list[str] = []
     for record in source_closure["files"]:
         if (
             not isinstance(record, Mapping)
@@ -186,6 +182,7 @@ def _verify_source_closure(source_closure: Any) -> None:
         ):
             _fail("recurrent_sft_verification_source_record_invalid")
         roles.add(record["role"])
+        ordered_roles.append(record["role"])
         _verify_binding(
             {
                 "path": record["path"],
@@ -194,6 +191,8 @@ def _verify_source_closure(source_closure: Any) -> None:
             },
             role=f"source_{record['role']}",
         )
+    if roles != set(EVALUATION_SOURCE_ROLES) or ordered_roles != sorted(EVALUATION_SOURCE_ROLES):
+        _fail("recurrent_sft_verification_source_roles_invalid")
 
 
 def _verify_custody(report: Mapping[str, Any]) -> dict[str, Any]:
@@ -236,10 +235,7 @@ def _verify_custody(report: Mapping[str, Any]) -> dict[str, Any]:
         for name in STRUCTURED_SFT_EVALUATOR_FILES
     }
     replayed = validate_structured_sft_custody_pair(candidate, evaluator)
-    if (
-        replayed != reported_custody
-        or sha256_json(custody) != report.get("custody_binding_sha256")
-    ):
+    if replayed != reported_custody or sha256_json(custody) != report.get("custody_binding_sha256"):
         _fail("recurrent_sft_verification_custody_replay_mismatch")
     return {"candidate": candidate, "evaluator": evaluator, "report": replayed}
 
@@ -359,8 +355,7 @@ def _verify_equal_work(
     if (
         checkpoint.get("optimizer_updates") != trained["optimizer_updates"]
         or checkpoint.get("step") != trained["step"]
-        or checkpoint.get("trainer_config_sha256")
-        != trained["trainer_config_sha256"]
+        or checkpoint.get("trainer_config_sha256") != trained["trainer_config_sha256"]
         or trained["step"] != trained["optimizer_updates"]
     ):
         _fail("recurrent_sft_verification_reference_workload_mismatch")
@@ -380,9 +375,7 @@ def _verify_equal_work(
         expected_authority_sha256=authority["authority_sha256"],
         expected_reference_checkpoint_sha256=trained["checkpoint"]["sha256"],
         expected_model_identity_sha256=authority["model"]["identity_sha256"],
-        expected_execution_spec_sha256=authority["execution_spec"][
-            "semantic_sha256"
-        ],
+        expected_execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
         expected_reference_optimizer_updates=trained["optimizer_updates"],
         expected_trainer_config_sha256=trainer_config_sha256,
     )
@@ -399,25 +392,47 @@ def _verify_equal_work(
 
 def _verify_decisions(report: Mapping[str, Any]) -> dict[str, Any]:
     observations = report.get("observations")
-    canary_observations = report.get(
-        "regression_likelihood_canary_observations"
-    )
+    canary_observations = report.get("regression_likelihood_canary_observations")
+    behavior_observations = report.get("generated_behavior_canary_observations")
+    behavior_contract = report.get("generated_behavior_generation_contract")
+    adapter_fingerprints = report.get("adapter_fingerprints")
     if (
         not isinstance(observations, Mapping)
         or set(observations) != set(ALL_ARMS)
         or not isinstance(canary_observations, Mapping)
         or set(canary_observations) != {BASE_ARM, TRAINED_ARM}
+        or not isinstance(behavior_observations, Mapping)
+        or set(behavior_observations) != {BASE_ARM, TRAINED_ARM}
+        or not isinstance(behavior_contract, Mapping)
+        or not isinstance(adapter_fingerprints, Mapping)
     ):
         _fail("recurrent_sft_verification_observations_invalid")
+    expected_behavior_contract = build_generated_behavior_generation_contract(
+        execution_spec_sha256=str(report.get("execution_spec_sha256") or ""),
+    )
+    if (
+        dict(behavior_contract) != expected_behavior_contract
+        or report.get("generated_behavior_generation_contract_sha256")
+        != expected_behavior_contract["contract_sha256"]
+        or report.get("generated_behavior_canary_count") != len(build_generated_behavior_canaries())
+    ):
+        _fail("recurrent_sft_verification_behavior_contract_invalid")
     falsification = build_falsification_verdict(observations)
     canaries = regression_canary_verdict(
         canary_observations[BASE_ARM],
         canary_observations[TRAINED_ARM],
     )
+    behavior_canaries = generated_behavior_verdict(
+        behavior_observations[BASE_ARM],
+        behavior_observations[TRAINED_ARM],
+        expected_generation_contract_sha256=(expected_behavior_contract["contract_sha256"]),
+        expected_trained_adapter_fingerprint=adapter_fingerprints.get(TRAINED_ARM),
+    )
     lexical = report.get("ordinary_lexical_hashes")
     if (
         falsification != report.get("falsification")
         or canaries != report.get("regression_likelihood_canary_verdict")
+        or behavior_canaries != report.get("generated_behavior_canary_verdict")
         or not isinstance(lexical, Mapping)
         or set(lexical) != set(ALL_ARMS)
         or any(not _is_sha256(value) for value in lexical.values())
@@ -427,10 +442,11 @@ def _verify_decisions(report: Mapping[str, Any]) -> dict[str, Any]:
     all_passed = (
         falsification["heldout_transfer_proven"]
         and canaries["passed"]
+        and behavior_canaries["passed"]
         and lexical_invariance
     )
     expected_status = (
-        "small_checkpoint_transfer_with_likelihood_regression_gates_passed"
+        "small_checkpoint_transfer_with_all_regression_gates_passed"
         if all_passed
         else "small_checkpoint_transfer_not_proven"
     )
@@ -441,12 +457,24 @@ def _verify_decisions(report: Mapping[str, Any]) -> dict[str, Any]:
         or report.get("production_effect") is not False
         or report.get("promotion_allowed") is not False
         or report.get("base_weights_unchanged") is not True
-        or report.get("generated_behavior_regression_tested") is not False
+        or report.get("generated_behavior_regression_tested") is not True
+        or report.get("claims_not_supported")
+        != [
+            "broad_reasoning_gain",
+            "frontier_performance",
+            "resident_32b_result",
+            "production_promotion",
+            "wow_signal",
+        ]
     ):
         _fail("recurrent_sft_verification_final_decision_invalid")
     return {
         "falsification": falsification,
         "canaries": canaries,
+        "generated_behavior_canaries": behavior_canaries,
+        "generated_behavior_generation_contract_sha256": (
+            expected_behavior_contract["contract_sha256"]
+        ),
         "lexical_invariance": lexical_invariance,
         "all_small_checkpoint_gates_passed": all_passed,
     }
@@ -504,9 +532,9 @@ def _run(arguments: argparse.Namespace) -> int:
     if not kernel_probe or any(value is not True for value in kernel_probe.values()):
         _fail("recurrent_sft_verification_kernel_probe_invalid")
 
-    authority_path = Path(contract["command"][
-        contract["command"].index("--reference-authority") + 1
-    ])
+    authority_path = Path(
+        contract["command"][contract["command"].index("--reference-authority") + 1]
+    )
     authority_raw = _read_json(authority_path, role="authority")
     issued_at = authority_raw.get("issued_at_unix")
     if type(issued_at) is not int:
@@ -538,9 +566,7 @@ def _run(arguments: argparse.Namespace) -> int:
         != authority_candidate.get("custody_root_sha256")
     ):
         _fail("recurrent_sft_verification_authority_custody_mismatch")
-    model_path = Path(
-        contract["command"][contract["command"].index("--model-dir") + 1]
-    )
+    model_path = Path(contract["command"][contract["command"].index("--model-dir") + 1])
     if (
         small_model_identity(model_path) != authority["model"]
         or authority["model"]["identity_sha256"] != report["model_identity_sha256"]
@@ -577,7 +603,6 @@ def _run(arguments: argparse.Namespace) -> int:
             "frontier_performance",
             "resident_32b_result",
             "production_promotion",
-            "generated_behavior_regression",
             "wow_signal",
         ],
     }
@@ -607,6 +632,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         ImportError,
         OSError,
+        RecurrentSFTBehaviorCanaryError,
         RecurrentSFTEvaluationError,
         RecurrentSFTFalsificationVerificationError,
         StructuredSFTResearchAuthorityError,

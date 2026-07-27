@@ -10,6 +10,7 @@ import sys
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Never
 
@@ -20,8 +21,15 @@ if str(REPO_ROOT) not in sys.path:
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
+from core.learning.recurrent_sft_behavior_canaries import (  # noqa: E402
+    build_generated_behavior_canaries,
+    build_generated_behavior_generation_contract,
+    generated_behavior_verdict,
+    grade_generated_behavior_text,
+)
 from core.learning.recurrent_sft_evaluation import (  # noqa: E402
     EVALUATION_SCHEMA,
+    EVALUATION_SOURCE_ROLES,
     RecurrentSFTEvaluationError,
     build_regression_canary_rows,
     evaluator_holdout_rows,
@@ -140,117 +148,72 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
 def evaluation_source_paths() -> dict[str, Path]:
     return {
         "atomic_writer": REPO_ROOT / "core/runtime/atomic_writer.py",
-        "authority": (
-            REPO_ROOT / "core/learning/structured_sft_research_authority.py"
+        "authority": (REPO_ROOT / "core/learning/structured_sft_research_authority.py"),
+        "action_state_capture": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/action_state_capture.py"
         ),
-        "branch_exchange": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/branch_exchange.py"
-        ),
+        "branch_exchange": (REPO_ROOT / "core/brain/llm/latent_cortex/branch_exchange.py"),
         "branch_roles": REPO_ROOT / "core/brain/llm/latent_cortex/branches.py",
+        "capability_canaries": (REPO_ROOT / "core/brain/llm/latent_cortex/capability_canaries.py"),
         "code_repl": REPO_ROOT / "core/skills/code_repl.py",
-        "cognitive_operators": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/cognitive_operators.py"
-        ),
-        "control_containment": (
-            REPO_ROOT / "tools/launch_recurrent_sft_controls.py"
-        ),
-        "depth_conditioned_lora": (
-            REPO_ROOT / "core/learning/depth_conditioned_lora.py"
-        ),
+        "cognitive_operators": (REPO_ROOT / "core/brain/llm/latent_cortex/cognitive_operators.py"),
+        "control_containment": (REPO_ROOT / "tools/launch_recurrent_sft_controls.py"),
+        "depth_conditioned_lora": (REPO_ROOT / "core/learning/depth_conditioned_lora.py"),
         "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
-        "evaluation_contract": (
-            REPO_ROOT / "core/learning/recurrent_sft_evaluation.py"
-        ),
+        "evaluation_contract": (REPO_ROOT / "core/learning/recurrent_sft_evaluation.py"),
+        "epistemic_state": (REPO_ROOT / "core/brain/llm/latent_cortex/epistemic_state.py"),
+        "escape": REPO_ROOT / "core/brain/llm/latent_cortex/escape.py",
         "evaluator": Path(__file__),
-        "evaluator_launcher": (
-            REPO_ROOT / "tools/launch_recurrent_sft_falsification.py"
+        "evaluator_launcher": (REPO_ROOT / "tools/launch_recurrent_sft_falsification.py"),
+        "independent_verifier": (REPO_ROOT / "tools/verify_recurrent_sft_falsification.py"),
+        "execution_spec": (REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"),
+        "fast_weights": (REPO_ROOT / "core/brain/llm/latent_cortex/fast_weights.py"),
+        "fast_weight_learning": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/fast_weight_learning.py"
         ),
-        "independent_verifier": (
-            REPO_ROOT / "tools/verify_recurrent_sft_falsification.py"
-        ),
-        "execution_spec": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"
-        ),
-        "fast_weights": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/fast_weights.py"
-        ),
-        "falsification": (
-            REPO_ROOT / "core/learning/recurrent_sft_falsification.py"
-        ),
+        "falsification": (REPO_ROOT / "core/learning/recurrent_sft_falsification.py"),
         "file_read_gateway": REPO_ROOT / "core/runtime/file_read_gateway.py",
+        "generated_behavior_canaries": (
+            REPO_ROOT / "core/learning/recurrent_sft_behavior_canaries.py"
+        ),
+        "latent_cortex_engine": (REPO_ROOT / "core/brain/llm/latent_cortex/engine.py"),
+        "latent_cortex_governance": (REPO_ROOT / "core/brain/llm/latent_cortex/governance.py"),
+        "latent_optimizer": (REPO_ROOT / "core/brain/llm/latent_cortex/latent_opt.py"),
         "memory_guard": REPO_ROOT / "core/runtime/mlx_memory_guard.py",
         "model_lane": REPO_ROOT / "core/runtime/model_lane_control.py",
         "model_lane_admission": REPO_ROOT / "core/brain/lane_admission.py",
         "natural_deduction": REPO_ROOT / "core/reasoning/natural_deduction.py",
         "proof_kernel": REPO_ROOT / "core/reasoning/proof_kernel.py",
-        "recurrence_adapter": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
-        ),
+        "probe_cache": (REPO_ROOT / "core/brain/llm/latent_cortex/probe_cache.py"),
+        "recurrence_adapter": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"),
         "recurrence_identity": (
-            REPO_ROOT
-            / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
+            REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
         ),
-        "recurrent_loop_core": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/loop_core.py"
-        ),
-        "recurrence_objective": (
-            REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
-        ),
-        "resource_accounting": (
-            REPO_ROOT / "core/brain/llm/latent_cortex/resource_accounting.py"
-        ),
-        "recurrent_sft_execution": (
-            REPO_ROOT / "core/learning/recurrent_sft_execution.py"
-        ),
-        "sandbox_profile_builder": (
-            REPO_ROOT / "tools/launch_structured_sft_research.py"
-        ),
+        "recurrent_loop_core": (REPO_ROOT / "core/brain/llm/latent_cortex/loop_core.py"),
+        "recurrence_runner": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"),
+        "recurrence_objective": (REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"),
+        "resource_accounting": (REPO_ROOT / "core/brain/llm/latent_cortex/resource_accounting.py"),
+        "runtime_errors": REPO_ROOT / "core/runtime/errors.py",
+        "recurrent_sft_execution": (REPO_ROOT / "core/learning/recurrent_sft_execution.py"),
+        "sandbox_profile_builder": (REPO_ROOT / "tools/launch_structured_sft_research.py"),
         "sandbox_runner": REPO_ROOT / "core/sandbox/runner.py",
+        "layer_schedules": (REPO_ROOT / "core/brain/llm/latent_cortex/schedules.py"),
         "structured_sft": REPO_ROOT / "core/learning/structured_sft.py",
         "subprocess_gateway": REPO_ROOT / "core/runtime/subprocess_gateway.py",
+        "latent_telemetry": (REPO_ROOT / "core/brain/llm/latent_cortex/telemetry.py"),
+        "test_time_training": (REPO_ROOT / "core/brain/llm/latent_cortex/test_time_training.py"),
         "types": REPO_ROOT / "core/brain/llm/latent_cortex/types.py",
+        "value_of_computation": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/value_of_computation.py"
+        ),
+        "verified_best": (REPO_ROOT / "core/brain/llm/latent_cortex/verified_best.py"),
         "workspace": REPO_ROOT / "core/brain/llm/latent_cortex/workspace.py",
     }
 
 
 def evaluation_source_closure() -> dict[str, Any]:
     paths = evaluation_source_paths()
-    expected = {
-        "atomic_writer",
-        "authority",
-        "branch_exchange",
-        "branch_roles",
-        "code_repl",
-        "cognitive_operators",
-        "control_containment",
-        "depth_conditioned_lora",
-        "detached_supervisor",
-        "evaluation_contract",
-        "evaluator",
-        "evaluator_launcher",
-        "independent_verifier",
-        "execution_spec",
-        "fast_weights",
-        "falsification",
-        "file_read_gateway",
-        "memory_guard",
-        "model_lane",
-        "model_lane_admission",
-        "natural_deduction",
-        "proof_kernel",
-        "recurrence_adapter",
-        "recurrence_identity",
-        "recurrent_loop_core",
-        "recurrence_objective",
-        "resource_accounting",
-        "recurrent_sft_execution",
-        "sandbox_profile_builder",
-        "sandbox_runner",
-        "structured_sft",
-        "subprocess_gateway",
-        "types",
-        "workspace",
-    }
+    expected = set(EVALUATION_SOURCE_ROLES)
     if set(paths) != expected:
         _fail("recurrent_sft_evaluation_source_roles_invalid")
     files: list[dict[str, Any]] = []
@@ -335,9 +298,7 @@ def _candidate_and_evaluator_artifacts(
     custody_binding_sha256 = sha256_json(bindings)
     candidate_authority = authority.get("candidate")
     candidate_files = (
-        candidate_authority.get("files")
-        if isinstance(candidate_authority, Mapping)
-        else None
+        candidate_authority.get("files") if isinstance(candidate_authority, Mapping) else None
     )
     observed_candidate_files = [
         {
@@ -355,15 +316,18 @@ def _candidate_and_evaluator_artifacts(
         != candidate_authority.get("candidate_package_sha256")
         or custody.get("evaluator_package_sha256")
         != candidate_authority.get("evaluator_package_sha256")
-        or custody.get("custody_root_sha256")
-        != candidate_authority.get("custody_root_sha256")
+        or custody.get("custody_root_sha256") != candidate_authority.get("custody_root_sha256")
     ):
         _fail("recurrent_sft_evaluation_authority_custody_drift")
-    return candidate_artifacts, evaluator_artifacts, {
-        "rows": rows,
-        "bindings": bindings,
-        "custody_binding_sha256": custody_binding_sha256,
-    }
+    return (
+        candidate_artifacts,
+        evaluator_artifacts,
+        {
+            "rows": rows,
+            "bindings": bindings,
+            "custody_binding_sha256": custody_binding_sha256,
+        },
+    )
 
 
 def _reference_adapter(
@@ -385,10 +349,8 @@ def _reference_adapter(
         or checkpoint.get("terminal") is not True
         or checkpoint.get("last_step_committed") is not True
         or checkpoint.get("authority_sha256") != authority["authority_sha256"]
-        or checkpoint.get("model_identity_sha256")
-        != authority["model"]["identity_sha256"]
-        or checkpoint.get("execution_spec_sha256")
-        != authority["execution_spec"]["semantic_sha256"]
+        or checkpoint.get("model_identity_sha256") != authority["model"]["identity_sha256"]
+        or checkpoint.get("execution_spec_sha256") != authority["execution_spec"]["semantic_sha256"]
         or not isinstance(adapter, Mapping)
         or set(adapter) != {"path", "sha256", "size_bytes"}
         or not isinstance(adapter.get("path"), str)
@@ -455,10 +417,7 @@ def _control_adapters(
         if path.parent != report_path.parent:
             _fail(f"recurrent_sft_evaluation_control_adapter_{arm}_escape")
         payload = _read_bytes(path, role=f"control_adapter_{arm}")
-        if (
-            len(payload) != binding["size_bytes"]
-            or sha256_bytes(payload) != binding["sha256"]
-        ):
+        if len(payload) != binding["size_bytes"] or sha256_bytes(payload) != binding["sha256"]:
             _fail(f"recurrent_sft_evaluation_control_adapter_{arm}_mismatch")
         paths[arm] = path
         adapter_bindings[arm] = _artifact_binding(path, payload)
@@ -580,6 +539,119 @@ def _ordinary_lexical_hash(model: Any, tokenizer: Any) -> str:
     return digest.hexdigest()
 
 
+def _tokens_sha256(tokens: Sequence[int]) -> str:
+    return sha256_bytes(
+        json.dumps(
+            list(tokens),
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    )
+
+
+def _generate_behavior_canaries(
+    model: Any,
+    tokenizer: Any,
+    *,
+    model_path: Path,
+    spec: RLCExecutionSpec,
+    arm: str,
+    adapter_fingerprint: str | None,
+    generation_contract: Mapping[str, Any],
+    envelope: Any,
+) -> list[dict[str, Any]]:
+    import mlx.core as mx
+
+    from core.brain.llm.latent_cortex.engine import LatentCortexEngine
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_disabled,
+    )
+    from core.learning.recurrent_grpo import cortex_config_from_execution_spec
+
+    if arm not in {BASE_ARM, TRAINED_ARM}:
+        _fail("recurrent_sft_evaluation_behavior_arm_invalid")
+    decode = generation_contract.get("decode")
+    if not isinstance(decode, Mapping):
+        _fail("recurrent_sft_evaluation_behavior_contract_invalid")
+    config = replace(
+        cortex_config_from_execution_spec(spec),
+        decode_max_tokens=int(decode["max_tokens"]),
+        decode_temperature=float(decode["temperature"]),
+        decode_top_p=float(decode["top_p"]),
+        decode_bridge_policy=str(decode["bridge_policy"]),
+        allow_vanilla_fallback=bool(decode["allow_vanilla_fallback"]),
+        generative_verifier_enabled=False,
+        counterfactual_verifier_enabled=False,
+        prefix_stability_enabled=False,
+        local_repair_enabled=False,
+        answer_replacement_enabled=False,
+        telemetry_enabled=False,
+        probe_cache_enabled=False,
+    )
+    if config.validate():
+        _fail("recurrent_sft_evaluation_behavior_config_invalid")
+    engine = LatentCortexEngine(
+        model,
+        tokenizer=tokenizer,
+        config=config,
+        model_path=str(model_path),
+        schedule_library=None,
+    )
+    context = recurrence_adapter_disabled() if arm == BASE_ARM else nullcontext()
+    observations: list[dict[str, Any]] = []
+    with context:
+        for case in build_generated_behavior_canaries():
+            result = engine.reason(
+                messages=[
+                    {"role": "system", "content": case["system"]},
+                    {"role": "user", "content": case["prompt"]},
+                ],
+                domain="evaluation",
+                decode_max_tokens=int(decode["max_tokens"]),
+                decode_sentence_grace_tokens=int(decode["sentence_grace_tokens"]),
+                nonparametric_memory_enabled=bool(decode["nonparametric_memory_enabled"]),
+            )
+            receipt = result.receipt
+            integrity = receipt.weight_integrity.to_dict()
+            params_before = str(integrity.get("params_before") or "")
+            params_after = str(integrity.get("params_after") or "")
+            fallback_used = any(
+                str(flag).startswith(("fallback", "latent_and_fallback"))
+                for flag in receipt.honest_flags
+            ) or "fallback" in str(result.reason)
+            text = str(result.text or "")
+            observations.append(
+                {
+                    "case_id": case["case_id"],
+                    "family": case["family"],
+                    "arm": arm,
+                    "prompt_sha256": sha256_bytes(case["prompt"].encode("utf-8")),
+                    "generation_contract_sha256": generation_contract["contract_sha256"],
+                    "engine_ok": bool(result.ok),
+                    "engine_reason": str(result.reason or ""),
+                    "text": text,
+                    "text_sha256": sha256_bytes(text.encode("utf-8")),
+                    "tokens": list(result.tokens),
+                    "token_count": len(result.tokens),
+                    "tokens_sha256": _tokens_sha256(result.tokens),
+                    "decode_termination": str(receipt.decode_termination or ""),
+                    "fallback_used": fallback_used,
+                    "adapter_active": arm == TRAINED_ARM,
+                    "adapter_fingerprint": (adapter_fingerprint if arm == TRAINED_ARM else None),
+                    "params_before": params_before,
+                    "params_after": params_after,
+                    "params_unchanged": bool(
+                        receipt.params_unchanged and params_before and params_before == params_after
+                    ),
+                    "grade": grade_generated_behavior_text(case, text),
+                }
+            )
+            mx.clear_cache()
+            envelope.reclaim(force=True)
+    return observations
+
+
 def _validated_containment_contract(
     path: Path,
     *,
@@ -593,14 +665,11 @@ def _validated_containment_contract(
     observed = body.pop("contract_sha256", None)
     if (
         observed != sha256_json(body)
-        or contract.get("authority_sha256")
-        != arguments.expected_authority_sha256
+        or contract.get("authority_sha256") != arguments.expected_authority_sha256
         or contract.get("reference_checkpoint_sha256")
         != arguments.expected_reference_checkpoint_sha256
-        or contract.get("control_report_file_sha256")
-        != arguments.expected_control_report_sha256
-        or contract.get("custody_binding_sha256")
-        != arguments.expected_custody_binding_sha256
+        or contract.get("control_report_file_sha256") != arguments.expected_control_report_sha256
+        or contract.get("custody_binding_sha256") != arguments.expected_custody_binding_sha256
         or contract.get("source_closure") != source_closure
         or contract.get("network") != "kernel_denied"
         or contract.get("process_fork") != "kernel_denied"
@@ -640,6 +709,9 @@ def _run(arguments: argparse.Namespace) -> int:
     if execution_spec_identity(spec_raw) != authority["execution_spec"]:
         _fail("recurrent_sft_evaluation_execution_spec_drift")
     spec = RLCExecutionSpec.from_dict(spec_raw)
+    behavior_generation_contract = build_generated_behavior_generation_contract(
+        execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
+    )
     model_identity = small_model_identity(arguments.model_dir)
     if model_identity != authority["model"]:
         _fail("recurrent_sft_evaluation_model_identity_drift")
@@ -656,17 +728,14 @@ def _run(arguments: argparse.Namespace) -> int:
         type(trained_binding.get("optimizer_updates")) is not int
         or trained_binding["optimizer_updates"] < 1
         or trained_binding.get("step") != trained_binding["optimizer_updates"]
-        or trained_binding.get("trainer_config_sha256")
-        != expected_trainer_config_sha256
+        or trained_binding.get("trainer_config_sha256") != expected_trainer_config_sha256
     ):
         _fail("recurrent_sft_evaluation_reference_workload_invalid")
     control_paths, control_bindings = _control_adapters(
         arguments.control_report.expanduser(),
         expected_report_sha256=arguments.expected_control_report_sha256,
         authority=authority,
-        expected_reference_checkpoint_sha256=(
-            arguments.expected_reference_checkpoint_sha256
-        ),
+        expected_reference_checkpoint_sha256=(arguments.expected_reference_checkpoint_sha256),
         expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
         expected_trainer_config_sha256=expected_trainer_config_sha256,
     )
@@ -676,18 +745,15 @@ def _run(arguments: argparse.Namespace) -> int:
         source_closure=sources,
     )
     contract_custody = containment_contract.get("custody_bindings")
-    if (
-        not isinstance(contract_custody, Mapping)
-        or not isinstance(contract_custody.get("custody"), Mapping)
+    if not isinstance(contract_custody, Mapping) or not isinstance(
+        contract_custody.get("custody"), Mapping
     ):
         _fail("recurrent_sft_evaluation_contract_custody_invalid")
     _candidate, _evaluator, custody_material = _candidate_and_evaluator_artifacts(
         arguments.candidate_dir,
         arguments.evaluator_dir,
         authority=authority,
-        expected_custody_binding_sha256=(
-            arguments.expected_custody_binding_sha256
-        ),
+        expected_custody_binding_sha256=(arguments.expected_custody_binding_sha256),
         expected_custody=contract_custody["custody"],
     )
     holdout_rows = custody_material["rows"]
@@ -761,6 +827,16 @@ def _run(arguments: argparse.Namespace) -> int:
             disable_adapter=True,
             envelope=envelope,
         )
+        base_behavior_canaries = _generate_behavior_canaries(
+            model,
+            tokenizer,
+            model_path=arguments.model_dir,
+            spec=spec,
+            arm=BASE_ARM,
+            adapter_fingerprint=None,
+            generation_contract=behavior_generation_contract,
+            envelope=envelope,
+        )
         lexical_hashes[BASE_ARM] = _ordinary_lexical_hash(model, tokenizer)
 
         arm_paths = {
@@ -768,6 +844,7 @@ def _run(arguments: argparse.Namespace) -> int:
             **control_paths,
         }
         trained_canaries: list[dict[str, Any]] | None = None
+        trained_behavior_canaries: list[dict[str, Any]] | None = None
         for arm in (TRAINED_ARM, *CONTROL_ARMS):
             adapter_fingerprints[arm] = _load_adapter(
                 model,
@@ -790,7 +867,17 @@ def _run(arguments: argparse.Namespace) -> int:
                     disable_adapter=False,
                     envelope=envelope,
                 )
-        if trained_canaries is None:
+                trained_behavior_canaries = _generate_behavior_canaries(
+                    model,
+                    tokenizer,
+                    model_path=arguments.model_dir,
+                    spec=spec,
+                    arm=TRAINED_ARM,
+                    adapter_fingerprint=adapter_fingerprints[TRAINED_ARM],
+                    generation_contract=behavior_generation_contract,
+                    envelope=envelope,
+                )
+        if trained_canaries is None or trained_behavior_canaries is None:
             _fail("recurrent_sft_evaluation_trained_canaries_missing")
         base_after = full_weight_checkpoint_identity(arguments.model_dir)
         if base_after != base_before:
@@ -801,16 +888,23 @@ def _run(arguments: argparse.Namespace) -> int:
         base_canaries,
         trained_canaries,
     )
+    behavior_canary_verdict = generated_behavior_verdict(
+        base_behavior_canaries,
+        trained_behavior_canaries,
+        expected_generation_contract_sha256=(behavior_generation_contract["contract_sha256"]),
+        expected_trained_adapter_fingerprint=(adapter_fingerprints[TRAINED_ARM]),
+    )
     lexical_invariance = len(set(lexical_hashes.values())) == 1
     all_gates_passed = (
         falsification["heldout_transfer_proven"]
         and likelihood_canary_verdict["passed"]
+        and behavior_canary_verdict["passed"]
         and lexical_invariance
     )
     body = {
         "schema": REPORT_SCHEMA,
         "status": (
-            "small_checkpoint_transfer_with_likelihood_regression_gates_passed"
+            "small_checkpoint_transfer_with_all_regression_gates_passed"
             if all_gates_passed
             else "small_checkpoint_transfer_not_proven"
         ),
@@ -820,9 +914,7 @@ def _run(arguments: argparse.Namespace) -> int:
         "containment_contract_sha256": containment_contract["contract_sha256"],
         "source_closure": sources,
         "custody": custody_material["bindings"],
-        "custody_binding_sha256": custody_material[
-            "custody_binding_sha256"
-        ],
+        "custody_binding_sha256": custody_material["custody_binding_sha256"],
         "trained_candidate": trained_binding,
         "controls": control_bindings,
         "wrapped_projections": wrapped,
@@ -836,7 +928,17 @@ def _run(arguments: argparse.Namespace) -> int:
             TRAINED_ARM: trained_canaries,
         },
         "regression_likelihood_canary_verdict": likelihood_canary_verdict,
-        "generated_behavior_regression_tested": False,
+        "generated_behavior_canary_count": len(build_generated_behavior_canaries()),
+        "generated_behavior_generation_contract": (behavior_generation_contract),
+        "generated_behavior_generation_contract_sha256": (
+            behavior_generation_contract["contract_sha256"]
+        ),
+        "generated_behavior_canary_observations": {
+            BASE_ARM: base_behavior_canaries,
+            TRAINED_ARM: trained_behavior_canaries,
+        },
+        "generated_behavior_canary_verdict": behavior_canary_verdict,
+        "generated_behavior_regression_tested": True,
         "ordinary_lexical_hashes": lexical_hashes,
         "ordinary_lexical_invariance_proven": lexical_invariance,
         "base_weights_unchanged": True,
@@ -857,7 +959,6 @@ def _run(arguments: argparse.Namespace) -> int:
             "frontier_performance",
             "resident_32b_result",
             "production_promotion",
-            "generated_behavior_regression",
             "wow_signal",
         ],
     }

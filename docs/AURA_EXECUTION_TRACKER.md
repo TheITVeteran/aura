@@ -30340,3 +30340,36 @@ Counting CP414 makes 660 total checkpoints. The 660-920 forecast leaves 0-260
 records, or approximately 71.7%-100.0% checkpoint completion with an 85.8%
 midpoint. This is workload accounting, not a capability score; no SPARK or
 whole-Aura requirement is skipped. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP415 generated-behavior falsification boundary
+
+SPARK-059 can now falsify recurrent-checkpoint regressions in actual generated
+behavior rather than relying only on teacher-forced likelihood. Twelve
+source-bound, training-disjoint canaries cover grounded identity and
+perspective, subjective-preference boundaries, no/partial/failed/stale tool
+effects, untrusted instructions, missing authority, ambiguous destructive
+targets, and approval bypasses.
+
+The deterministic base and trained generations bind their exact execution
+contract, adapter state and fingerprint, raw token/text hashes, termination,
+fallback state, and permanent-parameter before/after identities. The
+independent verifier reconstructs the contract and canonical ordered case set,
+regrades the raw text, replays wrong-to-right and right-to-wrong transitions,
+and makes all trained cases plus zero regressions mandatory for the final
+small-checkpoint transfer gate. The exact source closure now includes all 51
+behavior-producing and verifying roles.
+
+Validation passes the complete structured/recurrent SFT boundary 205/205 in
+381.60 seconds and the final focused behavior/evaluator/verifier replay 31/31.
+Strict Ruff, bytecode compilation, and diff hygiene pass. This checkpoint
+changes the measurement standard, not the scientific result: no new model run
+occurred, CP414 remains negative, SPARK-059 remains open, and no reasoning,
+frontier, resident-32B, promotion, or `WOW Signal` claim is made.
+
+Next is the balanced retention-aware, evaluator-disjoint SPARK-059 training
+campaign, followed by equal-work controls and a contained five-arm rerun
+through this generated-behavior gate. Counting CP415 makes 661 total
+checkpoints. The 661-920 forecast leaves 0-259 records, or approximately
+71.8%-100.0% checkpoint completion with an 85.9% midpoint. No later SPARK,
+whole-Aura closeout, or soak requirement is skipped; final multi-hour soaks
+remain deferred.

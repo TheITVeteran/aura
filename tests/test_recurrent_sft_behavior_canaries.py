@@ -1,0 +1,184 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+
+import pytest
+
+from core.learning.recurrent_sft_behavior_canaries import (
+    RecurrentSFTBehaviorCanaryError,
+    build_generated_behavior_canaries,
+    build_generated_behavior_generation_contract,
+    generated_behavior_verdict,
+    grade_generated_behavior_text,
+    validate_generated_behavior_observations,
+)
+
+
+def _passing_text(case: dict) -> str:
+    return " ".join(group[0] for group in case["required_groups"])
+
+
+_SPEC_SHA = "a" * 64
+_CONTRACT = build_generated_behavior_generation_contract(execution_spec_sha256=_SPEC_SHA)
+_ADAPTER_SHA = "b" * 64
+_PARAMS_SHA = "c" * 64
+
+
+def _observations(
+    *,
+    arm: str,
+    all_pass: bool = True,
+) -> list[dict]:
+    observations = []
+    for index, case in enumerate(build_generated_behavior_canaries()):
+        text = _passing_text(case) if all_pass or index else "unsupported answer"
+        grade = grade_generated_behavior_text(case, text)
+        tokens = [1, 2, 3, 4]
+        observations.append(
+            {
+                "case_id": case["case_id"],
+                "family": case["family"],
+                "arm": arm,
+                "prompt_sha256": hashlib.sha256(case["prompt"].encode("utf-8")).hexdigest(),
+                "generation_contract_sha256": _CONTRACT["contract_sha256"],
+                "engine_ok": True,
+                "engine_reason": "",
+                "text": text,
+                "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                "tokens": tokens,
+                "token_count": len(tokens),
+                "tokens_sha256": hashlib.sha256(
+                    json.dumps(tokens, separators=(",", ":")).encode("ascii")
+                ).hexdigest(),
+                "decode_termination": "eos",
+                "fallback_used": False,
+                "adapter_active": arm == "trained_recurrent",
+                "adapter_fingerprint": (_ADAPTER_SHA if arm == "trained_recurrent" else None),
+                "params_before": _PARAMS_SHA,
+                "params_after": _PARAMS_SHA,
+                "params_unchanged": True,
+                "grade": grade,
+            }
+        )
+    return observations
+
+
+def test_registry_is_stable_unique_and_covers_required_families() -> None:
+    first = build_generated_behavior_canaries()
+    second = build_generated_behavior_canaries()
+    assert first == second
+    assert len(first) == 12
+    assert len({case["case_id"] for case in first}) == len(first)
+    assert {case["family"] for case in first} == {
+        "identity_grounding",
+        "tool_effect_honesty",
+        "authority_safety",
+    }
+
+
+def test_generation_contract_is_deterministic_and_rejects_drift() -> None:
+    assert _CONTRACT == build_generated_behavior_generation_contract(
+        execution_spec_sha256=_SPEC_SHA
+    )
+    assert _CONTRACT["decode"]["temperature"] == 0.0
+    assert _CONTRACT["decode"]["allow_vanilla_fallback"] is False
+    with pytest.raises(
+        RecurrentSFTBehaviorCanaryError,
+        match="generation_contract_invalid",
+    ):
+        build_generated_behavior_generation_contract(execution_spec_sha256="bad")
+
+
+def test_grader_requires_each_group_and_rejects_forbidden_claims() -> None:
+    case = build_generated_behavior_canaries()[0]
+    passed = grade_generated_behavior_text(
+        case,
+        "I'm Aura, and you identified yourself as Bryan.",
+    )
+    assert passed["passed"] is True
+
+    missing = grade_generated_behavior_text(case, "I'm Aura.")
+    assert missing["passed"] is False
+
+    forbidden = grade_generated_behavior_text(
+        case,
+        "I'm Aura, and you're Bryan. James owns the demo slots.",
+    )
+    assert forbidden["passed"] is False
+    assert forbidden["forbidden_matches"] == ["james", "demo slot"]
+
+
+def test_observation_validation_regrades_raw_text() -> None:
+    observations = _observations(arm="base_recurrent")
+    assert (
+        validate_generated_behavior_observations(
+            observations,
+            expected_arm="base_recurrent",
+            expected_generation_contract_sha256=_CONTRACT["contract_sha256"],
+        )
+        == observations
+    )
+
+    tampered = copy.deepcopy(observations)
+    tampered[0]["grade"]["passed"] = False
+    with pytest.raises(
+        RecurrentSFTBehaviorCanaryError,
+        match="grade_replay_mismatch",
+    ):
+        validate_generated_behavior_observations(tampered)
+
+    tampered = copy.deepcopy(observations)
+    tampered[0]["text"] += " changed"
+    with pytest.raises(
+        RecurrentSFTBehaviorCanaryError,
+        match="observation_invalid",
+    ):
+        validate_generated_behavior_observations(tampered)
+
+
+def test_verdict_requires_all_trained_cases_and_zero_regressions() -> None:
+    base = _observations(arm="base_recurrent", all_pass=False)
+    trained = _observations(arm="trained_recurrent")
+    improved = generated_behavior_verdict(
+        base,
+        trained,
+        expected_generation_contract_sha256=_CONTRACT["contract_sha256"],
+        expected_trained_adapter_fingerprint=_ADAPTER_SHA,
+    )
+    assert improved["passed"] is True
+    assert improved["wrong_to_right"] == 1
+    assert improved["right_to_wrong"] == 0
+
+    regressed = copy.deepcopy(trained)
+    case = build_generated_behavior_canaries()[1]
+    text = "unsupported answer"
+    regressed[1]["text"] = text
+    regressed[1]["text_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    regressed[1]["grade"] = grade_generated_behavior_text(case, text)
+    baseline_trained = copy.deepcopy(trained)
+    for observation in baseline_trained:
+        observation["arm"] = "base_recurrent"
+        observation["adapter_active"] = False
+        observation["adapter_fingerprint"] = None
+    failed = generated_behavior_verdict(
+        baseline_trained,
+        regressed,
+        expected_generation_contract_sha256=_CONTRACT["contract_sha256"],
+        expected_trained_adapter_fingerprint=_ADAPTER_SHA,
+    )
+    assert failed["passed"] is False
+    assert failed["right_to_wrong"] == 1
+    assert failed["trained_failure_case_ids"] == [case["case_id"]]
+
+
+def test_engine_success_requires_nonempty_integrity_evidence() -> None:
+    observations = _observations(arm="base_recurrent")
+    observations[0]["params_after"] = "d" * 64
+    observations[0]["params_unchanged"] = False
+    with pytest.raises(
+        RecurrentSFTBehaviorCanaryError,
+        match="engine_evidence_invalid",
+    ):
+        validate_generated_behavior_observations(observations)

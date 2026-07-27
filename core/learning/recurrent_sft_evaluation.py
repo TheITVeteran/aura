@@ -20,10 +20,61 @@ from core.learning.structured_sft import (
     validate_structured_sft_custody_pair,
 )
 
-CONTROL_REPORT_SCHEMA: Final = (
-    "aura.rlc.synthetic_recurrent_sft_control_training.v1"
-)
+CONTROL_REPORT_SCHEMA: Final = "aura.rlc.synthetic_recurrent_sft_control_training.v1"
 EVALUATION_SCHEMA: Final = "aura.rlc.synthetic_recurrent_sft_evaluation.v1"
+EVALUATION_SOURCE_ROLES: Final = (
+    "action_state_capture",
+    "atomic_writer",
+    "authority",
+    "branch_exchange",
+    "branch_roles",
+    "capability_canaries",
+    "code_repl",
+    "cognitive_operators",
+    "control_containment",
+    "depth_conditioned_lora",
+    "detached_supervisor",
+    "epistemic_state",
+    "escape",
+    "evaluation_contract",
+    "evaluator",
+    "evaluator_launcher",
+    "execution_spec",
+    "falsification",
+    "fast_weight_learning",
+    "fast_weights",
+    "file_read_gateway",
+    "generated_behavior_canaries",
+    "independent_verifier",
+    "latent_cortex_engine",
+    "latent_cortex_governance",
+    "latent_optimizer",
+    "latent_telemetry",
+    "layer_schedules",
+    "memory_guard",
+    "model_lane",
+    "model_lane_admission",
+    "natural_deduction",
+    "probe_cache",
+    "proof_kernel",
+    "recurrence_adapter",
+    "recurrence_identity",
+    "recurrence_objective",
+    "recurrence_runner",
+    "recurrent_loop_core",
+    "recurrent_sft_execution",
+    "resource_accounting",
+    "runtime_errors",
+    "sandbox_profile_builder",
+    "sandbox_runner",
+    "structured_sft",
+    "subprocess_gateway",
+    "test_time_training",
+    "types",
+    "value_of_computation",
+    "verified_best",
+    "workspace",
+)
 
 
 class RecurrentSFTEvaluationError(ValueError):
@@ -31,9 +82,7 @@ class RecurrentSFTEvaluationError(ValueError):
 
 
 def _fail(code: str) -> Never:
-    raise RecurrentSFTEvaluationError(
-        str(code or "recurrent_sft_evaluation_invalid")
-    )
+    raise RecurrentSFTEvaluationError(str(code or "recurrent_sft_evaluation_invalid"))
 
 
 def _is_sha256(value: Any) -> bool:
@@ -52,9 +101,7 @@ def strict_json_bytes(payload: bytes, *, role: str) -> dict[str, Any]:
     try:
         value = json.loads(payload.decode("ascii"))
     except (RecursionError, UnicodeError, ValueError) as exc:
-        raise RecurrentSFTEvaluationError(
-            f"recurrent_sft_evaluation_{role}_json_invalid"
-        ) from exc
+        raise RecurrentSFTEvaluationError(f"recurrent_sft_evaluation_{role}_json_invalid") from exc
     if not isinstance(value, dict):
         _fail(f"recurrent_sft_evaluation_{role}_invalid")
     return value
@@ -169,16 +216,11 @@ def validate_control_report(
         or report.get("status") != "completed_equal_work_negative_controls"
         or observed_report_sha256 != sha256_json(body)
         or report_file_sha256 != expected_report_file_sha256
-        or report.get("reference_authority_sha256")
-        != expected_authority_sha256
-        or report.get("reference_checkpoint_sha256")
-        != expected_reference_checkpoint_sha256
-        or report.get("model_identity_sha256")
-        != expected_model_identity_sha256
-        or report.get("execution_spec_sha256")
-        != expected_execution_spec_sha256
-        or report.get("trainer_config_sha256")
-        != expected_trainer_config_sha256
+        or report.get("reference_authority_sha256") != expected_authority_sha256
+        or report.get("reference_checkpoint_sha256") != expected_reference_checkpoint_sha256
+        or report.get("model_identity_sha256") != expected_model_identity_sha256
+        or report.get("execution_spec_sha256") != expected_execution_spec_sha256
+        or report.get("trainer_config_sha256") != expected_trainer_config_sha256
         or report.get("equal_sample_order") is not True
         or report.get("equal_per_step_token_counts") is not True
         or report.get("equal_optimizer_and_hyperparameters") is not True
@@ -221,19 +263,14 @@ def validate_control_report(
             or arm_report.get("optimizer_updates") != reference_updates
             or control_updates.get(arm) != reference_updates
             or arm_report.get("optimizer") != "AdamW"
-            or arm_report.get("starting_adapter_sha256")
-            != initial_adapter_sha256
+            or arm_report.get("starting_adapter_sha256") != initial_adapter_sha256
             or not isinstance(sample_indices, list)
             or len(sample_indices) != reference_updates
             or any(type(value) is not int or value < 0 for value in sample_indices)
             or not isinstance(sample_token_counts, list)
             or len(sample_token_counts) != reference_updates
-            or any(
-                type(value) is not int or value < 1
-                for value in sample_token_counts
-            )
-            or arm_report.get("sample_token_budget")
-            != sum(sample_token_counts)
+            or any(type(value) is not int or value < 1 for value in sample_token_counts)
+            or arm_report.get("sample_token_budget") != sum(sample_token_counts)
             or not isinstance(adapter, Mapping)
             or set(adapter) != {"filename", "sha256", "size_bytes"}
             or not isinstance(adapter.get("filename"), str)
@@ -248,10 +285,7 @@ def validate_control_report(
         if reference_indices is None:
             reference_indices = list(sample_indices)
             reference_token_counts = list(sample_token_counts)
-        elif (
-            sample_indices != reference_indices
-            or sample_token_counts != reference_token_counts
-        ):
+        elif sample_indices != reference_indices or sample_token_counts != reference_token_counts:
             _fail("recurrent_sft_evaluation_control_workload_invalid")
         bindings[arm] = dict(adapter)
     return bindings
@@ -278,8 +312,7 @@ def score_forward(
         _fail("recurrent_sft_evaluation_forward_invalid")
     loss = branch_mean_answer_loss(forward, answer_tokens)
     branch_probabilities = [
-        mx.softmax(logits.astype(mx.float32), axis=-1)
-        for logits in forward.branch_logits
+        mx.softmax(logits.astype(mx.float32), axis=-1) for logits in forward.branch_logits
     ]
     mixture = sum(branch_probabilities) / len(branch_probabilities)
     predictions = mx.argmax(mixture, axis=-1)
@@ -388,17 +421,12 @@ def regression_canary_verdict(
 ) -> dict[str, Any]:
     """Reject material loss or target-top1 regressions in each canary class."""
 
-    if (
-        len(base_rows) != len(trained_rows)
-        or not base_rows
-        or absolute_loss_tolerance < 0.0
-    ):
+    if len(base_rows) != len(trained_rows) or not base_rows or absolute_loss_tolerance < 0.0:
         _fail("recurrent_sft_evaluation_canary_alignment_invalid")
     families: dict[str, dict[str, Any]] = {}
     for before, after in zip(base_rows, trained_rows, strict=True):
-        if (
-            before.get("example_id") != after.get("example_id")
-            or before.get("family") != after.get("family")
+        if before.get("example_id") != after.get("example_id") or before.get("family") != after.get(
+            "family"
         ):
             _fail("recurrent_sft_evaluation_canary_alignment_invalid")
         family = str(before["family"])
@@ -407,16 +435,11 @@ def regression_canary_verdict(
             {"loss_deltas": [], "top1_delta": 0},
         )
         bucket["loss_deltas"].append(float(after["loss"]) - float(before["loss"]))
-        bucket["top1_delta"] += sum(after["target_top1"]) - sum(
-            before["target_top1"]
-        )
+        bucket["top1_delta"] += sum(after["target_top1"]) - sum(before["target_top1"])
     summaries: dict[str, Any] = {}
     for family, values in sorted(families.items()):
         mean_delta = sum(values["loss_deltas"]) / len(values["loss_deltas"])
-        passed = (
-            mean_delta <= absolute_loss_tolerance
-            and values["top1_delta"] >= 0
-        )
+        passed = mean_delta <= absolute_loss_tolerance and values["top1_delta"] >= 0
         summaries[family] = {
             "mean_loss_delta": round(mean_delta, 12),
             "target_top1_delta": values["top1_delta"],
@@ -434,6 +457,7 @@ def regression_canary_verdict(
 __all__ = [
     "CONTROL_REPORT_SCHEMA",
     "EVALUATION_SCHEMA",
+    "EVALUATION_SOURCE_ROLES",
     "RecurrentSFTEvaluationError",
     "build_regression_canary_rows",
     "evaluator_holdout_rows",

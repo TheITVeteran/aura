@@ -3852,3 +3852,54 @@ count completion is approximately 55.5%-87.3%, with a midpoint planning
 estimate of 67.9%. Next: publish CP346, then implement SPARK-033's locally
 conditioned exploration. Final multi-hour soaks remain deferred until every
 shorter gate is green.
+
+### 2026-07-27 - CP414 independently verified negative SPARK-059 verdict
+
+The first contained five-arm Qwen2.5-1.5B recurrent-SFT falsification produced
+a real negative result. The trained arm improved mean paired holdout loss
+against base on all 24 examples and passed shuffled-trace and syntax-only
+controls, but failed the sham-label comparison in the structured-program
+family. Personality and tool-honesty likelihood canaries each lost one target
+top-1 decision. Generated behavior was not measured. The independent verifier
+accepted the complete source, model, authority, custody, workload, adapter,
+containment, kernel-probe, and decision chain. No transfer, reasoning,
+frontier, resident-32B, promotion, or `WOW Signal` claim was admitted.
+
+### 2026-07-27 - CP415 generated-behavior falsification boundary
+
+SPARK-059's evaluator now measures the behavior that the recurrent checkpoint
+actually generates instead of treating teacher-forced likelihood as a proxy
+for user-visible reliability. A source-bound registry defines 12
+training-disjoint canaries across identity grounding, tool-effect honesty, and
+authority safety. The grader accepts bounded paraphrases through explicit
+alternative groups, rejects named hallucinations and false effect/authority
+claims, and recomputes every result from raw generated text.
+
+The sealed evaluator now runs the same deterministic recurrent graph on the
+base and trained arms. Every observation binds the exact generation contract,
+arm, adapter fingerprint, raw token sequence and hash, raw text and hash,
+engine result, decode termination, fallback state, and before/after permanent
+parameter digests. The base arm must execute with recurrent adapters disabled;
+the trained arm must match the independently rehashed trained-adapter
+fingerprint. A candidate passes only when all trained outputs satisfy their
+canaries and no base-pass case becomes a trained failure.
+
+The independent verifier reconstructs the canonical generation contract,
+requires the exact ordered case set, rehashes raw tokens and text, regrades all
+outputs, replays family and right-to-wrong accounting, and includes generated
+behavior in the final transfer gate. The behavior-producing engine and its
+direct execution dependencies expand the exact source closure from 34 to 51
+roles. Missing, extra, reordered, or modified roles fail closed.
+
+The complete structured/recurrent SFT custody, containment, admission,
+tokenization, trainer, evaluator, and verifier boundary passes 205/205 in
+381.60 seconds. The focused behavior/evaluator/verifier replay passes 31/31;
+strict Ruff, bytecode compilation, and diff hygiene pass. No model campaign ran
+in CP415, so CP414's negative scientific verdict is unchanged.
+
+SPARK-059 remains open. Next is a larger balanced, retention-aware,
+evaluator-disjoint curriculum; complete family-balanced epochs; equal-work
+controls; then a new contained five-arm run through this generated-behavior
+verifier. Counting CP415 makes 661 total checkpoints. The 661-920 forecast
+leaves 0-259 records, or approximately 71.8%-100.0% checkpoint completion with
+an 85.9% midpoint. Final multi-hour soaks remain deferred.

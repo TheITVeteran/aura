@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.learning import recurrent_sft_evaluation as evaluation
+from core.learning.recurrent_sft_evaluation import EVALUATION_SOURCE_ROLES
 from core.learning.recurrent_sft_falsification import CONTROL_ARMS, sha256_json
 from core.learning.structured_sft import (
     STRUCTURED_SFT_CANDIDATE_FILES,
@@ -401,10 +402,8 @@ def test_regression_canaries_require_every_family_to_hold() -> None:
 def test_evaluator_source_closure_is_exact_and_hash_bound() -> None:
     closure = evaluator_tool.evaluation_source_closure()
     assert closure["schema"].endswith("source_closure")
-    assert len(closure["files"]) == 34
-    assert [row["role"] for row in closure["files"]] == sorted(
-        row["role"] for row in closure["files"]
-    )
+    assert len(closure["files"]) == len(EVALUATION_SOURCE_ROLES)
+    assert [row["role"] for row in closure["files"]] == sorted(EVALUATION_SOURCE_ROLES)
     assert closure["closure_sha256"] == sha256_json(
         {
             "schema": closure["schema"],
@@ -469,7 +468,4 @@ def test_adapter_switch_replaces_every_recurrent_tensor(
 
     assert first != second
     assert second == evaluator_tool._tensor_fingerprint(adapter_b)
-    assert all(
-        bool(mx.array_equal(model.current[name], adapter_b[name]))
-        for name in names
-    )
+    assert all(bool(mx.array_equal(model.current[name], adapter_b[name])) for name in names)
