@@ -101,6 +101,19 @@ const CHAT_HANDOFF_MAX_AGE_MS = 10 * 60 * 1000;
 const CHAT_DELIVERY_STATUS_TIMEOUT_MS = 8000;
 const CHAT_DELIVERY_POLL_BASE_MS = 400;
 const CHAT_DELIVERY_POLL_MAX_MS = 5000;
+// How long a turn keeps retrying a runtime it cannot reach at all.
+//
+// The delivery loop is deliberately patient: a turn survives a transport
+// blip and resumes, which is why it retries rather than failing on the first
+// error. It had no ceiling, so when the runtime went away mid-turn the UI
+// showed "Aura is reconciling the current turn…" indefinitely — a dead
+// backend and a slow thought looked exactly alike. Observed 2026-07-27:
+// seventeen minutes of spinner over a process that had already exited.
+//
+// Only consecutive TRANSPORT failures count against this. A server that
+// answers "still working" is contact, and resets the clock — a long
+// reasoning turn is never cut off by it.
+const CHAT_DELIVERY_UNREACHABLE_MS = 180000;
 const CHAT_DELIVERY_TERMINAL_STATES = new Set([
     'awaiting_approval',
     'completed',
@@ -3834,6 +3847,7 @@ async function resolveChatDelivery(
     let source = resumeFirst ? 'status' : 'post';
     let retryDelay = CHAT_DELIVERY_POLL_BASE_MS;
     let lastError = null;
+    let unreachableSince = 0;
     while (true) {
         if (shouldDefer()) return { deferred: true, lastError };
         let packet = null;
@@ -3844,11 +3858,35 @@ async function resolveChatDelivery(
         } catch (error) {
             lastError = error;
             source = 'status';
+            if (!unreachableSince) unreachableSince = Date.now();
+            if (Date.now() - unreachableSince >= CHAT_DELIVERY_UNREACHABLE_MS) {
+                item.deliveryState = 'failed';
+                item.resumePending = true;
+                item.resumeDeadline = 0;
+                return {
+                    deferred: false,
+                    ok: false,
+                    unreachable: true,
+                    lastError,
+                    data: {
+                        response: (
+                            "I lost contact with my own runtime partway through that turn, "
+                            + "so I don't know whether it finished. I'd rather tell you that "
+                            + "than leave you watching a spinner. Your message is still here — "
+                            + "send it again once I'm back."
+                        ),
+                        status: 'runtime_unreachable',
+                        response_confidence: 'not_generated',
+                    },
+                };
+            }
             onPending({ error, source, envelope: null });
             await wait(retryDelay);
             retryDelay = Math.min(CHAT_DELIVERY_POLL_MAX_MS, retryDelay * 1.7);
             continue;
         }
+        // Contact restored: a turn that is merely slow must never be cut off.
+        unreachableSince = 0;
 
         const decision = chatDeliveryDecision(
             source,
