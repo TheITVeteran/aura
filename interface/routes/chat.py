@@ -6641,6 +6641,7 @@ def _desktop_live_reply_token_budget(
     bounded_planning_contract: bool,
     runtime_fact_status_contract: bool,
     memory_state_contract: bool,
+    memory_state_contract_covers_turn: bool = True,
 ) -> int:
     """Allocate live reply capacity from semantic workload, not route name.
 
@@ -6648,9 +6649,18 @@ def _desktop_live_reply_token_budget(
     not imply a small completion for multi-step planning.  Keeping this policy
     beside the route classifiers also prevents backend and live UI calls from
     silently receiving different reasoning budgets for the same request.
+
+    A memory-state turn gets the small budget only when the memory request is
+    the whole turn — the same rule the engine's ladder applies. The engine
+    floors currently rescue a compound turn that arrives here capped at 384,
+    which makes this a latent duplicate of a defect already fixed downstream
+    rather than a live one; two places deciding the same thing differently is
+    how it comes back.
     """
 
-    if memory_state_contract or runtime_fact_status_contract:
+    if runtime_fact_status_contract or (
+        memory_state_contract and memory_state_contract_covers_turn
+    ):
         return 384
     if capability_inventory_contract:
         return 384
@@ -7593,6 +7603,7 @@ async def _run_cognitive_engine_chat_turn(
             bounded_planning_contract=bounded_planning_contract,
             runtime_fact_status_contract=runtime_fact_status_contract,
             memory_state_contract=memory_state_contract,
+            memory_state_contract_covers_turn=memory_state_contract_covers_turn,
         )
         if self_condition_contract:
             live_reply_token_budget = min(live_reply_token_budget, 384)
