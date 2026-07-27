@@ -249,7 +249,10 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
     {
         # Only surface/style defects belong here. Thin, evasive, or confused
         # drafts need another generation attempt because downstream repair
-        # cannot safely invent the missing answer.
+        # cannot safely invent the missing answer — "I don't know what caused
+        # that timeout yet" clears any length floor and is still a non-answer.
+        # The thinness FALSE POSITIVES are fixed where they are produced (see
+        # _has_reliability_diagnostic_substance), not by widening this set.
         "off_topic_self_reflection_reply",
         "pseudo_internal_jargon",
         "status_page_self_reflection",

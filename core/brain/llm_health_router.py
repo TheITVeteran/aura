@@ -928,6 +928,20 @@ def validate_response(text: str | None, min_tokens: int = 1) -> tuple[bool, str]
     return True, "ok"
 
 
+# A draft we rejected on QUALITY says nothing about the endpoint that produced
+# it. These outcomes must never be recorded as endpoint damage: the model ran,
+# returned text, and a gate above it declined the text. Treating them as
+# transport failures opened the Cortex circuit and cost later turns the primary
+# lane over a verdict the infrastructure had no part in.
+_SURFACE_QUALITY_REJECTIONS = frozenset(
+    {
+        "surface_quality_rejected",       # the worker's own surface gate
+        "user_facing_assessment_rejected",  # inference_gate, caller side
+        "model_text_integrity_rejected",    # inference_gate, malformed shape
+    }
+)
+
+
 def _is_transient_local_runtime_failure(error: str) -> bool:
     normalized = str(error or "").strip().lower()
     if not normalized:
@@ -4199,17 +4213,26 @@ class HealthAwareLLMRouter:
                                     generation_metadata = dict(raw_metadata)
                             except (AttributeError, RuntimeError, TypeError, ValueError):
                                 generation_metadata = {}
-                        if (
-                            str(generation_metadata.get("error") or "").strip()
-                            == "surface_quality_rejected"
-                        ):
-                            # The endpoint is healthy; its worker intentionally
-                            # rejected a semantically invalid visible draft.
+                        _quality_rejection = str(
+                            generation_metadata.get("error") or ""
+                        ).strip()
+                        if _quality_rejection in _SURFACE_QUALITY_REJECTIONS:
+                            # The endpoint is healthy; something above it
+                            # intentionally rejected the visible draft.
                             # Preserve that typed outcome without tripping the
                             # infrastructure circuit as "no text".
+                            #
+                            # Only the WORKER's own rejection was recognised
+                            # here. The gate's caller-side rejections carry
+                            # different names, so a Cortex that returned 458
+                            # good characters was reported as
+                            # "client_returned_no_text" and its circuit was
+                            # opened "on transient runtime failure" — costing
+                            # the NEXT turn a primary lane over a quality
+                            # verdict the infrastructure had no part in.
                             return {
                                 "ok": False,
-                                "error": "surface_quality_rejected",
+                                "error": _quality_rejection,
                                 "endpoint": ep.name,
                                 "surface_control_receipt": dict(
                                     generation_metadata.get(

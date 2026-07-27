@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-07-02T15:23:44.743797+00:00",
+  "timestamp": "2026-07-27T00:12:10.998947+00:00",
   "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
   "model_layers": 64,
   "vector_source": {
@@ -36,7 +36,7 @@
   ],
   "alpha": 8.0,
   "max_tokens": 100,
-  "duration_seconds": 2507.5,
+  "duration_seconds": 2863.6,
   "injection_count": 12642,
   "analysis": {
     "n_trials": 50,

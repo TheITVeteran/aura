@@ -975,11 +975,47 @@ async def api_brain_retry(
 async def api_reboot(
     _: None = Depends(_require_internal),
 ):
-    """Restart the server process (send SIGTERM; supervisor restarts)."""
+    """Restart the server process, arranging the restart when nothing else will.
+
+    This used to send SIGTERM and document "supervisor restarts". That holds
+    only under launchd, which sets AURA_SUPERVISED=1. Started directly — the
+    ordinary way, PPID 1, no supervisor anywhere — the desktop's Reboot control
+    was a kill switch: Aura went down and never came back, with nothing in the
+    UI saying that "Reboot" meant "shut down".
+    """
     logger.warning("Reboot requested via API")
     import signal as _sig
+
+    from core.runtime.runtime_relaunch import schedule_relaunch, supervisor_will_restart
+
+    relaunch: dict[str, Any] = {"scheduled": False, "reason": "supervisor_owns_restart"}
+    if not supervisor_will_restart():
+        relaunch = schedule_relaunch()
+        if not relaunch.get("scheduled"):
+            # Refuse to become a kill switch. Nothing has been signalled yet,
+            # so the runtime is still up and the caller learns why.
+            logger.error(
+                "Reboot refused: no supervisor and no relaunch could be arranged (%s)",
+                relaunch.get("reason"),
+            )
+            return JSONResponse(
+                {
+                    "status": "reboot_unavailable",
+                    "detail": (
+                        "Nothing would restart this runtime, so the request was "
+                        "refused instead of shutting Aura down for good."
+                    ),
+                    "relaunch": relaunch,
+                },
+                status_code=503,
+            )
+        logger.warning(
+            "Relaunch armed (waiter pid=%s) before shutting down for reboot.",
+            relaunch.get("waiter_pid"),
+        )
+
     _sig.raise_signal(_sig.SIGTERM)
-    return JSONResponse({"status": "shutting_down"})
+    return JSONResponse({"status": "shutting_down", "relaunch": relaunch})
 
 
 # ── Skills ────────────────────────────────────────────────────

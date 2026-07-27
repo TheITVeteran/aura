@@ -618,22 +618,29 @@ _RELIABILITY_DIAGNOSTIC_SUBSTANCE_MARKERS = (
 # "what happens, and where does it break" is answered by explaining the
 # mechanism, and demanding a remediation verb rejected correct answers to
 # questions that never asked for one.
+#
+# These are STEMS, matched as substrings, because the literal forms were
+# brittle to the point of uselessness: "degrade" did not match "degradation",
+# so a second correct answer was rejected for the same reason as the first.
+# Word-final variation is the norm in this vocabulary, not the exception.
 _RELIABILITY_DIAGNOSTIC_MECHANISM_MARKERS = (
     "as a result",
     "because",
     "climb",
     "compound",
-    "degrade",
+    "degrad",
     "grow",
+    "increas",
     "leads to",
-    "means that",
+    "means",
     "results in",
-    "scales with",
+    "scale",
     "so each",
     "so every",
+    "start from scratch",
     "start over",
+    "strain on",
     "which is why",
-    "which means",
 )
 _TINY_DIRECT_MARKERS = (
     "do you know my name",
