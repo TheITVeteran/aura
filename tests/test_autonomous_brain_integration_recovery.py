@@ -74,20 +74,76 @@ async def test_agentic_path_continues_with_empty_tool_map_when_tool_discovery_fa
         async def think_and_act(self, _objective, _system_prompt, **kwargs):
             return {"content": "acted", "tools": kwargs.get("tools")}
 
+    # CP126 af6a3b7d: agentic execution is restricted to the declared LOCAL
+    # agentic tiers, so this stands up the endpoint under a name that is on
+    # that allowlist rather than relying on dictionary order.
+    from core.brain.llm.model_registry import DEEP_ENDPOINT
+
     endpoint = LLMEndpoint(
-        name="Agentic-Test",
+        name=DEEP_ENDPOINT,
         tier=LLMTier.SECONDARY,
         model_name="agentic-test",
         client=AgenticClient(),
     )
     router = SimpleNamespace(
-        endpoints={"Agentic-Test": endpoint},
+        endpoints={DEEP_ENDPOINT: endpoint},
         health_monitor=SimpleNamespace(is_healthy=lambda _name: True),
     )
 
-    result = await _engine_with_router(router).think("Research and act.")
+    result = await _engine_with_router(router).think(
+        "Research and act.", tools={"declared": True},
+    )
 
-    assert result == {"content": "acted", "tools": {}}
+    assert result["content"] == "acted"
+    # The caller's tools reach the client; a discovery failure would leave {}.
+    assert result["tools"] == {"declared": True}
+    assert result["route"] == "agentic"
+    assert result["endpoint"] == DEEP_ENDPOINT
+    # CP126 480a31a0: the map's provenance travels with the result.
+    assert result["tool_authority"]["source"] == "caller_supplied"
+
+
+@pytest.mark.asyncio
+async def test_agentic_tool_discovery_failure_yields_an_empty_map(monkeypatch):
+    """A tool registry that is offline must not stop the turn — and the
+    degradation is recorded as a capability loss, not a safe fallback."""
+    recorded = []
+    monkeypatch.setattr(
+        brain_module,
+        "_record_brain_degradation",
+        lambda error, **kwargs: recorded.append((error, kwargs)),
+    )
+    monkeypatch.setattr(
+        brain_module,
+        "build_agentic_tool_map",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("tool registry offline")),
+    )
+
+    class AgenticClient:
+        async def think_and_act(self, _objective, _system_prompt, **kwargs):
+            return {"content": "acted", "tools": kwargs.get("tools")}
+
+    from core.brain.llm.model_registry import DEEP_ENDPOINT
+
+    endpoint = LLMEndpoint(
+        name=DEEP_ENDPOINT,
+        tier=LLMTier.SECONDARY,
+        model_name="agentic-test",
+        client=AgenticClient(),
+    )
+    router = SimpleNamespace(
+        endpoints={DEEP_ENDPOINT: endpoint},
+        health_monitor=SimpleNamespace(is_healthy=lambda _name: True),
+    )
+
+    result = await _engine_with_router(router).think(
+        "Research and act.", context={"require_tools": True},
+    )
+
+    assert result["content"] == "acted"
+    assert result["tools"] == {}
+    assert result["tool_authority"]["source"] == "unavailable"
     assert recorded[0][1]["action"] == (
         "continued agentic reasoning without dynamically built tool map"
     )
+    assert recorded[0][1]["kind"] == "capability_loss"
