@@ -172,10 +172,42 @@ class ExistentialStakes:
             try:
                 tracker = get_degradation_tracker()
                 if tracker and hasattr(tracker, "_records"):
-                    recent_degradation_weight = sum(
-                        self._degradation_record_weight(r, now=now)
-                        for r in tracker._records
-                    )
+                    # Distinct problems, not repetitions of one.
+                    #
+                    # Summing every record let a single stuck fault saturate
+                    # survival threat by itself. Measured live 2026-07-27: an
+                    # empty draft recorded once per turn from one fail-closed
+                    # subsystem drove deg_threat to 1.00 on a host at 4% memory
+                    # pressure, which pinned existential_threat, which tripped
+                    # the Ulysses covenant, which refused every build the owner
+                    # asked for. The runtime was healthy and reported itself in
+                    # an emergency.
+                    #
+                    # A fault repeating is worse than a fault happening once,
+                    # so repeats still count — but the series has to converge,
+                    # or a stuck fault reaches saturation anyway and merely
+                    # takes longer about it. A harmonic discount grows like
+                    # log n and still crossed the threshold by 40 repeats; the
+                    # square converges to about 1.64x a single occurrence, so
+                    # one problem is worth at most ~2 of itself and can never
+                    # outweigh several genuinely different ones. The escalation
+                    # governor already caps the RATE of re-escalation for this
+                    # reason; this applies the principle to the measurement
+                    # that gates survival.
+                    seen: dict[tuple[str, str], int] = {}
+                    recent_degradation_weight = 0.0
+                    for record in tracker._records:
+                        weight = self._degradation_record_weight(record, now=now)
+                        if weight <= 0.0:
+                            continue
+                        signature = (
+                            str(getattr(record, "subsystem", "") or "unknown"),
+                            str(getattr(record, "error_type", "") or "")
+                            or str(getattr(record, "error_message", "") or "")[:80],
+                        )
+                        repeat = seen.get(signature, 0)
+                        seen[signature] = repeat + 1
+                        recent_degradation_weight += weight / (1.0 + repeat) ** 2
             except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
                 logger.debug("Failed to query degradation tracker: %s", e)
 
