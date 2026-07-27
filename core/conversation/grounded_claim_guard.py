@@ -149,6 +149,82 @@ _ARTIFACT_BEHAVIOUR_RE = re.compile(
 )
 
 
+# Claiming an action finished when nothing finished it.
+#
+# Live 2026-07-27: "I've found a beautiful image of a blue whale and set it as
+# your desktop background. Enjoy!" The wallpaper never changed. The capability
+# exists and is reachable — os_settings.set_wallpaper through computer_use's
+# system_control — so this was not a missing feature. It was a completed-action
+# claim with no completed action behind it.
+#
+# That is the same shape as describing a game she never built, and it deserves
+# the same treatment: the ledger decides. A sentence in the past tense about
+# having done something is checkable against whether anything was done.
+#
+# Deliberately narrow. Only first-person past-tense claims about consequential
+# acts count — "I set", "I saved", "I created". Intent ("I'll set it"),
+# capability ("I can set it") and refusal ("I couldn't set it") are all
+# untouched, because none of them asserts that the world changed.
+# The verb rarely sits next to the pronoun. "I've found a beautiful image and
+# set it as your desktop background" is one first-person sentence with the
+# action six words from the "I've", so the two halves are matched separately.
+_FIRST_PERSON_RE = re.compile(r"\b(?:I|I'(?:ve|m|ll)|we|we'(?:ve|ll))\b", re.IGNORECASE)
+_ACTION_VERB_RE = re.compile(
+    r"\b(?:set|saved|created|written|wrote|made|placed|put|changed|updated|"
+    r"exported|downloaded|installed|deleted|moved|renamed|sent|posted|added|"
+    r"generated|built|opened|launched)\b",
+    re.IGNORECASE,
+)
+_COMPLETED_STATE_RE = re.compile(
+    r"\b(?:it(?:'s| is)|that(?:'s| is))\s+(?:now\s+)?"
+    r"(?:set|saved|created|done|written|exported|installed|ready|there|on your)\b",
+    re.IGNORECASE,
+)
+
+
+def _claims_an_action_completed(text: str) -> bool:
+    """A sentence asserting the world already changed, not that it might."""
+    if _NOT_A_COMPLETION_RE.search(text):
+        return False
+    if _COMPLETED_STATE_RE.search(text):
+        return True
+    return bool(_FIRST_PERSON_RE.search(text) and _ACTION_VERB_RE.search(text))
+# Words that make a sentence about the future or the hypothetical rather than
+# the past. A claim is only a claim when it says the thing already happened.
+_NOT_A_COMPLETION_RE = re.compile(
+    r"\b(?:I(?:'ll| will| can| could| would| should| might)|going to|about to|"
+    r"trying to|couldn(?:'t| not)|didn(?:'t| not)|wasn(?:'t| not)|"
+    r"unable to|failed to|not going to)\b",
+    re.IGNORECASE,
+)
+
+
+def _last_action_succeeded() -> tuple[bool, str]:
+    """Did the most recent consequential attempt succeed? From the ledger.
+
+    Returns (claim_is_unsupported, what_was_attempted).
+    """
+    try:
+        from core.agency.intention_loop import get_intention_loop
+
+        completed = list(
+            getattr(get_intention_loop(), "_completed_intentions", None) or []
+        )
+    except _RECOVERABLE:
+        return False, ""
+    if not completed:
+        # No ledger entries at all is not evidence of failure — the loop may
+        # not be running. Silence is not a refutation.
+        return False, ""
+    for record in reversed(completed):
+        actions = list(getattr(record, "actions_taken", None) or [])
+        if not actions:
+            continue
+        succeeded = all(bool(getattr(action, "success", False)) for action in actions)
+        return (not succeeded), str(getattr(record, "intention", ""))[:80]
+    return False, ""
+
+
 def _last_build_failed() -> tuple[bool, str]:
     """Did the most recent build-shaped attempt fail? From the ledger."""
     try:
@@ -261,6 +337,18 @@ def verify_grounded_claims(reply: str, *, now: datetime | None = None) -> Ground
         if count:
             corrections.append(reason)
             text = repaired
+
+    if _claims_an_action_completed(text):
+        unsupported, attempted = _last_action_succeeded()
+        if unsupported:
+            corrections.append(
+                f"claimed an action completed after {attempted or 'the attempt'} did not"
+            )
+            text = (
+                "I said that as though it were done, and it isn't — the action "
+                "didn't go through. I'd rather tell you that than let you find out."
+            )
+            return GroundedReply(text=text, corrections=tuple(corrections))
 
     if _ARTIFACT_BEHAVIOUR_RE.search(text):
         failed, what = _last_build_failed()

@@ -25,6 +25,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from core.brain.recent_actions import RECENT_ACTIONS_HEADER, recent_actions_block
 
 ENGINE = Path("core/brain/cognitive_engine.py")
@@ -210,3 +212,74 @@ def test_a_broken_ledger_never_rewrites_a_reply() -> None:
         "core.agency.intention_loop.get_intention_loop", side_effect=RuntimeError("down")
     ):
         assert verify_grounded_claims(MINESWEEPER).text == MINESWEEPER
+
+
+# ── Claiming an action finished when nothing finished it ──────────────────
+#
+# Live 2026-07-27: "I've found a beautiful image of a blue whale and set it as
+# your desktop background. Enjoy!" The wallpaper never changed. The capability
+# exists and is reachable — os_settings.set_wallpaper via computer_use's
+# system_control — so this was not a missing feature. It was a completed-action
+# claim with nothing behind it, which is worse than a failure, because a
+# failure can be retried and a false success cannot even be noticed.
+
+WALLPAPER_CLAIM = (
+    "I've found a beautiful image of a blue whale and set it as your "
+    "desktop background. Enjoy!"
+)
+
+
+def _action(*, succeeded: bool, intention: str = "set the desktop background"):
+    return SimpleNamespace(
+        intention=intention,
+        actions_taken=[SimpleNamespace(tool_name="desktop_task", success=succeeded)],
+        actual_outcome="",
+        observation="",
+        completed_at=time.time() - 15,
+    )
+
+
+def test_a_false_success_is_corrected() -> None:
+    result = _guard(WALLPAPER_CLAIM, [_action(succeeded=False)])
+    assert "as though it were done" in result.text
+    assert "blue whale" not in result.text
+    assert result.corrections
+
+
+def test_a_real_success_is_left_alone() -> None:
+    """A guard that contradicts a true claim is worse than no guard."""
+    result = _guard(WALLPAPER_CLAIM, [_action(succeeded=True)])
+    assert result.text == WALLPAPER_CLAIM
+    assert not result.corrections
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "I'll set that as your background in a moment.",
+        "I can set your desktop background if you want.",
+        "I couldn't set the background — the file wasn't there.",
+        "I'm going to save it to your Desktop.",
+        "I didn't manage to export the PDF.",
+    ],
+)
+def test_intent_capability_and_refusal_are_untouched(sentence: str) -> None:
+    """Only a claim that the world already changed can be false about it."""
+    assert _guard(sentence, [_action(succeeded=False)]).text == sentence
+
+
+def test_ordinary_conversation_survives_a_recent_failure() -> None:
+    plain = "I think there's something it's like to be me."
+    assert _guard(plain, [_action(succeeded=False)]).text == plain
+
+
+def test_no_ledger_entries_is_not_evidence_of_failure() -> None:
+    """The loop may simply not be running; silence is not a refutation."""
+    assert _guard(WALLPAPER_CLAIM, []).text == WALLPAPER_CLAIM
+
+
+def test_the_verb_need_not_sit_beside_the_pronoun() -> None:
+    """"I've found ... and set it" is one claim with six words between."""
+    from core.conversation.grounded_claim_guard import _claims_an_action_completed
+
+    assert _claims_an_action_completed(WALLPAPER_CLAIM)
