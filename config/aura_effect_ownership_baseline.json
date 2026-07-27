@@ -3889,6 +3889,22 @@
       "scope": "<module>.LiveLearner.record_tick"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/permanent_distillation_registry.py",
+      "scope": "<module>.write_lineage"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/learning/permanent_distillation_registry.py",
+      "scope": "<module>.write_lineage"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -15362,6 +15378,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "ca7a9101b54871de81a73648978691e2edbb26d0ae4cb2d98383d9ddb74c4fcc",
+  "inventory_sha256": "b3548e5453cf99827f083273c13d96b5b199f3b2a4ada1888f94496545ece5b3",
   "schema_version": 1
 }
