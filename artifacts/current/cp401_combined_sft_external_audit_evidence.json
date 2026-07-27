@@ -1,0 +1,100 @@
+{
+  "schema": "aura.rlc.cp401_combined_sft_external_audit_evidence.v1",
+  "checkpoint": "CP401",
+  "scope": "combined_sft_external_privacy_contamination_execution_audit_contract",
+  "claims": {
+    "cp400_custody_reconstructed": true,
+    "four_distinct_externally_custodied_roles_required": true,
+    "synthetic_and_user_replay_privacy_classes_distinct": true,
+    "complete_declared_evaluation_inventory_bound": true,
+    "multisurface_contamination_report_bound": true,
+    "exact_source_holdout_and_tool_replay_counts_required": true,
+    "implementation_and_release_identity_pinned": true,
+    "caller_owned_monotonic_chain_state_required": true,
+    "private_key_free_operator_cli": true,
+    "training_authority_granted": false
+  },
+  "source_files": [
+    {
+      "path": "core/learning/combined_sft_external_audit.py",
+      "line_count": 811,
+      "sha256": "0702bdf1b005ca293971b6f84b39ae296503cd45eabf18f277f0ad90777eaeb4"
+    },
+    {
+      "path": "tools/manage_combined_sft_external_audit.py",
+      "line_count": 276,
+      "sha256": "b316b5c09d54b0ec45be1636d5265ddc3723cc0bdeb83afbd9c718ec74e6d309"
+    },
+    {
+      "path": "tests/test_combined_sft_external_audit.py",
+      "line_count": 624,
+      "sha256": "8b46ab1944133877ef3fe622c928710311ccab4e6b3b0285e00560e4a8bf7928"
+    },
+    {
+      "path": "tests/test_structured_sft_admission.py",
+      "line_count": 791,
+      "sha256": "983aa19d7a4add7d379c5f074c5cfed46ea768230ce805317630fd8e3000a860"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "passed": 10,
+      "failed": 0,
+      "duration_seconds": 17.05
+    },
+    "structured_admission_python_3_14": {
+      "passed": 16,
+      "failed": 0,
+      "duration_seconds": 129.09
+    },
+    "broad_exact_post_reconcile": {
+      "passed": 66,
+      "failed": 0,
+      "duration_seconds": 265.46
+    },
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "governance_lint": {
+      "passed": true,
+      "recognized_calls": 2029,
+      "buckets": 1897,
+      "migration_debt_calls": 1787
+    },
+    "model_load_ownership": {
+      "passed": true,
+      "paths": 47,
+      "references": 60,
+      "findings": 0
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "matches_clean_main": true,
+      "new_cp401_path_findings": 0
+    }
+  },
+  "credential_boundary": {
+    "test_credentials": "ephemeral_ed25519_fixtures_labeled_external_service",
+    "real_separately_operated_credentials_present": false,
+    "operator_cli_can_generate_or_load_private_keys": false
+  },
+  "explicit_non_claims": [
+    "real production corpus independently inspected or signed",
+    "real external privacy attestation",
+    "real external contamination attestation",
+    "real external execution attestation",
+    "externally witnessed monotonic head",
+    "resident verified replay tokenizer admission",
+    "resumable trainer authority",
+    "small checkpoint transfer gain",
+    "resident 32B training or gain",
+    "frontier performance",
+    "WOW Signal"
+  ],
+  "model_weights_touched": false,
+  "trainer_invoked": false,
+  "multi_hour_soak_deferred": true
+}

@@ -3088,6 +3088,28 @@ before those dependencies close is not admissible.
   have been supplied. Receipt:
   `artifacts/current/cp400_combined_sft_lineage_publication_evidence.json`.
 
+  CP401 adds the combined external-audit contract over CP400 custody. A
+  root-signed, source-bound campaign policy pins four distinct signer, key, and
+  organization identities under external-service or remote-HSM custody. The
+  task issuer signs the exact package and complete inventory commitment; the
+  contamination auditor signs exact, normalized, token/character shingle,
+  AST, JSON, and causal-lineage results; the evidence verifier signs separate
+  structured-synthetic and verified-replay-user privacy reports plus exact
+  source/tool execution replay counts; and the runner signs a non-loadable,
+  non-authorizing quarantine binding. Caller-pinned sequence, prior root,
+  policy digest/revision, observation time, freshness window, release identity,
+  complete deterministic reconstruction, and detached signatures all fail
+  closed. A private-key-free CLI emits payloads, assembles, and independently
+  reverifies a committed CP400 publication. The final focused matrix passes
+  10/10 and the full lineage/publication/admission/trust family passes 66/66.
+  Governance and model ownership pass; the enterprise scan exactly matches
+  inherited debt with no new CP401 finding. These tests use explicitly labeled
+  ephemeral external-custody fixtures to prove enforcement. They do not claim
+  that separately operated real auditors have signed Aura's production data,
+  that a monotonic external witness exists, or that tokenizer/trainer authority
+  has been granted. Receipt:
+  `artifacts/current/cp401_combined_sft_external_audit_evidence.json`.
+
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording
   only commitments. This proves candidate noncontainment and candidate-only

@@ -466,6 +466,16 @@ def _validate(bundle: dict[str, Any], inputs: dict[str, Any], **overrides):
     return validate_structured_sft_admission_bundle(bundle, **arguments)
 
 
+def _clone_admission_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    """Copy mutable evidence while preserving non-pickleable key handles."""
+
+    preserved = {"root", "root_pem", "role_keys", "policy"}
+    return {
+        key: value if key in preserved else copy.deepcopy(value)
+        for key, value in inputs.items()
+    }
+
+
 def test_external_admission_round_trip_never_authorizes_training(
     admission_inputs,
 ) -> None:
@@ -517,7 +527,7 @@ def test_external_admission_round_trip_never_authorizes_training(
 def test_reports_fail_closed_even_when_recommitted(
     admission_inputs, report_name, field, value, error
 ) -> None:
-    attacked = copy.deepcopy(admission_inputs)
+    attacked = _clone_admission_inputs(admission_inputs)
     report = attacked[report_name]
     digest_field = "binding_sha256" if report_name == "trainer_binding" else "report_sha256"
     report[field] = value
@@ -532,7 +542,7 @@ def test_reports_fail_closed_even_when_recommitted(
 def test_tokenizer_bundle_requires_exact_reconstructed_commitment(
     admission_inputs,
 ) -> None:
-    attacked = copy.deepcopy(admission_inputs)
+    attacked = _clone_admission_inputs(admission_inputs)
     attacked["tokenizer_validation"]["rows_checked"] += 1
 
     with pytest.raises(StructuredSFTAdmissionError, match="tokenizer_commitment_invalid"):
@@ -542,7 +552,7 @@ def test_tokenizer_bundle_requires_exact_reconstructed_commitment(
 def test_auditor_report_provenance_must_match_policy_pin(
     admission_inputs,
 ) -> None:
-    attacked = copy.deepcopy(admission_inputs)
+    attacked = _clone_admission_inputs(admission_inputs)
     report = attacked["contamination_report"]
     report["implementation_sha256"] = SHA
     body = dict(report)
@@ -554,7 +564,7 @@ def test_auditor_report_provenance_must_match_policy_pin(
 
 
 def test_admission_rejects_nonexternal_role_custody(admission_inputs) -> None:
-    attacked = copy.deepcopy(admission_inputs)
+    attacked = _clone_admission_inputs(admission_inputs)
     policy_document = copy.deepcopy(attacked["policy"].document)
     policy_document["roles"]["task_issuer"]["custody_class"] = "local_software"
     _resign_policy(policy_document, attacked["root"])
@@ -574,7 +584,7 @@ def test_admission_rejects_future_or_stale_role_attestations(
     with pytest.raises(StructuredSFTAdmissionError, match="too_late"):
         _build(admission_inputs, signed_at=NOW + 1)
 
-    stale_inputs = copy.deepcopy(admission_inputs)
+    stale_inputs = _clone_admission_inputs(admission_inputs)
     policy_document = copy.deepcopy(stale_inputs["policy"].document)
     policy_document["issued_at_unix"] = NOW - 900_000
     policy_document["not_before_unix"] = NOW - 800_000
@@ -637,7 +647,7 @@ def test_bundle_rejects_substitution_unknown_fields_and_authority_escalation(
 
 
 def test_protocol_rejects_nonfinite_json_before_signing(admission_inputs) -> None:
-    attacked = copy.deepcopy(admission_inputs)
+    attacked = _clone_admission_inputs(admission_inputs)
     attacked["privacy_report"]["pii_findings"] = float("nan")
 
     with pytest.raises(StructuredSFTAdmissionError, match="report_invalid"):

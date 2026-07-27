@@ -29761,3 +29761,37 @@ gain, frontier performance, or a `WOW Signal`. Counting CP400 makes 642 total
 checkpoints. The 642-920 forecast leaves 0-278 records, or approximately
 69.8%-100.0% checkpoint completion with an 82.3% midpoint. Long soaks remain
 deferred and no open requirement may be skipped.
+
+## Checkpoint 2026-07-26-401: Combined External-Audit Contract
+
+SPARK-059 now binds CP400's committed combined lineage to a source-bound,
+root-signed four-role audit. Distinct externally custodied task issuer,
+contamination auditor, evidence verifier, and campaign runner identities sign
+different canonical payloads. The contract distinguishes structured synthetic
+data from user-derived verified replay, binds every declared evaluation corpus
+and exact split count, requires complete multisurface contamination methods,
+requires exact source/holdout/tool execution replay counts, enforces auditor
+implementation and release pins, and reconstructs against caller-owned policy,
+sequence, previous-root, freshness, and observation-time state.
+
+The operator CLI has no key generation, private-key, training, candidate
+renaming, or promotion operation. It emits detached-signature payloads,
+assembles four attestations, and reverifies against a committed CP400
+publication. Focused validation passes 10/10; the broader
+lineage/publication/structured-admission/campaign-trust family passes 66/66.
+Ruff, bytecode compilation, governance ownership, and model-load ownership
+pass. Governance migration debt remains 1,787 calls. The enterprise scan
+exactly matches clean-main inherited debt at ten regression categories, 228
+findings, and 58 high/critical findings, with zero finding in a new CP401 path.
+Evidence is
+`artifacts/current/cp401_combined_sft_external_audit_evidence.json`.
+
+CP401 proves the external-signature and reconstruction enforcement using
+explicitly labeled ephemeral test credentials. It does not claim that Aura's
+real production corpus has been independently inspected or signed, that a
+separately witnessed monotonic head exists, that verified replay passed the
+resident tokenizer, that trainer authority exists, or that any small/resident
+training, gain, frontier result, or `WOW Signal` exists. Counting CP401 makes
+643 total checkpoints. The 643-920 forecast leaves 0-277 records, or
+approximately 69.9%-100.0% checkpoint completion with an 82.4% midpoint. Long
+soaks remain deferred and no open requirement may be skipped.
