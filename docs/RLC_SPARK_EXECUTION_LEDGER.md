@@ -3248,6 +3248,46 @@ before those dependencies close is not admissible.
   The next checkpoint is kernel-contained detached execution followed by the
   preregistered small-checkpoint falsification controls. Receipt:
   `artifacts/current/cp404_synthetic_recurrent_sft_authority_evidence.json`.
+
+  CP405 closes the missing kernel containment and strict in-kernel admission
+  boundary. A frozen macOS sandbox profile denies by default, denies all
+  network access and process creation, and grants only the exact read and
+  quarantined write roots required by the synthetic 1.5B experiment. Explicit
+  deny rules protect evaluator custody, verified replay, resident checkpoints,
+  adapter and model registries, fusion, and promotion even where a broader
+  ancestor is readable. The profile itself is part of the detached
+  supervisor's immutable execution manifest.
+
+  A live kernel probe proves permitted read/write and MLX Metal computation
+  work while evaluator read, evaluator write, localhost network, and
+  `os.fork()` are denied. The contained trainer no longer replays executable
+  synthetic oracles after fork denial. Instead, authority creation performs
+  the full replay before freezing the source closure, and in-kernel admission
+  reopens the exact no-follow candidate generation, recomputes every file
+  binding and custody commitment, and checks the committed manifest. It then
+  rebinds the source and content-addressed tokenizer artifacts, snapshot
+  manifest, installed MLX/runtime implementation, and every real
+  `mlx_lm.ChatDataset(mask_prompt=True)` offset before and after projection.
+  The tokenizer returned by the later model load must satisfy the same runtime
+  identity and projection.
+
+  The strict no-model-load admission passes under the real profile with
+  authority `98baaf5f...`, contract `ff85b8e4...`, profile `0fac4140...`,
+  dataset `b276537e...`, tokenizer `a41d7bc6...`, model `72407226...`,
+  recurrence program `d79e3093...`, and source closure `c8d40a9c...`.
+  Candidate-byte and custody-mutation regressions fail closed. The focused
+  authority, trainer, containment, and detached-supervisor family passes
+  68/68 in 58.66 seconds; strict Ruff, bytecode compilation, and diff hygiene
+  pass. Model-load ownership passes at 48 paths, 61 references, and zero
+  findings. Governance remains globally red only on the same two unrelated
+  in-flight `program_materialization.py` calls, with zero CP405 regression.
+
+  This checkpoint proves containment and admission only. No training occurred,
+  and there is no transfer, reasoning-gain, resident-32B, frontier,
+  production-promotion, or `WOW Signal` claim. CP406 is the bounded contained
+  1.5B training run; CP407 is its independent fresh-task falsification and
+  first SPARK-059 verdict. Receipt:
+  `artifacts/current/cp405_synthetic_recurrent_sft_containment_evidence.json`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

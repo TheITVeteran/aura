@@ -88,6 +88,10 @@ def _source_paths() -> dict[str, Path]:
             / "core/learning/structured_sft_research_authority.py"
         ),
         "trainer": REPO_ROOT / "tools/train_structured_sft_research.py",
+        "containment_launcher": (
+            REPO_ROOT / "tools/launch_structured_sft_research.py"
+        ),
+        "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
         "checkpoint_state": (
             REPO_ROOT / "core/learning/structured_sft_research_state.py"
         ),

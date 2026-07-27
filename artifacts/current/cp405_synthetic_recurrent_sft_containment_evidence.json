@@ -1,0 +1,67 @@
+{
+  "admission": {
+    "authority_sha256": "98baaf5ffa7fca75a29fc6af14da3728a688139a43d3210976ba412628456b52",
+    "dataset_sha256": "b276537ee67747b60b8a30c1061d7097ebcf3ab4dd98e9c82594a260e97003a0",
+    "execution_spec_sha256": "d79e3093bd47d62cd2080146b9c437254548a6281fea1bc65cb885762ebc1a08",
+    "model_identity_sha256": "72407226f12f89a32a84252031a7b7a8545f4d0504d44018e1a315561c561140",
+    "model_weights_loaded": false,
+    "source_closure_sha256": "c8d40a9ce14e5a949dafe3b68daa6a4f640d9d8fbb7d0d899e563ffbbbcf595c",
+    "status": "admission_revalidated_no_model_weights_loaded",
+    "tokenization_identity_sha256": "a41d7bc6e66375c1ca8ff107399edd528672e2fae33d9193988b19781c3812da",
+    "trainer_config_sha256": "6d652fac2cfba3ae961b4c250d44dac8c3060ac1756d30c171f897cc77ed1582"
+  },
+  "campaign": "SPARK-059",
+  "checkpoint": "CP405",
+  "claims": {
+    "frontier_performance_proven": false,
+    "kernel_containment_proven": true,
+    "production_promotion_allowed": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_training_occurred": false,
+    "small_checkpoint_training_occurred": false,
+    "strict_admission_proven": true,
+    "wow_signal": false
+  },
+  "containment": {
+    "contract_sha256": "ff85b8e4e5d8839b7d22cba5e62673ae47b04f4ae718cf885e9afa1bd5acb604",
+    "evaluator_access": false,
+    "kernel_probe": {
+      "allowed_read": "passed",
+      "allowed_write": "passed",
+      "forbidden_evaluator_read": "kernel_denied",
+      "forbidden_evaluator_write": "kernel_denied",
+      "fork": "kernel_denied",
+      "mlx_metal_sum": 6,
+      "network": "kernel_denied"
+    },
+    "network": "kernel_denied",
+    "process_fork": "kernel_denied",
+    "production_write_access": false,
+    "profile_sha256": "0fac4140dec502cbdc8b9d842def9b23d66c63d2cc199db9191a9e0f49fdd4af",
+    "resident_checkpoint_access": false,
+    "sandbox_executable_sha256": "d1ee30dbde955aaa75c7f801fdfea4df05b10129454d7982eb6453f771436d42",
+    "verified_replay_access": false
+  },
+  "next_gate": "CP406 bounded 1.5B synthetic recurrent-SFT training under the frozen containment contract",
+  "schema": "aura.rlc.synthetic_recurrent_sft_containment_evidence.v1",
+  "status": "passed_kernel_containment_and_strict_admission",
+  "validation": {
+    "focused_and_integrated_tests": {
+      "passed": 68,
+      "seconds": 58.66
+    },
+    "governance": {
+      "cp405_regressions": 0,
+      "inherited_unrelated_regressions": 2,
+      "repository_wide_status": "not_green"
+    },
+    "model_load_ownership": {
+      "findings": 0,
+      "paths": 48,
+      "references": 61,
+      "status": "passed"
+    },
+    "strict_admission_returncode": 0,
+    "strict_ruff": "passed"
+  }
+}

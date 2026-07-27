@@ -29943,3 +29943,46 @@ Long soaks remain deferred.
 Counting CP404 makes 646 total checkpoints. The 646-920 forecast leaves 0-274
 records, or approximately 70.2%-100.0% checkpoint completion with an 85.1%
 midpoint. This accounting cannot close or skip any open requirement.
+
+### 2026-07-27 - CP405 deny-default recurrent-SFT kernel containment
+
+SPARK-059's synthetic 1.5B trainer now executes behind a frozen macOS
+deny-default sandbox. The kernel denies network and process creation and
+explicitly denies evaluator custody, verified replay, resident checkpoints,
+adapter/model registries, fusion, and promotion. Its exact profile is frozen
+as an input to the crash-observable detached supervisor. A live probe proves
+the permitted file and MLX Metal paths work while evaluator read/write,
+localhost network, and `os.fork()` are denied.
+
+The trainer's admission path no longer needs to weaken that boundary to replay
+forking synthetic oracles. Full deterministic replay remains a prerequisite
+of authority creation. Inside containment, Aura reopens the exact no-follow
+candidate generation, recomputes every file and custody commitment, validates
+the committed manifest, and rebinds source tokenizer, content-addressed
+snapshot, snapshot manifest, MLX/runtime implementation, and every real
+`mlx_lm.ChatDataset(mask_prompt=True)` projection. The tokenizer returned by
+the actual model load must later reproduce the same identity and validation
+projection.
+
+The real strict admission passes without loading model weights. It binds
+authority `98baaf5f...`, contract `ff85b8e4...`, profile `0fac4140...`,
+dataset `b276537e...`, tokenizer `a41d7bc6...`, model `72407226...`,
+execution program `d79e3093...`, and source closure `c8d40a9c...`.
+Candidate-byte and custody-mutation tests fail closed. The focused and
+integrated authority/trainer/containment/detached family passes 68/68 in
+58.66 seconds; strict Ruff, bytecode compilation, and diff hygiene pass.
+Model-load ownership passes at 48 paths, 61 references, and zero findings.
+Governance remains globally red only on the same two unrelated in-flight
+`program_materialization.py` calls, with zero CP405 regression.
+
+This proves containment and strict admission, not training or gain. No
+small-checkpoint or resident-32B training occurred; no transfer,
+reasoning-gain, frontier, promotion, or `WOW Signal` claim exists. CP406 is the
+bounded contained 1.5B run, CP407 is independent fresh-task falsification, and
+SPARK-060 through SPARK-071 remain separate required initiatives after that
+first verdict. Final multi-hour soaks remain deferred.
+
+Counting CP405 makes 647 total checkpoints. The 647-920 forecast leaves 0-273
+records, or approximately 70.3%-100.0% checkpoint completion with an 85.2%
+midpoint. This accounting cannot close, merge, or skip any open SPARK or
+whole-codebase requirement.

@@ -98,13 +98,16 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DARWIN_SANDBOX = Path("/usr/bin/sandbox-exec")
 _DARWIN_CAFFEINATE = Path("/usr/bin/caffeinate")
 _NO_FORK_SANDBOX_PROFILE = "(version 1) (allow default) (deny process-fork)"
-_SOURCE_SUFFIXES = frozenset({".json", ".py", ".pyi", ".sh", ".toml", ".yaml", ".yml"})
+_SOURCE_SUFFIXES = frozenset(
+    {".json", ".py", ".pyi", ".sb", ".sh", ".toml", ".yaml", ".yml"}
+)
 _EXECUTABLE_SOURCE_SUFFIXES = frozenset({".py", ".pyi", ".sh"})
 _SAFE_ENVIRONMENT_KEYS = (
     "AURA_DATA_DIR",
     "AURA_HOME",
     "AURA_LATENT_CORTEX",
     "AURA_MODEL_PATH",
+    "AURA_MODEL_LANE_STATE_PATH",
     "AURA_RLC_FULL_SHA",
     "COMMAND_MODE",
     "HF_HOME",

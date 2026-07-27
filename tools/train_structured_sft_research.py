@@ -8,8 +8,10 @@ fusion, or promotion path. Outputs remain quarantined research artifacts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import signal
 import sys
 import time
@@ -26,15 +28,13 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     RecurrentSFTTrainerConfig,
     StructuredSFTResearchAuthorityError,
-    authorize_candidate_bytes,
-    candidate_identity,
+    authorize_prevalidated_candidate_bytes,
     canonical_json_bytes,
     execution_spec_identity,
     sha256_json,
     small_model_identity,
     source_closure,
     strict_json_bytes,
-    tokenization_identity,
     validate_authority,
     verify_authority_upstream,
 )
@@ -49,17 +49,15 @@ from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     ensure_private_directory,
 )
-from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
-from tools.build_structured_sft_dataset import (  # noqa: E402
-    CandidateDatasetBuildError,
-    read_candidate_dataset_directory_with_attestation,
+from core.runtime.file_read_gateway import (  # noqa: E402
+    read_stable_bytes,
+    read_stable_directory_files,
 )
 from tools.validate_structured_sft_tokenization import (  # noqa: E402
     TokenizerValidationError,
     load_resident_tokenizer,
-)
-from tools.validate_structured_sft_tokenization import (  # noqa: E402
-    validate as validate_tokenization,
+    resident_tokenizer_artifact_identity,
+    resident_tokenizer_runtime_identity,
 )
 
 COMPLETION_SCHEMA = "aura.rlc.synthetic_recurrent_sft_completion.v1"
@@ -67,6 +65,13 @@ DATASET_SCHEMA = "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1"
 RESUME_POLICIES = frozenset({"never", "auto", "required"})
 _MAX_DOCUMENT_BYTES = 256 * 1024 * 1024
 _MAX_JSONL_ROWS = 100_000
+_CANDIDATE_FILES = (
+    "candidate_train.jsonl",
+    "candidate_valid.jsonl",
+    "manifest.json",
+)
+_CUSTODY_COMMIT_FILE = ".aura_structured_sft_custody.commit.json"
+_SNAPSHOT_MANIFEST_FILE = "tokenizer_snapshot_manifest.bin"
 _INTERRUPTED = False
 
 
@@ -114,6 +119,10 @@ def _source_paths() -> dict[str, Path]:
             / "core/learning/structured_sft_research_authority.py"
         ),
         "trainer": Path(__file__),
+        "containment_launcher": (
+            REPO_ROOT / "tools/launch_structured_sft_research.py"
+        ),
+        "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
         "checkpoint_state": (
             REPO_ROOT / "core/learning/structured_sft_research_state.py"
         ),
@@ -171,23 +180,44 @@ def _project_rows(
     apply_template = getattr(tokenizer, "apply_chat_template", None)
     if not callable(apply_template):
         _fail("trainer_tokenizer_template_missing")
+    try:
+        from mlx_lm.tuner.datasets import ChatDataset
+    except ImportError as exc:
+        raise StructuredSFTResearchTrainingError(
+            "trainer_chat_dataset_unavailable"
+        ) from exc
+    source_rows = [dict(row) for row in rows]
+    dataset = ChatDataset(
+        source_rows,
+        tokenizer,
+        mask_prompt=True,
+    )
     projected: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for index, row in enumerate(rows):
+    for index, row in enumerate(source_rows):
         messages = row.get("messages")
         tools = row.get("tools")
         metadata = row.get("_meta")
         if (
             not isinstance(messages, list)
             or not messages
+            or not isinstance(messages[-1], Mapping)
+            or messages[-1].get("role") != "assistant"
             or not isinstance(metadata, Mapping)
             or not isinstance(metadata.get("example_id"), str)
             or metadata["example_id"] in seen_ids
         ):
             _fail("trainer_candidate_row_invalid")
         seen_ids.add(metadata["example_id"])
+        processed = dataset.process(row)
+        if (
+            not isinstance(processed, tuple)
+            or len(processed) != 2
+            or type(processed[1]) is not int
+        ):
+            _fail("trainer_chat_dataset_projection_invalid")
         full = _token_sequence(
-            apply_template(messages, tools=tools, return_dict=False),
+            processed[0],
             role=f"trainer_full_tokens_{index}",
         )
         prefix = _token_sequence(
@@ -200,7 +230,8 @@ def _project_rows(
             role=f"trainer_prefix_tokens_{index}",
         )
         if (
-            len(prefix) >= len(full)
+            processed[1] != len(prefix)
+            or len(prefix) >= len(full)
             or full[: len(prefix)] != prefix
             or len(full) > max_seq_length
         ):
@@ -216,6 +247,111 @@ def _project_rows(
             }
         )
     return projected
+
+
+def _lexical_absolute(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def _read_prevalidated_candidate(
+    candidate_directory: Path,
+) -> tuple[dict[str, bytes], dict[str, Any], str]:
+    candidate = _lexical_absolute(candidate_directory)
+    commit_path = candidate.parent / _CUSTODY_COMMIT_FILE
+    commit_before = read_stable_bytes(
+        commit_path,
+        max_bytes=_MAX_DOCUMENT_BYTES,
+    )
+    artifacts = read_stable_directory_files(
+        candidate,
+        names=_CANDIDATE_FILES,
+        max_bytes_per_file=_MAX_DOCUMENT_BYTES,
+    )
+    commit_after = read_stable_bytes(
+        commit_path,
+        max_bytes=_MAX_DOCUMENT_BYTES,
+    )
+    if commit_after != commit_before:
+        _fail("trainer_candidate_custody_changed_during_read")
+    custody = strict_json_bytes(
+        commit_before,
+        role="candidate_custody_commit",
+    )
+    return artifacts, custody, candidate.name
+
+
+def _revalidate_tokenizer_and_project(
+    *,
+    tokenization: Mapping[str, Any],
+    tokenizer_directory: Path,
+    snapshot_root: Path,
+    train_rows: Sequence[Mapping[str, Any]],
+    validation_rows: Sequence[Mapping[str, Any]],
+    max_seq_length: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    snapshot = _lexical_absolute(Path(str(tokenization["snapshot_path"])))
+    expected_root = _lexical_absolute(snapshot_root)
+    if snapshot.parent != expected_root:
+        _fail("trainer_tokenizer_snapshot_root_drift")
+    source_identity = resident_tokenizer_artifact_identity(
+        _lexical_absolute(tokenizer_directory)
+    )
+    snapshot_identity = resident_tokenizer_artifact_identity(snapshot)
+    expected_identity = tokenization["tokenizer_identity_sha256"]
+    if (
+        source_identity.get("sha256") != expected_identity
+        or snapshot_identity.get("sha256") != expected_identity
+        or source_identity.get("files") != snapshot_identity.get("files")
+    ):
+        _fail("trainer_tokenizer_artifact_identity_drift")
+
+    snapshot_manifest = strict_json_bytes(
+        read_stable_bytes(
+            snapshot / _SNAPSHOT_MANIFEST_FILE,
+            max_bytes=_MAX_DOCUMENT_BYTES,
+        ),
+        role="tokenizer_snapshot_manifest",
+    )
+    snapshot_body = dict(snapshot_manifest)
+    snapshot_sha256 = snapshot_body.pop("snapshot_manifest_sha256", None)
+    if (
+        snapshot_manifest.get("schema") != "aura.rlc.tokenizer_snapshot.v1"
+        or snapshot_manifest.get("tokenizer_identity_sha256")
+        != expected_identity
+        or snapshot_manifest.get("files") != snapshot_identity.get("files")
+        or not isinstance(snapshot_sha256, str)
+        or hashlib.sha256(canonical_json_bytes(snapshot_body)).hexdigest()
+        != snapshot_sha256
+        or snapshot_sha256 != tokenization["snapshot_manifest_sha256"]
+    ):
+        _fail("trainer_tokenizer_snapshot_manifest_drift")
+
+    tokenizer = load_resident_tokenizer(snapshot)
+    runtime_before = resident_tokenizer_runtime_identity(tokenizer)
+    if (
+        runtime_before.get("sha256")
+        != tokenization["tokenizer_runtime_identity_sha256"]
+    ):
+        _fail("trainer_tokenizer_runtime_identity_drift")
+    projected_train = _project_rows(
+        train_rows,
+        tokenizer=tokenizer,
+        max_seq_length=max_seq_length,
+    )
+    projected_validation = _project_rows(
+        validation_rows,
+        tokenizer=tokenizer,
+        max_seq_length=max_seq_length,
+    )
+    if (
+        len(projected_train) + len(projected_validation)
+        != tokenization["rows_checked"]
+    ):
+        _fail("trainer_tokenizer_rows_checked_drift")
+    runtime_after = resident_tokenizer_runtime_identity(tokenizer)
+    if runtime_after != runtime_before:
+        _fail("trainer_tokenizer_runtime_changed_during_projection")
+    return projected_train, projected_validation
 
 
 def _dataset_identity(
@@ -505,31 +641,20 @@ def _run(arguments: argparse.Namespace) -> int:
         expected_sequence=arguments.witness_sequence,
     )
 
-    candidate_artifacts, custody = (
-        read_candidate_dataset_directory_with_attestation(
-            arguments.candidate_dir
-        )
+    candidate_artifacts, custody, candidate_directory_name = (
+        _read_prevalidated_candidate(arguments.candidate_dir)
     )
-    authorized = authorize_candidate_bytes(
+    authorized = authorize_prevalidated_candidate_bytes(
         validated_authority,
         candidate_artifacts=candidate_artifacts,
         custody_attestation=custody,
+        candidate_directory_name=candidate_directory_name,
         now_unix=now,
         expected_authority_sha256=arguments.expected_authority_sha256,
         allow_expired_resume=allow_expired_resume,
     )
-    observed_candidate = candidate_identity(authorized, custody)
-    if observed_candidate != validated_authority["candidate"]:
-        _fail("trainer_candidate_binding_drift")
-
-    tokenization_report = validate_tokenization(
-        candidate_directory=arguments.candidate_dir,
-        tokenizer_directory=arguments.tokenizer_dir,
-        snapshot_root=arguments.snapshot_root,
-    )
-    observed_tokenization = tokenization_identity(tokenization_report)
-    if observed_tokenization != validated_authority["tokenization"]:
-        _fail("trainer_tokenization_binding_drift")
+    observed_candidate = validated_authority["candidate"]
+    observed_tokenization = validated_authority["tokenization"]
     observed_model = small_model_identity(arguments.model_dir)
     if observed_model != validated_authority["model"]:
         _fail("trainer_model_binding_drift")
@@ -543,23 +668,20 @@ def _run(arguments: argparse.Namespace) -> int:
 
     config = _trainer_config(validated_authority["trainer"])
     spec = RLCExecutionSpec.from_dict(execution_raw)
-    tokenizer = load_resident_tokenizer(
-        Path(validated_authority["tokenization"]["snapshot_path"])
+    candidate_train_rows = _jsonl_rows(
+        authorized["candidate_train.jsonl"],
+        role="candidate_train",
     )
-    train_rows = _project_rows(
-        _jsonl_rows(
-            authorized["candidate_train.jsonl"],
-            role="candidate_train",
-        ),
-        tokenizer=tokenizer,
-        max_seq_length=config.max_seq_length,
+    candidate_validation_rows = _jsonl_rows(
+        authorized["candidate_valid.jsonl"],
+        role="candidate_validation",
     )
-    validation_rows = _project_rows(
-        _jsonl_rows(
-            authorized["candidate_valid.jsonl"],
-            role="candidate_validation",
-        ),
-        tokenizer=tokenizer,
+    train_rows, validation_rows = _revalidate_tokenizer_and_project(
+        tokenization=observed_tokenization,
+        tokenizer_directory=arguments.tokenizer_dir,
+        snapshot_root=arguments.snapshot_root,
+        train_rows=candidate_train_rows,
+        validation_rows=candidate_validation_rows,
         max_seq_length=config.max_seq_length,
     )
     dataset = _dataset_identity(
@@ -639,6 +761,14 @@ def _run(arguments: argparse.Namespace) -> int:
             _fail("trainer_model_lane_not_active")
         before_weights = full_weight_checkpoint_identity(arguments.model_dir)
         model, loaded_tokenizer = load(str(arguments.model_dir))
+        loaded_runtime_before = resident_tokenizer_runtime_identity(
+            loaded_tokenizer
+        )
+        if (
+            loaded_runtime_before.get("sha256")
+            != observed_tokenization["tokenizer_runtime_identity_sha256"]
+        ):
+            _fail("trainer_loaded_tokenizer_runtime_identity_drift")
         loaded_tokenization = _project_rows(
             _jsonl_rows(
                 authorized["candidate_valid.jsonl"],
@@ -647,7 +777,11 @@ def _run(arguments: argparse.Namespace) -> int:
             tokenizer=loaded_tokenizer,
             max_seq_length=config.max_seq_length,
         )
-        if loaded_tokenization != validation_rows:
+        if (
+            loaded_tokenization != validation_rows
+            or resident_tokenizer_runtime_identity(loaded_tokenizer)
+            != loaded_runtime_before
+        ):
             _fail("trainer_loaded_tokenizer_projection_drift")
         wrapped = _wrap_recurrent_window(model, spec=spec, config=config)
         expected_adapter = dict(tree_flatten(model.trainable_parameters()))
@@ -959,7 +1093,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return _run(arguments)
     except (
-        CandidateDatasetBuildError,
         FloatingPointError,
         ImportError,
         MemoryError,

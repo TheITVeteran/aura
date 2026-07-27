@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,151 @@ def test_deterministic_order_has_no_hidden_rng_state() -> None:
     assert first == authority.deterministic_order(31, seed=42, epoch=3)
     assert first != authority.deterministic_order(31, seed=42, epoch=4)
     assert sorted(first) == list(range(31))
+
+
+def _prevalidated_candidate_material() -> tuple[
+    dict[str, bytes],
+    dict[str, Any],
+    dict[str, Any],
+]:
+    train = b'{"messages":[{"role":"assistant","content":"train"}]}\n'
+    validation = b'{"messages":[{"role":"assistant","content":"valid"}]}\n'
+    source_sha256 = "d" * 64
+    curriculum_sha256 = "e" * 64
+    custody_root_sha256 = "f" * 64
+    artifact_bindings = {
+        "candidate_train.jsonl": {
+            "sha256": hashlib.sha256(train).hexdigest(),
+            "size_bytes": len(train),
+        },
+        "candidate_valid.jsonl": {
+            "sha256": hashlib.sha256(validation).hexdigest(),
+            "size_bytes": len(validation),
+        },
+    }
+    manifest_body = {
+        "schema": "test",
+        "curriculum_manifest": {
+            "curriculum_sha256": curriculum_sha256,
+            "source_binding": {"sha256": source_sha256},
+        },
+        "artifacts": artifact_bindings,
+        "candidate_filenames": {
+            "train": "candidate_train.jsonl",
+            "validation": "candidate_valid.jsonl",
+        },
+        "custody_root_sha256": custody_root_sha256,
+        "validation_scope": "train_validation_replay_only",
+        "trainer_ready": False,
+    }
+    manifest = {
+        **manifest_body,
+        "package_sha256": authority.sha256_json(manifest_body),
+    }
+    artifacts = {
+        "candidate_train.jsonl": train,
+        "candidate_valid.jsonl": validation,
+        "manifest.json": authority.canonical_json_bytes(manifest),
+    }
+    files = [
+        {
+            "name": name,
+            "sha256": hashlib.sha256(artifacts[name]).hexdigest(),
+            "size_bytes": len(artifacts[name]),
+        }
+        for name in (
+            "candidate_train.jsonl",
+            "candidate_valid.jsonl",
+            "manifest.json",
+        )
+    ]
+    custody_body = {
+        "schema": "aura.rlc.structured_sft_custody_commit.v1",
+        "state": "committed",
+        "generation_id": "1" * 32,
+        "candidate_directory": "candidate",
+        "evaluator_directory": "evaluator",
+        "candidate_package_sha256": manifest["package_sha256"],
+        "evaluator_package_sha256": SHA_B,
+        "custody_root_sha256": custody_root_sha256,
+        "custody_report_sha256": SHA_C,
+    }
+    custody = {
+        **custody_body,
+        "commit_sha256": authority.sha256_json(custody_body),
+    }
+    candidate = {
+        "files": files,
+        "candidate_package_sha256": manifest["package_sha256"],
+        "custody_commit_sha256": custody["commit_sha256"],
+        "evaluator_package_sha256": SHA_B,
+        "custody_root_sha256": custody_root_sha256,
+        "curriculum_sha256": curriculum_sha256,
+        "source_closure_sha256": source_sha256,
+    }
+    return artifacts, custody, candidate
+
+
+def test_prevalidated_candidate_authorization_accepts_only_frozen_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts, custody, candidate = _prevalidated_candidate_material()
+    document = {"candidate": candidate}
+    monkeypatch.setattr(
+        authority,
+        "validate_authority",
+        lambda *_args, **_kwargs: document,
+    )
+    accepted = authority.authorize_prevalidated_candidate_bytes(
+        document,
+        candidate_artifacts=artifacts,
+        custody_attestation=custody,
+        candidate_directory_name="candidate",
+        now_unix=1,
+        expected_authority_sha256=SHA_A,
+    )
+    assert accepted == artifacts
+
+    mutated = dict(artifacts)
+    mutated["candidate_train.jsonl"] += b" "
+    with pytest.raises(
+        authority.StructuredSFTResearchAuthorityError,
+        match="prevalidated_candidate_file_drift",
+    ):
+        authority.authorize_prevalidated_candidate_bytes(
+            document,
+            candidate_artifacts=mutated,
+            custody_attestation=custody,
+            candidate_directory_name="candidate",
+            now_unix=1,
+            expected_authority_sha256=SHA_A,
+        )
+
+
+def test_prevalidated_candidate_authorization_rejects_custody_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifacts, custody, candidate = _prevalidated_candidate_material()
+    document = {"candidate": candidate}
+    monkeypatch.setattr(
+        authority,
+        "validate_authority",
+        lambda *_args, **_kwargs: document,
+    )
+    mutated = dict(custody)
+    mutated["custody_report_sha256"] = "9" * 64
+    with pytest.raises(
+        authority.StructuredSFTResearchAuthorityError,
+        match="prevalidated_custody_drift",
+    ):
+        authority.authorize_prevalidated_candidate_bytes(
+            document,
+            candidate_artifacts=artifacts,
+            custody_attestation=mutated,
+            candidate_directory_name="candidate",
+            now_unix=1,
+            expected_authority_sha256=SHA_A,
+        )
 
 
 def test_upstream_witness_binds_global_and_active_shard_indices(

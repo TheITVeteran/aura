@@ -56,6 +56,8 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_ROLES: Final = (
     "authority",
     "trainer",
+    "containment_launcher",
+    "detached_supervisor",
     "checkpoint_state",
     "structured_sft",
     "tokenization",
@@ -84,6 +86,21 @@ _REQUIRED_NONCLAIMS: Final = (
     "frontier_performance",
     "production_promotion",
     "wow_signal",
+)
+_CUSTODY_COMMIT_SCHEMA: Final = "aura.rlc.structured_sft_custody_commit.v1"
+_CUSTODY_COMMIT_FIELDS: Final = frozenset(
+    {
+        "schema",
+        "state",
+        "generation_id",
+        "candidate_directory",
+        "evaluator_directory",
+        "candidate_package_sha256",
+        "evaluator_package_sha256",
+        "custody_root_sha256",
+        "custody_report_sha256",
+        "commit_sha256",
+    }
 )
 
 
@@ -926,6 +943,132 @@ def authorize_candidate_bytes(
     }
 
 
+def authorize_prevalidated_candidate_bytes(
+    authority: Mapping[str, Any],
+    *,
+    candidate_artifacts: Mapping[str, bytes],
+    custody_attestation: Mapping[str, Any],
+    candidate_directory_name: str,
+    now_unix: int,
+    expected_authority_sha256: str,
+    allow_expired_resume: bool = False,
+) -> dict[str, bytes]:
+    """Revalidate authority-bound bytes without replaying executable oracles.
+
+    Authority creation performs the complete deterministic candidate replay.
+    A contained trainer cannot repeat that replay because its kernel policy
+    denies process creation. This path therefore proves that the trainer sees
+    the exact bytes and custody commitment accepted before the authority and
+    source closure were frozen.
+    """
+
+    validated = validate_authority(
+        authority,
+        expected_authority_sha256=expected_authority_sha256,
+        now_unix=now_unix,
+        allow_expired_resume=allow_expired_resume,
+    )
+    candidate = validated["candidate"]
+    if (
+        not isinstance(candidate_artifacts, Mapping)
+        or set(candidate_artifacts) != set(STRUCTURED_SFT_CANDIDATE_FILES)
+        or not isinstance(candidate_directory_name, str)
+        or not candidate_directory_name
+        or Path(candidate_directory_name).name != candidate_directory_name
+    ):
+        _fail("structured_sft_research_prevalidated_candidate_invalid")
+    observed_files = [
+        _artifact_binding(name, candidate_artifacts[name])
+        for name in STRUCTURED_SFT_CANDIDATE_FILES
+    ]
+    if observed_files != candidate.get("files"):
+        _fail("structured_sft_research_prevalidated_candidate_file_drift")
+
+    if (
+        not isinstance(custody_attestation, Mapping)
+        or set(custody_attestation) != _CUSTODY_COMMIT_FIELDS
+        or custody_attestation.get("schema") != _CUSTODY_COMMIT_SCHEMA
+        or custody_attestation.get("state") != "committed"
+        or custody_attestation.get("candidate_directory")
+        != candidate_directory_name
+        or custody_attestation.get("evaluator_directory")
+        == candidate_directory_name
+        or not isinstance(custody_attestation.get("evaluator_directory"), str)
+        or Path(str(custody_attestation["evaluator_directory"])).name
+        != custody_attestation["evaluator_directory"]
+        or not isinstance(custody_attestation.get("generation_id"), str)
+        or re.fullmatch(
+            r"[0-9a-f]{32}",
+            str(custody_attestation["generation_id"]),
+        )
+        is None
+    ):
+        _fail("structured_sft_research_prevalidated_custody_invalid")
+    custody_body = dict(custody_attestation)
+    custody_sha256 = custody_body.pop("commit_sha256", None)
+    if (
+        not _is_sha256(custody_sha256)
+        or sha256_json(custody_body) != custody_sha256
+        or custody_sha256 != candidate.get("custody_commit_sha256")
+        or custody_attestation.get("candidate_package_sha256")
+        != candidate.get("candidate_package_sha256")
+        or custody_attestation.get("evaluator_package_sha256")
+        != candidate.get("evaluator_package_sha256")
+        or custody_attestation.get("custody_root_sha256")
+        != candidate.get("custody_root_sha256")
+        or not _is_sha256(custody_attestation.get("custody_report_sha256"))
+    ):
+        _fail("structured_sft_research_prevalidated_custody_drift")
+
+    manifest = strict_json_bytes(
+        candidate_artifacts["manifest.json"],
+        role="prevalidated_candidate_manifest",
+    )
+    manifest_body = dict(manifest)
+    package_sha256 = manifest_body.pop("package_sha256", None)
+    curriculum = manifest.get("curriculum_manifest")
+    source_binding = (
+        curriculum.get("source_binding")
+        if isinstance(curriculum, Mapping)
+        else None
+    )
+    train_valid_bindings = {
+        row["name"]: {
+            "sha256": row["sha256"],
+            "size_bytes": row["size_bytes"],
+        }
+        for row in observed_files
+        if row["name"] != "manifest.json"
+    }
+    if (
+        not _is_sha256(package_sha256)
+        or sha256_json(manifest_body) != package_sha256
+        or package_sha256 != candidate.get("candidate_package_sha256")
+        or manifest.get("custody_root_sha256")
+        != candidate.get("custody_root_sha256")
+        or not isinstance(curriculum, Mapping)
+        or curriculum.get("curriculum_sha256")
+        != candidate.get("curriculum_sha256")
+        or not isinstance(source_binding, Mapping)
+        or source_binding.get("sha256")
+        != candidate.get("source_closure_sha256")
+        or manifest.get("artifacts") != train_valid_bindings
+        or manifest.get("candidate_filenames")
+        != {
+            "train": "candidate_train.jsonl",
+            "validation": "candidate_valid.jsonl",
+        }
+        or manifest.get("validation_scope")
+        != "train_validation_replay_only"
+        or manifest.get("trainer_ready") is not False
+    ):
+        _fail("structured_sft_research_prevalidated_manifest_drift")
+    return {
+        name: bytes(candidate_artifacts[name])
+        for name in STRUCTURED_SFT_CANDIDATE_FILES
+    }
+
+
 def deterministic_order(size: int, *, seed: int, epoch: int) -> list[int]:
     """Produce an exact epoch permutation with no hidden PRNG state."""
 
@@ -970,6 +1113,7 @@ __all__ = [
     "TRAINING_AUTHORITY",
     "TRAINING_MODE",
     "authorize_candidate_bytes",
+    "authorize_prevalidated_candidate_bytes",
     "build_authority",
     "candidate_identity",
     "canonical_json_bytes",
