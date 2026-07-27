@@ -11066,7 +11066,6 @@ def _build_degraded_live_reply(
 
     topics = _select_anchor_topic_tokens(user_message)
     attention = _sanitize_attention_focus(str(frame.get("attention_focus") or ""))
-    action = str(frame.get("dominant_action") or "").strip().lower()
 
     if topics:
         if len(topics) == 1:
@@ -16523,21 +16522,112 @@ def _extract_program_dna_target(user_message: str) -> str | None:
             return candidate
     match = re.search(
         r"\b(?:program dna|reverse[ -]?engineer|reconstruct|clean[ -]?room)\s+"
-        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-][a-z0-9_.+/-]*(?:\s+[a-z0-9_.+/-]+){0,4})",
+        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-][a-z0-9_.+/-]*(?:\s+[a-z0-9_.+/-]+){0,9})",
         lowered,
     )
     if not match:
         return None
     candidate = match.group(1).strip(" .,:;!?`'\"")
-    candidate = re.sub(
-        r"^(?:to\s+)?(?:reverse[ -]?engineer|reconstruct|clean[ -]?room|build|rebuild)\s+",
-        "",
-        candidate,
-    ).strip(" .,:;!?`'\"")
-    candidate = re.sub(r"^(?:a|an|the)\s+", "", candidate).strip(" .,:;!?`'\"")
-    if candidate in {"program", "app", "application", "software", "tool", "command", "binary", "utility"}:
+    candidate = _strip_program_dna_filler(candidate)
+    if candidate in _PROGRAM_DNA_GENERIC_NOUNS:
         return None
     return candidate or None
+
+
+# "reverse-engineer a clean-room version of the game 2048 and place it on my
+# Desktop" named its target in the seventh word. The capture window is five, so
+# the target came through as "version of the game" — and she reported routing
+# `version of the game` through Program DNA. Everything before the real noun is
+# filler describing HOW to build it, not WHAT to build.
+_PROGRAM_DNA_GENERIC_NOUNS = frozenset(
+    {
+        "app",
+        "application",
+        "binary",
+        "clone",
+        "command",
+        "copy",
+        "game",
+        "implementation",
+        "program",
+        "replica",
+        "software",
+        "tool",
+        "utility",
+        "version",
+    }
+)
+_PROGRAM_DNA_FILLER_WORDS = _PROGRAM_DNA_GENERIC_NOUNS | {
+    "reverse-engineer",
+    "reverse",
+    "engineer",
+    "reconstruct",
+    "build",
+    "rebuild",
+    "make",
+    "create",
+    "write",
+    "a",
+    "an",
+    "basic",
+    "clean",
+    "clean-room",
+    "cleanroom",
+    "complete",
+    "faithful",
+    "full",
+    "functional",
+    "my",
+    "of",
+    "own",
+    "playable",
+    "proper",
+    "real",
+    "room",
+    "simple",
+    "the",
+    "working",
+    "your",
+}
+# Where the target's name ends and the rest of the sentence begins.
+_PROGRAM_DNA_STOP_WORDS = frozenset(
+    {
+        "and",
+        "at",
+        "for",
+        "from",
+        "in",
+        "into",
+        "on",
+        "onto",
+        "place",
+        "put",
+        "save",
+        "so",
+        "that",
+        "then",
+        "to",
+        "using",
+        "which",
+        "with",
+        "write",
+    }
+)
+
+
+def _strip_program_dna_filler(candidate: str) -> str:
+    """Reduce a captured phrase to the name of the thing being rebuilt."""
+    tokens = [token for token in str(candidate or "").split() if token]
+    while tokens and tokens[0].strip(" .,:;!?`'\"-") in _PROGRAM_DNA_FILLER_WORDS:
+        tokens.pop(0)
+    kept: list[str] = []
+    for token in tokens:
+        if token.strip(" .,:;!?`'\"") in _PROGRAM_DNA_STOP_WORDS:
+            break
+        kept.append(token)
+        if len(kept) >= 4:
+            break
+    return " ".join(kept).strip(" .,:;!?`'\"")
 
 
 def _program_dna_known_host_target(target: str) -> bool:
@@ -16615,11 +16705,33 @@ def _build_program_dna_chat_params(target: str, objective: str) -> dict[str, Any
             "observed_behaviors": [],
             "tests": [],
         }
+    # "and place it on my Desktop" is part of the request, not decoration. The
+    # same extractor the desktop lane uses, so one notion of "which file".
+    destination = ""
+    try:
+        from core.runtime.os_automation_effects import extract_target_paths
+
+        paths = extract_target_paths(objective)
+        destination = paths[0] if paths else ""
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        destination = ""
+    if not destination:
+        lowered_objective = str(objective or "").lower()
+        for keyword, folder in (
+            ("desktop", "~/Desktop"),
+            ("documents", "~/Documents"),
+            ("downloads", "~/Downloads"),
+        ):
+            if keyword in lowered_objective:
+                destination = folder
+                break
+
     return {
         "target": target,
         "authorization": "user_owned",
         "analysis_mode": "reconstruct",
         "emit_scaffold": True,
+        "output_dir": destination or None,
         "perform_research": wants_research,
         "max_research_results": 3,
         "observed_behaviors": [objective],

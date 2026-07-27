@@ -6,6 +6,7 @@ UI notes, host/Aura interaction traces, and research evidence.
 """
 from __future__ import annotations
 
+import asyncio
 import importlib
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,16 @@ class ProgramDNAReconstructSkill(BaseSkill):
 
             engine = program_dna.register_program_dna_reconstruction_engine(project_root=Path.cwd())
 
+        # A named program with published rules and a place to put it is a
+        # request for a program, not a blueprint. The scaffold lane answered it
+        # with a ReconstructedProgram whose execute() returns status="planned" —
+        # analysis where a playable file was asked for. This lane reconstructs
+        # the behaviour, verifies it against held-out positions the synthesizer
+        # never saw, plays the result headlessly, and only then writes it.
+        materialized = await self._materialize_named_program(engine, params)
+        if materialized is not None:
+            return materialized
+
         # Runnable reverse-engineering: observe a REAL host binary, reconstruct
         # its behavior via cognition, and VERIFY against held-out real outputs.
         # Preferred whenever the target is a known safe host binary — that is
@@ -109,6 +120,52 @@ class ProgramDNAReconstructSkill(BaseSkill):
             "standards_review": payload.get("standards_review", []),
             "result": payload,
             "summary": self._summary(payload, feature_names),
+        }
+
+
+    async def _materialize_named_program(
+        self, engine: Any, params: ProgramDNAInput
+    ) -> dict[str, Any] | None:
+        """Build and prove a known program, or return None to fall through."""
+        try:
+            from core.self_improvement.program_materialization import (
+                materialize_program,
+                resolve_program_spec,
+            )
+        except ImportError:
+            return None
+        spec = resolve_program_spec(params.target)
+        if spec is None or not str(params.output_dir or "").strip():
+            return None
+
+        # expanduser() touches the filesystem, so keep it off the event loop.
+        destination = await asyncio.to_thread(
+            lambda: Path(str(params.output_dir)).expanduser()
+        )
+        report = await materialize_program(engine, spec, destination)
+        written = bool(report.get("written"))
+        passed = report.get("held_out_passed")
+        total = report.get("held_out_total")
+        if written:
+            summary = (
+                f"Reconstructed {spec.name} from its published rules with no source: "
+                f"{passed}/{total} held-out positions reproduced exactly, and the "
+                f"program I wrote {report.get('play_evidence')}. It is at "
+                f"{report.get('destination')}."
+            )
+        else:
+            summary = (
+                f"I did not finish {spec.name} and I am not claiming I did: "
+                f"{passed}/{total} held-out positions reproduced. "
+                f"{report.get('reason') or 'verification did not pass'}. "
+                "Nothing was written to disk."
+            )
+        return {
+            "ok": written,
+            "skill": self.name,
+            "target": spec.name,
+            "result": report,
+            "summary": summary,
         }
 
     async def _reverse_engineer_host(self, engine: Any, target_label: str) -> dict[str, Any] | None:
