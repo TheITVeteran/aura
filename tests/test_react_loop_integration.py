@@ -97,6 +97,26 @@ def tmp_episodic(tmp_path: Path):
 # 1. MEMORY_QUERY uses the correct recall API and returns episodes.
 # ---------------------------------------------------------------------------
 
+async def _recall_when_written(episodic, query: str, *, limit: int = 5, deadline_s: float = 5.0):
+    """Poll until the episode lands, or the deadline passes.
+
+    The trace is recorded asynchronously, so a fixed sleep is a race: it holds
+    on an idle machine and loses under load, which is what made these tests
+    pass alone and fail inside a large run. Waiting on the CONDITION removes
+    the race without slowing the passing path.
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    recalled = []
+    while loop.time() - started < deadline_s:
+        recalled = await episodic.recall_similar_async(query, limit=limit)
+        if recalled:
+            return recalled
+        await asyncio.sleep(0.02)
+    return recalled
+
+
+
 @pytest.mark.asyncio
 async def test_memory_query_returns_stored_episodes(tmp_episodic: EpisodicMemory):
     # Seed an episode about the Y Combinator so we can recall it.
@@ -186,8 +206,7 @@ async def test_completed_trace_is_recorded_as_episode(tmp_episodic: EpisodicMemo
 
     assert "55" in trace.final_answer
     # Give the write-through async path a beat to finalize the DB row.
-    await asyncio.sleep(0.05)
-    recalled = await tmp_episodic.recall_similar_async("sum 0 through 10", limit=5)
+    recalled = await _recall_when_written(tmp_episodic, "sum 0 through 10")
     assert any("55" in ep.outcome or "sum" in ep.context.lower() for ep in recalled), (
         f"Episode from completed trace must be retrievable, got: {[ep.to_dict() for ep in recalled]}"
     )
@@ -237,8 +256,7 @@ async def test_error_then_recovery_records_lessons(tmp_episodic: EpisodicMemory)
 
     # Retention: the recorded episode must contain a lesson capturing both the
     # error and the recovery — this is what enables next-turn self-heal.
-    await asyncio.sleep(0.05)
-    episodes = await tmp_episodic.recall_similar_async("squares python sandbox", limit=5)
+    episodes = await _recall_when_written(tmp_episodic, "squares python sandbox")
     assert episodes, "Self-heal run must produce an episode"
     ep = episodes[0]
     assert ep.lessons, f"Self-heal episode must capture lessons, got: {ep.lessons}"

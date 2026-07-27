@@ -2294,10 +2294,27 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     # and is followed by a space and the start of a phrase, so arithmetic and
     # ordinary dashes are untouched.
     text = re.sub(r"(?<=[.!?:])\s*-\s+(?=[A-Za-z(\[*_\"'])", "\n- ", text)
+    # …and welded after an ordinary word, which is what the local model
+    # actually produces: "### Case 1: Both are red- Probability that first
+    # marble is red: 3/12- Probability that second…". A hyphen only counts
+    # when a word character precedes it, a space follows it, and the next
+    # character starts a phrase, so "3 - 5 items", "-0.04" and
+    # "state-of-the-art" are all untouched.
+    text = re.sub(r"(?<=[A-Za-z0-9)\]])\s*-\s+(?=[A-Z(\[*_\"'])", "\n- ", text)
+    # Markdown headings welded to the previous sentence get their own line too.
+    text = re.sub(r"(?<=[^\n])\s*(#{1,6}\s+)", r"\n\1", text)
     # A sentence welded to the previous one: "= 12 marbles.Probability of
     # drawing…". Lowercase-or-digit, full stop, capital — the standard shape,
     # and one the local model produces constantly.
     text = re.sub(r"(?<=[a-z0-9])\.(?=[A-Z][a-z])", ". ", text)
+    # A sentence welded straight onto a number with no punctuation at all:
+    # "…probability second is green: 4/11Adding these together gives 19/66."
+    # The conclusion was there and unreadable, and "Adding" had no word
+    # boundary in front of it so nothing downstream could see it either.
+    # Digit-then-capital only, and only when the following word is long
+    # enough to start a sentence rather than finish a model number: "12Pro"
+    # and "3D" stay, "4/11Adding" splits.
+    text = re.sub(r"(?<=[0-9])(?=[A-Z][a-z]{4,})", "\n", text)
     text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
     text = _plain_text_maths(text)
     return text.strip()
@@ -5812,6 +5829,18 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
                 question_phrase_repeats if question_sourced else required_repeats
             )
             if count >= threshold:
+                # A loop is a reply that stops going anywhere. Repetition alone
+                # does not establish that — a worked answer repeats its framing
+                # once per case by construction, and five different correct
+                # answers to the same question were rejected here on 2026-07-26,
+                # each for a different n-gram.
+                #
+                # Progression is the thing being asked about, so measure it: if
+                # the reply's statements are nearly all different, it is
+                # advancing and the repeated phrase is its subject. If they are
+                # not, it is stuck, and that is the loop this exists to catch.
+                if _distinct_statement_ratio(reply_text) >= 0.7:
+                    continue
                 return "repetitive_phrase_loop"
 
     content_words = [

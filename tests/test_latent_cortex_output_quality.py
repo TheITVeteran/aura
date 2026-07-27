@@ -288,9 +288,13 @@ def test_phrase_loop_gate_is_length_aware():
     assert plr(question, long_answer) == "", (
         "question-sourced repetition in a technical answer must not read as a loop"
     )
-    # The same phrase count WITHOUT question support still trips: the answer
-    # invented its repetition.
-    assert plr("compare the architectures", long_answer) == "repetitive_phrase_loop"
+    # The same answer with a question that does not source its phrase is still
+    # not a loop, because it is still going somewhere: every sentence in it
+    # says something new. Repetition is evidence of a loop, not the definition
+    # of one — the definition is a reply that stops progressing, and five
+    # different correct answers were rejected here on 2026-07-26, each for a
+    # different n-gram, before that distinction was made.
+    assert plr("compare the architectures", long_answer) == ""
     # And looping the question's own words at pathological density is still
     # a loop.
     parroting = long_answer + " The single-owner design wins." * 8
