@@ -2226,6 +2226,16 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     if not text:
         return text
     text = _split_jammed_numbered_markers(text)
+    # A bullet welded to the previous sentence or a heading colon is the same
+    # defect as a welded number: "Let's break this down:- Total marbles: …".
+    # A hyphen only counts as a marker when it follows a terminator or colon
+    # and is followed by a space and the start of a phrase, so arithmetic and
+    # ordinary dashes are untouched.
+    text = re.sub(r"(?<=[.!?:])\s*-\s+(?=[A-Za-z(\[*_\"'])", "\n- ", text)
+    # A sentence welded to the previous one: "= 12 marbles.Probability of
+    # drawing…". Lowercase-or-digit, full stop, capital — the standard shape,
+    # and one the local model produces constantly.
+    text = re.sub(r"(?<=[a-z0-9])\.(?=[A-Z][a-z])", ". ", text)
     text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
     return text.strip()
 
@@ -5599,10 +5609,11 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
     #
     # A repeat that occurs at most once per enumerated item is structure. One
     # that outruns the items is a loop, and still caught.
-    enumerated_items = sum(
-        1
-        for line in str(reply_text or "").splitlines()
-        if _LIST_LINE_RE.match(line.strip())
+    # Count markers wherever they are, not only at line starts: the model
+    # often welds its items together, and an answer's structure should not
+    # depend on whether the formatting repair has run yet.
+    enumerated_items = len(
+        re.findall(r"(?:^|[\n.!?:])\s*(?:[-*+]|\d{1,2}[.)])\s+\S", str(reply_text or ""))
     )
     if enumerated_items >= 2:
         required_repeats = max(required_repeats, enumerated_items + 1)

@@ -1064,6 +1064,20 @@ def _record_exact_reply_token_evidence(
         )
 
 
+def _normalize_surface_format(response_text: Any) -> str:
+    """Whitespace-only repair of jammed list markers and welded sentences."""
+    text = str(response_text or "")
+    if not text.strip():
+        return ""
+    try:
+        from core.conversation.response_reliability import normalize_user_facing_format
+
+        return normalize_user_facing_format(text)
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Surface format normalisation skipped: %s", exc)
+        return ""
+
+
 def _repair_live_user_surface_escaped_newlines(response_text: Any) -> str:
     """Turn literal \\n / \\t / \\r the model typed back into real whitespace.
 
@@ -5497,6 +5511,30 @@ def _mlx_worker_loop(
                                                 deterministic=True,
                                             )
                                             response_text = grounded_surface
+                                        # Normalise whitespace-only defects
+                                        # BEFORE judging quality. The local
+                                        # model welds its list markers and
+                                        # sentences to the previous line —
+                                        # "this down:- Total marbles… = 12
+                                        # marbles.Probability of drawing…" —
+                                        # and the run-together text then reads
+                                        # as a repetition loop with no
+                                        # structure. Judging the reply on a
+                                        # formatting defect the runtime already
+                                        # knows how to fix cost the person the
+                                        # answer, repeatedly, on 2026-07-26.
+                                        formatted_surface = _normalize_surface_format(response_text)
+                                        if formatted_surface and formatted_surface != response_text:
+                                            append_text_mutation(
+                                                surface_control_state,
+                                                stage="mlx_worker.surface_format",
+                                                method="normalize_user_facing_format",
+                                                reasons=["jammed_markers"],
+                                                before=response_text,
+                                                after=formatted_surface,
+                                                deterministic=True,
+                                            )
+                                            response_text = formatted_surface
                                         pre_shape_reasons = _surface_quality_failure_reasons(
                                             job,
                                             response_text,
