@@ -805,14 +805,16 @@ main {
 
 /* Mic Button Inner Orb (small indicator) */
 #mic-orb {
+    /* Absolutely positioned so the state ring never contributes to layout —
+     * a 22px orb inside a 34px control was part of what made the row tall. */
     position: absolute;
-    left: 12px;
+    left: 11px;
     /* Centred with `top`, not a transform: orb-pulse animates transform, so a
      * centring translate is overwritten the moment the animation runs and the
      * glow drops to the bottom-left of the button. */
-    top: calc(50% - 11px);
-    width: 22px;
-    height: 22px;
+    top: calc(50% - 8px);
+    width: 16px;
+    height: 16px;
     opacity: 0.55;
     pointer-events: none;
     background: radial-gradient(circle at 30% 30%, #fff, #a786ff 40%, #5d34ff);
@@ -1254,21 +1256,34 @@ main {
  * to SEND, so the live duplex voice lane went unnoticed entirely — the orb is
  * now the state ring behind a drawn microphone and a word. */
 .mic-btn {
+    /* Sits in the row with SEND, at the row's height. It was tall enough to
+     * set the height of the whole composer — the glyph and the label stacked
+     * and the control became a block, which made the chat bar grow around it.
+     * A control in a button row is the size of the row. */
     display: inline-flex;
+    flex-direction: row;
     align-items: center;
-    gap: 7px;
+    justify-content: center;
+    flex: none;
+    white-space: nowrap;
+    gap: 6px;
     border: none;
-    padding: 8px 14px;
+    /* Matches .input-btn exactly, so SEND and VOICE are the same height. */
+    padding: 10px 16px;
+    line-height: 1;
     position: relative;
     font-family: var(--font-main);
-    font-size: 0.72rem;
-    font-weight: bold;
-    letter-spacing: 0.06em;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     color: #efe6ff;
 }
 .mic-glyph {
-    width: 18px;
-    height: 18px;
+    /* Cap-height sized, so the glyph rides the text baseline instead of
+     * setting the button's height. */
+    width: 15px;
+    height: 15px;
     flex: none;
     position: relative;
     z-index: 1;
