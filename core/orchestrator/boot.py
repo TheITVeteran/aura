@@ -36,6 +36,66 @@ from .orchestrator_types import SystemStatus
 logger = logging.getLogger(__name__)
 
 
+async def _await_startup_io(
+    start: Any,
+    *,
+    what: str,
+    env_var: str,
+    default_s: float,
+) -> None:
+    """Await a disk-bound startup step, retrying once before giving up.
+
+    How long opening a database takes is a property of the disk and of how much
+    history is already in it — not of whether the runtime is healthy. These
+    steps were awaited on hardcoded budgets (15s for the state repository, 10s
+    for the database coordinator) with no operator knob, and a TimeoutError here
+    propagates out of boot: the whole runtime fails to start.
+
+    Observed live 2026-07-26 on a busy host: the state repository's 15-second
+    budget expired at boot.py:478 and the TimeoutError ended the boot. Aura did
+    not come up at all. A slow disk must not be indistinguishable from
+    a broken one, so the budget is tunable, generous by default, and a first
+    timeout buys a second attempt at double the budget before the failure is
+    allowed to be fatal. The final failure is recorded with the elapsed time so
+    the cause is attributable rather than a bare traceback.
+    """
+    try:
+        budget = max(5.0, float(os.getenv(env_var, "") or default_s))
+    except (TypeError, ValueError):
+        budget = default_s
+
+    started = time.monotonic()
+    for attempt, timeout_s in enumerate((budget, budget * 2.0), start=1):
+        try:
+            await asyncio.wait_for(start(), timeout=timeout_s)
+            if attempt > 1:
+                logger.warning(
+                    "🐢 %s came up on attempt %d after %.1fs — the disk is slow, "
+                    "not broken.",
+                    what, attempt, time.monotonic() - started,
+                )
+            return
+        except TimeoutError:
+            if attempt == 1:
+                logger.warning(
+                    "🐢 %s did not initialize within %.0fs; retrying once with "
+                    "%.0fs before treating a slow disk as a failed boot.",
+                    what, timeout_s, timeout_s * 2.0,
+                )
+                continue
+            elapsed = time.monotonic() - started
+            record_degradation(
+                "orchestrator_boot",
+                TimeoutError(f"{what} initialize exceeded {elapsed:.1f}s"),
+                severity="critical",
+                action=(
+                    f"failed boot after {what} exceeded its startup budget twice; "
+                    f"raise {env_var} if this host is simply slow"
+                ),
+            )
+            raise
+
+
 def _record_boot_degradation(
     exc: BaseException,
     *,
@@ -475,12 +535,22 @@ class OrchestratorBootMixin(
                 await self._start_meta_evolution()
 
                 if hasattr(self, "state_repo") and self.state_repo:
-                    await asyncio.wait_for(self.state_repo.initialize(), timeout=15.0)
+                    await _await_startup_io(
+                        self.state_repo.initialize,
+                        what="state repository",
+                        env_var="AURA_STATE_REPO_INIT_TIMEOUT_S",
+                        default_s=60.0,
+                    )
 
                 from core.resilience.database_coordinator import get_db_coordinator
 
                 db_coord = get_db_coordinator()
-                await asyncio.wait_for(db_coord.start(), timeout=10.0)
+                await _await_startup_io(
+                    db_coord.start,
+                    what="database coordinator",
+                    env_var="AURA_DB_COORDINATOR_START_TIMEOUT_S",
+                    default_s=45.0,
+                )
                 ServiceContainer.register_instance("database_coordinator", db_coord)
                 boot_profiler.mark("state_vault_and_databases")
 
