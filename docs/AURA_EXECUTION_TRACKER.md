@@ -29688,3 +29688,51 @@ remains, leaving approximately 0-280 records. Checkpoint-count completion is
 approximately 69.6%-100.0%, with a midpoint planning estimate of 82.1%. This
 is checkpoint accounting, not permission to skip any open SPARK or
 whole-codebase requirement.
+
+## Checkpoint 2026-07-26-399: Combined SFT and Evaluation Lineage Contract
+
+SPARK-059 now has one source-level pre-augmentation lineage contract across
+structured synthetic SFT, encrypted verified replay, and caller-declared
+external evaluation corpora. The builder independently reconstructs both
+candidate/evaluator custody pairs, regenerates every synthetic split from the
+sealed evaluator seed, parses every replay split, canonicalizes complete
+model-visible tool prefixes and targets, and requires nonempty records for
+every declared evaluation corpus. One Horcrux-key-compatible index covers
+exact content, objective, answer, token and character shingles, and causal
+lineage without retaining plaintext.
+
+The policy preserves legitimate supervision without weakening split truth:
+same-lineage derivatives are accepted only in the same split; generated
+template similarity is accepted only within one declared corpus; exact reuse,
+cross-corpus near duplication, and any lineage reuse across splits fail. A
+candidate-safe artifact contains only commitments. The evaluator artifact
+holds keyed records, exact counts, complete coverage, and source bindings.
+Standalone custody validation rejects malformed record shapes, source
+bindings, coverage, counts, and split values even after ordinary hashes are
+recomputed; full byte-identical reconstruction from source custody and the
+dedup key remains the authenticity gate.
+
+Final focused validation passes 9/9 in 79.05 seconds. Combined/replay
+compatibility passes 31/31 in 82.59 seconds, and the broader combined,
+structured, and replay family passes 94/94 in 311.65 seconds. Ruff, bytecode
+compilation, diff hygiene, governance ownership (1,787 inherited debt calls),
+and model-load ownership (47 paths, 60 references, zero findings) pass. The
+enterprise scan remains inherited-red at ten baseline regressions, 228
+findings, and 58 high/critical findings, with no CP399 finding and no baseline
+increase. Evidence is
+`artifacts/current/cp399_combined_sft_lineage_evidence.json`.
+
+CP399 proves the contract using deterministic sealed fixtures. It does not
+claim that the complete real Aura evaluation inventory has been supplied, that
+a production combined manifest has been generated or durably published, that
+external privacy/contamination/execution attestations or a monotonic witness
+exist, that replay rows passed resident tokenizer admission, or that trainer
+authority, resident 32B training, gains, frontier performance, or a `WOW
+Signal` exist. Those remain direct SPARK-059 gates. No model weights or live
+Aura process are touched; long soaks remain deferred.
+
+Counting CP399 makes the total checkpoint record 641. The 641-920 forecast
+leaves approximately 0-279 records. Checkpoint-count completion is
+approximately 69.7%-100.0%, with a midpoint planning estimate of 82.2%. This
+accounting does not permit skipping any open SPARK or whole-codebase
+requirement.

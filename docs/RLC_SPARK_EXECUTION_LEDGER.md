@@ -3043,6 +3043,38 @@ before those dependencies close is not admissible.
   performance, or a `WOW Signal`. The sanitized receipt is
   `artifacts/current/cp398_verified_replay_sft_publication_evidence.json`.
 
+  CP399 closes the source-level combined lineage contract that CP397 left
+  open. It reconstructs the complete structured-synthetic custody pair from
+  its sealed holdout seed, reconstructs the encrypted verified-replay pair,
+  requires nonempty coverage for every caller-declared external evaluation
+  corpus, and projects train, validation, holdout, and external-evaluation
+  surfaces through one Horcrux-key-compatible exact, objective, answer,
+  bottom-k token/character shingle, and causal-lineage index. Tool supervision
+  binds the complete model-visible prefix and exact target message rather than
+  a producer-authored success label.
+
+  The combined policy permits multiple targets only when they inherit the same
+  causal lineage and split. It permits template-level near similarity only
+  inside one declared corpus, while exact reuse, cross-corpus near duplication,
+  and any lineage crossing splits remain fatal. The trainer-facing artifact
+  contains only package, key, index, record-count, and manifest commitments;
+  keyed evaluator records remain in the separate evaluator artifact. Full
+  reconstruction is byte-identical and remains mandatory for key-authenticity.
+  A standalone parser additionally rejects malformed signatures, counts,
+  coverage, source bindings, and split values even if ordinary SHA commitments
+  are recomputed.
+
+  The final focused matrix passes 9/9, combined/replay compatibility passes
+  31/31, and the broader combined/structured/replay family passes 94/94.
+  Ruff, bytecode compilation, diff hygiene, governance ownership, and
+  model-load ownership pass. The enterprise ratchet remains inherited-red at
+  ten regressions, 228 findings, and 58 high/critical findings, with no CP399
+  finding and no baseline increase. This proves the artifact contract with
+  deterministic sealed fixtures; it does not claim that Aura's complete real
+  evaluation inventory has been supplied, externally audited, durably
+  published, or admitted for training. The receipt is
+  `artifacts/current/cp399_combined_sft_lineage_evidence.json`.
+
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording
   only commitments. This proves candidate noncontainment and candidate-only

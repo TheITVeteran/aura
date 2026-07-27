@@ -360,32 +360,44 @@ def _jaccard(left: Sequence[str], right: Sequence[str]) -> float:
 def _assert_no_signature_overlap(
     projected: Sequence[Mapping[str, Any]],
     references: Sequence[Mapping[str, Any]],
+    *,
+    allow_same_lineage_same_split: bool = False,
+    allow_same_corpus_near_duplicates: bool = False,
 ) -> None:
     """Use inverted shingle indexes instead of an all-pairs corpus scan."""
 
     records: list[Mapping[str, Any]] = []
     record_ids: set[str] = set()
-    exact_index: dict[str, int] = {}
-    objective_index: dict[str, int] = {}
+    exact_index: dict[str, set[int]] = defaultdict(set)
+    objective_index: dict[str, set[int]] = defaultdict(set)
     answer_index: dict[str, set[int]] = defaultdict(set)
     lineage_index: dict[str, set[int]] = defaultdict(set)
     token_index: dict[str, set[int]] = defaultdict(set)
     character_index: dict[str, set[int]] = defaultdict(set)
 
     def add(record: Mapping[str, Any]) -> None:
+        def permitted(prior: Mapping[str, Any]) -> bool:
+            return bool(
+                allow_same_lineage_same_split
+                and prior["lineage_token"] == record["lineage_token"]
+                and prior["split"] == record["split"]
+            )
+
         record_id = record["record_id_sha256"]
         if record_id in record_ids:
             _fail("verified_replay_sft_duplicate_record_identity")
-        if record["exact_token"] in exact_index:
-            _fail("verified_replay_sft_exact_content_overlap")
-        if record["objective_token"] in objective_index:
-            _fail("verified_replay_sft_exact_content_overlap")
+        for prior_index in exact_index[record["exact_token"]]:
+            if not permitted(records[prior_index]):
+                _fail("verified_replay_sft_exact_content_overlap")
+        for prior_index in objective_index[record["objective_token"]]:
+            if not permitted(records[prior_index]):
+                _fail("verified_replay_sft_exact_content_overlap")
         for prior_index in answer_index[record["answer_token"]]:
             prior = records[prior_index]
             if min(
                 record["answer_character_count"],
                 prior["answer_character_count"],
-            ) >= 32:
+            ) >= 32 and not permitted(prior):
                 _fail("verified_replay_sft_exact_content_overlap")
         for prior_index in lineage_index[record["lineage_token"]]:
             if records[prior_index]["split"] != record["split"]:
@@ -398,19 +410,31 @@ def _assert_no_signature_overlap(
             possible.update(character_index[shingle])
         for prior_index in possible:
             prior = records[prior_index]
-            if _jaccard(record["token_shingles"], prior["token_shingles"]) >= (
-                _TOKEN_NEAR_DUPLICATE_THRESHOLD
-            ) or _jaccard(
-                record["character_shingles"],
-                prior["character_shingles"],
-            ) >= _CHARACTER_NEAR_DUPLICATE_THRESHOLD:
+            if (
+                not permitted(prior)
+                and not (
+                    allow_same_corpus_near_duplicates
+                    and prior["corpus"] == record["corpus"]
+                )
+                and (
+                    _jaccard(
+                        record["token_shingles"], prior["token_shingles"]
+                    )
+                    >= _TOKEN_NEAR_DUPLICATE_THRESHOLD
+                    or _jaccard(
+                        record["character_shingles"],
+                        prior["character_shingles"],
+                    )
+                    >= _CHARACTER_NEAR_DUPLICATE_THRESHOLD
+                )
+            ):
                 _fail("verified_replay_sft_semantic_near_duplicate")
 
         index = len(records)
         records.append(record)
         record_ids.add(record_id)
-        exact_index[record["exact_token"]] = index
-        objective_index[record["objective_token"]] = index
+        exact_index[record["exact_token"]].add(index)
+        objective_index[record["objective_token"]].add(index)
         answer_index[record["answer_token"]].add(index)
         lineage_index[record["lineage_token"]].add(index)
         for shingle in record["token_shingles"]:
@@ -422,6 +446,82 @@ def _assert_no_signature_overlap(
         add(reference)
     for candidate in projected:
         add(candidate)
+
+
+def assert_semantic_signature_integrity(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    allow_same_lineage_same_split: bool = False,
+    allow_same_corpus_near_duplicates: bool = False,
+) -> None:
+    """Validate exact, near-duplicate, and causal split integrity."""
+
+    _assert_no_signature_overlap(
+        records,
+        (),
+        allow_same_lineage_same_split=allow_same_lineage_same_split,
+        allow_same_corpus_near_duplicates=allow_same_corpus_near_duplicates,
+    )
+
+
+def build_semantic_signature_records(
+    *,
+    dedup_key: bytes,
+    records: Sequence[Mapping[str, str]],
+    allow_same_lineage_same_split: bool = False,
+    allow_same_corpus_near_duplicates: bool = False,
+) -> list[dict[str, Any]]:
+    """Project plaintext surfaces into keyed signatures and discard plaintext."""
+
+    key = _key(dedup_key, code="verified_replay_sft_dedup_key_invalid")
+    projected: list[dict[str, Any]] = []
+    for ordinal, raw in enumerate(records):
+        if not isinstance(raw, Mapping) or set(raw) != {
+            "corpus",
+            "split",
+            "lineage_root_sha256",
+            "objective",
+            "answer",
+        }:
+            _fail("verified_replay_sft_reference_source_invalid")
+        if (
+            not isinstance(raw["corpus"], str)
+            or not raw["corpus"]
+            or raw["split"] not in {*SPLITS, "external_evaluation"}
+            or not isinstance(raw["objective"], str)
+            or not isinstance(raw["answer"], str)
+        ):
+            _fail("verified_replay_sft_reference_source_invalid")
+        signature = _signature(
+            objective=raw["objective"],
+            answer=raw["answer"],
+            lineage_root_sha256=_require_sha(
+                raw["lineage_root_sha256"],
+                code="verified_replay_sft_reference_lineage_invalid",
+            ),
+            dedup_key=key,
+        )
+        projected.append(
+            {
+                "record_id_sha256": _sha(
+                    {
+                        "ordinal": ordinal,
+                        "corpus": raw["corpus"],
+                        "split": raw["split"],
+                        **signature,
+                    }
+                ),
+                "corpus": raw["corpus"],
+                "split": raw["split"],
+                **signature,
+            }
+        )
+    assert_semantic_signature_integrity(
+        projected,
+        allow_same_lineage_same_split=allow_same_lineage_same_split,
+        allow_same_corpus_near_duplicates=allow_same_corpus_near_duplicates,
+    )
+    return projected
 
 
 def _scan_text(objective: str, answer: str) -> None:
@@ -700,48 +800,10 @@ def build_reference_index(
     """Build a keyed external index without retaining reference plaintext."""
 
     key = _key(dedup_key, code="verified_replay_sft_dedup_key_invalid")
-    projected: list[dict[str, Any]] = []
-    for ordinal, raw in enumerate(records):
-        if not isinstance(raw, Mapping) or set(raw) != {
-            "corpus",
-            "split",
-            "lineage_root_sha256",
-            "objective",
-            "answer",
-        }:
-            _fail("verified_replay_sft_reference_source_invalid")
-        if (
-            not isinstance(raw["corpus"], str)
-            or not raw["corpus"]
-            or raw["split"] not in {*SPLITS, "external_evaluation"}
-            or not isinstance(raw["objective"], str)
-            or not isinstance(raw["answer"], str)
-        ):
-            _fail("verified_replay_sft_reference_source_invalid")
-        signature = _signature(
-            objective=raw["objective"],
-            answer=raw["answer"],
-            lineage_root_sha256=_require_sha(
-                raw["lineage_root_sha256"],
-                code="verified_replay_sft_reference_lineage_invalid",
-            ),
-            dedup_key=key,
-        )
-        projected.append(
-            {
-                "record_id_sha256": _sha(
-                    {
-                        "ordinal": ordinal,
-                        "corpus": raw["corpus"],
-                        "split": raw["split"],
-                        **signature,
-                    }
-                ),
-                "corpus": raw["corpus"],
-                "split": raw["split"],
-                **signature,
-            }
-        )
+    projected = build_semantic_signature_records(
+        dedup_key=key,
+        records=records,
+    )
     body = {
         "schema": VERIFIED_REPLAY_SFT_REFERENCE_INDEX_SCHEMA,
         "dedup_key_commitment_sha256": hashlib.sha256(key).hexdigest(),
@@ -1643,6 +1705,7 @@ __all__ = [
     "VerifiedReplaySFTError",
     "build_privacy_clearance",
     "build_reference_index",
+    "build_semantic_signature_records",
     "build_verified_replay_sft_custody_bundles",
     "canonical_json_bytes",
     "empty_reference_index",
@@ -1651,4 +1714,5 @@ __all__ = [
     "validate_reference_index",
     "validate_verified_replay_sft_candidate_artifacts",
     "validate_verified_replay_sft_custody_pair",
+    "assert_semantic_signature_integrity",
 ]

@@ -1,0 +1,110 @@
+{
+  "schema": "aura.rlc.cp399_combined_sft_lineage_evidence.v1",
+  "checkpoint": "CP399",
+  "scope": "combined_synthetic_replay_evaluation_pre_augmentation_lineage_contract",
+  "claims": {
+    "structured_custody_pair_reconstructed": true,
+    "verified_replay_custody_pair_reconstructed": true,
+    "all_three_splits_indexed": true,
+    "declared_external_evaluation_coverage_required": true,
+    "one_keyed_exact_near_and_lineage_index": true,
+    "same_lineage_derivatives_restricted_to_same_split": true,
+    "same_corpus_template_near_duplicates_explicitly_allowed": true,
+    "cross_corpus_near_duplicates_allowed": false,
+    "cross_split_lineage_reuse_allowed": false,
+    "candidate_contains_evaluator_signature_records": false,
+    "ordinary_hash_recomputation_can_bypass_shape_validation": false,
+    "trainer_ready": false,
+    "training_authority": "none_pending_external_audit_and_trainer_admission"
+  },
+  "source_files": [
+    {
+      "path": "core/learning/verified_replay_sft.py",
+      "line_count": 1718,
+      "sha256": "dda99cb45e93da47bae5705c1faeb3faabf30f6098d4ad2bf183aaa51ed7a4c2"
+    },
+    {
+      "path": "core/learning/combined_sft_lineage.py",
+      "line_count": 641,
+      "sha256": "ada6190442923279e4ad3d47f86e61a33e88f6e6023bc7954a60626045c98705"
+    },
+    {
+      "path": "tests/test_combined_sft_lineage.py",
+      "line_count": 256,
+      "sha256": "8979365410861819fd4b650993faed7d9c64d6acae1255b609ba9d62cd02d740"
+    }
+  ],
+  "verification": {
+    "post_hardening_focused": {
+      "passed": 9,
+      "failed": 0,
+      "duration_seconds": 79.05
+    },
+    "combined_and_verified_replay_compatibility": {
+      "passed": 31,
+      "failed": 0,
+      "duration_seconds": 82.59
+    },
+    "combined_structured_and_replay_compatibility": {
+      "passed": 94,
+      "failed": 0,
+      "duration_seconds": 311.65
+    },
+    "defects_discovered_and_retired": [
+      "same_lineage_same_split_derivatives_were_falsely_rejected",
+      "same_corpus_generated_templates_were_falsely_classified_as_cross_corpus_contamination",
+      "new_raise_only_helper_would_have_increased_enterprise_baseline"
+    ],
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "git_diff_check": "passed",
+    "governance_lint": {
+      "passed": true,
+      "migration_debt_calls": 1787,
+      "baseline_raised": false
+    },
+    "model_load_ownership": {
+      "passed": true,
+      "owned_paths": 47,
+      "load_references": 60,
+      "findings": 0
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "cp399_path_findings": 0,
+      "baseline_raised": false
+    }
+  },
+  "explicit_non_claims": [
+    "real complete Aura evaluation inventory supplied",
+    "production combined manifest generated from live corpora",
+    "governed durable combined-manifest publication",
+    "external privacy attestation",
+    "external multisurface contamination attestation",
+    "external execution attestation",
+    "externally witnessed monotonic root",
+    "resident replay tokenizer validation",
+    "trainer authority",
+    "small checkpoint gain",
+    "resident 32B training",
+    "reasoning gain",
+    "frontier performance",
+    "WOW Signal"
+  ],
+  "next_required_gates": [
+    "publish the combined candidate commitment and evaluator index under governed durable custody",
+    "supply and independently attest the complete real evaluation corpus inventory",
+    "run external privacy and multisurface contamination audits",
+    "bind an externally witnessed monotonic anti rollback head",
+    "validate committed replay rows with the resident tokenizer",
+    "grant bounded externally rooted trainer authority with resumable receipts"
+  ],
+  "model_weights_touched": false,
+  "trainer_invoked": false,
+  "live_user_desktop_touched": false,
+  "multi_hour_soak_deferred": true
+}
