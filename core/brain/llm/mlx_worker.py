@@ -1096,9 +1096,17 @@ def _repair_live_user_surface_escaped_newlines(response_text: Any) -> str:
     text = str(response_text or "")
     if not text.strip() or "```" in text or "\\\\" in text:
         return ""
-    repaired = (
-        text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\n")
-    )
+    # Only when the escape is NOT the start of a LaTeX command. \text, \times,
+    # \neq, \rho, \right all begin with the same two characters as a control
+    # escape, and rewriting them corrupts the maths.
+    #
+    # LIVE DEFECT introduced by the first version of this repair, 2026-07-26:
+    # "P(\text{same color})" was served as "P( ext{same color})" because the
+    # \t was replaced with a tab.
+    repaired = re.sub(r"\\r\\n(?![A-Za-z])", "\n", text)
+    repaired = re.sub(r"\\n(?![A-Za-z])", "\n", repaired)
+    repaired = re.sub(r"\\r(?![A-Za-z])", "\n", repaired)
+    repaired = re.sub(r"\\t(?![A-Za-z])", "\t", repaired)
     if repaired == text:
         return ""
     # Collapse the runs the substitution can create, without touching

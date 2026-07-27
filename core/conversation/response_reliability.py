@@ -2237,7 +2237,61 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     # and one the local model produces constantly.
     text = re.sub(r"(?<=[a-z0-9])\.(?=[A-Z][a-z])", ". ", text)
     text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
+    text = _plain_text_maths(text)
     return text.strip()
+
+
+# The desktop chat window renders plain text, not TeX. A correct answer that
+# arrives as "\[P(\text{same color}) = \frac{19}{66}\]" is still a wall of
+# backslashes to the person reading it — measured live 2026-07-26, when the
+# marble derivation finally landed correct and unreadable.
+#
+# This is deliberately a small, total rewriter for the constructs a local model
+# actually reaches for in conversational maths. Anything it does not recognise
+# is left exactly as it is, and a fenced code block is never touched.
+_MATHS_DELIMITERS_RE = re.compile(r"\\[\[\]()]")
+_FRAC_RE = re.compile(r"\\[dt]?frac\s*\{([^{}]{1,40})\}\s*\{([^{}]{1,40})\}")
+_TEX_WRAPPER_RE = re.compile(r"\\(?:text|mathrm|mathbf|boxed|left|right)\s*(?:\{([^{}]{0,80})\})?")
+_TEX_BINOM_RE = re.compile(r"_\{?(\d{1,3})\}?\s*C\s*_\{?(\d{1,3})\}?")
+_TEX_SYMBOL_MAP = {
+    r"\times": "x",
+    r"\cdot": "*",
+    r"\div": "/",
+    r"\le": "<=",
+    r"\ge": ">=",
+    r"\neq": "!=",
+    r"\approx": "~",
+    r"\pm": "+/-",
+}
+
+
+def _plain_text_maths(text: str) -> str:
+    """Render the common TeX constructs as readable text, or leave them be."""
+    if "\\" not in text:
+        return text
+    fences = "```" in text
+    if fences:
+        return text
+    rendered = text
+    for _ in range(3):  # nested fractions, bounded
+        replaced = _FRAC_RE.sub(lambda m: f"{m.group(1).strip()}/{m.group(2).strip()}", rendered)
+        if replaced == rendered:
+            break
+        rendered = replaced
+    rendered = _TEX_BINOM_RE.sub(lambda m: f"C({m.group(1)},{m.group(2)})", rendered)
+    rendered = _TEX_WRAPPER_RE.sub(lambda m: (m.group(1) or ""), rendered)
+    for symbol, plain in _TEX_SYMBOL_MAP.items():
+        rendered = rendered.replace(symbol, plain)
+    # Display maths gets its own line; inline maths just loses its delimiters.
+    # Without this the equation welds to the prose either side of it:
+    # "…two marbles from 12:C(12,2) = … = 66Next, calculate…".
+    rendered = re.sub(r"\\\[\s*", "\n", rendered)
+    rendered = re.sub(r"\s*\\\]", "\n", rendered)
+    rendered = _MATHS_DELIMITERS_RE.sub("", rendered)
+    rendered = re.sub(r"[ \t]{2,}", " ", rendered)
+    rendered = re.sub(r"\n{3,}", "\n\n", rendered)
+    rendered = re.sub(r"(?m)[ \t]+$", "", rendered)
+    return rendered
 
 
 def _list_item_bodies(reply_text: Any) -> list[str]:
