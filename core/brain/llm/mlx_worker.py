@@ -3176,7 +3176,45 @@ class _PromptCacheLRU:
         # leaving generation itself untouched.
         self.max_entry_tokens = max_entry_tokens
         self._cache: dict[Any, dict[Any, Any]] = {}
-        self._lru = deque()
+        # One eviction queue PER LANE, not one globally. A single global queue
+        # meant Aura's internal lanes (loop ticks, enrichment, dreaming,
+        # health probes — dozens of generations per minute) evicted the user
+        # conversation's entry within seconds of it being written, so the one
+        # entry whose reuse decides whether a conversation survives was always
+        # the first one thrown away. Lane budgets still sum to max_size, so
+        # per-entry KV RAM is bounded exactly as before.
+        self._lru: dict[str, deque] = {}
+
+    def _lane_of(self, model_key: Any) -> str:
+        # A single-entry budget cannot be split without overspending it, so
+        # every lane shares one queue and eviction stays global.
+        if self.max_size <= 1:
+            return "shared"
+        if isinstance(model_key, tuple) and len(model_key) >= 2:
+            return str(model_key[1])
+        return "default"
+
+    def _lane_budget(self, lane: str) -> int:
+        if self.max_size <= 1 or lane == "shared":
+            return self.max_size
+        reserved = max(1, self.max_size // 2)
+        return reserved if lane == "user_surface" else self.max_size - reserved
+
+    def _queue_for(self, lane: str) -> deque:
+        queue_for_lane = self._lru.get(lane)
+        if queue_for_lane is None:
+            queue_for_lane = deque()
+            self._lru[lane] = queue_for_lane
+        return queue_for_lane
+
+    def _forget_key(self, cache_key: tuple) -> None:
+        queue_for_lane = self._lru.get(self._lane_of(cache_key[0]))
+        if queue_for_lane is None:
+            return
+        try:
+            queue_for_lane.remove(cache_key)
+        except ValueError as exc:
+            logger.debug("Prompt cache LRU entry already absent: %s", exc)
 
     def clear(self) -> None:
         self._cache.clear()
@@ -3241,10 +3279,7 @@ class _PromptCacheLRU:
         cache_entry = self._get(model_key, tokens)
         if cache_entry.count == 1:
             self._delete(model_key, tokens)
-            try:
-                self._lru.remove((model_key, tuple(tokens)))
-            except ValueError as exc:
-                logger.debug("Prompt cache LRU entry already absent during extract: %s", exc)
+            self._forget_key((model_key, tuple(tokens)))
             return cache_entry
 
         cache_entry.count -= 1
@@ -3266,13 +3301,21 @@ class _PromptCacheLRU:
         # budget shrinking 81.1s -> 73.2s -> 55.8s against a first token that
         # kept taking 58-82s. None of that was visible: there was no hit/miss
         # signal anywhere, so reuse could only be inferred from latency.
-        if result.exact is not None:
+        if result.exact is not None and len(tokens) > 1:
+            # Never hand back an EMPTY remainder: mlx_lm has to be given at
+            # least one token to run a decode step, so an exact hit reuses
+            # everything but the final token and replays that one.
             cache_entry = self._extract(model_key, result.exact)
-            logger.info(
-                "🎯 [PROMPT CACHE] exact hit — reused %d/%d tokens, 0 to prefill.",
-                len(tokens), len(tokens),
-            )
-            return cache_entry.prompt_cache, []
+            if can_trim_prompt_cache(cache_entry.prompt_cache):
+                trim_prompt_cache(cache_entry.prompt_cache, 1)
+                logger.info(
+                    "🎯 [PROMPT CACHE] exact hit — reused %d/%d tokens, 1 to prefill.",
+                    len(tokens) - 1, len(tokens),
+                )
+                return cache_entry.prompt_cache, tokens[-1:]
+            # Untrimmable cache: putting it back keeps it available for the
+            # prefix path instead of silently dropping a live entry.
+            self.insert_cache(model_key, list(result.exact), cache_entry.prompt_cache)
 
         if result.shorter is not None:
             cache_entry = self._extract(model_key, result.shorter)
@@ -3286,9 +3329,13 @@ class _PromptCacheLRU:
         if result.longer is not None:
             cache_entry = self._get(model_key, result.longer)
             if can_trim_prompt_cache(cache_entry.prompt_cache):
-                trimmed = _PromptCacheEntry(copy.deepcopy(cache_entry.prompt_cache), 1)
                 prefix = min(len(tokens) - 1, result.common_prefix)
                 num_to_trim = len(result.longer) - prefix
+                # _extract already copies when the entry is shared and hands
+                # over the live object when it is not. Deep-copying here
+                # unconditionally cost a second full KV allocation — ~1.5GB on
+                # the 32B geometry — on the hot path of every diverging turn.
+                trimmed = self._extract(model_key, result.longer)
                 trim_prompt_cache(trimmed.prompt_cache, num_to_trim)
                 logger.info(
                     "🎯 [PROMPT CACHE] trimmed hit — reused %d/%d tokens, %d to prefill.",
@@ -3315,16 +3362,15 @@ class _PromptCacheLRU:
         cache_key = (model_key, tuple(tokens))
         if "cache" in current:
             current["cache"].count += 1
-            try:
-                self._lru.remove(cache_key)
-            except ValueError as exc:
-                logger.debug("Prompt cache LRU entry already absent during insert refresh: %s", exc)
+            self._forget_key(cache_key)
         else:
             current["cache"] = _PromptCacheEntry(prompt_cache, 1)
 
-        self._lru.append(cache_key)
-        if len(self._lru) > self.max_size:
-            evict_model_key, evict_tokens = self._lru.popleft()
+        lane = self._lane_of(model_key)
+        queue_for_lane = self._queue_for(lane)
+        queue_for_lane.append(cache_key)
+        while len(queue_for_lane) > self._lane_budget(lane):
+            evict_model_key, evict_tokens = queue_for_lane.popleft()
             self._delete(evict_model_key, list(evict_tokens))
 
 class JobWatchdog(threading.Thread):
@@ -4699,14 +4745,24 @@ def _mlx_worker_loop(
                                             f"output_reserve={_output_reserve}:"
                                             f"window={effective_context_window}"
                                         )
-                                    import mlx_lm.utils as u
+                                    # These live in mlx_lm.models.cache, not
+                                    # mlx_lm.utils. Probing the wrong module
+                                    # made _can_trim answer False forever, so
+                                    # the trimmed-reuse path could never run.
+                                    from mlx_lm.models.cache import (
+                                        can_trim_prompt_cache as _mlx_can_trim,
+                                        make_prompt_cache as _mlx_make_cache,
+                                        trim_prompt_cache as _mlx_trim,
+                                    )
 
                                     def _can_trim(pc):
-                                        return hasattr(u, "trim_prompt_cache")
+                                        try:
+                                            return bool(_mlx_can_trim(pc))
+                                        except (AttributeError, TypeError, ValueError):
+                                            return False
 
                                     def _do_trim(pc, num):
-                                        if hasattr(u, "trim_prompt_cache"):
-                                            u.trim_prompt_cache(pc, num)
+                                        _mlx_trim(pc, num)
 
                                     # Scope-partitioned key: user-surface
                                     # turns only ever see user-surface
@@ -4724,10 +4780,27 @@ def _mlx_worker_loop(
                                             can_trim_prompt_cache=_can_trim,
                                             trim_prompt_cache=_do_trim
                                         )
+                                        if cache is None:
+                                            # A miss still has to leave something
+                                            # BEHIND. mlx_lm only fills a cache
+                                            # object the caller supplies, and this
+                                            # lane supplied none — so nothing was
+                                            # ever cached, every turn re-prefilled
+                                            # the whole history from token 0, and
+                                            # the measured hit rate was 0/92.
+                                            cache = _mlx_make_cache(model)
+                                            remaining_tokens = tokens
 
                                     gen_prompt = remaining_tokens if cache is not None else prompt
                                     if cache is not None:
                                         kwargs["prompt_cache"] = cache
+                                        # mlx_lm mutates this object in place as
+                                        # it prefills and decodes, so the object
+                                        # we hand in IS the post-generation cache.
+                                        # It is never reported back on the
+                                        # response, which is why reading it from
+                                        # there captured nothing.
+                                        final_prompt_cache = cache
 
                                     # [STABILITY v57] Reset activity immediately before loop to maximize budget for prefill
                                     try:
@@ -4824,19 +4897,15 @@ def _mlx_worker_loop(
                                             draft_accepted_tokens += 1
 
                                         tokens.append(response.token)
-                                        # Track the live cache object; insertion happens
-                                        # ONCE after the loop. Per-token insertion stored
-                                        # the same mutable cache under every growing
-                                        # prefix (mlx_lm mutates it across yields), so
-                                        # older trie keys aliased later-prefix KV state —
-                                        # and each insert churned the small LRU.
-                                        if (
-                                            prompt_cache_lru is not None
-                                            and not disable_prompt_cache
-                                            and hasattr(response, "prompt_cache")
-                                            and response.prompt_cache is not None
-                                        ):
-                                            final_prompt_cache = response.prompt_cache
+                                        # `final_prompt_cache` is bound once, before
+                                        # the loop, to the cache object handed to
+                                        # mlx_lm; it is mutated in place as tokens
+                                        # are produced, so `tokens` and that object
+                                        # stay in step and insertion happens ONCE
+                                        # after the loop. Per-token insertion used
+                                        # to store the same mutable cache under
+                                        # every growing prefix, so older trie keys
+                                        # aliased later-prefix KV state.
 
                                         if intero_tap is not None:
                                             intero_tap.feed(

@@ -520,10 +520,13 @@ def test_prompt_cache_scopes_are_partitioned_and_entries_capped():
     )
     hit, remaining = lru.fetch_nearest_cache(
         default_key, [1, 2, 3],
-        can_trim_prompt_cache=lambda _pc: False,
+        can_trim_prompt_cache=lambda _pc: True,
         trim_prompt_cache=lambda _pc, _n: None,
     )
-    assert hit == fake_cache and remaining == []
+    assert hit == fake_cache and remaining == [3], (
+        "an exact hit replays the final token; mlx_lm cannot decode from an "
+        "empty prompt"
+    )
 
     lru.insert_cache(surface_key, [1, 2, 3, 4, 5], fake_cache)
     hit, _ = lru.fetch_nearest_cache(
@@ -554,6 +557,82 @@ def test_prompt_cache_prefix_reuse_shrinks_the_next_turns_prefill():
     assert remaining == list(range(1000, 1040)), (
         "prefill must shrink to the new turn's suffix, not the whole history"
     )
+
+
+def test_mlx_never_reports_the_prompt_cache_back_so_the_worker_must_own_it():
+    """The bug this pins: the worker harvested ``response.prompt_cache``.
+
+    mlx_lm's ``GenerationResponse`` has no such field and never has, so
+    ``final_prompt_cache`` stayed None, ``insert_cache`` was never reached, and
+    the whole prompt cache was dead code — measured live at 0 hits in 92
+    lookups while every turn re-prefilled its entire history. Reuse only works
+    if the worker CREATES the cache object and keeps its own reference.
+    """
+    import dataclasses
+
+    from mlx_lm.generate import GenerationResponse
+    from mlx_lm.models.cache import make_prompt_cache
+
+    fields = {f.name for f in dataclasses.fields(GenerationResponse)}
+    assert "prompt_cache" not in fields, (
+        "if mlx_lm ever starts reporting the cache, revisit worker ownership"
+    )
+    assert callable(make_prompt_cache), (
+        "the worker depends on being able to mint its own cache on a miss"
+    )
+
+
+def test_internal_lane_churn_cannot_evict_the_user_conversation():
+    """Aura runs dozens of internal generations per minute beside a
+    conversation. With one global eviction queue they threw the conversation's
+    entry away immediately, so the reuse that decides endurance never survived
+    to the next user turn."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=2)
+    surface_key = (7, "user_surface")
+    default_key = (7, "default")
+    turn1 = list(range(200))
+    lru.insert_cache(surface_key, turn1, ["kv-conversation"])
+
+    # A minute of loop ticks, enrichment, dreaming, health probes.
+    for tick in range(25):
+        lru.insert_cache(default_key, [900_000 + tick, tick, tick + 1], ["kv-internal"])
+
+    hit, remaining = lru.fetch_nearest_cache(
+        surface_key, turn1 + list(range(5000, 5030)),
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == ["kv-conversation"], (
+        "internal-lane churn evicted the user conversation's KV"
+    )
+    assert remaining == list(range(5000, 5030))
+
+
+def test_lane_budgets_never_exceed_the_models_entry_budget():
+    """Reserving a slot for the conversation must not raise total KV RAM:
+    per-entry cost is fixed, so the lane budgets have to sum to max_size."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    for max_size in (1, 2, 6, 12):
+        lru = _PromptCacheLRU(max_size=max_size)
+        lanes = {
+            lru._lane_of((1, scope)) for scope in ("user_surface", "default")
+        }
+        total = sum(lru._lane_budget(lane) for lane in lanes)
+        assert total <= max_size, f"lane budgets overspent at max_size={max_size}"
+        assert all(lru._lane_budget(lane) >= 1 for lane in lanes), (
+            "a lane with a queue needs at least one slot"
+        )
+
+    lru = _PromptCacheLRU(max_size=2)
+    for entry in range(6):
+        lru.insert_cache((1, "default"), [entry, entry + 1], ["kv"])
+    for entry in range(6):
+        lru.insert_cache((1, "user_surface"), [500 + entry, entry], ["kv"])
+    held = sum(len(queue) for queue in lru._lru.values())
+    assert held <= 2, f"prompt cache retained {held} entries against a budget of 2"
 
 
 def test_optional_deep_solver_memory_refusal_stays_noncritical(monkeypatch):
