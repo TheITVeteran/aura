@@ -170,12 +170,38 @@ checkpoint.
 
 `coupling_seam(...)` per subsystem, then `coupling_matrix(seams)` over all
 nine. Each seam needs forward evidence, reverse evidence, and a lesion that
-removes at least half the intact effect. Evidence declared `metadata` is
-recordable and uncountable — the seam builds, and the matrix refuses to call it
-coupling.
+removes at least half the intact effect.
 
-Instrumenting the seams to produce these observations from the live organism is
-the work that remains.
+**Do not hand-label `kind`.** Use the harness:
+
+```python
+seam = measure_coupling_seam(
+    subsystem="memory", trials=64,
+    forward_closed=..., forward_open=..., forward_metric=..., forward_identity=...,
+    reverse_closed=..., reverse_open=..., reverse_metric=..., reverse_identity=...,
+    lesioned=...,
+)
+```
+
+It runs the behavior with the seam open and closed and compares each trial's
+**observable outcome identity**. If nothing observable changed, the evidence is
+`metadata` however you would have described it. `outcome_identity` is the
+important argument: it must return what a downstream observer can actually act
+on, not the field the seam passed.
+
+Binding the nine seams to real subsystem callables is the work that remains.
+
+## Before you start: run the preflight
+
+```bash
+python tools/spark_pretraining_preflight.py --campaign <artifact-dir>
+```
+
+It hands every instrument above the exact input it must refuse and fails if the
+refusal does not come — the same idea as the campaign kernel probes. A weakened
+gate still imports and still returns a verdict; it just stops saying no, and
+nothing but an attempt to make it say no will notice. Exit 0 ready, 1 an
+instrument is dead, 2 a campaign artifact failed validation.
 
 ## SPARK-068 — the campaign journal stops costing quadratically
 

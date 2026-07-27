@@ -237,6 +237,20 @@ as half a checkbox.
   * **SPARK-068's compact-proof half** — replace the quadratic
     complete-prefix intervention envelope with a versioned checkpointed
     MMR inclusion witness that preserves independent replay.
+  **F7-G (2026-07-27) adds `tools/spark_pretraining_preflight.py`.** Every
+  leg above is a refusal surface, and a refusal surface that has been weakened
+  — a threshold relaxed, a check commented out during a debugging session —
+  still imports, still runs, and still returns a verdict. It just stops saying
+  no, and that failure is invisible to anything except an attempt to make it
+  say no. The preflight therefore does not check that the modules exist: it
+  hands each instrument the exact input it must refuse and fails if the
+  refusal does not come, the same idea as the campaign kernel probes. Eleven
+  probes, all firing; `--campaign DIR` additionally validates any real
+  promotion or STaR lineage found there. Exit 0 ready, 1 an instrument is
+  dead, 2 an artifact failed validation. 23 tests, including ones that weaken
+  a real instrument and require the preflight to notice — a probe suite that
+  always passes is decoration.
+
   The march keeps SPARK-060/061/062/063/069 and everything the CP419/CP420
   lane is touching (`core/learning/verified_transition_episode.py`,
   `core/runtime/resource_observation.py`, `core/brain/llm/latent_cortex/
@@ -3973,11 +3987,31 @@ before those dependencies close is not admissible.
   measured nothing, an underpowered direction, an effect surviving its lesion,
   a flat lesion, a duplicate seam, and an edited seam.
 
-  **The checkbox stays open**: this is the judge, not the measurement. No seam
-  has been instrumented to produce these observations from the live organism,
-  and the forward/reverse/lesion runs against a resident model are the march's.
+  **F7-F part two adds the harness that makes the classification a
+  measurement.** The matrix cannot enforce the metadata rule on its own: `kind`
+  arrives already labelled, and a caller who believes their coupling is
+  behavioral writes `behavioral`. Believing it is the normal case — the field
+  *is* being passed, the receipt *does* show it — and being wrong about it is
+  the whole failure. So `core/brain/llm/latent_cortex/coupling_harness.py` does
+  not accept the label. It runs the behavior with the seam open and closed and
+  compares the **observable outcome identity** of each trial; if every trial's
+  outcome is identical either way, the seam moved a field and changed nothing
+  an observer could act on, and the evidence is recorded as `metadata` however
+  the caller would have described it. The lesion is measured the same way.
+  A seam that raises mid-run is a finding, not a weak measurement — averaging
+  over the trials that survived would report a broken seam as a weak one — and
+  a trial count below the matrix's floor is refused while it can still be
+  fixed. Measurements are deterministic per trial index and replay exactly.
+
+  13 further tests, including the case that looks fine from the inside: a seam
+  that really passes a field on every trial, whose downstream decision is
+  byte-identical either way, classified `metadata` and then refused by the
+  matrix.
+
+  **The checkbox stays open**: the harness runs whatever callables it is given
+  and none of the nine seams has been bound to it against a live organism.
   This checkpoint runs no model and grants no coupling claim — an empty matrix
-  proves nothing and this module refuses to pretend otherwise.
+  proves nothing and neither module pretends otherwise.
 - [ ] **SPARK-068 - Production reliability and observability.** Bound latency,
   memory, event-loop work, cancellation, concurrency, worker recovery, health,
   degradation taxonomy, privacy, audit logs, and UI presentation; fix root
