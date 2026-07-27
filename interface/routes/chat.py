@@ -9923,6 +9923,87 @@ def _reset_lane_status_repeat_state() -> None:
     _LANE_STATUS_REPEAT_STATE["count"] = 0
 
 
+_FOREGROUND_GATE_BOOT_WAIT_S = 90.0
+_BOOT_TRANSITION_STALL_S = 45.0
+
+
+def _boot_is_still_in_progress(phases: Any) -> bool:
+    """True only while a boot is demonstrably running and moving.
+
+    "Not ready" is not the same as "booting". A fresh BootPhases that has
+    never transitioned — every unit test, and any process where the boot
+    machinery never ran — reports STARTING forever, and waiting on it would
+    hang the turn for the whole budget. Boot is in progress only when it has
+    actually made a transition, and made one recently.
+    """
+    if phases is None:
+        return False
+    try:
+        if phases.ready():
+            return False
+        if getattr(phases, "last_change", None) is None:
+            return False
+        last_transition = float(getattr(phases, "last_transition_at", 0.0) or 0.0)
+    except _CHAT_RECOVERABLE_ERRORS:
+        return False
+    if last_transition <= 0.0:
+        return False
+    return (time.time() - last_transition) < _BOOT_TRANSITION_STALL_S
+
+
+async def _await_foreground_gate(*, budget_s: float) -> Any:
+    """Return the inference gate, waiting for it if the runtime is still booting.
+
+    A component that has not registered YET is not a component that failed.
+    The HTTP server accepts chat turns from the moment the port binds, which
+    is minutes before the inference gate registers; a turn landing in that
+    window was answered with "the live answer lane could not finish preparing"
+    and classified as a HARD failure — no wait, no retry, turn spent. Live
+    2026-07-27 that is exactly what a message typed straight after a reboot
+    received, while the UI badge read ONLINE.
+
+    A vanilla model in that situation is slow, not broken. So is this one:
+    while boot is genuinely still in progress, wait for the gate to appear.
+    Only once boot has settled or stalled is absence a real answer.
+    """
+    gate = ServiceContainer.get("inference_gate", default=None)
+    if gate is not None and hasattr(gate, "ensure_foreground_ready"):
+        return gate
+    if budget_s <= 0:
+        return gate
+
+    try:
+        from core.runtime.boot_phases import get_boot_phases
+
+        phases = get_boot_phases()
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        phases = None
+
+    if not _boot_is_still_in_progress(phases):
+        return gate
+
+    deadline = time.monotonic() + budget_s
+    announced = False
+    while time.monotonic() < deadline:
+        if not _boot_is_still_in_progress(phases):
+            break
+        if not announced:
+            logger.info(
+                "⏳ Chat turn arrived before the inference gate registered; "
+                "waiting up to %.0fs for boot rather than failing the turn.",
+                budget_s,
+            )
+            announced = True
+        await asyncio.sleep(0.25)
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if gate is not None and hasattr(gate, "ensure_foreground_ready"):
+            logger.info("✅ Inference gate registered mid-turn; the turn proceeds normally.")
+            return gate
+
+    return ServiceContainer.get("inference_gate", default=None)
+
+
 def _conversation_lane_user_message(
     lane: dict[str, Any],
     *,
@@ -19736,7 +19817,14 @@ async def api_chat(
                 logger.info("🛡️ Recovery cooldown: skipping protected foreground, proceeding to kernel.")
 
         if allow_chat_fastpaths and not bool(lane.get("conversation_ready", False)):
-            gate = ServiceContainer.get("inference_gate", default=None)
+            # Same rule as the desktop admission barrier below: a gate that has
+            # not registered yet during boot is worth waiting for.
+            gate = await _await_foreground_gate(
+                budget_s=min(
+                    _FOREGROUND_GATE_BOOT_WAIT_S,
+                    max(0.0, _remaining_foreground_budget(reserve=30.0)),
+                )
+            )
             if gate and hasattr(gate, "ensure_foreground_ready"):
                 # Give a cold/recovering cortex a real chance to come online
                 # before we concede to a fallback lane. The previous 12s cap
@@ -20078,7 +20166,18 @@ async def api_chat(
             and desktop_requires_cognitive_engine
             and not bool(lane.get("conversation_ready", False))
         ):
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = await _await_foreground_gate(
+                budget_s=min(
+                    _FOREGROUND_GATE_BOOT_WAIT_S,
+                    max(
+                        0.0,
+                        _remaining_foreground_budget(
+                            reserve=_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S
+                            + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S
+                        ),
+                    ),
+                )
+            )
             admission_reason = ""
             admission_override = "warming_failed"
             hard_lane_failure = False

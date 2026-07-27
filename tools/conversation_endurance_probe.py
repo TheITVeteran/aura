@@ -46,7 +46,12 @@ from core.runtime.resource_observation import (  # noqa: E402
 OUT_DIR = ROOT / "artifacts" / "reliability" / "runs"
 
 HIJACK_RE = re.compile(r"task accepted into governed background execution", re.IGNORECASE)
-REFLEX_CANNED_RE = re.compile(r"i'?m right here with you", re.IGNORECASE)
+# Shared with the module that generates the floors, so the standard and the
+# generator cannot drift: response_reliability used to emit the exact sentence
+# this probe scores against.
+from core.conversation.response_reliability import (  # noqa: E402
+    CANNED_PRESENCE_REFLEX_RE as REFLEX_CANNED_RE,
+)
 
 # ---------------------------------------------------------------- script ---
 

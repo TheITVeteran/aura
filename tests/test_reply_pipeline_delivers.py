@@ -22,7 +22,11 @@ rediscovered. Capture the draft from the log, paste it in, state the verdict.
 
 import pytest
 
-from core.conversation.response_reliability import assess_user_facing_reply
+from core.conversation.response_reliability import (
+    _RELIABILITY_FLOOR_TEXTS,
+    CANNED_PRESENCE_REFLEX_RE,
+    assess_user_facing_reply,
+)
 from core.conversation.surface_disposition import SurfaceDisposition, disposition_for
 
 pytestmark = pytest.mark.unit
@@ -190,3 +194,31 @@ class TestTheCorpusItselfStaysHonest:
         deliverable = {draft for _, _, draft in DELIVERABLE}
         undeliverable = {draft for _, _, draft in UNDELIVERABLE}
         assert not (deliverable & undeliverable)
+
+
+class TestFallbacksDoNotClaimWhatTheyLack:
+    """A fallback may not claim the quality whose absence produced it.
+
+    Every floor here is reached only because the answer lane failed. A floor
+    that answers that failure by asserting steadiness, attention, or that it
+    is "addressing exactly what you're asking" makes a claim the situation
+    contradicts — the same false-claim class UNSPEAKABLE_REASONS exists to
+    catch, except emitted by the repair machinery itself.
+    """
+
+    @pytest.mark.parametrize("floor", _RELIABILITY_FLOOR_TEXTS)
+    def test_floor_is_not_a_canned_presence_reflex(self, floor: str):
+        assert not CANNED_PRESENCE_REFLEX_RE.search(floor), (
+            "this module emitted a sentence the endurance probe scores as a "
+            "canned ungrounded reflex"
+        )
+
+    @pytest.mark.parametrize("floor", _RELIABILITY_FLOOR_TEXTS)
+    def test_floor_survives_the_gate_that_asked_for_it(self, floor: str):
+        """A repair that produces text the pipeline would itself reject is not
+        a repair. Whatever the floor says, it has to be servable."""
+        reasons = assess_user_facing_reply("Are you with me?", floor).reasons
+        assert disposition_for(reasons) is not SurfaceDisposition.DISCARD, (
+            f"a repair floor would be destroyed by the pipeline that emitted "
+            f"it: {reasons}"
+        )

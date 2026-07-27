@@ -1136,6 +1136,18 @@ _STATUS_REPAIR_FLOOR = (
     "Yes. I'm following what you said and ready to continue from this turn. "
     "Tell me where you want to pick up."
 )
+# The canned presence reflex this module must never emit again.
+#
+# _STATUS_REPAIR_FLOOR used to be "I'm right here with you. My mind feels
+# steady enough to answer clearly..." — asserting steadiness and attention at
+# the one moment neither could be demonstrated, since the floor only fires
+# when the answer lane failed. tools/conversation_endurance_probe.py had been
+# scoring that exact sentence as a fluent ungrounded reflex the whole time:
+# one half of the system marking down what the other half wrote. The probe now
+# imports this pattern instead of keeping its own copy, so the standard and
+# the generator cannot drift apart again.
+CANNED_PRESENCE_REFLEX_RE = re.compile(r"i'?m right here with you", re.IGNORECASE)
+
 _RELIABILITY_FLOOR_TEXTS = (
     _CONFUSION_REPAIR_FLOOR,
     _RELIABILITY_REPAIR_FLOOR,
