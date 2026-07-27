@@ -5165,6 +5165,24 @@ def _append_turn_text_mutation(
         deterministic=deterministic,
     )
     mutations = list(receipt.get("text_mutations") or [])
+    # Every gate that changes outgoing text passes through here, so this is
+    # where suppression stops being anonymous. The turn ledger keeps what was
+    # discarded next to what replaced it, which is the difference between an
+    # apology that cost 900 characters of real answer and one that tidied
+    # whitespace — indistinguishable afterwards without the sizes.
+    try:
+        from core.conversation.turn_arbitration import ledger_for
+
+        ledger_for(
+            str(trace.get("turn_id") or trace.get("idempotency_key") or "unknown")
+        ).record_suppression(
+            stage,
+            ",".join(str(item) for item in (reasons or ())) or method,
+            before=str(before or ""),
+            after=str(after or ""),
+        )
+    except _CHAT_RECOVERABLE_ERRORS as _exc:
+        record_degradation("chat.turn_arbitration", _exc, severity="info")
     trace["live_mind_surface_control_receipt"] = receipt
     trace["text_mutations"] = mutations
     trace["text_mutation_count"] = len(mutations)
