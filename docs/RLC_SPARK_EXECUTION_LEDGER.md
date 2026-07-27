@@ -221,6 +221,28 @@ as half a checkbox.
   stay bound to the march. The Fable session still holds the live-runtime
   endurance forensics (the ~15-turn resident ceiling and the 4h soak
   memory slope) — outside the Spark checkpoints, no march collision.
+- **F7 lane claim (2026-07-27, Bryan-directed acceleration).** The Fable
+  session claims the pre-training infrastructure legs that the march needs
+  in place *before* a resident-32B campaign can promote or scale, and that
+  require no model run to build:
+  * **SPARK-064** — the permanent-distillation promotion transaction:
+    versioned generations, a complete-by-declaration regression gate set
+    (anti-interference, capability families, personality, tool honesty,
+    authority safety, memory, frontier), and exact rollback with a proven
+    byte-identical restore.
+  * **SPARK-065** — the architecture meta-controller: measured
+    expert/router/depth failure evidence, bounded proposals, isolated
+    candidate evaluation, machine-checkable invariants, canary rollout,
+    rollback, and an independent approval policy.
+  * **SPARK-068's compact-proof half** — replace the quadratic
+    complete-prefix intervention envelope with a versioned checkpointed
+    MMR inclusion witness that preserves independent replay.
+  The march keeps SPARK-060/061/062/063/069 and everything the CP419/CP420
+  lane is touching (`core/learning/verified_transition_episode.py`,
+  `core/runtime/resource_observation.py`, `core/brain/llm/latent_cortex/
+  frontier_tasks.py`, `tools/independent_paired_campaign_scoring.py`,
+  `tools/lint_governance.py`). The Fable lane does not run a model, does
+  not open holdout custody, and grants no capability claim.
 
 | Checkpoints | Primary implementation owners | Live integration owners |
 |---|---|---|
