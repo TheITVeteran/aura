@@ -3362,6 +3362,28 @@ before those dependencies close is not admissible.
   and the resulting SPARK-059 verdict remain open. It establishes no heldout
   transfer, reasoning gain, resident-32B result, frontier performance,
   promotion, or `WOW Signal`.
+
+  CP408 freezes the control execution behind a dedicated macOS deny-default
+  launcher before any expensive optimizer work. The profile denies network,
+  process creation, evaluator custody, verified replay, resident checkpoints,
+  adapter/model registries, fusion, promotion, and arbitrary model-lane
+  siblings. The command, sanitized environment, exact historical authority and
+  terminal-checkpoint SHA, candidate projection, model identity, recurrence
+  program, read/write roots, profile, sandbox binary, and timeout are
+  commitment-bound.
+
+  The target independently recomputes a 13-file Aura source closure before
+  model load, covering the launcher, control trainer, detached supervisor,
+  recurrent objective and adapter, shared execution and falsification logic,
+  authority verifier, model lane, memory guard, checkpoint identity, and file
+  gateway. The detached supervisor executes the already-contained target
+  without nesting a second sandbox and declares no replay contract. The direct
+  launcher/control/containment suite passes 32/32; strict Ruff, bytecode
+  compilation, and diff hygiene pass.
+
+  CP408 freezes executable evidence infrastructure only. The three control
+  adapters have not yet been trained, evaluator custody has not opened, and no
+  transfer or capability claim changes.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

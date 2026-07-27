@@ -25299,6 +25299,35 @@ estimate of 64.9%. Next: publish CP328, then implement distinct executable
 cognitive operator policies and their causal role/lesion proof. Final
 multi-hour soaks remain deferred until every shorter gate is green.
 
+### 2026-07-27 - CP408 contained control-run source freeze
+
+SPARK-059's sham-label, shuffled-trace, and syntax-only control trainer now has
+a dedicated macOS deny-default launcher. The frozen contract binds the
+historical authority and externally recorded CP406 terminal-checkpoint SHA,
+candidate-only projection, small-model identity, recurrent execution program,
+exact command, sanitized environment, allowed roots, denied roots, profile,
+sandbox binary, timeout, and output locations.
+
+Kernel policy denies network, child-process creation, evaluator and replay
+custody, resident checkpoints, production adapters and registries, fusion, and
+promotion. The target independently recomputes a 13-file Aura source closure
+before model load. The detached supervisor recognizes that the target is
+already contained, does not nest another sandbox, and declares no replay
+contract for this bounded run. The direct launcher, control, containment, and
+falsification suite passes 32/32; strict Ruff, bytecode compilation, and diff
+hygiene pass.
+
+This is a pre-execution source freeze. No control adapter has run yet, no
+evaluator bytes were opened, and no heldout transfer, reasoning gain,
+resident-32B result, frontier result, promotion, or `WOW Signal` is claimed.
+The contained control run follows immediately, then evaluator-only fresh-task
+scoring and the honest initial SPARK-059 verdict.
+
+Counting CP408 makes 652 total checkpoints. The 652-920 forecast leaves 0-268
+records, or approximately 70.9%-100.0% checkpoint completion with an 85.4%
+midpoint. Final multi-hour soaks remain deferred until every shorter gate is
+green.
+
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 
 Branch roles are no longer labels that seed different vectors and then run the

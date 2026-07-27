@@ -44,6 +44,7 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     canonical_json_bytes,
     execution_spec_identity,
     small_model_identity,
+    source_closure,
     strict_json_bytes,
     validate_authority,
 )
@@ -90,6 +91,43 @@ def _sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def control_source_paths() -> dict[str, Path]:
+    """Return the complete Aura-owned source closure for this control process."""
+
+    return {
+        "authority": (
+            REPO_ROOT / "core/learning/structured_sft_research_authority.py"
+        ),
+        "control_trainer": Path(__file__),
+        "containment_launcher": (
+            REPO_ROOT / "tools/launch_recurrent_sft_controls.py"
+        ),
+        "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
+        "execution_spec": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"
+        ),
+        "falsification": (
+            REPO_ROOT / "core/learning/recurrent_sft_falsification.py"
+        ),
+        "file_read_gateway": REPO_ROOT / "core/runtime/file_read_gateway.py",
+        "memory_guard": REPO_ROOT / "core/runtime/mlx_memory_guard.py",
+        "model_lane": REPO_ROOT / "core/runtime/model_lane_control.py",
+        "recurrence_adapter": (
+            REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
+        ),
+        "recurrence_identity": (
+            REPO_ROOT
+            / "core/brain/llm/latent_cortex/recurrence_adapter_identity_v2.py"
+        ),
+        "recurrence_objective": (
+            REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
+        ),
+        "recurrent_sft_execution": (
+            REPO_ROOT / "core/learning/recurrent_sft_execution.py"
+        ),
+    }
 
 
 def _is_sha256(value: Any) -> bool:
@@ -328,6 +366,9 @@ def _run(arguments: argparse.Namespace) -> int:
     model_identity = small_model_identity(arguments.model_dir)
     if model_identity != authority["model"]:
         _fail("control_training_model_identity_drift")
+    sources = source_closure(control_source_paths())
+    if sources["closure_sha256"] != arguments.expected_source_closure_sha256:
+        _fail("control_training_source_closure_drift")
 
     out_dir = ensure_private_directory(arguments.out_dir.expanduser())
     report_path = out_dir / "control_training_report.json"
@@ -477,6 +518,7 @@ def _run(arguments: argparse.Namespace) -> int:
         "projected_dataset_file_sha256": _sha256_file(projected_path),
         "model_identity_sha256": model_identity["identity_sha256"],
         "execution_spec_sha256": authority["execution_spec"]["semantic_sha256"],
+        "source_closure": sources,
         "trainer_config_sha256": sha256_json(authority["trainer"]),
         "wrapped_projections": wrapped,
         "initialization_seed": config.seed,
@@ -519,6 +561,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--projected-dataset", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--execution-spec", type=Path, required=True)
+    parser.add_argument("--expected-source-closure-sha256", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     return parser
 
@@ -528,6 +571,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (
         not _is_sha256(arguments.expected_authority_sha256)
         or not _is_sha256(arguments.expected_reference_checkpoint_sha256)
+        or not _is_sha256(arguments.expected_source_closure_sha256)
     ):
         _parser().error("expected authority SHA-256 is invalid")
     try:
