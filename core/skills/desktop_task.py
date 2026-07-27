@@ -3033,6 +3033,46 @@ class DesktopTaskSkill(BaseSkill):
             return False
         return looks_like_desktop_objective(objective)
 
+
+    @staticmethod
+    def _failure_cause(failures: list[dict[str, Any]], *, objective: str = "") -> str:
+        """Why the desktop task failed, in the words of the step that failed.
+
+        Every failing receipt already knows: the step's action, what it expected,
+        the effect evidence, and the child result's own error. None of that was
+        lifted into the skill's `error` field, so BaseSkill fell back to
+        "desktop_task reported failure without a cause (status=failed)" — which
+        is what reached Bryan, twice, for "create a file on my Desktop". An
+        undiagnosable failure is barely better than a silent one: he cannot act
+        on it, she cannot explain it, and the surprise engine banks a
+        maximal-surprise signal carrying no information.
+        """
+        for receipt in failures or []:
+            if not isinstance(receipt, dict):
+                continue
+            result = receipt.get("result")
+            detail = ""
+            if isinstance(result, dict):
+                detail = str(
+                    result.get("error") or result.get("status") or result.get("reason") or ""
+                ).strip()
+            if not detail:
+                detail = str(receipt.get("effect_evidence") or "").strip()
+            action = str(receipt.get("action") or "step").strip()
+            expected = str(receipt.get("expect") or "").strip()
+            if detail:
+                suffix = f" (expected: {expected})" if expected else ""
+                return f"{action} failed: {detail}{suffix}"[:400]
+            if expected:
+                return f"{action} did not produce its expected effect: {expected}"[:400]
+            return f"{action} failed without reporting why"
+        if objective:
+            return (
+                "no step reported a failure, yet the objective was not verified as "
+                f"complete: {objective[:160]}"
+            )
+        return "the desktop task did not complete and no step reported a cause"
+
     @staticmethod
     def _os_automation_effect_evidence(result: dict[str, Any]) -> tuple[bool, str]:
         if not bool(result.get("ok")):
@@ -3141,6 +3181,7 @@ class DesktopTaskSkill(BaseSkill):
         return {
             "ok": ok,
             "status": "completed" if ok else "failed",
+            **({} if ok else {"error": self._failure_cause([receipt], objective=objective)}),
             "objective": objective,
             "steps_requested": 1,
             "steps_completed": 1 if ok else 0,
@@ -3626,6 +3667,15 @@ class DesktopTaskSkill(BaseSkill):
         return {
             "ok": ok,
             "status": status,
+            **(
+                {}
+                if ok
+                else {
+                    "error": self._failure_cause(
+                        critical_failures or failures, objective=objective
+                    )
+                }
+            ),
             "objective": objective,
             "steps_requested": len(steps),
             "steps_completed": completed_count,
