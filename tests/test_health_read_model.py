@@ -634,20 +634,29 @@ def test_runtime_revision_contract_covers_exact_source_workspace_and_shell_ident
     assert exact["actual_workspace_state_sha256"] == workspace
     assert exact["expected_shell_assets_sha256"] == "c" * 64
     assert exact["actual_shell_assets_sha256"] == "c" * 64
-    assert changed_shell["verified"] is False
-    assert changed_shell["revision_token"] == ""
-    assert "shell_asset_identity_unverified" in changed_shell["issues"]
-    assert unsigned_shell["verified"] is False
-    assert "shell_asset_identity_unverified" in unsigned_shell["issues"]
+    assert exact["source_current"] is True
+    # Shell, workspace and commit are MEASURED, so disagreeing with the
+    # build-time manifest means the workspace moved on — reported as
+    # source_current False, not as a failed identity. Requiring agreement made
+    # every commit "unverified" and left the revision token permanently empty,
+    # which is what forced a rebuild after each change.
+    assert changed_shell["verified"] is True
+    assert changed_shell["source_current"] is False
+    assert len(changed_shell["revision_token"]) == 64
+    assert unsigned_shell["source_current"] is False
+    assert workspace_mismatch["verified"] is True
+    assert workspace_mismatch["source_current"] is False
+    # The token names the revision actually running.
+    assert workspace_mismatch["actual_workspace_state_sha256"] == "e" * 64
+    assert commit_mismatch["verified"] is True
+    assert commit_mismatch["source_current"] is False
+    assert commit_mismatch["actual_commit_sha"] == "f" * 40
+    # Identity failures are unchanged: a different checkout, or a capture taken
+    # while the workspace was being written, still fail.
     assert unstable_capture["verified"] is False
     assert "workspace_changed_during_revision_capture" in unstable_capture["issues"]
-    assert workspace_mismatch["verified"] is False
-    assert workspace_mismatch["revision_token"] == ""
-    assert "workspace_identity_unverified" in workspace_mismatch["issues"]
     assert root_mismatch["verified"] is False
     assert "source_root_identity_unverified" in root_mismatch["issues"]
-    assert commit_mismatch["verified"] is False
-    assert "commit_identity_unverified" in commit_mismatch["issues"]
     assert fallback == {
         "schema": "aura.runtime_revision.v2",
         "required": False,
@@ -742,7 +751,11 @@ def test_runtime_revision_collection_rejects_workspace_change_during_capture(
     assert result["capture_stable"] is False
     assert result["revision_token"] == ""
     assert "workspace_changed_during_revision_capture" in result["issues"]
-    assert "workspace_identity_unverified" in result["issues"]
+    # A workspace that CHANGED MID-CAPTURE is still an identity failure: the
+    # measurement itself is incoherent. That is distinct from a workspace that
+    # has simply moved on since the bundle was built, which is now reported as
+    # source_current rather than failed.
+    assert result["source_current"] is False
 
 
 def test_runtime_revision_collection_rejects_shell_change_during_capture(

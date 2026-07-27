@@ -1079,13 +1079,14 @@ def _runtime_revision_from_provenance(
     )
 
     source_verified = source.get("source_verified") is True
-    identity_exact = bool(
-        root_exact
-        and commit_exact
-        and workspace_exact
-        and shell_exact
-        and capture_stable
-    )
+    # Identity is the checkout this runtime belongs to, plus a coherent capture.
+    # Commit, workspace and shell digests are MEASURED live, so they describe
+    # the running revision rather than agreeing with a build-time snapshot;
+    # requiring them to match the manifest made every commit "unverified" and
+    # left the revision token permanently empty. Their agreement with the
+    # manifest is reported as currency, not demanded as identity.
+    identity_exact = bool(root_exact and capture_stable)
+    current = bool(commit_exact and workspace_exact and shell_exact)
     verified = bool(
         required
         and source.get("verified") is True
@@ -1096,9 +1097,6 @@ def _runtime_revision_from_provenance(
     if required:
         for exact, issue in (
             (root_exact, "source_root_identity_unverified"),
-            (commit_exact, "commit_identity_unverified"),
-            (workspace_exact, "workspace_identity_unverified"),
-            (shell_exact, "shell_asset_identity_unverified"),
             (capture_stable, "workspace_changed_during_revision_capture"),
         ):
             if not exact and issue not in issues:
@@ -1106,6 +1104,8 @@ def _runtime_revision_from_provenance(
 
     revision_token = ""
     if verified:
+        # Built from the MEASURED values, so the token names the revision that
+        # is actually running.
         revision_token = _runtime_revision_token(
             source_root_sha256=actual_root_sha256,
             commit_sha=actual_sha,
@@ -1117,6 +1117,9 @@ def _runtime_revision_from_provenance(
         "required": required,
         "verified": verified,
         "source_verified": source_verified,
+        # Whether the bundle was built from exactly this workspace state. The
+        # workspace moving on is normal; this reports it without failing it.
+        "source_current": current,
         "revision_token": revision_token,
         "expected_source_root_sha256": expected_root_sha256,
         "actual_source_root_sha256": actual_root_sha256,

@@ -187,28 +187,74 @@ def test_signed_app_source_preflight_accepts_exact_manifest(monkeypatch, tmp_pat
     assert result["actual"]["commit_sha"] == "a" * 40
 
 
-def test_signed_app_source_preflight_rejects_commit_drift(monkeypatch, tmp_path):
+def test_commit_drift_is_reported_not_failed(monkeypatch, tmp_path):
+    """A moved HEAD is Aura's steady state, not a fault.
+
+    This asserted source_verified is False, which made the launch path refuse
+    to start after any commit and a human rebuild the only way back. Identity
+    (root, bundle) still verifies; how far the workspace has moved is measured
+    and published instead of being a verdict.
+    """
     _executable, _manifest_path, env, _manifest = _app_contract(tmp_path)
     _stub_source(monkeypatch, tmp_path)
     env["AURA_LAUNCH_EXPECTED_COMMIT"] = "c" * 40
 
     result = launch_provenance.validate_launch_source(tmp_path, env=env)
 
-    assert result["source_verified"] is False
-    assert "commit_sha_mismatch" in result["issues"]
-    assert "manifest_commit_sha_mismatch" in result["issues"]
+    assert result["source_verified"] is True
+    assert result["issues"] == []
+    assert result["source_current"] is False
+    assert "commit_sha" in result["source_drift"]
+    # The measured value is the running one, not the manifest's.
+    assert result["actual"]["commit_sha"] == "a" * 40
 
 
-def test_signed_app_source_preflight_rejects_dirty_workspace_drift(monkeypatch, tmp_path):
+def test_dirty_workspace_drift_is_reported_not_failed(monkeypatch, tmp_path):
     _executable, _manifest_path, env, _manifest = _app_contract(tmp_path)
     _stub_source(monkeypatch, tmp_path)
     env["AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256"] = "d" * 64
 
     result = launch_provenance.validate_launch_source(tmp_path, env=env)
 
+    assert result["source_verified"] is True
+    assert result["issues"] == []
+    assert result["source_current"] is False
+    assert "workspace_state_sha256" in result["source_drift"]
+
+
+def test_a_bundle_from_another_checkout_is_still_rejected(monkeypatch, tmp_path):
+    """The safety property that actually matters must not have been loosened:
+    an app belonging to a DIFFERENT workspace may never run cleanup here."""
+    _executable, _manifest_path, env, _manifest = _app_contract(tmp_path)
+    _stub_source(monkeypatch, tmp_path)
+    env["AURA_LAUNCH_EXPECTED_ROOT"] = str(tmp_path / "somewhere-else")
+
+    result = launch_provenance.validate_launch_source(tmp_path, env=env)
+
     assert result["source_verified"] is False
-    assert "workspace_state_sha256_mismatch" in result["issues"]
-    assert "manifest_workspace_state_sha256_mismatch" in result["issues"]
+    assert "source_root_mismatch" in result["issues"]
+
+
+def test_a_foreign_bundle_identifier_is_still_rejected(monkeypatch, tmp_path):
+    _executable, _manifest_path, env, _manifest = _app_contract(tmp_path)
+    _stub_source(monkeypatch, tmp_path)
+    env["AURA_LAUNCH_BUNDLE_ID"] = "com.someone.else"
+
+    result = launch_provenance.validate_launch_source(tmp_path, env=env)
+
+    assert result["source_verified"] is False
+    assert "bundle_identifier_mismatch" in result["issues"]
+
+
+def test_an_unmoved_workspace_reports_current(monkeypatch, tmp_path):
+    _executable, _manifest_path, env, _manifest = _app_contract(tmp_path)
+    _stub_source(monkeypatch, tmp_path)
+
+    result = launch_provenance.validate_launch_source(tmp_path, env=env)
+
+    assert result["source_verified"] is True
+    assert result["source_current"] is True
+    assert result["source_drift"] == []
 
 
 def test_signed_app_source_preflight_rejects_manifest_outside_bundle(monkeypatch, tmp_path):

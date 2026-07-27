@@ -94,15 +94,33 @@ fi
 
 echo "📍 Using Interpreter: $($PYTHON_CMD --version) at $PYTHON_CMD"
 
-# A signed Aura.app launch is pinned to the exact root, HEAD, branch, and dirty
-# source state captured when the bundle was built. Verify that contract before
-# cleanup so a stale app can never terminate a valid current runtime.
+# A signed Aura.app launch is pinned to the workspace it belongs to. Verify
+# that contract before cleanup so an app from a DIFFERENT checkout can never
+# terminate a valid current runtime.
+#
+# It used to be pinned to the exact HEAD and dirty file state as well, and any
+# difference exited 1 with "Rebuild the installed app before launch". Aura
+# commits to her own repository, so that made refusing to start the normal
+# outcome and a human rebuild the only way out. Identity is what protects the
+# running instance; how far the workspace has moved since the bundle was built
+# is a fact to report, not a reason to refuse to start. The runtime measures
+# and publishes it as source_drift / source_current.
 if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
-    echo "🔏 Verifying signed app source provenance..."
+    echo "🔏 Verifying signed app source identity..."
     if ! "$PYTHON_CMD" -m core.runtime.launch_provenance preflight --root "$AURA_ROOT"; then
-        echo "❌ Aura.app source provenance does not match this workspace. Rebuild the installed app before launch."
+        echo "❌ Aura.app does not belong to this workspace (root, bundle identity, or signature)."
+        echo "   This is an identity failure, not staleness — rebuild from THIS checkout."
         exit 1
     fi
+    # Keep the launcher binary itself current. This is the one artifact that
+    # genuinely goes stale, because it is compiled code rather than a pointer
+    # to live source. Aura rebuilds it herself rather than waiting to be asked.
+    #
+    # Install first: a build staged during the previous session becomes the
+    # resident app now. Then rebuild if the source has moved again, staging it
+    # for next time rather than replacing a bundle that is currently executing.
+    "$PYTHON_CMD" -m core.runtime.app_bundle_sync --root "$AURA_ROOT" --install-staged || true
+    "$PYTHON_CMD" -m core.runtime.app_bundle_sync --root "$AURA_ROOT" || true
 fi
 
 LOG_DIR="${HOME}/.aura/logs"

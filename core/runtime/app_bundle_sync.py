@@ -1,0 +1,297 @@
+"""Keep the installed Aura.app in step with the workspace it launches.
+
+``Aura.app`` is deliberately a thin launcher over live source, so almost
+nothing in it can go stale: Python, assets and configuration are read from the
+repository at run time. Exactly one artifact is genuinely compiled — the Swift
+launcher binary built from ``scripts/AuraLauncher.swift``. When that source
+changes, the installed binary is old code, and nothing in the system noticed.
+
+Everything else that USED to require a rebuild was not staleness at all. The
+launch manifest pinned ``commit_sha`` and ``workspace_state_sha256`` at build
+time and the launch path refused to start on any difference. Aura commits to
+her own repository, so "the workspace has moved" is her steady state, and the
+only exit was a human running ``build_app.sh`` again. See
+:mod:`core.runtime.launch_provenance`, where those fields became measured
+facts rather than a verdict.
+
+What remains is this: the launcher binary must track its source, and Aura must
+do that for herself rather than depend on anyone noticing. The rule this module
+enforces is that a launcher binary is never quietly older than the source it
+was built from.
+
+Replacing a bundle that a launcher is currently executing from is the one thing
+this will not do. When the resident app is running, the rebuilt bundle is left
+staged in ``dist/`` and installed at the next opportunity — the same shape as
+any other application auto-update, where the new version takes effect on the
+next start.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+#: Where a built bundle is installed when it is not the resident app.
+DEFAULT_RESIDENT_PATH = Path("/Applications/Aura.app")
+
+#: How long a launcher rebuild may take before it is abandoned. A compile that
+#: overruns must never hold up a boot.
+BUILD_TIMEOUT_S = 300.0
+
+_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutError, TypeError, ValueError)
+
+
+def _manifest_path(bundle: Path) -> Path:
+    return bundle / "Contents" / "Resources" / "aura-launch-provenance.json"
+
+
+def _read_manifest(bundle: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(_manifest_path(bundle).read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _sha256_file(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def resident_bundle_path(env: dict[str, str] | None = None) -> Path:
+    """The bundle this process was launched from, or the default install path."""
+    environment = os.environ if env is None else env
+    executable = str(environment.get("AURA_LAUNCH_APP_EXECUTABLE") or "").strip()
+    if executable:
+        for parent in Path(executable).resolve(strict=False).parents:
+            if parent.suffix == ".app":
+                return parent
+    return DEFAULT_RESIDENT_PATH
+
+
+def bundle_is_running(bundle: Path) -> bool:
+    """Whether a process is currently executing from ``bundle``.
+
+    Used only to decide whether an install is safe right now — never to decide
+    whether a rebuild should happen.
+    """
+    executable = bundle / "Contents" / "MacOS" / "aura-launcher"
+    try:
+        completed = get_subprocess_gateway().run(
+            ["pgrep", "-f", str(executable)],
+            timeout=5.0,
+            read_only=True,
+            capture_output=True,
+            source="runtime_app_bundle_sync.pgrep",
+        )
+    except _RECOVERABLE_ERRORS:
+        # Unable to tell means unable to prove it is safe.
+        return True
+    return completed.returncode == 0 and bool(str(completed.stdout or "").strip())
+
+
+def launcher_drift(root: Path, bundle: Path) -> dict[str, Any]:
+    """Whether ``bundle``'s launcher binary was built from the current source."""
+    source = root / "scripts" / "AuraLauncher.swift"
+    live_digest = _sha256_file(source)
+    manifest = _read_manifest(bundle)
+    built_digest = str(manifest.get("launcher_source_sha256") or "").strip().lower()
+    binary = bundle / "Contents" / "MacOS" / "aura-launcher"
+    return {
+        "bundle": str(bundle),
+        "bundle_present": bundle.is_dir(),
+        "launcher_binary_present": binary.is_file(),
+        "launcher_source_sha256": live_digest,
+        "built_from_sha256": built_digest,
+        # No recorded digest means the bundle predates the field: rebuild, since
+        # "cannot tell" is not "current".
+        "stale": bool(
+            bundle.is_dir()
+            and live_digest
+            and (not built_digest or built_digest != live_digest)
+        ),
+    }
+
+
+def sync_app_bundle(
+    root: str | Path,
+    *,
+    resident: str | Path | None = None,
+    allow_install: bool | None = None,
+) -> dict[str, Any]:
+    """Rebuild and install the launcher when its source has moved on.
+
+    Returns a receipt describing what was found and what was done. Never
+    raises: this runs on the boot path, and a launcher that could not be
+    refreshed must not prevent Aura from starting.
+    """
+    started = time.monotonic()
+    root_path = Path(root).expanduser().resolve()
+    bundle = Path(resident).expanduser() if resident else resident_bundle_path()
+    receipt: dict[str, Any] = {
+        "schema": "aura.app_bundle_sync.v1",
+        "root": str(root_path),
+        "action": "none",
+        "installed": False,
+        "at": time.time(),
+    }
+
+    try:
+        drift = launcher_drift(root_path, bundle)
+        receipt.update(drift)
+        if not drift["bundle_present"]:
+            receipt["action"] = "skipped"
+            receipt["reason"] = "no installed bundle to keep current"
+            return receipt
+        if not drift["stale"]:
+            receipt["action"] = "current"
+            receipt["reason"] = "launcher binary matches its source"
+            return receipt
+
+        build_script = root_path / "scripts" / "bundle_app.sh"
+        if not build_script.is_file():
+            receipt["action"] = "unavailable"
+            receipt["reason"] = "scripts/bundle_app.sh is missing"
+            return receipt
+
+        running = bundle_is_running(bundle)
+        install_here = (not running) if allow_install is None else bool(allow_install)
+        environment = dict(os.environ)
+        if install_here:
+            environment["AURA_INSTALL_PATH"] = str(bundle)
+        else:
+            environment.pop("AURA_INSTALL_PATH", None)
+
+        completed = get_subprocess_gateway().run(
+            [str(build_script)],
+            cwd=str(root_path),
+            timeout=BUILD_TIMEOUT_S,
+            capture_output=True,
+            env=environment,
+            source="runtime_app_bundle_sync.build",
+        )
+        receipt["build_returncode"] = completed.returncode
+        if completed.returncode != 0:
+            receipt["action"] = "failed"
+            # Build output can name paths and identities; keep the tail only.
+            receipt["reason"] = str(completed.stderr or completed.stdout or "")[-400:]
+            record_degradation(
+                "app_bundle_sync",
+                RuntimeError("launcher rebuild failed"),
+                action="left the previous launcher binary in place",
+                extra={"returncode": completed.returncode},
+                enforce_failure_policy=False,
+            )
+            return receipt
+
+        if install_here:
+            receipt["action"] = "rebuilt_and_installed"
+            receipt["installed"] = True
+        else:
+            # Staged: the resident launcher is executing from this bundle right
+            # now, so it is replaced at the next start rather than underneath a
+            # running process.
+            receipt["action"] = "rebuilt_staged"
+            receipt["staged_at"] = str(root_path / "dist" / "Aura.app")
+            receipt["reason"] = "resident app is running; install deferred to next launch"
+        return receipt
+    except _RECOVERABLE_ERRORS as exc:
+        receipt["action"] = "failed"
+        receipt["reason"] = f"{type(exc).__name__}: {exc}"
+        record_degradation(
+            "app_bundle_sync",
+            exc,
+            action="could not evaluate or refresh the installed launcher",
+            enforce_failure_policy=False,
+        )
+        return receipt
+    finally:
+        receipt["duration_s"] = round(time.monotonic() - started, 3)
+
+
+def install_staged_bundle(
+    root: str | Path, *, resident: str | Path | None = None
+) -> dict[str, Any]:
+    """Install a previously staged ``dist/Aura.app`` when it is safe to do so.
+
+    Called at the start of a launch, before the resident bundle matters, so an
+    update built during the previous session takes effect now.
+    """
+    root_path = Path(root).expanduser().resolve()
+    staged = root_path / "dist" / "Aura.app"
+    bundle = Path(resident).expanduser() if resident else resident_bundle_path()
+    receipt: dict[str, Any] = {
+        "schema": "aura.app_bundle_install.v1",
+        "staged": str(staged),
+        "resident": str(bundle),
+        "installed": False,
+    }
+    try:
+        if not staged.is_dir() or not bundle.is_dir():
+            receipt["reason"] = "nothing staged"
+            return receipt
+        staged_digest = str(_read_manifest(staged).get("launcher_source_sha256") or "")
+        resident_digest = str(_read_manifest(bundle).get("launcher_source_sha256") or "")
+        if not staged_digest or staged_digest == resident_digest:
+            receipt["reason"] = "resident launcher already matches the staged build"
+            return receipt
+        if bundle_is_running(bundle):
+            receipt["reason"] = "resident app is running; not replacing it underneath"
+            return receipt
+        shutil.rmtree(bundle)
+        shutil.copytree(staged, bundle, symlinks=True)
+        receipt["installed"] = True
+        return receipt
+    except _RECOVERABLE_ERRORS as exc:
+        receipt["reason"] = f"{type(exc).__name__}: {exc}"
+        record_degradation(
+            "app_bundle_sync",
+            exc,
+            action="could not install the staged launcher bundle",
+            enforce_failure_policy=False,
+        )
+        return receipt
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Keep Aura.app's launcher current")
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--resident", default=None)
+    parser.add_argument(
+        "--install-staged",
+        action="store_true",
+        help="install a bundle staged by a previous run, when safe",
+    )
+    args = parser.parse_args(argv)
+    if args.install_staged:
+        receipt = install_staged_bundle(args.root, resident=args.resident)
+    else:
+        receipt = sync_app_bundle(args.root, resident=args.resident)
+    print(json.dumps(receipt, sort_keys=True))
+    # A launcher that could not be refreshed is not a boot failure.
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+__all__ = [
+    "bundle_is_running",
+    "install_staged_bundle",
+    "launcher_drift",
+    "resident_bundle_path",
+    "sync_app_bundle",
+]

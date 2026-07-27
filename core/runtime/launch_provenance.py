@@ -513,22 +513,50 @@ def validate_launch_source(
     except _RECOVERABLE_ERRORS as exc:
         issues.append(f"source_identity_unavailable:{type(exc).__name__}")
 
-    comparisons = {
+    # IDENTITY — which checkout this bundle belongs to. These cannot drift
+    # through ordinary work: a mismatch means the app is pointed at a different
+    # or moved workspace, which is exactly the condition that must never be
+    # allowed to run cleanup or process replacement. Hard failure.
+    identity_comparisons = {
         "source_root": (
             str(Path(expected_root).expanduser().resolve()) if expected_root else "",
             actual.get("source_root"),
         ),
-        "commit_sha": (expected_commit, actual.get("commit_sha")),
-        "branch": (expected_branch, actual.get("branch")),
-        "workspace_state_sha256": (expected_workspace, actual.get("workspace_state_sha256")),
         "bundle_identifier": (expected_bundle_id, EXPECTED_BUNDLE_ID),
     }
-    for field, (expected, observed) in comparisons.items():
+    for field, (expected, observed) in identity_comparisons.items():
         if expected and str(expected) != str(observed or ""):
             issues.append(f"{field}_mismatch")
         manifest_value = manifest.get(field) if manifest else None
         if expected and str(expected) != str(manifest_value or ""):
             issues.append(f"manifest_{field}_mismatch")
+
+    # FRESHNESS — how far the workspace has moved since the bundle was built.
+    # These are MEASURED here, live, and reported; they are not a verdict.
+    #
+    # They used to be identity: the manifest pinned commit_sha and
+    # workspace_state_sha256 at build time and any difference failed the whole
+    # check, so every commit and every edit made the installed app "unverified"
+    # and launch_aura.sh refused to start with "Rebuild the installed app".
+    # Aura commits to her own repository, so that made staleness the normal
+    # state and a human rebuild the only exit — the software could not keep
+    # itself current by construction.
+    #
+    # Baking a snapshot of mutable state was never what made the check safe.
+    # The safety property is "this bundle belongs to this checkout", which
+    # source_root and the code signature carry. What the commit hash adds is a
+    # freshness FACT, and a fact measured at launch is strictly more accurate
+    # than one copied from build time — the recorded commit now always
+    # describes the code that is actually running.
+    drift: list[str] = []
+    freshness_comparisons = {
+        "commit_sha": (expected_commit, actual.get("commit_sha")),
+        "branch": (expected_branch, actual.get("branch")),
+        "workspace_state_sha256": (expected_workspace, actual.get("workspace_state_sha256")),
+    }
+    for field, (expected, observed) in freshness_comparisons.items():
+        if expected and str(expected) != str(observed or ""):
+            drift.append(field)
 
     source_verified = not issues
     return {
@@ -536,6 +564,10 @@ def validate_launch_source(
         "required": True,
         "launch_mode": "signed_app",
         "source_verified": source_verified,
+        # True when the bundle was built from exactly this workspace state.
+        # Informational: the workspace moving on is normal, not a fault.
+        "source_current": source_verified and not drift,
+        "source_drift": sorted(set(drift)),
         "verified": False,
         "issues": sorted(set(issues)),
         "manifest_path": str(manifest_path or ""),
