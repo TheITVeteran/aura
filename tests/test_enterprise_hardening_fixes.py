@@ -1955,7 +1955,11 @@ def test_primary_proof_boot_skips_non_primary_llm_tiers_without_degradation():
     assert "Proof-primary lane active — non-primary local LLM endpoints are not registered." in source
     assert "allow_non_primary_tiers and solver_model_path" in source
     assert "allow_non_primary_tiers and brainstem_model_path" in source
-    assert "allow_non_primary_tiers and fallback_model" in source
+    # `fallback_model` became `fallback_path` (CP126 953459cc): the branch was
+    # GATED on brainstem-or-cortex being present but LOADED FALLBACK_MODEL, so
+    # a valid cortex path could trigger loading a fallback that does not exist.
+    # The proof-lane gate under test is unchanged.
+    assert "allow_non_primary_tiers and fallback_path" in source
     assert "Proof-primary boot failed closed: no primary LLM endpoint registered" in source
 
 

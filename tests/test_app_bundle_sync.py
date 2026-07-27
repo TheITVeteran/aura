@@ -265,3 +265,78 @@ def test_an_unknown_process_state_is_treated_as_running(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "get_subprocess_gateway", lambda: _Exploding())
 
     assert module.bundle_is_running(tmp_path / "Aura.app") is True
+
+
+# --- the boot card this whole change exists to clear ---------------------
+
+
+def _drifted_provenance(root="/repo"):
+    """The exact shape of a bundle built before the workspace moved on."""
+    return {
+        "required": True, "verified": True, "source_verified": True,
+        "launch_mode": "signed_app", "issues": [],
+        "expected": {
+            "source_root": root, "commit_sha": "a" * 40,
+            "workspace_state_sha256": "1" * 64,
+        },
+        "actual": {
+            "source_root": root, "commit_sha": "b" * 40,
+            "workspace_state_sha256": "2" * 64,
+        },
+        "manifest": {"shell_assets_sha256": "c" * 64},
+    }
+
+
+def test_a_moved_workspace_no_longer_blocks_the_boot_card():
+    """"LAUNCH AND SHELL PROVENANCE FAILED" fired on every commit, telling the
+    user to rebuild an app whose launcher had not changed."""
+    from interface.routes import system as system_routes
+
+    revision = system_routes._runtime_revision_from_provenance(
+        _drifted_provenance(), shell_assets_sha256="d" * 64
+    )
+
+    assert revision["verified"] is True
+    assert revision["source_current"] is False
+    assert system_routes._runtime_revision_blocker(revision) == ""
+
+
+def test_drift_is_no_longer_diagnosed_as_the_cause():
+    from interface.routes import system as system_routes
+
+    provenance = _drifted_provenance()
+    revision = system_routes._runtime_revision_from_provenance(
+        provenance, shell_assets_sha256="d" * 64
+    )
+
+    diagnosis = system_routes._provenance_failure_diagnosis(revision, provenance)
+
+    assert "rebuild Aura.app" not in diagnosis
+    assert "build_app.sh" not in diagnosis
+
+
+def test_an_app_from_another_checkout_still_blocks():
+    """The property that actually protects a running instance."""
+    from interface.routes import system as system_routes
+
+    provenance = _drifted_provenance()
+    provenance["actual"]["source_root"] = "/somewhere-else"
+    revision = system_routes._runtime_revision_from_provenance(
+        provenance, shell_assets_sha256="d" * 64
+    )
+
+    assert system_routes._runtime_revision_blocker(revision) != ""
+
+
+def test_a_malformed_measurement_still_blocks():
+    """Measured values must be present and well-formed; only their agreement
+    with the build-time manifest stopped being required."""
+    from interface.routes import system as system_routes
+
+    provenance = _drifted_provenance()
+    provenance["actual"]["commit_sha"] = "not-a-sha"
+    revision = system_routes._runtime_revision_from_provenance(
+        provenance, shell_assets_sha256="d" * 64
+    )
+
+    assert system_routes._runtime_revision_blocker(revision) != ""

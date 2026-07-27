@@ -1345,22 +1345,23 @@ def _runtime_revision_blocker(revision: Any) -> str:
     token = str(contract.get("revision_token") or "")
     expected_root = str(contract.get("expected_source_root_sha256") or "")
     actual_root = str(contract.get("actual_source_root_sha256") or "")
-    expected_commit = str(contract.get("expected_commit_sha") or "")
     actual_commit = str(contract.get("actual_commit_sha") or "")
-    expected_workspace = str(contract.get("expected_workspace_state_sha256") or "")
     actual_workspace = str(contract.get("actual_workspace_state_sha256") or "")
-    expected_shell = str(contract.get("expected_shell_assets_sha256") or "")
     actual_shell = str(contract.get("actual_shell_assets_sha256") or "")
+    # Identity is the checkout, plus well-formed measurements of what is
+    # running. The commit, workspace and shell digests are MEASURED, so they
+    # must be present and well-formed — but requiring them to equal the
+    # build-time manifest is the same "staleness is a fault" error corrected in
+    # core.runtime.launch_provenance, and it was duplicated here. Their
+    # agreement is reported as source_current; disagreement means the workspace
+    # moved on, which is Aura's normal state, not a failed identity.
     if not (
         _is_lower_hex_digest(token, 64)
         and _is_lower_hex_digest(actual_root, 64)
         and expected_root == actual_root
         and _is_lower_hex_digest(actual_commit, 40)
-        and expected_commit == actual_commit
         and _is_lower_hex_digest(actual_workspace, 64)
-        and expected_workspace == actual_workspace
         and _is_lower_hex_digest(actual_shell, 64)
-        and expected_shell == actual_shell
     ):
         return "runtime_revision_identity_invalid"
     expected_token = _runtime_revision_token(
@@ -1613,30 +1614,20 @@ def _provenance_failure_diagnosis(
     revision = dict(runtime_revision) if isinstance(runtime_revision, dict) else {}
     source = dict(provenance) if isinstance(provenance, dict) else {}
 
+    # Drift is NOT a cause of a blocked boot any more — the app is a thin
+    # launcher over live source, so a moved commit, edited workspace or updated
+    # UI shell all still run the current code. These used to be the three
+    # "rebuild Aura.app" messages, and they fired constantly because Aura
+    # commits to her own repository. If a diagnosis is being written at all,
+    # something else genuinely failed, so drift is reported as context rather
+    # than blamed.
+    drift_note = ""
     expected_commit = str(revision.get("expected_commit_sha") or "").strip()
     actual_commit = str(revision.get("actual_commit_sha") or "").strip()
     if expected_commit and actual_commit and expected_commit != actual_commit:
-        return (
-            f"Cause: the signed app was built from commit {expected_commit[:9]} but the "
-            f"source checkout is now at {actual_commit[:9]} — the app bundle is stale, "
-            "not the runtime. Remedy: rebuild Aura.app (./build_app.sh) and relaunch."
-        )
-
-    expected_shell = str(revision.get("expected_shell_assets_sha256") or "").strip()
-    actual_shell = str(revision.get("actual_shell_assets_sha256") or "").strip()
-    if expected_shell and actual_shell and expected_shell != actual_shell:
-        return (
-            "Cause: the app's pinned UI shell no longer matches the current interface/ "
-            "assets. Remedy: rebuild Aura.app (./build_app.sh) and relaunch."
-        )
-
-    expected_workspace = str(revision.get("expected_workspace_state_sha256") or "").strip()
-    actual_workspace = str(revision.get("actual_workspace_state_sha256") or "").strip()
-    if expected_workspace and actual_workspace and expected_workspace != actual_workspace:
-        return (
-            "Cause: the source workspace has uncommitted changes that differ from the "
-            "state the app was built against. Remedy: commit or stash the changes, or "
-            "rebuild Aura.app (./build_app.sh) against the current workspace."
+        drift_note = (
+            f" (For context, the bundle was built at {expected_commit[:9]} and the "
+            f"checkout is at {actual_commit[:9]}; that is expected and not the cause.)"
         )
 
     issues = sorted(
@@ -1649,8 +1640,8 @@ def _provenance_failure_diagnosis(
         }
     )
     if issues:
-        return "Identity issues: " + ", ".join(issues[:5]) + "."
-    return ""
+        return "Identity issues: " + ", ".join(issues[:5]) + "." + drift_note
+    return drift_note.strip()
 
 
 def _launched_from_app_flag() -> bool:
