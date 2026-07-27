@@ -5725,7 +5725,7 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
     # describing verification. They only count as a loop at pathological
     # density (a model looping the question's own words still gets caught).
     question_content_words = {
-        w.lower() for w in _WORD_RE.findall(user) if w.lower() not in stop_words
+        _topical_stem(w) for w in _WORD_RE.findall(user) if w.lower() not in stop_words
     }
     question_phrase_repeats = max(8, required_repeats * 2)
     for n in (4, 3, 2):
@@ -5742,7 +5742,7 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
             # articles. Recombining question vocabulary is topical; only
             # pathological density of it reads as a loop.
             question_sourced = question_content_words and all(
-                part in question_content_words
+                _topical_stem(part) in question_content_words
                 for part in gram
                 if part not in stop_words
             )
@@ -5769,6 +5769,34 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
             return ""
         return "low_lexical_diversity_loop"
     return ""
+
+
+def _topical_stem(word: str) -> str:
+    """Crude suffix strip, enough to match a word to its own inflections.
+
+    The question-sourced exemption compares the answer's repeated phrases
+    against the question's vocabulary, and it compared them literally — so
+    "drawing" did not match "draw" and "probabilities" did not match
+    "probability". Live 2026-07-26 that cost a correct derivation: the person
+    asked "I draw two without replacement… what's the probability", the answer
+    said "the probability of drawing" three times as it worked each case, and
+    the repetition read as invented rather than topical.
+
+    Deliberately shallow. Over-stemming would let genuinely unrelated words
+    collide, so this only removes the endings that separate a word from its
+    own forms.
+    """
+    lowered = str(word or "").lower()
+    if len(lowered) > 4 and lowered.endswith("ies"):
+        return lowered[:-3] + "y"  # probabilities -> probability
+    for suffix in ("ingly", "ing", "edly", "ed", "ly"):
+        if len(lowered) - len(suffix) >= 4 and lowered.endswith(suffix):
+            return lowered[: -len(suffix)]
+    if len(lowered) > 4 and lowered.endswith("es") and lowered[-3:-2] in "sxzoh":
+        return lowered[:-2]  # boxes -> box, matches -> match
+    if len(lowered) > 3 and lowered.endswith("s") and not lowered.endswith("ss"):
+        return lowered[:-1]  # marbles -> marble
+    return lowered
 
 
 def _distinct_statement_ratio(reply_text: Any) -> float:
