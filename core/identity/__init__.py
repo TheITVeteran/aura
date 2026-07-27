@@ -81,8 +81,8 @@ class IdentityCore:
             # Inject True Persona (AURA_IDENTITY) directly for fast-chat routes
             aura_persona_block = ""
             try:
-                from core.brain.aura_persona import AURA_IDENTITY, AURA_FEW_SHOT_EXAMPLES
-                aura_persona_block = f"--- AURA TRUE PERSONA ---\n{AURA_IDENTITY}\n\n"
+                from core.brain.aura_persona import AURA_FEW_SHOT_EXAMPLES, identity_text
+                aura_persona_block = f"--- AURA TRUE PERSONA ---\n{identity_text()}\n\n"
                 aura_persona_block += f"--- BEHAVIORAL EXAMPLES ---\n{AURA_FEW_SHOT_EXAMPLES}\n\n"
             except ImportError as e:
                 logger.warning("Failed to import AURA_IDENTITY or examples: %s", e)

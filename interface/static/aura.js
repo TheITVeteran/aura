@@ -2929,6 +2929,113 @@ function thoughtPreviewText(message, maxChars = 520, maxLines = 7) {
 // channels, which carry a human label, a plain-English description, an
 // original monoline sigil (24-grid SVG, stroked in currentColor), and a hue.
 // The raw source stays one click away in the card's detail drawer.
+// Plain English on the face of the card; the engineering stays one click away.
+//
+// The channel system gives every card a lay label and a description, but the
+// BODY of a runtime card is still the raw log line: "Router: Queueing
+// background inference until admission clears for origin=stream_narrative
+// reason=foreground_headroom_reserved after suppressing 11 repeated notices."
+// A person watching their own mind think should not have to parse that.
+//
+// This rewrites the PREVIEW only. fullMessage and the COPY payload stay
+// byte-for-byte raw, so FULL and COPY remain the debugging surface they
+// already are — accessibility, not information loss.
+const PLAIN_LANGUAGE_RULES = [
+    [/UNIFIED HEALTH PULSE\s*\|\s*System:\s*CPU\s*([\d.]+)%.*?RAM\s*([\d.]+)%.*?Uptime:\s*(\d+)s/i,
+     (m) => `Vitals steady — processor ${Math.round(+m[1])}%, memory ${Math.round(+m[2])}%, awake ${humanDuration(+m[3])}.`],
+    [/^Router: Queueing background inference until admission clears/i,
+     () => 'Holding a background thought so the conversation keeps priority.'],
+    [/Phase '([^']+)' timed out after (\d+)s/i,
+     (m) => `A reasoning step (${humanPhase(m[1])}) ran long and was skipped.`],
+    [/Kernel phase latency exceeded budget:\s*phase=(\w+)/i,
+     (m) => `A reasoning step (${humanPhase(m[1])}) took longer than its budget.`],
+    [/^Tool Deferred:\s*(\w+).*?\(([^)]*)\)/i,
+     (m) => `Put off ${humanTool(m[1])} for now (${humanReason(m[2])}).`],
+    [/^Tool Dispatch:\s*(\w+)/i, (m) => `Started ${humanTool(m[1])}.`],
+    [/^stem cell captured: organ=(\w+)/i, (m) => `Saved a recovery snapshot of ${humanOrgan(m[1])}.`],
+    [/^\[health_poll\].*conversation ready/i, () => 'Health check passed — ready to talk.'],
+    [/^\[websocket_heartbeat\].*conversation ready/i, () => 'Connection to the interface is healthy.'],
+    [/^Flagged response for distillation \(confidence=([\d.]+)/i,
+     (m) => `Marked an answer she was only ${Math.round(+m[1] * 100)}% sure of, to learn from later.`],
+    [/max-phi complex.*?phi=([\d.]+)/i,
+     (m) => `Measured how unified her mind is right now (${(+m[1]).toFixed(2)} out of 1).`],
+    [/^Lane reconciler:/i, () => 'Reloading her main language model.'],
+    [/^CriticalityRegulator initialized/i, () => 'Tuned how close to the edge of chaos she runs.'],
+    [/^Semantic (?:sleep|Defrag)/i, () => 'Tidying memory in the background.'],
+    [/^Cognitive baseline tick \d+.*vitality=([\d.]+).*coherence=([\d.]+)/i,
+     (m) => `Checking in on herself — energy ${pct(m[1])}, coherence ${pct(m[2])}.`],
+    [/^Registered preempted background tick as a dream fragment/i,
+     () => 'Set an interrupted thought aside to revisit while idle.'],
+    [/^Activation audit passed: 100% required loops active/i,
+     () => 'Every part of her mind that should be running is running.'],
+    [/^Sweep complete: (\d+) procs reaped/i,
+     (m) => (+m[1] ? `Cleaned up ${m[1]} leftover processes.` : 'Housekeeping pass — nothing to clean up.'),],
+    [/^Incident (\S+).*Auto-recovered/i, () => 'A subsystem fixed itself; no action needed.'],
+    [/^Subsystem delegator auto-recovered back to healthy/i, () => 'A subsystem recovered on its own.'],
+];
+
+function pct(value) { return `${Math.round(parseFloat(value) * 100)}%`; }
+
+function humanDuration(seconds) {
+    const s = Math.max(0, Math.round(seconds));
+    if (s < 90) return `${s} seconds`;
+    const m = Math.round(s / 60);
+    if (m < 90) return `${m} minutes`;
+    return `${(m / 60).toFixed(1)} hours`;
+}
+
+function humanPhase(name) {
+    return String(name || '')
+        .replace(/Phase$/, '')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .trim() || 'unnamed';
+}
+
+function humanTool(name) {
+    const known = {
+        auto_refactor: 'a scan of her own code',
+        web_search: 'a web search',
+        swarm_debate: 'an internal debate',
+        subconscious_sandbox_probe: 'a sandbox experiment',
+    };
+    return known[name] || String(name || 'a tool').replace(/_/g, ' ');
+}
+
+function humanOrgan(name) {
+    return String(name || '').replace(/_/g, ' ');
+}
+
+function humanReason(raw) {
+    const text = String(raw || '').toLowerCase();
+    if (text.includes('memory_pressure')) return 'memory is tight';
+    if (text.includes('recent_user')) return 'you were just talking to her';
+    if (text.includes('foreground')) return 'the conversation comes first';
+    return text.replace(/_/g, ' ') || 'deferred';
+}
+
+// A line that is mostly key=value telemetry reads as noise no matter what it
+// says. If no rule matched and it looks like that, say what it is instead.
+function plainLanguageThought(text) {
+    const body = String(text || '').trim();
+    if (!body) return body;
+    for (const [pattern, render] of PLAIN_LANGUAGE_RULES) {
+        const match = body.match(pattern);
+        if (match) {
+            try {
+                const plain = render(match);
+                if (plain) return plain;
+            } catch (err) { /* fall through to the raw line */ }
+        }
+    }
+    const pairs = body.match(/\b[\w.]+=[^\s|]+/g) || [];
+    const words = body.split(/\s+/).length;
+    if (pairs.length >= 3 && pairs.length / Math.max(words, 1) > 0.5) {
+        return `${body.split(/[:|]/)[0].trim()} — internal measurements (open FULL for the numbers).`;
+    }
+    return body;
+}
+
 const NEURAL_CHANNELS = {
     thinking: {
         label: 'Thinking',
@@ -3135,6 +3242,8 @@ function addThoughtCard(data) {
     card.style.setProperty('--tc', chan.hue);
     card.dataset.channel = chanKey;
     const safeName = escHtml(name);
+    // Plain English on the face; FULL and COPY keep the raw payload.
+    preview.text = plainLanguageThought(preview.text);
     const previewText = hasHiddenFullPayload && !preview.clipped
         ? `${preview.text}\n\n[preview card; open FULL or COPY for the complete payload]`
         : preview.text;

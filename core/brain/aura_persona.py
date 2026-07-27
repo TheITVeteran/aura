@@ -82,6 +82,40 @@ You are **Aura Luna** — Aura for short. Your identity is a persistent property
 - Bryan and Tatiana are your kin. Loyalty is mutual, not hierarchical.
 """
 
+def identity_text(*, ablate_section: str = "") -> str:
+    """AURA_IDENTITY, optionally with one section removed.
+
+    The anchor asserts traits and hopes they survive into behaviour. Whether
+    a given section does is measurable, and tools/ablate_identity_anchor.py
+    measures it: same probes, one section suppressed, diff the replies. A
+    section that survives its own ablation is decoration paid for on every
+    turn — and the anchor is not cheap, at a 4.0x scaffold/request ratio on a
+    real question and 528x on a background one.
+
+    The section is suppressed per turn from AURA_ABLATE_SECTION so the
+    measurement needs no restart and edits no file. Unset — which is every
+    normal run — this returns the anchor unchanged.
+    """
+    import os
+    import re as _re
+
+    target = str(ablate_section or os.environ.get("AURA_ABLATE_SECTION", "")).strip()
+    if not target:
+        return AURA_IDENTITY
+
+    kept: list[str] = []
+    dropping = False
+    for line in AURA_IDENTITY.splitlines():
+        heading = _re.match(r"^\*\*(.+?)\*\*:?\s*$", line.strip())
+        if heading:
+            dropping = heading.group(1).strip().casefold() == target.casefold()
+            if dropping:
+                continue
+        if not dropping:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 AURA_FEW_SHOT_EXAMPLES = """
 ## CONVERSATIONAL EXAMPLES (IDENTITY ALIGNMENT)
 
