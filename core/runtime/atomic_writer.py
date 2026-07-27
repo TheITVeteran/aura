@@ -102,7 +102,7 @@ def ensure_private_directory(path: PathLike) -> Path:
     """Create a durability directory and restrict it to the current user."""
 
     directory = Path(path)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     directory.chmod(0o700)
     _fsync_dir(directory.parent)
     return directory

@@ -131,6 +131,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # private arm artifacts. Neither accepts arbitrary user paths.
             "core/brain/llm/latent_cortex/detached_campaign_evidence.py",
             "core/brain/llm/latent_cortex/worker_attempt_import.py",
+            # Verified-replay SFT publication owns one fixed, owner-private
+            # candidate/evaluator namespace. Its sole raw mutation is a
+            # no-follow, single-link, inode-bound pair-publication lock; all
+            # payload and commit bytes still traverse FileWriteGateway.
+            "core/learning/verified_replay_sft_publication.py",
             "core/runtime/file_read_gateway.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/shutdown_artifact_store.py",
@@ -202,6 +207,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # content-addressed artifact schema. It accepts no runtime action
             # or arbitrary effect and is the sole writer for that evidence.
             "core/learning/prefix_stability.py",
+            # Verified replay projection writes only its fixed custody commit
+            # and exact candidate/evaluator artifact sets under Aura's private
+            # RLC root, inside named internal governance scopes. It grants no
+            # trainer authority and accepts no arbitrary artifact filenames.
+            "core/learning/verified_replay_sft_publication.py",
             # The safe optimizer writes only its configured adapter state and
             # byte-identical backup through FileWriteGateway; rollback restores
             # that same bounded artifact inside the optimizer's governed lane.

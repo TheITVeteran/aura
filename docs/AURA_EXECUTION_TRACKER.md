@@ -29630,3 +29630,61 @@ remains, leaving approximately 1-281 records. Checkpoint-count completion is
 approximately 69.5%-99.8%, with a midpoint planning estimate of 81.9%. This is
 checkpoint accounting, not permission to skip any open SPARK or whole-codebase
 requirement.
+
+## Checkpoint 2026-07-26-398: Governed Horcrux-Backed Replay Publication
+
+SPARK-059 now has a live-runtime publication boundary for CP397's quarantined
+verified-replay projection. `HorcruxManager` derives independent, stable
+partition and dedup subkeys under explicit domains without exporting its root
+key and exposes a non-secret active-key identity commitment. `BlackHole`
+publishes the matching identity. Runtime projection refuses a local-key
+fallback, inactive encryption, missing services, mismatched identities,
+ambiguous derivation contexts, collapsed subkeys, or an identity change across
+projection and publication. The real-class integration test uses
+`HorcruxManager`, `BlackHole` AES-GCM, `VerifiedReplayBuffer`, resident service
+resolution, and the complete durable publisher together.
+
+The publisher creates one owner-private root with distinct candidate and
+evaluator siblings. It serializes the pair through a no-follow, owner-bound,
+single-link lock; writes a canonical digest-bound `preparing` record before
+either package becomes eligible; commits evaluator then candidate file sets
+through transactional `FileWriteGateway` batches; re-reads every durable byte;
+reconstructs the complete custody pair; and only then advances the shared
+record to `committed`. Candidate readers never open evaluator custody and
+reject extra files, symlinks, hardlinks, permissive modes, noncanonical or
+duplicate-key commits, source/package/custody mismatches, and mid-read commit
+changes. An interrupted pair remains unreadable and recovers on retry.
+Identical concurrent publishers converge on one committed generation, a valid
+older store revision can be superseded, and tampered committed bytes are
+preserved and refused rather than overwritten. The underlying private-directory
+primitive now creates its target at `0700` immediately, eliminating the
+first-publication mode race found during the broad matrix.
+
+The final post-tightening publication, Horcrux, BlackHole, and service-status
+matrix passes 42/42 in 9.03 seconds. The contention case also passes ten
+consecutive repetitions. The broader verified replay,
+structured-SFT, custody, tokenizer, external admission, campaign trust,
+Horcrux, BlackHole, and service family passes 239/239 in 496.66 seconds. Scoped
+Ruff (retaining the existing public `BlackHoleEncryptionUnavailable` N818
+compatibility exception), bytecode compilation, diff hygiene, model-load
+ownership (47 paths, 60 references, zero findings), and governance ownership
+pass. All four new effect buckets are explicit canonical owners, so migration
+debt remains 1,787 calls rather than increasing. The enterprise scan remains
+inherited-red at ten baseline regressions, 228 findings, and 58 high/critical
+findings, with no CP398-path finding. Evidence is
+`artifacts/current/cp398_verified_replay_sft_publication_evidence.json`.
+
+CP398 remains `trainer_ready=false` with
+`training_authority=none_quarantined_projection`. It does not claim an
+externally signed privacy or complete multisurface contamination attestation,
+an externally witnessed monotonic root, replay-row resident-tokenizer
+admission, trainer authority, small-checkpoint transfer, resident-32B
+training, reasoning gain, frontier performance, or a `WOW Signal`. Those
+remain the next SPARK-059 gates. No model weights are touched and the final
+multi-hour soaks remain deferred until every shorter gate is green.
+
+Counting CP398 makes the total checkpoint record 640. The 640-920 forecast
+remains, leaving approximately 0-280 records. Checkpoint-count completion is
+approximately 69.6%-100.0%, with a midpoint planning estimate of 82.1%. This
+is checkpoint accounting, not permission to skip any open SPARK or
+whole-codebase requirement.

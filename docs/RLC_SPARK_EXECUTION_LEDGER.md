@@ -3005,6 +3005,44 @@ before those dependencies close is not admissible.
   touched. The sanitized receipt is
   `artifacts/current/cp397_verified_replay_sft_evidence.json`.
 
+  CP398 makes that projection a governed live-runtime publication surface.
+  `HorcruxManager` now derives stable domain-separated partition and dedup
+  subkeys without exporting its root and exposes a non-secret key-identity
+  commitment. `BlackHole` carries the same identity, and publication fails
+  unless the live protector is active, Horcrux-backed, and identity-equal to
+  the resident Horcrux before projection, after decryption, and after lock
+  acquisition. The async `LatentCortexService` route performs the blocking
+  snapshot and durable writes off the event loop.
+
+  Candidate and evaluator packages publish into distinct owner-private sibling
+  directories. A no-follow, owner-bound, single-link lock serializes the pair;
+  a canonical preparing record makes both sides ineligible for consumption;
+  evaluator and candidate file sets then commit independently through
+  `FileWriteGateway`; and only byte-for-byte durable readback plus complete
+  pair reconstruction advances the shared record to committed. Candidate-only
+  readers never open evaluator custody, reject every extra trainer-visible
+  file, and bind source revision, package, custody root, Horcrux identity, and
+  partition/dedup key commitments. Interrupted generations recover on retry,
+  identical concurrent publishers converge on one generation, valid older
+  snapshots may roll forward, and a tampered committed generation is refused
+  rather than silently overwritten. The shared private-directory primitive
+  now creates the target at `0700` from its first visible instant, closing the
+  first-publication race found by the broad gate.
+
+  The final post-tightening publication/crypto/service matrix passes 42/42,
+  ten consecutive contention repetitions pass, and the broader structured-SFT,
+  replay, tokenizer, external-admission, campaign-trust, Horcrux, BlackHole,
+  and service family passes 239/239. Governance ownership matches baseline
+  with all new calls classified as canonical and no increase in migration
+  debt; model-load ownership remains 47 paths, 60 references, and zero
+  findings. The enterprise ratchet remains inherited-red at ten baseline
+  regressions, 228 findings, and 58 high/critical findings, with no CP398-path
+  finding. This is governed local custody, not an external privacy or
+  contamination signature, externally witnessed monotonic root, replay
+  tokenizer admission, trainer authority, resident training, gain, frontier
+  performance, or a `WOW Signal`. The sanitized receipt is
+  `artifacts/current/cp398_verified_replay_sft_publication_evidence.json`.
+
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording
   only commitments. This proves candidate noncontainment and candidate-only

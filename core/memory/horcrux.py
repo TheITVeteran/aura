@@ -2,10 +2,12 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
 import json
 import logging
 import os
 import platform
+import re
 import secrets
 import time
 import uuid as uuidlib
@@ -37,6 +39,9 @@ _HORCRUX_RECOVERABLE_ERRORS = (
     ValueError,
 )
 _KEYCHAIN_ACCOUNT = "Aura"
+_SUBKEY_CONTEXT_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,127}\Z")
+_SUBKEY_DOMAIN = b"AURA-HORCRUX-SUBKEY-v1\x00"
+_KEY_IDENTITY_DOMAIN = b"AURA-HORCRUX-KEY-IDENTITY-v1\x00"
 SecretGetter = Callable[[str], str | None]
 SecretSetter = Callable[[str, str], None]
 
@@ -530,3 +535,39 @@ class HorcruxManager:
         if not self.derived_key:
             raise RuntimeError("Horcrux not initialized")
         return base64.b64encode(self.derived_key).decode()
+
+    @property
+    def key_identity_sha256(self) -> str:
+        """Return a non-secret commitment to the active root-key identity."""
+
+        if (
+            not isinstance(self.derived_key, bytes)
+            or len(self.derived_key) != 32
+        ):
+            raise RuntimeError("Horcrux not initialized")
+        return hashlib.sha256(
+            _KEY_IDENTITY_DOMAIN + self.derived_key
+        ).hexdigest()
+
+    def derive_subkey(self, context: str) -> bytes:
+        """Derive one stable domain-separated key without exporting the root."""
+
+        if not isinstance(context, str):
+            raise ValueError("Horcrux subkey context is invalid")
+        normalized = context.strip()
+        if (
+            normalized != context
+            or normalized != normalized.lower()
+            or _SUBKEY_CONTEXT_RE.fullmatch(normalized) is None
+        ):
+            raise ValueError("Horcrux subkey context is invalid")
+        if (
+            not isinstance(self.derived_key, bytes)
+            or len(self.derived_key) != 32
+        ):
+            raise RuntimeError("Horcrux not initialized")
+        return hmac.new(
+            self.derived_key,
+            _SUBKEY_DOMAIN + normalized.encode("ascii"),
+            hashlib.sha256,
+        ).digest()

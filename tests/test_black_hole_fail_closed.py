@@ -11,6 +11,7 @@ and there is normally a key at all (first boot provisions one).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -61,6 +62,7 @@ def test_encryption_active_reports_the_truth():
     bh = BlackHole()
     assert bh.encryption_active is False
     assert bh.key_provenance == "none"
+    assert bh.key_identity_sha256 == ""
 
 
 def test_first_boot_without_horcrux_still_encrypts(monkeypatch):
@@ -75,6 +77,7 @@ def test_first_boot_without_horcrux_still_encrypts(monkeypatch):
 
     assert bh.encryption_active is True
     assert bh.key_provenance == "local"
+    assert len(bh.key_identity_sha256) == 64
 
     secret = b"Bryan's private memory"
     blob = bh.encrypt(secret)
@@ -220,6 +223,9 @@ def test_horcrux_key_is_preferred_when_available(monkeypatch):
 
     class _Horcrux:
         derived_key = b"\x11" * 32
+        key_identity_sha256 = hashlib.sha256(
+            b"AURA-HORCRUX-KEY-IDENTITY-v1\x00" + derived_key
+        ).hexdigest()
 
     monkeypatch.setattr(
         "core.memory.black_hole.get_runtime_service",
@@ -229,7 +235,27 @@ def test_horcrux_key_is_preferred_when_available(monkeypatch):
     bh = BlackHole()
     bh.on_start()
     assert bh.key_provenance == "horcrux"
+    assert bh.key_identity_sha256 == _Horcrux.key_identity_sha256
     assert not _local_key_path().exists(), "provisioned a local key despite Horcrux"
+
+
+def test_horcrux_identity_must_be_a_canonical_sha256(monkeypatch):
+    class _Horcrux:
+        derived_key = b"\x12" * 32
+        key_identity_sha256 = "Z" * 64
+
+    monkeypatch.setattr(
+        "core.memory.black_hole.get_runtime_service",
+        lambda _name, default=None: _Horcrux(),
+    )
+    black_hole = BlackHole()
+
+    with pytest.raises(RuntimeError, match="key identity is unavailable"):
+        black_hole.on_start()
+
+    assert black_hole.encryption_active is False
+    assert black_hole.key_provenance == "none"
+    assert black_hole.key_identity_sha256 == ""
 
 
 def test_encrypt_json_cannot_leak_plaintext():

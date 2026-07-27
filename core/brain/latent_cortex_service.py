@@ -187,6 +187,7 @@ class LatentCortexService:
         self._last_success_at = 0.0
         self._last_latency_s = 0.0
         self._last_allocation: dict[str, Any] = {}
+        self._last_replay_sft_publication: dict[str, Any] = {}
         logger.info("🧠 LatentCortexService initialized (Recursive Latent Cortex)")
 
     @staticmethod
@@ -277,6 +278,34 @@ class LatentCortexService:
             "retired_count": stored["retired_count"],
             "receipt_sha256": stored["receipt_sha256"],
         }
+
+    async def publish_verified_replay_sft(
+        self,
+        *,
+        privacy_clearances: dict[str, dict[str, Any]],
+        reference_index: dict[str, Any],
+        publication_root: Path | None = None,
+        replay_path: Path | None = None,
+        partition_ratios: dict[str, int] | None = None,
+        minimum_rows_per_split: int = 1,
+    ) -> dict[str, Any]:
+        """Publish a Horcrux-backed replay snapshot without training authority."""
+
+        from core.learning.verified_replay_sft_publication import (
+            publish_runtime_verified_replay_sft,
+        )
+
+        report = await asyncio.to_thread(
+            publish_runtime_verified_replay_sft,
+            privacy_clearances=privacy_clearances,
+            reference_index=reference_index,
+            publication_root=publication_root,
+            replay_path=replay_path,
+            partition_ratios=partition_ratios,
+            minimum_rows_per_split=minimum_rows_per_split,
+        )
+        self._last_replay_sft_publication = dict(report)
+        return dict(report)
 
     # ── Cognitive economy ───────────────────────────────────────────────
     @staticmethod
@@ -4759,6 +4788,22 @@ class LatentCortexService:
             "last_latency_s": round(self._last_latency_s, 3),
             "last_allocation": dict(self._last_allocation),
             "last_progress": dict(self._last_progress),
+            "last_replay_sft_publication": {
+                key: self._last_replay_sft_publication.get(key)
+                for key in (
+                    "status",
+                    "generation_id",
+                    "candidate_package_sha256",
+                    "evaluator_package_sha256",
+                    "custody_root_sha256",
+                    "publication_commit_sha256",
+                    "protector_key_provenance",
+                    "protector_key_identity_sha256",
+                    "trainer_ready",
+                    "training_authority",
+                )
+                if key in self._last_replay_sft_publication
+            },
             "last_failure_receipt": {
                 key: self._last_failure_receipt.get(key)
                 for key in (

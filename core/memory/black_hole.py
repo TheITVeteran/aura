@@ -234,6 +234,7 @@ class BlackHole:
     def __init__(self):
         self._aesgcm: AESGCM | None = None
         self.key_provenance: str = "none"
+        self.key_identity_sha256: str = ""
 
     def on_start(self):
         """Initialize the provider, preferring the Horcrux-derived key.
@@ -243,9 +244,23 @@ class BlackHole:
         went to disk in plaintext.
         """
         horcrux = get_runtime_service("horcrux", default=None)
-        if horcrux and horcrux.derived_key:
-            self._aesgcm = AESGCM(horcrux.derived_key)
+        derived_key = getattr(horcrux, "derived_key", None)
+        if derived_key:
+            self._aesgcm = AESGCM(derived_key)
             self.key_provenance = "horcrux"
+            identity = getattr(horcrux, "key_identity_sha256", "")
+            self.key_identity_sha256 = str(identity or "")
+            if (
+                len(self.key_identity_sha256) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in self.key_identity_sha256
+                )
+            ):
+                self._aesgcm = None
+                self.key_provenance = "none"
+                self.key_identity_sha256 = ""
+                raise RuntimeError("Horcrux key identity is unavailable")
             logger.info("BlackHole: AES-256-GCM substrate initialized (Horcrux key).")
             return
 
@@ -253,6 +268,9 @@ class BlackHole:
         if local_key:
             self._aesgcm = AESGCM(local_key)
             self.key_provenance = "local"
+            self.key_identity_sha256 = hashlib.sha256(
+                b"AURA-BLACK-HOLE-LOCAL-KEY-IDENTITY-v1\x00" + local_key
+            ).hexdigest()
             logger.warning(
                 "BlackHole: Horcrux keys unavailable — using a locally provisioned "
                 "key. Memories are encrypted at rest but NOT hardware-entangled."
@@ -260,6 +278,7 @@ class BlackHole:
             return
 
         self.key_provenance = "none"
+        self.key_identity_sha256 = ""
         record_degradation(
             "black_hole",
             RuntimeError("no encryption key available"),

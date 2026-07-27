@@ -1,6 +1,9 @@
 import base64
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from core.memory.horcrux import HorcruxManager, reconstruct_secret, split_secret
 
@@ -68,3 +71,58 @@ def test_file_and_hint_shards_round_trip(tmp_path: Path) -> None:
     assert manager._load_file_sync() == (3, b"file-shard")
     assert manager._load_hint_sync("answer") == (4, b"hint-shard")
     assert manager._load_hint_sync("wrong") != (4, b"hint-shard")
+
+
+def test_domain_separated_subkeys_are_stable_distinct_and_bound_to_root(
+    tmp_path: Path,
+) -> None:
+    manager = _manager(tmp_path)
+    with pytest.raises(RuntimeError, match="not initialized"):
+        manager.derive_subkey("rlc.verified_replay_sft.partition.v1")
+
+    manager.derived_key = b"r" * 32
+    partition = manager.derive_subkey(
+        "rlc.verified_replay_sft.partition.v1"
+    )
+    dedup = manager.derive_subkey("rlc.verified_replay_sft.dedup.v1")
+
+    assert len(partition) == 32
+    assert partition == manager.derive_subkey(
+        "rlc.verified_replay_sft.partition.v1"
+    )
+    assert partition != dedup
+    assert manager.derived_key not in (partition, dedup)
+    first_identity = manager.key_identity_sha256
+    assert len(first_identity) == 64
+    assert manager.derived_key.hex() not in first_identity
+
+    manager.derived_key = b"s" * 32
+    assert manager.key_identity_sha256 != first_identity
+    assert manager.derive_subkey(
+        "rlc.verified_replay_sft.partition.v1"
+    ) != partition
+
+
+def test_subkey_api_rejects_malformed_active_root(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    manager.derived_key = b"too-short"
+
+    with pytest.raises(RuntimeError, match="not initialized"):
+        _ = manager.key_identity_sha256
+    with pytest.raises(RuntimeError, match="not initialized"):
+        manager.derive_subkey("rlc.verified_replay_sft.partition.v1")
+
+
+@pytest.mark.parametrize(
+    "context",
+    ("", "UPPERCASE", "contains spaces", "../escape", "x" * 129),
+)
+def test_subkey_context_rejects_ambiguous_or_unbounded_names(
+    tmp_path: Path,
+    context: str,
+) -> None:
+    manager = _manager(tmp_path)
+    manager.derived_key = hashlib.sha256(b"test-root").digest()
+
+    with pytest.raises(ValueError, match="context is invalid"):
+        manager.derive_subkey(context)

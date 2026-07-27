@@ -1,0 +1,166 @@
+{
+  "schema": "aura.rlc.cp398_verified_replay_sft_publication_evidence.v1",
+  "checkpoint": "CP398",
+  "scope": "governed_horcrux_backed_verified_replay_sft_publication",
+  "claim": {
+    "live_runtime_service_surface": true,
+    "horcrux_root_key_exported_by_publication": false,
+    "domain_separated_partition_and_dedup_subkeys": true,
+    "black_hole_horcrux_identity_equality_required": true,
+    "local_key_fallback_accepted": false,
+    "candidate_evaluator_owner_private_siblings": true,
+    "preparing_state_blocks_consumers": true,
+    "evaluator_published_before_candidate": true,
+    "file_write_gateway_transactional_batches": true,
+    "durable_pair_reconstruction_before_commit": true,
+    "candidate_reader_opens_evaluator_custody": false,
+    "exact_artifact_inventory_required": true,
+    "interrupted_generation_recoverable": true,
+    "identical_concurrent_publishers_converge": true,
+    "tampered_committed_generation_overwritten": false,
+    "trainer_ready": false,
+    "training_authority": "none_quarantined_projection"
+  },
+  "source_files": [
+    {
+      "path": "config/aura_effect_ownership_baseline.json",
+      "line_count": 15159,
+      "sha256": "c6253819af785fc68867ca09fb34fdecf587e1c98a9fd8659ecc1d5fd6496682"
+    },
+    {
+      "path": "core/brain/latent_cortex_service.py",
+      "line_count": 4959,
+      "sha256": "0251d3e5998417afd208c4a03c826be95e49d9edc40536f8ef60d2666d315c86"
+    },
+    {
+      "path": "core/learning/verified_replay_sft_publication.py",
+      "line_count": 1007,
+      "sha256": "cae650253e1facca04c823830b47d89c2d8e29e2f74b369971c9eaede8d68d47"
+    },
+    {
+      "path": "core/memory/black_hole.py",
+      "line_count": 385,
+      "sha256": "cb7b4490ab7b26309a2dc9ae9f4f5c914ac1a1ed9a1badf17c03b6f1ed0ea28f"
+    },
+    {
+      "path": "core/memory/horcrux.py",
+      "line_count": 573,
+      "sha256": "d11a3aedd0328fa623051acfd66c3a3ba0eae4bcfd19aa18496a0f5ecf2d62c6"
+    },
+    {
+      "path": "core/runtime/atomic_writer.py",
+      "line_count": 473,
+      "sha256": "bcd8191da6522555a081f3da2bb3c6d0ac55e5b9f539d7ea14961801a81bdccb"
+    },
+    {
+      "path": "tests/test_black_hole_fail_closed.py",
+      "line_count": 265,
+      "sha256": "2f2003ec781a43a593ae87ec601e6b50e67a79e5713c9c6f233ad62bd65c485e"
+    },
+    {
+      "path": "tests/test_horcrux_hardening.py",
+      "line_count": 128,
+      "sha256": "e46179e192c9cea984979e9137070dd4d2bf6dac228514e8b4e64cbf599ee4cc"
+    },
+    {
+      "path": "tests/test_verified_replay_sft_publication.py",
+      "line_count": 580,
+      "sha256": "91c31ce080171c9b74cc9b4cbe974a4905801d8c4c13133df2f84d65567aedea"
+    },
+    {
+      "path": "tools/lint_governance.py",
+      "line_count": 1032,
+      "sha256": "190772422a24e55ec821198c76e9ae3df49f9c9d40c00a8da2c61b6027d4c051"
+    }
+  ],
+  "verification": {
+    "focused_and_service_compatibility": {
+      "passed": 42,
+      "failed": 0,
+      "duration_seconds": 9.03,
+      "scope": "final_post_tightening_key_custody_and_publication_surface"
+    },
+    "concurrent_first_publication_stress": {
+      "repetitions": 10,
+      "passed": 10,
+      "failed": 0
+    },
+    "broader_integrated": {
+      "passed": 239,
+      "failed": 0,
+      "duration_seconds": 496.66
+    },
+    "defect_discovered_and_retired": {
+      "pre_fix_broad_result": "236_passed_1_failed",
+      "failure": "first_publication_private_directory_mode_race",
+      "repair": "create_target_directory_with_mode_0700_before_first_visibility",
+      "post_fix_stress_passed": true,
+      "post_fix_broad_passed": true
+    },
+    "ruff": {
+      "passed": true,
+      "scope": "all_cp398_code_and_tests",
+      "existing_public_exception_name_compatibility_exemption": "N818:BlackHoleEncryptionUnavailable"
+    },
+    "python_bytecode_compile": "passed",
+    "git_diff_check": "passed",
+    "model_load_ownership": {
+      "passed": true,
+      "owned_paths": 47,
+      "load_references": 60,
+      "findings": 0
+    },
+    "governance_lint": {
+      "passed": true,
+      "baseline_matched": true,
+      "new_canonical_buckets": 4,
+      "migration_debt_calls_before": 1787,
+      "migration_debt_calls_after": 1787
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "cp398_path_findings": 0,
+      "baseline_raised": false
+    },
+    "semantic_review": {
+      "cp398_publisher_fully_reviewed": true,
+      "cp398_publication_tests_fully_reviewed": true,
+      "full_repository_semantic_review_current": false,
+      "semantic_code_review_coverage_ratio": 0.093758,
+      "fully_reviewed_code_files": 530,
+      "unreviewed_code_files": 4605,
+      "stale_review_receipts": 1149,
+      "orphan_review_receipts": 27
+    }
+  },
+  "explicit_non_claims": [
+    "externally signed privacy attestation",
+    "complete multisurface external contamination clearance",
+    "externally witnessed monotonic publication root",
+    "external producer verifier role separation",
+    "resident tokenizer validation of replay rows",
+    "externally rooted trainer authority",
+    "small checkpoint transfer gain",
+    "resident 32B training",
+    "reasoning gain",
+    "frontier performance",
+    "WOW Signal"
+  ],
+  "next_required_gates": [
+    "combined synthetic replay and evaluation lineage manifest",
+    "external privacy and multisurface contamination attestations",
+    "externally witnessed monotonic anti rollback head",
+    "resident tokenizer validation of committed replay candidate rows",
+    "externally rooted trainer admission and resumable receipt",
+    "small checkpoint transfer falsification",
+    "resident 32B equal compute ablations and independent promotion"
+  ],
+  "model_weights_touched": false,
+  "trainer_invoked": false,
+  "live_user_desktop_touched": false,
+  "multi_hour_soak_deferred": true
+}
