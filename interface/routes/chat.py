@@ -20319,18 +20319,74 @@ async def api_chat(
                         state="warming",
                     )
                 except _CHAT_RECOVERABLE_ERRORS as admission_exc:
-                    record_degradation("chat.conversation_lane_admission", admission_exc)
-                    admission_reason = str(admission_exc or "foreground_warmup_failed")
-                    hard_lane_failure = admission_reason.startswith(
-                        ("mlx_runtime_unavailable:", "local_runtime_unavailable:")
-                    ) or admission_reason in {
-                        "foreground_lane_unavailable",
-                        "runtime_shutdown",
-                    }
-                    lane = _mark_conversation_lane_state(
-                        admission_reason,
-                        state="failed" if hard_lane_failure else "recovering",
-                    )
+                    # Memory pressure is a "not yet", not a "no".
+                    #
+                    # Live 2026-07-27, mid-conversation:
+                    #   foreground_warmup_deferred:memory_pressure:70.2%/19.1GB
+                    #   (need <72.0% and >=20.0GB)
+                    # — short by under a gigabyte because another process on
+                    # the host was holding memory. The turn was refused in one
+                    # second, with the whole admission budget unspent.
+                    #
+                    # Same rule as the boot wait above: a condition that clears
+                    # on its own is worth waiting out. Retry inside the budget
+                    # already reserved for admission, and only report the
+                    # deferral if it is still true when that budget is gone.
+                    if _lane_warmup_is_deliberately_deferred(
+                        {"last_failure_reason": str(admission_exc or "")}
+                    ):
+                        retry_deadline = time.monotonic() + max(
+                            0.0, admission_budget - 2.0
+                        )
+                        logger.info(
+                            "⏳ Foreground lane deferred (%s); waiting up to %.0fs "
+                            "for it to clear rather than refusing the turn.",
+                            str(admission_exc)[:120],
+                            max(0.0, admission_budget - 2.0),
+                        )
+                        while time.monotonic() < retry_deadline:
+                            await asyncio.sleep(2.0)
+                            try:
+                                lane = dict(
+                                    await gate.ensure_foreground_ready(
+                                        timeout=max(
+                                            1.0, retry_deadline - time.monotonic()
+                                        )
+                                    )
+                                    or {}
+                                )
+                            except _CHAT_RECOVERABLE_ERRORS as retry_exc:
+                                admission_exc = retry_exc
+                                continue
+                            except TimeoutError:
+                                break
+                            if bool(lane.get("conversation_ready", False)):
+                                logger.info(
+                                    "✅ Foreground lane cleared its deferral mid-turn; "
+                                    "the turn proceeds normally."
+                                )
+                                admission_exc = None
+                                break
+                        if admission_exc is None:
+                            admission_reason = ""
+                            hard_lane_failure = False
+                    if admission_exc is not None:
+                        record_degradation(
+                            "chat.conversation_lane_admission", admission_exc
+                        )
+                        admission_reason = str(
+                            admission_exc or "foreground_warmup_failed"
+                        )
+                        hard_lane_failure = admission_reason.startswith(
+                            ("mlx_runtime_unavailable:", "local_runtime_unavailable:")
+                        ) or admission_reason in {
+                            "foreground_lane_unavailable",
+                            "runtime_shutdown",
+                        }
+                        lane = _mark_conversation_lane_state(
+                            admission_reason,
+                            state="failed" if hard_lane_failure else "recovering",
+                        )
 
             if admission_reason:
                 _live_turn_trace.update(
