@@ -44,7 +44,6 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     canonical_json_bytes,
     execution_spec_identity,
     small_model_identity,
-    source_closure,
     strict_json_bytes,
     validate_authority,
 )
@@ -128,6 +127,56 @@ def control_source_paths() -> dict[str, Path]:
             REPO_ROOT / "core/learning/recurrent_sft_execution.py"
         ),
     }
+
+
+def control_source_closure() -> dict[str, Any]:
+    """Bind exactly the control process's declared Aura-owned source roles."""
+
+    paths = control_source_paths()
+    expected_roles = {
+        "authority",
+        "control_trainer",
+        "containment_launcher",
+        "detached_supervisor",
+        "execution_spec",
+        "falsification",
+        "file_read_gateway",
+        "memory_guard",
+        "model_lane",
+        "recurrence_adapter",
+        "recurrence_identity",
+        "recurrence_objective",
+        "recurrent_sft_execution",
+    }
+    if set(paths) != expected_roles:
+        _fail("control_training_source_roles_invalid")
+    records: list[dict[str, Any]] = []
+    for role in sorted(expected_roles):
+        lexical = paths[role].expanduser()
+        if lexical.is_symlink():
+            _fail("control_training_source_symlink_rejected")
+        try:
+            path = lexical.resolve(strict=True)
+        except OSError as exc:
+            raise RecurrentSFTControlTrainingError(
+                "control_training_source_unreadable"
+            ) from exc
+        if not path.is_file():
+            _fail("control_training_source_file_invalid")
+        payload = read_stable_bytes(path, max_bytes=_MAX_DOCUMENT_BYTES)
+        records.append(
+            {
+                "role": role,
+                "path": str(path),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        )
+    body = {
+        "schema": "aura.rlc.synthetic_recurrent_sft_control_source_closure.v1",
+        "files": records,
+    }
+    return {**body, "closure_sha256": sha256_json(body)}
 
 
 def _is_sha256(value: Any) -> bool:
@@ -366,7 +415,7 @@ def _run(arguments: argparse.Namespace) -> int:
     model_identity = small_model_identity(arguments.model_dir)
     if model_identity != authority["model"]:
         _fail("control_training_model_identity_drift")
-    sources = source_closure(control_source_paths())
+    sources = control_source_closure()
     if sources["closure_sha256"] != arguments.expected_source_closure_sha256:
         _fail("control_training_source_closure_drift")
 

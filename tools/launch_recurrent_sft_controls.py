@@ -23,7 +23,6 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     canonical_json_bytes,
     execution_spec_identity,
     small_model_identity,
-    source_closure,
     strict_json_bytes,
     validate_authority,
 )
@@ -37,7 +36,7 @@ from tools.launch_structured_sft_research import (  # noqa: E402
     SANDBOX_PATH,
     build_sandbox_profile,
 )
-from tools.train_recurrent_sft_controls import control_source_paths  # noqa: E402
+from tools.train_recurrent_sft_controls import control_source_closure  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.rlc.synthetic_recurrent_sft_control_containment.v1"
 RESULT_SCHEMA = "aura.rlc.synthetic_recurrent_sft_control_operator.v1"
@@ -309,7 +308,7 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         != authority["execution_spec"]
     ):
         _fail("control_containment_model_or_execution_drift")
-    sources = source_closure(control_source_paths())
+    sources = control_source_closure()
 
     contract_dir = _private_directory(arguments.contract_dir, role="contract")
     output_dir = _private_directory(arguments.output_dir, role="output")

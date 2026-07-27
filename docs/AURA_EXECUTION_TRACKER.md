@@ -25328,6 +25328,28 @@ records, or approximately 70.9%-100.0% checkpoint completion with an 85.4%
 midpoint. Final multi-hour soaks remain deferred until every shorter gate is
 green.
 
+### 2026-07-27 - CP409 control source-closure prepare repair
+
+The first real CP408 prepare attempt failed closed before creating contract or
+output directories, loading a model, or running an optimizer. The original
+structured-SFT authority closure deliberately accepts only its fixed original
+trainer roles, so attempting to pass the new control process's 13 roles through
+it returned `structured_sft_research_source_roles_invalid`.
+
+The repair does not weaken that authority allowlist. Control training now owns
+a separate versioned closure with exactly 13 permitted roles. It rejects
+missing, extra, symlinked, non-file, unreadable, or changed sources and
+canonical-hashes each role, resolved path, size, and file bytes. Launcher and
+target independently reconstruct the same closure before model load. The
+focused source-closure and containment repair suite passes 15/15; strict Ruff,
+bytecode compilation, and diff hygiene pass.
+
+This is a provenance repair, not a control result. Counting CP409 makes 653
+total checkpoints. The 653-920 forecast leaves 0-267 records, or approximately
+71.0%-100.0% checkpoint completion with an 85.5% midpoint. Real contained
+control execution and evaluator-only scoring remain open; no capability claim
+changes.
+
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 
 Branch roles are no longer labels that seed different vectors and then run the

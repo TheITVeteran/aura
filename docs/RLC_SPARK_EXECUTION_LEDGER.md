@@ -3384,6 +3384,21 @@ before those dependencies close is not admissible.
   CP408 freezes executable evidence infrastructure only. The three control
   adapters have not yet been trained, evaluator custody has not opened, and no
   transfer or capability claim changes.
+
+  CP409 preserves and repairs the first real CP408 prepare rejection. The
+  existing structured-SFT `source_closure()` is intentionally closed over the
+  original trainer's fixed role set; reusing it for the new 13-role control
+  process failed with `structured_sft_research_source_roles_invalid`. The
+  failure happened before contract or output directory creation, model load,
+  or optimizer work.
+
+  The control path now owns a separate strict closure schema and exact role
+  allowlist. It rejects missing, extra, symlinked, non-file, unreadable, or
+  changed sources and hashes role, resolved path, size, and bytes in canonical
+  order. The original authority closure remains unchanged rather than being
+  broadened to admit unrelated roles. The targeted closure and containment
+  repair suite passes 15/15; strict Ruff, bytecode compilation, and diff
+  hygiene pass. Real prepare and execution remain open.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

@@ -168,3 +168,18 @@ def test_tensor_fingerprint_binds_name_shape_dtype_and_values() -> None:
     assert baseline != controls._tensor_fingerprint(
         {"other.lora_a": np.asarray([[1.0, 2.0]], dtype=np.float32)}
     )
+
+
+def test_control_source_closure_is_exact_and_hash_bound() -> None:
+    closure = controls.control_source_closure()
+    assert closure["schema"].endswith("control_source_closure.v1")
+    assert len(closure["files"]) == 13
+    assert [row["role"] for row in closure["files"]] == sorted(
+        row["role"] for row in closure["files"]
+    )
+    assert closure["closure_sha256"] == sha256_json(
+        {
+            "schema": closure["schema"],
+            "files": closure["files"],
+        }
+    )
