@@ -5955,6 +5955,47 @@ def _build_live_turn_contract_payload(
     }
 
 
+
+# Whether the full-mind contract failed because the answer was not hers, or
+# because it was hers and something ancillary was soft.
+#
+# Measured live 2026-07-27, twice in one conversation. The cortex produced a
+# real 199-character answer; the quality pass marked confidence "degraded"
+# because she had recently said something similar; the full-mind gate requires
+# confidence == "high", so her answer was thrown away and replaced with "I
+# couldn't get my full attention onto that one". Which then became the previous
+# answer, making the NEXT turn look repetitive too.
+#
+# That is this codebase's most expensive recurring bug: a good answer produced,
+# discarded by a gate, and reported to the user as an infrastructure failure.
+# The gate is right about theatre — bounded-repair text and legacy fallbacks
+# must never speak in her voice — and wrong about her own words. So the two
+# cases are separated: authorship proofs stay fail-closed, and a soft
+# confidence reading is disclosed instead of substituted.
+_SOFT_FULL_MIND_PROOF_PREFIXES: tuple[str, ...] = ("confidence:",)
+
+
+def _only_soft_proofs_missing(contract: Any) -> bool:
+    """True when the text is genuinely hers and only confidence came back soft."""
+    if not isinstance(contract, dict):
+        return False
+    missing = [str(item or "") for item in (contract.get("full_mind_missing_proofs") or [])]
+    if not missing:
+        return False
+    if not all(
+        item.startswith(_SOFT_FULL_MIND_PROOF_PREFIXES) for item in missing
+    ):
+        return False
+    # Authorship is never waived: she has to have thought it and said it.
+    return bool(
+        contract.get("engine_think_invoked")
+        and contract.get("cognitive_engine_reply_accepted")
+        and not contract.get("cognitive_engine_reply_failed")
+        and not contract.get("bounded_contract_used")
+        and not contract.get("legacy_fallback_used")
+    )
+
+
 def _bounded_text(value: Any, limit: int = 1200) -> str:
     text = " ".join(str(value or "").split())
     if len(text) > limit:
@@ -21577,10 +21618,21 @@ async def api_chat(
                 },
                 status_code=503,
             )
-        if (
-            desktop_requires_cognitive_engine
-            and not bool(final_live_turn_contract.get("full_mind_path"))
-        ):
+        _full_mind_unproven = desktop_requires_cognitive_engine and not bool(
+            final_live_turn_contract.get("full_mind_path")
+        )
+        if _full_mind_unproven and _only_soft_proofs_missing(final_live_turn_contract):
+            # Same treatment the regenerate, recovery and candidate gates already
+            # give an authentic reply: serve it, say the proof was soft, never
+            # replace her own words with an apology.
+            logger.warning(
+                "Desktop reply served with DEGRADED full-mind proof (her own text; "
+                "missing: %s).",
+                ",".join(final_live_turn_contract.get("full_mind_missing_proofs") or ())
+                or "unknown",
+            )
+            _full_mind_unproven = False
+        if _full_mind_unproven:
             logger.warning(
                 "⚠️ Required desktop full-mind contract was not proven; failing "
                 "closed instead of serving partial/raw speech (path=%s).",
