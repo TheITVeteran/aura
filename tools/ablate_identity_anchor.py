@@ -131,16 +131,26 @@ def load_sections() -> dict[str, str]:
     return {name: body for name, body in sections.items() if body}
 
 
-def ask(base_url: str, message: str, *, session: str, timeout: float) -> Reply:
+def ask(
+    base_url: str,
+    message: str,
+    *,
+    session: str,
+    timeout: float,
+    ablate: str = "",
+) -> Reply:
     payload = json.dumps({"message": message, "session_id": session}).encode()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Aura-Surface": "desktop-ui",
+        "X-Aura-Require-CognitiveEngine": "true",
+    }
+    if ablate:
+        # Per request, not per process: the runtime keeps serving normally
+        # while the battery runs.
+        headers["X-Aura-Ablate-Identity-Section"] = ablate
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/api/chat",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "X-Aura-Surface": "desktop-ui",
-            "X-Aura-Require-CognitiveEngine": "true",
-        },
+        f"{base_url.rstrip('/')}/api/chat", data=payload, headers=headers
     )
     started = time.monotonic()
     try:
@@ -162,6 +172,7 @@ def run_battery(
     label: str,
     repeats: int,
     timeout: float,
+    ablate: str = "",
 ) -> list[Reply]:
     replies: list[Reply] = []
     for name, probe in PROBES:
@@ -171,6 +182,7 @@ def run_battery(
                 probe,
                 session=f"ablation-{label}-{name}-{index}",
                 timeout=timeout,
+                ablate=ablate,
             )
             reply.probe = name
             replies.append(reply)
@@ -213,13 +225,14 @@ def main() -> int:
     results: list[SectionResult] = []
     for name in targets:
         print(f"ablating {name} …", flush=True)
-        # The runtime reads AURA_ABLATE_SECTION per turn, so no restart is
-        # needed and no file is edited. See aura_persona.identity_text().
+        # Sent as a per-request header, so no restart is needed, no file is
+        # edited, and the runtime keeps serving normal turns while this runs.
         ablated = run_battery(
             args.base_url,
             label=f"without-{name}",
             repeats=args.repeats,
             timeout=args.timeout,
+            ablate=name,
         )
         results.append(
             SectionResult(

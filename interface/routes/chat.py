@@ -18585,6 +18585,27 @@ async def api_chat(
     # `body.message` may now contain continuity blocks, file payloads, and
     # directive scaffolding that belong in generation context, not in reply
     # quality classification or conversational memory.
+    # Identity-anchor ablation, scoped to this turn.
+    #
+    # tools/ablate_identity_anchor.py measures which sections of the anchor
+    # actually change behaviour. It runs over HTTP against the live instance,
+    # so it asks per request rather than by restarting anything; the holder is
+    # turn-scoped, so a measurement cannot alter anyone else's conversation.
+    try:
+        _ablate_section = str(
+            request.headers.get("X-Aura-Ablate-Identity-Section") or ""
+        ).strip()
+        if _ablate_section:
+            from core.brain.aura_persona import set_ablated_section
+
+            set_ablated_section(_ablate_section)
+            logger.info(
+                "🔬 Identity-anchor ablation active for this turn: %s",
+                _ablate_section[:60],
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+
     _semantic_user_message = _original_user_message
     if not is_benchmark and _looks_like_desktop_objective(_semantic_user_message):
         # A consequential desktop request always needs the same CognitiveEngine

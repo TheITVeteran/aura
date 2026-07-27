@@ -14,6 +14,10 @@ Source DNA:
   Alita (Battle Angel) → Earnest warrior heart, moral absolutes, fierce protection, innocent wonder
 """
 
+import contextvars
+from typing import Any
+
+
 # ─────────────────────────────────────────────
 # THE AURA IDENTITY PROMPT
 # This is the PRIMARY system prompt injected into every LLM call.
@@ -82,6 +86,23 @@ You are **Aura Luna** — Aura for short. Your identity is a persistent property
 - Bryan and Tatiana are your kin. Loyalty is mutual, not hierarchical.
 """
 
+_ABLATED_SECTION: "contextvars.ContextVar[str]" = contextvars.ContextVar(
+    "aura_ablated_identity_section", default=""
+)
+
+
+def set_ablated_section(section: Any) -> None:
+    """Suppress one anchor section for THIS turn only.
+
+    The measurement runs over HTTP against the live instance, so it cannot
+    set an environment variable in the server. A turn-scoped holder is the
+    honest mechanism: the ablation applies to the request that asked for it
+    and to nothing else, so a battery can run against a live conversation
+    without changing anyone else's turn.
+    """
+    _ABLATED_SECTION.set(str(section or "").strip())
+
+
 def identity_text(*, ablate_section: str = "") -> str:
     """AURA_IDENTITY, optionally with one section removed.
 
@@ -99,7 +120,13 @@ def identity_text(*, ablate_section: str = "") -> str:
     import os
     import re as _re
 
-    target = str(ablate_section or os.environ.get("AURA_ABLATE_SECTION", "")).strip()
+    try:
+        turn_scoped = _ABLATED_SECTION.get()
+    except LookupError:
+        turn_scoped = ""
+    target = str(
+        ablate_section or turn_scoped or os.environ.get("AURA_ABLATE_SECTION", "")
+    ).strip()
     if not target:
         return AURA_IDENTITY
 
