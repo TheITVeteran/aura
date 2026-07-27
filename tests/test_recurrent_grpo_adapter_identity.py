@@ -24,6 +24,7 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     MANIFEST_FILE,
     VERIFIED_IDENTITY_RECEIPT_SCHEMA,
     RecurrentGRPOAdapterIdentityError,
+    recurrent_policy_sha256_from_safetensors,
     sha256_bytes,
     validate_recurrent_grpo_adapter_identity_with_verified_transitions,
 )
@@ -32,6 +33,7 @@ from core.learning import (
 )
 from core.learning.grpo import GRPOConfig, group_advantages
 from core.learning.grpo_training_state import canonical_json_bytes as training_json_bytes
+from core.learning.recurrent_grpo import recurrent_policy_sha256
 from tests.fixtures.rlc_runtime_integrity import engine_runtime_integrity
 from tools import prepare_latent_cortex_campaign as preparation
 from tools.train_grpo import (
@@ -65,6 +67,27 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _verified_training_evidence(base_identity: dict) -> dict:
+    material = {
+        "schema": "aura.verified_transition.training_evidence.v1",
+        "campaign_receipt_sha256": "a" * 64,
+        "campaign_manifest_sha256": "b" * 64,
+        "updated_sequences": [0],
+        "group_admission_sha256s": ["c" * 64],
+        "update_receipt_sha256s": ["d" * 64],
+        "objective_receipt_sha256s": ["e" * 64],
+        "optimizer_update_count": 1,
+        "initial_policy_sha256": "f" * 64,
+        "final_policy_sha256": base_identity["final_policy_sha256"],
+        "source_artifacts_replayed": True,
+        "legacy_scalar_reward_path_used": False,
+    }
+    return {
+        **material,
+        "receipt_sha256": sha256_bytes(canonical_json_bytes(material)),
+    }
+
+
 def _fixture(
     tmp_path: Path,
     *,
@@ -91,6 +114,10 @@ def _fixture(
             f"{projection}.lora_a": mx.zeros((4, 2)),
             f"{projection}.lora_b": mx.ones((2, 4)),
         },
+    )
+    frozen_policy_sha256 = recurrent_policy_sha256_from_safetensors(
+        (out / "grpo_adapters.safetensors").read_bytes(),
+        execution_spec_sha256=spec.sha256,
     )
     sources = {}
     source_paths = {}
@@ -248,7 +275,7 @@ def _fixture(
         advantage_report=advantage,
         step_kind="optimizer_update",
         update={"schema": "aura.recurrent_grpo.v1", "has_gradient": True},
-        policy_after_sha256="5" * 64,
+        policy_after_sha256=frozen_policy_sha256,
         trajectory_credit_enabled=trajectory_credit,
         trajectory_shaping_weight=0.25,
         advantage_clip=4.0,
@@ -362,22 +389,59 @@ def test_recurrent_grpo_bundle_is_complete_distinct_and_idempotent(tmp_path):
     assert _validate(fixture) == identity
 
 
+@pytest.mark.parametrize("dtype_name", ["float32", "float16", "bfloat16"])
+def test_frozen_policy_hash_matches_live_mlx_tensor_tree(tmp_path, dtype_name):
+    mx = pytest.importorskip("mlx.core")
+    from mlx.utils import tree_flatten
+
+    spec = RLCExecutionSpec(
+        n_slots=2,
+        branch_roles=("constructive_solution",),
+        recurrent_steps=2,
+        adaptive_halting=False,
+        latent_opt_mode="disabled",
+        fast_weights_mode="disabled",
+        decode_bridge_policy="none",
+    )
+
+    class Model:
+        def __init__(self) -> None:
+            dtype = getattr(mx, dtype_name)
+            self.parameters = {
+                "model": {
+                    "layers": [
+                        {
+                            "self_attn": {
+                                "o_proj": {
+                                    "lora_a": mx.array([[0.25, -0.5]], dtype=dtype),
+                                    "lora_b": mx.array([[1.5], [-2.0]], dtype=dtype),
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+
+        def trainable_parameters(self):
+            return self.parameters
+
+    model = Model()
+    path = tmp_path / f"{dtype_name}.safetensors"
+    mx.save_safetensors(str(path), dict(tree_flatten(model.trainable_parameters())))
+
+    assert recurrent_policy_sha256_from_safetensors(
+        path.read_bytes(),
+        execution_spec_sha256=spec.sha256,
+    ) == recurrent_policy_sha256(model, spec)
+
+
 def test_verified_identity_requires_source_replay_and_cross_binds_final_policy(
     monkeypatch,
+    tmp_path,
 ):
-    base_identity = {
-        "schema": IDENTITY_RECEIPT_SCHEMA,
-        "composite_identity_sha256": "1" * 64,
-        "optimizer_updates": 3,
-        "final_policy_sha256": "2" * 64,
-    }
-    evidence = {
-        "receipt_sha256": "3" * 64,
-        "source_artifacts_replayed": True,
-        "legacy_scalar_reward_path_used": False,
-        "optimizer_update_count": 3,
-        "final_policy_sha256": "2" * 64,
-    }
+    fixture = _fixture(tmp_path)
+    base_identity = fixture["identity"]
+    evidence = _verified_training_evidence(base_identity)
     monkeypatch.setattr(
         identity_runtime,
         "validate_recurrent_grpo_adapter_identity",
@@ -405,9 +469,14 @@ def test_verified_identity_requires_source_replay_and_cross_binds_final_policy(
 
     assert result["proof_grade_mutation"] is True
     assert result["legacy_scalar_reward_path_used"] is False
-    assert result["verified_transition_evidence_sha256"] == "3" * 64
+    assert result["verified_transition_evidence_sha256"] == evidence["receipt_sha256"]
+    assert result["base_identity"] == base_identity
 
+    evidence = _verified_training_evidence(base_identity)
     evidence["final_policy_sha256"] = "4" * 64
+    unsigned = dict(evidence)
+    unsigned.pop("receipt_sha256")
+    evidence["receipt_sha256"] = sha256_bytes(canonical_json_bytes(unsigned))
     with pytest.raises(
         RecurrentGRPOAdapterIdentityError,
         match="verified_transition_identity_cross_binding_mismatch",
@@ -536,6 +605,22 @@ def test_recurrent_grpo_identity_rejects_rebound_unadmitted_behavior(tmp_path):
         _validate(fixture)
 
 
+def test_recurrent_grpo_identity_rejects_receipt_policy_not_in_frozen_tensors(tmp_path):
+    fixture = _fixture(tmp_path)
+    _rebind_receipt(
+        fixture,
+        lambda receipt: receipt["step_receipts"][0].update(
+            {"policy_after_sha256": "0" * 64}
+        ),
+    )
+
+    with pytest.raises(
+        RecurrentGRPOAdapterIdentityError,
+        match="final_policy_adapter_mismatch",
+    ):
+        _validate(fixture)
+
+
 def test_recurrent_grpo_identity_rejects_runtime_or_model_substitution(tmp_path):
     fixture = _fixture(tmp_path)
     wrong_base = copy.deepcopy(fixture["base"])
@@ -581,20 +666,40 @@ def test_recurrent_grpo_bundle_freezes_and_verifies_without_unplanned_files(tmp_
     assert (destination / "campaign_adapter/adapters.safetensors").exists()
 
 
-def test_verified_recurrent_grpo_identity_freezes_only_with_proof_fields(tmp_path):
+def test_verified_recurrent_grpo_identity_freezes_only_with_proof_fields(
+    tmp_path,
+    monkeypatch,
+):
     fixture = _fixture(tmp_path)
     source = fixture["out"]
     staging = tmp_path / ".verified-freeze.staging"
     destination = tmp_path / "verified-freeze"
     inventory = preparation.copy_adapter_snapshot(source, staging)
-    identity = {
-        **fixture["identity"],
-        "schema": VERIFIED_IDENTITY_RECEIPT_SCHEMA,
-        "base_identity_sha256": fixture["identity"]["composite_identity_sha256"],
-        "verified_transition_evidence_sha256": "9" * 64,
-        "proof_grade_mutation": True,
-        "legacy_scalar_reward_path_used": False,
-    }
+    evidence = _verified_training_evidence(fixture["identity"])
+    monkeypatch.setattr(
+        identity_runtime,
+        "validate_recurrent_grpo_adapter_identity",
+        lambda *_args, **_kwargs: dict(fixture["identity"]),
+    )
+    monkeypatch.setattr(
+        transition_evidence_runtime,
+        "validate_verified_transition_training_evidence",
+        lambda *_args, **_kwargs: dict(evidence),
+    )
+    identity = validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+        b"{}",
+        adapter_id=fixture["adapter_id"],
+        actual_base_checkpoint={},
+        actual_model_behavior_bundle={},
+        actual_personality_adapter={},
+        actual_runtime_environment={},
+        artifacts={},
+        tensor_metadata=(),
+        transition_campaign_ledger=object(),
+        transition_policy=object(),
+        transition_groups=(object(),),
+    )
+    monkeypatch.undo()
     model_identity = {
         "fingerprint": "1" * 64,
         "files": 1,
@@ -617,8 +722,8 @@ def test_verified_recurrent_grpo_identity_freezes_only_with_proof_fields(tmp_pat
     assert verified["identity_receipt"]["schema"] == VERIFIED_IDENTITY_RECEIPT_SCHEMA
     assert verified["identity_receipt"]["proof_grade_mutation"] is True
 
-    incomplete = dict(identity)
-    incomplete.pop("verified_transition_evidence_sha256")
+    incomplete = copy.deepcopy(identity)
+    incomplete["verified_transition_evidence"]["final_policy_sha256"] = "0" * 64
     with pytest.raises(CampaignLaunchBundleError, match="adapter_identity_receipt_invalid"):
         build_adapter_freeze_certificate(
             adapter_id=fixture["adapter_id"],

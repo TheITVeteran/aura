@@ -35,6 +35,7 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
 from core.learning import recurrent_grpo as recurrent_grpo_runtime
 from core.learning import verified_transition_episode as transition_runtime
 from core.learning import verified_transition_reward as reward_runtime
+from core.learning import verified_transition_training_evidence as training_evidence_runtime
 from core.learning import verified_transition_update as update_runtime
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignError,
@@ -113,6 +114,24 @@ from tools.independent_paired_campaign_scoring import (
 PROTOCOL_SHA256 = "9" * 64
 OBSERVED_AT = 1_800_000_300
 PASS_0_AT = 1_800_000_210_000_000_000
+
+
+def _exact_objective_receipt() -> dict[str, Any]:
+    return {
+        "schema": recurrent_grpo_runtime.RECURRENT_GRPO_SCHEMA,
+        "mode": "exact_adjoint_single_update",
+        "advantage_report": {"schema": "aura.test.advantage.v1"},
+        "reference_kl": 0.0,
+        "old_policy_approx_kl": 0.0,
+        "clip_fraction": 0.0,
+        "policy_loss": -0.125,
+        "objective_at_sampling": -0.125,
+        "gradient_surrogate_value": -0.125,
+        "completion_count": 2,
+        "token_count": 2,
+        "branch_indices": [0, 1],
+        "has_gradient": True,
+    }
 PASS_1_AT = 1_800_000_215_000_000_000
 VERIFIER_AT = 1_800_000_221_000_000_000
 RUNNER_AT = 1_800_000_222
@@ -2046,7 +2065,7 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
 
         @staticmethod
         def receipt() -> dict[str, Any]:
-            return {"schema": "aura.test.objective.v1", "loss_micros": 125_000}
+            return _exact_objective_receipt()
 
     model = Model()
     optimizer = Optimizer()
@@ -2139,6 +2158,25 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     assert training_evidence["optimizer_update_count"] == 1
     assert training_evidence["final_policy_sha256"] == policy_after
 
+    objective_path = tmp_path / "updates" / f"{admission_sha256}.objective.json"
+    objective_bytes = objective_path.read_bytes()
+    tampered_objective = json.loads(objective_bytes)
+    tampered_objective["objective_receipt"]["policy_loss"] = -0.5
+    objective_path.write_bytes(
+        json.dumps(
+            tampered_objective,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("ascii")
+    )
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_objective_digest_mismatch",
+    ):
+        validate_verified_transition_update_receipt(journal, receipt)
+    objective_path.write_bytes(objective_bytes)
+
     forged = _reseal(
         {
             **receipt,
@@ -2182,6 +2220,105 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     assert optimizer.update_count == 1
 
 
+def test_training_evidence_rejects_admission_for_a_different_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admission = {
+        "receipt_sha256": _sha("admission-policy-a"),
+        "policy_sha256": _sha("policy-a"),
+    }
+    update = {
+        "receipt_sha256": _sha("update-policy-b"),
+        "group_admission_sha256": admission["receipt_sha256"],
+        "objective_receipt_sha256": _sha("objective-policy-b"),
+        "policy_before_sha256": _sha("policy-b"),
+        "policy_after_sha256": _sha("policy-c"),
+    }
+
+    class Ledger:
+        @staticmethod
+        def validate_closed(*, policy: Any) -> dict[str, Any]:
+            del policy
+            return {
+                "receipt_sha256": _sha("closed-campaign"),
+                "close_payload": {
+                    "campaign_manifest_sha256": _sha("campaign-manifest"),
+                    "group_statuses": ["updated"],
+                    "updated_count": 1,
+                },
+            }
+
+        @staticmethod
+        def group_records(*, sequence: int, policy: Any) -> tuple[dict, dict]:
+            del policy
+            assert sequence == 0
+            return {"group_manifest": {}}, {
+                "status": "updated",
+                "group_admission_sha256": admission["receipt_sha256"],
+                "update_receipt_sha256": update["receipt_sha256"],
+            }
+
+    monkeypatch.setattr(
+        training_evidence_runtime,
+        "validate_verified_transition_group_admission",
+        lambda *_args, **_kwargs: admission,
+    )
+    monkeypatch.setattr(
+        training_evidence_runtime,
+        "validate_verified_transition_update_receipt",
+        lambda *_args, **_kwargs: update,
+    )
+    group = VerifiedTransitionReplayGroup(
+        sequence=0,
+        transition_store=object(),
+        group_admission_receipt={},
+        reward_receipt={},
+        transition_evidence=(),
+        samples=(),
+        prompt_tokens=(),
+        group_manifest={},
+        group_manifest_attestation={},
+        independent_scorer=lambda *_args: {},
+        token_encoder=lambda _value: (),
+        token_decoder=lambda _value: b"",
+        update_journal=object(),
+        update_receipt={},
+    )
+
+    with pytest.raises(
+        training_evidence_runtime.VerifiedTransitionTrainingEvidenceError,
+        match="verified_training_group_source_binding_mismatch",
+    ):
+        validate_verified_transition_training_evidence(
+            Ledger(),
+            policy=object(),
+            groups=(group,),
+        )
+
+
+def test_group_records_returns_validated_snapshot_without_post_validation_reread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = {"receipt_sha256": _sha("snapshot-start")}
+    terminal = {"receipt_sha256": _sha("snapshot-terminal"), "status": "updated"}
+    close = {
+        "close_payload": {"group_count": 1},
+    }
+    ledger = object.__new__(VerifiedTransitionCampaignLedger)
+    monkeypatch.setattr(
+        VerifiedTransitionCampaignLedger,
+        "_validate_closed_snapshot",
+        lambda _self, *, policy: (close, ((start, terminal),)),
+    )
+    monkeypatch.setattr(
+        VerifiedTransitionCampaignLedger,
+        "_read",
+        lambda *_args, **_kwargs: pytest.fail("post-validation record reread"),
+    )
+
+    assert ledger.group_records(sequence=0, policy=object()) == (start, terminal)
+
+
 def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
     transition_outcome_episodes: dict[str, dict[str, Any]],
     tmp_path: Path,
@@ -2205,7 +2342,7 @@ def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
 
         @staticmethod
         def receipt() -> dict[str, Any]:
-            return {"schema": "aura.test.objective.v1"}
+            return _exact_objective_receipt()
 
     model = Model()
     optimizer = Optimizer()
@@ -2265,19 +2402,23 @@ def test_durable_commit_recovers_update_receipt_and_campaign_terminal(
     admission_sha256 = material["admission"]["receipt_sha256"]
     policy_before = material["admission"]["policy_sha256"]
     policy_after = _sha("recovered-policy-after")
-    objective_sha256 = _sha("recovered-objective")
     journal = VerifiedTransitionUpdateJournal.open(tmp_path / "recovery-updates")
     reservation = journal.reserve(
         admission_sha256=admission_sha256,
         policy_before_sha256=policy_before,
         reserved_at_unix_ns=1_800_000_225_000_000_000,
     )
+    objective = journal.record_objective(
+        admission_sha256=admission_sha256,
+        objective_receipt=_exact_objective_receipt(),
+    )
     journal.commit(
         admission_sha256=admission_sha256,
         reservation_sha256=reservation["receipt_sha256"],
         policy_before_sha256=policy_before,
         policy_after_sha256=policy_after,
-        objective_receipt_sha256=objective_sha256,
+        objective_record_sha256=objective["receipt_sha256"],
+        objective_receipt_sha256=objective["objective_receipt_sha256"],
         committed_at_unix_ns=1_800_000_226_000_000_000,
     )
     campaign = _open_transition_campaign(

@@ -1,0 +1,66 @@
+{
+  "schema": "aura.spark.cp420f_verified_transition_proof_repair_evidence.v1",
+  "checkpoint": "CP420F",
+  "date": "2026-07-27",
+  "source_base_commit": "8f180aa30ce76730143ab20195226b2f3baa59f2",
+  "supersedes": {
+    "checkpoint": "CP420E",
+    "reason": "adversarial review found four proof-boundary defects"
+  },
+  "claims": {
+    "campaign_group_replay_uses_exact_validated_snapshot": true,
+    "campaign_open_record_seal_replayed": true,
+    "admission_policy_bound_to_update_policy_before": true,
+    "objective_receipt_durably_persisted_before_mutation": true,
+    "objective_receipt_replayed_from_create_once_journal": true,
+    "frozen_adapter_policy_hash_recomputed_from_tensor_bytes": true,
+    "verified_identity_exact_schema_and_composite_replayed": true,
+    "frozen_grpo_base_identity_rebuilt_from_immutable_artifacts": true,
+    "fabricated_verified_identity_rejected": true
+  },
+  "source_sha256": {
+    "core/brain/llm/latent_cortex/campaign_launch_bundle.py": "3dce7f24124f69b4b313afe1597452fbe84e1dbfd182ad170061e998f30ad2eb",
+    "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py": "1efd85835a4f26a2c8ebbb13baf5d7a0c15731b55b56840edd4bcad407d515ee",
+    "core/learning/verified_transition_campaign.py": "6473ea6155455d77655fea0ca829a46b64c71c083e7bb08645d10f3faefb9aef",
+    "core/learning/verified_transition_training_evidence.py": "a478940376f63094497211a78e388ee627b6b7c36899f1b2d0c6c5c896e4c238",
+    "core/learning/verified_transition_update.py": "4e3d9ccf2a76c9e396c18c59f39dca9511a716b5ef223af06575316a2ad72d2e",
+    "tests/test_recurrent_grpo_adapter_identity.py": "cef6bb6c59a85b19abb7132f3c8fc4b0f4998754975242f002e2956caea0d5d9",
+    "tests/test_verified_transition_episode.py": "57e4d743de415fa78eb5f1fbbebfe65e7872b0d9e8492f1df415fa7cd0b6c4e3"
+  },
+  "validation": {
+    "integrated_transition_identity_freeze_and_f8_objective_matrix": {
+      "passed": 147,
+      "failed": 0,
+      "duration_seconds": 77.81
+    },
+    "frozen_policy_dtype_parity": {
+      "passed": 3,
+      "failed": 0,
+      "dtypes": ["float32", "float16", "bfloat16"]
+    },
+    "governance_effect_ownership": {
+      "status": "inherited_baseline_drift",
+      "regressions": 4,
+      "introduced_by_cp420f": 0,
+      "source_commit": "c0f68fc746273c5c4207e04669adb19797917869"
+    },
+    "ruff": "pass",
+    "compileall": "pass",
+    "diff_hygiene": "pass"
+  },
+  "nonclaims": {
+    "exclusive_production_mutation_path": false,
+    "legacy_trainer_bypass_removed": false,
+    "model_loaded": false,
+    "model_trained": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false
+  },
+  "next": [
+    "replace the trainer raw recurrent mutation route with the verified campaign transaction",
+    "run a fresh sealed small-checkpoint campaign through the repaired proof boundary",
+    "accept independently implemented SPARK-061 and SPARK-062 only after integration review"
+  ]
+}

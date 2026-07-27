@@ -30679,3 +30679,46 @@ CP420E makes 670 total checkpoints. The evidence-adjusted planning range is
 5-10 checkpoints to resident-32B training launch, 9-16 to a defensible
 preliminary live gain verdict, and 15-26 to a powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420F adversarial repair of CP420E proof custody
+
+CP420E's source-replay implementation was not accepted on its positive-path
+tests alone. Adversarial review found four P1 defects: a relabeled ordinary
+identity could pass as proof-grade, the campaign receipt was not independently
+bound to the frozen adapter tensors, the first update policy was not anchored
+to its admission, and `group_records()` reread records after validation.
+CP420F supersedes those affected CP420E claims rather than hiding the failed
+review.
+
+Campaign replay now returns the exact start/terminal objects whose seals,
+signatures, ordering, and close bindings were validated, with no
+validation-to-use reread. Each admission policy must equal its update's
+immediate pre-mutation policy. The exact-adjoint objective receipt is validated
+and durably published before mutation, then independently reread and bound by
+the commit and final update receipt. Crash recovery now requires that durable
+objective record instead of accepting a caller-supplied objective digest.
+
+The adapter identity boundary independently parses the frozen safetensors,
+reconstructs the same recurrent-policy digest used on the live trainable tensor
+tree, and requires it to equal the terminal update policy. A proof-grade
+identity embeds the complete ordinary identity and sealed transition replay
+receipt behind an exact schema and reconstructable composite digest. Freeze
+verification rebuilds the ordinary GRPO identity from the immutable manifest,
+artifacts, tensor metadata, and tensor bytes before accepting either ordinary
+or proof-grade GRPO identity.
+
+The integrated transition, identity, freeze, progressive-objective, and
+auxiliary-curriculum matrix passes 147/147 in 77.81 seconds. Three live-MLX
+parity checks prove identical float32, float16, and bfloat16 policy hashes.
+Ruff, compilation, and diff hygiene pass. Direct regressions cover all four
+review findings. Evidence is
+`artifacts/current/cp420f_verified_transition_proof_repair_evidence.json`.
+
+CP420 and SPARK-060 remain open for exclusive trainer mutation. F8's
+SPARK-061/062 implementation has landed, but its own evidence correctly leaves
+both checkboxes open until a resident treatment measures the progressive
+objective and each auxiliary term's gradient. No model or capability result is
+claimed. Counting CP420F makes 671 total checkpoints. The recalibrated planning
+range is 3-8 checkpoints to resident-32B training launch, 7-14 to a defensible
+preliminary live gain verdict, and 13-24 to a powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

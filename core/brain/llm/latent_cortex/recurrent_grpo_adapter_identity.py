@@ -112,6 +112,121 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _safetensors_tensors(
+    payload: bytes,
+) -> tuple[tuple[str, str, list[int], bytes], ...]:
+    import numpy as np
+
+    if not isinstance(payload, bytes) or len(payload) < 10:
+        _fail("adapter_safetensors_invalid")
+    header_size = int.from_bytes(payload[:8], "little", signed=False)
+    if header_size < 2 or header_size > MAX_JSON_BYTES or 8 + header_size > len(payload):
+        _fail("adapter_safetensors_header_invalid")
+    header = strict_json_loads(payload[8 : 8 + header_size], role="adapter_safetensors")
+    metadata = header.pop("__metadata__", None)
+    if metadata is not None and (
+        not isinstance(metadata, Mapping)
+        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items())
+    ):
+        _fail("adapter_safetensors_metadata_invalid")
+    if not header:
+        _fail("adapter_safetensors_empty")
+    dtype_table = {
+        "BOOL": ("mlx.core.bool_", 1, "?"),
+        "U8": ("mlx.core.uint8", 1, "u1"),
+        "I8": ("mlx.core.int8", 1, "i1"),
+        "U16": ("mlx.core.uint16", 2, "<u2"),
+        "I16": ("mlx.core.int16", 2, "<i2"),
+        "U32": ("mlx.core.uint32", 4, "<u4"),
+        "I32": ("mlx.core.int32", 4, "<i4"),
+        "U64": ("mlx.core.uint64", 8, "<u8"),
+        "I64": ("mlx.core.int64", 8, "<i8"),
+        "F16": ("mlx.core.float16", 2, "<f2"),
+        "F32": ("mlx.core.float32", 4, "<f4"),
+        "F64": ("mlx.core.float64", 8, "<f8"),
+        "BF16": ("mlx.core.bfloat16", 2, None),
+    }
+    data = memoryview(payload)[8 + header_size :]
+    tensors: list[tuple[str, str, list[int], bytes, int, int]] = []
+    for name, raw_record in header.items():
+        if not isinstance(name, str) or not name:
+            _fail("adapter_safetensors_tensor_name_invalid")
+        record = _exact(
+            raw_record,
+            {"dtype", "shape", "data_offsets"},
+            role="adapter_safetensors_tensor",
+        )
+        dtype_record = dtype_table.get(record.get("dtype"))
+        shape = record.get("shape")
+        offsets = record.get("data_offsets")
+        if (
+            dtype_record is None
+            or not isinstance(shape, list)
+            or any(type(dimension) is not int or dimension < 0 for dimension in shape)
+            or not isinstance(offsets, list)
+            or len(offsets) != 2
+            or any(type(offset) is not int or offset < 0 for offset in offsets)
+        ):
+            _fail("adapter_safetensors_tensor_invalid")
+        start, end = offsets
+        elements = math.prod(shape)
+        dtype_name, item_size, numpy_dtype = dtype_record
+        if end < start or end - start != elements * item_size or end > len(data):
+            _fail("adapter_safetensors_tensor_range_invalid")
+        raw = bytes(data[start:end])
+        if numpy_dtype is None:
+            words = np.frombuffer(raw, dtype="<u2").astype(np.uint32)
+            tensor_payload = (words << 16).view(np.float32).tobytes(order="C")
+        else:
+            tensor_payload = np.frombuffer(raw, dtype=numpy_dtype).tobytes(order="C")
+        tensors.append((name, dtype_name, shape, tensor_payload, start, end))
+    ranges = sorted((start, end) for *_prefix, start, end in tensors)
+    cursor = 0
+    for start, end in ranges:
+        if start != cursor:
+            _fail("adapter_safetensors_tensor_ranges_noncanonical")
+        cursor = end
+    if cursor != len(data):
+        _fail("adapter_safetensors_unbound_bytes")
+    return tuple(
+        (name, dtype_name, shape, tensor_payload)
+        for name, dtype_name, shape, tensor_payload, _start, _end in sorted(tensors)
+    )
+
+
+def tensor_metadata_from_safetensors(payload: bytes) -> tuple[dict[str, Any], ...]:
+    """Read exact tensor metadata from the same immutable bytes being hashed."""
+
+    return tuple(
+        {"key": name, "dtype": dtype_name, "shape": shape}
+        for name, dtype_name, shape, _tensor_payload in _safetensors_tensors(payload)
+    )
+
+
+def recurrent_policy_sha256_from_safetensors(
+    payload: bytes,
+    *,
+    execution_spec_sha256: str,
+) -> str:
+    """Reconstruct the trainer's recurrent-policy digest from frozen tensors."""
+
+    spec_sha256 = _sha(execution_spec_sha256, role="frozen_policy_execution_spec")
+
+    digest = hashlib.sha256()
+    digest.update(b"aura.recurrent_policy.v1\0")
+    digest.update(spec_sha256.encode("ascii"))
+    for name, dtype_name, shape, tensor_payload in _safetensors_tensors(payload):
+        for part in (
+            name.encode("utf-8"),
+            dtype_name.encode("ascii"),
+            json.dumps(shape, separators=(",", ":")).encode("ascii"),
+            tensor_payload,
+        ):
+            digest.update(len(part).to_bytes(8, "big"))
+            digest.update(part)
+    return digest.hexdigest()
+
+
 def strict_json_loads(raw: bytes, *, role: str) -> dict[str, Any]:
     if not isinstance(raw, bytes) or not raw or len(raw) > MAX_JSON_BYTES:
         _fail(f"{role}_size_invalid")
@@ -833,7 +948,21 @@ def validate_recurrent_grpo_adapter_identity(
         != {"rank": lora["rank"], "scale": 20.0, "dropout": 0.0, "keys": lora["targets"]}
     ):
         _fail("loader_config_cross_binding_mismatch")
-    tensors = _validate_tensors(parsed["tensors"], tensor_metadata, lora=lora)
+    supplied_tensor_metadata = normalize_tensor_metadata(tensor_metadata)
+    frozen_tensor_metadata = normalize_tensor_metadata(
+        tensor_metadata_from_safetensors(payloads["adapter"])
+    )
+    if supplied_tensor_metadata != frozen_tensor_metadata:
+        _fail("adapter_tensor_metadata_source_mismatch")
+    tensors = _validate_tensors(
+        parsed["tensors"], frozen_tensor_metadata, lora=lora
+    )
+    frozen_policy_sha256 = recurrent_policy_sha256_from_safetensors(
+        payloads["adapter"],
+        execution_spec_sha256=spec.sha256,
+    )
+    if step_summary["final_policy_sha256"] != frozen_policy_sha256:
+        _fail("final_policy_adapter_mismatch")
 
     completion_raw = artifacts.get("training_completion.json")
     if not isinstance(completion_raw, bytes):
@@ -909,7 +1038,7 @@ def validate_recurrent_grpo_adapter_identity(
         "tensor_metadata_sha256": sha256_bytes(canonical_json_bytes(tensors)),
         "steps": steps,
         "optimizer_updates": optimizer_updates,
-        "final_policy_sha256": step_summary["final_policy_sha256"],
+        "final_policy_sha256": frozen_policy_sha256,
         "causal_gain_proven": False,
         "complete": True,
     }
@@ -957,22 +1086,156 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         or identity.get("final_policy_sha256") != evidence.get("final_policy_sha256")
     ):
         _fail("verified_transition_identity_cross_binding_mismatch")
+    base_identity_sha256 = sha256_bytes(canonical_json_bytes(identity))
     evidence_sha256 = _sha(evidence.get("receipt_sha256"), role="verified_evidence")
     material = {
-        "base_identity_sha256": identity["composite_identity_sha256"],
-        "verified_transition_evidence_sha256": evidence_sha256,
-        "optimizer_update_count": evidence["optimizer_update_count"],
-        "final_policy_sha256": evidence["final_policy_sha256"],
-    }
-    return {
-        **identity,
         "schema": VERIFIED_IDENTITY_RECEIPT_SCHEMA,
-        "base_identity_sha256": identity["composite_identity_sha256"],
+        "adapter_id": identity["adapter_id"],
+        "base_identity": identity,
+        "base_identity_sha256": base_identity_sha256,
+        "verified_transition_evidence": evidence,
         "verified_transition_evidence_sha256": evidence_sha256,
+        "adapter_sha256": identity["adapter_sha256"],
+        "execution_spec_sha256": identity["execution_spec_sha256"],
+        "optimizer_updates": evidence["optimizer_update_count"],
+        "initial_policy_sha256": evidence["initial_policy_sha256"],
+        "final_policy_sha256": evidence["final_policy_sha256"],
         "proof_grade_mutation": True,
         "legacy_scalar_reward_path_used": False,
-        "composite_identity_sha256": sha256_bytes(canonical_json_bytes(material)),
+        "causal_gain_proven": False,
+        "complete": True,
     }
+    return validate_verified_recurrent_grpo_adapter_identity_receipt(
+        {
+            **material,
+            "composite_identity_sha256": sha256_bytes(canonical_json_bytes(material)),
+        }
+    )
+
+
+def validate_verified_recurrent_grpo_adapter_identity_receipt(
+    value: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct a proof-grade identity from its embedded validated receipts."""
+
+    required = {
+        "schema",
+        "adapter_id",
+        "base_identity",
+        "base_identity_sha256",
+        "verified_transition_evidence",
+        "verified_transition_evidence_sha256",
+        "adapter_sha256",
+        "execution_spec_sha256",
+        "optimizer_updates",
+        "initial_policy_sha256",
+        "final_policy_sha256",
+        "proof_grade_mutation",
+        "legacy_scalar_reward_path_used",
+        "causal_gain_proven",
+        "complete",
+        "composite_identity_sha256",
+    }
+    receipt = dict(_exact(value, required, role="verified_identity_receipt"))
+    base_required = {
+        "schema",
+        "manifest_sha256",
+        "composite_identity_sha256",
+        "adapter_id",
+        "training_method",
+        "objective_name",
+        "base_checkpoint_fingerprint",
+        "model_behavior_bundle_sha256",
+        "personality_adapter_bundle_sha256",
+        "training_runtime_identity_sha256",
+        "adapter_sha256",
+        "training_receipt_sha256",
+        "training_protocol_sha256",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "training_completion_sha256",
+        "rank",
+        "targets",
+        "wrapped_projection_count",
+        "tensor_count",
+        "tensor_metadata_sha256",
+        "steps",
+        "optimizer_updates",
+        "final_policy_sha256",
+        "causal_gain_proven",
+        "complete",
+    }
+    base = dict(_exact(receipt.get("base_identity"), base_required, role="verified_base_identity"))
+    for field in (
+        "manifest_sha256",
+        "composite_identity_sha256",
+        "base_checkpoint_fingerprint",
+        "model_behavior_bundle_sha256",
+        "training_runtime_identity_sha256",
+        "adapter_sha256",
+        "training_receipt_sha256",
+        "training_protocol_sha256",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "training_completion_sha256",
+        "tensor_metadata_sha256",
+        "final_policy_sha256",
+    ):
+        _sha(base.get(field), role=f"verified_base_{field}")
+    personality = base.get("personality_adapter_bundle_sha256")
+    _sha(personality, role="verified_base_personality", allow_empty=True)
+    if (
+        base.get("schema") != IDENTITY_RECEIPT_SCHEMA
+        or base.get("adapter_id") != receipt.get("adapter_id")
+        or base.get("training_method") != TRAINING_METHOD
+        or base.get("objective_name") != OBJECTIVE_NAME
+        or base.get("causal_gain_proven") is not False
+        or base.get("complete") is not True
+        or type(base.get("optimizer_updates")) is not int
+        or base["optimizer_updates"] < 1
+        or type(base.get("steps")) is not int
+        or base["steps"] < base["optimizer_updates"]
+        or type(base.get("rank")) is not int
+        or base["rank"] < 1
+        or not isinstance(base.get("targets"), list)
+        or not base["targets"]
+        or type(base.get("wrapped_projection_count")) is not int
+        or base["wrapped_projection_count"] < 1
+        or type(base.get("tensor_count")) is not int
+        or base["tensor_count"] < 1
+    ):
+        _fail("verified_base_identity_invalid")
+
+    from core.learning.verified_transition_training_evidence import (
+        validate_verified_transition_training_evidence_receipt,
+    )
+
+    evidence = validate_verified_transition_training_evidence_receipt(
+        receipt.get("verified_transition_evidence")
+    )
+    base_sha256 = sha256_bytes(canonical_json_bytes(base))
+    evidence_sha256 = _sha(evidence.get("receipt_sha256"), role="verified_evidence")
+    material = {key: receipt[key] for key in required - {"composite_identity_sha256"}}
+    if (
+        receipt.get("schema") != VERIFIED_IDENTITY_RECEIPT_SCHEMA
+        or receipt.get("base_identity_sha256") != base_sha256
+        or receipt.get("verified_transition_evidence_sha256") != evidence_sha256
+        or receipt.get("adapter_sha256") != base["adapter_sha256"]
+        or receipt.get("execution_spec_sha256") != base["execution_spec_sha256"]
+        or receipt.get("optimizer_updates") != base["optimizer_updates"]
+        or receipt.get("optimizer_updates") != evidence["optimizer_update_count"]
+        or receipt.get("initial_policy_sha256") != evidence["initial_policy_sha256"]
+        or receipt.get("final_policy_sha256") != base["final_policy_sha256"]
+        or receipt.get("final_policy_sha256") != evidence["final_policy_sha256"]
+        or receipt.get("proof_grade_mutation") is not True
+        or receipt.get("legacy_scalar_reward_path_used") is not False
+        or receipt.get("causal_gain_proven") is not False
+        or receipt.get("complete") is not True
+        or receipt.get("composite_identity_sha256")
+        != sha256_bytes(canonical_json_bytes(material))
+    ):
+        _fail("verified_identity_receipt_reconstruction_mismatch")
+    return receipt
 
 
 __all__ = [
@@ -994,7 +1257,10 @@ __all__ = [
     "canonical_json_bytes",
     "declared_bindings",
     "sha256_bytes",
+    "recurrent_policy_sha256_from_safetensors",
+    "tensor_metadata_from_safetensors",
     "strict_json_loads",
     "validate_recurrent_grpo_adapter_identity",
     "validate_recurrent_grpo_adapter_identity_with_verified_transitions",
+    "validate_verified_recurrent_grpo_adapter_identity_receipt",
 ]

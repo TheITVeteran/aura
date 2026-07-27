@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing import Any, Never, cast
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrent_grpo import (
+    RECURRENT_GRPO_SCHEMA,
     RecurrentGRPOConfig,
     exact_adjoint_verified_transition_group_value_and_grad,
     recurrent_policy_sha256,
@@ -33,6 +35,7 @@ from core.runtime.file_write_gateway import FileWriteGateway
 VERIFIED_TRANSITION_UPDATE_SCHEMA = "aura.verified_transition.update_receipt.v1"
 VERIFIED_TRANSITION_RESERVATION_SCHEMA = "aura.verified_transition.update_reservation.v1"
 VERIFIED_TRANSITION_COMMIT_SCHEMA = "aura.verified_transition.update_commit.v1"
+VERIFIED_TRANSITION_OBJECTIVE_SCHEMA = "aura.verified_transition.objective_record.v1"
 VERIFIED_TRANSITION_RECONCILIATION_SCHEMA = (
     "aura.verified_transition.update_reconciliation.v1"
 )
@@ -85,6 +88,69 @@ def _json_bytes(document: Mapping[str, Any]) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("ascii")
+
+
+def _seal_objective(document: Mapping[str, Any]) -> dict[str, Any]:
+    sealed = dict(document)
+    sealed["receipt_sha256"] = hashlib.sha256(_json_bytes(sealed)).hexdigest()
+    return sealed
+
+
+def _validate_objective_seal(document: Mapping[str, Any]) -> None:
+    observed = _require_sha256(
+        document.get("receipt_sha256"), role="verified_transition_objective_receipt"
+    )
+    unsigned = dict(document)
+    unsigned.pop("receipt_sha256", None)
+    if observed != hashlib.sha256(_json_bytes(unsigned)).hexdigest():
+        _fail("verified_transition_objective_digest_mismatch")
+
+
+def _validate_objective_receipt(value: Any) -> dict[str, Any]:
+    required = {
+        "schema",
+        "mode",
+        "advantage_report",
+        "reference_kl",
+        "old_policy_approx_kl",
+        "clip_fraction",
+        "policy_loss",
+        "objective_at_sampling",
+        "gradient_surrogate_value",
+        "completion_count",
+        "token_count",
+        "branch_indices",
+        "has_gradient",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        _fail("verified_transition_objective_receipt_schema_invalid")
+    receipt = dict(value)
+    if (
+        receipt.get("schema") != RECURRENT_GRPO_SCHEMA
+        or receipt.get("mode") != "exact_adjoint_single_update"
+        or not isinstance(receipt.get("advantage_report"), Mapping)
+        or receipt.get("has_gradient") is not True
+        or type(receipt.get("completion_count")) is not int
+        or receipt["completion_count"] < 2
+        or type(receipt.get("token_count")) is not int
+        or receipt["token_count"] < receipt["completion_count"]
+        or not isinstance(receipt.get("branch_indices"), list)
+        or len(receipt["branch_indices"]) != receipt["completion_count"]
+        or any(type(index) is not int or index < 0 for index in receipt["branch_indices"])
+    ):
+        _fail("verified_transition_objective_receipt_invalid")
+    for field in (
+        "reference_kl",
+        "old_policy_approx_kl",
+        "clip_fraction",
+        "policy_loss",
+        "objective_at_sampling",
+        "gradient_surrogate_value",
+    ):
+        observed = receipt.get(field)
+        if type(observed) not in {int, float} or not math.isfinite(float(observed)):
+            _fail("verified_transition_objective_receipt_invalid")
+    return receipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,9 +218,23 @@ class VerifiedTransitionUpdateJournal:
         reservation_sha256: str,
         policy_before_sha256: str,
         policy_after_sha256: str,
+        objective_record_sha256: str,
         objective_receipt_sha256: str,
         committed_at_unix_ns: int,
     ) -> dict[str, Any]:
+        if not self.exists(admission_sha256, "objective"):
+            _fail("verified_transition_objective_missing")
+        objective = self.read(admission_sha256, "objective")
+        if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
+            _fail("verified_transition_objective_schema_invalid")
+        _validate_objective_seal(objective)
+        if (
+            objective.get("admission_sha256") != admission_sha256
+            or objective.get("receipt_sha256") != objective_record_sha256
+            or objective.get("objective_receipt_sha256")
+            != objective_receipt_sha256
+        ):
+            _fail("verified_transition_objective_commit_binding_mismatch")
         commit = _seal(
             {
                 "schema": VERIFIED_TRANSITION_COMMIT_SCHEMA,
@@ -169,6 +249,9 @@ class VerifiedTransitionUpdateJournal:
                 ),
                 "policy_after_sha256": _require_sha256(
                     policy_after_sha256, role="commit_policy_after"
+                ),
+                "objective_record_sha256": _require_sha256(
+                    objective_record_sha256, role="commit_objective_record"
                 ),
                 "objective_receipt_sha256": _require_sha256(
                     objective_receipt_sha256, role="commit_objective"
@@ -188,12 +271,40 @@ class VerifiedTransitionUpdateJournal:
             _fail("verified_transition_admission_already_committed")
         return commit
 
+    def record_objective(
+        self,
+        *,
+        admission_sha256: str,
+        objective_receipt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        objective = _validate_objective_receipt(objective_receipt)
+        record = _seal_objective(
+            {
+                "schema": VERIFIED_TRANSITION_OBJECTIVE_SCHEMA,
+                "admission_sha256": _require_sha256(
+                    admission_sha256, role="objective_admission"
+                ),
+                "objective_receipt": objective,
+                "objective_receipt_sha256": hashlib.sha256(
+                    _json_bytes(objective)
+                ).hexdigest(),
+            }
+        )
+        if not self.gateway.write_bytes_if_absent(
+            self._path(admission_sha256, "objective"),
+            _json_bytes(record),
+            source="verified_transition_update.objective",
+            durable=True,
+        ):
+            _fail("verified_transition_objective_already_recorded")
+        return record
+
     def read(self, admission_sha256: str, suffix: str) -> dict[str, Any]:
-        if suffix not in {"reserved", "committed", "reconciled"}:
+        if suffix not in {"reserved", "objective", "committed", "reconciled"}:
             _fail("verified_transition_journal_suffix_invalid")
         payload = read_stable_bytes(
             self._path(admission_sha256, suffix),
-            max_bytes=65_536,
+            max_bytes=4 * 1024 * 1024 if suffix == "objective" else 65_536,
         )
         try:
             document = json.loads(payload)
@@ -206,7 +317,7 @@ class VerifiedTransitionUpdateJournal:
         return document
 
     def exists(self, admission_sha256: str, suffix: str) -> bool:
-        if suffix not in {"reserved", "committed", "reconciled"}:
+        if suffix not in {"reserved", "objective", "committed", "reconciled"}:
             _fail("verified_transition_journal_suffix_invalid")
         path = self._path(admission_sha256, suffix)
         if path.is_symlink():
@@ -347,6 +458,13 @@ def apply_verified_transition_group_update(
     if policy_immediately_before_update != policy_before:
         _fail("verified_transition_policy_changed_before_update")
 
+    objective_receipt = objective.receipt()
+    objective_record = journal.record_objective(
+        admission_sha256=cast_sha256(admission["receipt_sha256"]),
+        objective_receipt=objective_receipt,
+    )
+    objective_sha256 = cast_sha256(objective_record["objective_receipt_sha256"])
+
     optimizer.update(model, objective.gradients)
     try:
         import mlx.core as mx
@@ -357,10 +475,6 @@ def apply_verified_transition_group_update(
     policy_after = recurrent_policy_sha256(model, spec)
     if policy_after == policy_before:
         _fail("verified_transition_optimizer_did_not_change_policy")
-    objective_receipt = objective.receipt()
-    objective_sha256 = hashlib.sha256(
-        _json_bytes(objective_receipt)
-    ).hexdigest()
     committed_at = _require_time(now_unix_ns(), role="update_committed_at")
     if committed_at < reserved_at:
         _fail("verified_transition_update_time_reversed")
@@ -369,6 +483,7 @@ def apply_verified_transition_group_update(
         reservation_sha256=cast_sha256(reservation["receipt_sha256"]),
         policy_before_sha256=policy_before,
         policy_after_sha256=policy_after,
+        objective_record_sha256=cast_sha256(objective_record["receipt_sha256"]),
         objective_receipt_sha256=objective_sha256,
         committed_at_unix_ns=committed_at,
     )
@@ -378,6 +493,7 @@ def apply_verified_transition_group_update(
             "group_admission_sha256": admission["receipt_sha256"],
             "reservation_sha256": reservation["receipt_sha256"],
             "commit_sha256": commit["receipt_sha256"],
+            "objective_record_sha256": objective_record["receipt_sha256"],
             "objective_receipt_sha256": objective_sha256,
             "policy_before_sha256": policy_before,
             "policy_after_sha256": policy_after,
@@ -408,6 +524,7 @@ def validate_verified_transition_update_receipt(
         "group_admission_sha256",
         "reservation_sha256",
         "commit_sha256",
+        "objective_record_sha256",
         "objective_receipt_sha256",
         "policy_before_sha256",
         "policy_after_sha256",
@@ -422,19 +539,38 @@ def validate_verified_transition_update_receipt(
     _validate_seal(receipt, role="verified_transition_update")
     admission_sha256 = cast_sha256(receipt.get("group_admission_sha256"))
     reservation = journal.read(admission_sha256, "reserved")
+    objective = journal.read(admission_sha256, "objective")
     commit = journal.read(admission_sha256, "committed")
     if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
         _fail("verified_transition_reservation_schema_invalid")
     if commit.get("schema") != VERIFIED_TRANSITION_COMMIT_SCHEMA:
         _fail("verified_transition_commit_schema_invalid")
+    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
+        _fail("verified_transition_objective_schema_invalid")
     _validate_seal(reservation, role="verified_transition_reservation")
+    _validate_objective_seal(objective)
     _validate_seal(commit, role="verified_transition_commit")
+    replayed_objective = _validate_objective_receipt(
+        objective.get("objective_receipt")
+    )
+    replayed_objective_sha256 = hashlib.sha256(
+        _json_bytes(replayed_objective)
+    ).hexdigest()
     if (
         reservation.get("receipt_sha256") != receipt.get("reservation_sha256")
         or commit.get("receipt_sha256") != receipt.get("commit_sha256")
         or reservation.get("admission_sha256") != admission_sha256
         or commit.get("admission_sha256") != admission_sha256
         or commit.get("reservation_sha256") != reservation.get("receipt_sha256")
+        or objective.get("admission_sha256") != admission_sha256
+        or objective.get("receipt_sha256")
+        != receipt.get("objective_record_sha256")
+        or commit.get("objective_record_sha256")
+        != objective.get("receipt_sha256")
+        or objective.get("objective_receipt_sha256")
+        != replayed_objective_sha256
+        or objective.get("objective_receipt_sha256")
+        != receipt.get("objective_receipt_sha256")
         or reservation.get("policy_before_sha256")
         != receipt.get("policy_before_sha256")
         or commit.get("policy_before_sha256") != receipt.get("policy_before_sha256")
@@ -465,12 +601,16 @@ def recover_committed_verified_transition_update(
 
     admission = cast_sha256(admission_sha256)
     reservation = journal.read(admission, "reserved")
+    objective = journal.read(admission, "objective")
     commit = journal.read(admission, "committed")
     if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
         _fail("verified_transition_reservation_schema_invalid")
     if commit.get("schema") != VERIFIED_TRANSITION_COMMIT_SCHEMA:
         _fail("verified_transition_commit_schema_invalid")
     _validate_seal(reservation, role="verified_transition_reservation")
+    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
+        _fail("verified_transition_objective_schema_invalid")
+    _validate_objective_seal(objective)
     _validate_seal(commit, role="verified_transition_commit")
     receipt = _seal(
         {
@@ -478,6 +618,7 @@ def recover_committed_verified_transition_update(
             "group_admission_sha256": admission,
             "reservation_sha256": reservation["receipt_sha256"],
             "commit_sha256": commit["receipt_sha256"],
+            "objective_record_sha256": objective["receipt_sha256"],
             "objective_receipt_sha256": commit["objective_receipt_sha256"],
             "policy_before_sha256": commit["policy_before_sha256"],
             "policy_after_sha256": commit["policy_after_sha256"],
@@ -605,6 +746,7 @@ def cast_sha256(value: Any) -> str:
 
 __all__ = [
     "VERIFIED_TRANSITION_COMMIT_SCHEMA",
+    "VERIFIED_TRANSITION_OBJECTIVE_SCHEMA",
     "VERIFIED_TRANSITION_RECONCILIATION_SCHEMA",
     "VERIFIED_TRANSITION_RESERVATION_SCHEMA",
     "VERIFIED_TRANSITION_UPDATE_SCHEMA",

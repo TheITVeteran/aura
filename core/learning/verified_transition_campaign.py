@@ -500,36 +500,29 @@ class VerifiedTransitionCampaignLedger:
         sequence: int,
         policy: VerifiedCampaignTrustPolicy,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return one independently checked start/terminal pair."""
+        """Return the exact start/terminal pair used to validate campaign close."""
 
-        receipt = self.validate_closed(policy=policy)
+        receipt, records = self._validate_closed_snapshot(policy=policy)
         close_payload = cast(dict[str, Any], receipt["close_payload"])
         sequence = _integer(sequence, role="campaign_records_sequence")
         if sequence >= cast(int, close_payload["group_count"]):
             _fail("campaign_group_not_planned")
-        start = self._read(self._group_name(sequence, "started"))
-        terminal = self._read(self._group_name(sequence, "terminal"))
-        if (
-            start.get("receipt_sha256")
-            != close_payload["group_start_sha256s"][sequence]
-            or terminal.get("receipt_sha256")
-            != close_payload["group_terminal_sha256s"][sequence]
-        ):
-            _fail("campaign_group_close_binding_mismatch")
-        return start, terminal
+        return records[sequence]
 
-    def close_payload(
+    def _close_payload_snapshot(
         self,
         *,
         completed_at_unix_ns: int,
         policy: VerifiedCampaignTrustPolicy,
-    ) -> dict[str, Any]:
-        campaign = self._manifest()
+        campaign: Mapping[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], tuple[tuple[dict[str, Any], dict[str, Any]], ...]]:
+        campaign = dict(campaign) if campaign is not None else self._manifest()
         if campaign["trust_policy_sha256"] != policy.policy_sha256:
             _fail("campaign_manifest_policy_mismatch")
         starts: list[str] = []
         terminals: list[str] = []
         statuses: list[str] = []
+        records: list[tuple[dict[str, Any], dict[str, Any]]] = []
         latest = cast(int, campaign["planned_at_unix_ns"])
         for sequence in range(cast(int, campaign["group_count"])):
             start = self._read(self._group_name(sequence, "started"))
@@ -604,13 +597,14 @@ class VerifiedTransitionCampaignLedger:
             starts.append(cast(str, start["receipt_sha256"]))
             terminals.append(cast(str, terminal["receipt_sha256"]))
             statuses.append(cast(str, status))
+            records.append((start, terminal))
             latest = max(latest, cast(int, terminal["finished_at_unix_ns"]))
         completed_at = _integer(
             completed_at_unix_ns, role="campaign_completed_at", minimum=1
         )
         if completed_at < latest:
             _fail("campaign_close_time_reversed")
-        return _seal(
+        payload = _seal(
             {
                 "schema": CAMPAIGN_CLOSE_PAYLOAD_SCHEMA,
                 "campaign_id": campaign["campaign_id"],
@@ -627,6 +621,19 @@ class VerifiedTransitionCampaignLedger:
             },
             field="payload_sha256",
         )
+        return payload, tuple(records)
+
+    def close_payload(
+        self,
+        *,
+        completed_at_unix_ns: int,
+        policy: VerifiedCampaignTrustPolicy,
+    ) -> dict[str, Any]:
+        payload, _records = self._close_payload_snapshot(
+            completed_at_unix_ns=completed_at_unix_ns,
+            policy=policy,
+        )
+        return payload
 
     def close(
         self,
@@ -672,10 +679,16 @@ class VerifiedTransitionCampaignLedger:
             _fail("campaign_already_closed")
         return receipt
 
-    def validate_closed(
+    def _validate_closed_snapshot(
         self, *, policy: VerifiedCampaignTrustPolicy
-    ) -> dict[str, Any]:
+    ) -> tuple[
+        dict[str, Any],
+        tuple[tuple[dict[str, Any], dict[str, Any]], ...],
+    ]:
         opened = self._read("campaign.open.json")
+        if opened.get("schema") != CAMPAIGN_OPEN_SCHEMA:
+            _fail("campaign_open_schema_invalid")
+        _validate_seal(opened, field="receipt_sha256", role="campaign_open")
         campaign = validate_transition_campaign_manifest(opened.get("campaign_manifest"))
         verify_role_attestation(
             policy,
@@ -690,13 +703,14 @@ class VerifiedTransitionCampaignLedger:
             _fail("campaign_receipt_schema_invalid")
         _validate_seal(receipt, field="receipt_sha256", role="campaign_receipt")
         close_payload = cast(Mapping[str, Any], receipt.get("close_payload"))
-        expected = self.close_payload(
+        expected, records = self._close_payload_snapshot(
             completed_at_unix_ns=_integer(
                 close_payload.get("completed_at_unix_ns"),
                 role="campaign_close_completed_at",
                 minimum=1,
             ),
             policy=policy,
+            campaign=campaign,
         )
         if expected != dict(close_payload):
             _fail("campaign_close_reconstruction_mismatch")
@@ -710,6 +724,12 @@ class VerifiedTransitionCampaignLedger:
             )
             // 1_000_000_000,
         )
+        return receipt, records
+
+    def validate_closed(
+        self, *, policy: VerifiedCampaignTrustPolicy
+    ) -> dict[str, Any]:
+        receipt, _records = self._validate_closed_snapshot(policy=policy)
         return receipt
 
 

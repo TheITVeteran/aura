@@ -38,6 +38,9 @@ from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     VERIFIED_IDENTITY_RECEIPT_SCHEMA as VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
 )
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+    validate_verified_recurrent_grpo_adapter_identity_receipt,
+)
 from core.runtime.file_read_gateway import open_stable_readonly_binary, read_stable_bytes
 
 ADAPTER_FREEZE_SCHEMA = "aura.latent_cortex.adapter_freeze.v1"
@@ -435,15 +438,74 @@ def _valid_identity_receipt(
         return False
     if identity_receipt.get("schema") != VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA:
         return True
-    return (
-        identity_receipt.get("proof_grade_mutation") is True
-        and identity_receipt.get("legacy_scalar_reward_path_used") is False
-        and _is_sha256(identity_receipt.get("base_identity_sha256"))
-        and _is_sha256(identity_receipt.get("verified_transition_evidence_sha256"))
-        and type(identity_receipt.get("optimizer_updates")) is int
-        and identity_receipt["optimizer_updates"] > 0
-        and _is_sha256(identity_receipt.get("final_policy_sha256"))
+    try:
+        validate_verified_recurrent_grpo_adapter_identity_receipt(identity_receipt)
+    except ValueError:
+        return False
+    return True
+
+
+def _verify_frozen_grpo_identity(
+    root: Path,
+    receipt: Mapping[str, Any],
+    model_identity: Mapping[str, Any],
+) -> None:
+    """Rebuild the embedded base identity from the immutable frozen artifacts."""
+
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        declared_bindings,
+        strict_json_loads,
+        tensor_metadata_from_safetensors,
+        validate_recurrent_grpo_adapter_identity,
     )
+
+    manifest_path = _contained_file(root, _MANIFEST_FILE, role="verified_manifest")
+    manifest_bytes = read_stable_bytes(manifest_path, max_bytes=_MAX_JSON_BYTES)
+    manifest = strict_json_loads(manifest_bytes, role="verified_frozen_manifest")
+    artifacts: dict[str, bytes] = {}
+    for role, binding in declared_bindings(manifest):
+        relative = _relative_path(binding.get("path"), role=f"verified_{role}")
+        artifacts[relative] = read_stable_bytes(
+            _contained_file(root, relative, role=f"verified_{role}"),
+            max_bytes=_MAX_ARTIFACT_BYTES,
+        )
+    artifacts[_COMPLETION_FILE] = read_stable_bytes(
+        _contained_file(root, _COMPLETION_FILE, role="verified_completion"),
+        max_bytes=_MAX_JSON_BYTES,
+    )
+    adapter_binding = manifest.get("adapter")
+    if not isinstance(adapter_binding, Mapping):
+        _fail("adapter_freeze_verified_manifest_invalid")
+    adapter_relative = _relative_path(
+        adapter_binding.get("path"), role="verified_adapter"
+    )
+    rebuilt = validate_recurrent_grpo_adapter_identity(
+        manifest_bytes,
+        adapter_id=receipt["adapter_id"],
+        actual_base_checkpoint=manifest["base_checkpoint"],
+        actual_model_behavior_bundle=manifest["model_behavior_bundle"],
+        actual_personality_adapter=manifest["personality_adapter"],
+        actual_runtime_environment=manifest["training_runtime"],
+        artifacts=artifacts,
+        tensor_metadata=tensor_metadata_from_safetensors(artifacts[adapter_relative]),
+    )
+    expected = (
+        receipt.get("base_identity")
+        if receipt.get("schema") == VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA
+        else receipt
+    )
+    if rebuilt != expected:
+        _fail("adapter_freeze_verified_base_identity_mismatch")
+    if (
+        rebuilt.get("base_checkpoint_fingerprint") != model_identity.get("fingerprint")
+        or rebuilt.get("model_behavior_bundle_sha256")
+        != model_identity.get("model_behavior_bundle_sha256")
+        or rebuilt.get("personality_adapter_bundle_sha256")
+        != model_identity.get("personality_adapter_bundle_sha256")
+        or rebuilt.get("training_runtime_identity_sha256")
+        != model_identity.get("runtime_environment_identity_sha256")
+    ):
+        _fail("adapter_freeze_verified_model_identity_mismatch")
 
 
 def build_adapter_freeze_certificate(
@@ -524,6 +586,11 @@ def verify_adapter_freeze(root: Path) -> dict[str, Any]:
     receipt = certificate.get("identity_receipt")
     if not _valid_identity_receipt(receipt, adapter_id=certificate.get("adapter_id")):
         _fail("adapter_freeze_identity_invalid")
+    if receipt.get("schema") in {
+        GRPO_IDENTITY_RECEIPT_SCHEMA,
+        VERIFIED_GRPO_IDENTITY_RECEIPT_SCHEMA,
+    }:
+        _verify_frozen_grpo_identity(resolved, receipt, model_identity)
     return certificate
 
 

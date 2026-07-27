@@ -5081,3 +5081,37 @@ Validation: 93 focused across the two new suites plus threat model, matrix and
 preflight; the 16-probe preflight returns READY. Two pre-existing tests were
 updated because they pinned contracts this change deliberately strengthened —
 stated here rather than left for someone to find in a diff.
+
+### 2026-07-27 - CP420F CP420E adversarial proof repair
+
+CP420E failed its independent adversarial review on four proof boundaries, so
+its affected freeze and source-custody claims are superseded here. The
+campaign ledger no longer validates one pair of group records and returns a
+second reread pair. Admission policy A cannot be joined to an update beginning
+from policy B. Exact-adjoint objective evidence is now a create-once durable
+record written before mutation and replayed through commit recovery. The final
+adapter policy is recomputed from frozen safetensor names, dtypes, shapes, and
+values under the same digest algorithm used on the live recurrent policy.
+
+Verified adapter identities now have an exact reconstructable schema containing
+the complete base identity and sealed transition replay receipt. Frozen GRPO
+verification reruns the ordinary identity validator over the immutable files
+and compares its output to that embedded base identity; fabricated proof fields
+and stale adapters therefore fail rather than inheriting a campaign's result.
+
+The integrated proof/F8 objective matrix passes 147/147, with one direct
+regression for each review finding plus 3/3 live-MLX tensor-dtype parity
+checks. Ruff, compilation, and diff hygiene pass. Evidence is
+`artifacts/current/cp420f_verified_transition_proof_repair_evidence.json`.
+
+This restores CP418 source replay on a defensible boundary. It does not close
+CP420/SPARK-060: `tools/train_grpo.py` still owns the raw recurrent mutation
+route, and replacing that route remains next. F8's SPARK-061/062 implementation
+has landed, but its own ledger correctly leaves both checkboxes open until a
+resident treatment measures the progressive objective and every auxiliary
+term's gradient. No model loaded, no training occurred, and no reasoning,
+resident-32B, frontier, promotion, or `WOW Signal` claim follows. Counting
+CP420F makes 671 total checkpoints. The recalibrated range is 3-8 checkpoints
+to resident training launch, 7-14 to a defensible preliminary verdict, and
+13-24 to a powered conditional `WOW Signal` decision. Final multi-hour soaks
+remain deferred.
