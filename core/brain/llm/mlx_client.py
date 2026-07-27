@@ -6300,6 +6300,54 @@ class MLXLocalClient:
             logger.debug("Orphan reclamation scan failed (non-fatal): %s", orphan_exc)
 
         memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+
+        # The orphan scan above only reaps workers from PREVIOUS incarnations —
+        # it explicitly skips this client's own process. So a worker that loaded
+        # the model but never finished initializing sits there holding its
+        # weights while the lane, which has already given up on it, refuses to
+        # spawn the replacement for want of the very memory it is holding.
+        #
+        # Measured live 2026-07-26: available 17.4GB against a 24GB gate, with
+        # ~16GB of it wired to our own unusable worker. Killing the instance by
+        # hand dropped wired 21.7GB -> 5.2GB and freed 34.6GB. Aura could not
+        # recover on her own from a state she created, which is the worst shape
+        # a deadlock can take.
+        #
+        # Narrow by construction: only when the spawn is about to be refused
+        # anyway, only our own process, only one that never became usable, and
+        # only when it is serving nobody. Then re-check, so the reclaim wait
+        # below observes the memory this just freed.
+        if memory_block and not self._is_deep_solver_lane():
+            try:
+                stale = self._process
+                stale_alive = bool(
+                    stale is not None
+                    and getattr(stale, "is_alive", lambda: False)()
+                )
+                if (
+                    stale_alive
+                    and not self._init_done
+                    and int(getattr(self, "_active_generations", 0) or 0) == 0
+                ):
+                    logger.warning(
+                        "🧹 [MLX] Reclaiming our own never-initialized worker pid=%s "
+                        "before refusing a spawn for headroom (%s) — it is holding "
+                        "the memory the replacement needs and serving no one.",
+                        getattr(stale, "pid", "unknown"),
+                        memory_block,
+                    )
+                    stale.kill()
+                    if hasattr(stale, "join"):
+                        stale.join(timeout=3.0)
+                    self._process = None
+                    self._init_done = False
+                    memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+            except (OSError, AttributeError, RuntimeError, ValueError) as reclaim_exc:
+                _record_mlx_degradation(
+                    reclaim_exc,
+                    action="continued spawn admission after self-worker reclaim failed",
+                )
+
         if memory_block and not self._is_deep_solver_lane():
             # A worker we just killed (orphan reclamation above, or a prior
             # generation-timeout force-abort) frees ~18GB, but the OS reclaim of
