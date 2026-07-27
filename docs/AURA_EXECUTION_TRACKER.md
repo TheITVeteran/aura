@@ -30606,3 +30606,30 @@ reasoning, resident-32B, frontier, promotion, or `WOW Signal` claim follows.
 Counting CP420B makes 667 total checkpoints. The 667-920 forecast leaves 0-253
 records, or approximately 72.5%-100.0% checkpoint completion with an 86.3%
 midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420C campaign completeness and interrupted-update custody
+
+The proof-grade recurrent path now preregisters every ordered optimizer group
+in one task-issuer-signed campaign before task disclosure. Its create-once
+ledger requires every planned group to start in order and publish a typed
+terminal result; campaign closure independently replays the raw records and
+requires a separately custodied evidence-verifier signature. Missing,
+duplicated, reordered, substituted, or resealed-invalid group evidence fails.
+
+Reserved-but-uncommitted optimizer admissions are no longer an unclassified
+manual state. Reconciliation burns the admission in every case: an unchanged
+policy requires a fresh admission, while a changed policy requires exact
+checkpoint recovery and cannot be guessed into a commit.
+
+Validation passes 70/70 focused tests, 144/144 adjacent recurrent proof tests,
+and the 11/11 SPARK refusal preflight. Governance ownership, Ruff, compilation,
+and diff hygiene pass. Evidence is
+`artifacts/current/cp420c_verified_transition_campaign_evidence.json`.
+
+CP420/SPARK-060 remain open only for exclusive trainer mutation and CP418
+source-artifact replay before the fresh sealed small-checkpoint campaign. No
+model or capability result is claimed. The evidence-adjusted forecast is 7-12
+total checkpoints to resident-32B training launch, 11-18 to a defensible
+preliminary live gain verdict, and 17-28 to the powered conditional `WOW
+Signal` decision. Counting CP420C makes 668 total checkpoints; final multi-hour
+soaks remain deferred.

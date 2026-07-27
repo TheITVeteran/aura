@@ -4667,3 +4667,42 @@ establishes no reasoning, resident-32B, frontier, promotion, or `WOW Signal`
 result. Counting CP420B makes 667 total checkpoints. The 667-920 forecast
 leaves 0-253 records, or approximately 72.5%-100.0% checkpoint completion with
 an 86.3% midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420C complete campaign custody and crash reconciliation
+
+The task issuer now commits the entire ordered optimizer campaign before any
+campaign task is disclosed. The manifest binds every group manifest, its
+task-issuer attestation, ordered episode identities, trust policy, and sequence,
+and refuses duplicate groups or an episode reused across groups. A create-once
+ledger requires each group to start in order and reach an explicit `updated`,
+`rejected`, `aborted`, or `indeterminate` terminal record. The campaign cannot
+close with a missing group. Its close payload is signed by the separately
+custodied evidence verifier and independently reconstructs every raw start and
+terminal record, group manifest, task-issuer signature, evidence combination,
+chronology, and digest rather than trusting summary counts.
+
+Reserved-but-uncommitted updates now have a durable reconciliation path. The
+admission is never silently retried: an unchanged policy is recorded as
+`reserved_no_policy_change` and still requires a fresh admission; a changed
+policy is recorded as `policy_changed_without_commit` and requires exact
+checkpoint recovery. Both outcomes burn the original admission. A committed
+update cannot be reconciled, and a reconciliation cannot be rewritten.
+
+The verified-transition suite passes 70/70 in 73.81 seconds. The adjacent
+recurrent/adapter/trainer/preregistration/post-training matrix passes 144/144 in
+76.87 seconds; the SPARK refusal preflight passes 11/11. Governance ownership
+matches 2,059 recognized calls in 1,922 buckets. Ruff, bytecode compilation,
+and diff hygiene pass. Evidence is
+`artifacts/current/cp420c_verified_transition_campaign_evidence.json`.
+
+CP420 and SPARK-060 remain open for one final implementation slice: the legacy
+trainer/raw recurrent reward route must no longer bypass the verified
+transaction, and CP418 adapter identity must replay campaign, group admission,
+reservation, commit, and update source artifacts. No model was loaded or
+trained and no reasoning, resident-32B, frontier, promotion, or `WOW Signal`
+claim follows. The measured Fable pre-training legs reduce the planning range
+to approximately 7-12 total checkpoints before resident-32B training launch,
+11-18 before a defensible preliminary live gain verdict, and 17-28 before a
+powered conditional `WOW Signal` decision. These are workload forecasts, not
+capability scores. Counting CP420C makes 668 total checkpoints. Final
+multi-hour soaks remain deferred.

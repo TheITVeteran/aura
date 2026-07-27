@@ -36,6 +36,12 @@ from core.learning import recurrent_grpo as recurrent_grpo_runtime
 from core.learning import verified_transition_episode as transition_runtime
 from core.learning import verified_transition_reward as reward_runtime
 from core.learning import verified_transition_update as update_runtime
+from core.learning.verified_transition_campaign import (
+    VerifiedTransitionCampaignError,
+    VerifiedTransitionCampaignLedger,
+    build_transition_campaign_manifest,
+    campaign_group_from_manifest,
+)
 from core.learning.verified_transition_episode import (
     ExternalAttemptLedger,
     TransitionArtifactStore,
@@ -90,6 +96,8 @@ from core.learning.verified_transition_update import (
     VerifiedTransitionUpdateError,
     VerifiedTransitionUpdateJournal,
     apply_verified_transition_group_update,
+    reconcile_interrupted_verified_transition_update,
+    validate_verified_transition_reconciliation_receipt,
     validate_verified_transition_update_receipt,
 )
 from core.runtime.resource_observation import HostResourceObserver, ObservationSource
@@ -1783,6 +1791,171 @@ def test_group_manifest_signature_must_precede_task_disclosure(
         )
 
 
+def test_campaign_ledger_requires_every_predeclared_group_and_external_close(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    material = _positive_group_material(transition_outcome_episodes)
+    issuer = material["cases"][0]
+    second_entries = tuple(
+        TransitionGroupPlanEntry(
+            **{
+                **entry,
+                "episode_id": f"{entry['episode_id']}-second",
+            }
+        )
+        for entry in material["manifest"]["entries"]
+    )
+    second_manifest = build_transition_group_manifest(
+        group_id="spark-060-group-0002",
+        task_id=material["manifest"]["task_id"],
+        entries=second_entries,
+        reward_config_sha256=material["manifest"]["reward_config_sha256"],
+        planned_at_unix_ns=1_800_000_204_000_000_000,
+    )
+    second_attestation = build_role_attestation(
+        issuer["policy"],
+        role=TASK_ISSUER,
+        payload=second_manifest,
+        signed_at_unix=1_800_000_204,
+        private_key=issuer["role_keys"][TASK_ISSUER],
+    )
+    campaign = build_transition_campaign_manifest(
+        campaign_id="spark-060-complete-campaign",
+        groups=(
+            campaign_group_from_manifest(
+                0, material["manifest"], material["manifest_attestation"]
+            ),
+            campaign_group_from_manifest(1, second_manifest, second_attestation),
+        ),
+        trust_policy_sha256=issuer["policy"].policy_sha256,
+        planned_at_unix_ns=1_800_000_204_000_000_000,
+    )
+    campaign_attestation = build_role_attestation(
+        issuer["policy"],
+        role=TASK_ISSUER,
+        payload=campaign,
+        signed_at_unix=1_800_000_204,
+        private_key=issuer["role_keys"][TASK_ISSUER],
+    )
+    ledger = VerifiedTransitionCampaignLedger.create(
+        tmp_path / "campaign",
+        campaign_manifest=campaign,
+        campaign_manifest_attestation=campaign_attestation,
+        policy=issuer["policy"],
+    )
+
+    with pytest.raises(
+        VerifiedTransitionCampaignError,
+        match="campaign_ledger_record_missing:group-00000000.terminal.json",
+    ):
+        ledger.start_group(
+            sequence=1,
+            group_manifest=second_manifest,
+            group_manifest_attestation=second_attestation,
+            policy=issuer["policy"],
+            started_at_unix_ns=1_800_000_225_000_000_000,
+        )
+
+    ledger.start_group(
+        sequence=0,
+        group_manifest=material["manifest"],
+        group_manifest_attestation=material["manifest_attestation"],
+        policy=issuer["policy"],
+        started_at_unix_ns=1_800_000_225_000_000_000,
+    )
+    with pytest.raises(
+        VerifiedTransitionCampaignError, match="campaign_group_already_started"
+    ):
+        ledger.start_group(
+            sequence=0,
+            group_manifest=material["manifest"],
+            group_manifest_attestation=material["manifest_attestation"],
+            policy=issuer["policy"],
+            started_at_unix_ns=1_800_000_225_000_000_000,
+        )
+    ledger.finish_group(
+        sequence=0,
+        status="updated",
+        group_admission_sha256=_sha("campaign-group-admission"),
+        update_receipt_sha256=_sha("campaign-group-update"),
+        terminal_reason="optimizer_update_committed",
+        finished_at_unix_ns=1_800_000_226_000_000_000,
+    )
+    with pytest.raises(
+        VerifiedTransitionCampaignError,
+        match="campaign_ledger_record_missing:group-00000001.started.json",
+    ):
+        ledger.close_payload(
+            completed_at_unix_ns=1_800_000_229_000_000_000,
+            policy=issuer["policy"],
+        )
+
+    ledger.start_group(
+        sequence=1,
+        group_manifest=second_manifest,
+        group_manifest_attestation=second_attestation,
+        policy=issuer["policy"],
+        started_at_unix_ns=1_800_000_227_000_000_000,
+    )
+    ledger.finish_group(
+        sequence=1,
+        status="rejected",
+        group_admission_sha256=None,
+        update_receipt_sha256=None,
+        terminal_reason="right_to_wrong_regression",
+        finished_at_unix_ns=1_800_000_228_000_000_000,
+    )
+    close_payload = ledger.close_payload(
+        completed_at_unix_ns=1_800_000_229_000_000_000,
+        policy=issuer["policy"],
+    )
+    verifier_attestation = build_role_attestation(
+        issuer["policy"],
+        role=EVIDENCE_VERIFIER,
+        payload=close_payload,
+        signed_at_unix=1_800_000_229,
+        private_key=issuer["role_keys"][EVIDENCE_VERIFIER],
+    )
+    receipt = ledger.close(
+        close_payload=close_payload,
+        evidence_verifier_attestation=verifier_attestation,
+        policy=issuer["policy"],
+    )
+
+    assert close_payload["group_statuses"] == ["updated", "rejected"]
+    assert close_payload["updated_count"] == 1
+    assert close_payload["rejected_count"] == 1
+    assert ledger.validate_closed(policy=issuer["policy"]) == receipt
+
+    terminal_path = tmp_path / "campaign/group-00000001.terminal.json"
+    original_terminal = json.loads(terminal_path.read_text(encoding="ascii"))
+    tampered = copy.deepcopy(original_terminal)
+    tampered["terminal_reason"] = "forged_result"
+    terminal_path.write_bytes(
+        json.dumps(tampered, sort_keys=True, separators=(",", ":")).encode("ascii")
+    )
+    with pytest.raises(
+        VerifiedTransitionCampaignError, match="campaign_group_terminal_digest_mismatch"
+    ):
+        ledger.validate_closed(policy=issuer["policy"])
+
+    resealed = _reseal(
+        {
+            **original_terminal,
+            "status": "updated",
+            "update_receipt_sha256": None,
+        }
+    )
+    terminal_path.write_bytes(
+        json.dumps(resealed, sort_keys=True, separators=(",", ":")).encode("ascii")
+    )
+    with pytest.raises(
+        VerifiedTransitionCampaignError, match="campaign_group_terminal_invalid"
+    ):
+        ledger.validate_closed(policy=issuer["policy"])
+
+
 def test_group_admission_rejects_rehashed_manifest_attestation_forgery(
     transition_outcome_episodes: dict[str, dict[str, Any]],
 ) -> None:
@@ -1986,6 +2159,72 @@ def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
     admission_sha256 = material["admission"]["receipt_sha256"]
     assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
     assert not (tmp_path / "updates" / f"{admission_sha256}.committed.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("policy_changed", "classification", "requires_recovery"),
+    [
+        (False, "reserved_no_policy_change", False),
+        (True, "policy_changed_without_commit", True),
+    ],
+)
+def test_interrupted_update_reconciliation_burns_admission_without_guessing(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    policy_changed: bool,
+    classification: str,
+    requires_recovery: bool,
+) -> None:
+    material = _positive_admission_material(transition_outcome_episodes)
+    admission_sha256 = material["admission"]["receipt_sha256"]
+    policy_before = material["admission"]["policy_sha256"]
+    policy_observed = (
+        _sha("interrupted-policy-changed") if policy_changed else policy_before
+    )
+    journal = VerifiedTransitionUpdateJournal.open(
+        tmp_path / f"updates-{int(policy_changed)}"
+    )
+    journal.reserve(
+        admission_sha256=admission_sha256,
+        policy_before_sha256=policy_before,
+        reserved_at_unix_ns=1_800_000_225_000_000_000,
+    )
+    monkeypatch.setattr(
+        update_runtime,
+        "recurrent_policy_sha256",
+        lambda _model, _spec: policy_observed,
+    )
+
+    receipt = reconcile_interrupted_verified_transition_update(
+        object(),
+        SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"]),
+        journal,
+        admission_sha256,
+        now_unix_ns=lambda: 1_800_000_226_000_000_000,
+    )
+
+    assert receipt["classification"] == classification
+    assert receipt["admission_reusable"] is False
+    assert receipt["requires_fresh_admission"] is True
+    assert receipt["requires_checkpoint_recovery"] is requires_recovery
+    assert (
+        validate_verified_transition_reconciliation_receipt(journal, receipt)
+        == receipt
+    )
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_admission_already_reconciled",
+    ):
+        reconcile_interrupted_verified_transition_update(
+            object(),
+            SimpleNamespace(
+                sha256=material["admission"]["recurrent_execution_spec_sha256"]
+            ),
+            journal,
+            admission_sha256,
+            now_unix_ns=lambda: 1_800_000_227_000_000_000,
+        )
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,45 @@
+{
+  "schema": "aura.spark.cp420c_verified_transition_campaign_evidence.v1",
+  "checkpoint": "CP420C",
+  "date": "2026-07-27",
+  "source_base_commit": "a2652736980735d3aefae455aa96001d45e61606",
+  "claims": {
+    "campaign_groups_predeclared": true,
+    "global_episode_identity_unique": true,
+    "group_start_order_enforced": true,
+    "every_planned_group_terminal_required": true,
+    "external_evidence_verifier_close_required": true,
+    "raw_group_records_replayed_at_close": true,
+    "interrupted_admission_reusable": false,
+    "changed_policy_without_commit_requires_checkpoint_recovery": true
+  },
+  "source_sha256": {
+    "core/learning/verified_transition_campaign.py": "d361f949da7fd3d76fbc5cf5229cf334f7142a0b6e40d360cb1a6d4395090a82",
+    "core/learning/verified_transition_update.py": "8bdf6b993c88066932c6850711cac4423761daa0243a8691d7f336d2613a6ac0",
+    "tests/test_verified_transition_episode.py": "fa507bf21038d142aaf9756362bad18a430c22997e71ec5cd7d6ae50504ded16"
+  },
+  "validation": {
+    "focused_transition_suite": {"passed": 70, "failed": 0, "duration_seconds": 73.81},
+    "adjacent_recurrent_proof_matrix": {"passed": 144, "failed": 0, "duration_seconds": 76.87},
+    "spark_pretraining_refusal_preflight": {"passed": 11, "failed": 0},
+    "governance_effect_ownership": {"status": "baseline_matched", "recognized_calls": 2059, "buckets": 1922},
+    "ruff": "pass",
+    "compileall": "pass",
+    "diff_hygiene": "pass"
+  },
+  "nonclaims": {
+    "exclusive_production_mutation_path": false,
+    "cp418_source_artifact_replay": false,
+    "model_loaded": false,
+    "model_trained": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false
+  },
+  "next": [
+    "remove the legacy raw recurrent optimizer bypass",
+    "bind CP418 adapter identity to campaign, admission, reservation, commit, and update artifacts",
+    "run the fresh sealed small-checkpoint behavior campaign"
+  ]
+}

@@ -30,6 +30,9 @@ from core.runtime.file_write_gateway import FileWriteGateway
 VERIFIED_TRANSITION_UPDATE_SCHEMA = "aura.verified_transition.update_receipt.v1"
 VERIFIED_TRANSITION_RESERVATION_SCHEMA = "aura.verified_transition.update_reservation.v1"
 VERIFIED_TRANSITION_COMMIT_SCHEMA = "aura.verified_transition.update_commit.v1"
+VERIFIED_TRANSITION_RECONCILIATION_SCHEMA = (
+    "aura.verified_transition.update_reconciliation.v1"
+)
 
 
 class VerifiedTransitionUpdateError(RuntimeError):
@@ -183,7 +186,7 @@ class VerifiedTransitionUpdateJournal:
         return commit
 
     def read(self, admission_sha256: str, suffix: str) -> dict[str, Any]:
-        if suffix not in {"reserved", "committed"}:
+        if suffix not in {"reserved", "committed", "reconciled"}:
             _fail("verified_transition_journal_suffix_invalid")
         payload = read_stable_bytes(
             self._path(admission_sha256, suffix),
@@ -198,6 +201,67 @@ class VerifiedTransitionUpdateJournal:
         if not isinstance(document, dict) or _json_bytes(document) != payload:
             _fail("verified_transition_journal_noncanonical")
         return document
+
+    def exists(self, admission_sha256: str, suffix: str) -> bool:
+        if suffix not in {"reserved", "committed", "reconciled"}:
+            _fail("verified_transition_journal_suffix_invalid")
+        path = self._path(admission_sha256, suffix)
+        if path.is_symlink():
+            _fail("verified_transition_journal_symlink_rejected")
+        return path.is_file()
+
+    def reconcile(
+        self,
+        *,
+        admission_sha256: str,
+        reservation_sha256: str,
+        policy_before_sha256: str,
+        observed_policy_sha256: str,
+        classification: str,
+        reconciled_at_unix_ns: int,
+    ) -> dict[str, Any]:
+        if classification not in {
+            "reserved_no_policy_change",
+            "policy_changed_without_commit",
+        }:
+            _fail("verified_transition_reconciliation_classification_invalid")
+        if self.exists(admission_sha256, "committed"):
+            _fail("verified_transition_reconciliation_after_commit")
+        expected_changed = classification == "policy_changed_without_commit"
+        if (observed_policy_sha256 != policy_before_sha256) is not expected_changed:
+            _fail("verified_transition_reconciliation_policy_mismatch")
+        receipt = _seal(
+            {
+                "schema": VERIFIED_TRANSITION_RECONCILIATION_SCHEMA,
+                "admission_sha256": _require_sha256(
+                    admission_sha256, role="reconciliation_admission"
+                ),
+                "reservation_sha256": _require_sha256(
+                    reservation_sha256, role="reconciliation_reservation"
+                ),
+                "policy_before_sha256": _require_sha256(
+                    policy_before_sha256, role="reconciliation_policy_before"
+                ),
+                "observed_policy_sha256": _require_sha256(
+                    observed_policy_sha256, role="reconciliation_policy_observed"
+                ),
+                "classification": classification,
+                "admission_reusable": False,
+                "requires_fresh_admission": True,
+                "requires_checkpoint_recovery": expected_changed,
+                "reconciled_at_unix_ns": _require_time(
+                    reconciled_at_unix_ns, role="reconciliation_time"
+                ),
+            }
+        )
+        if not self.gateway.write_bytes_if_absent(
+            self._path(admission_sha256, "reconciled"),
+            _json_bytes(receipt),
+            source="verified_transition_update.reconcile",
+            durable=True,
+        ):
+            _fail("verified_transition_admission_already_reconciled")
+        return receipt
 
 
 def apply_verified_transition_group_update(
@@ -374,16 +438,108 @@ def validate_verified_transition_update_receipt(
     return dict(receipt)
 
 
+def reconcile_interrupted_verified_transition_update(
+    model: Any,
+    spec: RLCExecutionSpec,
+    journal: VerifiedTransitionUpdateJournal,
+    admission_sha256: str,
+    *,
+    now_unix_ns: Callable[[], int] = time.time_ns,
+) -> dict[str, Any]:
+    """Classify a durable reservation that has no durable commit.
+
+    An interrupted admission is always burned. If its policy changed, exact
+    checkpoint recovery is required before training may continue; this helper
+    deliberately does not guess whether the optimizer update completed.
+    """
+
+    admission = cast_sha256(admission_sha256)
+    reservation = journal.read(admission, "reserved")
+    if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
+        _fail("verified_transition_reservation_schema_invalid")
+    _validate_seal(reservation, role="verified_transition_reservation")
+    if reservation.get("admission_sha256") != admission:
+        _fail("verified_transition_reservation_admission_mismatch")
+    if journal.exists(admission, "committed"):
+        _fail("verified_transition_reconciliation_after_commit")
+    observed = recurrent_policy_sha256(model, spec)
+    before = cast_sha256(reservation.get("policy_before_sha256"))
+    classification = (
+        "reserved_no_policy_change"
+        if observed == before
+        else "policy_changed_without_commit"
+    )
+    return journal.reconcile(
+        admission_sha256=admission,
+        reservation_sha256=cast_sha256(reservation.get("receipt_sha256")),
+        policy_before_sha256=before,
+        observed_policy_sha256=observed,
+        classification=classification,
+        reconciled_at_unix_ns=_require_time(
+            now_unix_ns(), role="reconciliation_observed_at"
+        ),
+    )
+
+
+def validate_verified_transition_reconciliation_receipt(
+    journal: VerifiedTransitionUpdateJournal,
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(receipt, Mapping) or set(receipt) != {
+        "schema",
+        "admission_sha256",
+        "reservation_sha256",
+        "policy_before_sha256",
+        "observed_policy_sha256",
+        "classification",
+        "admission_reusable",
+        "requires_fresh_admission",
+        "requires_checkpoint_recovery",
+        "reconciled_at_unix_ns",
+        "receipt_sha256",
+    }:
+        _fail("verified_transition_reconciliation_receipt_schema_invalid")
+    if receipt.get("schema") != VERIFIED_TRANSITION_RECONCILIATION_SCHEMA:
+        _fail("verified_transition_reconciliation_receipt_version_invalid")
+    _validate_seal(receipt, role="verified_transition_reconciliation")
+    admission = cast_sha256(receipt.get("admission_sha256"))
+    reservation = journal.read(admission, "reserved")
+    durable = journal.read(admission, "reconciled")
+    changed = receipt.get("policy_before_sha256") != receipt.get(
+        "observed_policy_sha256"
+    )
+    expected_classification = (
+        "policy_changed_without_commit" if changed else "reserved_no_policy_change"
+    )
+    if (
+        durable != dict(receipt)
+        or reservation.get("receipt_sha256") != receipt.get("reservation_sha256")
+        or reservation.get("admission_sha256") != admission
+        or reservation.get("policy_before_sha256")
+        != receipt.get("policy_before_sha256")
+        or receipt.get("classification") != expected_classification
+        or receipt.get("admission_reusable") is not False
+        or receipt.get("requires_fresh_admission") is not True
+        or receipt.get("requires_checkpoint_recovery") is not changed
+        or journal.exists(admission, "committed")
+    ):
+        _fail("verified_transition_reconciliation_reconstruction_mismatch")
+    return dict(receipt)
+
+
 def cast_sha256(value: Any) -> str:
     return _require_sha256(value, role="verified_transition_digest")
 
 
 __all__ = [
     "VERIFIED_TRANSITION_COMMIT_SCHEMA",
+    "VERIFIED_TRANSITION_RECONCILIATION_SCHEMA",
     "VERIFIED_TRANSITION_RESERVATION_SCHEMA",
     "VERIFIED_TRANSITION_UPDATE_SCHEMA",
     "VerifiedTransitionUpdateError",
     "VerifiedTransitionUpdateJournal",
     "apply_verified_transition_group_update",
+    "reconcile_interrupted_verified_transition_update",
+    "validate_verified_transition_reconciliation_receipt",
     "validate_verified_transition_update_receipt",
 ]
