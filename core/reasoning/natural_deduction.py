@@ -23,9 +23,8 @@ exact solver, into belief contradiction-detection, and to a governance signal in
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
-
 
 # ── Formula AST ───────────────────────────────────────────────────────────
 
@@ -34,13 +33,13 @@ class Formula:
 
     __slots__ = ()
 
-    def __and__(self, other: "Formula") -> "And":
+    def __and__(self, other: Formula) -> And:
         return And(self, other)
 
-    def __or__(self, other: "Formula") -> "Or":
+    def __or__(self, other: Formula) -> Or:
         return Or(self, other)
 
-    def __invert__(self) -> "Not":
+    def __invert__(self) -> Not:
         return Not(self)
 
 
@@ -254,7 +253,7 @@ class CertStep:
 
     kind: str
     target: Formula
-    children: tuple["CertStep", ...] = ()
+    children: tuple[CertStep, ...] = ()
 
     def node_count(self) -> int:
         return 1 + sum(c.node_count() for c in self.children)
@@ -268,7 +267,7 @@ class CertStep:
         }
 
     @staticmethod
-    def from_dict(data: dict[str, object]) -> "CertStep":
+    def from_dict(data: dict[str, object]) -> CertStep:
         return CertStep(
             kind=str(data["kind"]),
             target=formula_from_dict(data["target"]),  # type: ignore[arg-type]
@@ -333,7 +332,7 @@ def _expand(f: Formula) -> tuple[str, list[list[Formula]]]:
 def _literal_conflict(branch: set[Formula]) -> tuple[Formula, Formula] | None:
     if Bot() in branch:
         return Bot(), Bot()
-    for f in branch:
+    for f in sorted(branch, key=_formula_sort_key):
         if isinstance(f, Not) and f.f in branch:                     # {A, ¬A} ⊆ Γ
             return f.f, f
     return None
@@ -343,11 +342,40 @@ def _is_literal(f: Formula) -> bool:
     return isinstance(f, (Atom, Bot)) or (isinstance(f, Not) and isinstance(f.f, Atom))
 
 
+def _formula_sort_key(formula: Formula) -> tuple[object, ...]:
+    if isinstance(formula, Atom):
+        return ("atom", formula.name)
+    if isinstance(formula, Bot):
+        return ("bot",)
+    if isinstance(formula, Not):
+        return ("not", _formula_sort_key(formula.f))
+    if isinstance(formula, And):
+        return (
+            "and",
+            _formula_sort_key(formula.a),
+            _formula_sort_key(formula.b),
+        )
+    if isinstance(formula, Or):
+        return (
+            "or",
+            _formula_sort_key(formula.a),
+            _formula_sort_key(formula.b),
+        )
+    if isinstance(formula, Implies):
+        return (
+            "implies",
+            _formula_sort_key(formula.a),
+            _formula_sort_key(formula.b),
+        )
+    raise TypeError(f"unsupported formula type: {type(formula).__name__}")
+
+
 def _pick_target(branch: set[Formula]) -> Formula | None:
-    for f in branch:
-        if not _is_literal(f):
-            return f
-    return None
+    return min(
+        (formula for formula in branch if not _is_literal(formula)),
+        key=_formula_sort_key,
+        default=None,
+    )
 
 
 def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> dict[str, bool] | None:
@@ -370,7 +398,7 @@ def _saturate(formulas: Iterable[Formula], trace: list[str] | None = None) -> di
         if target is None:
             # saturated open branch → countermodel
             model: dict[str, bool] = {}
-            for f in branch:
+            for f in sorted(branch, key=_formula_sort_key):
                 if isinstance(f, Atom):
                     model[f.name] = True
                 elif isinstance(f, Not) and isinstance(f.f, Atom):
@@ -395,7 +423,7 @@ _REFUTATION_NODE_BUDGET = 50_000
 _REFUTATION_MAX_DEPTH = 800
 
 
-class _RefutationBudgetExceeded(RuntimeError):
+class _RefutationBudgetExceededError(RuntimeError):
     """Raised when certificate construction exceeds its node/depth budget."""
 
 
@@ -414,7 +442,7 @@ def _refute(
     """
     budget[0] -= 1
     if budget[0] < 0 or depth > _REFUTATION_MAX_DEPTH:
-        raise _RefutationBudgetExceeded(f"budget exhausted at depth {depth}")
+        raise _RefutationBudgetExceededError(f"budget exhausted at depth {depth}")
     conflict = _literal_conflict(branch)
     if conflict is not None:
         if trace is not None:
@@ -425,7 +453,7 @@ def _refute(
     target = _pick_target(branch)
     if target is None:
         model: dict[str, bool] = {}
-        for f in branch:
+        for f in sorted(branch, key=_formula_sort_key):
             if isinstance(f, Atom):
                 model[f.name] = True
             elif isinstance(f, Not) and isinstance(f.f, Atom):
@@ -477,12 +505,12 @@ def prove(premises: Iterable[Formula], goal: Formula) -> Proof:
     Returns a :class:`Proof` whose ``provable`` flag is the soundness verdict,
     with a rule trace when proved or a countermodel when not.
     """
-    prem = list(premises)
+    prem = sorted(set(premises), key=_formula_sort_key)
     trace: list[str] = []
     root = set(prem) | {_negate(goal)}
     try:
         cert, model = _refute(root, [_REFUTATION_NODE_BUDGET], trace)
-    except (_RefutationBudgetExceeded, RecursionError):
+    except (_RefutationBudgetExceededError, RecursionError):
         # Fall back to the certificateless decision procedure: the verdict is
         # still sound, but consumers that require kernel verification will see
         # (and must treat) the proof as unchecked.

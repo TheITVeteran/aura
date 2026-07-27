@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import stat
+import sys
 
 import pytest
 
@@ -315,6 +316,678 @@ def test_file_write_gateway_batch_rejects_ambiguous_targets(tmp_path) -> None:
             source="unit.batch.lock_symlink",
         )
     assert lock_backing.read_bytes() == b"do-not-follow"
+
+
+def test_directory_relative_batch_commits_exact_generation(tmp_path) -> None:
+    from core.runtime.file_write_gateway import (
+        DirectoryFileWriteBatchEntry,
+        FileWriteGateway,
+    )
+
+    gateway = FileWriteGateway()
+    receipt = gateway.write_bytes_batch_in_directory(
+        tmp_path,
+        (
+            DirectoryFileWriteBatchEntry("data.bin", b"payload", 0o640),
+            DirectoryFileWriteBatchEntry("manifest.json", b"{}", 0o600),
+        ),
+        allowed_existing_names={"data.bin", "manifest.json"},
+        commit_marker="manifest.json",
+        source="unit.directory_batch",
+    )
+
+    assert (tmp_path / "data.bin").read_bytes() == b"payload"
+    assert (tmp_path / "manifest.json").read_bytes() == b"{}"
+    assert stat.S_IMODE((tmp_path / "data.bin").stat().st_mode) == 0o640
+    assert set(receipt.paths) == {
+        str(tmp_path / "data.bin"),
+        str(tmp_path / "manifest.json"),
+    }
+    assert {
+        path.name for path in tmp_path.iterdir()
+    } == {"data.bin", "manifest.json", ".aura_file_write_batch.lock"}
+
+
+def test_directory_relative_batch_rejects_unexpected_and_symlink_entries(
+    tmp_path,
+) -> None:
+    from core.runtime.file_write_gateway import (
+        DirectoryFileWriteBatchEntry,
+        FileWriteGateway,
+        FileWriteTransactionError,
+    )
+
+    gateway = FileWriteGateway()
+    directory = tmp_path / "package"
+    directory.mkdir(mode=0o700)
+    (directory / "unexpected.txt").write_text("foreign")
+    with pytest.raises(FileWriteTransactionError, match="unexpected entries"):
+        gateway.write_bytes_batch_in_directory(
+            directory,
+            (DirectoryFileWriteBatchEntry("manifest.json", b"{}"),),
+            allowed_existing_names={"manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.unexpected",
+        )
+
+    (directory / "unexpected.txt").unlink()
+    backing = tmp_path / "backing"
+    backing.write_bytes(b"unchanged")
+    (directory / "manifest.json").symlink_to(backing)
+    with pytest.raises(FileWriteTransactionError, match="non-regular"):
+        gateway.write_bytes_batch_in_directory(
+            directory,
+            (DirectoryFileWriteBatchEntry("manifest.json", b"{}"),),
+            allowed_existing_names={"manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.symlink",
+        )
+    assert backing.read_bytes() == b"unchanged"
+
+
+def test_directory_relative_batch_rolls_back_second_replace_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    gateway = gateway_module.FileWriteGateway()
+    (tmp_path / "a.bin").write_bytes(b"old-a")
+    (tmp_path / "manifest.json").write_bytes(b"old-manifest")
+    real_replace = gateway_module.os.replace
+    failed = False
+
+    def fail_manifest_once(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+        nonlocal failed
+        if dst == "manifest.json" and not failed:
+            failed = True
+            raise OSError("injected marker replacement failure")
+        return real_replace(
+            src,
+            dst,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+
+    monkeypatch.setattr(gateway_module.os, "replace", fail_manifest_once)
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="originals restored",
+    ):
+        gateway.write_bytes_batch_in_directory(
+            tmp_path,
+            (
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "a.bin",
+                    b"new-a",
+                ),
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "manifest.json",
+                    b"new-manifest",
+                ),
+            ),
+            allowed_existing_names={"a.bin", "manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.rollback",
+        )
+    assert (tmp_path / "a.bin").read_bytes() == b"old-a"
+    assert (tmp_path / "manifest.json").read_bytes() == b"old-manifest"
+
+
+def test_directory_relative_batch_cleans_staging_failure_and_retries(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    gateway = gateway_module.FileWriteGateway()
+    real_stage = gateway_module._stage_bytes_at
+    failed = False
+
+    def fail_after_stage(directory_fd, name, payload, mode):
+        nonlocal failed
+        real_stage(directory_fd, name, payload, mode)
+        if name.endswith("-0.tmp") and not failed:
+            failed = True
+            raise OSError("injected staging fsync failure")
+
+    monkeypatch.setattr(
+        gateway_module,
+        "_stage_bytes_at",
+        fail_after_stage,
+    )
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="originals restored",
+    ):
+        gateway.write_bytes_batch_in_directory(
+            tmp_path,
+            (
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "data.bin",
+                    b"data",
+                ),
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "manifest.json",
+                    b"manifest",
+                ),
+            ),
+            allowed_existing_names={"data.bin", "manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.stage_failure",
+        )
+    assert {
+        path.name for path in tmp_path.iterdir()
+    } == {".aura_file_write_batch.lock"}
+
+    monkeypatch.setattr(gateway_module, "_stage_bytes_at", real_stage)
+    gateway.write_bytes_batch_in_directory(
+        tmp_path,
+        (
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "data.bin",
+                b"data",
+            ),
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "manifest.json",
+                b"manifest",
+            ),
+        ),
+        allowed_existing_names={"data.bin", "manifest.json"},
+        commit_marker="manifest.json",
+        source="unit.directory_batch.stage_retry",
+    )
+    assert (tmp_path / "data.bin").read_bytes() == b"data"
+
+
+def test_directory_relative_batch_recovers_process_death_before_retry(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    (tmp_path / "manifest.json").write_bytes(b"old-manifest")
+    script = """
+import os
+import sys
+import core.runtime.file_write_gateway as gateway_module
+
+target = sys.argv[1]
+real_replace = gateway_module.os.replace
+
+def crash_after_first_target(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+    result = real_replace(
+        src,
+        dst,
+        src_dir_fd=src_dir_fd,
+        dst_dir_fd=dst_dir_fd,
+    )
+    if dst == "data.bin":
+        os._exit(91)
+    return result
+
+gateway_module.os.replace = crash_after_first_target
+gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+    target,
+    (
+        gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new-data"),
+        gateway_module.DirectoryFileWriteBatchEntry(
+            "manifest.json",
+            b"new-manifest",
+        ),
+    ),
+    allowed_existing_names={"data.bin", "manifest.json"},
+    commit_marker="manifest.json",
+    source="unit.directory_batch.process_death",
+)
+"""
+    crashed = get_subprocess_gateway().run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=False,
+        capture_output=True,
+        offline_tooling=True,
+        source="certification_tooling:directory_batch_process_death",
+    )
+    assert crashed.returncode == 91
+    assert (tmp_path / ".aura_file_write_batch.journal").exists()
+
+    real_stage = gateway_module._stage_bytes_at
+
+    def stop_after_recovery(directory_fd, name, payload, mode):
+        if "-recover-" in name:
+            return real_stage(directory_fd, name, payload, mode)
+        raise OSError("stop after recovery")
+
+    monkeypatch.setattr(
+        gateway_module,
+        "_stage_bytes_at",
+        stop_after_recovery,
+    )
+    with pytest.raises(gateway_module.FileWriteTransactionError):
+        gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+            tmp_path,
+            (
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "data.bin",
+                    b"final-data",
+                ),
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "manifest.json",
+                    b"final-manifest",
+                ),
+            ),
+            allowed_existing_names={"data.bin", "manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.recovery_probe",
+        )
+    assert (tmp_path / "data.bin").read_bytes() == b"old-data"
+    assert (tmp_path / "manifest.json").read_bytes() == b"old-manifest"
+    assert not (tmp_path / ".aura_file_write_batch.journal").exists()
+
+    monkeypatch.setattr(gateway_module, "_stage_bytes_at", real_stage)
+    gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+        tmp_path,
+        (
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "data.bin",
+                b"final-data",
+            ),
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "manifest.json",
+                b"final-manifest",
+            ),
+        ),
+        allowed_existing_names={"data.bin", "manifest.json"},
+        commit_marker="manifest.json",
+        source="unit.directory_batch.recovery_commit",
+    )
+    assert (tmp_path / "data.bin").read_bytes() == b"final-data"
+
+
+def test_directory_relative_batch_commit_cleanup_survives_process_death(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    (tmp_path / "manifest.json").write_bytes(b"old-manifest")
+    script = """
+import os
+import sys
+import core.runtime.file_write_gateway as gateway_module
+
+target = sys.argv[1]
+real_unlink = gateway_module._unlink_private_regular_at
+
+def crash_on_disposable_backup(directory_fd, name):
+    if name.endswith(".bak"):
+        os._exit(92)
+    return real_unlink(directory_fd, name)
+
+gateway_module._unlink_private_regular_at = crash_on_disposable_backup
+gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+    target,
+    (
+        gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new-data"),
+        gateway_module.DirectoryFileWriteBatchEntry(
+            "manifest.json", b"new-manifest"
+        ),
+    ),
+    allowed_existing_names={"data.bin", "manifest.json"},
+    commit_marker="manifest.json",
+    source="unit.directory_batch.commit_cleanup_death",
+)
+"""
+    crashed = get_subprocess_gateway().run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=False,
+        capture_output=True,
+        offline_tooling=True,
+        source="certification_tooling:directory_batch_commit_cleanup_death",
+    )
+    assert crashed.returncode == 92
+    assert (tmp_path / "data.bin").read_bytes() == b"new-data"
+    assert not (tmp_path / ".aura_file_write_batch.journal").exists()
+    assert any(path.name.endswith(".bak") for path in tmp_path.iterdir())
+
+    real_stage = gateway_module._stage_bytes_at
+
+    def stop_new_transaction(*_args, **_kwargs):
+        raise OSError("stop after abandoned-backup cleanup")
+
+    monkeypatch.setattr(
+        gateway_module,
+        "_stage_bytes_at",
+        stop_new_transaction,
+    )
+    with pytest.raises(gateway_module.FileWriteTransactionError):
+        gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+            tmp_path,
+            (
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "data.bin", b"final-data"
+                ),
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "manifest.json", b"final-manifest"
+                ),
+            ),
+            allowed_existing_names={"data.bin", "manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.commit_cleanup_probe",
+        )
+    assert (tmp_path / "data.bin").read_bytes() == b"new-data"
+    assert not any(path.name.endswith(".bak") for path in tmp_path.iterdir())
+
+    monkeypatch.setattr(gateway_module, "_stage_bytes_at", real_stage)
+
+
+def test_directory_relative_batch_recovery_cleanup_survives_process_death(
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    (tmp_path / "manifest.json").write_bytes(b"old-manifest")
+    crash_replace = """
+import os
+import sys
+import core.runtime.file_write_gateway as gateway_module
+
+target = sys.argv[1]
+real_replace = gateway_module.os.replace
+def crash(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+    result = real_replace(
+        src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd
+    )
+    if dst == "data.bin":
+        os._exit(93)
+    return result
+gateway_module.os.replace = crash
+gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+    target,
+    (
+        gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new-data"),
+        gateway_module.DirectoryFileWriteBatchEntry(
+            "manifest.json", b"new-manifest"
+        ),
+    ),
+    allowed_existing_names={"data.bin", "manifest.json"},
+    commit_marker="manifest.json",
+    source="unit.directory_batch.recovery_cleanup_setup",
+)
+"""
+    first = get_subprocess_gateway().run(
+        [sys.executable, "-c", crash_replace, str(tmp_path)],
+        check=False,
+        capture_output=True,
+        offline_tooling=True,
+        source="certification_tooling:directory_batch_recovery_cleanup_setup",
+    )
+    assert first.returncode == 93
+    assert (tmp_path / ".aura_file_write_batch.journal").exists()
+
+    crash_cleanup = """
+import os
+import sys
+import core.runtime.file_write_gateway as gateway_module
+
+target = sys.argv[1]
+real_unlink = gateway_module._unlink_private_regular_at
+def crash(directory_fd, name):
+    if name.endswith(".bak"):
+        os._exit(94)
+    return real_unlink(directory_fd, name)
+gateway_module._unlink_private_regular_at = crash
+gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+    target,
+    (
+        gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"final-data"),
+        gateway_module.DirectoryFileWriteBatchEntry(
+            "manifest.json", b"final-manifest"
+        ),
+    ),
+    allowed_existing_names={"data.bin", "manifest.json"},
+    commit_marker="manifest.json",
+    source="unit.directory_batch.recovery_cleanup_death",
+)
+"""
+    second = get_subprocess_gateway().run(
+        [sys.executable, "-c", crash_cleanup, str(tmp_path)],
+        check=False,
+        capture_output=True,
+        offline_tooling=True,
+        source="certification_tooling:directory_batch_recovery_cleanup_death",
+    )
+    assert second.returncode == 94
+    assert (tmp_path / "data.bin").read_bytes() == b"old-data"
+    assert (tmp_path / "manifest.json").read_bytes() == b"old-manifest"
+    assert not (tmp_path / ".aura_file_write_batch.journal").exists()
+
+    gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+        tmp_path,
+        (
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "data.bin", b"final-data"
+            ),
+            gateway_module.DirectoryFileWriteBatchEntry(
+                "manifest.json", b"final-manifest"
+            ),
+        ),
+        allowed_existing_names={"data.bin", "manifest.json"},
+        commit_marker="manifest.json",
+        source="unit.directory_batch.recovery_cleanup_commit",
+    )
+    assert (tmp_path / "data.bin").read_bytes() == b"final-data"
+
+
+def test_directory_relative_batch_refuses_unrecoverable_journal_size(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    monkeypatch.setattr(
+        gateway_module,
+        "_MAX_DIRECTORY_BATCH_JOURNAL_BYTES",
+        128,
+    )
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="originals restored",
+    ):
+        gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+            tmp_path,
+            (gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new"),),
+            allowed_existing_names={"data.bin"},
+            commit_marker="data.bin",
+            source="unit.directory_batch.journal_bound",
+        )
+    assert (tmp_path / "data.bin").read_bytes() == b"old-data"
+    assert not (tmp_path / ".aura_file_write_batch.journal").exists()
+    assert not any(
+        path.name.startswith(".aura-batch-") for path in tmp_path.iterdir()
+    )
+
+
+def test_directory_relative_batch_reports_durable_committed_state(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    real_write_journal = gateway_module._write_directory_batch_journal
+
+    def fail_after_committed_journal(*args, state, **kwargs):
+        real_write_journal(*args, state=state, **kwargs)
+        if state == "committed":
+            raise OSError("failure after durable committed journal")
+
+    monkeypatch.setattr(
+        gateway_module,
+        "_write_directory_batch_journal",
+        fail_after_committed_journal,
+    )
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="committed but durable cleanup",
+    ):
+        gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+            tmp_path,
+            (gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new"),),
+            allowed_existing_names={"data.bin"},
+            commit_marker="data.bin",
+            source="unit.directory_batch.committed_state",
+        )
+    assert (tmp_path / "data.bin").read_bytes() == b"new"
+    assert not (tmp_path / ".aura_file_write_batch.journal").exists()
+
+
+def test_directory_relative_batch_classifies_persistent_committed_cleanup_failure(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    (tmp_path / "data.bin").write_bytes(b"old-data")
+    real_write_journal = gateway_module._write_directory_batch_journal
+    real_unlink = gateway_module._unlink_private_regular_at
+
+    def fail_after_committed_journal(*args, state, **kwargs):
+        real_write_journal(*args, state=state, **kwargs)
+        if state == "committed":
+            raise OSError("failure after durable committed journal")
+
+    def refuse_committed_journal_cleanup(directory_fd, name):
+        if name == gateway_module._DIRECTORY_BATCH_JOURNAL_FILE:
+            raise OSError("persistent committed cleanup failure")
+        return real_unlink(directory_fd, name)
+
+    monkeypatch.setattr(
+        gateway_module,
+        "_write_directory_batch_journal",
+        fail_after_committed_journal,
+    )
+    monkeypatch.setattr(
+        gateway_module,
+        "_unlink_private_regular_at",
+        refuse_committed_journal_cleanup,
+    )
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="committed but durable cleanup is incomplete",
+    ):
+        gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+            tmp_path,
+            (gateway_module.DirectoryFileWriteBatchEntry("data.bin", b"new"),),
+            allowed_existing_names={"data.bin"},
+            commit_marker="data.bin",
+            source="unit.directory_batch.persistent_committed_cleanup",
+        )
+    assert (tmp_path / "data.bin").read_bytes() == b"new"
+    assert (tmp_path / ".aura_file_write_batch.journal").exists()
+    directory_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert gateway_module._load_directory_batch_journal(directory_fd)[
+            "state"
+        ] == "committed"
+    finally:
+        os.close(directory_fd)
+
+
+def test_directory_relative_batch_rejects_hardlinked_lock_without_chmod(
+    tmp_path,
+) -> None:
+    import fcntl
+
+    import core.runtime.file_write_gateway as gateway_module
+
+    backing = tmp_path.parent / f"{tmp_path.name}-lock-backing"
+    backing.write_bytes(b"lock")
+    backing.chmod(0o640)
+    os.link(backing, tmp_path / ".aura_file_write_batch.lock")
+    descriptor = os.open(backing, os.O_RDWR)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        with pytest.raises(
+            gateway_module.FileWriteTransactionError,
+            match="lock path no longer binds",
+        ):
+            gateway_module.FileWriteGateway().write_bytes_batch_in_directory(
+                tmp_path,
+                (
+                    gateway_module.DirectoryFileWriteBatchEntry(
+                        "manifest.json", b"{}"
+                    ),
+                ),
+                allowed_existing_names={"manifest.json"},
+                commit_marker="manifest.json",
+                source="unit.directory_batch.hardlink_lock",
+            )
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+    assert stat.S_IMODE(backing.stat().st_mode) == 0o640
+
+
+def test_directory_relative_batch_never_writes_to_swapped_path(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.runtime.file_write_gateway as gateway_module
+
+    directory = tmp_path / "bound"
+    moved = tmp_path / "moved"
+    directory.mkdir(mode=0o700)
+    (directory / "data.bin").write_bytes(b"old-data")
+    (directory / "manifest.json").write_bytes(b"old-manifest")
+    gateway = gateway_module.FileWriteGateway()
+    real_replace = gateway_module.os.replace
+    swapped = False
+
+    def swap_path_then_replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            directory.rename(moved)
+            directory.mkdir(mode=0o700)
+        return real_replace(
+            src,
+            dst,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+        )
+
+    monkeypatch.setattr(gateway_module.os, "replace", swap_path_then_replace)
+    with pytest.raises(
+        gateway_module.FileWriteTransactionError,
+        match="originals restored",
+    ):
+        gateway.write_bytes_batch_in_directory(
+            directory,
+            (
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "data.bin",
+                    b"new-data",
+                ),
+                gateway_module.DirectoryFileWriteBatchEntry(
+                    "manifest.json",
+                    b"new-manifest",
+                ),
+            ),
+            allowed_existing_names={"data.bin", "manifest.json"},
+            commit_marker="manifest.json",
+            source="unit.directory_batch.path_swap",
+        )
+    assert not any(directory.iterdir())
+    assert (moved / "data.bin").read_bytes() == b"old-data"
+    assert (moved / "manifest.json").read_bytes() == b"old-manifest"
 
 
 def test_file_write_gateway_owned_binary_is_narrow_private_and_no_follow(tmp_path) -> None:

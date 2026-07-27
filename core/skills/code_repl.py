@@ -12,10 +12,12 @@ This closes the "code REPL" gap in tool parity.
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,341 @@ _REPL_RECOVERABLE_ERRORS = (
     OSError,
     TimeoutError,
 )
+CODE_REPL_MODEL_RESULT_SCHEMA = "aura.code_repl.model_result.v3"
+_MODEL_STDOUT_LIMIT = 1024
+_MODEL_STDERR_LIMIT = 1024
+_MODEL_ERROR_LIMIT = 768
+_MODEL_ENGINE_LIMIT = 64
+CODE_REPL_MODEL_RESULT_FIELDS = frozenset(
+    {
+        "schema",
+        "ok",
+        "status",
+        "stdout",
+        "stderr",
+        "returncode",
+        "engine",
+        "summary",
+        "error",
+        "stdout_truncated",
+        "stdout_original_chars",
+        "stdout_sha256",
+        "stdout_preview_sha256",
+        "stderr_truncated",
+        "stderr_original_chars",
+        "stderr_sha256",
+        "stderr_preview_sha256",
+        "error_truncated",
+        "error_original_chars",
+        "error_sha256",
+        "error_preview_sha256",
+    }
+)
+
+
+def _bounded_model_evidence(
+    value: Any,
+    *,
+    limit: int,
+) -> tuple[str, bool, int, str]:
+    text = str(value or "")
+    original_chars = len(text)
+    digest = hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest()
+    if original_chars <= limit:
+        return text, False, original_chars, digest
+    marker = "\n...[TRUNCATED; VERIFY SHA256]..."
+    retained = max(0, limit - len(marker))
+    return text[:retained] + marker, True, original_chars, digest
+
+
+def _validate_canonical_model_result(raw: Mapping[str, Any]) -> dict[str, Any]:
+    if (
+        raw.get("schema") != CODE_REPL_MODEL_RESULT_SCHEMA
+        or not CODE_REPL_MODEL_RESULT_FIELDS.issubset(raw)
+    ):
+        raise ValueError("code_repl canonical result fields are invalid")
+    result = {name: raw[name] for name in CODE_REPL_MODEL_RESULT_FIELDS}
+    if (
+        type(result["ok"]) is not bool
+        or result["status"] not in {"ok", "error", "timeout"}
+        or (result["status"] == "ok") != result["ok"]
+        or (
+            result["returncode"] is not None
+            and type(result["returncode"]) is not int
+        )
+        or not isinstance(result["engine"], str)
+        or len(result["engine"]) > _MODEL_ENGINE_LIMIT
+        or not isinstance(result["summary"], str)
+        or result["summary"]
+        != (
+            "Code execution completed successfully."
+            if result["status"] == "ok"
+            else (
+                "Code execution timed out."
+                if result["status"] == "timeout"
+                else "Code execution failed."
+            )
+        )
+        or (result["ok"] and result["returncode"] not in {None, 0})
+    ):
+        raise ValueError("code_repl canonical result status is invalid")
+    for name in ("stdout", "stderr", "error"):
+        truncated = result[f"{name}_truncated"]
+        original_chars = result[f"{name}_original_chars"]
+        digest = result[f"{name}_sha256"]
+        preview_digest = result[f"{name}_preview_sha256"]
+        value = result[name]
+        if (
+            not isinstance(value, str)
+            or type(truncated) is not bool
+            or type(original_chars) is not int
+            or original_chars < len(value)
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            or not isinstance(preview_digest, str)
+            or preview_digest
+            != hashlib.sha256(
+                value.encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
+            or (not truncated and original_chars != len(value))
+            or (
+                not truncated
+                and hashlib.sha256(
+                    value.encode("utf-8", errors="surrogatepass")
+                ).hexdigest()
+                != digest
+            )
+        ):
+            raise ValueError(f"code_repl canonical {name} evidence is invalid")
+    if result["ok"] and result["error"]:
+        raise ValueError("successful code_repl result cannot contain an error")
+    if not result["ok"] and not result["error"]:
+        raise ValueError("failed code_repl result must contain an error")
+    return result
+
+
+def normalize_code_repl_model_result(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the stable evidence view shown to the model and SFT datasets."""
+
+    if not isinstance(raw, Mapping):
+        raise TypeError("code_repl result must be a mapping")
+    if raw.get("schema") == CODE_REPL_MODEL_RESULT_SCHEMA:
+        return _validate_canonical_model_result(raw)
+    raw_status = str(raw.get("status") or "").strip().lower()
+    returncode = raw.get("returncode")
+    returncode = returncode if type(returncode) is int else None
+    explicit_ok = raw.get("ok")
+    raw_error = str(raw.get("error") or "").strip()
+    stdout_raw = str(raw.get("stdout") or "")
+    stderr_raw = str(raw.get("stderr") or "")
+    failure_status = raw_status in {
+        "aborted",
+        "blocked",
+        "cancelled",
+        "deferred",
+        "denied",
+        "error",
+        "failed",
+        "failure",
+        "partial",
+        "rejected",
+        "timeout",
+    }
+    success_status = raw_status in {"ok", "success", "completed"}
+    unknown_status = bool(raw_status) and not failure_status and not success_status
+    failure_evidence = (
+        explicit_ok is False
+        or failure_status
+        or unknown_status
+        or returncode is not None
+        and returncode != 0
+        or bool(raw_error)
+    )
+    success_evidence = (
+        explicit_ok is True
+        or success_status
+        or returncode == 0
+    )
+    ok = bool(success_evidence and not failure_evidence)
+    status = "ok" if ok else ("timeout" if raw_status == "timeout" else "error")
+
+    error_raw = raw_error
+    if not ok and not error_raw:
+        if stderr_raw.strip():
+            error_raw = stderr_raw.strip()
+        else:
+            supplemental = [
+                str(raw.get(name) or "").strip()
+                for name in ("repr", "traceback", "reason", "detail")
+            ]
+            error_raw = "\n".join(
+                text for index, text in enumerate(supplemental)
+                if text and text not in supplemental[:index]
+            )
+    if not ok and not error_raw:
+        error_raw = f"code_repl execution failed ({status})"
+    if ok:
+        error_raw = ""
+
+    stdout, stdout_truncated, stdout_chars, stdout_sha256 = (
+        _bounded_model_evidence(stdout_raw, limit=_MODEL_STDOUT_LIMIT)
+    )
+    stderr, stderr_truncated, stderr_chars, stderr_sha256 = (
+        _bounded_model_evidence(stderr_raw, limit=_MODEL_STDERR_LIMIT)
+    )
+    error, error_truncated, error_chars, error_sha256 = (
+        _bounded_model_evidence(error_raw, limit=_MODEL_ERROR_LIMIT)
+    )
+    engine = str(raw.get("engine") or "unknown")[:_MODEL_ENGINE_LIMIT]
+    summary = (
+        "Code execution completed successfully."
+        if ok
+        else (
+            "Code execution timed out."
+            if status == "timeout"
+            else "Code execution failed."
+        )
+    )
+    return {
+        "schema": CODE_REPL_MODEL_RESULT_SCHEMA,
+        "ok": ok,
+        "status": status,
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": returncode,
+        "engine": engine,
+        "summary": summary,
+        "error": error,
+        "stdout_truncated": stdout_truncated,
+        "stdout_original_chars": stdout_chars,
+        "stdout_sha256": stdout_sha256,
+        "stdout_preview_sha256": hashlib.sha256(
+            stdout.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "stderr_truncated": stderr_truncated,
+        "stderr_original_chars": stderr_chars,
+        "stderr_sha256": stderr_sha256,
+        "stderr_preview_sha256": hashlib.sha256(
+            stderr.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+        "error_truncated": error_truncated,
+        "error_original_chars": error_chars,
+        "error_sha256": error_sha256,
+        "error_preview_sha256": hashlib.sha256(
+            error.encode("utf-8", errors="surrogatepass")
+        ).hexdigest(),
+    }
+
+
+def serialize_code_repl_model_result(
+    raw: Mapping[str, Any],
+    *,
+    limit: int = 4000,
+) -> str:
+    """Return schema-preserving v3 JSON within the final escaped budget."""
+
+    if type(limit) is not int or limit <= 0:
+        raise ValueError("code_repl model result limit must be positive")
+    result = normalize_code_repl_model_result(raw)
+
+    def render() -> str:
+        return json.dumps(
+            result,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    serialized = render()
+    irreducible = dict(result)
+    for field in ("stdout", "stderr", "error"):
+        minimum_chars = 1 if field == "error" and not result["ok"] else 0
+        irreducible[field] = result[field][:minimum_chars]
+        irreducible[f"{field}_truncated"] = bool(
+            result[f"{field}_truncated"]
+            or len(result[field]) > minimum_chars
+        )
+        irreducible[f"{field}_preview_sha256"] = hashlib.sha256(
+            irreducible[field].encode("utf-8", errors="surrogatepass")
+        ).hexdigest()
+    if len(
+        json.dumps(
+            irreducible,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    ) > limit:
+        raise ValueError(
+            "code_repl model result limit cannot contain canonical schema"
+        )
+    while len(serialized) > limit:
+        fields = [
+            name
+            for name in ("stdout", "stderr", "error")
+            if len(result[name])
+            > (1 if name == "error" and not result["ok"] else 0)
+        ]
+        if not fields:
+            raise ValueError(
+                "code_repl model result limit cannot contain canonical schema"
+            )
+        field = max(
+            fields,
+            key=lambda name: (
+                len(json.dumps(result[name], ensure_ascii=True)),
+                -("stdout", "stderr", "error").index(name),
+            ),
+        )
+        original_preview = result[field]
+        candidate = dict(result)
+        minimum_chars = 1 if field == "error" and not result["ok"] else 0
+        candidate[field] = original_preview[:minimum_chars]
+        candidate[f"{field}_truncated"] = True
+        candidate[f"{field}_preview_sha256"] = hashlib.sha256(
+            candidate[field].encode("utf-8", errors="surrogatepass")
+        ).hexdigest()
+        empty_serialized = json.dumps(
+            candidate,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len(empty_serialized) > limit:
+            result.update(candidate)
+            serialized = empty_serialized
+            continue
+        low = minimum_chars
+        high = len(original_preview)
+        best = original_preview[:minimum_chars]
+        while low <= high:
+            middle = (low + high) // 2
+            candidate[field] = original_preview[:middle]
+            candidate[f"{field}_preview_sha256"] = hashlib.sha256(
+                candidate[field].encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
+            rendered = json.dumps(
+                candidate,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if len(rendered) <= limit:
+                best = candidate[field]
+                low = middle + 1
+            else:
+                high = middle - 1
+        result[field] = best
+        result[f"{field}_truncated"] = True
+        result[f"{field}_preview_sha256"] = hashlib.sha256(
+            best.encode("utf-8", errors="surrogatepass")
+        ).hexdigest()
+        next_serialized = render()
+        if len(next_serialized) >= len(serialized):
+            raise ValueError("code_repl model result fitting made no progress")
+        serialized = next_serialized
+    return serialized
 
 
 def _record_repl_degradation(
@@ -166,10 +503,12 @@ class CodeREPLSkill(BaseSkill):
             )
 
         if result is None:
-            return {
+            result = {
                 "ok": False,
                 "error": "No execution backend available.",
             }
+
+        result = normalize_code_repl_model_result(result)
 
         # Detect newly generated files
         new_files: list[str] = []
@@ -226,6 +565,8 @@ class CodeREPLSkill(BaseSkill):
                 "status": status,
                 "returncode": returncode,
                 "engine": "sandbox_runner",
+                "repr": raw.get("repr", ""),
+                "traceback": raw.get("traceback", ""),
                 "summary": (
                     "Code executed successfully."
                     if ok

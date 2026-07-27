@@ -1,0 +1,133 @@
+{
+  "artifact_policy": {
+    "contains_holdout_plaintext": false,
+    "contains_holdout_seed": false,
+    "contains_user_content": false,
+    "contains_user_secrets": false,
+    "ephemeral_full_bundle_destroyed_after_receipt": true
+  },
+  "candidate": {
+    "curriculum_sha256": "b0cadc7ef4b04241e5f05483b77e15db2926f4255e9b944f9f1dd07bab4b31e8",
+    "curriculum_version": "2026.07.26.3",
+    "manifest_sha256": "b3323add975cbf1f09ca658ad9d263180537ec5b3e230b491493f3c511777047",
+    "package_sha256": "ae1baddd0b33f8c4579403e090d89ce2d15d1d614de92bfd007eb6ab54b1ccf9",
+    "split_example_counts": {
+      "holdout": 48,
+      "train": 96,
+      "validation": 24
+    }
+  },
+  "claims_not_supported": [
+    "external_trust_root_or_role_separation",
+    "process_or_principal_access_isolation",
+    "verified_replay_privacy_or_contamination_clearance",
+    "trainer_admission_or_training_authority",
+    "resident_32b_training_or_inference_gain",
+    "frontier_reasoning_gain",
+    "wow_signal"
+  ],
+  "claims_supported": [
+    "source_bound_executable_synthetic_curriculum",
+    "independent_local_semantic_replay",
+    "case_disjoint_train_validation_holdout_partition",
+    "crash_recoverable_candidate_and_evaluator_publication",
+    "candidate_artifact_noncontainment_of_holdout_plaintext",
+    "candidate_only_resident_tokenizer_projection_without_evaluator_filesystem_access",
+    "exact_masked_prefix_projection_without_truncation"
+  ],
+  "closeout": {
+    "architecture_dependency_edges": 1122,
+    "architecture_subsystems": 151,
+    "code_files": 5154,
+    "code_lines": 1711984,
+    "fully_reviewed_code_files": 517,
+    "governance_regressions": 1,
+    "governance_stale_buckets": 0,
+    "mechanical_gate_passed": false,
+    "orphan_reviews": 27,
+    "production_readiness_checks": "37/37",
+    "rubric": "19/20_security_scan_open",
+    "stale_reviews": 1148,
+    "tracked_files": 8234,
+    "unreviewed_code_files": 4606
+  },
+  "custody": {
+    "access_isolation_enforced": false,
+    "candidate_package_sha256": "ae1baddd0b33f8c4579403e090d89ce2d15d1d614de92bfd007eb6ab54b1ccf9",
+    "commit_sha256": "7742497392de4e29173f8e91ad662934d579a9cbb9cf25b893d7e742815ea1b8",
+    "custody_report_sha256": "78ef7939d06f37a0a292ea18000e061335970dccaa173a1b56a63fbc780abb5d",
+    "custody_root_sha256": "d89d434e20549d816e8b8ef278b980937be6ce949a881b754a629414578132bb",
+    "evaluator_package_sha256": "6a979119768c0da96c825eb5148dcbd2e27fc2ad9a9678314cd126325385d721",
+    "scope": "separate_artifact_root_shared_uid",
+    "trainer_access": "not_enforced_shared_process_identity"
+  },
+  "enterprise_gate": {
+    "baseline_regressions": 10,
+    "cp395_path_findings": 0,
+    "high_or_critical_findings": 59,
+    "passed": false
+  },
+  "evaluator": {
+    "manifest_sha256": "0d0d45021634bc2ededc104a984bab541267e1b6e813867d0699954a2a0dd8ce",
+    "package_sha256": "6a979119768c0da96c825eb5148dcbd2e27fc2ad9a9678314cd126325385d721",
+    "plaintext_retained_only_in_ephemeral_proof_root": true
+  },
+  "execution_boundary": {
+    "code_execution": "aura_sandbox_execution_mapped_to_live_code_repl_model_result_v3",
+    "governed_live_skill_route_exercised": false,
+    "resident_model_weights_loaded": false,
+    "resident_tokenizer_loaded": true
+  },
+  "required_next_gates": [
+    "external_replay_privacy_attestation",
+    "independent_semantic_reverification",
+    "tool_trace_execution_attestation",
+    "pre_augmentation_partition_manifest",
+    "external_multisurface_contamination_audit",
+    "injection_and_poisoning_screen",
+    "trainer_source_and_mask_policy_binding",
+    "replay_transfer_noninferiority_evaluation",
+    "external_replay_sft_authority",
+    "independent_heldout_promotion_protocol"
+  ],
+  "schema": "aura.rlc.cp395.structured_sft_evidence.v1",
+  "source_binding": {
+    "python": "cpython-3.12.13",
+    "schema": "aura.rlc.structured_sft_source_closure.v2",
+    "sha256": "246c3390d6267beacce92dc592e21c8f475daf5a76a2f155e0275bf94ec20256"
+  },
+  "status": "candidate_and_evaluator_built_replay_validated_not_trainer_authorized",
+  "tests": {
+    "broader_compatibility": {
+      "passed": 673,
+      "warnings": 7
+    },
+    "focused_cp395": {
+      "passed": 258,
+      "warnings": 0
+    },
+    "model_load_ownership": {
+      "findings": 0,
+      "owned_paths": 47,
+      "references": 60
+    },
+    "py_compile": "passed",
+    "ruff": "passed",
+    "whitespace": "passed"
+  },
+  "tokenizer_projection": {
+    "candidate_only_evaluator_filesystem_accessed": false,
+    "holdout_tokenized": false,
+    "max_seq_length": 4096,
+    "projection_receipts_sha256": "df8202e2d4912114bb37300099742e81fa61196d22fe85654597dd65d0c963de",
+    "rows_checked": 120,
+    "rows_with_truncation": 0,
+    "runtime_identity_sha256": "ebe7e3d043246731bc641e9cd226d5c0f7eaedc29a86d147075cf23aeaa2fb68",
+    "snapshot_manifest_sha256": "7a611adf5f9587e16db066fabb93ca8fed697b7e2eb2d0a47bf12b3f135b286d",
+    "status": "passed_exact_masked_prefix",
+    "tokenizer_identity_sha256": "8b010013a7737e43f205f92feac8700bed63625922b1a6addc026536ce90af2f",
+    "validation_bundle_sha256": "04d7b2b0a2d7cada719ce1b2115826b8d2d164241110954b5f719f122664282a"
+  },
+  "trainer_ready": false,
+  "training_authority": "none_pending_external_contamination_and_transfer_audit"
+}

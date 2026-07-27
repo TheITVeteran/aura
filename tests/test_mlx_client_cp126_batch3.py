@@ -213,11 +213,19 @@ class TestToolResultTruncation:
         parsed = json.loads(out)  # must not raise
         assert parsed["truncated"] is True
         assert parsed["original_chars"] == len(payload)
+        assert len(out) <= 2000
+
+    def test_json_result_budget_accounts_for_escaping(self):
+        payload = json.dumps({"value": "\0" * 5000})
+        out = mc._truncate_tool_result(payload, limit=1000)
+
+        assert json.loads(out)["truncated"] is True
+        assert len(out) <= 1000
 
     def test_plain_text_marked_truncated(self):
         out = mc._truncate_tool_result("y" * 9000, limit=1000)
         assert "TRUNCATED" in out
-        assert len(out) < 9000
+        assert len(out) <= 1000
 
 
 class TestLatentRequestIdentity:

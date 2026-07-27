@@ -2827,6 +2827,128 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-059 - Structured SFT and tool traces.** Train logical forms,
   programs, proof steps, tool calls, tool-result interpretation, and local
   repair from executable, held-out, contamination-audited data.
+
+  **CP395 candidate-curriculum checkpoint:**
+
+  - [x] Implement a typed, source-bound curriculum over deterministic modular
+    programs, independently kernel-checked propositional proofs, executed
+    `code_repl` calls, executed tool-result interpretation, failed-call repair,
+    corrected calls, and corrected-result interpretation.
+  - [x] Use Aura's actual Qwen/OpenAI tool-message contract (`assistant`
+    `tool_calls`, matching `tool_call_id`, `tool` result, final assistant) and
+    supervise only the final assistant message through the exact
+    `mlx_lm.ChatDataset(mask_prompt=True)` boundary. Failed calls are input
+    evidence, never rewarded targets.
+  - [x] Execute synthetic code through Aura's real sandbox and independently
+    replay every example from family, target, seed, and current source bytes.
+    Make tableau target/conflict/model ordering deterministic across process
+    hash seeds and omit volatile theorem IDs/timestamps from training evidence.
+  - [x] Partition cases before target projection and prove exact
+    train/validation/holdout case-fingerprint disjointness. Export holdout
+    plaintext only to a distinct evaluator package; candidate readers and the
+    tokenizer validator never require or read that package.
+  - [x] Build governed, journaled, owner-private candidate and evaluator
+    packages with a root pair commitment and deliberately non-loadable
+    `candidate_train.jsonl` and `candidate_valid.jsonl` names. Stable-read and
+    reconstruct every durable byte after commit; recover process death before
+    or after the commit point; refuse symlinked, hardlinked, partial, renamed,
+    tampered, escaped-path, or mixed-generation packages.
+  - [x] Bind explicit projection receipts (input, target, masked-prefix count,
+    target index, roles, and hashes), exclude all oracle fields from trainer
+    rows, and declare synthetic-data privacy, consent, license, tenant,
+    retention, revocation, deletion, and remote-sync disposition.
+  - [x] Bind the complete semantic source dependency closure and validate the
+    package against a persistent content-addressed snapshot of the resident
+    Qwen2.5-32B tokenizer with the exact MLX `ChatDataset` masking algorithm.
+    Candidate package `ae1baddd...`, curriculum `b0cadc7e...`, source closure
+    `246c3390...`, tokenizer identity `8b010013...`, and projection receipt
+    `df8202e2...` cover all 120 train/validation rows: every masked prefix is an
+    exact prefix, every target is nonempty, all six target coordinates pass,
+    no row truncates, and holdout is not tokenized. The evaluator directory was
+    physically absent for this validation and the attestation records
+    `evaluator_filesystem_accessed=false`.
+  - [x] Keep the result quarantined. The manifest says `trainer_ready=false`
+    and grants no training authority.
+
+  **Remaining SPARK-059 acceptance work:**
+
+  - [ ] Produce an externally signed privacy attestation over user content,
+    PII, secrets, consent, license, tenant boundary, retention, revocation,
+    deletion, and derived-artifact lineage. Synthetic candidates and live
+    verified replay must remain distinguishable.
+  - [x] Independently recompute all local semantic verifier routes from
+    plaintext examples, including full message reconstruction, proof replay,
+    modular-program execution, exact AST one-substitution repair, and canonical
+    model-visible tool results. Self-consistent hashes, syntax-only Python/JSON
+    checks, and producer-authored success labels grant no authority.
+  - [x] Bind synthetic tool traces to independently executed Aura sandbox
+    results, source/environment identity, code/result hashes, and the canonical
+    `aura.code_repl.model_result.v3` shape. This does not claim the governed live
+    skill/Will route was exercised; external execution attestation remains open.
+  - [ ] Seal the pre-augmentation split and persistent semantic-dedup manifest.
+    Prove no case lineage can cross train, validation, or holdout after
+    paraphrase, repair expansion, replay transfer, or flywheel iteration.
+  - [ ] Run an external contamination audit across prompt, target, rationale,
+    tool input/output, normalized code and JSON, adapters, training corpora,
+    every evaluation corpus, and semantic near-duplicates. Add prompt-
+    injection, data-poisoning, and verifier-gaming projections.
+  - [ ] Protect package metadata with authenticated associated data, a keyed
+    commitment, externally signed monotonic root, anti-rollback sequence, and
+    independent trust root. Role separation must prevent the producer from
+    signing its own admission.
+  - [ ] Build the verified-replay SFT projection and prove that private replay
+    fields, hidden reasoning, user secrets, and holdout answers cannot leak
+    into trainer-visible rows.
+  - [ ] Bind the admitted files, exact source, tokenizer, chat template,
+    masking offset, model, adapter, recurrence program, optimizer, scheduler,
+    RNG, and compute budget into a resumable trainer receipt. Candidate
+    filenames must remain unloadable until this authority is present.
+  - [ ] Run small-checkpoint falsification before resident expense: exact
+    reconstruction, target learnability, heldout transfer, negative-transfer,
+    right-to-wrong/error-introduction, personality/tool/safety regressions,
+    sham labels, shuffled traces, syntax-only traces, and equal-token/equal-
+    compute controls.
+  - [ ] Train the resident 32B only after all prior gates pass. Compare frozen
+    base/adapter vanilla, base/adapter RLC, trained adapter vanilla/RLC,
+    ablations, and equal-compute controls on fresh externally sealed tasks.
+  - [ ] Require preregistered retained gains, confidence intervals, weakest-
+    domain noninferiority, no broad regressions, reproducibility, exact
+    rollback, and independent promotion verification. A positive result must
+    establish the adapter-by-RLC interaction; a failed result must remain a
+    measured failure and feed the next diagnosis, not be relabeled frontier.
+
+  CP395 validation passes 258/258 in the focused post-review matrix and 673/673
+  across the broader sandbox, gateway, MLX, trainer, proof, deduction, and
+  belief compatibility family. The broader run reports seven existing
+  trainer/legacy-ONNX warnings and no failures. Strict Ruff, bytecode
+  compilation, diff hygiene, and model-load ownership (47 paths / 60
+  references / zero findings) pass. The real resident-tokenizer proof loads no
+  model weights. The sanitized durable evidence is
+  `artifacts/current/cp395_structured_sft_evidence.json`.
+
+  The full evaluator package was generated as plaintext under the same OS user
+  in an ephemeral separate artifact directory, then destroyed after recording
+  only commitments. This proves candidate noncontainment and candidate-only
+  access, not process/principal isolation, an external trust root, or
+  producer/verifier role separation. Those become CP396 requirements.
+
+  The reconciled all-line closeout audit enumerates 8,234 tracked files, 5,154
+  code files, and 1,711,984 code lines. Production readiness passes 37/37; the
+  architecture
+  map covers 151 subsystems and 1,122 dependency edges; resource observation
+  scans 3,007 Python files without a finding. The aggregate audit remains FAIL
+  because a newer upstream runtime-relaunch helper has one raw-subprocess
+  governance regression. Semantic closure remains red at 517/5,154 fully
+  reviewed code files, 4,606 unreviewed, 1,148 stale reviews, and 27 orphan
+  reviews. The independent rubric
+  remains 19/20 with the repository security scan open.
+
+  The enterprise ratchet remains non-green on inherited debt: ten count
+  regressions and 59 high/critical findings. No CP395 path appears in its
+  findings, and no baseline is raised. This checkpoint proves a deterministic,
+  executable candidate and exact trainer projection; it does not prove replay
+  transfer, trained reasoning gain, resident inference gain, frontier
+  performance, or a `WOW Signal`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

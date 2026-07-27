@@ -7,14 +7,15 @@ premise footprint (axiom audit), and (4) keep honest books on admitted
 """
 from __future__ import annotations
 
+import os
+import sys
+
 import pytest
 
 from core.reasoning.natural_deduction import (
     Atom,
     Bot,
     CertStep,
-    Implies,
-    Not,
     parse,
     prove,
 )
@@ -25,6 +26,7 @@ from core.reasoning.proof_kernel import (
     prove_certified_text,
     reset_theorem_ledger_for_test,
 )
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +57,45 @@ def test_kernel_accepts_search_certificates(premises, goal):
     assert cp.proof.certificate is not None
     assert cp.verified, cp.verdict.reason if cp.verdict else "no verdict"
     assert cp.theorem is not None
+
+
+def test_tableau_certificate_is_reproducible_across_hash_seeds():
+    script = """
+import json
+from core.reasoning.natural_deduction import And, Atom, Not, prove
+
+proof = prove(
+    {
+        And(Atom("A"), Atom("B \u2227 C")),
+        And(Atom("A \u2227 B"), Atom("C")),
+        Not(Atom("A")),
+    },
+    Atom("Q"),
+)
+assert proof.certificate is not None
+print(json.dumps(
+    {
+        "certificate": proof.certificate.to_dict(),
+        "premises": proof.premises,
+        "trace": proof.trace,
+    },
+    sort_keys=True,
+    separators=(",", ":"),
+))
+"""
+    outputs = []
+    for hash_seed in ("1", "8675309"):
+        result = get_subprocess_gateway().run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            env={**os.environ, "PYTHONHASHSEED": hash_seed},
+            offline_tooling=True,
+            source="certification_tooling:proof_kernel_hash_seed_replay",
+        )
+        outputs.append(result.stdout)
+
+    assert outputs[0] == outputs[1]
 
 
 def test_unprovable_goal_yields_countermodel_and_no_theorem():

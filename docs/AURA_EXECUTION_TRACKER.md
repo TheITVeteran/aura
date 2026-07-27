@@ -29198,6 +29198,88 @@ admitted resident training, and powered equal-compute reasoning/frontier
 evidence. Final multi-hour soaks remain deferred until all shorter gates are
 green.
 
+## Checkpoint 2026-07-26-395: Executable Structured SFT Candidate
+
+SPARK-059 is now materially implemented but remains open. Aura can generate a
+source-bound structured curriculum containing deterministic modular programs,
+kernel-certified propositional proofs, real sandboxed `code_repl` calls,
+tool-result interpretation, failed-call diagnosis, corrected calls, and
+corrected-result interpretation. Every example reconstructs from its declared
+family, target, seed, and source identity. The proof search is now deterministic
+across process hash seeds, and volatile theorem IDs/timestamps cannot poison
+dataset replay.
+
+The messages use the same Qwen/OpenAI tool shape as the resident runtime.
+Training projection follows the exact `mlx_lm.ChatDataset(mask_prompt=True)`
+algorithm: only the final assistant message is supervised, prior failed calls
+remain masked context, and oracle fields never enter trainer rows. Split
+assignment precedes projection, exact case-fingerprint checks prove
+train/validation/holdout disjointness, and holdout plaintext is exported only
+to a distinct evaluator package.
+
+The governed builder journal-publishes owner-private candidate and evaluator
+packages, then commits their pair at the custody root and stable-reconstructs
+every durable byte. Candidate files are deliberately named
+`candidate_train.jsonl` and `candidate_valid.jsonl`; there is no loadable
+`train.jsonl` or `valid.jsonl`. Process-death recovery preserves the old or new
+generation according to the durable commit point. Symlinked, hardlinked,
+partial, renamed, escaped-path, tampered, and mixed-generation packages fail
+closed. The manifest remains `trainer_ready=false` and grants no training
+authority.
+
+The real resident-tokenizer proof binds candidate package `ae1baddd...`,
+curriculum `b0cadc7e...`, semantic source closure `246c3390...`, Qwen2.5-32B
+tokenizer identity `8b010013...`, and projection receipt `df8202e2...`. All 120
+train/validation rows across six target coordinates have an exact masked
+prefix and nonempty target, with zero truncation. The evaluator directory was
+physically absent during validation; holdout was not tokenized and the
+candidate attestation records `evaluator_filesystem_accessed=false`.
+
+The focused post-review matrix passes 258/258 and the broader sandbox, gateway,
+MLX, trainer, proof, deduction, and belief compatibility family passes 673/673
+with seven existing trainer/legacy-ONNX warnings. Strict Ruff, bytecode
+compilation, diff hygiene, and model-load ownership pass. The sanitized receipt
+is `artifacts/current/cp395_structured_sft_evidence.json`.
+
+The remaining SPARK-059 gates are explicit in the RLC Spark ledger: external
+privacy and semantic attestations; independent tool execution; pre-augmentation
+partition and semantic-dedup manifests; multisurface contamination,
+prompt-injection, and poisoning audits; authenticated metadata, monotonic
+external roots, and anti-rollback; safe verified-replay projection; exact
+trainer/model/tokenizer/source/optimizer/RNG binding; small-checkpoint
+falsification; resident-32B training; equal-compute ablations; retained-gain
+statistics; noninferiority; independent promotion; and exact rollback. This
+checkpoint proves the executable candidate and projection, not trained
+reasoning gain, resident-32B improvement, frontier performance, or a
+`WOW Signal`.
+
+The full evaluator package was generated as plaintext in a separate ephemeral
+directory under the same OS user, then destroyed after recording only
+commitments. This proves candidate artifact noncontainment and candidate-only
+access, not process/principal isolation, an external trust root, or
+producer/verifier role separation. Those remain explicit CP396 gates.
+
+The reconciled all-line closeout audit enumerates 8,234 tracked files, 5,154
+code files, and 1,711,984 code lines. Production readiness passes 37/37 checks;
+the
+architecture map covers 151 subsystems and 1,122 dependency edges; model-load
+ownership covers 47 paths and 60 references without a finding; and resource
+observation scans 3,007 Python files without a finding. The aggregate audit is
+still FAIL because a newer upstream runtime-relaunch helper has one raw-
+subprocess governance regression. Semantic closure remains red at 517/5,154
+fully reviewed code files, 4,606 unreviewed code files, 1,148 stale reviews,
+and 27 orphan reviews. The closeout rubric remains 19/20 with the security scan
+open.
+
+The enterprise ratchet remains non-green on inherited debt: ten count
+regressions and 59 high/critical findings. CP395 contributes no enterprise
+finding and raises no baseline.
+
+Counting CP395 makes the total checkpoint record 637. The 640-920 forecast
+remains, leaving approximately 3-283 records. Checkpoint-count completion is
+approximately 69.2%-99.5%, with a midpoint planning estimate of 81.7%. Final
+multi-hour soaks remain deferred until all shorter gates are green.
+
 ## Checkpoint 2026-07-26-392: Measured Runtime Integrity
 
 SPARK-056 is complete. A latent episode now produces one schema-exact,

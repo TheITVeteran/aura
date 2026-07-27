@@ -9083,7 +9083,12 @@ class MLXLocalClient:
             tool_call_id = f"call_{uuid.uuid4().hex[:12]}"
 
             # ── Execute the tool via FunctionCallingAdapter ───────────
-            tool_result = f"[Tool '{tool_name}' not found]"
+            raw_result: Any = {
+                "ok": False,
+                "status": "error",
+                "error": f"Tool '{tool_name}' is unavailable",
+                "engine": "capability_engine",
+            }
             try:
                 from core.container import ServiceContainer
 
@@ -9094,18 +9099,23 @@ class MLXLocalClient:
                         tool_args,
                         context or {"source": "think_and_act"},
                     )
-                    if isinstance(raw_result, dict):
-                        tool_result = json.dumps(raw_result, default=str)
-                    else:
-                        tool_result = str(raw_result)
             except (ImportError, AttributeError, RuntimeError) as exc:
-                tool_result = f"[Tool error: {exc}]"
+                raw_result = {
+                    "ok": False,
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "engine": "capability_engine",
+                }
                 _record_mlx_degradation(
                     exc,
                     action="returned structured tool error to the model loop",
                     severity="error",
                 )
                 logger.warning("[think_and_act] Tool '%s' failed: %s", tool_name, exc)
+            tool_result = _serialize_tool_result_for_model(
+                tool_name,
+                raw_result,
+            )
 
             tool_calls_made.append(
                 {
@@ -9136,13 +9146,6 @@ class MLXLocalClient:
                     ],
                 }
             )
-
-            # [STABILITY v53] Protect against massive tool outputs breaking
-            # context windows. CP126 abd93abf: a blind character slice cut
-            # structured results mid-value, so the model reasoned over
-            # syntactically broken JSON. Truncate to a still-parseable form
-            # and say so explicitly.
-            tool_result = _truncate_tool_result(tool_result, limit=4000)
 
             messages.append(
                 {
@@ -10103,17 +10106,79 @@ def _truncate_tool_result(result: Any, *, limit: int = 4000) -> str:
         if parsed is not None:
             # Re-emit a VALID, explicitly-marked truncation envelope instead
             # of a broken fragment.
-            preview = json.dumps(parsed, default=str)[: max(0, limit - 200)]
-            return json.dumps(
-                {
-                    "truncated": True,
-                    "original_chars": len(text),
-                    "note": "Result exceeded the context budget; preview only.",
-                    "preview": preview,
-                },
+            preview = json.dumps(
+                parsed,
                 default=str,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
             )
-    return text[:limit] + "\n\n...[OUTPUT TRUNCATED FOR LENGTH]..."
+
+            def envelope(candidate: str) -> str:
+                return json.dumps(
+                    {
+                        "truncated": True,
+                        "original_chars": len(text),
+                        "note": "Result exceeded the context budget; preview only.",
+                        "preview": candidate,
+                    },
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+
+            if len(envelope("")) <= limit:
+                low = 0
+                high = len(preview)
+                best = ""
+                while low <= high:
+                    middle = (low + high) // 2
+                    candidate = envelope(preview[:middle])
+                    if len(candidate) <= limit:
+                        best = candidate
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                return best
+    marker = "\n\n...[OUTPUT TRUNCATED FOR LENGTH]..."
+    if limit <= len(marker):
+        return marker[:limit]
+    return text[: limit - len(marker)] + marker
+
+
+def _serialize_tool_result_for_model(
+    tool_name: str,
+    raw_result: Any,
+    *,
+    limit: int = 4000,
+) -> str:
+    """Serialize the exact bounded evidence contract fed to the model."""
+
+    model_result = raw_result
+    if tool_name == "code_repl":
+        from core.skills.code_repl import serialize_code_repl_model_result
+
+        if not isinstance(raw_result, Mapping):
+            raw_result = {
+                "ok": False,
+                "status": "error",
+                "error": (
+                    "code_repl returned a non-mapping result "
+                    f"({type(raw_result).__name__})"
+                ),
+                "engine": "capability_engine",
+            }
+        return serialize_code_repl_model_result(raw_result, limit=limit)
+    if isinstance(model_result, Mapping):
+        serialized = json.dumps(
+            model_result,
+            default=str,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        serialized = str(model_result)
+    return _truncate_tool_result(serialized, limit=limit)
 
 
 def _proof_run_requested(origin: Any) -> bool:

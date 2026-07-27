@@ -121,6 +121,32 @@ class TestForegroundEvictionHonoursTheHolder:
 
 
 class TestCancellationAckIsBound:
+    @pytest.fixture(autouse=True)
+    def _runtime_integrity_verifier(self, monkeypatch):
+        from core.brain.llm.latent_cortex import runtime_integrity
+
+        def measured_safe(value, **expected):
+            return bool(
+                value == {"fixture": "measured-safe"}
+                and expected
+                == {
+                    "require_worker": True,
+                    "expected_episode_id": "episode-1",
+                    "expected_input_tokens_sha256": "c" * 64,
+                    "expected_worker_identity": self._identity(),
+                    "expected_fast_weights_applied": False,
+                    "expected_checkpoint_fingerprint": "",
+                    "expected_checkpoint_method": "",
+                    "expected_checkpoint_file_count": 0,
+                }
+            )
+
+        monkeypatch.setattr(
+            runtime_integrity,
+            "runtime_integrity_safe",
+            measured_safe,
+        )
+
     def _client(self, identity=None):
         client = mlx_client.MLXLocalClient.__new__(mlx_client.MLXLocalClient)
         client.model_path = "/models/aura-32b"
@@ -131,10 +157,28 @@ class TestCancellationAckIsBound:
         receipt = {
             "params_unchanged": True,
             "request_payload_sha256": "sha-this-request",
-            "worker_boot_id": "b" * 32,
-            "worker_pid": 4242,
-            "worker_model_path": "/models/aura-32b",
+            "worker_identity": {
+                **self._identity(),
+                "worker_model_path": "/models/aura-32b",
+            },
+            "runtime_integrity": {"fixture": "measured-safe"},
+            "episode_id": "episode-1",
+            "input_tokens_sha256": "c" * 64,
+            "fast_weights_applied": False,
+            "checkpoint_fingerprint": "",
+            "checkpoint_fingerprint_method": "",
+            "checkpoint_file_count": 0,
         }
+        worker_overrides = {
+            key: receipt_overrides.pop(key)
+            for key in (
+                "worker_boot_id",
+                "worker_pid",
+                "worker_model_path",
+            )
+            if key in receipt_overrides
+        }
+        receipt["worker_identity"].update(worker_overrides)
         receipt.update(receipt_overrides)
         return {"id": "req-1", "message": "soft_cancelled", "receipt": receipt}
 
@@ -198,10 +242,10 @@ class TestCancellationAckIsBound:
             expected_request_sha256="sha-this-request",
         ) is False
 
-    def test_unproven_params_still_fail(self):
+    def test_unproven_runtime_integrity_still_fails(self):
         client = self._client(self._identity())
         assert client._clean_latent_cancel_ack(
-            self._ack(params_unchanged=None),
+            self._ack(runtime_integrity=None),
             expected_request_id="req-1",
             expected_request_sha256="sha-this-request",
         ) is False
