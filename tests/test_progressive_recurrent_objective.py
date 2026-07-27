@@ -148,7 +148,8 @@ def test_a_collapsed_report_cannot_be_relabelled_as_progress():
     forged["supports_training"] = True
     forged["receipt_sha256"] = canonical_sha256(forged)
 
-    with pytest.raises(ProgressiveObjectiveError, match="collapsed"):
+    # Caught by the full rebuild: the rows still say collapsed.
+    with pytest.raises(ProgressiveObjectiveError, match="does not replay"):
         validate_progressive_report(forged)
 
 
@@ -490,3 +491,38 @@ def test_a_landscape_with_no_barrier_needs_no_pressure():
     assert solved["collapse_is_local_basin"] is False
     assert solved["barriers"] == []
     assert solved["solved"] is True
+
+
+def test_a_forged_summary_cannot_outvote_its_own_trajectory_rows():
+    """Adversarial self-review finding: the aggregates replayed, the atoms did not.
+
+    The first version of this validator checked only summary fields, so a
+    forger who edited the trajectories AND the summary consistently, then
+    resealed, passed every aggregate check while the rows underneath said
+    "collapsed". A commitment proves nobody altered the bytes after signing;
+    it proves nothing about whether the signer's arithmetic was honest.
+    """
+    collapsed = _trajectory(losses=(2.4, 1.2), displacements=(1e-7, 1e-7))
+    report = build_progressive_report([collapsed])
+
+    forged = {
+        key: value for key, value in report.items() if key != "receipt_sha256"
+    }
+    forged["min_displacement"] = 0.5
+    forged["mean_displacement"] = 0.5
+    forged["verdict"] = "real_progress"
+    forged["supports_training"] = True
+    forged["receipt_sha256"] = canonical_sha256(forged)
+
+    with pytest.raises(ProgressiveObjectiveError, match="does not replay"):
+        validate_progressive_report(forged)
+
+
+def test_an_unmeasured_necessity_step_still_round_trips():
+    """A recorded None is an unmeasured value, not an absent row."""
+    trajectories = [_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))]
+    report = build_progressive_report(
+        trajectories, necessity={1: float("nan"), 2: -0.4}
+    )
+    assert report["necessity"][0]["delta"] is None
+    validate_progressive_report(report)

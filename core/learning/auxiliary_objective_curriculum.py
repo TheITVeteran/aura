@@ -74,6 +74,14 @@ DEFAULT_MINIMUM_SHARE = 0.01
 # no path to the weights at all.
 DEFAULT_GRADIENT_EPSILON = 1e-12
 
+# Provenance of the per-term shares. Recomputing verdicts from the recorded
+# rows closes LABEL forgery; it cannot close INPUT forgery, because the
+# rebuild consumes the same share it is checking. Rather than pretend that
+# boundary away, the receipt names which side of it the shares came from.
+SHARES_DERIVED_FROM_COMPOSITE = "derived_from_composite"
+SHARES_CALLER_SUPPLIED = "caller_supplied"
+SHARES_SOURCES = (SHARES_DERIVED_FROM_COMPOSITE, SHARES_CALLER_SUPPLIED)
+
 
 class AuxiliaryObjectiveError(ValueError):
     """An auxiliary composite or curriculum does not hold up."""
@@ -305,6 +313,7 @@ def build_liveness_report(
     gradient_norms: Mapping[str, float] | None = None,
     minimum_share: float = DEFAULT_MINIMUM_SHARE,
     gradient_epsilon: float = DEFAULT_GRADIENT_EPSILON,
+    shares_source: str = SHARES_CALLER_SUPPLIED,
 ) -> dict[str, Any]:
     """Classify each declared term against what it actually contributed.
 
@@ -322,6 +331,8 @@ def build_liveness_report(
     epsilon = _finite(gradient_epsilon, name="gradient_epsilon")
     if epsilon < 0.0:
         raise AuxiliaryObjectiveError("gradient_epsilon must be non-negative")
+    if shares_source not in SHARES_SOURCES:
+        raise AuxiliaryObjectiveError("unknown shares source")
 
     rows: list[dict[str, Any]] = []
     for term in declared:
@@ -375,6 +386,13 @@ def build_liveness_report(
         "schema": AUXILIARY_COMPOSITE_SCHEMA,
         "term_count": len(rows),
         "terms": rows,
+        # Where the shares came from. Recomputing verdicts from the rows
+        # closes label forgery, but it cannot close INPUT forgery: a rebuild
+        # consumes the same share it is checking. Naming the provenance is
+        # the honest move — `derived_from_composite` means the shares were
+        # computed by `base_weight_loss` from measured contributions, and
+        # `caller_supplied` means a reader must trust whoever produced them.
+        "shares_source": shares_source,
         "minimum_share": round(floor, 9),
         "gradient_epsilon": epsilon,
         "live_terms": sorted(
@@ -386,6 +404,42 @@ def build_liveness_report(
     return {**payload, "receipt_sha256": canonical_sha256(payload)}
 
 
+def liveness_from_composite(
+    terms: Sequence[AuxiliaryTerm],
+    composite_telemetry: Mapping[str, Any],
+    *,
+    gradient_norms: Mapping[str, float] | None = None,
+    minimum_share: float = DEFAULT_MINIMUM_SHARE,
+    gradient_epsilon: float = DEFAULT_GRADIENT_EPSILON,
+) -> dict[str, Any]:
+    """Build a liveness report whose shares came from the measured composite.
+
+    Prefer this over passing ``shares`` by hand. `build_liveness_report`
+    recomputes every verdict from the recorded rows, which closes *label*
+    forgery — but a rebuild consumes the same share it is checking, so a
+    forged share survives it. Deriving the shares from `base_weight_loss`'s
+    own telemetry removes that input from the caller's control entirely,
+    which is a stronger guarantee than any amount of re-validation.
+    """
+
+    if not isinstance(composite_telemetry, Mapping):
+        raise AuxiliaryObjectiveError("composite telemetry must be a mapping")
+    shares = composite_telemetry.get("shares")
+    if not isinstance(shares, Mapping):
+        raise AuxiliaryObjectiveError(
+            "composite telemetry carries no shares; it did not come from "
+            "base_weight_loss"
+        )
+    return build_liveness_report(
+        terms,
+        shares={str(name): float(value) for name, value in shares.items()},
+        gradient_norms=gradient_norms,
+        minimum_share=minimum_share,
+        gradient_epsilon=gradient_epsilon,
+        shares_source=SHARES_DERIVED_FROM_COMPOSITE,
+    )
+
+
 def validate_liveness_report(value: Any) -> dict[str, Any]:
     """Independently replay the liveness verdicts from the report's own rows."""
 
@@ -395,6 +449,7 @@ def validate_liveness_report(value: Any) -> dict[str, Any]:
         "schema",
         "term_count",
         "terms",
+        "shares_source",
         "minimum_share",
         "gradient_epsilon",
         "live_terms",
@@ -415,6 +470,52 @@ def validate_liveness_report(value: Any) -> dict[str, Any]:
     names = [row.get("name") for row in rows]
     if len(set(names)) != len(names):
         raise AuxiliaryObjectiveError("duplicate terms in the liveness report")
+    # Recompute every row's verdict from its OWN share and gradient rather
+    # than trusting the recorded label. Checking only the aggregates was a
+    # real defect in the first version of this validator: relabelling a
+    # zero-gradient row `live` and updating `live_terms` to match passed every
+    # aggregate check, because the aggregates were derived from the labels
+    # they were supposed to police. A commitment proves nobody edited the
+    # bytes after signing; it says nothing about whether the signer's
+    # classification was honest.
+    try:
+        rebuilt = build_liveness_report(
+            [
+                AuxiliaryTerm(
+                    name=str(row["name"]),
+                    target=TermTarget(row["target"]),
+                    weight=float(row["weight"]),
+                    source_module=str(row["source_module"]),
+                    required=bool(row["required"]),
+                )
+                for row in rows
+            ],
+            shares={
+                str(row["name"]): float(row["share"])
+                for row in rows
+                if row.get("share") is not None
+            },
+            gradient_norms={
+                str(row["name"]): float(row["gradient_norm"])
+                for row in rows
+                if row.get("gradient_norm") is not None
+            }
+            or None,
+            minimum_share=float(value["minimum_share"]),
+            gradient_epsilon=float(value["gradient_epsilon"]),
+            shares_source=str(value["shares_source"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise AuxiliaryObjectiveError("liveness term rows are malformed") from exc
+    if rebuilt != dict(value):
+        differing = sorted(
+            key
+            for key in set(rebuilt) | set(value)
+            if rebuilt.get(key) != value.get(key)
+        )
+        raise AuxiliaryObjectiveError(
+            f"liveness report does not replay from its own rows: {differing}"
+        )
     for row in rows:
         if row.get("liveness") not in TERM_LIVENESS:
             raise AuxiliaryObjectiveError("unknown liveness verdict")
@@ -708,6 +809,9 @@ __all__ = [
     "DEFAULT_GRADIENT_EPSILON",
     "DEFAULT_MINIMUM_SHARE",
     "DEPTH_CURRICULUM_SCHEMA",
+    "SHARES_CALLER_SUPPLIED",
+    "SHARES_DERIVED_FROM_COMPOSITE",
+    "SHARES_SOURCES",
     "SPARK062_TERMS",
     "TERM_LIVENESS",
     "AuxiliaryObjectiveError",
@@ -717,6 +821,7 @@ __all__ = [
     "TermTarget",
     "base_weight_loss",
     "build_liveness_report",
+    "liveness_from_composite",
     "canonical_sha256",
     "parity_binding",
     "require_parity",

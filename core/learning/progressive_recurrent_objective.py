@@ -686,36 +686,73 @@ def validate_progressive_report(value: Any) -> dict[str, Any]:
         raise ProgressiveObjectiveError(
             "training support must follow the verdict exactly"
         )
-    # Replay the two verdicts a caller has the most incentive to forge.
-    if (
-        value["min_displacement"] is not None
-        and float(value["min_displacement"]) < float(value["displacement_floor"])
-        and value["verdict"] != "degenerate_identity_collapse"
-    ):
-        raise ProgressiveObjectiveError(
-            "a collapsed operator cannot carry any other verdict"
-        )
-    if (
-        value["verdict"] == "real_progress"
-        and value["mean_improvement"] is not None
-        and float(value["mean_improvement"]) <= float(value["improvement_margin"])
-    ):
-        raise ProgressiveObjectiveError(
-            "real progress requires improvement above the margin"
-        )
-    if value["necessity"] and value["verdict"] == "real_progress":
-        idle = [
-            row["step"]
-            for row in value["necessity"]
-            if row["delta"] is None
-            or float(row["delta"]) > -float(value["necessity_margin"])
-        ]
-        if idle != value["idle_steps"]:
-            raise ProgressiveObjectiveError("idle-step set does not replay")
-        if len(idle) == len(value["necessity"]):
-            raise ProgressiveObjectiveError(
-                "every step idle cannot be real progress"
+
+    # Rebuild the ENTIRE report from its own trajectory rows and require
+    # equality. Checking only the summary fields was a real defect in the
+    # first version of this validator: a forger who edited the trajectories
+    # and the summary consistently, then resealed, passed every aggregate
+    # check while the rows underneath said "collapsed". A commitment proves
+    # the bytes were not altered after signing; it proves nothing about
+    # whether the signer's arithmetic was honest, so the arithmetic is redone.
+    try:
+        rebuilt_trajectories = [
+            ProgressiveTrajectory(
+                depth=int(row["depth"]),
+                probe_steps=tuple(int(step) for step in row["probe_steps"]),
+                step_losses=tuple(float(item) for item in row["step_losses"]),
+                displacements=tuple(
+                    float(item) for item in row["displacements"]
+                ),
+                anchor_drifts=tuple(
+                    float(item) for item in row["anchor_drifts"]
+                ),
+                answer_token_count=int(row["answer_token_count"]),
             )
+            for row in value["trajectories"]
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProgressiveObjectiveError(
+            "progressive trajectory rows are malformed"
+        ) from exc
+    rebuilt = build_progressive_report(
+        rebuilt_trajectories,
+        # A recorded None is an unmeasured value, not an absent row. Feeding
+        # NaN back preserves the row and re-normalizes to None, so an honest
+        # report carrying an unmeasured step still round-trips exactly.
+        necessity={
+            int(row["step"]): (
+                float(row["delta"])
+                if row.get("delta") is not None
+                else float("nan")
+            )
+            for row in value["necessity"]
+        }
+        or None,
+        gradient_norms={
+            int(row["step"]): (
+                float(row["norm"])
+                if row.get("norm") is not None
+                else float("nan")
+            )
+            for row in value["gradient_norms"]
+        }
+        or None,
+        depth_one_reference=value["depth_one_reference"],
+        displacement_floor=float(value["displacement_floor"]),
+        necessity_margin=float(value["necessity_margin"]),
+        length_confound_limit=float(value["length_confound_limit"]),
+        gradient_ratio_limit=float(value["gradient_ratio_limit"]),
+        improvement_margin=float(value["improvement_margin"]),
+    )
+    if rebuilt != dict(value):
+        differing = sorted(
+            key
+            for key in set(rebuilt) | set(value)
+            if rebuilt.get(key) != value.get(key)
+        )
+        raise ProgressiveObjectiveError(
+            f"progressive report does not replay from its own rows: {differing}"
+        )
     return dict(value)
 
 

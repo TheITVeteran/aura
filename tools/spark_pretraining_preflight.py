@@ -522,7 +522,7 @@ def _probe_progressive_forged_verdict() -> dict[str, Any]:
     return _must_refuse(
         "SPARK-061 rejects a resealed report relabelled as progress",
         lambda: validate_progressive_report(forged),
-        "collapsed",
+        "does not replay",
     )
 
 

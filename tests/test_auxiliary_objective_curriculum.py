@@ -19,6 +19,8 @@ mx = pytest.importorskip("mlx.core")
 from core.learning.auxiliary_objective_curriculum import (  # noqa: E402
     AUXILIARY_COMPOSITE_SCHEMA,
     DEPTH_CURRICULUM_SCHEMA,
+    SHARES_CALLER_SUPPLIED,
+    SHARES_DERIVED_FROM_COMPOSITE,
     SPARK062_TERMS,
     AuxiliaryObjectiveError,
     AuxiliaryTerm,
@@ -28,6 +30,7 @@ from core.learning.auxiliary_objective_curriculum import (  # noqa: E402
     base_weight_loss,
     build_liveness_report,
     canonical_sha256,
+    liveness_from_composite,
     parity_binding,
     require_parity,
     validate_curriculum_receipt,
@@ -203,7 +206,7 @@ def test_liveness_report_rejects_forged_verdicts():
     forged["inert_required_terms"] = []
     forged["supports_training"] = True
     forged["receipt_sha256"] = canonical_sha256(forged)
-    with pytest.raises(AuxiliaryObjectiveError, match="inert-required"):
+    with pytest.raises(AuxiliaryObjectiveError, match="does not replay"):
         validate_liveness_report(forged)
 
     tampered = dict(report)
@@ -436,3 +439,88 @@ def test_liveness_and_composite_schemas_are_pinned():
     )
     assert report["schema"] == AUXILIARY_COMPOSITE_SCHEMA
     validate_liveness_report(report)
+
+
+def test_a_relabelled_inert_row_cannot_pass_as_live():
+    """Adversarial self-review finding, the SPARK-062 half.
+
+    Relabelling a zero-gradient row `live` and updating `live_terms` to match
+    passed every aggregate check in the first version of this validator,
+    because those aggregates were derived from the labels they were supposed
+    to police. Verdicts are now recomputed from each row's own share and
+    gradient.
+    """
+    terms = [_base("improvement"), _base("diversity")]
+    report = build_liveness_report(
+        terms,
+        shares={"improvement": 0.4, "diversity": 0.4},
+        gradient_norms={"improvement": 0.7, "diversity": 0.0},
+    )
+    forged = {
+        key: value for key, value in report.items() if key != "receipt_sha256"
+    }
+    rows = [dict(row) for row in forged["terms"]]
+    for row in rows:
+        if row["name"] == "diversity":
+            row["liveness"] = "live"
+    forged["terms"] = rows
+    forged["live_terms"] = ["diversity", "improvement"]
+    forged["inert_required_terms"] = []
+    forged["supports_training"] = True
+    forged["receipt_sha256"] = canonical_sha256(forged)
+
+    with pytest.raises(AuxiliaryObjectiveError, match="does not replay"):
+        validate_liveness_report(forged)
+
+
+def test_a_forged_share_is_the_boundary_the_receipt_names_honestly():
+    """The limit of self-validation, stated rather than papered over.
+
+    Recomputing verdicts from the rows closes label forgery. It cannot close
+    INPUT forgery: the rebuild consumes the same share it is checking, so a
+    forged share is reproduced faithfully and the report validates. Pretending
+    otherwise would be the exact "absence of a check reported as a passed
+    check" pattern this codebase keeps finding. The receipt therefore names
+    where its shares came from, and `liveness_from_composite` removes the
+    input from the caller's hands entirely.
+    """
+    terms = [_base("improvement"), _base("diversity")]
+    report = build_liveness_report(
+        terms,
+        shares={"improvement": 0.6, "diversity": 0.00037},
+        gradient_norms={"improvement": 0.7, "diversity": 1e-4},
+    )
+    forged = {
+        key: value for key, value in report.items() if key != "receipt_sha256"
+    }
+    rows = [dict(row) for row in forged["terms"]]
+    for row in rows:
+        if row["name"] == "diversity":
+            row["liveness"] = "live"
+            row["share"] = 0.4
+    forged["terms"] = rows
+    forged["live_terms"] = ["diversity", "improvement"]
+    forged["inert_required_terms"] = []
+    forged["supports_training"] = True
+    forged["receipt_sha256"] = canonical_sha256(forged)
+
+    # It validates — and says plainly that a human supplied the shares.
+    validated = validate_liveness_report(forged)
+    assert validated["shares_source"] == SHARES_CALLER_SUPPLIED
+
+    # Derived shares cannot be forged this way: the composite computes them
+    # from measured contributions, so the input leaves the caller's hands.
+    terms_live = [_base("improvement"), _head("process")]
+    total, telemetry = base_weight_loss(
+        terms_live,
+        {"improvement": mx.array(0.5), "process": mx.array(0.5)},
+        primary=mx.array(2.0),
+    )
+    mx.eval(total)
+    derived = liveness_from_composite(
+        terms_live,
+        telemetry,
+        gradient_norms={"improvement": 0.7, "process": 0.0},
+    )
+    assert derived["shares_source"] == SHARES_DERIVED_FROM_COMPOSITE
+    validate_liveness_report(derived)

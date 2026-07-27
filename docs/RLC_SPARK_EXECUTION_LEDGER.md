@@ -5115,3 +5115,36 @@ CP420F makes 671 total checkpoints. The recalibrated range is 3-8 checkpoints
 to resident training launch, 7-14 to a defensible preliminary verdict, and
 13-24 to a powered conditional `WOW Signal` decision. Final multi-hour soaks
 remain deferred.
+
+### 2026-07-27 - F8 adversarial self-review: two forgeries the validators allowed
+
+The same scrutiny the collapse sweep turned on v4's docstring, turned on F8's
+own receipts. It found two live defects, both the same class and both in the
+validators whose entire job is to prevent forged claims: **the aggregates
+replayed, but the atoms were trusted.**
+
+- `validate_progressive_report` checked only summary fields. A forger who
+  edited the trajectory rows *and* the summary consistently, then resealed,
+  passed every aggregate check while the rows underneath said "collapsed".
+  Demonstrated: a report whose trajectories carry 1e-7 displacement, declaring
+  `min_displacement` 0.5 and verdict `real_progress`, validated.
+- `validate_liveness_report` trusted each row's recorded `liveness`. Relabelling
+  a zero-gradient term `live` and updating `live_terms` to match passed, because
+  the aggregates were derived from the labels they were supposed to police.
+
+Both now rebuild the entire receipt from its own rows and require equality — a
+commitment proves nobody altered the bytes after signing, and says nothing about
+whether the signer's arithmetic was honest, so the arithmetic is redone.
+
+**A third finding was a limit rather than a bug, and is named instead of
+papered over.** Recomputing verdicts closes *label* forgery but cannot close
+*input* forgery: the rebuild consumes the same share it is checking, so a forged
+share is reproduced faithfully. Pretending otherwise would be the "absence of a
+check reported as a passed check" pattern this codebase keeps finding. The
+receipt therefore records `shares_source`, and `liveness_from_composite` derives
+shares from `base_weight_loss`'s measured contributions so the input leaves the
+caller's hands entirely — a stronger guarantee than any amount of re-validation.
+
+Validation: 49 focused, 277 across the affected surface, preflight 16/16 READY.
+Three pre-existing expectations were updated because the refusals now fire at
+the rebuild rather than at a single rule.
