@@ -277,6 +277,11 @@ UNSPEAKABLE_REASONS: frozenset[str] = frozenset(
         # judged: the person said "answer exactly: yes" and the reply is
         # something else. Identification, not estimate.
         "missing_requested_exact_reply",
+        # Internal task assignments and protocol tags spoken as though they
+        # were speech: "<answer>…", "[SWARM PROTOCOL…", "To deconstruct and
+        # comprehensively research the user preference…". Literal fragments of
+        # the runtime's own machinery, not a judgement about quality.
+        "internal_task_prompt_leak",
     }
 )
 

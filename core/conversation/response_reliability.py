@@ -2315,6 +2315,10 @@ def normalize_user_facing_format(reply_text: Any) -> str:
     # enough to start a sentence rather than finish a model number: "12Pro"
     # and "3D" stay, "4/11Adding" splits.
     text = re.sub(r"(?<=[0-9])(?=[A-Z][a-z]{4,})", "\n", text)
+    # A numbered marker welded straight onto a word: "= 12 marbles2. We want
+    # to find…". A letter before the digits distinguishes it from a decimal,
+    # and the space-plus-capital after it from a model number.
+    text = re.sub(r"(?<=[a-z])(\d{1,2})\.(?=\s+[A-Z])", r"\n\1.", text)
     text = re.sub(r"(?m)^(\s*\d+[.)])(?=\S)", r"\1 ", text)
     text = _plain_text_maths(text)
     return text.strip()
@@ -2332,6 +2336,7 @@ _MATHS_DELIMITERS_RE = re.compile(r"\\[\[\]()]")
 _FRAC_RE = re.compile(r"\\[dt]?frac\s*\{([^{}]{1,40})\}\s*\{([^{}]{1,40})\}")
 _TEX_WRAPPER_RE = re.compile(r"\\(?:text|mathrm|mathbf|boxed|left|right)\s*(?:\{([^{}]{0,80})\})?")
 _TEX_BINOM_RE = re.compile(r"_\{?(\d{1,3})\}?\s*C\s*_\{?(\d{1,3})\}?")
+_TEX_BINOM_CMD_RE = re.compile(r"\\[dt]?binom\s*\{([^{}]{1,20})\}\s*\{([^{}]{1,20})\}")
 _TEX_SYMBOL_MAP = {
     r"\times": "x",
     r"\cdot": "*",
@@ -2358,6 +2363,9 @@ def _plain_text_maths(text: str) -> str:
             break
         rendered = replaced
     rendered = _TEX_BINOM_RE.sub(lambda m: f"C({m.group(1)},{m.group(2)})", rendered)
+    rendered = _TEX_BINOM_CMD_RE.sub(
+        lambda m: f"C({m.group(1).strip()},{m.group(2).strip()})", rendered
+    )
     rendered = _TEX_WRAPPER_RE.sub(lambda m: (m.group(1) or ""), rendered)
     for symbol, plain in _TEX_SYMBOL_MAP.items():
         rendered = rendered.replace(symbol, plain)
@@ -5491,6 +5499,42 @@ def _has_function_word_starvation(reply_text: Any) -> bool:
     return ratio < _MIN_FUNCTION_WORD_RATIO
 
 
+# Internal task and protocol text, spoken to a person as though it were
+# speech. Not style, and not an estimate — each of these is a literal fragment
+# of the runtime's own machinery.
+#
+# LIVE DEFECT, 2026-07-27. The chat window received, unprompted:
+#
+#   "To deconstruct and comprehensively research the user preference 'Aura
+#    believes that achieving consensus efficiently while ensuring fault
+#    tolerance,' we'll break it down into its components…"
+#   "<answer>I'm feeling pretty good, actually. Just finished some light
+#    research on the latest in"
+#
+# The first is an initiative task assignment; the second is a raw protocol tag
+# around a truncated reply. Both arrive through the autonomous channel, which
+# has no question to be judged against — so the check has to be on the text.
+_INTERNAL_TASK_PROMPT_RE = re.compile(
+    r"</?(?:answer|thinking|reasoning|scratchpad|thought)>"
+    r"|\[SWARM PROTOCOL"
+    r"|\[SILENT AUTO-FIX\]"
+    r"|\bGodMode/TASK\b"
+    r"|\bUnitary Tick Initiated\b"
+    r"|^\s*ORIGINAL PROBLEM\s*:"
+    r"|\bSWARM ANALYSES\s*:"
+    r"|\bYou are (?:the Master Synthesizer|'The [A-Z])"
+    r"|\bDeconstruct and comprehensively research\b"
+    r"|\bTo deconstruct and comprehensively research\b"
+    r"|\[(?:ARCHITECT|CRITIC|SYNTHESIZER|RESEARCHER)\]"
+    r"|\[User Preference\]",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _has_internal_task_prompt_leak(reply_text: Any) -> bool:
+    return bool(_INTERNAL_TASK_PROMPT_RE.search(str(reply_text or "")))
+
+
 def _has_truncated_tail(reply_text: Any) -> bool:
     body = str(reply_text or "").strip()
     if len(body) < 24:
@@ -5945,6 +5989,8 @@ def _model_text_integrity_reasons(
             reasons.append("runtime_boilerplate")
         if _KNOWN_CORRUPT_RE.search(raw):
             reasons.append("corrupted_language")
+        if _has_internal_task_prompt_leak(raw):
+            reasons.append("internal_task_prompt_leak")
         if _GENERIC_ASSISTANT_RE.search(raw):
             reasons.append("generic_assistant_language")
         if _has_incomplete_code_response(raw):
@@ -6006,6 +6052,8 @@ def _model_text_integrity_reasons(
     loop_reason = _phrase_loop_reason(prompt, raw)
     if loop_reason:
         reasons.append(loop_reason)
+    if _has_internal_task_prompt_leak(raw):
+        reasons.append("internal_task_prompt_leak")
     if _has_truncated_tail(raw):
         reasons.append("truncated_tail")
     if is_status_check_turn(prompt) and _VAGUE_STATUS_DERAILMENT_RE.search(raw):
@@ -6504,6 +6552,7 @@ _INTERNAL_LEAK_REASONS = frozenset(
         "raw_model_identity_leak",
         "corrupted_language",
         "function_word_starvation",
+        "internal_task_prompt_leak",
     }
 )
 
