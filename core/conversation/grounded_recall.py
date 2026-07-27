@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any, Literal
 
 logger = logging.getLogger("Aura.Conversation.GroundedRecall")
@@ -73,11 +72,81 @@ def detect_positional_recall(user_message: str) -> RecallPosition | None:
     return None
 
 
+# "This conversation" means what a person means by it: the run of turns since
+# the last long silence. The buffer this resolver reads is the live working
+# memory — global, trimmed to a fixed length, and shared by every origin the
+# runtime has — so without a boundary "the first thing I asked you in this
+# conversation" reaches back into whatever happened to survive in it.
+#
+# Measured live 2026-07-27, on the first battery turn of a fresh conversation:
+#
+#     Q: "What was the very first thing I asked me in this conversation?"
+#     A: "The first thing you asked me was: 'If I had a whole Saturday with no
+#         obligations, what would I do?'"
+#
+# The grounding block fired and reported success; the turn it grounded on was
+# simply not from this conversation. A confident quote of the wrong turn is
+# worse than an admission, because it is indistinguishable from memory.
+_CONVERSATION_GAP_S = 45 * 60
+
+
+def _entry_is_from_the_human(entry: dict) -> bool:
+    """Did a person type this, or did the runtime write it to itself?
+
+    Working memory carries entries from many origins, and ``role`` alone does
+    not separate them — several writers append ``role="user"`` directly without
+    going through ``role_for_origin``. An origin that is not user-anchored, or
+    an entry marked ephemeral, is the runtime talking to itself.
+    """
+    if entry.get("ephemeral"):
+        return False
+    origin = entry.get("origin")
+    if origin is None:
+        # No origin recorded: trust the chat surface's own marker when present,
+        # and otherwise accept it — the chat route appends without an origin.
+        source = str((entry.get("metadata") or {}).get("source", "") or "")
+        return source in {"", "chat_api", "desktop-ui", "desktop_ui"}
+    try:
+        from core.state.aura_state import _origin_is_user_anchored
+
+        return bool(_origin_is_user_anchored(origin))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return True
+
+
+def _within_current_conversation(history: Any) -> list[dict]:
+    """Trailing run of entries with no gap longer than a long silence."""
+    entries = [entry for entry in (history or []) if isinstance(entry, dict)]
+    if not entries:
+        return []
+    stamped = [entry for entry in entries if _entry_timestamp(entry) is not None]
+    if len(stamped) < 2:
+        return entries
+    start_index = 0
+    for index in range(len(entries) - 1, 0, -1):
+        current = _entry_timestamp(entries[index])
+        previous = _entry_timestamp(entries[index - 1])
+        if current is None or previous is None:
+            continue
+        if current - previous > _CONVERSATION_GAP_S:
+            start_index = index
+            break
+    return entries[start_index:]
+
+
+def _entry_timestamp(entry: dict) -> float | None:
+    try:
+        value = entry.get("timestamp")
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _history_user_turns(history: Any, exclude_norm: str) -> list[str]:
-    """User utterances from a passed-in history buffer (list of {role, content})."""
+    """What the human actually said, in this conversation, oldest first."""
     turns: list[str] = []
-    for entry in history or []:
-        if not isinstance(entry, dict) or entry.get("role") != "user":
+    for entry in _within_current_conversation(history):
+        if entry.get("role") != "user" or not _entry_is_from_the_human(entry):
             continue
         content = str(entry.get("content", "") or "").strip()
         if content and content.lower() != exclude_norm:

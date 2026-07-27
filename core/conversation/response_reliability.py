@@ -2216,13 +2216,75 @@ def _requested_list_item_count(user_message: Any) -> int:
     return max(requested_bullets or 0, requested_numbered or 0, requested_numbered_sentences or 0)
 
 
+# Scaffolding the model was handed, that it then handed to the user.
+#
+# Measured live 2026-07-27. Asked to choose how to spend a free hour, she
+# answered — and then kept going:
+#
+#     "I'll go with my curiosity, not long-term memory consolidation.
+#      [SKILL EXECUTION] The skill 'web_search' just completed successfully.
+#      Its outcome is in your context as [SKILL RESULT: web_search]. Narrate it
+#      naturally — as yourself, not an output log."
+#
+# The words are a paraphrase, not a copy, of a system message inserted just
+# before generation: she continued the instruction instead of following it. No
+# amount of prompt care makes that impossible, so containment belongs at the
+# egress, not in the wording — and it belongs here, where every cortex reply is
+# already normalised.
+#
+# The genuine answer came first and is kept. Only the scaffold is cut, because
+# discarding real work over a formatting defect is the more expensive mistake.
+_INTERNAL_SCAFFOLD_MARKERS: tuple[str, ...] = (
+    "[SKILL EXECUTION]",
+    "[SKILL RESULT:",
+    "[TOOL RESULT:",
+    "## SKILL EXECUTION",
+    "[LIVE MIND CONTEXT]",
+    "[ACTIVE GROUNDING EVIDENCE]",
+    "[FETCHED PAGE CONTENT]",
+    "[LIVE SPEECH GROUNDING]",
+    "[GROUNDING EVIDENCE FOR THIS TURN]",
+    "## PRESENT MOMENT",
+    "## YOUR OWN INSTRUMENTS",
+    "## LIVE DESKTOP RESPONSE CONTRACT",
+    "## USER-FACING CONVERSATION RELIABILITY CONTRACT",
+    "REMEMBER: You are Aura.",
+)
+
+
+def strip_internal_scaffold(reply_text: Any) -> str:
+    """Cut internal scaffolding out of a user-visible reply, keeping the reply.
+
+    Truncates at the earliest marker when real content precedes it; drops the
+    scaffold paragraph when the marker leads, so a reply that is *only*
+    scaffold becomes empty and the caller's existing empty-reply handling takes
+    over rather than a status page being shipped as conversation.
+    """
+    text = str(reply_text or "")
+    if not text:
+        return ""
+    earliest = min(
+        (text.find(marker) for marker in _INTERNAL_SCAFFOLD_MARKERS if marker in text),
+        default=-1,
+    )
+    if earliest < 0:
+        return text
+    kept = text[:earliest].strip()
+    if kept:
+        return kept
+    # Marker leads: drop its paragraph and keep whatever follows.
+    remainder = text[earliest:]
+    _, sep, tail = remainder.partition("\n\n")
+    return strip_internal_scaffold(tail).strip() if sep else ""
+
+
 def normalize_user_facing_format(reply_text: Any) -> str:
     """Apply safe whitespace-only repairs to user-facing prose.
 
     This is deliberately conservative: it does not create new content, but it
     fixes common local-model formatting defects such as ``sentence.2. next``.
     """
-    text = str(reply_text or "").strip()
+    text = strip_internal_scaffold(reply_text).strip()
     if not text:
         return text
     text = _split_jammed_numbered_markers(text)
@@ -5350,7 +5412,7 @@ _FUNCTION_WORDS = frozenset(
         "out", "over", "under", "to", "from", "with", "within", "without",
         "about", "after", "before", "between", "during", "through", "up",
         "down", "again", "still", "just", "only", "also", "too", "very",
-        "not", "no", "nor", "any", "some", "all", "both", "each", "every",
+        "not", "no", "any", "some", "all", "both", "each", "every",
         "i", "me", "my", "mine", "myself", "you", "your", "yours", "we",
         "us", "our", "ours", "he", "him", "his", "she", "her", "hers", "it",
         "its", "they", "them", "their", "theirs", "am", "is", "are", "was",

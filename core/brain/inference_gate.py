@@ -5736,6 +5736,8 @@ class InferenceGate:
         ("[LIVE SPEECH GROUNDING]", 2),
         ("## DERIVED RUNTIME SIGNALS", 2),
         ("## FUNCTIONAL STATE SIGNALS", 2),
+        ("## PRESENT MOMENT", 2),
+        ("## YOUR OWN INSTRUMENTS", 2),
         ("## SOMATIC STATE", 2),
         ("## STATE", 2),
         ("## LIVE TONE", 2),
@@ -5757,6 +5759,8 @@ class InferenceGate:
         if budget <= 0:
             return ""
         important_headers = (
+            "## PRESENT MOMENT",
+            "## YOUR OWN INSTRUMENTS",
             "[LIVE MIND CONTEXT]",
             "## DERIVED RUNTIME SIGNALS",
             "[LIVE SPEECH GROUNDING]",
@@ -7943,6 +7947,38 @@ class InferenceGate:
         prompt_contract_block = self._prompt_contract_block(context)
         if prompt_contract_block and not isolated_generation_contract:
             system_prompt = f"{system_prompt}\n\n{prompt_contract_block}"
+
+        # She has no clock. Asked how she is doing at 00:30 she answered "the
+        # sun's up ... clouds gathering in the east" — not dishonesty, but the
+        # only thing a model can do when asked about a present it was never
+        # given. Nothing in this path had ever carried the date or the hour.
+        # ~500 chars of read-not-inferred fact, on every non-isolated turn.
+        if not isolated_generation_contract:
+            try:
+                from core.brain.present_moment import present_moment_block
+
+                _present = present_moment_block()
+                if _present:
+                    system_prompt = f"{system_prompt}\n\n{_present}"
+
+                # Suppressing the web search is only half the fix; without the
+                # readings she still has to invent them, which is how "I
+                # processed a 45-page PDF on neuromorphic computing" happened.
+                from core.runtime.self_state_intent import asks_about_own_runtime
+
+                if asks_about_own_runtime(visible_user_prompt):
+                    from core.brain.self_state_report import runtime_self_report
+
+                    _instruments = runtime_self_report()
+                    if _instruments:
+                        system_prompt = f"{system_prompt}\n\n{_instruments}"
+            except _INFERENCE_RECOVERABLE_ERRORS as _exc:
+                record_degradation(
+                    "inference_gate",
+                    _exc,
+                    severity="warning",
+                    action="continued without present-moment grounding",
+                )
         # Keep prompt growth aligned with the actual local model context window
         # instead of assuming 128k+ headroom on the primary Qwen lane.
 

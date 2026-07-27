@@ -29,6 +29,9 @@ class EffectKind(StrEnum):
     BROWSER_URL_CONTAINS = "browser_url_contains"
     CALCULATION_RESULT = "calculation_result"
     INTERACTION_CHANGED_VISIBLE_STATE = "interaction_changed_visible_state"
+    FILE_EXISTS = "file_exists"
+    FILE_NONEMPTY = "file_nonempty"
+    FILE_CONTAINS = "file_contains"
 
 
 _APP_ALIASES = {
@@ -93,6 +96,83 @@ _UNVERIFIED_CONTROL_OPERATIONS = (
 )
 
 
+_HOME_ANCHORS = {
+    "desktop": "~/Desktop",
+    "documents": "~/Documents",
+    "downloads": "~/Downloads",
+    "home folder": "~",
+    "home directory": "~",
+}
+_FILENAME_RE = re.compile(r"(?<![\w./~-])([\w-][\w.-]{0,60}\.[A-Za-z0-9]{1,8})(?![\w])")
+_EXPLICIT_PATH_RE = re.compile(r"(?<![\w])((?:~|/)[\w./-]*[\w.])")
+_FILE_INTENT_RE = re.compile(
+    r"\b(?:file|folder|script|program|app|document|note|report|save|write|create|"
+    r"place|put|generate|build|export|drop)\b",
+    re.IGNORECASE,
+)
+_FILE_CONTENT_INTENT_RE = re.compile(
+    r"\b(?:containing|contains|with|write|writing|wrote|text|content|contents|"
+    r"sentence|line|code|says?)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class FileFact:
+    """What is true of one path on disk, read without touching it."""
+
+    path: str
+    exists: bool = False
+    size: int = 0
+    excerpt: str = ""
+    error: str = ""
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "exists": self.exists,
+            "size": self.size,
+            "excerpt": self.excerpt[:400],
+            "error": self.error,
+        }
+
+
+def observe_paths(paths: Sequence[str]) -> tuple[FileFact, ...]:
+    """Stat and excerpt each path. Read-only, bounded, never raises.
+
+    A file on disk is the strongest desktop postcondition available — far
+    stronger than any pixel — and it costs a stat call. Text is excerpted so a
+    content requirement can be checked without loading an arbitrary artifact
+    into memory.
+    """
+    import os
+
+    facts: list[FileFact] = []
+    for raw in dict.fromkeys(str(item or "").strip() for item in paths):
+        if not raw:
+            continue
+        try:
+            expanded = os.path.expanduser(raw)
+            if not os.path.exists(expanded):
+                facts.append(FileFact(path=raw, exists=False))
+                continue
+            size = int(os.path.getsize(expanded)) if os.path.isfile(expanded) else 0
+            excerpt = ""
+            if os.path.isfile(expanded) and size <= 4_000_000:
+                try:
+                    with open(expanded, encoding="utf-8", errors="replace") as handle:
+                        excerpt = handle.read(8000)
+                except OSError as exc:
+                    facts.append(
+                        FileFact(path=raw, exists=True, size=size, error=type(exc).__name__)
+                    )
+                    continue
+            facts.append(FileFact(path=raw, exists=True, size=size, excerpt=excerpt))
+        except (OSError, ValueError) as exc:
+            facts.append(FileFact(path=raw, error=type(exc).__name__))
+    return tuple(facts)
+
+
 @dataclass(frozen=True)
 class DesktopSnapshot:
     """Bounded observable desktop state captured without mutating the host."""
@@ -107,6 +187,14 @@ class DesktopSnapshot:
     screen_text: str = ""
     clipboard_excerpt: str = ""
     running_apps: tuple[str, ...] = ()
+    files: tuple[FileFact, ...] = ()
+
+    def file_fact(self, path: str) -> FileFact | None:
+        wanted = str(path or '').strip()
+        for fact in self.files:
+            if fact.path == wanted:
+                return fact
+        return None
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, object] | None) -> DesktopSnapshot:
@@ -135,6 +223,9 @@ class DesktopSnapshot:
             screen_text=_bounded_text(source.get("screen_text"), 4000),
             clipboard_excerpt=_bounded_text(source.get("clipboard_excerpt"), 1200),
             running_apps=running_apps,
+            files=tuple(
+                item for item in (source.get("files") or ()) if isinstance(item, FileFact)
+            ),
         )
 
     def to_dict(self) -> dict[str, object]:
@@ -149,6 +240,7 @@ class DesktopSnapshot:
             "screen_text": self.screen_text,
             "clipboard_excerpt": self.clipboard_excerpt,
             "running_apps": list(self.running_apps),
+            "files": [fact.to_dict() for fact in self.files],
         }
 
     def visible_fingerprint(self) -> str:
@@ -161,6 +253,9 @@ class DesktopSnapshot:
             "url": self.browser_url,
             "screen": _normalize_text(self.screen_text),
             "running": sorted(_normalize_app_name(app) for app in self.running_apps),
+            "files": sorted(
+                (fact.path, fact.exists, fact.size) for fact in self.files
+            ),
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -210,6 +305,18 @@ class EffectContract:
                 EffectKind.INTERACTION_CHANGED_VISIBLE_STATE,
             }
             for requirement in self.requirements
+        )
+
+    @property
+    def observed_paths(self) -> tuple[str, ...]:
+        """Paths whose on-disk state this contract is judged against."""
+        return tuple(
+            dict.fromkeys(
+                requirement.expected.split("::", 1)[0]
+                for requirement in self.requirements
+                if requirement.kind
+                in {EffectKind.FILE_EXISTS, EffectKind.FILE_NONEMPTY, EffectKind.FILE_CONTAINS}
+            )
         )
 
     @property
@@ -272,6 +379,45 @@ class EffectVerdict:
             "evidence": list(self.evidence),
             "failure_reasons": list(self.failure_reasons),
         }
+
+
+def extract_target_paths(goal: str) -> tuple[str, ...]:
+    """Paths a desktop objective names, as a user would name them.
+
+    "on my Desktop called aura_hello.txt" and "~/Desktop/2048.py" both resolve
+    to one concrete path. Without this, an objective whose entire point is a
+    file had no observable postcondition at all, and the automation lane
+    refused it as unverifiable — the exact refusal seen live 2026-07-27 for
+    "create a file on my Desktop called aura_hello.txt".
+    """
+    text = " ".join(str(goal or "").split())
+    if not text or not _FILE_INTENT_RE.search(text):
+        return ()
+
+    paths: list[str] = []
+    for match in _EXPLICIT_PATH_RE.finditer(text):
+        candidate = match.group(1).strip().rstrip(".,;:")
+        # A bare "/" or a sentence fragment is not a path; require a real segment.
+        if len(candidate) > 2 and ("/" in candidate.lstrip("~/") or candidate.startswith("~/")):
+            paths.append(candidate)
+    if paths:
+        return tuple(dict.fromkeys(paths))
+
+    lowered = text.lower()
+    anchor_dir = ""
+    for keyword, target in _HOME_ANCHORS.items():
+        if re.search(rf"\b{re.escape(keyword)}\b", lowered):
+            anchor_dir = target
+            break
+    if not anchor_dir:
+        return ()
+    for match in _FILENAME_RE.finditer(text):
+        name = match.group(1).strip()
+        # "2048.py" yes; "e.g" and version numbers no.
+        if re.fullmatch(r"\d+\.\d+", name):
+            continue
+        paths.append(f"{anchor_dir}/{name}")
+    return tuple(dict.fromkeys(paths))
 
 
 def build_effect_contract(
@@ -381,6 +527,28 @@ def build_effect_contract(
     elif requests_search:
         unsupported.append("browser search has no concrete destination or query to verify")
 
+    target_paths = extract_target_paths(normalized_goal)
+    wants_content = bool(_FILE_CONTENT_INTENT_RE.search(lowered))
+    for path in target_paths:
+        add(
+            EffectKind.FILE_EXISTS,
+            path,
+            f"{path} exists on disk after the action.",
+        )
+        if wants_content:
+            add(
+                EffectKind.FILE_NONEMPTY,
+                path,
+                f"{path} has content, not just an empty file.",
+            )
+    witness_for_file = _text_witness(resolved_text) if target_paths and resolved_text else ""
+    if witness_for_file and len(witness_for_file) >= 4:
+        add(
+            EffectKind.FILE_CONTAINS,
+            f"{target_paths[0]}::{witness_for_file}",
+            f"{target_paths[0]} contains the requested text.",
+        )
+
     calculation_result = _calculation_result(normalized_goal)
     if calculation_result:
         add(
@@ -408,7 +576,28 @@ def build_effect_contract(
             "closing an app window lacks targeted window-closure observation; "
             "use an explicit quit objective for process termination"
         )
-    unsupported.extend(_unsupported_control_operations(normalized_goal))
+    if target_paths:
+        unsupported = [
+            reason
+            for reason in unsupported
+            if reason
+            not in {
+                "requested interaction has no concrete visible target to verify",
+                "requested text entry has no concrete text payload to verify",
+            }
+        ]
+    control_caveats = _unsupported_control_operations(normalized_goal)
+    if target_paths:
+        # These caveats say "we cannot see the artifact". Now we can: the
+        # requirement above stats the exact path. Deletion stays unsupported —
+        # absence is not the same evidence as presence.
+        control_caveats = tuple(
+            reason
+            for reason in control_caveats
+            if "durable artifact postcondition" not in reason
+            and "source, destination, and artifact verification" not in reason
+        )
+    unsupported.extend(control_caveats)
 
     if not requirements:
         unsupported.append("objective has no supported observable desktop postcondition")
@@ -470,6 +659,57 @@ def _evaluate_requirement(
     passed = False
     observed = ""
     detail = ""
+
+    if kind in {EffectKind.FILE_EXISTS, EffectKind.FILE_NONEMPTY, EffectKind.FILE_CONTAINS}:
+        path, _, witness = expected.partition("::")
+        after_fact = after.file_fact(path)
+        before_fact = before.file_fact(path)
+        if after_fact is None:
+            return EffectCheck(
+                requirement_id=requirement.requirement_id,
+                kind=kind,
+                passed=False,
+                expected=expected,
+                observed="",
+                detail=f"{path} was never observed",
+                required=requirement.required,
+                strong=False,
+            )
+        observed = f"exists={after_fact.exists};size={after_fact.size}"
+        if kind == EffectKind.FILE_EXISTS:
+            passed = after_fact.exists
+            detail = f"{path} exists" if passed else f"{path} does not exist"
+        elif kind == EffectKind.FILE_NONEMPTY:
+            passed = after_fact.exists and after_fact.size > 0
+            detail = (
+                f"{path} has {after_fact.size} bytes"
+                if passed
+                else f"{path} is missing or empty"
+            )
+        else:
+            passed = _normalize_text(witness) in _normalize_text(after_fact.excerpt)
+            detail = (
+                f"{path} contains {witness!r}"
+                if passed
+                else f"{path} does not contain {witness!r}"
+            )
+        # Causal strength: the objective made this true, rather than finding it
+        # true. An unchanged file is honest evidence of nothing.
+        changed = before_fact is None or (
+            before_fact.exists != after_fact.exists
+            or before_fact.size != after_fact.size
+            or before_fact.excerpt != after_fact.excerpt
+        )
+        return EffectCheck(
+            requirement_id=requirement.requirement_id,
+            kind=kind,
+            passed=passed,
+            expected=expected,
+            observed=observed,
+            detail=detail,
+            required=requirement.required,
+            strong=bool(requirement.strong and changed),
+        )
 
     if kind == EffectKind.APP_FRONTMOST:
         observed = after.frontmost_app

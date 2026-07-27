@@ -17,6 +17,7 @@ from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_RETRY_SAFE_ACTIONS,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.os_automation_effects import extract_target_paths
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
 
@@ -2891,6 +2892,17 @@ class DesktopTaskSkill(BaseSkill):
         actions = {step.action for step in steps}
         if not actions:
             return False
+        # An objective that names a concrete path IS a durable-artifact
+        # objective, whatever else the sentence says. Without this, "create a
+        # file on my Desktop called aura_hello.txt containing one sentence you
+        # choose" matched none of the document tokens below, so the derived
+        # write_text_file plan was discarded and the turn was escalated to
+        # AppleScript on the strength of the word "choose" — where a file has
+        # no observable postcondition and the objective was refused outright.
+        # Same path extractor the effect contract uses, so router and verifier
+        # cannot disagree about what the objective is about.
+        target_paths = extract_target_paths(objective)
+        wants_file = bool(target_paths) or bool(re.search(r"\bfiles?\b", lowered))
         wants_folder = any(token in lowered for token in ("folder", "directory"))
         wants_document = any(
             token in lowered
@@ -2912,7 +2924,14 @@ class DesktopTaskSkill(BaseSkill):
         wants_pdf = "pdf" in lowered or bool(
             re.search(r"\b(?:export|save)\b[^.\n]{0,60}\bas\s+(?:a\s+)?pdf\b", lowered)
         )
-        if not (wants_folder or wants_document or wants_pdf):
+        if not (wants_folder or wants_document or wants_pdf or wants_file):
+            return False
+        if wants_file and not actions & {
+            "write_text_file",
+            "render_text_pdf",
+            "move_file",
+            "create_folder",
+        }:
             return False
         if wants_folder and "create_folder" not in actions:
             return False

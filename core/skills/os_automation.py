@@ -31,6 +31,7 @@ from core.runtime.os_automation_effects import (
     build_effect_contract,
     evaluate_effect_contract,
     extract_target_apps,
+    observe_paths,
 )
 from core.skills.base_skill import BaseSkill
 
@@ -844,7 +845,16 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
         values: dict[str, object] = {}
         inspect_script = getattr(host, "inspect_applescript", None)
         if not callable(inspect_script):
-            return DesktopSnapshot(), ["read_only_applescript_inspection_unavailable"]
+            # No UI inspection does not mean no evidence — disk is still readable.
+            fallback = (
+                {"files": observe_paths(contract.observed_paths)}
+                if contract.observed_paths
+                else {}
+            )
+            return (
+                DesktopSnapshot.from_mapping(fallback),
+                ["read_only_applescript_inspection_unavailable"],
+            )
 
         try:
             receipt = await inspect_script(
@@ -923,6 +933,11 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
                         errors.append("screen_text_snapshot_unavailable")
                 except _OS_AUTOMATION_ERRORS as exc:
                     errors.append(f"screen_text_snapshot_exception:{type(exc).__name__}")
+
+        observed_paths = contract.observed_paths
+        if observed_paths:
+            # A stat call is cheaper and far stronger evidence than any pixel.
+            values["files"] = observe_paths(observed_paths)
 
         return DesktopSnapshot.from_mapping(values), errors
 

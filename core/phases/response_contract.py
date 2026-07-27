@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+from core.runtime.self_state_intent import asks_about_own_runtime
 from core.runtime.structured_input import analyze_prompt_shape, looks_like_learning_resource_bundle
 from core.state.aura_state import AuraState
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -1013,6 +1014,15 @@ def build_response_contract(
         # desktop_task. Letting the response contract launch web_search first
         # creates a duplicate consequential path and can destabilize Will before
         # the actual desktop action executes.
+        explicit_search = False
+        factual_lookup = False
+        factual_followup = False
+        temporal_live_lookup = False
+    if asks_about_own_runtime(text):
+        # Her uptime is not on the internet. Asked "how much memory are you
+        # holding? Read it from your own runtime", the live runtime opened a
+        # headless browser on windowsforum.com for 302s and answered nothing.
+        # The readings are supplied to the prompt instead (self_state_report).
         explicit_search = False
         factual_lookup = False
         factual_followup = False
