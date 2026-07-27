@@ -3627,9 +3627,46 @@ before those dependencies close is not admissible.
   a reordered lineage, an edited iteration, an ungated tool-assisted class, a
   gate withdrawal, and a trend attempted over a contaminated lineage.
 
+  **F7-D part two closes the producer, and it found a live defect.**
+  `core/learning/star_iteration_producer.py` derives every fingerprint from the
+  real `HeldoutTask` objects and *grades the holdout itself* with the real
+  `grade_response` — a caller cannot supply a holdout score, because a supplied
+  score is the one number in the record that nothing else constrains. An
+  ungraded holdout item is refused rather than counted either way.
+
+  **The defect: the flywheel's seed floor separates seeds, not content.**
+  `selfplay_flywheel` keeps practice seeds below `EVAL_SEED_FLOOR` and mints
+  eval batteries at or above it, and that convention is assumed to keep the
+  splits apart. It does not. `generate_battery` deduplicates *within* one
+  battery and has no cross-battery exclusion, and its template space is small:
+  measured over seeds 3-39, **15.5% of seed pairs share at least one prompt**
+  (103 of 666), and 684 draws over seeds 3-59 yielded only 569 distinct
+  prompts. So a practice battery and an "independent" eval battery can contain
+  the same task. This is the same defect CP385 hit — independently generated
+  train and holdout batteries sharing a prompt — which was repaired there for
+  the recurrence curriculum by constructing the holdout under an exclusion set,
+  and which is still live on the held-out-battery path.
+
+  It was found by the new instrument: the first honest multi-iteration test
+  failed because the ledger correctly caught a real collision between training
+  seed 102 and holdout seed 1102. `mint_disjoint_holdout(seed, size,
+  excluded_fingerprints)` is the corresponding repair — deterministic per
+  attempt, refusing rather than returning a short or contaminated battery — and
+  a regression test pins the collision rate so that if the generator ever gains
+  a larger space or its own exclusion, the workaround is re-checked instead of
+  assumed. Fingerprints here are full SHA-256 rather than
+  `battery_fingerprints`' 16-hex prefix: a truncated collision accumulated over
+  a long campaign would report contamination that is not there and stop a clean
+  run.
+
+  35/35 across the SPARK-063 surface, including the full leak reproduced from
+  real batteries — iteration 0 trains on a battery, iteration 2 samples it as
+  its "fresh" holdout, and `validate_star_lineage` names the scope, the
+  iteration, and all twelve overlapping tasks.
+
   **The checkbox stays open**: no flywheel iteration has run through this
-  ledger, and the generate/verify/train stages themselves remain the march's.
-  This checkpoint runs no model and grants no capability claim.
+  ledger against a model, and the generate/verify/train stages remain the
+  march's. This checkpoint runs no model and grants no capability claim.
 - [ ] **SPARK-064 - Permanent distillation.** Promote successful recurrent and
   correction policies through versioned adapters/base updates only after broad
   anti-interference, personality, tool, safety, memory, and frontier regressions

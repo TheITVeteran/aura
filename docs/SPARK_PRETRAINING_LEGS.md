@@ -76,6 +76,23 @@ Tool-assisted and latent traces need a `trace_gate` recorded as passed before
 they may appear in `training_trace_classes`; a later failing gate withdraws the
 class again.
 
+**Read this before minting a holdout.** `core/learning/star_iteration_producer.py`
+derives the fingerprints from real task objects and grades the holdout itself.
+It also carries a repair you need: **the flywheel's `EVAL_SEED_FLOOR` separates
+seeds, not content.** `generate_battery` has no cross-battery exclusion and its
+template space is small — measured over seeds 3-39, 15.5% of seed pairs share at
+least one prompt. Two "independent" batteries can therefore contain the same
+task. Use
+
+```python
+holdout = mint_disjoint_holdout(
+    seed=..., size=..., excluded_fingerprints=everything_trained_on_so_far,
+)
+```
+
+rather than trusting a different seed. This is the same defect CP385 repaired in
+the recurrence curriculum; it is still live on the held-out-battery path.
+
 ## SPARK-065 — bounded architecture control
 
 `architecture_findings(observations)` → `propose_architecture_change(...)` →
