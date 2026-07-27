@@ -545,6 +545,25 @@ async def test_api_health_exposes_ready_conversation_at_top_level(service_contai
     monkeypatch.setattr(
         server_module.system_routes, "build_boot_health_snapshot", ready_boot_snapshot
     )
+    # _collect_full_runtime_status reads the autonomy conductor, the overt
+    # action loop, agency_core and the background-policy env — all
+    # process-global. Whatever an earlier test registered or set decided
+    # whether this payload carried "full_runtime:*" blockers, which is what
+    # turned "ok" into "booting" in a long run. This test is about the health
+    # payload CONTRACT, not about which organs happen to be live in this
+    # process, so pin that input too.
+    monkeypatch.setattr(
+        server_module.system_routes,
+        "_collect_full_runtime_status",
+        lambda *_args, **_kwargs: {
+            "profile": "server_or_test",
+            "full_runtime_expected": False,
+            "resource_guard_enabled": False,
+            "ready": True,
+            "blockers": [],
+            "background_cognition": {"enabled": False, "active": False},
+        },
+    )
     monkeypatch.setattr(
         server_module.system_routes,
         "_collect_conversation_lane_status",

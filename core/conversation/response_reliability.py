@@ -5587,6 +5587,25 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
     # names its subject three or four times across 400+ words. An absolute
     # 3-repeat rule rejected a correct 350-token deep-reasoning answer live.
     required_repeats = 3 + min(2, len(lower_words) // 220)
+    # An enumerated answer repeats its phrasing once per case, by necessity.
+    # "The probability of drawing a red first is 3/12… the probability of
+    # drawing a blue first is 4/12… the probability of drawing a green first
+    # is 5/12" is parallel structure with progression, which is what a correct
+    # worked derivation looks like — not a model stuck in a loop.
+    #
+    # LIVE DEFECT, 2026-07-26: exactly that answer to the marble question was
+    # rejected as repetitive_phrase_loop, four times over, and the person got
+    # "I couldn't get to an answer I'd stand behind on that one".
+    #
+    # A repeat that occurs at most once per enumerated item is structure. One
+    # that outruns the items is a loop, and still caught.
+    enumerated_items = sum(
+        1
+        for line in str(reply_text or "").splitlines()
+        if _LIST_LINE_RE.match(line.strip())
+    )
+    if enumerated_items >= 2:
+        required_repeats = max(required_repeats, enumerated_items + 1)
     # Question-sourced phrases are topical by definition: an answer that
     # compares "an early single-owner design with a late deduplication
     # design" MUST echo those noun phrases while comparing, choosing, and
@@ -5625,8 +5644,42 @@ def _phrase_loop_reason(user_message: Any, reply_text: Any) -> str:
         if w not in {"i", "you", "it", "that", "this", "the", "a", "to", "and", "but", "then", "mean", "know"}
     ]
     if len(content_words) >= 8 and len(set(content_words)) / max(1, len(content_words)) < 0.36:
+        # Lexical diversity alone cannot tell a worked derivation from a loop.
+        # Measured 2026-07-26 on the live surface: a correct enumerated answer
+        # to the marble question scored 0.327 and a model repeating "I want to
+        # help you with that" scored 0.318. Both are enumerated, both reuse a
+        # small vocabulary — because that is what enumerating cases looks like.
+        #
+        # What separates them is PROGRESSION. The derivation's items all differ
+        # (3/12, 4/12, 5/12; red, blue, green); the loop's are verbatim repeats.
+        if _distinct_statement_ratio(reply_text) >= 0.7:
+            return ""
         return "low_lexical_diversity_loop"
     return ""
+
+
+def _distinct_statement_ratio(reply_text: Any) -> float:
+    """Share of this reply's statements that say something new.
+
+    Statements are lines and sentences with list markers, emphasis and
+    whitespace normalised away, so "2. **Both red:** …" and "3. **Both blue:**
+    …" compare as the different claims they are, while three identical
+    sentences under three different numbers compare as one.
+    """
+    body = str(reply_text or "").strip()
+    if not body:
+        return 1.0
+    statements: list[str] = []
+    for line in body.splitlines():
+        for sentence in _SENTENCE_SPLIT_RE.split(line):
+            cleaned = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s*", "", sentence)
+            cleaned = re.sub(r"[*_`#]+", "", cleaned)
+            cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+            if len(cleaned) >= 12:
+                statements.append(cleaned)
+    if len(statements) < 3:
+        return 1.0
+    return len(set(statements)) / len(statements)
 
 
 def _model_text_integrity_reasons(
