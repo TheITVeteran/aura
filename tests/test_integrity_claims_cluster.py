@@ -125,18 +125,46 @@ class TestServiceGateRequiresEvidence:
     def test_a_bare_boolean_no_longer_passes(self):
         assert self._verdict({"params_unchanged": True}) == "unproven"
 
-    def test_digests_are_judged(self):
+    def test_an_unbound_digest_pair_is_not_proof(self):
+        """Matching digests, attached to nothing, prove nothing.
+
+        This test used to assert the opposite: two equal hashes in a
+        weight_integrity dict returned "proven". The service gate has since
+        been tightened to reconstruct the verdict from a measured
+        runtime_integrity receipt bound to a worker identity, an episode id,
+        the input tokens and the checkpoint fingerprint — because a bare pair
+        of digests says nothing about WHICH worker produced them, on which
+        episode, against which weights. The safety property strengthened and
+        the test kept asserting the old, weaker one.
+        """
         assert self._verdict(
             {"weight_integrity": {"params_before": "a", "params_after": "a"}},
-        ) == "proven"
+        ) == "unproven"
+
+    def test_differing_digests_are_still_not_silently_accepted(self):
         assert self._verdict(
             {"weight_integrity": {"params_before": "a", "params_after": "b"}},
-        ) == "refuted"
+        ) in {"unproven", "refuted"}
 
-    def test_a_precomputed_verdict_is_honoured(self):
+    def test_a_receipt_cannot_certify_itself(self):
+        """A verdict asserted inside the receipt is a claim, not evidence.
+
+        Honouring a self-declared "proven" would let anything that can write a
+        receipt declare its own integrity, which is the one thing this gate
+        exists to prevent.
+        """
         assert self._verdict(
             {"integrity_verdicts": {"params_unchanged": {"verdict": "proven"}}},
-        ) == "proven"
+        ) == "unproven"
+
+    def test_evidence_with_no_worker_binding_is_refused(self):
+        """The binding is the point: proof must name who produced it."""
+        assert self._verdict(
+            {
+                "runtime_integrity": {"parameters": {"unchanged": True}},
+                "episode_id": "ep-1",
+            },
+        ) == "unproven"
 
     def test_malformed_input_is_unproven_not_a_crash(self):
         assert self._verdict("nope") == "unproven"
@@ -185,10 +213,14 @@ class TestServiceGateRequiresEvidence:
 
         assert _receipt_integrity_verdict({"params_unchanged": True}, "params_unchanged") == "unproven"
         assert _receipt_integrity_verdict("nope", "params_unchanged") == "unproven"
+        # Certification tightened the same way the service gate did: an
+        # unbound pair of digests is no longer accepted as proof, because it
+        # does not say which worker produced them, on which episode, against
+        # which weights. Fails closed, which is the property named here.
         assert _receipt_integrity_verdict(
             {"weight_integrity": {"params_before": "a", "params_after": "a"}},
             "params_unchanged",
-        ) == "proven"
+        ) == "unproven"
 
 
 class TestServingStackIdentity:
@@ -196,7 +228,10 @@ class TestServingStackIdentity:
         from core.brain.llm.latent_cortex import runtime_identity
 
         source = inspect.getsource(runtime_identity.build_worker_identity)
-        assert "_serving_stack_identity" in source
+        # The helper became public; the property under test is that worker
+        # identity carries the serving stack, not what the function is called.
+        assert "serving_stack_identity(" in source
+        assert callable(runtime_identity.serving_stack_identity)
 
     def test_absent_evidence_is_reported_as_a_gap(self, tmp_path):
         from core.brain.llm.latent_cortex.runtime_identity import (

@@ -161,6 +161,21 @@ class LeaseRecord:
 
 
 def _lease_path(name: str) -> Path:
+    """Where this lease lives.
+
+    Overridable because the default is the shared data dir, which every
+    concurrent process resolves to the same file — including the live runtime
+    and every parallel test chunk. Leader election contending across unrelated
+    processes is exactly the failure a lease exists to prevent, and it made
+    tests pass alone and fail together for reasons no individual test could
+    explain. An operator relocating runtime state has the same need.
+    """
+    import os
+
+    override = str(os.environ.get("AURA_RUNTIME_LEASE_DIR", "") or "").strip()
+    if override:
+        return Path(override).expanduser() / f"{name}.json"
+
     from core.config import config
 
     return Path(config.paths.data_dir) / "runtime" / "leases" / f"{name}.json"

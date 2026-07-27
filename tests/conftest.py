@@ -303,6 +303,12 @@ def resource_observer(request, monkeypatch, tmp_path):
     # itself. core/environment/runtime_workspace.py enforces the same rule
     # process-wide for import-time calls no fixture can reach.
     monkeypatch.setenv("AURA_ENV_RUNTIME_DIR", str(runtime_root / "environment_runtime"))
+    # Leader-election leases default to the shared data dir, so every parallel
+    # chunk — and the live runtime — resolved to the same files. A test could
+    # then lose an election to an unrelated process and fail for a reason
+    # nothing in it could explain, which is precisely the pass-alone /
+    # fail-together shape that makes an aggregate pass count untrustworthy.
+    monkeypatch.setenv("AURA_RUNTIME_LEASE_DIR", str(runtime_root / "leases"))
 
     def _reset_resource_singletons():
         from core.agency.capability_token import reset_token_store
@@ -1126,3 +1132,117 @@ def _reset_working_memory_queue_load_between_tests():
     _reset()
     yield
     _reset()
+
+
+# ── Attribution for cross-test contamination ──────────────────────────────
+#
+# The chunk runner already reports order-dependence: a test that fails in a
+# chunk and passes alone. What it cannot say is WHICH earlier test caused it.
+# So the victim gets investigated and the polluter keeps running, and the only
+# available remedy is to distrust the whole aggregate.
+#
+# This snapshots the process-global surfaces a test has no business changing
+# and attributes any change to the test that made it. Report-mode by default —
+# a wall of failures on first run teaches people to disable the guard — and
+# AURA_TEST_STATE_GUARD=fail makes it enforcing, the same escalation the live
+# data guard uses.
+_STATE_GUARD_LEDGER: list[str] = []
+
+
+def _global_state_fingerprint() -> dict[str, object]:
+    fingerprint: dict[str, object] = {}
+    try:
+        from core.container import ServiceContainer
+
+        services = getattr(ServiceContainer, "_services", None)
+        if isinstance(services, dict):
+            fingerprint["service_container"] = frozenset(services)
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        import os
+
+        fingerprint["cwd"] = os.getcwd()
+        # An AURA_* variable set without monkeypatch outlives the test and
+        # silently reconfigures every later one. This is the leak that made a
+        # latent-cortex authority test fail only when a governance suite ran
+        # first, and it is invisible to the ServiceContainer snapshot.
+        fingerprint["aura_env"] = frozenset(
+            f"{key}={value}"
+            for key, value in os.environ.items()
+            if key.startswith("AURA_")
+        )
+    except OSError:
+        pass
+    try:
+        # Installed resolvers and sinks are process-global by design: they are
+        # how the runtime is wired once at boot. A test that installs one and
+        # does not remove it rewires every later test's view of the runtime,
+        # and nothing about the victim shows where it came from.
+        from core.runtime import service_registry as _registry
+
+        fingerprint["installed_resolvers"] = frozenset(
+            name
+            for name in dir(_registry)
+            if name.startswith("_") and not name.startswith("__")
+            and getattr(_registry, name, None) is not None
+            and callable(getattr(_registry, name, None)) is False
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError):
+        pass
+    try:
+        import sys
+
+        # A test that leaves a mock in sys.modules under a real module name
+        # silently rewires every later import of it.
+        fingerprint["mocked_core_modules"] = frozenset(
+            name
+            for name, module in list(sys.modules.items())
+            if name.startswith(("core.", "interface."))
+            and module is not None
+            and not hasattr(module, "__file__")
+        )
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+    return fingerprint
+
+
+@pytest.fixture(autouse=True)
+def _global_state_contamination_guard(request):
+    """Name the test that dirtied shared state, not the one that tripped over it."""
+    import os
+
+    if request.node.get_closest_marker("mutates_global_state"):
+        yield
+        return
+
+    before = _global_state_fingerprint()
+    try:
+        yield
+    finally:
+        after = _global_state_fingerprint()
+        changes: list[str] = []
+        for key in sorted(set(before) | set(after)):
+            old_value, new_value = before.get(key), after.get(key)
+            if old_value == new_value:
+                continue
+            if isinstance(old_value, frozenset) and isinstance(new_value, frozenset):
+                added = sorted(new_value - old_value)[:6]
+                removed = sorted(old_value - new_value)[:6]
+                detail = []
+                if added:
+                    detail.append(f"added {', '.join(map(str, added))}")
+                if removed:
+                    detail.append(f"removed {', '.join(map(str, removed))}")
+                if detail:
+                    changes.append(f"{key}: {'; '.join(detail)}")
+            else:
+                changes.append(f"{key}: {old_value!r} -> {new_value!r}")
+        if changes:
+            message = (
+                f"{request.node.nodeid} left shared state changed: " + " | ".join(changes)
+            )
+            _STATE_GUARD_LEDGER.append(message)
+            if str(os.environ.get("AURA_TEST_STATE_GUARD", "")).strip().lower() == "fail":
+                pytest.fail(message, pytrace=False)
+            print(f"\n[state-guard] {message}")
