@@ -4826,6 +4826,35 @@ def _mlx_worker_loop(
                                             cache = _mlx_make_cache(model)
                                             remaining_tokens = tokens
 
+                                    # Reuse only pays if the prompts share a LONG
+                                    # prefix. Measured live, hits reused 13-125
+                                    # tokens of 790-2211 — real hits worth almost
+                                    # nothing, because something volatile sits near
+                                    # the front of the prompt. The hit/miss line
+                                    # alone cannot say what; naming the first
+                                    # divergent tokens can.
+                                    if (
+                                        cache is not None
+                                        and len(tokens) > 512
+                                        and 0 < len(tokens) - len(remaining_tokens)
+                                        < len(tokens) * 0.5
+                                    ):
+                                        _reused = len(tokens) - len(remaining_tokens)
+                                        try:
+                                            _divergent = tokenizer.decode(
+                                                tokens[_reused:_reused + 24]
+                                            )
+                                        except (AttributeError, RuntimeError, TypeError, ValueError):
+                                            _divergent = "<undecodable>"
+                                        logger.info(
+                                            "🔍 [PROMPT CACHE] prefix diverges at token %d "
+                                            "(%.0f%% of %d reused); divergent text begins: %r",
+                                            _reused,
+                                            100.0 * _reused / max(1, len(tokens)),
+                                            len(tokens),
+                                            _divergent[:160],
+                                        )
+
                                     gen_prompt = remaining_tokens if cache is not None else prompt
                                     if cache is not None:
                                         kwargs["prompt_cache"] = cache

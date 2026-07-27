@@ -5703,6 +5703,39 @@ class InferenceGate:
             return ""
         return "## LIVE DESKTOP RESPONSE CONTRACT\n" + "\n".join(f"- {item}" for item in sections)
 
+    # How turn-volatile each live-mind section is. 0 = stable across a
+    # conversation (identity, contracts, policy), 2 = changes every turn by
+    # design (mood, tone, unity, somatic readings). Emission is sorted by this
+    # so the cacheable prefix is as long as possible; Python's sort is stable,
+    # so sections of equal volatility keep their priority order.
+    _FOREGROUND_SECTION_VOLATILITY: tuple[tuple[str, int], ...] = (
+        ("## USER-FACING CONVERSATION RELIABILITY CONTRACT", 0),
+        ("## LIVE DESKTOP RESPONSE CONTRACT", 0),
+        ("## CONTINUITY SUMMARY", 1),
+        ("## GOALS", 1),
+        ("## HELD POSITION", 1),
+        ("## TEMPORAL OBLIGATIONS", 1),
+        ("## CONVERSATIONAL INTENT", 1),
+        ("[LIVE MIND CONTEXT]", 1),
+        ("## IMAGINATION WORKSPACE", 1),
+        ("## BICAMERAL ADVISORY", 1),
+        ("[LIVE SPEECH GROUNDING]", 2),
+        ("## DERIVED RUNTIME SIGNALS", 2),
+        ("## FUNCTIONAL STATE SIGNALS", 2),
+        ("## SOMATIC STATE", 2),
+        ("## STATE", 2),
+        ("## LIVE TONE", 2),
+        ("## UNITY", 2),
+    )
+
+    @staticmethod
+    def _foreground_section_volatility(section: str) -> int:
+        text = str(section or "")
+        for header, rank in InferenceGate._FOREGROUND_SECTION_VOLATILITY:
+            if text.startswith(header):
+                return rank
+        return 1
+
     @staticmethod
     def _critical_foreground_system_excerpt(content: str, *, budget: int) -> str:
         """Keep live-mind grounding visible inside compacted system prompts."""
@@ -5755,6 +5788,19 @@ class InferenceGate:
                 sections.append(section)
         if not sections:
             return ""
+
+        # Selection order above is PRIORITY (which sections survive the budget).
+        # Emission order is a different question, and it decides whether the
+        # prompt cache can do anything: a cached entry is KV for a byte-identical
+        # prefix, so every turn-volatile byte placed early destroys the reuse of
+        # everything after it. Measured live, a conversation turn reused 325 of
+        # 2,105 tokens — 15% — and the diagnostic named the divergence exactly:
+        # " empathy\nTone: inquisitive_engaged\n\n## UNITY\nLevel: coherent".
+        # Mood, tone, unity and somatic readings change every turn by design.
+        # Emitting them LAST leaves the stable identity and contract text as a
+        # reusable prefix, without changing which sections are included or how
+        # much budget each one gets.
+        sections.sort(key=InferenceGate._foreground_section_volatility)
 
         rendered: list[str] = []
         remaining = int(budget)
