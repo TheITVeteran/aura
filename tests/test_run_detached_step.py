@@ -1006,6 +1006,90 @@ def test_plan_freezes_absolute_executable_and_secret_free_environment(
     assert "must-not-cross-boundary" not in json.dumps(plan)
 
 
+def test_precontained_sandbox_plan_is_bound_and_not_nested(
+    tmp_path: Path,
+) -> None:
+    profile = tmp_path / "contained.sb"
+    profile.write_text(
+        "\n".join(
+            (
+                "(version 1)",
+                "(deny default)",
+                "(deny network*)",
+                "(deny process-fork)",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    command = [
+        str(detached._DARWIN_SANDBOX),
+        "-f",
+        str(profile),
+        sys.executable,
+        "-c",
+        "pass",
+    ]
+    plan = detached._build_plan(
+        "precontained",
+        command,
+        tmp_path,
+        5.0,
+        "none",
+        containment_mode=detached._PRECONTAINED_SANDBOX_MODE,
+    )
+    assert plan["execution_sandbox"]["mode"] == "precontained-sandbox"
+    assert plan["execution_sandbox"]["profile_path"] == str(profile)
+    assert detached._executed_command(plan) == plan["command"]
+    assert [
+        root
+        for root in plan["target_execution_manifest"]["roots"]
+        if root.get("path") == str(profile)
+    ]
+    detached._verify_plan(plan, tmp_path / "detached_plan.json")
+
+    profile.write_text(
+        "(version 1)\n(deny default)\n(deny network*)\n"
+        "(deny process-fork)\n# changed\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        detached.DetachedStepError,
+        match="precontained sandbox profile drift",
+    ):
+        detached._verify_plan(plan, tmp_path / "detached_plan.json")
+
+
+def test_precontained_sandbox_rejects_allow_default_profile(
+    tmp_path: Path,
+) -> None:
+    profile = tmp_path / "unsafe.sb"
+    profile.write_text(
+        "(version 1)\n(allow default)\n(deny default)\n"
+        "(deny network*)\n(deny process-fork)\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        detached.DetachedStepError,
+        match="lacks the required deny boundary",
+    ):
+        detached._build_plan(
+            "unsafe-precontained",
+            [
+                str(detached._DARWIN_SANDBOX),
+                "-f",
+                str(profile),
+                sys.executable,
+                "-c",
+                "pass",
+            ],
+            tmp_path,
+            5.0,
+            "none",
+            containment_mode=detached._PRECONTAINED_SANDBOX_MODE,
+        )
+
+
 def test_target_receives_exact_detached_evidence_paths_and_identity(tmp_path: Path) -> None:
     run_dir = tmp_path / "evidence-environment"
     observed_path = tmp_path / "observed-environment.json"

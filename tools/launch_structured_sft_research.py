@@ -261,6 +261,7 @@ def build_sandbox_profile(
         ")",
         "(allow file-write*",
         *_path_rules(write_paths),
+        f"    {_literal(model_lane_parent)}",
         f"    {_literal(model_lane_state)}",
         f"    {_literal(model_lane_lock)}",
         (
@@ -622,6 +623,8 @@ def launch_contract(contract: Mapping[str, Any]) -> dict[str, Any]:
         str(contract["timeout_s"]),
         "--resume-contract",
         "target_checkpoint",
+        "--containment-mode",
+        "precontained-sandbox",
         "--resume-verifier-json",
         json.dumps(verifier_command, separators=(",", ":")),
     ]

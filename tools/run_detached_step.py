@@ -98,6 +98,18 @@ _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _DARWIN_SANDBOX = Path("/usr/bin/sandbox-exec")
 _DARWIN_CAFFEINATE = Path("/usr/bin/caffeinate")
 _NO_FORK_SANDBOX_PROFILE = "(version 1) (allow default) (deny process-fork)"
+_PRECONTAINED_SANDBOX_MODE = "precontained-sandbox"
+_SUPERVISOR_SANDBOX_MODE = "supervisor-no-fork"
+_CONTAINMENT_MODES = frozenset(
+    {_PRECONTAINED_SANDBOX_MODE, _SUPERVISOR_SANDBOX_MODE}
+)
+_MAX_SANDBOX_PROFILE_BYTES = 1024 * 1024
+_REQUIRED_PRECONTAINED_PROFILE_MARKERS = (
+    "(version 1)",
+    "(deny default)",
+    "(deny network*)",
+    "(deny process-fork)",
+)
 _SOURCE_SUFFIXES = frozenset(
     {".json", ".py", ".pyi", ".sb", ".sh", ".toml", ".yaml", ".yml"}
 )
@@ -1428,6 +1440,8 @@ def _kill_group(process: subprocess.Popen[Any], sig: signal.Signals) -> None:
 def _sandboxed_command(plan: dict[str, Any], command: list[str]) -> list[str]:
     sandbox = plan.get("execution_sandbox")
     if sandbox is None:
+        return list(command)
+    if sandbox.get("mode") == _PRECONTAINED_SANDBOX_MODE:
         return list(command)
     return [str(sandbox["path"]), "-p", str(sandbox["profile"]), *command]
 
@@ -3962,6 +3976,7 @@ def _build_plan(
     resume_verifier: list[str] | None = None,
     broker_policy_specs: list[dict[str, Any]] | None = None,
     execution_exclusion_roots: Iterable[Path] = (),
+    containment_mode: str = _SUPERVISOR_SANDBOX_MODE,
 ) -> dict[str, Any]:
     exclusions = _normalized_excluded_roots(execution_exclusion_roots)
     environment = _frozen_environment()
@@ -3972,12 +3987,64 @@ def _build_plan(
         raise DetachedStepError(
             "strong detached containment requires the macOS sandbox-exec process-fork boundary"
         )
-    sandbox = {
-        "path": str(_DARWIN_SANDBOX),
-        "sha256": _sha256_file(_DARWIN_SANDBOX),
-        "profile": _NO_FORK_SANDBOX_PROFILE,
-        "profile_sha256": hashlib.sha256(_NO_FORK_SANDBOX_PROFILE.encode("utf-8")).hexdigest(),
-    }
+    if containment_mode not in _CONTAINMENT_MODES:
+        raise DetachedStepError("detached containment mode is invalid")
+    if containment_mode == _PRECONTAINED_SANDBOX_MODE:
+        if (
+            len(resolved_command) < 4
+            or Path(resolved_command[0]) != _DARWIN_SANDBOX
+            or resolved_command[1] != "-f"
+        ):
+            raise DetachedStepError(
+                "precontained target must start with exact sandbox-exec -f"
+            )
+        profile_path = Path(resolved_command[2])
+        if not profile_path.is_absolute():
+            raise DetachedStepError(
+                "precontained sandbox profile path must be absolute"
+            )
+        profile_payload = _read_stable_private_bytes(
+            profile_path,
+            max_bytes=_MAX_SANDBOX_PROFILE_BYTES,
+            role="precontained sandbox profile",
+        )
+        try:
+            profile = profile_payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DetachedStepError(
+                "precontained sandbox profile is not UTF-8"
+            ) from exc
+        if (
+            any(
+                marker not in profile
+                for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS
+            )
+            or "(allow default)" in profile
+            or "(allow network" in profile
+            or "(allow process-fork" in profile
+        ):
+            raise DetachedStepError(
+                "precontained sandbox profile lacks the required deny boundary"
+            )
+        sandbox = {
+            "mode": _PRECONTAINED_SANDBOX_MODE,
+            "path": str(_DARWIN_SANDBOX),
+            "sha256": _sha256_file(_DARWIN_SANDBOX),
+            "profile_path": str(profile_path),
+            "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
+            "required_markers": list(
+                _REQUIRED_PRECONTAINED_PROFILE_MARKERS
+            ),
+        }
+    else:
+        sandbox = {
+            "path": str(_DARWIN_SANDBOX),
+            "sha256": _sha256_file(_DARWIN_SANDBOX),
+            "profile": _NO_FORK_SANDBOX_PROFILE,
+            "profile_sha256": hashlib.sha256(
+                _NO_FORK_SANDBOX_PROFILE.encode("utf-8")
+            ).hexdigest(),
+        }
     power_assertion = (
         {"path": str(_DARWIN_CAFFEINATE), "sha256": _sha256_file(_DARWIN_CAFFEINATE)}
         if _DARWIN_CAFFEINATE.is_file()
@@ -4043,7 +4110,11 @@ def _build_plan(
         "resume_contract": resume_contract,
         "session_escape_policy": "prohibited",
         "fork_policy": "kernel_denied",
-        "containment_policy": "sandbox_no_fork_plus_process_identity_and_group",
+        "containment_policy": (
+            "precontained_deny_default_plus_process_identity_and_group"
+            if containment_mode == _PRECONTAINED_SANDBOX_MODE
+            else "sandbox_no_fork_plus_process_identity_and_group"
+        ),
         "containment_environment_key": "AURA_DETACHED_RUN_TOKEN",
         "created_at": time.time(),
     }
@@ -4122,12 +4193,55 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
     if not isinstance(sandbox, dict):
         raise DetachedStepError(f"detached plan sandbox binding is invalid: {path}")
     sandbox_path = Path(str(sandbox.get("path") or ""))
-    if (
+    if sandbox.get("mode") == _PRECONTAINED_SANDBOX_MODE:
+        profile_path = Path(str(sandbox.get("profile_path") or ""))
+        if (
+            sandbox_path != _DARWIN_SANDBOX
+            or sandbox.get("sha256") != _sha256_file(sandbox_path)
+            or len(command) < 4
+            or command[0] != str(_DARWIN_SANDBOX)
+            or command[1] != "-f"
+            or command[2] != str(profile_path)
+            or not profile_path.is_absolute()
+            or sandbox.get("required_markers")
+            != list(_REQUIRED_PRECONTAINED_PROFILE_MARKERS)
+        ):
+            raise DetachedStepError(
+                f"detached precontained sandbox binding mismatch: {path}"
+            )
+        profile_payload = _read_stable_private_bytes(
+            profile_path,
+            max_bytes=_MAX_SANDBOX_PROFILE_BYTES,
+            role="precontained sandbox profile",
+        )
+        try:
+            profile = profile_payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DetachedStepError(
+                f"detached precontained sandbox profile is invalid: {path}"
+            ) from exc
+        if (
+            sandbox.get("profile_sha256")
+            != hashlib.sha256(profile_payload).hexdigest()
+            or any(
+                marker not in profile
+                for marker in _REQUIRED_PRECONTAINED_PROFILE_MARKERS
+            )
+            or "(allow default)" in profile
+            or "(allow network" in profile
+            or "(allow process-fork" in profile
+        ):
+            raise DetachedStepError(
+                f"detached precontained sandbox profile drift: {path}"
+            )
+    elif (
         sandbox_path != _DARWIN_SANDBOX
         or sandbox.get("sha256") != _sha256_file(sandbox_path)
         or sandbox.get("profile") != _NO_FORK_SANDBOX_PROFILE
         or sandbox.get("profile_sha256")
-        != hashlib.sha256(_NO_FORK_SANDBOX_PROFILE.encode("utf-8")).hexdigest()
+        != hashlib.sha256(
+            _NO_FORK_SANDBOX_PROFILE.encode("utf-8")
+        ).hexdigest()
     ):
         raise DetachedStepError(f"detached plan sandbox hash mismatch: {path}")
     power_assertion = plan.get("power_assertion")
@@ -4216,8 +4330,13 @@ def _verify_plan(plan: dict[str, Any], path: Path) -> None:
         seen_broker_commands.add(command_sha)
     if plan.get("session_escape_policy") != "prohibited":
         raise DetachedStepError(f"detached plan containment policy is invalid: {path}")
+    expected_containment_policy = (
+        "precontained_deny_default_plus_process_identity_and_group"
+        if sandbox.get("mode") == _PRECONTAINED_SANDBOX_MODE
+        else "sandbox_no_fork_plus_process_identity_and_group"
+    )
     if plan.get("fork_policy") != "kernel_denied" or (
-        plan.get("containment_policy") != "sandbox_no_fork_plus_process_identity_and_group"
+        plan.get("containment_policy") != expected_containment_policy
         or plan.get("containment_environment_key") != "AURA_DETACHED_RUN_TOKEN"
     ):
         raise DetachedStepError(f"detached plan lineage containment policy is invalid: {path}")
@@ -4682,6 +4801,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         resume_verifier,
         broker_policy_specs,
         (run_dir,),
+        args.containment_mode,
     )
     recovered_stale_child = False
     prior_completion_indeterminate = False
@@ -5007,6 +5127,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--broker-policy-json",
         default="",
         help="JSON object array of exact bounded subprocess commands the target may broker",
+    )
+    launch.add_argument(
+        "--containment-mode",
+        choices=tuple(sorted(_CONTAINMENT_MODES)),
+        default=_SUPERVISOR_SANDBOX_MODE,
+        help=(
+            "use the supervisor no-fork wrapper, or verify and execute one "
+            "already deny-default sandboxed target without nesting"
+        ),
     )
     launch.add_argument("--resume", action="store_true")
     launch.add_argument("command", nargs=argparse.REMAINDER)

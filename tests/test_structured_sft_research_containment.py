@@ -159,6 +159,62 @@ print(json.dumps(result, sort_keys=True))
     }
 
 
+def test_model_lane_directory_metadata_is_allowed_without_sibling_writes(
+    tmp_path: Path,
+) -> None:
+    allowed = tmp_path / "allowed"
+    lane = tmp_path / "lane" / "model_lane_control.json"
+    allowed.mkdir()
+    lane.parent.mkdir()
+    profile = containment.build_sandbox_profile(
+        python=_python(),
+        read_paths=(*_system_reads(), tmp_path),
+        write_paths=(allowed,),
+        forbidden_roots=(),
+        model_lane_state=lane,
+    )
+    profile_path = allowed / "profile.sb"
+    profile_path.write_text(profile, encoding="utf-8")
+    script = """
+import json
+from pathlib import Path
+import sys
+
+lane = Path(sys.argv[1])
+lane.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+lane.parent.chmod(0o700)
+lane.write_text("state", encoding="ascii")
+lane.with_suffix(lane.suffix + ".lock").write_text("lock", encoding="ascii")
+try:
+    (lane.parent / "unbound-sibling.json").write_text("forbidden")
+except OSError:
+    sibling = "kernel_denied"
+else:
+    sibling = "unexpectedly_allowed"
+print(json.dumps({"lane": lane.read_text(), "sibling": sibling}, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [
+            str(containment.SANDBOX_PATH),
+            "-f",
+            str(profile_path),
+            str(_python()),
+            "-c",
+            script,
+            str(lane),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {
+        "lane": "state",
+        "sibling": "kernel_denied",
+    }
+
+
 def test_profile_is_frozen_as_a_detached_execution_input(
     tmp_path: Path,
 ) -> None:
