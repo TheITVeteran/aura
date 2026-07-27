@@ -2942,7 +2942,7 @@ before those dependencies close is not admissible.
     separable and share a recomputed custody root. Holdout plaintext and its
     manifests exist only in evaluator artifacts; the candidate retains
     commitments and remains `trainer_ready=false` with no training authority.
-  - [ ] Bind the admitted files, exact source, tokenizer, chat template,
+  - [x] Bind the admitted files, exact source, tokenizer, chat template,
     masking offset, model, adapter, recurrence program, optimizer, scheduler,
     RNG, and compute budget into a resumable trainer receipt. Candidate
     filenames must remain unloadable until this authority is present.
@@ -3204,6 +3204,50 @@ before those dependencies close is not admissible.
   `artifacts/current/cp403_spark_059_production_audit_packet.json`,
   `artifacts/current/cp403_external_witness_statement.json`, and
   `artifacts/current/cp403_rekor_witness_bundle.json`.
+
+  CP404 turns CP403's narrow research permission into one exact, expiring,
+  synthetic-only small-checkpoint authority. The operator and trainer each
+  independently reverify the Rekor witness, candidate custody, installed MLX
+  tokenization, full 1.5B weight identity, recurrence program, trainer
+  configuration, and runtime-effective source closure. The trainer accepts no
+  evaluator, holdout, verified-replay, personality-adapter, fusion, registry,
+  or promotion path. Its candidate files remain nonstandard and are projected
+  in memory only after authority verification.
+
+  The authorized objective is recurrent-live-path final-assistant cross
+  entropy through the exact latent-slot adjoint, not ordinary lexical LoRA.
+  Only recurrent-window `q_proj`, `v_proj`, and `o_proj` LoRA tensors can
+  train, lexical activation remains false, and the base checkpoint is
+  full-hashed before and after execution. The run is capped at 20 updates and
+  90 total minutes across retries. Immutable generations bind adapter,
+  optimizer, epoch, cursor, stateless sample order, elapsed time, losses, and
+  validation evidence before an atomic latest pointer advances. A separate
+  attempt-bound verifier reconstructs checkpoint bytes and the hash-linked
+  journal without loading MLX before the detached supervisor may retry. A
+  terminal checkpoint interrupted before completion-receipt publication is
+  admitted only for receipt finalization; it is not called complete early.
+
+  Live admission covers all 36 synthetic train/validation rows with zero
+  truncation and no evaluator filesystem access. Authority `afec6201...`,
+  candidate `8d9a7505...`, dataset `b276537e...`, tokenizer `a41d7bc6...`,
+  model `72407226...`, recurrence program `d79e3093...`, and source closure
+  `7eb9f38d...` are bound. The witness receipt now distinguishes Rekor's
+  global entry index `2257039380` from active-shard Merkle index
+  `2135135118` and pins both.
+
+  The focused authority/state/trainer/resume matrix passes 18/18, and the
+  integrated custody/tokenizer/witness/adapter/exact-adjoint family passes
+  219/219. Strict Ruff, bytecode compilation, JSON parsing, and diff hygiene
+  pass. Model-load ownership passes at 48 paths, 61 references, and zero
+  findings. CP404's immutable state store is a reviewed canonical governance
+  owner; governance lint remains globally red only on two unrelated in-flight
+  `program_materialization.py` calls, with zero CP404 regression. This grants
+  only the recorded synthetic 1.5B experiment;
+  no model training has started, and it proves no heldout transfer, reasoning
+  gain, resident-32B effect, frontier performance, promotion, or `WOW Signal`.
+  The next checkpoint is kernel-contained detached execution followed by the
+  preregistered small-checkpoint falsification controls. Receipt:
+  `artifacts/current/cp404_synthetic_recurrent_sft_authority_evidence.json`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

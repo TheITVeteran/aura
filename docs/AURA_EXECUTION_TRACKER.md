@@ -29895,3 +29895,51 @@ Counting CP403 makes 645 total checkpoints. The 645-920 forecast leaves 0-275
 records, or approximately 70.1%-100.0% checkpoint completion with an 85.1%
 midpoint. This is accounting, not permission to skip any open SPARK or
 whole-codebase requirement. Long soaks remain deferred.
+
+### 2026-07-27 - CP404 bounded recurrent-SFT research authority and exact resume
+
+SPARK-059 now has a real runtime-enforced authority for the one experiment
+CP403 permits: structured-synthetic recurrence-native SFT on a bounded small
+checkpoint. The authority is exact and expiring. It binds the public Rekor
+witness, candidate-only custody, installed tokenizer and MLX mask projection,
+full checkpoint and behavior bytes, fixed RLC execution program, optimizer
+budget, and every runtime-effective trainer/checkpoint/objective source.
+Verified replay, evaluator holdout, resident checkpoints, ordinary lexical
+adapter activation, personality adapters, registries, fusion, and promotion
+are not accepted inputs.
+
+The trainer uses the exact recurrent live-path adjoint over latent slots and
+wraps only the middle recurrent window's `q_proj`, `v_proj`, and `o_proj`
+layers. Its 20-step and 90-total-minute limits survive retry. Each checkpoint
+publishes immutable adapter and optimizer tensors plus epoch, cursor,
+deterministic stateless order, cumulative elapsed time, and evidence trails
+before atomically advancing `latest`. A separate detached-retry verifier
+checks every byte commitment and the hash-linked journal without loading MLX;
+terminal, stale-budget, partial, tampered, or differently bound checkpoints
+cannot resume. A terminal checkpoint published immediately before a crash is
+resumable only to reconstruct and bind its missing completion receipt; only
+the complete checkpoint-plus-receipt state is classified already completed.
+
+The real 1.5B admission covers 36 synthetic train/validation rows with zero
+truncation and no evaluator access. Authority `dd555138...`, dataset
+`b276537e...`, model `72407226...`, execution program `d79e3093...`, and
+source closure `7eb9f38d...` are bound. The corrected witness evidence records
+global Rekor index `2257039380` and active-shard index `2135135118` as distinct
+values. Authority `afec6201...` binds those final bytes. The focused
+adversarial matrix passes 18/18, and the integrated
+custody/tokenizer/witness/adapter/exact-adjoint family passes 219/219. Strict
+Ruff, bytecode compilation, JSON parsing, and diff hygiene pass. Model-load
+ownership passes at 48 paths, 61 references, and zero findings. CP404's state
+store is a reviewed canonical governance owner; the global governance gate
+remains red only on two unrelated in-flight `program_materialization.py`
+calls, with zero CP404 regression.
+
+This is trainer authority and admission, not training. It does not establish
+target learnability, transfer, reasoning gain, resident-32B improvement,
+frontier performance, promotion, or a `WOW Signal`. CP405 is the
+kernel-contained detached run and measured small-checkpoint falsification.
+Long soaks remain deferred.
+
+Counting CP404 makes 646 total checkpoints. The 646-920 forecast leaves 0-274
+records, or approximately 70.2%-100.0% checkpoint completion with an 85.1%
+midpoint. This accounting cannot close or skip any open requirement.

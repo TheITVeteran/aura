@@ -1,0 +1,108 @@
+{
+  "admission": {
+    "authority_sha256": "afec62013342dabbcd034a704441e473d28f7a93f3ec07b9cef06ebf56ba8d2f",
+    "dataset_sha256": "b276537ee67747b60b8a30c1061d7097ebcf3ab4dd98e9c82594a260e97003a0",
+    "execution_spec_sha256": "d79e3093bd47d62cd2080146b9c437254548a6281fea1bc65cb885762ebc1a08",
+    "model_identity_sha256": "72407226f12f89a32a84252031a7b7a8545f4d0504d44018e1a315561c561140",
+    "source_closure_sha256": "7eb9f38d7e51eefea50ee0467700783ee0b8ccdf87036d780edbefa43a2a9d9f",
+    "status": "admission_revalidated_no_model_weights_loaded",
+    "tokenization_identity_sha256": "a41d7bc6e66375c1ca8ff107399edd528672e2fae33d9193988b19781c3812da",
+    "trainer_config_sha256": "6d652fac2cfba3ae961b4c250d44dac8c3060ac1756d30c171f897cc77ed1582"
+  },
+  "authority": {
+    "authority_sha256": "afec62013342dabbcd034a704441e473d28f7a93f3ec07b9cef06ebf56ba8d2f",
+    "expires_at_unix": 1785747811,
+    "issued_at_unix": 1785143011,
+    "production_promotion_allowed": false,
+    "status": "authorized_synthetic_small_checkpoint_recurrent_sft_research_only",
+    "training_authority": "synthetic_small_checkpoint_recurrent_sft_research_only"
+  },
+  "candidate": {
+    "candidate_identity_sha256": "8d9a7505097dbd8fb22ff5b4100b12c0d85c497fed2f411a9f0d241eb0d0060b",
+    "candidate_package_sha256": "dc01d4ed452603cfe2064200714fdff5e9eceff47de07b7415a6064fe5397809",
+    "custody_commit_sha256": "5f741d57b0585acf8c3b6333ed1aacdafeb3431652a9c8a2e4a6fc73caafc4a1",
+    "custody_root_sha256": "0fce3e161cd5f751d428d36ec88321a575443270e557003e242fd1bc98c4af53",
+    "evaluator_filesystem_accessed": false,
+    "evaluator_package_sha256": "eb3ed2b42fd74685110a1cc727ec9c2f9ab781c85c7198f3f75b505dac4576c8",
+    "rows_checked": 36
+  },
+  "checkpoint": "CP404",
+  "claims": {
+    "frontier_performance_proven": false,
+    "model_training_occurred": false,
+    "production_replay_admitted": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_touched": false,
+    "wow_signal_earned": false
+  },
+  "execution": {
+    "adapter_activation": "latent_slot_positions_only",
+    "checkpoint_every": 5,
+    "evaluate_every": 5,
+    "exact_resume_state": [
+      "adapter",
+      "optimizer",
+      "epoch",
+      "cursor",
+      "sample_order",
+      "elapsed_training_time",
+      "evidence_trails"
+    ],
+    "execution_spec_sha256": "d79e3093bd47d62cd2080146b9c437254548a6281fea1bc65cb885762ebc1a08",
+    "max_minutes": 90.0,
+    "max_steps": 20,
+    "ordinary_lexical_activation": false,
+    "recurrent_steps": 4,
+    "resume_verifier": "attempt_bound_metadata_and_tensor_commitment_reconstruction",
+    "training_mode": "recurrent_latent_slot_sft"
+  },
+  "model": {
+    "estimated_dense_parameters": 1562836992,
+    "full_weight_fingerprint": "d6e4ecf7593b78cb88ded2f4e98dd26b16802b38d2421b2af805eaea2f24f37d",
+    "model_identity_sha256": "72407226f12f89a32a84252031a7b7a8545f4d0504d44018e1a315561c561140",
+    "resident_checkpoint_allowed": false,
+    "total_weight_bytes": 868628559
+  },
+  "schema": "aura.rlc.cp404_synthetic_recurrent_sft_authority_evidence.v1",
+  "status": "passed_authority_and_admission_training_not_started",
+  "tokenization": {
+    "max_seq_length": 4096,
+    "rows_with_truncation": 0,
+    "snapshot_manifest_sha256": "b70f2d8f63b8fc6519d285b7658b10b225ac2ccebc05a827da688244543be459",
+    "tokenizer_identity_sha256": "02286d041992db5a232b94cc51aa9c53de986ed285bc5b3bc40e922a112c379a",
+    "validation_bundle_sha256": "697861567566eec12b6a26453b12bfbec4c2fbebf3ecedb173d5140646d3282c"
+  },
+  "verification": {
+    "bytecode_compilation": "passed",
+    "diff_hygiene": "passed",
+    "focused_tests": {
+      "passed": 18,
+      "total": 18
+    },
+    "integrated_compatibility_tests": {
+      "passed": 219,
+      "total": 219
+    },
+    "governance": {
+      "cp404_regressions": 0,
+      "inherited_or_parallel_regressions": 2,
+      "status": "cp404_canonical_owner_registered_global_gate_open"
+    },
+    "model_load_ownership": {
+      "findings": 0,
+      "owned_paths": 48,
+      "references": 61,
+      "status": "passed"
+    },
+    "strict_ruff": "passed"
+  },
+  "witness": {
+    "active_shard_log_index": 2135135118,
+    "bundle_sha256": "483aecfb4dc5f11a75e9782c099db0eeb2a4f66d3bafd689f051d05fe587d0c7",
+    "global_log_index": 2257039380,
+    "integrated_time": 1785137442,
+    "packet_sha256": "dfb6dbcbe5d18a4d49a7d6ec2a19f9bc3dc41ec2fb0daf3ebd6f4c660487bbab",
+    "rekor_uuid": "108e9186e8c5677a32264910b35ebf7f1c9b732f34d7e8525b9985a664568b3e9e13900ecfdeb7a4",
+    "statement_sha256": "30cb94fd549c0d5955b4881609c217d19291212fa0743821fb69fbc70512f4cd"
+  }
+}

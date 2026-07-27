@@ -1497,6 +1497,70 @@
       "scope": "<module>.save_recurrence_checkpoint"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.durable_unlink",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>._write_safetensors"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.append_journal_event"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.append_journal_event"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.append_journal_event"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_bytes",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 3,
+      "path": "core/learning/structured_sft_research_state.py",
+      "scope": "<module>.save_checkpoint"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -15178,6 +15242,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "f07112771cdc653ef8f509eda14f5cd676c16e1370e87ba58cd4bf83dfc9fb90",
+  "inventory_sha256": "7efb95b7a6d75c51a1684d8d5e5de449d69c0926af88aba10ff4e98f76fe3995",
   "schema_version": 1
 }

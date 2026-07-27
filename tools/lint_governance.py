@@ -150,6 +150,11 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             # atomic evidence store, analogous to campaign_journal. It owns no
             # arbitrary user path and advances only a digest-bound pointer.
             "core/learning/recurrence_training_state.py",
+            # Synthetic recurrent-SFT research state owns only immutable,
+            # digest-bound quarantine checkpoints and a hash-linked journal
+            # under the operator-selected private run root. It cannot publish
+            # adapters or mutate production state.
+            "core/learning/structured_sft_research_state.py",
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/post_action_receipt.py",
