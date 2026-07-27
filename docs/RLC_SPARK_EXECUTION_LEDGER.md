@@ -2921,9 +2921,15 @@ before those dependencies close is not admissible.
     commitment, externally signed monotonic root, anti-rollback sequence, and
     independent trust root. Role separation must prevent the producer from
     signing its own admission. CP396's source contract enforces the trust,
-    role-separation, exact-policy, sequence, and prior-root predicate; real
-    separately operated credentials and an externally witnessed monotonic
-    head remain open and no fixture key earns production credit.
+    role-separation, exact-policy, sequence, and prior-root predicate. CP403
+    now supplies a real Sigstore-Rekor-witnessed genesis head over the exact
+    CP400-CP402 audit state. Its offline verifier checks the producer
+    signature/certificate, logged artifact digest, signed entry timestamp,
+    RFC 6962 inclusion path, signed checkpoint, TUF-pinned log identity,
+    Rekor UUID derivation, sequence, prior head, global/shard indices, and
+    timestamp bounds. Real separately operated privacy, contamination,
+    evidence, and runner credentials over production replay remain open, so
+    this item cannot close and the witness grants no training authority.
   - [x] Build the verified-replay SFT projection and prove that private replay
     fields, hidden reasoning, user secrets, and holdout answers cannot leak
     into trainer-visible rows. CP397 authenticates and decrypts each encrypted
@@ -2962,6 +2968,29 @@ before those dependencies close is not admissible.
   references / zero findings) pass. The real resident-tokenizer proof loads no
   model weights. The sanitized durable evidence is
   `artifacts/current/cp395_structured_sft_evidence.json`.
+
+  The full evaluator package was generated as plaintext under the same OS user
+  in an ephemeral separate artifact directory, then destroyed after recording
+  only commitments. This proves candidate noncontainment and candidate-only
+  access, not process/principal isolation, an external trust root, or
+  producer/verifier role separation. Those become CP396 requirements.
+
+  The reconciled all-line closeout audit enumerates 8,234 tracked files, 5,154
+  code files, and 1,711,984 code lines. Production readiness passes 37/37; the
+  architecture map covers 151 subsystems and 1,122 dependency edges; resource
+  observation scans 3,007 Python files without a finding. The aggregate audit
+  remains FAIL because a newer upstream runtime-relaunch helper has one raw-
+  subprocess governance regression. Semantic closure remains red at 517/5,154
+  fully reviewed code files, 4,606 unreviewed, 1,148 stale reviews, and 27
+  orphan reviews. The independent rubric remains 19/20 with the repository
+  security scan open.
+
+  The enterprise ratchet remains non-green on inherited debt: ten count
+  regressions and 59 high/critical findings. No CP395 path appears in its
+  findings, and no baseline is raised. This checkpoint proves a deterministic,
+  executable candidate and exact trainer projection; it does not prove replay
+  transfer, trained reasoning gain, resident inference gain, frontier
+  performance, or a `WOW Signal`.
 
   CP396 adds a strict admission schema and private-key-free operator path.
   Its tests use explicitly labeled ephemeral Ed25519 fixture keys to prove
@@ -3143,29 +3172,38 @@ before those dependencies close is not admissible.
   occurred, or reasoning/frontier gains exist. Receipt:
   `artifacts/current/cp402_verified_replay_sft_tokenizer_evidence.json`.
 
-  The full evaluator package was generated as plaintext under the same OS user
-  in an ephemeral separate artifact directory, then destroyed after recording
-  only commitments. This proves candidate noncontainment and candidate-only
-  access, not process/principal isolation, an external trust root, or
-  producer/verifier role separation. Those become CP396 requirements.
+  CP403 closes the rewritable-local-ledger defect for the current SPARK-059
+  audit head. A canonical production-audit packet commits the exact CP400
+  lineage-publication, CP401 external-audit-contract, and CP402 resident-
+  tokenizer evidence bytes plus the source Git object. It records the absent
+  production replay candidate, absent independently signed audit bundle, and
+  fixture-only tokenizer result as blockers. The only next-stage scope it
+  permits is synthetic-only small-checkpoint falsification; verified replay,
+  evaluation holdout, production promotion, and all trainer authority remain
+  prohibited.
 
-  The reconciled all-line closeout audit enumerates 8,234 tracked files, 5,154
-  code files, and 1,711,984 code lines. Production readiness passes 37/37; the
-  architecture
-  map covers 151 subsystems and 1,122 dependency edges; resource observation
-  scans 3,007 Python files without a finding. The aggregate audit remains FAIL
-  because a newer upstream runtime-relaunch helper has one raw-subprocess
-  governance regression. Semantic closure remains red at 517/5,154 fully
-  reviewed code files, 4,606 unreviewed, 1,148 stale reviews, and 27 orphan
-  reviews. The independent rubric
-  remains 19/20 with the repository security scan open.
+  The genesis statement was detached-signed under an isolated Ed25519
+  producer key and published to Sigstore's public Rekor transparency log.
+  Rekor UUID `108e9186...deb7a4`, global index `2257039380`, active-shard index
+  `2135135118`, statement `30cb94fd...`, packet `dfb6dbcb...`, and bundle
+  `483aecfb...` are independently bound. The log key
+  `c0d23d6a...` comes from Cosign 3.1.2's embedded-root TUF initialization;
+  the committed PEM exactly matches signed TUF target `rekor.pub` digest
+  `dce5ef71...`. Aura's offline verifier does not trust the upload response:
+  it reconstructs and checks the X.509 producer signature, SET, Merkle root,
+  signed checkpoint, tree identity, UUID, and caller-pinned chain state.
 
-  The enterprise ratchet remains non-green on inherited debt: ten count
-  regressions and 59 high/critical findings. No CP395 path appears in its
-  findings, and no baseline is raised. This checkpoint proves a deterministic,
-  executable candidate and exact trainer projection; it does not prove replay
-  transfer, trained reasoning gain, resident inference gain, frontier
-  performance, or a `WOW Signal`.
+  One earlier Rekor entry signed the newline-terminated artifact while the
+  verifier expected canonical bytes. That admission failed and earns no
+  credit. CP403 adds a mode-0600 raw canonical signing-payload output and the
+  accepted entry proves byte-for-byte identity. The focused core/operator
+  matrix passes 16/16. This is a real independently witnessed statement of
+  Aura's current audit state, not an external privacy/contamination/execution
+  clearance, production replay admission, trainer receipt, model training,
+  reasoning gain, frontier result, or `WOW Signal`. Receipts:
+  `artifacts/current/cp403_spark_059_production_audit_packet.json`,
+  `artifacts/current/cp403_external_witness_statement.json`, and
+  `artifacts/current/cp403_rekor_witness_bundle.json`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

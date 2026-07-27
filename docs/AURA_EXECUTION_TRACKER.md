@@ -29851,7 +29851,47 @@ frontier performance, or a `WOW Signal`. The next SPARK-059 checkpoint is the
 monotonic external witness and production audit packet, followed by bounded
 resumable trainer authority and small-checkpoint falsification.
 
-Counting CP402 makes 644 total checkpoints. The 644-920 forecast leaves 0-276
-records, or approximately 70.0%-100.0% checkpoint completion with an 82.5%
+### 2026-07-27 - CP403 real external monotonic witness and honest production packet
+
+SPARK-059 now has a real, independently operated anti-rewrite witness rather
+than another producer-rewritable local hash chain. The canonical production-
+audit packet binds the exact CP400 combined-lineage publication, CP401
+external-audit contract, CP402 resident-tokenizer evidence, and source Git
+object. It explicitly records that Aura's production verified-replay store,
+independently signed privacy/contamination/execution bundle, and production-
+replay tokenizer receipt are absent. It therefore remains
+`trainer_ready=false`, grants `training_authority=none`, forbids verified
+replay and evaluator holdout from the research trainer, and permits only the
+synthetic curriculum in the upcoming small-checkpoint falsification.
+
+The genesis statement is publicly committed in Sigstore Rekor at UUID
+`108e9186e8c5677a32264910b35ebf7f1c9b732f34d7e8525b9985a664568b3e9e13900ecfdeb7a4`,
+global index `2257039380`, active-shard index `2135135118`, and integrated time
+`1785137442`. Packet `dfb6dbcbe5d18a4d49a7d6ec2a19f9bc3dc41ec2fb0daf3ebd6f4c660487bbab`,
+statement `30cb94fd549c0d5955b4881609c217d19291212fa0743821fb69fbc70512f4cd`,
+and bundle `483aecfb4dc5f11a75e9782c099db0eeb2a4f66d3bafd689f051d05fe587d0c7`
+are bound. The pinned Rekor key matches Sigstore's Cosign-verified TUF
+`rekor.pub` target digest `dce5ef715502ec9f3cdfd11f8cc384b31a6141023d3e7595e9908a81cb6241bd`.
+
+The core verifier is offline and network-free. It independently checks the
+producer certificate and signature, logged artifact hash, signed entry
+timestamp, RFC 6962 Merkle path, signed checkpoint, tree and log-key identity,
+UUID derivation, sequence/prior head, global and shard counters, and timestamp
+bounds. The operator accepts an already detached signature and never loads the
+private key. A first public entry over newline-terminated bytes failed
+admission; the repaired workflow emits a dedicated mode-0600 canonical
+signing payload, and only the corrected entry is accepted. The 16/16 focused
+adversarial/operator matrix is green.
+
+This closes the real externally witnessed monotonic-head mechanism and gives
+an externally immutable statement of current blockers. It does not fabricate
+production data or independent auditor signatures, grant trainer authority,
+train a model, prove reasoning gain, establish frontier performance, or earn a
+`WOW Signal`. Next is CP404's bounded, resumable, synthetic-only research
+trainer authority, then small-checkpoint falsification. Production replay and
+resident promotion remain blocked until their independent evidence exists.
+
+Counting CP403 makes 645 total checkpoints. The 645-920 forecast leaves 0-275
+records, or approximately 70.1%-100.0% checkpoint completion with an 85.1%
 midpoint. This is accounting, not permission to skip any open SPARK or
 whole-codebase requirement. Long soaks remain deferred.

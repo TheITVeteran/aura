@@ -1,0 +1,150 @@
+{
+  "schema": "aura.rlc.cp403_external_monotonic_witness_evidence.v1",
+  "checkpoint": "CP403",
+  "scope": "spark_059_real_external_witness_and_honest_production_audit_packet",
+  "claims": {
+    "real_public_rekor_entry": true,
+    "sigstore_tuf_pinned_log_key": true,
+    "producer_signature_verified": true,
+    "rekor_signed_entry_timestamp_verified": true,
+    "rfc6962_inclusion_proof_verified": true,
+    "rekor_signed_checkpoint_verified": true,
+    "rekor_uuid_tree_and_leaf_derivation_verified": true,
+    "caller_pinned_sequence_and_previous_head": true,
+    "global_and_shard_indices_distinguished": true,
+    "offline_network_free_reverification": true,
+    "production_replay_present": false,
+    "independent_production_auditor_signatures_present": false,
+    "trainer_ready": false,
+    "training_authority": "none"
+  },
+  "audit_packet": {
+    "file_sha256": "668c5f603cc5bcacf96ec28aa12c79bac769c53c9492da833571dec3bdb8b4bf",
+    "packet_sha256": "dfb6dbcbe5d18a4d49a7d6ec2a19f9bc3dc41ec2fb0daf3ebd6f4c660487bbab",
+    "source_git_commit": "8169fa534ba8398d3ae4a6881427d34776e71bf7",
+    "status": "audit_state_committed_production_training_blocked",
+    "allowed_research_data": [
+      "structured_synthetic"
+    ],
+    "forbidden_research_data": [
+      "verified_replay_user_content",
+      "evaluation_holdout"
+    ]
+  },
+  "accepted_witness": {
+    "statement_file_sha256": "aee8a1ead7cacaceba4e05c3b65ab217b554c1c13aedf1239112d73e1cf5503d",
+    "canonical_logged_artifact_sha256": "a30fe9d7c03b79738dc3ec2572a7d1c707b24cf58fa688562fe0fcd67a4c8a82",
+    "statement_sha256": "30cb94fd549c0d5955b4881609c217d19291212fa0743821fb69fbc70512f4cd",
+    "bundle_file_sha256": "3e663142384ac430d9ae76d71ef74c5adcabb71012311bbdb22d8ec50966ad00",
+    "bundle_sha256": "483aecfb4dc5f11a75e9782c099db0eeb2a4f66d3bafd689f051d05fe587d0c7",
+    "rekor_uuid": "108e9186e8c5677a32264910b35ebf7f1c9b732f34d7e8525b9985a664568b3e9e13900ecfdeb7a4",
+    "rekor_global_log_index": 2257039380,
+    "rekor_shard_log_index": 2135135118,
+    "rekor_shard_tree_size": 2135136443,
+    "rekor_integrated_time": 1785137442,
+    "rekor_root_hash": "d286cea6843fba69e6f454c2717b86c15b27540b2780375dfde346f0e79ee51f",
+    "rekor_log_id": "c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d",
+    "producer_certificate_sha256": "4ee3214b3e150a472e1982a25b026d2bb25f77ac779218d7561fd46096344922",
+    "status": "externally_witnessed_audit_head_verified_offline"
+  },
+  "failed_admission_retained_as_evidence": {
+    "rekor_uuid": "108e9186e8c5677a18792369b8afaf90e0329a2e7217598faf5f26f3142302c79a9d143d9097953d",
+    "rekor_global_log_index": 2257037671,
+    "reason": "newline_terminated_artifact_signature_did_not_match_canonical_verifier_bytes",
+    "accepted": false,
+    "credit": "none"
+  },
+  "sigstore_trust": {
+    "cosign_version": "3.1.2",
+    "rekor_cli_version": "1.5.3",
+    "initialization": "cosign_embedded_root_tuf_initialization",
+    "tuf_root_sha256": "73747011d0857ada15479a16c4cae0f3ed03aac698b523b97e1de314ac9d9ca8",
+    "tuf_timestamp_sha256": "96915e7186514fea9a0c112ff0428f019b808188d26e1bc156598031095df0ed",
+    "tuf_snapshot_sha256": "8f784ab614ec62bfdd5f568eb2a2e3011668449ba235ed4eb7befa99f8469933",
+    "tuf_targets_sha256": "6a697f7f8908c8ab26c11786ecb490b54acec97fa8c802e399f065f8a0cc1acd",
+    "trusted_root_target_sha256": "6494e21ea73fa7ee769f85f57d5a3e6a08725eae1e38c755fc3517c9e6bc0b66",
+    "rekor_pub_target_sha256": "dce5ef715502ec9f3cdfd11f8cc384b31a6141023d3e7595e9908a81cb6241bd",
+    "committed_rekor_pub_sha256": "dce5ef715502ec9f3cdfd11f8cc384b31a6141023d3e7595e9908a81cb6241bd"
+  },
+  "source_files": [
+    {
+      "path": "core/learning/external_monotonic_witness.py",
+      "line_count": 908,
+      "sha256": "4da60ca99737eba6148d1414584d99f77a060661aae13ef54a00285e0f97727c"
+    },
+    {
+      "path": "tools/manage_sft_external_witness.py",
+      "line_count": 463,
+      "sha256": "97447979b1cbfc97671afcf63bb53fe6234419a443d22f5b28d12b09f1c48902"
+    },
+    {
+      "path": "tests/test_external_monotonic_witness.py",
+      "line_count": 353,
+      "sha256": "e92b8671c10ebe0c41e6bd3d0ae32ce1128e235067fbb3f8b76ee389525a2d5f"
+    },
+    {
+      "path": "tests/test_manage_sft_external_witness.py",
+      "line_count": 134,
+      "sha256": "a2606f0663fb488b26edb4dfbc7f7e265ac4ac0d9120698b1818137eae96bf2e"
+    }
+  ],
+  "verification": {
+    "focused_final": {
+      "passed": 16,
+      "failed": 0,
+      "duration_seconds": 1.14
+    },
+    "integrated_spark_059_compatibility": {
+      "passed": 129,
+      "failed": 0,
+      "duration_seconds": 282.98
+    },
+    "real_offline_witness_reverification": "passed",
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "git_diff_check": "passed",
+    "governance_lint": {
+      "passed": true,
+      "recognized_calls": 2029,
+      "buckets": 1897,
+      "migration_debt_calls": 1787
+    },
+    "model_load_ownership": {
+      "passed": true,
+      "paths": 47,
+      "references": 60,
+      "findings": 0
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "new_cp403_path_findings": 0,
+      "baseline_raised": false
+    }
+  },
+  "explicit_non_claims": [
+    "production_verified_replay_rows_present",
+    "real_external_privacy_attestation",
+    "real_external_contamination_attestation",
+    "real_external_execution_attestation",
+    "four_role_independent_production_signatures",
+    "trainer_authority",
+    "small_checkpoint_training_or_transfer_gain",
+    "resident_32b_training",
+    "reasoning_gain",
+    "frontier_performance",
+    "WOW Signal"
+  ],
+  "next_required_gates": [
+    "bounded_resumable_synthetic_only_research_trainer_authority",
+    "small_checkpoint_transfer_falsification",
+    "production_replay_external_audit_and_tokenizer_admission",
+    "resident_32b_equal_compute_training_and_independent_promotion"
+  ],
+  "live_aura_touched": false,
+  "model_weights_touched": false,
+  "multi_hour_soak_deferred": true
+}
