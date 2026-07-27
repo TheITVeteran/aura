@@ -2341,6 +2341,13 @@ def _normalize_probe_detail(stdout: str, stderr: str, returncode: int) -> str:
 # a driver glitch; it is a broken runtime, and spawning onto it wastes a
 # 20-40GB load and strands the lane anyway.
 _LKG_PROBE_WINDOW_S = _finite_env_float("AURA_MLX_LKG_PROBE_WINDOW_S", 300.0, minimum=0.0)
+#: How long the out-of-process MLX availability probe may take. It starts an
+#: interpreter and imports MLX, so it is sensitive to host I/O rather than to
+#: anything about the runtime's health; on a thrashing page cache the import
+#: alone can outlast a fixed budget and report the runtime "unavailable".
+_MLX_RUNTIME_PROBE_TIMEOUT_S = _finite_env_float(
+    "AURA_MLX_RUNTIME_PROBE_TIMEOUT_S", 25.0, minimum=5.0
+)
 _LKG_PROBE_MAX_CONSECUTIVE = 2
 
 
@@ -2386,7 +2393,13 @@ def _probe_mlx_runtime(force: bool = False) -> tuple[bool, str]:
                 cwd=project_root,
                 env=env,
                 capture_output=True,
-                timeout=25.0,  # [STABILITY v57] Raised from 12.0s for high-load scenarios
+                # The probe spawns a fresh interpreter and imports MLX. On a
+                # host whose page cache is thrashing, that import alone can
+                # exceed a fixed budget — and the timeout was hardcoded with no
+                # way for an operator to raise it. Live 2026-07-26, repeatedly:
+                # `mlx_runtime_unavailable:exit_124`, on a machine where MLX was
+                # perfectly healthy and merely slow to load.
+                timeout=_MLX_RUNTIME_PROBE_TIMEOUT_S,
                 read_only=True,
                 source="runtime_probe:mlx_runtime_probe",
             )
