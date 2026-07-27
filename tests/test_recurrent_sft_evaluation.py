@@ -150,6 +150,35 @@ def test_holdout_projection_allows_executed_tool_evidence_for_interpretation(
     assert rows[0]["_meta"]["target_kind"] == "tool_result_interpretation"
 
 
+def test_holdout_projection_can_use_bound_launcher_custody_without_fork(
+    monkeypatch,
+) -> None:
+    candidate = _artifacts(STRUCTURED_SFT_CANDIDATE_FILES)
+    evaluator = _artifacts(STRUCTURED_SFT_EVALUATOR_FILES)
+    evaluator["holdout.private.json"] = json.dumps(_holdout()).encode()
+    custody = {
+        "holdout_example_count": 1,
+        "example_id_overlap_count": 0,
+        "case_fingerprint_overlap_count": 0,
+        "candidate_contains_holdout_seed": False,
+    }
+    monkeypatch.setattr(
+        evaluation,
+        "validate_structured_sft_custody_pair",
+        lambda *_args: pytest.fail("semantic replay would fork"),
+    )
+
+    rows, observed = evaluation.evaluator_holdout_rows(
+        candidate,
+        evaluator,
+        replay_semantics=False,
+        expected_custody=custody,
+    )
+
+    assert len(rows) == 1
+    assert observed == custody
+
+
 def _control_report() -> dict:
     arms = {}
     for arm in CONTROL_ARMS:

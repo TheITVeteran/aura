@@ -3470,6 +3470,28 @@ before those dependencies close is not admissible.
   required before the first honest SPARK-059 transfer verdict. Generated
   behavior, resident-32B gain, frontier performance, promotion, and a
   `WOW Signal` remain open.
+
+  CP413 preserves the first post-hardening evaluator generation as a pre-model
+  containment failure. Its contract/profile passed real read, output-write,
+  custody-write-denial, production-write-denial, lane-sibling-denial, network,
+  and no-fork probes. Aura shut down cleanly and released every live model-lane
+  owner. The evaluator still returned 2 in 3.3 seconds with no report or
+  residual process group.
+
+  Traceback replay identified an architectural conflict: full semantic custody
+  reconstruction executes synthetic tool cases through Aura's child-process
+  sandbox, while the scoring sandbox correctly denies every fork. The repair
+  does not weaken containment. The launcher performs and commits the first
+  complete source-bound semantic replay; the evaluator rehashes exact bytes,
+  validates authority/custody commitments, and validates every holdout
+  projection without forking; the independent verifier must perform the second
+  complete semantic replay after scoring. The report exposes all three stages
+  and no longer claims custody opened only inside the evaluator.
+
+  The focused boundary passes 39/39 and the integrated matrix passes 208/208
+  in 313.63 seconds. Strict Ruff, bytecode compilation, and diff hygiene pass.
+  CP413 has no holdout score or capability verdict. A fresh contract and kernel
+  probe remain mandatory before the next five-arm attempt.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

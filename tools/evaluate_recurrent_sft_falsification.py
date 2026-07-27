@@ -281,6 +281,7 @@ def _candidate_and_evaluator_artifacts(
     *,
     authority: Mapping[str, Any],
     expected_custody_binding_sha256: str,
+    expected_custody: Mapping[str, Any],
 ) -> tuple[dict[str, bytes], dict[str, bytes], dict[str, Any]]:
     candidate_lexical = candidate_dir.expanduser()
     evaluator_lexical = evaluator_dir.expanduser()
@@ -317,6 +318,8 @@ def _candidate_and_evaluator_artifacts(
     rows, custody = evaluator_holdout_rows(
         candidate_artifacts,
         evaluator_artifacts,
+        replay_semantics=False,
+        expected_custody=expected_custody,
     )
     bindings = {
         "candidate": {
@@ -667,6 +670,17 @@ def _run(arguments: argparse.Namespace) -> int:
         expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
         expected_trainer_config_sha256=expected_trainer_config_sha256,
     )
+    containment_contract = _validated_containment_contract(
+        arguments.containment_contract.expanduser().resolve(strict=True),
+        arguments=arguments,
+        source_closure=sources,
+    )
+    contract_custody = containment_contract.get("custody_bindings")
+    if (
+        not isinstance(contract_custody, Mapping)
+        or not isinstance(contract_custody.get("custody"), Mapping)
+    ):
+        _fail("recurrent_sft_evaluation_contract_custody_invalid")
     _candidate, _evaluator, custody_material = _candidate_and_evaluator_artifacts(
         arguments.candidate_dir,
         arguments.evaluator_dir,
@@ -674,13 +688,9 @@ def _run(arguments: argparse.Namespace) -> int:
         expected_custody_binding_sha256=(
             arguments.expected_custody_binding_sha256
         ),
+        expected_custody=contract_custody["custody"],
     )
     holdout_rows = custody_material["rows"]
-    containment_contract = _validated_containment_contract(
-        arguments.containment_contract.expanduser().resolve(strict=True),
-        arguments=arguments,
-        source_closure=sources,
-    )
     out_dir = ensure_private_directory(arguments.out_dir.expanduser())
     report_path = out_dir / "falsification_evaluation_report.json"
     if report_path.exists() or report_path.is_symlink():
@@ -831,7 +841,14 @@ def _run(arguments: argparse.Namespace) -> int:
         "ordinary_lexical_invariance_proven": lexical_invariance,
         "base_weights_unchanged": True,
         "all_small_checkpoint_gates_passed": all_gates_passed,
-        "evaluator_custody_opened_only_in_this_process": True,
+        "custody_execution": {
+            "launcher_semantic_replay_bound": True,
+            "evaluator_exact_byte_rehash": True,
+            "evaluator_projection_validation": True,
+            "evaluator_semantic_replay": False,
+            "independent_verifier_semantic_replay_required": True,
+            "reason": "kernel_process_fork_denied",
+        },
         "production_effect": False,
         "promotion_allowed": False,
         "duration_s": round(time.monotonic() - started, 6),

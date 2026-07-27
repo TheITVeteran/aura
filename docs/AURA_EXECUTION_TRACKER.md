@@ -25474,6 +25474,47 @@ resident-32B gain, frontier performance, promotion, and a `WOW Signal` remain
 open. The next generation must pass a fresh kernel probe, execute all five
 arms, and pass the independent verifier before an honest SPARK-059 verdict.
 
+### 2026-07-27 - CP413 no-fork custody reconstruction boundary
+
+The first post-hardening evaluator generation is also preserved as
+inadmissible rather than scored. Contract `0f8f41ef...` and profile
+`320357d3...` passed seven real kernel probes: every bound read and evaluator
+output write succeeded, while custody writes, production-source writes,
+arbitrary model-lane sibling writes, network, and child processes were denied.
+Aura shut down cleanly before launch and no live model-lane owner remained.
+The evaluator then returned 2 in 3.3 seconds with no report or residual process
+group.
+
+An exact sandbox replay without the presentation-layer exception handler
+located the denial before model load. Full structured-SFT custody replay
+reconstructs every synthetic tool case through Aura's untrusted-code sandbox,
+which correctly requires a child process; the outer evaluator correctly denies
+every fork. Granting process creation would have contradicted the frozen
+containment contract.
+
+The repair keeps the no-fork kernel boundary. Contract preparation performs
+the first complete source-bound semantic custody replay and commits its exact
+candidate/evaluator bytes, package identities, custody root, and replay report.
+The scoring process rehashes those exact bytes, validates the authority and
+commitment, and independently validates every holdout projection without
+executing child code. After scoring, the independent verifier must perform a
+second full semantic custody replay from the raw artifacts and match the
+report. The report now exposes this split explicitly and removes the false
+claim that evaluator custody was opened only inside the scoring process.
+
+Executed tool stdout remains admissible only for tool-result interpretation
+targets; oracle fields and target evidence on derivation or tool-call rows
+remain rejected. The focused boundary passes 39/39. The integrated
+recurrent-SFT, structured-SFT, admission, authority, containment, tokenizer,
+adapter-identity, and verifier matrix passes 208/208 in 313.63 seconds. Strict
+Ruff, bytecode compilation, and diff hygiene pass.
+
+Counting CP413 makes 659 total checkpoints. The 659-920 forecast leaves 0-261
+records, or approximately 71.6%-100.0% checkpoint completion with an 85.8%
+midpoint. No holdout score, transfer result, generated-behavior result,
+resident-32B gain, frontier result, promotion, or `WOW Signal` exists yet. A
+fresh source-bound contract and kernel probe must precede the next attempt.
+
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 
 Branch roles are no longer labels that seed different vectors and then run the

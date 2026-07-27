@@ -63,17 +63,27 @@ def strict_json_bytes(payload: bytes, *, role: str) -> dict[str, Any]:
 def evaluator_holdout_rows(
     candidate_artifacts: Mapping[str, bytes],
     evaluator_artifacts: Mapping[str, bytes],
+    *,
+    replay_semantics: bool = True,
+    expected_custody: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Replay custody and expose only the validated holdout chat projection."""
+    """Validate custody evidence and expose only the holdout chat projection."""
 
     if set(candidate_artifacts) != set(STRUCTURED_SFT_CANDIDATE_FILES):
         _fail("recurrent_sft_evaluation_candidate_file_set_invalid")
     if set(evaluator_artifacts) != set(STRUCTURED_SFT_EVALUATOR_FILES):
         _fail("recurrent_sft_evaluation_evaluator_file_set_invalid")
-    custody = validate_structured_sft_custody_pair(
-        candidate_artifacts,
-        evaluator_artifacts,
-    )
+    if type(replay_semantics) is not bool:
+        _fail("recurrent_sft_evaluation_custody_mode_invalid")
+    if replay_semantics:
+        custody = validate_structured_sft_custody_pair(
+            candidate_artifacts,
+            evaluator_artifacts,
+        )
+    elif not isinstance(expected_custody, Mapping):
+        _fail("recurrent_sft_evaluation_expected_custody_missing")
+    else:
+        custody = dict(expected_custody)
     holdout = strict_json_bytes(
         evaluator_artifacts["holdout.private.json"],
         role="holdout",

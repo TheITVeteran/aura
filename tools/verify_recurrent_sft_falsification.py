@@ -198,6 +198,7 @@ def _verify_source_closure(source_closure: Any) -> None:
 
 def _verify_custody(report: Mapping[str, Any]) -> dict[str, Any]:
     custody = report.get("custody")
+    custody_execution = report.get("custody_execution")
     if not isinstance(custody, Mapping):
         _fail("recurrent_sft_verification_custody_invalid")
     candidate_bindings = custody.get("candidate")
@@ -209,6 +210,15 @@ def _verify_custody(report: Mapping[str, Any]) -> dict[str, Any]:
         or not isinstance(evaluator_bindings, Mapping)
         or set(evaluator_bindings) != set(STRUCTURED_SFT_EVALUATOR_FILES)
         or not isinstance(reported_custody, Mapping)
+        or custody_execution
+        != {
+            "launcher_semantic_replay_bound": True,
+            "evaluator_exact_byte_rehash": True,
+            "evaluator_projection_validation": True,
+            "evaluator_semantic_replay": False,
+            "independent_verifier_semantic_replay_required": True,
+            "reason": "kernel_process_fork_denied",
+        }
     ):
         _fail("recurrent_sft_verification_custody_invalid")
     candidate = {
