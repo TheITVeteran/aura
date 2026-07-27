@@ -724,6 +724,22 @@ def _surface_quality_failure_reasons(
     if assessment.ok and not assessment.retryable and not assessment.hard_failure:
         return []
     reasons = list(assessment.reasons) or ["surface_quality_gate_failed"]
+    # This gate is about INTEGRITY — leaks, corruption, prompt artefacts,
+    # nonsense — which the worker can judge and must never let out. Whether a
+    # derivation reached its conclusion is about COMPLETENESS, and fixing that
+    # needs another generation.
+    #
+    # The worker cannot afford one: the surface-gate retry wall is 20s and a
+    # 32B turn takes longer than that, so "retry" here always resolves to
+    # "salvage", and salvage on this reason resolves to a refusal. Live
+    # 2026-07-26 that turned a correct three-case derivation into "I couldn't
+    # get to an answer I'd stand behind on that one" — strictly worse for the
+    # person than the derivation itself.
+    #
+    # The route keeps the signal and has the budget to act on it.
+    reasons = [reason for reason in reasons if reason != "final_answer_missing"]
+    if not reasons:
+        return []
     if bool(job.get("capability_inventory_contract", False)):
         grounded, _evidence = _capability_inventory_minimum_grounding(response_text)
         if grounded:
