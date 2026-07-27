@@ -3622,10 +3622,132 @@ before those dependencies close is not admissible.
 - [ ] **SPARK-061 - Progressive recurrent objective.** Train later latent states
   to improve over earlier states, not merely imitate long solutions; verify
   monotonic quality and useful gradients at the resident architecture.
+
+  F8-A (2026-07-27, Fable lane) builds the objective's *instrument* in
+  `core/learning/progressive_recurrent_objective.py`, because the loss half
+  already exists in v4 and the missing half is the one that decides whether a
+  descending curve means anything.
+
+  **The measurement that changed the design.** v4's docstring has been carried
+  forward for several checkpoints asserting that on families where depth is
+  destructive, the cheapest way to satisfy a monotone-improvement mandate is to
+  drive the recurrent transform toward the identity. That assertion gates a
+  32B campaign, so `tools/measure_progressive_collapse.py` measured it. The
+  recurrent update is `z' = (1-a)*z + a*RMSMatch(window(z), anchor)`, so
+  `a -> 0` **is** the identity operator: sweeping alpha walks the objective
+  along the collapse axis exactly, with no model surgery and no training
+  stochasticity. On the untrained Qwen2.5-1.5B at depth 4 over khop and modular
+  tasks the result **refines rather than confirms** the claim:
+
+  * Collapse is **not** the global optimum — v4 is minimized at the honest end
+    (alpha 0.5, loss 2.980).
+  * Collapse **is a local basin**. alpha 0.01 scores 3.3435 and the two steps
+    toward real motion cost **+0.1446** then **+0.0455** before the loss falls
+    away: a ~0.19-nat barrier. An optimizer that drifts into low motion is
+    trapped behind it, which is the falsifiable form of the concern and calls
+    for a different fix than "collapse is cheapest" would.
+
+  The same sweep found a defect in this lane's own first calibration: at the
+  basin the measured displacement is 0.0117, *above* the 0.01 detector floor,
+  so a penalty built on that floor is exactly zero where the pressure is
+  needed. Detecting collapse and pricing it out are different jobs with
+  different constants. `solve_collapse_barrier` therefore derives the training
+  constants from measured data rather than assuming them; on the 1.5B it
+  returns weight 4.0 and floor 0.103, and the penalized objective is then
+  strictly decreasing in alpha with no basin left. The constants are recorded
+  as a REFERENCE, not a default — the solver must be re-run against the
+  resident model, whose activation geometry is not the 1.5B's.
+
+  Four falsehoods a progressive claim can carry, each with its own
+  measurement and its own refusal: identity collapse (normalized per-step
+  displacement), early-step sabotage (against an independent depth-1
+  reference), length confound (Pearson r between per-task improvement and
+  answer length — the operational form of "not merely imitate long
+  solutions"), and causal idleness (`step_necessity` replaces one step's
+  update with the identity and re-measures the answer; a step whose removal
+  costs nothing did nothing, whatever the curve says). `state_gradient_norms`
+  closes the gradient leg by measuring the norm of the final loss's derivative
+  with respect to each intermediate state — the signal that actually arrives
+  at that depth.
+
+  22/22 focused tests, including a perfect four-step improvement curve produced
+  by a dead operator that must be refused, a forged verdict that must not
+  validate past its own collapse evidence, and the measured 1.5B sweep pinned
+  as a regression. Real-model checks run a real MLX Qwen2 through the real
+  `_prepare_live_path` / `_advance_recurrent_states` / `_persist_and_score`
+  chain. Evidence:
+  `artifacts/closeout/latent_cortex/spark061_progressive_objective/`.
+
+  **The checkbox stays open**: no resident model has been trained under this
+  objective, so "later states improve" remains a property of the instrument's
+  design rather than a measured outcome. Acceptance needs the SPARK-069
+  treatment.
+
 - [ ] **SPARK-062 - Auxiliary objectives and depth curriculum.** Add calibrated
   process, improvement, diversity, stopping, causality, mistake-location, and
   accept/discard losses; train variable depth from short to deep tasks with
   train/inference parity.
+
+  F8-B (2026-07-27, Fable lane) builds
+  `core/learning/auxiliary_objective_curriculum.py`. Summing seven terms is a
+  morning's work; the failure worth a checkpoint is quieter — **a term that is
+  declared, weighted, logged, and inert.** It happens without carelessness: a
+  signal that is constant on this batch, an accidental detachment, a term whose
+  natural scale is 1e-4 beside an answer CE of 2.0, or a term that trains a
+  separate head and was quietly summed into the base loss where it does
+  something real but not what its name claims. In every case the composite
+  descends, telemetry lists seven names, and one term is carrying the run. A
+  loss curve cannot distinguish that from seven healthy terms.
+
+  So the composite is a **registry with a liveness test**, and every term
+  declares what it optimizes — the distinction that gets muddled first:
+  `BASE_WEIGHTS` (differentiable into the resident weights), `AUXILIARY_HEAD`
+  (trains the process critic / mistake locator / accept-discard gate, and must
+  never be summed into the base loss), or `DIAGNOSTIC` (measured, never
+  optimized). Three of the seven SPARK-062 objectives are head terms, and
+  `base_weight_loss` excludes them structurally rather than by convention — a
+  test differentiates through the composite and requires the head term's
+  gradient to be exactly zero. Each term also names the dotted module that
+  produces its signal, all seven of which are imported and checked, so no term
+  can be a number invented inside a trainer.
+
+  `build_liveness_report` then classifies every term against its own
+  declaration: `live`, `inert_zero_gradient`, `inert_negligible_share` (below
+  1% of the composite's weighted magnitude — the level v3's diversity term sat
+  at, 0.037%, while being reported as active), `misdeclared_target`, or
+  `unmeasured`. A base term with no gradient measurement is `unmeasured`, never
+  `live`: absence of a check must not read as a passed check. A composite with
+  any inert *required* term refuses.
+
+  The depth curriculum's one rule is that **advancement is bound to measured
+  competence, never to a step counter**: a step-counted schedule will promote a
+  model to depth 16 having never established depth 2, and every measurement
+  after that conflates "deep tasks are hard" with "the shallow case was never
+  taught". `DepthCurriculum` needs a competence measurement over a minimum
+  sample before it moves, and it can move **back** — a curriculum that only
+  advances turns a transient dip into a permanent one. The receipt replays
+  every transition through an independent curriculum, so a forged final
+  position or a swapped advancement policy is rejected.
+
+  Train/inference parity here is a **different claim from SPARK-024's**. That
+  item proved the alpha/blend/RMS kernels are byte-identical between the two
+  paths, which is necessary and not sufficient: a stage may train a depth the
+  live configuration never reaches, tuning weights for a regime that does not
+  occur in production. `parity_binding` refuses a stage exceeding inference
+  `max_steps`, a spec whose depth disagrees with its stage, and adaptive
+  halting against a trained fixed depth (early halting runs a different
+  computation than the one trained, and the comparison is not clean until
+  SPARK-026's halting policy is itself trained).
+
+  23/23 focused tests, including a declared term with no gradient path, a term
+  too small to move the optimizer, a head term that reached the base weights, a
+  forged liveness verdict, a curriculum regression, a replayed receipt, and
+  four parity refusals.
+
+  **The checkbox stays open**: no campaign has run under this composite, the
+  per-term gradient measurement has not been taken against the resident
+  architecture, and the seven terms' calibration is declared rather than fitted.
+  Acceptance needs the SPARK-069 treatment.
 - [ ] **SPARK-063 - Verified STaR flywheel.** Generate, verify, filter, train,
   retest on fresh holdouts, and iterate with durable manifests; tool-assisted
   and latent traces enter only after evidence gates.
@@ -4872,3 +4994,45 @@ Counting CP420E makes 670 total checkpoints. The current planning range is
 5-10 checkpoints to resident-32B training launch, 9-16 to a defensible
 preliminary live gain verdict, and 15-26 to a powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - F8 lane: the two objectives ahead of the trainer (Fable)
+
+SPARK-061 and SPARK-062 were reassigned from the march to the Fable lane while
+the CP419/CP420 lane removes the raw trainer bypass for SPARK-060. Both were
+bare — no module, no test, no receipt — so this is construction ahead of the
+trainer rather than a parallel re-implementation, and the claim was pushed to
+this ledger before any code was written.
+
+What landed, and what it is not:
+
+- **F8-A / SPARK-061**: `core/learning/progressive_recurrent_objective.py` plus
+  `tools/measure_progressive_collapse.py`. Four degeneracy detectors, a causal
+  step-necessity lesion, a state-gradient measurement, the displacement-floor
+  loss term, and a barrier solver that derives training constants from data.
+- **F8-B / SPARK-062**: `core/learning/auxiliary_objective_curriculum.py`. The
+  seven-term registry with per-term liveness classification, a base-loss
+  composite that structurally excludes head terms, a competence-gated depth
+  curriculum with replayable receipts, and a train/inference depth-parity
+  binding distinct from SPARK-024's kernel parity.
+
+**One inherited claim was checked and came back different.** v4's docstring has
+asserted for several checkpoints that collapse to the identity is the cheapest
+solution to a monotone-improvement mandate. Measured on the untrained
+Qwen2.5-1.5B at depth 4, collapse is **not** the global optimum — but it **is**
+a local basin behind a measured ~0.19-nat barrier, which is the trap that
+actually matters and is falsifiable in a way the original phrasing was not. The
+same measurement caught this lane's own displacement floor being too low to fire
+at the basin it was written to remove; the constants are now solved from data
+and recorded as an operating-point-specific reference rather than a default.
+
+Validation: 45 focused tests (22 SPARK-061, 23 SPARK-062) and a 301-test
+adjacent sweep across every recurrence-objective, curriculum, halting, process-
+critic, mistake-locator, update-acceptance, uncertainty, GRPO, and latent-cortex
+suite — zero failures. Ruff and compilation clean on both modules and the tool.
+
+No model was trained. Neither checkbox moved: SPARK-061's "later states improve"
+is a property of the instrument's design until a resident treatment is measured
+under it, and SPARK-062's per-term gradient measurement has not been taken at
+the resident architecture. Nothing here is a reasoning, resident-32B, frontier,
+promotion, or `WOW Signal` result, and neither is counted against the march's
+checkpoint record.

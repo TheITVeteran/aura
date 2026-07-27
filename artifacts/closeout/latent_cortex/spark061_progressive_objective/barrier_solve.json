@@ -1,0 +1,57 @@
+{
+  "analysis": "collapse_barrier_solve_v1",
+  "barrier_total": 0.190169,
+  "barriers": [
+    {
+      "base_gap": 0.144648,
+      "from_alpha": 0.01,
+      "to_alpha": 0.05
+    },
+    {
+      "base_gap": 0.045521,
+      "from_alpha": 0.05,
+      "to_alpha": 0.1
+    }
+  ],
+  "collapse_is_global_optimum": false,
+  "collapse_is_local_basin": true,
+  "measurements": [
+    {
+      "alpha": 0.002,
+      "base_loss": 3.352137,
+      "displacement": 0.002404
+    },
+    {
+      "alpha": 0.01,
+      "base_loss": 3.343501,
+      "displacement": 0.011747
+    },
+    {
+      "alpha": 0.05,
+      "base_loss": 3.488149,
+      "displacement": 0.052329
+    },
+    {
+      "alpha": 0.1,
+      "base_loss": 3.53367,
+      "displacement": 0.089603
+    },
+    {
+      "alpha": 0.25,
+      "base_loss": 3.014076,
+      "displacement": 0.145112
+    },
+    {
+      "alpha": 0.5,
+      "base_loss": 2.980107,
+      "displacement": 0.185419
+    }
+  ],
+  "receipt_sha256": "bbbc03bfdebeab8acfbc2acab79793db9f664cf7d5cfdd571c493eeabd7cfcf8",
+  "schema": "aura.spark061.progressive_recurrent_objective.v1",
+  "solution": {
+    "floor": 0.103043,
+    "weight": 4.0
+  },
+  "solved": true
+}

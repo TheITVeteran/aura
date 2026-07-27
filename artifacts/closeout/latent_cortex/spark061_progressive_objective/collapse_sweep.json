@@ -1,0 +1,737 @@
+{
+  "alphas": [
+    0.002,
+    0.01,
+    0.05,
+    0.1,
+    0.25,
+    0.5
+  ],
+  "capability_claim": "none",
+  "collapse_alpha": 0.002,
+  "collapse_hatch_closed_by_progressive": false,
+  "collapse_hatch_open_in_v4": false,
+  "depth": 4,
+  "displacement_floor": 0.01,
+  "elapsed_s": 25.533,
+  "families": [
+    "khop",
+    "modular"
+  ],
+  "finding": "hatch_not_reproduced_at_this_operating_point",
+  "model_path": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "per_alpha": [
+    {
+      "alpha": 0.002,
+      "below_displacement_floor": 6,
+      "mean_improvement": 0.000264,
+      "mean_min_displacement": 0.002404,
+      "mean_progressive_loss": 3.359725,
+      "mean_v4_loss": 3.352137,
+      "sample_count": 6
+    },
+    {
+      "alpha": 0.01,
+      "below_displacement_floor": 3,
+      "mean_improvement": 0.006101,
+      "mean_min_displacement": 0.011747,
+      "mean_progressive_loss": 3.34533,
+      "mean_v4_loss": 3.343501,
+      "sample_count": 6
+    },
+    {
+      "alpha": 0.05,
+      "below_displacement_floor": 0,
+      "mean_improvement": -0.096556,
+      "mean_min_displacement": 0.052329,
+      "mean_progressive_loss": 3.488149,
+      "mean_v4_loss": 3.488149,
+      "sample_count": 6
+    },
+    {
+      "alpha": 0.1,
+      "below_displacement_floor": 0,
+      "mean_improvement": -0.107092,
+      "mean_min_displacement": 0.089603,
+      "mean_progressive_loss": 3.53367,
+      "mean_v4_loss": 3.53367,
+      "sample_count": 6
+    },
+    {
+      "alpha": 0.25,
+      "below_displacement_floor": 0,
+      "mean_improvement": 0.462044,
+      "mean_min_displacement": 0.145112,
+      "mean_progressive_loss": 3.014076,
+      "mean_v4_loss": 3.014076,
+      "sample_count": 6
+    },
+    {
+      "alpha": 0.5,
+      "below_displacement_floor": 0,
+      "mean_improvement": 0.358361,
+      "mean_min_displacement": 0.185419,
+      "mean_progressive_loss": 2.980107,
+      "mean_v4_loss": 2.980107,
+      "sample_count": 6
+    }
+  ],
+  "per_family": 3,
+  "progressive_preferred_alpha": 0.5,
+  "receipt_sha256": "70089284219bf9408f016bf8d44a8d89b5fe85825f908af3045ad17b3884ceea",
+  "row_count": 36,
+  "rows": [
+    {
+      "alpha": 0.002,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.000989,
+      "min_displacement": 0.003568,
+      "progressive_displacement_penalty": 0.006419,
+      "progressive_loss": 2.309526,
+      "step_losses": [
+        2.284425,
+        2.284395,
+        2.282351,
+        2.283436
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.01967,
+      "v4_loss": 2.303106
+    },
+    {
+      "alpha": 0.002,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.004097,
+      "min_displacement": 0.003557,
+      "progressive_displacement_penalty": 0.00643,
+      "progressive_loss": 2.756478,
+      "step_losses": [
+        2.735511,
+        2.733038,
+        2.732823,
+        2.731414
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.018634,
+      "v4_loss": 2.750048
+    },
+    {
+      "alpha": 0.002,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.005147,
+      "min_displacement": 0.003488,
+      "progressive_displacement_penalty": 0.006499,
+      "progressive_loss": 2.628015,
+      "step_losses": [
+        2.594653,
+        2.597529,
+        2.598779,
+        2.5998
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.021716,
+      "v4_loss": 2.621516
+    },
+    {
+      "alpha": 0.002,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.00023,
+      "min_displacement": 0.001307,
+      "progressive_displacement_penalty": 0.008692,
+      "progressive_loss": 4.057652,
+      "step_losses": [
+        4.029267,
+        4.028872,
+        4.028094,
+        4.029037
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.019923,
+      "v4_loss": 4.04896
+    },
+    {
+      "alpha": 0.002,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.00184,
+      "min_displacement": 0.001283,
+      "progressive_displacement_penalty": 0.008716,
+      "progressive_loss": 4.332835,
+      "step_losses": [
+        4.306572,
+        4.305217,
+        4.304494,
+        4.304732
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.019387,
+      "v4_loss": 4.324119
+    },
+    {
+      "alpha": 0.002,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": -0.000427,
+      "min_displacement": 0.001224,
+      "progressive_displacement_penalty": 0.008774,
+      "progressive_loss": 4.073846,
+      "step_losses": [
+        4.044502,
+        4.044499,
+        4.044976,
+        4.044929
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.020142,
+      "v4_loss": 4.065072
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.005617,
+      "min_displacement": 0.017358,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.294883,
+      "step_losses": [
+        2.282372,
+        2.280113,
+        2.27727,
+        2.276755
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.018128,
+      "v4_loss": 2.294883
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.021722,
+      "min_displacement": 0.017257,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.720514,
+      "step_losses": [
+        2.729476,
+        2.722791,
+        2.715509,
+        2.707755
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.012759,
+      "v4_loss": 2.720514
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.017353,
+      "min_displacement": 0.016924,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.643515,
+      "step_losses": [
+        2.600379,
+        2.604234,
+        2.611851,
+        2.617731
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.025784,
+      "v4_loss": 2.643515
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.00885,
+      "min_displacement": 0.006509,
+      "progressive_displacement_penalty": 0.003475,
+      "progressive_loss": 4.04115,
+      "step_losses": [
+        4.029475,
+        4.027223,
+        4.023808,
+        4.020625
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.01705,
+      "v4_loss": 4.037675
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.019459,
+      "min_displacement": 0.006375,
+      "progressive_displacement_penalty": 0.0036,
+      "progressive_loss": 4.299606,
+      "step_losses": [
+        4.301951,
+        4.298278,
+        4.288778,
+        4.282493
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.013514,
+      "v4_loss": 4.296006
+    },
+    {
+      "alpha": 0.01,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": -0.001692,
+      "min_displacement": 0.006058,
+      "progressive_displacement_penalty": 0.003903,
+      "progressive_loss": 4.072314,
+      "step_losses": [
+        4.046155,
+        4.046626,
+        4.047088,
+        4.047847
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.020564,
+      "v4_loss": 4.068411
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.349097,
+      "min_displacement": 0.075399,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.767193,
+      "step_losses": [
+        2.281731,
+        2.333795,
+        2.467674,
+        2.630828
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.136366,
+      "v4_loss": 2.767193
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.286472,
+      "min_displacement": 0.0741,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.101904,
+      "step_losses": [
+        2.699942,
+        2.703084,
+        2.816181,
+        2.986414
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.115491,
+      "v4_loss": 3.101904
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.332185,
+      "min_displacement": 0.072969,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.08445,
+      "step_losses": [
+        2.621537,
+        2.658144,
+        2.770474,
+        2.953722
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.130728,
+      "v4_loss": 3.08445
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.174072,
+      "min_displacement": 0.03185,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.842088,
+      "step_losses": [
+        4.016159,
+        3.973899,
+        3.912848,
+        3.842088
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 3.842088
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.22628,
+      "min_displacement": 0.030886,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 4.047387,
+      "step_losses": [
+        4.273667,
+        4.219702,
+        4.139778,
+        4.047387
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 4.047387
+    },
+    {
+      "alpha": 0.05,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": -0.011937,
+      "min_displacement": 0.028772,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 4.085871,
+      "step_losses": [
+        4.049955,
+        4.056602,
+        4.061503,
+        4.061892
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.023979,
+      "v4_loss": 4.085871
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.562052,
+      "min_displacement": 0.121505,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.106018,
+      "step_losses": [
+        2.336616,
+        2.63295,
+        2.862845,
+        2.898668
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.207351,
+      "v4_loss": 3.106018
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.355896,
+      "min_displacement": 0.120065,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.215615,
+      "step_losses": [
+        2.704619,
+        2.992256,
+        3.129916,
+        3.060515
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.155099,
+      "v4_loss": 3.215615
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": -0.590044,
+      "min_displacement": 0.120761,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.466964,
+      "step_losses": [
+        2.660239,
+        2.963719,
+        3.21357,
+        3.250283
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.216681,
+      "v4_loss": 3.466964
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.367887,
+      "min_displacement": 0.061785,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.606969,
+      "step_losses": [
+        3.974856,
+        3.842402,
+        3.703171,
+        3.606969
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 3.606969
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.515096,
+      "min_displacement": 0.059432,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.705793,
+      "step_losses": [
+        4.22089,
+        4.049142,
+        3.860394,
+        3.705793
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 3.705793
+    },
+    {
+      "alpha": 0.1,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": -0.017543,
+      "min_displacement": 0.054069,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 4.100658,
+      "step_losses": [
+        4.057268,
+        4.063161,
+        4.071002,
+        4.074811
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.025848,
+      "v4_loss": 4.100658
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.672553,
+      "min_displacement": 0.164794,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.110339,
+      "step_losses": [
+        2.782892,
+        2.742102,
+        2.304784,
+        2.110339
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 2.110339
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.568423,
+      "min_displacement": 0.160263,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.542369,
+      "step_losses": [
+        3.110791,
+        2.872532,
+        2.609693,
+        2.542369
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 2.542369
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.512533,
+      "min_displacement": 0.164695,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.619977,
+      "step_losses": [
+        3.13251,
+        3.111524,
+        2.75312,
+        2.619977
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 2.619977
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.334366,
+      "min_displacement": 0.135193,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.44201,
+      "step_losses": [
+        3.776376,
+        3.551133,
+        3.47643,
+        3.44201
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 3.44201
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.425876,
+      "min_displacement": 0.131306,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.551497,
+      "step_losses": [
+        3.962012,
+        3.603065,
+        3.510054,
+        3.536136
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.015361,
+      "v4_loss": 3.551497
+    },
+    {
+      "alpha": 0.25,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.258513,
+      "min_displacement": 0.114418,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.818267,
+      "step_losses": [
+        4.070382,
+        4.069576,
+        3.977032,
+        3.811869
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.006398,
+      "v4_loss": 3.818267
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.603506,
+      "min_displacement": 0.171731,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.104436,
+      "step_losses": [
+        2.707942,
+        2.189611,
+        2.151748,
+        2.104436
+      ],
+      "task_id": "recurrence-khop-d4-s130700826282694549633689869336685408089",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 2.104436
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.384945,
+      "min_displacement": 0.170206,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.480926,
+      "step_losses": [
+        2.863417,
+        2.553438,
+        2.540798,
+        2.478472
+      ],
+      "task_id": "recurrence-khop-d4-s166930807771743650863670436647413198658",
+      "v4_improvement_penalty": 0.002453,
+      "v4_loss": 2.480926
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 9,
+      "family": "khop",
+      "improvement": 0.502218,
+      "min_displacement": 0.170922,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 2.617292,
+      "step_losses": [
+        3.11951,
+        2.713922,
+        2.676461,
+        2.617292
+      ],
+      "task_id": "recurrence-khop-d4-s293203933556337299247933643601912487359",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 2.617292
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 11,
+      "family": "modular",
+      "improvement": 0.038183,
+      "min_displacement": 0.2001,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.573851,
+      "step_losses": [
+        3.571245,
+        3.450693,
+        3.465497,
+        3.533062
+      ],
+      "task_id": "recurrence-modular-d4-s84374915245481167761984703406231777799",
+      "v4_improvement_penalty": 0.040789,
+      "v4_loss": 3.573851
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.054539,
+      "min_displacement": 0.208086,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.604826,
+      "step_losses": [
+        3.628631,
+        3.521889,
+        3.532675,
+        3.574092
+      ],
+      "task_id": "recurrence-modular-d4-s174453744352966820491020857930692332363",
+      "v4_improvement_penalty": 0.030734,
+      "v4_loss": 3.604826
+    },
+    {
+      "alpha": 0.5,
+      "answer_tokens": 10,
+      "family": "modular",
+      "improvement": 0.566775,
+      "min_displacement": 0.191468,
+      "progressive_displacement_penalty": 0.0,
+      "progressive_loss": 3.499313,
+      "step_losses": [
+        4.066088,
+        3.92111,
+        3.6153,
+        3.499313
+      ],
+      "task_id": "recurrence-modular-d4-s60872273941158021654005128084979324685",
+      "v4_improvement_penalty": 0.0,
+      "v4_loss": 3.499313
+    }
+  ],
+  "schema": "aura.spark061.collapse_sweep.v1",
+  "seed": 61,
+  "task_count": 6,
+  "v4_preferred_alpha": 0.5
+}
