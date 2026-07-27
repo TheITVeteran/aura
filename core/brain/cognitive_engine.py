@@ -2953,8 +2953,19 @@ class CognitiveEngine:
                 "live_mind_generation_controls": dict(live_mind_generation_controls),
                 "live_mind_snapshot_ready": live_mind_snapshot_ready,
                 "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
-                "disable_prompt_cache": True,
-                "clear_prompt_cache": True,
+                # No disable_prompt_cache here. This is the lane the desktop UI
+                # actually talks through (origin=desktop_quick_*), and it was
+                # the FOURTH place independently switching the cache off for the
+                # conversation — after the chat contract, the inference gate's
+                # foreground force-set, and the worker's own bypass list. Each
+                # one made the others invisible: lifting three still produced a
+                # turn with no cache lookup logged at all.
+                #
+                # Reuse is scoped to `user_surface` and is KV for a
+                # byte-identical prefix, so within the scope the only shared
+                # state is this conversation's own history. `clear_prompt_cache`
+                # was worse than the disable: it wiped every other lane's entry
+                # on every user turn.
                 "max_tokens": max_tokens,
                 "num_predict": max_tokens,
                 "sampling_bias": advice.get("sampling_bias") if isinstance(advice, dict) else None,
