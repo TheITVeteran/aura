@@ -175,6 +175,31 @@ def _prompt_safe(value: Any, limit: int = 260) -> str:
 # These are demoted, not dropped: "search" is still a legitimate subject when
 # someone asks about search itself, so it stays available as a later keyword
 # and simply stops outranking the real topic.
+#: Vocabulary that belongs to Aura's own scaffolding, never to a subject.
+#:
+#: The imagination workspace showed four "novel thoughts" and four
+#: counterfactual probes, every one of them about "master":
+#:
+#:     Combine master with an opposing pressure and look for the behavior
+#:     neither has alone.
+#:     What if master and synthesizer trade roles?
+#:
+#: The frame had been seeded with an internal role prompt — "You are the
+#: Master Synthesizer. Review the original problem and the analyses from your
+#: specialized swarm agents…" — and the keyword extractor did its job
+#: perfectly on it: "Master" is capitalized and early, so it scored as the
+#: subject. She was imagining about the label on her own scaffolding.
+#:
+#: These tokens can still appear in a subject ("agent-based models"), so they
+#: are demoted rather than dropped: they lose to any real content word and
+#: only survive if nothing else is there.
+_SCAFFOLD_ROLE_TOKENS = frozenset({
+    "agent", "agents", "analyses", "analysis", "assistant", "conclusive",
+    "formulate", "master", "orchestrator", "original", "persona", "prompt",
+    "recommendation", "review", "role", "shard", "specialized", "swarm",
+    "synthesizer", "system", "task", "user",
+})
+
 _WEAK_TOPIC_TOKENS = frozenset({
     "actually", "add", "answer", "any", "ask", "asked", "asking", "build",
     "check", "come", "consider", "create", "day", "describe", "design",
@@ -205,7 +230,7 @@ def _extract_keywords(text: str, *, limit: int = 8) -> list[str]:
         if len(token) < 3 or token in _STOPWORDS or token in seen:
             continue
         seen.add(token)
-        if token in _WEAK_TOPIC_TOKENS:
+        if token in _WEAK_TOPIC_TOKENS or token in _SCAFFOLD_ROLE_TOKENS:
             weak.append(token)
         else:
             strong.append((-_topic_informativeness(surface, match.start()), order, token))
