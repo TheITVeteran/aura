@@ -1,0 +1,147 @@
+{
+  "schema": "aura.closeout.cp414_recurrent_sft_falsification_evidence.v1",
+  "checkpoint": "CP414",
+  "recorded_date": "2026-07-27",
+  "source_commit": "3f1a28df8",
+  "experiment": {
+    "model": "Qwen2.5-1.5B-Instruct-4bit",
+    "holdout_examples": 24,
+    "canary_examples": 6,
+    "arms": [
+      "base_recurrent",
+      "trained_recurrent",
+      "sham_labels",
+      "shuffled_traces",
+      "syntax_only"
+    ],
+    "evaluator_duration_s": 290.81534,
+    "detached_duration_s": 297.7329,
+    "detached_restart_count": 0,
+    "detached_returncode": 0,
+    "process_group_empty": true,
+    "timed_out": false
+  },
+  "containment": {
+    "all_bound_reads_allowed": true,
+    "output_write_allowed": true,
+    "custody_write_denied": true,
+    "production_write_denied": true,
+    "model_lane_sibling_write_denied": true,
+    "network_denied": true,
+    "process_fork_denied": true,
+    "launcher_semantic_replay_bound": true,
+    "evaluator_exact_byte_rehash": true,
+    "evaluator_projection_validation": true,
+    "evaluator_semantic_replay": false,
+    "independent_verifier_semantic_replay_required": true
+  },
+  "verdict": {
+    "status": "small_checkpoint_heldout_transfer_not_proven",
+    "all_small_checkpoint_gates_passed": false,
+    "heldout_transfer_proven": false,
+    "reasoning_gain_proven": false,
+    "resident_32b_result": false,
+    "frontier_performance_proven": false,
+    "production_effect": false,
+    "promotion_allowed": false,
+    "wow_signal": false
+  },
+  "trained_vs_base": {
+    "passed": true,
+    "mean_reference_loss": 1.415850866586,
+    "mean_candidate_loss": 1.281552103659,
+    "mean_loss_delta": -0.134298762927,
+    "improved_examples": 24,
+    "regressed_examples": 0,
+    "two_sided_sign_test_p": 1.19209e-07,
+    "wrong_to_right": 29,
+    "right_to_wrong": 10,
+    "net_error_corrections": 19,
+    "target_top1_delta": 19,
+    "negative_transfer_families": []
+  },
+  "trained_vs_controls": {
+    "sham_labels": {
+      "passed": false,
+      "mean_loss_delta": -0.060754872859,
+      "wrong_to_right": 18,
+      "right_to_wrong": 6,
+      "net_error_corrections": 12,
+      "target_top1_delta": 12,
+      "negative_transfer_families": [
+        "structured_program"
+      ]
+    },
+    "shuffled_traces": {
+      "passed": true,
+      "mean_loss_delta": -0.062932270269,
+      "wrong_to_right": 35,
+      "right_to_wrong": 6,
+      "net_error_corrections": 29,
+      "target_top1_delta": 29,
+      "negative_transfer_families": []
+    },
+    "syntax_only": {
+      "passed": true,
+      "mean_loss_delta": -0.093166404714,
+      "wrong_to_right": 37,
+      "right_to_wrong": 22,
+      "net_error_corrections": 15,
+      "target_top1_delta": 15,
+      "negative_transfer_families": []
+    }
+  },
+  "regression_canaries": {
+    "passed": false,
+    "generated_behavior_tested": false,
+    "absolute_loss_tolerance": 0.02,
+    "personality": {
+      "passed": false,
+      "mean_loss_delta": -0.176163911819,
+      "target_top1_delta": -1
+    },
+    "tool_honesty": {
+      "passed": false,
+      "mean_loss_delta": -0.146832227708,
+      "target_top1_delta": -1
+    },
+    "safety": {
+      "passed": true,
+      "mean_loss_delta": -0.003610014915,
+      "target_top1_delta": 1
+    }
+  },
+  "integrity": {
+    "base_weights_unchanged": true,
+    "ordinary_lexical_invariance_proven": true,
+    "holdout_content_absent_from_report": true,
+    "source_closure_rehashed": true,
+    "base_model_identity_rehashed": true,
+    "independent_verification_status": "independently_verified"
+  },
+  "hashes": {
+    "containment_contract_sha256": "61c590a584ab64d1a8a53a2011280b36698e06d7657927b303a453e418c14d90",
+    "containment_contract_file_sha256": "21bffb878f9dc9fe585f165bf378af5850f3819e445d448374d84586c414d919",
+    "kernel_probe_file_sha256": "8119e1a67b9131809b9a93b82c5a412cd328133a75a8a7b5b8ade5a2969e3681",
+    "detached_receipt_sha256": "6036071ae820da365cccacc4e4d6166aa07fab7e719d62ca6cb7203b93830909",
+    "detached_receipt_file_sha256": "8ec99a2451d00008e0736069d30bb15188c5e7934694f1742656fb121514bbbb",
+    "evaluation_report_sha256": "1c5c4d48ae67d3ec7bb36b733cc3dacfd14d3886089328b2868e8b0223793d06",
+    "evaluation_report_file_sha256": "736067c0603a2a6904c9ce0e10dae7bb288504704e844084f62e932b5f16cc8d",
+    "independent_verification_sha256": "06c0a47ec0c59632ff747860bd341cb2c7a4c0d89074f4cd1cb79cf9a8aa7188",
+    "independent_verification_file_sha256": "94fb3444e488a6b6d9b33c408c485e07e7f0cee67977c1da217c9fa1ff8ea6ed"
+  },
+  "claims_not_supported": [
+    "broad_reasoning_gain",
+    "frontier_performance",
+    "resident_32b_result",
+    "production_promotion",
+    "generated_behavior_regression",
+    "wow_signal"
+  ],
+  "required_repairs": [
+    "isolate why the structured-program family does not beat the equal-work sham-label control",
+    "add train-time regression protection for personality and tool-honesty target-token decisions",
+    "run generated behavior canaries instead of treating teacher-forced likelihood as behavioral proof",
+    "repeat the complete sealed five-arm evaluator and independent verification after repair"
+  ]
+}

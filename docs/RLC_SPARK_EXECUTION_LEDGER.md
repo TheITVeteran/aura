@@ -3492,6 +3492,37 @@ before those dependencies close is not admissible.
   in 313.63 seconds. Strict Ruff, bytecode compilation, and diff hygiene pass.
   CP413 has no holdout score or capability verdict. A fresh contract and kernel
   probe remain mandatory before the next five-arm attempt.
+
+  CP414 records the first admissible independent small-checkpoint verdict. The
+  fresh deny-default evaluator passed all seven kernel probes, returned 0 after
+  297.73 seconds with no restart or surviving process group, and published a
+  holdout-free report over 24 sealed examples and six regression canaries. A
+  separate verifier then rehashed the source closure, base model, authority,
+  custody, equal-work records, adapter tensors, containment contract, detached
+  receipt, kernel probe, and every decision statistic. It performed the second
+  full semantic custody replay outside the no-fork evaluator and returned
+  `independently_verified`.
+
+  The result is informative but negative. The trained recurrent arm beat base
+  recurrent on all 24 paired losses (mean loss 1.28155 versus 1.41585,
+  two-sided sign-test p=1.19209e-7), with 29 wrong-to-right and ten
+  right-to-wrong target-token transitions. It also passed the overall
+  shuffled-trace and syntax-only comparisons. It did not pass every equal-work
+  control: the structured-program family regressed by two net target-token
+  decisions against sham-label training, so that control comparison failed.
+  The safety likelihood canary passed, but personality and tool-honesty each
+  lost one target-token top-1 decision despite lower mean loss. Generated
+  behavior was not tested. Ordinary lexical logits and base weights remained
+  byte-stable, production effect and promotion stayed false, and no report
+  contains holdout content.
+
+  Therefore SPARK-059 and its small-checkpoint checkbox remain open. The next
+  bounded repair must diagnose structured-program/sham discrimination, add
+  train-time personality and tool-honesty regression protection, add generated
+  behavior canaries, and repeat the complete sealed five-arm evaluation. The
+  result does not establish broad reasoning gain, a resident-32B effect,
+  frontier performance, promotion, or a `WOW Signal`. Sanitized evidence is
+  `artifacts/current/cp414_recurrent_sft_falsification_evidence.json`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

@@ -30300,3 +30300,43 @@ approximately 70.8%-100.0% checkpoint completion with an 85.4% midpoint. This
 remains workload accounting rather than a capability score and does not close
 or merge any later SPARK or whole-Aura requirement. Final multi-hour soaks
 remain deferred until every shorter gate is green.
+
+### 2026-07-27 - CP414 independently verified negative SPARK-059 verdict
+
+The repaired five-arm Qwen2.5-1.5B recurrent-SFT falsification completed under
+the fresh CP414 deny-default contract. All seven live kernel probes passed:
+bound reads and the private output were available, while custody mutation,
+production writes, arbitrary model-lane sibling writes, network access, and
+process creation were denied. The detached evaluator returned 0 after 297.73
+seconds with no restart, timeout, cleanup, or surviving process group.
+
+The independent verifier accepted the complete evidence chain. It rehashed
+source, model, authority, custody, checkpoint, control workload, adapters,
+containment, detached receipt, kernel probe, and decision statistics; then
+performed the second full source-bound semantic custody replay that the
+no-fork evaluator cannot execute. Report `1c5c4d48...`, file `736067c0...`,
+and independent verification `06c0a47e...` are bound in
+`artifacts/current/cp414_recurrent_sft_falsification_evidence.json`.
+
+The scientific verdict is
+`small_checkpoint_heldout_transfer_not_proven`. The trained recurrent arm
+improved paired loss on all 24 holdouts versus base recurrent (mean 1.28155
+versus 1.41585, two-sided sign-test p=1.19209e-7), with 29 wrong-to-right,
+ten right-to-wrong, and 19 net target-token corrections. It passed the
+shuffled-trace and syntax-only comparisons. It failed the sham-label control
+because the structured-program family had two net target-token regressions.
+Safety likelihood passed, but personality and tool-honesty each lost one
+target-token top-1 decision despite improved mean loss. Generated behavior was
+not tested and receives no credit.
+
+Base weights and ordinary lexical logits remained invariant. Production
+effect, promotion, resident-32B credit, broad reasoning gain, frontier
+performance, and `WOW Signal` remain false. SPARK-059 stays open. Its next
+bounded checkpoint must diagnose and repair the structured-program/sham
+failure, add personality/tool-honesty regression protection and generated
+behavior canaries, then rerun the sealed evaluator and verifier.
+
+Counting CP414 makes 660 total checkpoints. The 660-920 forecast leaves 0-260
+records, or approximately 71.7%-100.0% checkpoint completion with an 85.8%
+midpoint. This is workload accounting, not a capability score; no SPARK or
+whole-Aura requirement is skipped. Final multi-hour soaks remain deferred.
