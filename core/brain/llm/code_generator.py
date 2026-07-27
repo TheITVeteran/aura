@@ -250,7 +250,7 @@ class LLMCodeGenerator:
                         self.generate_async(prompt, context), timeout=self.timeout_s + 5.0
                     )
                 )
-            except (asyncio.TimeoutError, TimeoutError) as exc:
+            except TimeoutError as exc:
                 raise TimeoutError(
                     f"LLM generation exceeded timeout of {self.timeout_s + 5.0}s"
                 ) from exc
@@ -275,9 +275,15 @@ class LLMCodeGenerator:
         except (TypeError, ValueError):
             temperature = self.temperature
         prefer_tier = str(context.get("prefer_tier", self.prefer_tier) or self.prefer_tier)
+        # A caller that took the trouble to write a system prompt meant it.
+        # The clean-room reconstruction lane sends "you are NOT given, and must
+        # NOT assume, the original source" — the single instruction that makes
+        # the output clean-room — and it was being discarded here in favour of
+        # the generic one, silently, on every call.
+        system_prompt = str(context.get("system_prompt") or "").strip() or _CODE_GEN_SYSTEM_PROMPT
         request = GenerationRequest(
             prompt=self._augment_prompt(prompt, context),
-            system_prompt=_CODE_GEN_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             prefer_tier=prefer_tier,
             max_tokens=max(64, min(max_tokens, self.max_tokens)),
             temperature=max(0.0, min(temperature, 2.0)),
@@ -290,9 +296,20 @@ class LLMCodeGenerator:
                 raise RuntimeError("no LLM router, inference gate, or cognitive engine is registered")
 
             response = await self._call_router(router, request)
-            code = extract_python_code(_coerce_response_text(response))
+            raw = _coerce_response_text(response)
+            code = extract_python_code(raw)
             if not code:
-                raise RuntimeError("LLM returned no Python source")
+                # "LLM returned no Python source" is true and undiagnosable —
+                # it reads identically whether the model returned nothing, an
+                # apology, prose, or a truncated block. The reconstruction lane
+                # reported "0/14 held-out positions reproduced" off the back of
+                # it, blaming the verification for a generation that never
+                # produced anything to verify.
+                preview = " ".join(str(raw or "").split())[:200]
+                raise RuntimeError(
+                    "LLM returned no Python source; "
+                    + (f"model said: {preview!r}" if preview else "the model returned nothing at all")
+                )
 
             ast.parse(code)
             logger.info(

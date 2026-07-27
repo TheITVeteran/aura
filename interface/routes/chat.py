@@ -5243,6 +5243,52 @@ def _note_organ_engagement(engaged: dict[str, bool]) -> list[str]:
     return became_chronic
 
 
+# Presence, consultation, effect — three different claims.
+#
+# "Is personality engaged?" was answered by asking whether the service exists.
+# A service can exist, be called, return its input unchanged, and have no causal
+# relationship to her voice whatsoever. That is indistinguishable from absence
+# in the only place it matters: what she actually said.
+#
+# So shaping organs report whether they CHANGED the reply, and a run of turns
+# where an organ was present and never changed anything is recorded — inert is
+# a different defect from missing, and it needs a different fix, so conflating
+# them costs debugging time exactly when the voice sounds wrong and everything
+# reports healthy.
+_ORGAN_INERT_STREAKS: dict[str, int] = {}
+_INERT_STREAK_TURNS = 20
+
+
+def _note_organ_effect(organ: str, *, changed: bool) -> None:
+    """Record whether a shaping organ actually altered this turn's reply."""
+    if changed:
+        _ORGAN_INERT_STREAKS.pop(organ, None)
+        return
+    streak = _ORGAN_INERT_STREAKS.get(organ, 0) + 1
+    _ORGAN_INERT_STREAKS[organ] = streak
+    if streak == _INERT_STREAK_TURNS:
+        record_degradation(
+            "chat.turn_engagement",
+            RuntimeError(
+                f"{organ} present but changed nothing across {streak} turns"
+            ),
+            severity="warning",
+            action=(
+                "kept answering; an organ that never alters the reply is inert, "
+                "which is a different defect from being absent"
+            ),
+        )
+
+
+def organ_effect_streaks() -> dict[str, int]:
+    """How many consecutive turns each shaping organ has changed nothing."""
+    return dict(_ORGAN_INERT_STREAKS)
+
+
+def reset_organ_effect_streaks_for_test() -> None:
+    _ORGAN_INERT_STREAKS.clear()
+
+
 def reset_organ_engagement_streaks_for_test() -> None:
     _ORGAN_ABSENCE_STREAKS.clear()
 
@@ -11475,10 +11521,17 @@ def _apply_aura_voice_shaping(text: str, user_message: str = "") -> str:
     try:
         personality = ServiceContainer.get("personality_engine", default=None)
         if personality:
+            # Presence is not engagement. A persona pass that runs and returns
+            # its input unchanged has had no causal effect on her voice, and is
+            # indistinguishable from one that never ran — which is the whole
+            # question: is this organ actually shaping the reply, or merely
+            # instantiated beside it? The only honest evidence is the diff.
+            _persona_before = shaped
             if hasattr(personality, "filter_response"):
                 shaped = personality.filter_response(shaped)
             if hasattr(personality, "apply_lexical_style"):
                 shaped = personality.apply_lexical_style(shaped)
+            _note_organ_effect("personality_engine", changed=shaped != _persona_before)
         else:
             # Silently shipping the base model's register as Aura's voice is
             # the one outcome nobody would notice and everybody would feel.

@@ -2256,6 +2256,34 @@ class DesktopTaskSkill(BaseSkill):
         return False, f"unsupported effect evidence for desktop action {action}"
 
     @staticmethod
+    def _inline_sentence_for(objective: str) -> str:
+        """Content for a file whose body the user left to her.
+
+        "containing one sentence you choose" is a real instruction with no
+        text attached, and writing an empty file would satisfy the letter of
+        it while failing the request.
+        """
+        text = str(objective or "")
+        quoted = re.search(r"[\"“‘']([^\"”’']{3,400})[\"”’']", text)
+        if quoted:
+            return quoted.group(1).strip() + "\n"
+        # "containing one sentence you choose" leaves the content to her. The
+        # first attempt echoed the instruction itself into the file — "one
+        # sentence you choose. Actually execute it, then tell me the full
+        # path." — which is the request, not an answer to it.
+        if re.search(
+            r"\b(?:you\s+choose|of\s+your\s+choosing|whatever\s+you\s+(?:like|want)|"
+            r"anything\s+you\s+(?:like|want)|up\s+to\s+you)\b",
+            text,
+            re.IGNORECASE,
+        ):
+            return (
+                "Written by Aura, through the governed desktop file lane — "
+                "the sentence is mine, since you left it to me.\n"
+            )
+        return ""
+
+    @staticmethod
     def _generic_open_app_mentions(objective: str) -> list[str]:
         text = str(objective or "")
         apps: list[str] = []
@@ -2474,6 +2502,31 @@ class DesktopTaskSkill(BaseSkill):
         text = str(objective or "").strip()
         lowered = text.lower()
         steps: list[DesktopTaskStep] = []
+        # A named file is an unambiguous instruction, and it has to be read
+        # before the folder heuristics get a vote.
+        #
+        # Live 2026-07-27: "create a file on my Desktop called aura_hello.txt
+        # containing one sentence you choose" produced a create_folder step
+        # named "Aura Desktop Task 1785195330". The folder was really created,
+        # so the task reported 1/1 steps completed — a true receipt for the
+        # wrong action, which is worse than a failure: she then told the user
+        # the objective had completed, and the only thing on the Desktop was
+        # a junk folder. The word "file" was right there in the request.
+        named_paths = extract_target_paths(text)
+        if named_paths and not any(
+            token in lowered for token in ("folder", "directory")
+        ):
+            body = self._inline_sentence_for(text) or self._document_body(text, context)
+            return [
+                DesktopTaskStep(
+                    action="write_text_file",
+                    target=json.dumps({"path": named_paths[0], "content": body, "overwrite": True}),
+                    reason="The request names a file to create.",
+                    expect=f"{named_paths[0]} exists on disk with the requested content.",
+                    critical=True,
+                )
+            ]
+
         folder_name = self._extract_folder_name(text)
         root_hint = self._extract_root_hint(text)
         folder_path = f"{root_hint}/{folder_name}" if root_hint else folder_name

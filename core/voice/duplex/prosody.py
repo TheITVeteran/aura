@@ -23,6 +23,10 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Voice.Prosody")
 
+# How many consecutive baseline compiles before flat affect is a defect rather
+# than a cold start. Roughly a short conversation's worth of turns.
+_INERT_AFFECT_TURNS = 15
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
@@ -67,6 +71,8 @@ class ProsodyCompiler:
     def __init__(self, *, base_voice: str, base_speed: float = 1.0) -> None:
         self._base_voice = base_voice
         self._base_speed = base_speed
+        # Consecutive turns compiled from no profile at all.
+        self._baseline_turns = 0
 
     def compile(self, profile: Any | None) -> ProsodySpec:
         """Derive synthesis parameters from her compiled speech profile.
@@ -76,7 +82,28 @@ class ProsodyCompiler:
         silence is a worse failure than flat affect.
         """
         if profile is None:
+            # Flat is the right failure — silence would be worse. But a voice
+            # that is ALWAYS flat is a different thing from one that is flat
+            # today, and the two are indistinguishable from the outside: both
+            # sound like a system with no interior. Presence of the affect
+            # chain is not evidence it reached the voice; this is.
+            self._baseline_turns += 1
+            if self._baseline_turns == _INERT_AFFECT_TURNS:
+                record_degradation(
+                    "voice_duplex.prosody",
+                    RuntimeError(
+                        f"prosody fell back to the neutral baseline for "
+                        f"{self._baseline_turns} consecutive turns"
+                    ),
+                    severity="warning",
+                    action=(
+                        "kept speaking in the baseline voice; her affect is not "
+                        "reaching the synthesiser, so every reply sounds the same"
+                    ),
+                )
             return ProsodySpec(voice=self._base_voice, speed=self._base_speed)
+
+        self._baseline_turns = 0
 
         try:
             energy = _clamp(_safe(profile, "energy", 0.5), 0.0, 1.0)
