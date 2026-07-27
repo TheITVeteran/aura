@@ -187,6 +187,63 @@ def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
     return stripped, False
 
 
+def _truncation_verdict(text: str) -> bool:
+    """Ask the gate that will JUDGE this reply whether the tail is truncated."""
+
+    try:
+        from core.conversation.response_reliability import _has_truncated_tail
+    except (ImportError, AttributeError):
+        return False
+    try:
+        return bool(_has_truncated_tail(text))
+    except (RuntimeError, TypeError, ValueError):
+        return False
+
+
+def _complete_reply_tail(text: str) -> tuple[str, bool]:
+    """Trim a clipped reply until the reliability gate accepts its tail.
+
+    `_trim_midsentence_cutoff` judges completeness by the LAST CHARACTER, while
+    the reliability gate that decides whether the turn lives applies a much
+    richer test — unmatched quotes, dangling gerunds, trailing conjunctions,
+    orphaned list numbers. Two different rules on the same text means the
+    trimmer can declare a reply finished and the gate can still reject it, and
+    then the turn dies with a real answer in hand: measured live, "Cortex
+    response received (len=240)" followed immediately by
+    "reply_reliability_gate_failed:truncated_tail" and the person was handed
+    "I couldn't get to an answer I'd stand behind on that one."
+
+    So trim against the detector that grades the result, one sentence boundary
+    at a time, and stop as soon as it is satisfied. If nothing survivable
+    remains, return the text untouched — a partial answer still beats none, and
+    that is the caller's existing behaviour.
+    """
+
+    stripped = str(text or "").rstrip()
+    if not stripped:
+        return stripped, False
+
+    trimmed, did_trim = _trim_midsentence_cutoff(stripped)
+    if not _truncation_verdict(trimmed):
+        return trimmed, did_trim
+
+    candidate = trimmed
+    # Bounded: each pass removes at least one sentence, so a handful of passes
+    # either satisfies the gate or proves nothing here will.
+    for _ in range(6):
+        boundary = max(candidate.rfind(char) for char in ".!?…")
+        if boundary < 0:
+            break
+        candidate = candidate[:boundary].rstrip()
+        boundary = max(candidate.rfind(char) for char in ".!?…")
+        candidate = candidate[: boundary + 1].rstrip() if boundary >= 0 else ""
+        if len(candidate) < _MIN_SALVAGEABLE_REPLY_CHARS:
+            break
+        if not _truncation_verdict(candidate):
+            return candidate, True
+    return trimmed, did_trim
+
+
 def _compact_json(value: Any, *, limit: int = 2400) -> str:
     try:
         text = json.dumps(value, sort_keys=True, default=str, ensure_ascii=True)
@@ -2983,7 +3040,7 @@ class CognitiveEngine:
                 )
             return None
         text = _restore_sentence_spacing(text)
-        text, trimmed_cutoff = _trim_midsentence_cutoff(text)
+        text, trimmed_cutoff = _complete_reply_tail(text)
         if trimmed_cutoff:
             record_degradation(
                 "cognitive_engine",
