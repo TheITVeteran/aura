@@ -1678,6 +1678,47 @@ def _schedule_chat_turn_memory_log(
         return False
 
 
+#: A second, separate request following the thing to be remembered. Only an
+#: explicit new ask counts — a wordy preamble around the memory request does
+#: not, because that turn is still entirely about memory.
+_SECOND_REQUEST_AFTER_PIN_RE = re.compile(
+    r"[.!?;]\s*(?:(?:also|then|and\s+then|separately|secondly|next)\b[\s,—–-]*)?"
+    r"(?:tell|show|open|create|write|export|find|search|go|make|change|"
+    r"summarize|summarise|explain|give|do|use|launch|click|describe|list|"
+    r"compare|walk|think|answer)\b"
+    r"|[.!?;]\s*(?:separately|on\s+another\s+note|aside\s+from\s+that|"
+    r"unrelatedly|changing\s+topic)\b"
+    r"|[.!?;]\s*(?:can|could|would|will|do|does|did|is|are|what|why|how|when|"
+    r"where|which|who)\s+you?\b",
+    re.IGNORECASE,
+)
+
+
+def _turn_has_substance_beyond_memory_request(user_message: str) -> bool:
+    """Whether this turn asks for something the memory template cannot answer.
+
+    The deterministic memory path ends the turn with one sentence. It may do
+    that only when remembering IS the turn. A question, or an explicit pivot
+    to a second subject, means there is more here than a pin confirmation.
+    """
+    text = " ".join(str(user_message or "").split())
+    if not text:
+        return False
+    pinned = _extract_session_memory_pin_request(text)
+    if not pinned:
+        return False
+    # Only what comes AFTER the thing being remembered can be a second
+    # request. A verbose preamble ("For this live reliability probe, remember…")
+    # is still one turn about memory.
+    index = text.find(pinned)
+    if index < 0:
+        return False
+    tail = text[index + len(pinned):]
+    if "?" in tail:
+        return True
+    return bool(_SECOND_REQUEST_AFTER_PIN_RE.search(tail))
+
+
 def _extract_session_memory_pin_request(user_message: str) -> str | None:
     text = str(user_message or "").strip()
     if not text:
@@ -1710,6 +1751,28 @@ def _extract_session_memory_pin_request(user_message: str) -> str | None:
         )
         pinned_text = re.sub(
             r"\s*[.!?]\s+(?:can|could|would|will)\s+you\b.*$",
+            "",
+            pinned_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        # A pivot into a second, unrelated request — "Separately —", "Now, on
+        # another note," — ends the thing being remembered.
+        #
+        # LIVE DEFECT, 2026-07-27: "Remember this: my project codename is
+        # HELIOTROPE, build 4471. Separately — do you think a system like you
+        # can actually prefer one thing over another…" pinned the whole tail,
+        # truncated mid-clause, and reported doing so as the entire reply.
+        pinned_text = re.sub(
+            r"\s*[.!?;]*\s+(?:separately|aside\s+from\s+that|on\s+another\s+note|"
+            r"unrelatedly|secondly|changing\s+topic)\b[\s,—–-]*.*$",
+            "",
+            pinned_text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        # …as does a following question of any shape.
+        pinned_text = re.sub(
+            r"\s*[.!?]\s+(?:do|does|did|is|are|was|were|what|why|how|when|where|"
+            r"which|who|should|shall|may|might|must)\b[^.!?]*\?.*$",
             "",
             pinned_text,
             flags=re.IGNORECASE | re.DOTALL,
@@ -2244,8 +2307,49 @@ async def _build_memory_state_fastpath_reply(
     *,
     session_id: str = "",
     owner_session_restored: bool = False,
+    as_evidence: bool = False,
 ) -> tuple[str, str] | None:
-    """Return deterministic memory/continuity replies from canonical runtime state."""
+    """Return deterministic memory/continuity state.
+
+    Two callers want two different things from this. The cognitive-engine
+    lane wants canonical memory state as EVIDENCE to ground a reply it will
+    write itself (``as_evidence=True``); the fastpath lane wants the reply
+    itself. Only the second has to prove the template covers the whole turn —
+    evidence never silences anyone.
+    """
+    # A template may only answer a turn it FULLY covers.
+    #
+    # This path returns a deterministic sentence and ends the turn. That is
+    # right for "remember X" and wrong for "remember X, and separately, what do
+    # you think about Y" — the second half is a real question and the template
+    # has nothing to say about it. Live 2026-07-27 the whole message was
+    # swallowed as the thing to remember, and the reply was:
+    #
+    #   I have pinned "my project codename is HELIOTROPE, build 4471.
+    #   Separately — do you think a system like you can actually prefer one
+    #   thing over another, or is" in this session.
+    #
+    # Same shape as the self-condition template earlier in the day: a reflex
+    # short-circuiting the model on a turn it only partially understood. When
+    # the turn carries substantive content beyond the memory request, the
+    # deterministic path stands down and the mind answers.
+    #
+    # Standing down is about the REPLY, not the memory: the fact is still
+    # pinned, or "remember X, and separately Y" would answer Y and forget X.
+    if not as_evidence and _turn_has_substance_beyond_memory_request(user_message):
+        deferred_pin = _extract_session_memory_pin_request(user_message)
+        if deferred_pin:
+            await _store_session_memory_pin(
+                deferred_pin,
+                user_message,
+                session_id=session_id,
+            )
+            logger.info(
+                "🧷 Pinned %r and left the reply to the mind: this turn asks "
+                "for more than the memory template can answer.",
+                deferred_pin[:80],
+            )
+        return None
     session_pin = _extract_session_memory_pin_request(user_message)
     if not session_pin and _is_anaphoric_session_memory_pin_request(user_message):
         exchanges = await _recent_completed_conversation_exchanges(
@@ -19514,6 +19618,7 @@ async def api_chat(
                 _semantic_user_message,
                 session_id=_chat_session_id,
                 owner_session_restored=owner_session_restored,
+                as_evidence=True,
             )
 
         if allow_memory_state_fastpath:

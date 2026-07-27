@@ -3981,10 +3981,22 @@ async def test_session_memory_pin_compound_instruction_stores_only_phrase(
     )
     chat_routes._session_memory_pins.clear()
 
-    assert stored is not None
-    assert stored[1] == "session_memory_pin"
-    assert 'pinned "silver lantern"' in stored[0]
-    assert "Also tell me" not in stored[0]
+    # The deterministic path ENDS the turn with one sentence, so it may only
+    # take a turn it fully covers. This one also asks what her live mind is
+    # attending to, and the template has nothing to say about that — it used
+    # to answer the pin and drop the question silently. It stands down now and
+    # the mind answers both halves. See
+    # _turn_has_substance_beyond_memory_request.
+    assert stored is None
+    # What it extracts is still exactly the phrase, which is what this test
+    # was really protecting.
+    assert (
+        chat_routes._extract_session_memory_pin_request(
+            "Remember this phrase: silver lantern. Also tell me one thing your "
+            "live mind is attending to right now."
+        )
+        == "silver lantern"
+    )
     assert recalled is not None
     assert recalled[1] == "session_memory_recall"
     assert '"silver lantern"' in recalled[0]
