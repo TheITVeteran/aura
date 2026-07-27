@@ -11016,6 +11016,31 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
     return " ".join(parts)
 
 
+def _servable_draft_or_none(draft: Any, user_message: Any = "") -> str:
+    """The draft, if everything wrong with it is a shortfall rather than a leak.
+
+    Used at the last-resort refusal site: a reply that three gates already
+    agreed was repairable should reach the person if repair could not run.
+    Returns "" when the draft carries anything that must not be spoken, or
+    when it is too slight to be worth more than an honest refusal.
+    """
+    text = str(draft or "").strip()
+    if len(text) < 80 or len(text.split()) < 12:
+        return ""
+    try:
+        from core.conversation.response_reliability import assess_user_facing_reply
+        from core.conversation.surface_disposition import draft_is_servable
+
+        assessment = assess_user_facing_reply(user_message, text)
+        if not draft_is_servable(assessment.reasons):
+            return ""
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Servable-draft check unavailable: %s", exc)
+        return ""
+    return text
+
+
 def _build_degraded_live_reply(
     frame: dict[str, Any],
     user_message: str = "",
@@ -18609,6 +18634,48 @@ async def api_chat(
             )
             if served is not None:
                 return served
+
+            # The other half of the repairable-draft contract. Three gates now
+            # PRESERVE a draft that merely fell short instead of discarding it
+            # (see core/conversation/surface_disposition.py) — on the promise
+            # that repair would finish it. When repair cannot run, that promise
+            # went unkept and the preserved work was dropped here anyway.
+            #
+            # Live 2026-07-26, the whole chain in one turn:
+            #   Cortex produced repairable user-facing draft shape
+            #     (truncated_tail, len=224). Passing it to downstream repair…
+            #   Preserving repairable Cortex draft for downstream repair…
+            #   ResponseGeneration kept repairable foreground draft…
+            #   Skipping CognitiveEngine desktop repair retry; the foreground
+            #     model owner already produced work for this turn.
+            #   → "I couldn't get to an answer I'd stand behind on that one."
+            #
+            # The one-generation bound is deliberate and stays. What changes is
+            # that a draft everything agreed was servable is served, rather
+            # than traded for an apology that says less.
+            salvaged = _servable_draft_or_none(rejected_reply, _semantic_user_message)
+            if salvaged:
+                logger.warning(
+                    "Serving the preserved repairable draft (%d chars) rather "
+                    "than refusing: repair could not run for this turn.",
+                    len(salvaged),
+                )
+                _live_turn_trace.update(
+                    {
+                        "response_path": f"{response_path}:served_repairable_draft",
+                        "bounded_contract_used": True,
+                        "post_generation_repair_applied": False,
+                    }
+                )
+                if pending_exchange_id:
+                    await _complete_logged_exchange(
+                        pending_exchange_id,
+                        _semantic_user_message,
+                        salvaged,
+                        record_experience=False,
+                    )
+                    pending_exchange_id = None
+                return salvaged
 
             lane = _mark_conversation_lane_state(status, state="failed")
             _live_turn_trace.update(
