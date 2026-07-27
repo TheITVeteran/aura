@@ -3638,6 +3638,46 @@ before those dependencies close is not admissible.
   runtimes, require machine-checkable invariants and evidence, canary rollout,
   rollback, and independent approval policy without routine human micromanaging.
 
+  F7-B (2026-07-27, Fable lane) closes the control-contract half in
+  `core/learning/architecture_meta_controller.py`. The safety of "Aura changes
+  her own architecture without a human approving each step" is entirely in how
+  narrow each step is allowed to be, so every stage is a refusal surface:
+  * **Measurement.** Six failure modes over the three named surfaces, each
+    observation declaring the episode count behind it. Below the 64-episode
+    floor a surface lands in `insufficient_evidence` and produces no proposal.
+    A surface measured and clean is reported as `clean` and counted in
+    `surfaces_measured`, so "nobody looked" and "we looked and it was fine"
+    are not the same silence — `surfaces_unmeasured` names the rest.
+  * **Proposal.** One finding maps to exactly one knob through an explicit
+    deterministic table. Each knob carries an inclusive bound and a step cap;
+    a proposal with no finding behind it, out of bounds, over the step cap, or
+    a no-op is refused. There is no free-form architecture edit.
+  * **Trial.** The candidate must report a runtime identity distinct from the
+    live one (`trial_not_isolated` otherwise), must grade at least 64
+    episodes, and must carry all six machine-checkable invariants — a missing
+    invariant makes the trial *invalid*, not passing. Compute equality is
+    computed, not asserted, and an unequal trial cannot be approved.
+  * **Approval.** The approver must be a different identity than the proposer
+    (`self_approval` is refused). Automated approval is admissible precisely
+    because the change class is bounded; a knob marked `requires_human` cannot
+    be auto-approved at any evidence level.
+  * **Rollout.** canary ≤5% → expanded ≤25% → full, in order, each stage with
+    its own health verdict. The rollback revision is required before the
+    ladder starts, a regression stops the ladder at that stage and returns
+    `ROLLED_BACK` naming the revision to restore, and a ladder that stops
+    short of full is `incomplete_ladder`, never a quiet success.
+
+  33/33 focused tests pass, the majority of them refusals (proposal without a
+  finding, out-of-bounds and oversized steps, a trial inside the live runtime,
+  each of the six invariants dropped in turn, a win bought with extra compute,
+  self-approval, a `requires_human` knob, an out-of-order stage, a canary
+  carrying full traffic, a rollout with no admitted approval).
+
+  **The checkbox stays open**: the measurement inputs are still supplied by the
+  caller rather than read from a live expert/router/depth telemetry seam, and
+  no architecture change has been proposed, tried, or rolled out against the
+  resident model. This checkpoint runs no model and grants no capability claim.
+
 ## H. Whole-Aura causal integration
 
 - [ ] **SPARK-066 - Resident-32B penultimate neural path.** Make the selected
