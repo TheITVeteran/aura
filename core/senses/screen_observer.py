@@ -259,7 +259,7 @@ class ScreenObserver:
                 self._kg = PersistentKnowledgeGraph(str(_BASE / "data" / "knowledge.db"))
             except (ImportError, AttributeError, RuntimeError) as exc:
                 record_degradation('screen_observer', exc)
-                logger.debug("Suppressed: %%s", exc)
+                logger.debug("Suppressed: %s", exc)
 
                 return self._kg
     

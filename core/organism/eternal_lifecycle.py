@@ -28,7 +28,10 @@ async def eternal_lifecycle():
             
             # Thermal/Memory Emergency
             if mem > 88:
-                logger.warning("⚠️ High memory pressure (%s%). Triggering emergency eviction.", mem)
+                logger.warning(
+                    "⚠️ High memory pressure (%.1f%%). Triggering emergency eviction.",
+                    mem,
+                )
                 await rt.state_manager.snapshot("thermal_emergency")
                 try:
                     from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
@@ -60,14 +63,20 @@ async def eternal_lifecycle():
                     await nightly_lora_finetune()
                 except ImportError:
                     logger.debug("Nightly LoRA module not found, skipping.")
-                except (ImportError, AttributeError, RuntimeError) as e:
+                # ImportError above shadowed this clause's copy of it, so a
+                # nightly-maintenance failure that raised one was silently
+                # logged as "module not found" and never recorded.
+                except (AttributeError, RuntimeError) as e:
                     record_degradation('eternal_lifecycle', e)
                     logger.error("Nightly maintenance failed: %s", e)
 
         except RuntimeError as _e:
             # Runtime not yet initialized
             logger.debug('Ignored RuntimeError in eternal_lifecycle.py: %s', _e)
-        except (ImportError, AttributeError, RuntimeError) as e:
+        # RuntimeError is caught above and never reaches here, so every real
+        # eternal-loop RuntimeError was debug-logged as "not yet initialized"
+        # and never recorded as a degradation.
+        except (ImportError, AttributeError) as e:
             record_degradation('eternal_lifecycle', e)
             logger.error("Error in eternal_loop: %s", e)
             

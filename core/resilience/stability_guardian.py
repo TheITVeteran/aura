@@ -88,7 +88,12 @@ class SystemHealthReport:
     def print_summary(self) -> None:
         status = "HEALTHY" if self.overall_healthy else "DEGRADED"
         logger.info("\n[StabilityGuardian] %s  %s", status, f"{time.strftime('%H:%M:%S', time.localtime(self.timestamp))}")
-        logger.info("  Memory: %s%  CPU: %s%  Tasks: %s", f"{self.memory_pct:.0f}", f"{self.cpu_pct:.0f}", self.task_count)
+        logger.info(
+            "  Memory: %s%%  CPU: %s%%  Tasks: %s",
+            f"{self.memory_pct:.0f}",
+            f"{self.cpu_pct:.0f}",
+            self.task_count,
+        )
         logger.info("  Tick rate: %sHz  Mean tick: %sms", f"{self.tick_rate_hz:.2f}", f"{self.mean_tick_ms:.0f}")
         for c in self.checks:
             icon = "✓" if c.healthy else ("⚠" if c.severity in ("warning", "info") else "✗")
