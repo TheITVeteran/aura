@@ -25350,6 +25350,33 @@ total checkpoints. The 653-920 forecast leaves 0-267 records, or approximately
 control execution and evaluator-only scoring remain open; no capability claim
 changes.
 
+### 2026-07-27 - CP410 control adapter publication repair
+
+The first contained control-training process passed source reconstruction,
+entered the deny-default kernel sandbox, loaded the real 1.5B checkpoint, and
+ran for 294.56 seconds before failing closed at its first adapter publication.
+MLX appends `.safetensors` when the requested filename lacks that terminal
+extension. The control publisher used a `.tmp` suffix, so MLX wrote
+`.tmp.safetensors` while the publisher attempted to read `.tmp`. No final
+adapter or report was published, the supervisor recorded return code 2, and
+the process group was empty after exit.
+
+The publisher now uses the same explicit `.tmp.safetensors` convention as
+Aura's established recurrent and structured-SFT checkpoint writers. A
+regression invokes the real MLX serializer, verifies the final artifact, and
+proves no temporary file remains. The focused control and containment suite
+passes 16/16; strict Ruff, bytecode compilation, and diff hygiene pass. The
+failed output generation remains preserved as evidence; the rerun uses new
+immutable contract, output, and detached roots.
+
+Counting the concurrently landed chat-reliability checkpoint and CP410 makes
+655 total checkpoints. The 655-920 forecast leaves 0-265 records, or
+approximately 71.2%-100.0% checkpoint completion with an 85.6% midpoint. This
+is a publication-path repair, not a control or capability result. Contained
+control execution and independent evaluator-only scoring remain open, and no
+heldout-transfer, reasoning-gain, resident-32B, frontier, promotion, or
+`WOW Signal` claim changes.
+
 ## Checkpoint 2026-07-22-329: Cognitive Roles Become Different Programs
 
 Branch roles are no longer labels that seed different vectors and then run the

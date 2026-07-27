@@ -328,7 +328,9 @@ def _save_adapter(
 ) -> dict[str, Any]:
     import mlx.core as mx
 
-    scratch = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
+    scratch = output.with_name(
+        f".{output.stem}.{uuid.uuid4().hex}.tmp.safetensors"
+    )
     if output.exists() or output.is_symlink():
         _fail("control_training_adapter_output_exists")
     try:

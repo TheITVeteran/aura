@@ -3399,6 +3399,21 @@ before those dependencies close is not admissible.
   broadened to admit unrelated roles. The targeted closure and containment
   repair suite passes 15/15; strict Ruff, bytecode compilation, and diff
   hygiene pass. Real prepare and execution remain open.
+
+  CP410 preserves and repairs the first contained training failure. The process
+  passed source reconstruction, entered the kernel sandbox, loaded the real
+  1.5B checkpoint, and ran 294.56 seconds before its first adapter publication.
+  MLX appended `.safetensors` to a scratch name ending in `.tmp`, while the
+  publisher attempted to read the unappended name. It published no final
+  adapter or report, returned 2, and left an empty process group.
+
+  The publisher now uses an explicit `.tmp.safetensors` path, matching Aura's
+  established recurrent checkpoint writers. A regression exercises the real
+  MLX serializer, verifies final publication, and proves temporary cleanup.
+  The control and containment suite passes 16/16 with strict Ruff, bytecode,
+  and diff hygiene. The failed generation remains immutable evidence and the
+  rerun receives fresh roots. This repair changes no transfer or capability
+  claim.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right

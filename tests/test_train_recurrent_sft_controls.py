@@ -170,6 +170,21 @@ def test_tensor_fingerprint_binds_name_shape_dtype_and_values() -> None:
     )
 
 
+def test_save_adapter_uses_real_mlx_filename_contract(tmp_path) -> None:
+    import mlx.core as mx
+
+    output = tmp_path / "control.safetensors"
+    receipt = controls._save_adapter(
+        output,
+        {"layer.lora_a": mx.array([[1.0, 2.0]])},
+    )
+
+    assert output.is_file()
+    assert receipt["filename"] == output.name
+    assert receipt["size_bytes"] == output.stat().st_size
+    assert not list(tmp_path.glob(".*.tmp.safetensors"))
+
+
 def test_control_source_closure_is_exact_and_hash_bound() -> None:
     closure = controls.control_source_closure()
     assert closure["schema"].endswith("control_source_closure.v1")
