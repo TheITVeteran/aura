@@ -852,6 +852,11 @@ def materialize_verified_replay_entry(
         getattr(protector, "decrypt", None)
     ):
         raise ReplayEncryptionUnavailableError("replay protector is not active")
+    protector_provenance = str(getattr(protector, "key_provenance", "") or "")
+    if protector_provenance != entry["encryption"]["key_provenance"]:
+        raise ReplayEncryptionUnavailableError(
+            "replay protector provenance differs from the encrypted entry"
+        )
     try:
         ciphertext = base64.b64decode(
             entry["encryption"]["ciphertext_b64"],

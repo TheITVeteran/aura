@@ -29554,3 +29554,79 @@ traces. SPARK-051 remains separately open for answer-channel remediation,
 admitted resident training, and powered equal-compute reasoning/frontier
 evidence. Final multi-hour soaks remain deferred until all shorter gates are
 green.
+
+## Checkpoint 2026-07-26-397: Quarantined Verified-Replay SFT Projection
+
+SPARK-059 now has a one-way source-level bridge from encrypted, causally
+verified repair experience to physically separated SFT custody artifacts. The
+projector validates the public replay chain, binds the resident decryptor's
+declared key provenance, authenticates every ciphertext, and materializes each
+private payload only in memory. It selects exactly two model-visible fields:
+the task objective and the accepted verified answer. Failed candidates,
+baseline decodes, causal atoms and routes, preserved prefixes, replacement
+suffixes, token IDs, output-quality internals, worker/runtime provenance,
+privacy disposition, and tool traces never enter a trainer row.
+
+Every entry requires a commitment-bound privacy clearance that distinguishes
+synthetic data from explicitly opted-in user content and binds consent,
+license, tenant, retention, revocation, deletion, auditor implementation, and
+release identities. Clearance cannot override local fail-closed PII,
+payment-card, credential/secret, prompt-injection, or hidden-reasoning screens.
+The resulting row contains only user/assistant messages, no tools, bounded
+source commitments, an exact final-assistant-only loss policy, and an explicit
+`none_quarantined_projection` training-authority marker.
+
+The pre-augmentation partition is keyed and causal-lineage stable. Each source
+experience receives one train, validation, or holdout assignment through a
+domain-separated HMAC; generation-zero and parent commitments ensure future
+paraphrases, repair expansions, replay transfers, and flywheel descendants
+must inherit the same split. Candidate artifacts contain train/validation rows
+only. Holdout rows plus the partition, privacy, and semantic-dedup manifests
+exist only in the evaluator package. Independent validation recomputes every
+row commitment, embedded manifest, candidate/evaluator package, artifact
+binding, and shared custody root, and rejects duplicate JSON keys,
+noncanonical bytes, role or metadata drift, split drift, partial packages,
+holdout exposure, or resealed tampering.
+
+Contamination checks use keyed exact normalized content, objective, answer,
+and causal-lineage commitments plus token and character shingle similarity.
+The shingle surfaces are deterministic bottom-k sketches capped at 512 hashes
+per surface, and an inverted index narrows comparisons to records sharing a
+signature instead of scanning every corpus pair. The index contains no
+reference plaintext. Exact overlap, long-target reuse, high-similarity near
+duplicates, and lineage movement across splits fail closed. An empty index is
+explicitly labeled `empty_local_falsification_only`; it cannot be represented
+as external corpus coverage or training authority.
+
+The focused encrypted replay/projection matrix passes 38/38. It covers real
+AES-GCM ledger round trips, wrong keys and provenance, ciphertext/public
+resealing, secret/PII/payment-card/injection/hidden-reasoning content, missing,
+extra, forged, revoked, or deleted privacy state, exact and semantic
+contamination, bounded long-text sketches, split underpower, duplicate JSON
+keys, candidate role changes, evaluator holdout changes, deterministic
+reconstruction, and absence of file/trainer execution surfaces. Strict Ruff,
+bytecode compilation, and diff hygiene pass.
+
+The broader replay, structured-SFT, custody, tokenizer, externally rooted
+admission, campaign-trust, and operator compatibility matrix passes 154/154 in
+508.73 seconds on the rebased tree. Model-load ownership passes with 47 owned
+paths, 60 references, and zero findings across 3,010 scanned sources.
+Governance lint matches its ownership baseline. The enterprise ratchet remains
+inherited-red at ten baseline regressions, 228 findings, and 58 high/critical
+findings; no CP397 path appears in its findings and no baseline is raised. The
+sanitized receipt is
+`artifacts/current/cp397_verified_replay_sft_evidence.json`.
+
+CP397 does not claim an external privacy signature, complete multisurface
+contamination clearance, governed runtime publication, resident-tokenizer
+projection, trainer authority, small-checkpoint transfer, resident-32B
+training, reasoning gain, frontier performance, or a `WOW Signal`. Those
+remain the next SPARK-059 gates. No model weights or live Aura process are
+touched, and final multi-hour soaks remain deferred until all shorter gates are
+green.
+
+Counting CP397 makes the total checkpoint record 639. The 640-920 forecast
+remains, leaving approximately 1-281 records. Checkpoint-count completion is
+approximately 69.5%-99.8%, with a midpoint planning estimate of 81.9%. This is
+checkpoint accounting, not permission to skip any open SPARK or whole-codebase
+requirement.

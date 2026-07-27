@@ -1,0 +1,111 @@
+{
+  "schema": "aura.rlc.cp397_verified_replay_sft_evidence.v1",
+  "checkpoint": "CP397",
+  "scope": "source_level_quarantined_verified_replay_sft_projection",
+  "claim": {
+    "causally_verified_encrypted_replay_authenticated": true,
+    "decryptor_key_provenance_bound": true,
+    "plaintext_materialized_in_memory_only": true,
+    "trainer_visible_fields": [
+      "task_objective",
+      "accepted_verified_answer"
+    ],
+    "private_replay_fields_projected": false,
+    "tool_traces_projected": false,
+    "local_pii_secret_injection_hidden_reasoning_screens": true,
+    "entry_and_content_bound_privacy_clearance_required": true,
+    "pre_augmentation_causal_lineage_partition": true,
+    "future_derivatives_inherit_lineage_split": true,
+    "keyed_exact_and_bottom_k_semantic_dedup": true,
+    "candidate_evaluator_custody_separated": true,
+    "holdout_present_in_candidate_artifacts": false,
+    "trainer_ready": false,
+    "training_authority": "none_quarantined_projection"
+  },
+  "source_files": [
+    {
+      "path": "core/brain/llm/latent_cortex/verified_replay_buffer.py",
+      "line_count": 1364,
+      "sha256": "a95bf3f85bd8ea9493ef9d40f6dc124c8d618a78cc2803e68a6e4fb5600d876b"
+    },
+    {
+      "path": "core/learning/verified_replay_sft.py",
+      "line_count": 1654,
+      "sha256": "6b0136119e21e9ead96c3fb673d9c56357ae716d39e36a52bc6cba6ae7d2e113"
+    },
+    {
+      "path": "tests/test_rlc_verified_replay_buffer.py",
+      "line_count": 618,
+      "sha256": "c31a8fcfbbaf137137e448f5dcd63d0d1af2d6bc505820b0d42d9fc59ee13a7b"
+    },
+    {
+      "path": "tests/test_verified_replay_sft.py",
+      "line_count": 546,
+      "sha256": "bde3c0d122a68ce100382488818f4a72cc5b3d8e7afb0ebdb2b7b4305fa47317"
+    }
+  ],
+  "verification": {
+    "focused": {
+      "command": "pytest -q tests/test_verified_replay_sft.py tests/test_rlc_verified_replay_buffer.py",
+      "passed": 38,
+      "failed": 0,
+      "duration_seconds": 13.58
+    },
+    "broader_compatibility": {
+      "command": "pytest -q tests/test_verified_replay_sft.py tests/test_rlc_verified_replay_buffer.py tests/test_structured_sft.py tests/test_structured_sft_admission.py tests/test_validate_structured_sft_tokenization.py tests/test_build_structured_sft_dataset.py tests/test_manage_campaign_trust.py",
+      "passed": 154,
+      "failed": 0,
+      "duration_seconds": 508.73
+    },
+    "ruff": "passed",
+    "python_bytecode_compile": "passed",
+    "git_diff_check": "passed",
+    "model_load_ownership": {
+      "passed": true,
+      "owned_paths": 47,
+      "load_references": 60,
+      "source_paths_scanned": 3010,
+      "findings": 0
+    },
+    "governance_lint": {
+      "passed": true,
+      "baseline_matched": true,
+      "inherited_regressions": 0,
+      "cp397_regressions": 0
+    },
+    "enterprise_gate": {
+      "passed": false,
+      "compile_ok": true,
+      "baseline_regressions": 10,
+      "finding_count": 228,
+      "high_or_critical_findings": 58,
+      "cp397_path_findings": 0,
+      "baseline_raised": false
+    }
+  },
+  "explicit_non_claims": [
+    "real external privacy signature",
+    "complete multisurface external contamination clearance",
+    "externally witnessed monotonic publication",
+    "governed live artifact publication",
+    "resident tokenizer validation of replay rows",
+    "trainer authority",
+    "small-checkpoint transfer gain",
+    "resident 32B training",
+    "reasoning gain",
+    "frontier performance",
+    "WOW Signal"
+  ],
+  "next_required_gates": [
+    "governed runtime projection publication",
+    "combined synthetic replay evaluation lineage manifest",
+    "external privacy and multisurface contamination attestations",
+    "resident tokenizer projection validation",
+    "externally rooted trainer authority and resumable receipt",
+    "small-checkpoint transfer falsification",
+    "resident 32B equal-compute ablations and independent promotion"
+  ],
+  "live_aura_touched": false,
+  "model_weights_touched": false,
+  "multi_hour_soak_deferred": true
+}

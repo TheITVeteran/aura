@@ -2908,6 +2908,11 @@ before those dependencies close is not admissible.
   - [ ] Seal the pre-augmentation split and persistent semantic-dedup manifest.
     Prove no case lineage can cross train, validation, or holdout after
     paraphrase, repair expansion, replay transfer, or flywheel iteration.
+    CP397 now seals raw verified-replay lineages before augmentation and makes
+    every future derivative inherit that split. Its keyed exact and bounded
+    bottom-k shingle manifests prove replay-internal disjointness. The combined
+    synthetic/replay/all-evaluation manifest, external audit, monotonic
+    publication witness, and later flywheel generations remain open.
   - [ ] Run an external contamination audit across prompt, target, rationale,
     tool input/output, normalized code and JSON, adapters, training corpora,
     every evaluation corpus, and semantic near-duplicates. Add prompt-
@@ -2919,9 +2924,18 @@ before those dependencies close is not admissible.
     role-separation, exact-policy, sequence, and prior-root predicate; real
     separately operated credentials and an externally witnessed monotonic
     head remain open and no fixture key earns production credit.
-  - [ ] Build the verified-replay SFT projection and prove that private replay
+  - [x] Build the verified-replay SFT projection and prove that private replay
     fields, hidden reasoning, user secrets, and holdout answers cannot leak
-    into trainer-visible rows.
+    into trainer-visible rows. CP397 authenticates and decrypts each encrypted
+    source entry only in memory, selects exactly the model-visible objective
+    and verified final answer, requires an entry/content-bound privacy
+    clearance, applies non-overridable local PII, payment-card, secret,
+    prompt-injection, and hidden-reasoning screens, and emits no failed
+    candidate, atom, route, prefix/suffix, tokens, output-quality detail,
+    provenance, or tool trace. Candidate and evaluator bytes are physically
+    separable and share a recomputed custody root. Holdout plaintext and its
+    manifests exist only in evaluator artifacts; the candidate retains
+    commitments and remains `trainer_ready=false` with no training authority.
   - [ ] Bind the admitted files, exact source, tokenizer, chat template,
     masking offset, model, adapter, recurrence program, optimizer, scheduler,
     RNG, and compute budget into a resumable trainer receipt. Candidate
@@ -2968,6 +2982,28 @@ before those dependencies close is not admissible.
   findings and no baseline is raised. Governance lint remains red only for the
   newer upstream `core/runtime/runtime_relaunch.py` raw `Popen`; CP396 adds no
   governance regression.
+
+  CP397 adds the one-way encrypted-replay projection boundary. A causal
+  lineage is HMAC-assigned to train, validation, or holdout before any
+  augmentation; the frozen manifest binds the exact source-store revision and
+  key commitment. Exact normalized objective/answer/content commitments and
+  indexed keyed bottom-k token/character shingle sketches reject exact,
+  semantic-near, or cross-split lineage reuse against both replay and a sealed
+  external reference index. Sketch storage is capped at 512 signatures per
+  surface, and lookup is inverted-index based rather than corpus-quadratic.
+  The focused encrypted replay/projection matrix passes 38/38. The broader
+  replay, structured-SFT, custody, tokenizer, externally rooted admission,
+  campaign-trust, and operator matrix passes 154/154. This proves the
+  source-level confidentiality, partition, dedup, and custody mechanics; an
+  empty reference index is labeled local falsification only and cannot grant
+  admission. External privacy and contamination attestations, governed live
+  publication, replay tokenizer validation, and all training/promotion gates
+  remain open. Model-load ownership and governance ownership both pass on the
+  rebased tree. The enterprise ratchet remains inherited-red at ten baseline
+  regressions, 228 findings, and 58 high/critical findings, with no CP397-path
+  finding and no raised baseline. No model weights or live Aura process are
+  touched. The sanitized receipt is
+  `artifacts/current/cp397_verified_replay_sft_evidence.json`.
 
   The full evaluator package was generated as plaintext under the same OS user
   in an ephemeral separate artifact directory, then destroyed after recording

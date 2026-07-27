@@ -350,6 +350,27 @@ def test_entry_roundtrip_is_encrypted_and_commitment_bound():
         validate_verified_replay_entry(tampered)
 
 
+def test_materialization_binds_decryptor_key_provenance_even_after_public_reseal():
+    payload = _payload()
+    protector = _Protector()
+    entry = build_verified_replay_entry(
+        payload,
+        protector=protector,
+        sequence=1,
+        previous_entry_sha256="0" * 64,
+        created_at_unix_ns=42,
+    )
+    attacked = copy.deepcopy(entry)
+    attacked["encryption"]["key_provenance"] = "different_key"
+    attacked["entry_sha256"] = _sha(
+        {key: value for key, value in attacked.items() if key != "entry_sha256"}
+    )
+    validate_verified_replay_entry(attacked)
+
+    with pytest.raises(ReplayEncryptionUnavailableError, match="provenance differs"):
+        materialize_verified_replay_entry(attacked, protector=protector)
+
+
 def test_inactive_encryption_fails_before_plaintext_write(tmp_path: Path):
     path = tmp_path / "replay.json"
     buffer = VerifiedReplayBuffer(path)
