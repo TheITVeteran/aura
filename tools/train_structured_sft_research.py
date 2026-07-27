@@ -25,6 +25,13 @@ sys.path.insert(0, str(REPO_ROOT))
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
+from core.learning.recurrent_sft_execution import (  # noqa: E402
+    RecurrentSFTExecutionError,
+    adapter_tensor_dict,
+    assert_adapter_tensor_topology,
+    project_chat_rows,
+    wrap_recurrent_window,
+)
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     RecurrentSFTTrainerConfig,
     StructuredSFTResearchAuthorityError,
@@ -137,6 +144,9 @@ def _source_paths() -> dict[str, Path]:
         "recurrence_adapter": (
             REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
         ),
+        "recurrent_sft_execution": (
+            REPO_ROOT / "core/learning/recurrent_sft_execution.py"
+        ),
         "resume_verifier": (
             REPO_ROOT / "tools/verify_structured_sft_research_resume.py"
         ),
@@ -158,95 +168,6 @@ def _jsonl_rows(payload: bytes, *, role: str) -> list[dict[str, Any]]:
     if not rows:
         _fail(f"{role}_empty")
     return rows
-
-
-def _token_sequence(value: Any, *, role: str) -> list[int]:
-    if (
-        not isinstance(value, Sequence)
-        or isinstance(value, (str, bytes, bytearray))
-        or not value
-        or any(type(token) is not int or token < 0 for token in value)
-    ):
-        _fail(f"{role}_invalid")
-    return list(value)
-
-
-def _project_rows(
-    rows: Sequence[Mapping[str, Any]],
-    *,
-    tokenizer: Any,
-    max_seq_length: int,
-) -> list[dict[str, Any]]:
-    apply_template = getattr(tokenizer, "apply_chat_template", None)
-    if not callable(apply_template):
-        _fail("trainer_tokenizer_template_missing")
-    try:
-        from mlx_lm.tuner.datasets import ChatDataset
-    except ImportError as exc:
-        raise StructuredSFTResearchTrainingError(
-            "trainer_chat_dataset_unavailable"
-        ) from exc
-    source_rows = [dict(row) for row in rows]
-    dataset = ChatDataset(
-        source_rows,
-        tokenizer,
-        mask_prompt=True,
-    )
-    projected: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for index, row in enumerate(source_rows):
-        messages = row.get("messages")
-        tools = row.get("tools")
-        metadata = row.get("_meta")
-        if (
-            not isinstance(messages, list)
-            or not messages
-            or not isinstance(messages[-1], Mapping)
-            or messages[-1].get("role") != "assistant"
-            or not isinstance(metadata, Mapping)
-            or not isinstance(metadata.get("example_id"), str)
-            or metadata["example_id"] in seen_ids
-        ):
-            _fail("trainer_candidate_row_invalid")
-        seen_ids.add(metadata["example_id"])
-        processed = dataset.process(row)
-        if (
-            not isinstance(processed, tuple)
-            or len(processed) != 2
-            or type(processed[1]) is not int
-        ):
-            _fail("trainer_chat_dataset_projection_invalid")
-        full = _token_sequence(
-            processed[0],
-            role=f"trainer_full_tokens_{index}",
-        )
-        prefix = _token_sequence(
-            apply_template(
-                messages[:-1],
-                tools=tools,
-                add_generation_prompt=True,
-                return_dict=False,
-            ),
-            role=f"trainer_prefix_tokens_{index}",
-        )
-        if (
-            processed[1] != len(prefix)
-            or len(prefix) >= len(full)
-            or full[: len(prefix)] != prefix
-            or len(full) > max_seq_length
-        ):
-            _fail("trainer_candidate_token_projection_invalid")
-        projected.append(
-            {
-                "example_id": metadata["example_id"],
-                "family": metadata.get("family"),
-                "target_kind": metadata.get("target_kind"),
-                "prompt_tokens": prefix,
-                "answer_tokens": full[len(prefix) :],
-                "full_token_count": len(full),
-            }
-        )
-    return projected
 
 
 def _lexical_absolute(path: Path) -> Path:
@@ -333,15 +254,11 @@ def _revalidate_tokenizer_and_project(
         != tokenization["tokenizer_runtime_identity_sha256"]
     ):
         _fail("trainer_tokenizer_runtime_identity_drift")
-    projected_train = _project_rows(
-        train_rows,
-        tokenizer=tokenizer,
-        max_seq_length=max_seq_length,
+    projected_train = project_chat_rows(
+        train_rows, tokenizer=tokenizer, max_seq_length=max_seq_length
     )
-    projected_validation = _project_rows(
-        validation_rows,
-        tokenizer=tokenizer,
-        max_seq_length=max_seq_length,
+    projected_validation = project_chat_rows(
+        validation_rows, tokenizer=tokenizer, max_seq_length=max_seq_length
     )
     if (
         len(projected_train) + len(projected_validation)
@@ -383,71 +300,6 @@ def _write_create_or_verify(path: Path, payload: bytes) -> None:
             _fail("trainer_existing_artifact_commitment_mismatch")
         return
     atomic_write_bytes(path, payload, mode=0o600)
-
-
-def _wrap_recurrent_window(
-    model: Any,
-    *,
-    spec: RLCExecutionSpec,
-    config: RecurrentSFTTrainerConfig,
-) -> list[str]:
-    from core.brain.llm.latent_cortex.recurrence_adapter import (
-        ScopedLoRALinear,
-    )
-
-    model.freeze()
-    layers = model.model.layers
-    prelude_end = max(1, int(len(layers) * spec.prelude_frac))
-    coda_start = min(
-        len(layers) - 1,
-        len(layers) - int(len(layers) * spec.coda_frac),
-    )
-    wrapped: list[str] = []
-    for layer_index in range(prelude_end, coda_start):
-        layer = layers[layer_index]
-        for target in config.lora_targets:
-            parent_name = (
-                "self_attn"
-                if hasattr(layer.self_attn, target)
-                else "mlp"
-                if hasattr(layer.mlp, target)
-                else ""
-            )
-            if not parent_name:
-                continue
-            parent = getattr(layer, parent_name)
-            base = getattr(parent, target)
-            setattr(
-                parent,
-                target,
-                ScopedLoRALinear.from_base(
-                    base,
-                    r=config.lora_rank,
-                    dropout=config.lora_dropout,
-                    scale=config.lora_scale,
-                ),
-            )
-            wrapped.append(
-                f"model.layers.{layer_index}.{parent_name}.{target}"
-            )
-    if not wrapped:
-        _fail("trainer_no_recurrent_projections_wrapped")
-    return wrapped
-
-
-def _assert_adapter_keys(
-    expected: Mapping[str, Any],
-    observed: Mapping[str, Any],
-) -> None:
-    if (
-        not expected
-        or set(expected) != set(observed)
-        or any(
-            not (key.endswith(".lora_a") or key.endswith(".lora_b"))
-            for key in observed
-        )
-    ):
-        _fail("trainer_adapter_tensor_topology_invalid")
 
 
 def _validation_loss(
@@ -769,7 +621,7 @@ def _run(arguments: argparse.Namespace) -> int:
             != observed_tokenization["tokenizer_runtime_identity_sha256"]
         ):
             _fail("trainer_loaded_tokenizer_runtime_identity_drift")
-        loaded_tokenization = _project_rows(
+        loaded_tokenization = project_chat_rows(
             _jsonl_rows(
                 authorized["candidate_valid.jsonl"],
                 role="loaded_candidate_validation",
@@ -783,9 +635,15 @@ def _run(arguments: argparse.Namespace) -> int:
             != loaded_runtime_before
         ):
             _fail("trainer_loaded_tokenizer_projection_drift")
-        wrapped = _wrap_recurrent_window(model, spec=spec, config=config)
-        expected_adapter = dict(tree_flatten(model.trainable_parameters()))
-        _assert_adapter_keys(expected_adapter, expected_adapter)
+        wrapped = wrap_recurrent_window(
+            model,
+            spec=spec,
+            lora_rank=config.lora_rank,
+            lora_dropout=config.lora_dropout,
+            lora_scale=config.lora_scale,
+            lora_targets=config.lora_targets,
+        )
+        expected_adapter = adapter_tensor_dict(model)
         optimizer = optim.AdamW(
             learning_rate=config.learning_rate,
             weight_decay=config.weight_decay,
@@ -817,7 +675,10 @@ def _run(arguments: argparse.Namespace) -> int:
                 out_dir,
                 expected_bindings=bindings,
             )
-            _assert_adapter_keys(expected_adapter, loaded.adapter_tensors)
+            assert_adapter_tensor_topology(
+                expected_adapter,
+                loaded.adapter_tensors,
+            )
             model.load_weights(
                 list(loaded.adapter_tensors.items()),
                 strict=False,
@@ -876,8 +737,7 @@ def _run(arguments: argparse.Namespace) -> int:
             return prior_elapsed + time.monotonic() - started_monotonic
 
         def checkpoint(*, terminal: bool) -> Path:
-            adapter = dict(tree_flatten(model.trainable_parameters()))
-            _assert_adapter_keys(expected_adapter, adapter)
+            adapter = adapter_tensor_dict(model)
             optimizer_tensors = dict(tree_flatten(optimizer.state))
             if not optimizer_tensors:
                 _fail("trainer_optimizer_state_empty")
@@ -1102,6 +962,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         StructuredSFTResearchStateError,
         StructuredSFTResearchTrainingError,
         TokenizerValidationError,
+        RecurrentSFTExecutionError,
         ValueError,
     ) as exc:
         print(

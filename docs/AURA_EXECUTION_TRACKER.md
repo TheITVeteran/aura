@@ -30044,3 +30044,43 @@ checkpoints. The 649-920 forecast leaves 0-271 records, or approximately
 70.5%-100.0% checkpoint completion with an 85.3% midpoint. This is workload
 accounting, not a capability score, and cannot close, merge, or skip any open
 requirement.
+
+### 2026-07-27 - CP407 equal-work SPARK-059 falsification controls
+
+The first of the three currently estimated records to SPARK-059's initial
+verdict establishes its negative-control and paired-decision machinery. The
+original recurrent trainer and the upcoming evaluator now share one
+recurrent-window wrapper and one `ChatDataset(mask_prompt=True)` token boundary.
+The shared projector reproduces all 24 CP406 train rows and 12 validation rows
+byte-for-byte with the real resident 1.5B tokenizer.
+
+The control trainer defines sham-label, shuffled-trace, and syntax-only arms.
+It resets the same initial slot-scoped LoRA tensors before every arm and
+requires the historical sample order, update count, per-step token counts,
+optimizer, and hyperparameters. It verifies the terminal CP406 checkpoint and
+candidate-only projected dataset, requires the externally recorded checkpoint
+SHA, verifies the bound adapter and optimizer bytes, and records a
+name/shape/dtype/value fingerprint after every initial-state reset. It accepts
+no evaluator path and can write only quarantined hash-bound control adapters.
+The scoring contract measures paired loss, exact sign-test significance,
+per-family negative transfer, target-token top-1 changes, wrong-to-right,
+right-to-wrong, and available generated-answer transitions. A pass requires
+the trained arm to beat the base recurrent arm and all three controls with
+positive net error correction and no regressing family.
+
+The direct control/statistics and affected trainer, authority, state,
+containment, tokenizer, and ownership-auditor boundary pass 71/71. The real
+36-row historical projection parity check, strict Ruff, bytecode compilation,
+diff hygiene, and model-load ownership at 49 paths, 62 references, and zero
+findings pass. CP407 does not run the controls or open evaluator custody.
+Kernel-contained control execution, fresh evaluator execution,
+personality/tool/safety regressions, and the honest SPARK-059 verdict remain
+open. No heldout transfer, reasoning gain, resident-32B result, frontier
+result, promotion, or `WOW Signal` is claimed.
+
+Counting the concurrently landed conversation-reliability checkpoint and CP407
+makes 651 total checkpoints. The 651-920 forecast leaves 0-269 records, or
+approximately 70.8%-100.0% checkpoint completion with an 85.4% midpoint. This
+remains workload accounting rather than a capability score and does not close
+or merge any later SPARK or whole-Aura requirement. Final multi-hour soaks
+remain deferred until every shorter gate is green.

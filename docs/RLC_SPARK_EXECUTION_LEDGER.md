@@ -3326,6 +3326,42 @@ before those dependencies close is not admissible.
   equal-token, and equal-compute controls before the first SPARK-059 verdict.
   Receipt:
   `artifacts/current/cp406_synthetic_recurrent_sft_training_evidence.json`.
+
+  CP407 implements the preregistered falsification controls without claiming
+  their result. Training and evaluation now share one recurrent-window wrapper
+  and one `ChatDataset(mask_prompt=True)` boundary implementation. A real
+  tokenizer reconstruction reproduces all 24 CP406 train rows and 12
+  validation rows byte-for-byte, preventing an evaluator from silently testing
+  a different prompt/answer boundary or adapter topology.
+
+  Three deterministic negative-control arms are executable: unrelated sham
+  labels, order-destroyed shuffled traces, and alphanumeric-masked syntax-only
+  traces. Every arm preserves prompt tokens, row order, answer length, terminal
+  token, per-step sequence length, aggregate token budget, optimizer,
+  hyperparameters, initialization, sample order, and update count. The control
+  trainer resets the exact same initial slot-scoped LoRA tensors before each
+  arm and records a name/shape/dtype/value fingerprint at every reset. It
+  rejects evaluator inputs, requires the externally recorded terminal-
+  checkpoint SHA, verifies its adapter and optimizer bytes and the projected-
+  dataset commitment, and writes only quarantined hash-bound adapters.
+
+  Paired scoring is defined before the holdout opens. It reports overall and
+  per-family loss deltas, an exact two-sided sign test, teacher-forced token
+  top-1 transitions, wrong-to-right and right-to-wrong counts, generated-answer
+  transitions when supplied, and family-level negative transfer. The trained
+  arm must beat the base recurrent arm and every negative control at the
+  preregistered alpha with positive net error correction and no regressing
+  family. The direct control/statistics and affected trainer, authority, state,
+  containment, tokenizer, and ownership-auditor suite passes 71/71. The real
+  36-row projection parity check, strict Ruff, bytecode compilation, diff
+  hygiene, and model-load ownership at 49 paths, 62 references, and zero
+  findings pass.
+
+  This checkpoint is infrastructure only. Kernel-contained control execution,
+  evaluator-only fresh-task execution, personality/tool/safety regressions,
+  and the resulting SPARK-059 verdict remain open. It establishes no heldout
+  transfer, reasoning gain, resident-32B result, frontier performance,
+  promotion, or `WOW Signal`.
 - [ ] **SPARK-060 - RLVR delta reward and EIR.** Optimize verified improvement
   from pass N to N+1, information gain, independent diversity, compute cost,
   unsupported confidence, and Error Introduction Rate; report wrong-to-right
