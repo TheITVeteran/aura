@@ -2680,6 +2680,54 @@ def asks_for_a_number(user_message: Any) -> bool:
     return bool(_NUMERIC_OPERATOR_RE.search(text))
 
 
+_FINAL_ANSWER_REQUEST_RE = re.compile(
+    r"\b(?:then\s+)?(?:give|state|report|provide|show)\s+(?:me\s+)?"
+    r"(?:the\s+)?(?:exact\s+|final\s+|resulting\s+)?"
+    r"(?:answer|fraction|value|number|result|probability|total)\b"
+    r"|\bwhat\s+is\s+the\s+(?:final|exact)\s+\w+",
+    re.IGNORECASE,
+)
+_CONCLUSION_MARKER_RE = re.compile(
+    r"\b(?:therefore|thus|hence|so\s+the|in\s+total|altogether|overall|"
+    r"adding|summing|sum\s+(?:is|of|these)|final(?:ly)?|the\s+answer\s+is|"
+    r"the\s+(?:exact\s+)?(?:fraction|probability|value|result)\s+is|"
+    r"which\s+(?:reduces|simplifies)\s+to|comes\s+to|equals)\b",
+    re.IGNORECASE,
+)
+
+
+def final_answer_missing(user_message: Any, reply_text: Any) -> bool:
+    """A worked derivation that never states the answer it was asked for.
+
+    LIVE DEFECT, 2026-07-26. "…Show the reasoning, then give the exact
+    fraction." came back as a correct, well-formatted derivation that walked
+    the red case, the blue case, began the green case — and stopped. No sum,
+    no fraction. It was served as complete: the body is list-shaped, so the
+    truncation checks stand down, and the last item ends on "5/12." like a
+    finished one.
+
+    Narrow by construction. It only fires when the person explicitly asked for
+    a final value AND the reply is a multi-step derivation, and it is satisfied
+    by any ordinary concluding phrase. A short direct answer is never a
+    derivation, so it is never asked to conclude.
+    """
+    visible = visible_user_request(user_message) or str(user_message or "")
+    if not _FINAL_ANSWER_REQUEST_RE.search(visible):
+        return False
+    body = str(reply_text or "").strip()
+    if not body:
+        return False
+    enumerated = len(
+        re.findall(r"(?:^|[\n.!?:])\s*(?:[-*+]|\d{1,2}[.)])\s+\S", body)
+    )
+    if enumerated < 3 and _word_count(body) < 120:
+        return False
+    # The conclusion lives at the end. Give it the last quarter, and never
+    # less than 160 characters of room.
+    tail = body[-max(160, len(body) // 4):]
+    return not _CONCLUSION_MARKER_RE.search(tail)
+
+
 def numeric_answer_missing(user_message: Any, reply_text: Any) -> bool:
     """Whether a question that needs a number came back without one.
 
@@ -5859,6 +5907,10 @@ def _model_text_integrity_reasons(
         reasons.append("surface_nonsense_drift")
     if user_facing and _has_function_word_starvation(raw):
         reasons.append("function_word_starvation")
+    if user_facing and final_answer_missing(prompt, raw):
+        # Retryable, not a hard failure: the derivation is real work and the
+        # right move is to let the turn finish it, not to throw it away.
+        reasons.append("final_answer_missing")
     if user_facing and _UNSUPPORTED_AFFECTION_CLAIM_RE.search(raw):
         reasons.append("unsupported_affection_claim")
     if user_facing and _UNSUPPORTED_SELF_TELEMETRY_CLAIM_RE.search(raw):
@@ -6244,6 +6296,9 @@ def assess_user_facing_reply(
         "arithmetic_answer_missing",
     }
     retryable_reasons = hard_reasons | {
+        # A derivation that never states the answer it was asked for is real
+        # work left one step short. Retry it; do not throw it away.
+        "final_answer_missing",
         "low_signal_reliability_reply",
         "reliability_diagnostic_too_thin",
         "too_thin_for_reliability_turn",
