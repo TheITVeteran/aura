@@ -393,6 +393,22 @@ class BoundedWorkingMemoryQueueModel:
         self._deferred = 0
         self._compressed = 0
 
+    def reset(self) -> None:
+        """Drop accumulated queue load and counters.
+
+        The queue model is a genuine accumulator hanging off a process-wide
+        advisor, which is correct for a running mind and wrong for a process
+        that runs many independent scenarios in sequence: load left by one
+        scenario turns the next one's admission from "accept" into
+        "compress_foreground". That was the difference between an imagination
+        test passing alone and failing in a long run.
+        """
+        self._load = 0.0
+        self._last_update = time.monotonic()
+        self._accepted = 0
+        self._deferred = 0
+        self._compressed = 0
+
     def observe(
         self,
         features: Mapping[str, float],

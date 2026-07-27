@@ -143,11 +143,20 @@ def schedule_relaunch(
         # SIGTERM that stops the runtime does not also stop its replacement.
         # stdout/stderr are inherited on purpose: the replacement keeps writing
         # to whatever log the original launch was redirected into.
-        child = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+        # Through the gateway, like every other spawn in the tree — a raw
+        # Popen here is exactly the ownership hole the effect lint exists to
+        # catch. allow_during_shutdown is the point of this call: the waiter
+        # must be arranged BEFORE the runtime stops, or the reboot leaves Aura
+        # down with nothing to bring it back.
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        child = get_subprocess_gateway().spawn(
             command,
             cwd=resolved_cwd,
             start_new_session=True,
             stdin=subprocess.DEVNULL,
+            allow_during_shutdown=True,
+            source="runtime_relaunch:schedule_relaunch",
         )
     except (OSError, ValueError) as exc:
         record_degradation(

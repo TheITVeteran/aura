@@ -1093,3 +1093,36 @@ def _reset_health_caches_between_tests():
     _reset()
     yield
     _reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_working_memory_queue_load_between_tests():
+    """The spiking-inference queue model accumulates load across calls.
+
+    That is right for a running mind and wrong for a process running many
+    independent scenarios: load left by one test turns the next one's
+    admission decision from "accept" into "compress_foreground".
+    """
+
+    def _reset():
+        try:
+            import sys
+
+            module = sys.modules.get("core.cognitive.spiking_active_inference")
+            if module is None:
+                return
+            # Reset only an advisor that already exists. Constructing one here
+            # would drag cognition into every test, including the ones that
+            # assert a deterministic path never builds a CognitiveEngine.
+            advisor = getattr(module, "_ADVISOR", None)
+            if advisor is None:
+                return
+            queue = getattr(advisor, "_working_memory", None)
+            if queue is not None and hasattr(queue, "reset"):
+                queue.reset()
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+
+    _reset()
+    yield
+    _reset()

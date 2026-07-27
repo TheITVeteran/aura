@@ -14297,6 +14297,14 @@
       "scope": "<module>.host_pressure"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().spawn",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/runtime_relaunch.py",
+      "scope": "<module>.schedule_relaunch"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": true,
       "category": "subprocess_gateway",
@@ -15114,6 +15122,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "e78ba1bd3587722316d709e27f9fc0b516b43154add531dad32097fa6e475271",
+  "inventory_sha256": "bd2d1c575f27f59df5bc175d6ca158136d53bf3e8792fa572ae244295712f44d",
   "schema_version": 1
 }

@@ -1064,6 +1064,35 @@ def _record_exact_reply_token_evidence(
         )
 
 
+def _repair_live_user_surface_escaped_newlines(response_text: Any) -> str:
+    """Turn literal \\n / \\t / \\r the model typed back into real whitespace.
+
+    A local model that has read a lot of JSON sometimes emits the two-character
+    sequence backslash-n where it meant a newline. The reply is otherwise fine,
+    and rejecting it costs the person a correct answer over a typo the runtime
+    can fix deterministically.
+
+    LIVE DEFECT, 2026-07-26: a correct, well-structured marble derivation was
+    rejected with reasons=escaped_control_artifact and the user got "I couldn't
+    get to an answer I'd stand behind on that one".
+
+    Prose only — a fenced code block may legitimately contain a literal \\n,
+    and rewriting it would corrupt the code.
+    """
+    text = str(response_text or "")
+    if not text.strip() or "```" in text or "\\\\" in text:
+        return ""
+    repaired = (
+        text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\n")
+    )
+    if repaired == text:
+        return ""
+    # Collapse the runs the substitution can create, without touching
+    # deliberate paragraph breaks.
+    repaired = re.sub(r"\n{3,}", "\n\n", repaired)
+    return repaired.strip()
+
+
 def _repair_live_user_surface_truncated_tail(response_text: Any) -> str:
     """Keep complete model-derived content when only the final tail is clipped."""
 
@@ -5502,6 +5531,35 @@ def _mlx_worker_loop(
                                             job,
                                             response_text,
                                         )
+                                        if "escaped_control_artifact" in rejection_reasons:
+                                            unescaped_surface = (
+                                                _repair_live_user_surface_escaped_newlines(
+                                                    response_text
+                                                )
+                                            )
+                                            if unescaped_surface:
+                                                unescaped_reasons = (
+                                                    _surface_quality_failure_reasons(
+                                                        job,
+                                                        unescaped_surface,
+                                                    )
+                                                )
+                                                if "escaped_control_artifact" not in unescaped_reasons:
+                                                    logger.info(
+                                                        "🛡️ [WORKER] Restored newlines the model "
+                                                        "emitted as literal escapes."
+                                                    )
+                                                    append_text_mutation(
+                                                        surface_control_state,
+                                                        stage="mlx_worker.escaped_control_artifact",
+                                                        method="unescape_control_sequences",
+                                                        reasons=["escaped_control_artifact"],
+                                                        before=response_text,
+                                                        after=unescaped_surface,
+                                                        deterministic=True,
+                                                    )
+                                                    response_text = unescaped_surface
+                                                    rejection_reasons = unescaped_reasons
                                         if set(rejection_reasons) == {"truncated_tail"}:
                                             completed_surface = (
                                                 _repair_live_user_surface_truncated_tail(

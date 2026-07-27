@@ -217,6 +217,12 @@ _PSEUDO_COMMITMENT_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 _RAW_LANE_TELEMETRY_RE = re.compile(
+    # ROUTER_ERROR is a diagnostic label llm_health_router returns so string
+    # consumers like StructuredLLM can distinguish exhaustion from an empty
+    # reply. Nothing stopped it reaching a person, and on 2026-07-26 the live
+    # chat window rendered exactly this, verbatim, as Aura's reply:
+    #     ROUTER_ERROR: unknown (at all_failed)
+    r"\bROUTER_ERROR:|"
     r"\bLane:\s*\w+.*Kernel lock held:|\bSoul:\s*\d+%.*Glow:|\bTape:\s*\d+",
     re.IGNORECASE | re.DOTALL,
 )
