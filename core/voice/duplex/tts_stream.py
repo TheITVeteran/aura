@@ -525,6 +525,25 @@ class StreamingTts:
         text = (text or "").strip()
         if not text or token.cancelled:
             return None
+        # The synthesiser pronounces characters, not meaning: "$1.5B", "45%",
+        # "2026-07-27" and "https://…" all reach the listener as noise unless
+        # something turns them into the words a person would say. Kokoro takes
+        # no SSML, so this is the only channel there is — and it is also where
+        # a speaker's pauses get put, since punctuation is the only pacing
+        # instrument the model exposes.
+        try:
+            from core.voice.duplex.spoken_form import prepare_for_speech
+
+            spoken = prepare_for_speech(text)
+            if spoken.strip():
+                text = spoken
+        except (RuntimeError, ValueError, TypeError, ImportError, AttributeError) as exc:
+            record_degradation(
+                "voice_duplex.tts",
+                exc,
+                severity="warning",
+                action="synthesised the raw clause without spoken-form normalisation",
+            )
         if not await self.ensure_loaded():
             return None
 

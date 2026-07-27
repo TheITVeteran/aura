@@ -201,28 +201,37 @@ class MindBridge:
     def _spoken_turn_directive(self, words: int, offer_more: bool) -> str:
         """Tell the engine this reply will be heard, not read.
 
-        Serves two ends at once, which is why it is worth a prompt slot.
+        This used to carry two jobs, and one of them was really latency
+        management in the costume of a style note: because the governed turn
+        returned one finished string, reply length WAS time-to-first-audio, so
+        the word cap was the only lever available. That is what made spoken
+        answers shallower than the same question typed.
 
-        Latency: the governed turn returns one finished string, so nothing
-        can be spoken until the final token is decoded. Reply length is
-        therefore *directly* time-to-first-audio, and this is the largest
-        single lever in the lane.
+        Governed streaming removes that job (see governed_stream.py): clauses
+        are released and spoken as they are produced, so the first word no
+        longer waits for the last. What remains here is the real one — this is
+        speech, and speech has a different shape from prose.
 
-        Quality: written-length prose read aloud is what makes voice
-        assistants tiring. Markdown is worse — a spoken bullet list is just
-        a monotone run of fragments, and headings vanish entirely.
+        The shape, not the size. A spoken turn is built from short clauses that
+        each land on their own, because the listener has no way to re-read.
+        Markdown is worse than long: a bullet list read aloud is a monotone run
+        of fragments and a heading disappears entirely. Length is now a
+        suggestion about density rather than a ceiling on substance.
         """
         tail = (
-            " If there is more worth saying, finish your point and offer it "
-            "in a short clause rather than continuing."
+            " If there is more worth saying, say it — just keep it in the same "
+            "spoken register rather than switching into an essay."
             if offer_more
-            else " Lead with the useful part; leave detail for if they ask."
+            else " Lead with the useful part."
         )
         return (
-            "[spoken turn: this reply is going to be read aloud in a live "
-            f"conversation. Answer in about {words} words or fewer, as natural "
-            "speech. No markdown, no lists, no headings, no code blocks."
-            f"{tail} It is fine to be brief.]"
+            "[spoken turn: this is going to be heard, not read, in a live "
+            "conversation. Talk the way a person talks — short clauses that "
+            "each stand on their own, contractions, the natural connectives of "
+            "speech. No markdown, no lists, no headings, no code blocks; say a "
+            "list as a sentence. Around "
+            f"{words} words is the usual shape, though say what the answer "
+            f"actually needs.{tail}]"
         )
 
     def _compose_effective_message(
