@@ -1,0 +1,166 @@
+"""Whether a turn is actually hers, or the base model wearing her name.
+
+The question that prompted this — "are we sure voice and chat invoke everything
+they should, personality too?" — had no answer anywhere in the system, and the
+reason it had no answer is the interesting part.
+
+The persona pass is applied through
+``ServiceContainer.get("personality_engine", default=None)``. When the service
+is absent, the whole pass is skipped: no exception, no degradation, no record.
+The reply then ships in the flat register of the base model, every layer that
+computed her disposition discarded at the last inch — and the turn still
+reports a proven full-mind path, because personality was never in the required
+subsystem list. Its absence looked exactly like its presence.
+
+The fix is visibility, not another gate. The persona pass now records its own
+absence, and a turn carries the list of conversational organs it did not
+engage: personality, affect, episodic and semantic memory, identity continuity,
+felt state, the honesty governor, the knowledge graph, the event bus.
+
+Requiring them was the first attempt and it was wrong. A missing persona pass
+makes a reply flat — it does not make it wrong — and refusing a correct answer
+for being flat is the over-blocking failure this codebase has already paid for
+twice. Thirty-three tests said so immediately. Flat and true beats refused, so
+these are reported and never fatal.
+
+Voice needs no separate treatment, and that is worth asserting rather than
+assuming: it replays the real HTTP chat handler through a synthetic ASGI scope,
+so it inherits this contract exactly.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from interface.routes.chat import (
+    _EXPECTED_TURN_ORGANS,
+    _absent_turn_organs,
+    _collect_expected_turn_organs,
+    _collect_live_chat_required_subsystems,
+)
+
+SOURCE = Path("interface/routes/chat.py")
+
+
+# ── What a turn cannot be hers without ─────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "subsystem",
+    [
+        "kernel",
+        "cognitive_engine",
+        "inference",
+        "memory",
+        "tool_governance",
+        "substrate_voice",
+    ],
+)
+def test_the_required_contract_names_it(subsystem: str) -> None:
+    assert subsystem in _collect_live_chat_required_subsystems()
+
+
+def test_personality_is_reported_rather_than_required() -> None:
+    """A missing persona pass makes a reply flat; it does not make it wrong.
+
+    The instinct is to require it. Requiring it refuses a correct answer for
+    being flat, which is the over-blocking failure already paid for twice —
+    most recently a gate that replaced 900 characters of real answer with an
+    apology because confidence read "degraded". Flat and true beats refused,
+    so the absence is recorded and visible instead of fatal.
+    """
+    assert "personality_engine" in _collect_expected_turn_organs()
+    assert "personality" not in _collect_live_chat_required_subsystems()
+
+
+def test_a_missing_persona_pass_is_recorded() -> None:
+    """Shipping the base model's register as her voice must not be silent."""
+    src = SOURCE.read_text(encoding="utf-8")
+    assert "personality_engine absent; reply shaped by nothing" in src
+
+
+# ── What a turn should have engaged ───────────────────────────────────────
+
+def test_every_expected_organ_states_why_it_matters() -> None:
+    """A list of names teaches nobody what its absence costs."""
+    for name, why in _EXPECTED_TURN_ORGANS:
+        assert name and why
+        assert len(why) > 15, f"{name} has no real explanation"
+
+
+@pytest.mark.parametrize(
+    "organ",
+    [
+        "personality_engine",
+        "episodic_memory",
+        "semantic_memory",
+        "soul",
+        "soma",
+        "affect_engine",
+        "data_honesty_governor",
+        "knowledge_graph",
+        "event_bus",
+    ],
+)
+def test_the_expected_set_covers_the_conversational_organs(organ: str) -> None:
+    assert organ in _collect_expected_turn_organs()
+
+
+def test_absent_organs_are_reported_with_their_reason() -> None:
+    absent = _absent_turn_organs({"episodic_memory": False, "soul": True})
+    assert len(absent) == 1
+    assert "episodic_memory" in absent[0]
+    assert "remembered" in absent[0]
+
+
+def test_a_fully_engaged_turn_reports_nothing_absent() -> None:
+    assert _absent_turn_organs(dict.fromkeys(dict(_EXPECTED_TURN_ORGANS), True)) == []
+
+
+def test_probing_never_raises_outside_a_runtime() -> None:
+    """Nothing is registered in a bare process; that is a report, not a crash."""
+    engaged = _collect_expected_turn_organs()
+    assert set(engaged) == set(dict(_EXPECTED_TURN_ORGANS))
+    assert all(isinstance(value, bool) for value in engaged.values())
+
+
+def test_the_expected_tier_is_not_fatal() -> None:
+    """Promoting these would recreate a failure already paid for once."""
+    src = SOURCE.read_text(encoding="utf-8")
+    required = src[src.index("def _collect_live_chat_required_subsystems") :]
+    required = required[: required.index("def _assess_live_mind_snapshot")]
+    for organ, _why in _EXPECTED_TURN_ORGANS:
+        assert f'"{organ}":' not in required, (
+            f"{organ} became a hard requirement; a warming organ would now "
+            "refuse an otherwise good answer"
+        )
+
+
+def test_the_turn_contract_carries_the_engagement() -> None:
+    """Reported on the turn, or it is a probe nobody reads."""
+    src = SOURCE.read_text(encoding="utf-8")
+    assert '"expected_organs": _collect_expected_turn_organs(),' in src
+    assert '"absent_expected_organs": _absent_turn_organs(),' in src
+
+
+# ── Voice inherits it rather than reimplementing it ───────────────────────
+
+def test_voice_replays_the_real_chat_handler() -> None:
+    """Voice is a presentation surface, not a second cognition lane.
+
+    If it built its own request path it would drift, and the contract asserted
+    above would cover only half the ways she speaks.
+    """
+    src = SOURCE.read_text(encoding="utf-8")
+    turn = src[src.index("async def run_governed_voice_chat_turn") :]
+    turn = turn[:4000]
+    assert '"path": "/api/chat"' in turn
+    assert "validate_runtime_security_request(request)" in turn
+    assert "_require_internal(request)" in turn
+
+
+def test_the_voice_surface_is_declared_not_disguised() -> None:
+    src = SOURCE.read_text(encoding="utf-8")
+    turn = src[src.index("async def run_governed_voice_chat_turn") :][:4000]
+    assert b"x-aura-surface" in turn.encode() or "x-aura-surface" in turn
+    assert "x-aura-require-cognitiveengine" in turn

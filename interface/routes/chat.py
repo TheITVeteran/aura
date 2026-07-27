@@ -5113,6 +5113,93 @@ def _runtime_substrate_voice_available() -> bool:
         return False
 
 
+def _runtime_personality_available() -> bool:
+    """Is the voice that makes her sound like herself actually present?
+
+    The personality pass is applied through
+    ``ServiceContainer.get("personality_engine", default=None)``, so when the
+    service is absent the whole pass is skipped silently — no degradation, no
+    record — and the turn still reports a proven full-mind path. A reply
+    shaped by nothing then reaches the user in the flat register of the base
+    model, and every layer that computed her disposition is discarded at the
+    last inch.
+
+    Requiring it makes that absence a fact about the turn rather than a
+    difference nobody can see.
+    """
+    try:
+        engine = ServiceContainer.peek("personality_engine", default=None)
+        return bool(engine is not None and hasattr(engine, "filter_response"))
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime personality status probe failed: %s", exc)
+        return False
+
+
+def _runtime_affect_available() -> bool:
+    """Her affect state, which personality and prosody both read from."""
+    try:
+        from core.affect.affective_circumplex import get_circumplex
+
+        return bool(get_circumplex() is not None)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Runtime affect status probe failed: %s", exc)
+        return False
+
+
+# Organs a real conversational turn should have engaged.
+#
+# Deliberately a SECOND tier, reported and never fatal. The required list is
+# what authorises a turn; this is what shapes it.
+#
+# Personality sits here rather than in the required list, and the reasoning is
+# worth stating because the instinct runs the other way. A missing persona pass
+# makes a reply flat — it does not make it wrong. Refusing a correct answer for
+# being flat is the over-blocking failure this codebase has already paid for
+# twice, most recently a gate that replaced 900 characters of real answer with
+# an apology because confidence read "degraded". Flat and true beats refused.
+#
+# The point is visibility. Before this, "does chat actually engage everything
+# it should?" had no answer anywhere in the system: the persona pass was
+# applied through a default-None lookup, so its absence looked exactly like
+# its presence. Now a turn carries the list of what was missing, and a
+# persistent gap shows up instead of being felt and never found.
+_EXPECTED_TURN_ORGANS: tuple[tuple[str, str], ...] = (
+    ("personality_engine", "the voice that makes the reply hers rather than the base model's"),
+    ("affect_engine", "the affect this turn is coloured by"),
+    ("episodic_memory", "the turn is remembered, so tomorrow's answer knows about it"),
+    ("semantic_memory", "what she knows, as opposed to what she just heard"),
+    ("soul", "identity continuity across turns and restarts"),
+    ("soma", "felt state, which disposition and prosody both read"),
+    ("data_honesty_governor", "the honesty floor a claim has to clear"),
+    ("knowledge_graph", "grounding a claim against what she already believes"),
+    ("event_bus", "the turn is observable to the rest of the organism"),
+)
+
+
+def _collect_expected_turn_organs() -> dict[str, bool]:
+    """Which conversational organs were actually present for this turn."""
+    engaged: dict[str, bool] = {}
+    for name, _why in _EXPECTED_TURN_ORGANS:
+        try:
+            engaged[name] = ServiceContainer.peek(name, default=None) is not None
+        except _CHAT_RECOVERABLE_ERRORS:
+            engaged[name] = False
+    return engaged
+
+
+def _absent_turn_organs(engaged: dict[str, bool] | None = None) -> list[str]:
+    """The ones missing, with why they matter — for a log line or a receipt."""
+    engaged = engaged if engaged is not None else _collect_expected_turn_organs()
+    reasons = dict(_EXPECTED_TURN_ORGANS)
+    return [
+        f"{name} ({reasons.get(name, 'no stated purpose')})"
+        for name, present in sorted(engaged.items())
+        if not present
+    ]
+
+
 def _collect_live_chat_required_subsystems(
     lane: dict[str, Any] | None = None,
     *,
@@ -6154,6 +6241,10 @@ def _build_live_turn_contract_payload(
         "full_mind_path": full_mind_path,
         "required_subsystems": subsystems,
         "required_subsystems_ok": required_subsystems_ok,
+        # Reported, never fatal. A persistent absence here is why a reply can
+        # be technically correct and not sound like her.
+        "expected_organs": _collect_expected_turn_organs(),
+        "absent_expected_organs": _absent_turn_organs(),
         "recent_context_needed": bool(trace.get("recent_context_needed")),
         "recent_context_exchanges": int(trace.get("recent_context_exchanges") or 0),
         "compact_desktop_chat_contract": bool(trace.get("compact_desktop_chat_contract")),
@@ -11339,6 +11430,15 @@ def _apply_aura_voice_shaping(text: str, user_message: str = "") -> str:
                 shaped = personality.filter_response(shaped)
             if hasattr(personality, "apply_lexical_style"):
                 shaped = personality.apply_lexical_style(shaped)
+        else:
+            # Silently shipping the base model's register as Aura's voice is
+            # the one outcome nobody would notice and everybody would feel.
+            record_degradation(
+                "chat",
+                RuntimeError("personality_engine absent; reply shaped by nothing"),
+                severity="warning",
+                action="served the unshaped draft because the persona pass was unavailable",
+            )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Aura voice shaping personality pass skipped: %s", exc)
