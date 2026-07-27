@@ -3721,6 +3721,49 @@ before those dependencies close is not admissible.
   architecture run inside the live resident checkpoint's middle-layer/latent
   execution, bind exact model and adapter identity, and prove successful output
   is not replaced by an ordinary generation or shallow orchestration fallback.
+
+  F7-E (2026-07-27, Fable lane) closes the *falsifiability* half in
+  `core/brain/llm/latent_cortex/penultimate_execution_receipt.py`. This
+  repository has already paid for the clause about fallbacks: **CP227's
+  accuracy gate was voided** because `_decode` ran outside
+  `recurrence_adapter_scope`, both arms decoded the bare base model, on@d
+  matched off@d exactly, and a null that meant nothing was nearly a result.
+  Nothing lied — nobody checked that the treatment was attached, and an
+  unchecked treatment reported as a run treatment is indistinguishable from a
+  real null. The receipt makes the four ways that happens refusable:
+  * **The adapter that was never attached.** `attached: true` is not taken at
+    its word: the adapter must name the blocks it activated in and they must
+    equal the blocks it was expected to activate in. An empty activation list
+    with `attached: true` is `adapter_did_not_activate`, refused at
+    construction. A partial activation is refused the same way. An unattached
+    adapter may not carry an identity — a control arm is a valid receipt, it
+    simply cannot claim a treatment.
+  * **The depth that never recurred.** Passes carry per-pass state digests;
+    several passes that all landed on the same state return
+    `no_recurrence_occurred` — the T=1 identity wearing a depth label. One
+    pass is not accused of failing to recur.
+  * **The state computed and then dropped.** The decoded state must *be* the
+    final pass's state; decoding from an earlier or unrelated state returns
+    `decode_did_not_consume_final_state`. A run that recurred and then decoded
+    from something else did not use its own work.
+  * **The fallback wearing the latent name.** The mechanism is declared, a
+    fallback requires a reason, and a receipt recording a fallback cannot also
+    claim `recurrent_latent`. An ordinary generation *refuses* the latent
+    claim without erroring — that is the receipt correctly declining, not a
+    failure.
+  "Penultimate" is checked as a position (`layer_count - 2`), not accepted as
+  a label a caller may reassign.
+
+  21/21 focused tests pass, including a direct reconstruction of the CP227
+  shape asserted to be unable to produce a PROVEN verdict.
+
+  **The checkbox stays open**: this is the instrument, not the run. No
+  resident-32B execution has produced a receipt through it, and the producer
+  side — emitting these fields from the live worker's forward pass — is the
+  march's to wire. This checkpoint runs no model and grants no capability
+  claim. Note for the march: the repaired accuracy gate should emit one of
+  these per arm, which would have caught CP227 before its verdict was
+  published.
 - [ ] **SPARK-067 - Organism-wide bidirectional coupling.** Connect epistemic
   state and recurrent control causally with agency/Will, memory, tools,
   personality/self-model, affect/body, global workspace/consciousness,
