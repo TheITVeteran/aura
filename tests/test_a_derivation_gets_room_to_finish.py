@@ -42,7 +42,6 @@ SOURCE = Path("core/brain/cognitive_engine.py")
         "Walk me through how you got that.",
         "Calculate the compound interest over five years.",
         "How long would it take, and how much would it cost?",
-        "Which would you choose, and why?",
     ],
 )
 def test_a_question_that_needs_working_is_recognised(question: str) -> None:
@@ -57,6 +56,11 @@ def test_a_question_that_needs_working_is_recognised(question: str) -> None:
         "What is 17 times 23?",
         "hey",
         "",
+        # Conversation, not derivation. Treating "and why" as working to be
+        # shown lengthened ordinary turns for nothing.
+        "If you could put one song on right now, what would it be and why that one?",
+        "Which would you choose, and why?",
+        "Is a river the same river over time? I'm curious how you reason about it.",
     ],
 )
 def test_an_ordinary_turn_keeps_the_conversational_budget(question: str) -> None:
@@ -102,3 +106,30 @@ def test_tight_contracts_still_win() -> None:
     assert clamp.index("max_tokens = max(128, min(max_tokens, 256))") < clamp.index(
         "elif shape_wants_room:"
     )
+
+
+# ── The reason for the budget travels with it ──────────────────────────────
+
+GATE = Path("core/brain/inference_gate.py")
+
+
+def test_the_engine_says_why_it_asked_for_more() -> None:
+    """A number alone cannot survive a pressure cap; a reason can."""
+    assert '"reply_needs_room": shape_wants_room,' in SOURCE.read_text(encoding="utf-8")
+
+
+def test_the_starvation_floor_answers_the_caller_not_a_constant() -> None:
+    """Measured live: caller asked 896, pressure cut it to 459, the flat floor
+    lifted it to 512, and the derivation stopped at "- The" in step 5 of 5."""
+    src = GATE.read_text(encoding="utf-8")
+    assert 'needs_room = bool(context.get("reply_needs_room", False))' in src
+    assert "AURA_FOREGROUND_CHAT_DERIVATION_FLOOR_TOKENS" in src
+    assert "1024 if needs_room else 512" in src
+
+
+def test_the_floor_never_exceeds_what_was_asked_for() -> None:
+    """The floor stops starvation; it does not hand out budget nobody wanted."""
+    src = GATE.read_text(encoding="utf-8")
+    block = src[src.index("needs_room = bool(") :]
+    block = block[: block.index("if max_tokens < starvation_floor")]
+    assert "min(\n                    requested_budget," in block

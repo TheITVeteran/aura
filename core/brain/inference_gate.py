@@ -7564,11 +7564,21 @@ class InferenceGate:
             except (TypeError, ValueError):
                 requested_budget = 0
             if requested_budget > 0:
+                # A flat floor rescues a conversational reply and still starves
+                # a derivation: measured live 2026-07-27, the caller asked 896
+                # for "when does the second train catch the first, and how far
+                # from the station?", pressure scaling cut it to 459, and the
+                # floor lifted it to 512 — enough to reach step 5 of 5 and stop
+                # at "- The". The caller now says whether the turn needs room,
+                # and the floor answers that instead of a constant.
+                needs_room = bool(context.get("reply_needs_room", False))
                 starvation_floor = min(
                     requested_budget,
                     self._configured_token_bound(
-                        "AURA_FOREGROUND_CHAT_STARVATION_FLOOR_TOKENS",
-                        512,
+                        "AURA_FOREGROUND_CHAT_DERIVATION_FLOOR_TOKENS"
+                        if needs_room
+                        else "AURA_FOREGROUND_CHAT_STARVATION_FLOOR_TOKENS",
+                        1024 if needs_room else 512,
                         minimum=256,
                     ),
                 )

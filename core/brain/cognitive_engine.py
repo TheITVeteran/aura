@@ -139,8 +139,13 @@ _DERIVATION_CUE_RE = re.compile(
     r"calculate|compute|how (?:far|long|many|much)|when does|what time)\b",
     re.IGNORECASE,
 )
+# Two questions asked at once, or one question with a second quantity in it.
+# Deliberately narrow: "what would it be and why that one?" is conversation,
+# not a derivation, and treating it as one lengthens ordinary turns for nothing.
 _MULTI_PART_QUESTION_RE = re.compile(
-    r"\?[^?]*\?|\b(?:and|then)\b[^.?!]{0,80}\b(?:how|what|when|where|why|which)\b",
+    r"\?[^?]*\?"
+    r"|\b(?:and|then)\b[^.?!]{0,60}\b(?:how (?:far|long|many|much|fast|old)|"
+    r"what (?:time|number|value|percentage|fraction)|how do (?:i|you|we) get)\b",
     re.IGNORECASE,
 )
 
@@ -3048,6 +3053,12 @@ class CognitiveEngine:
                 # on every user turn.
                 "max_tokens": max_tokens,
                 "num_predict": max_tokens,
+                # Why this budget, not just how big. The gate's starvation
+                # floor is flat 512, so pressure scaling could cut a 896-token
+                # derivation to 459 and the floor would "rescue" it back to
+                # 512 — the caller's reason for asking was never carried, so
+                # the train problem still ran out of room at "- The".
+                "reply_needs_room": shape_wants_room,
                 "sampling_bias": advice.get("sampling_bias") if isinstance(advice, dict) else None,
                 "imagination_sampling_bias": (
                     imagination_frame.get("sampling_bias")
