@@ -805,8 +805,16 @@ main {
 
 /* Mic Button Inner Orb (small indicator) */
 #mic-orb {
-    width: 24px;
-    height: 24px;
+    position: absolute;
+    left: 12px;
+    /* Centred with `top`, not a transform: orb-pulse animates transform, so a
+     * centring translate is overwritten the moment the animation runs and the
+     * glow drops to the bottom-left of the button. */
+    top: calc(50% - 11px);
+    width: 22px;
+    height: 22px;
+    opacity: 0.55;
+    pointer-events: none;
     background: radial-gradient(circle at 30% 30%, #fff, #a786ff 40%, #5d34ff);
     border-radius: 50%;
     box-shadow: 0 0 15px rgba(167, 134, 255, 0.6), inset 0 0 8px rgba(255, 255, 255, 0.4);
@@ -815,13 +823,14 @@ main {
 }
 
 #mic-btn:hover #mic-orb {
-    transform: scale(1.1);
+    opacity: 0.85;
     box-shadow: 0 0 25px rgba(167, 134, 255, 0.8);
 }
 
 .mic-btn.active #mic-orb {
     background: radial-gradient(circle at 30% 30%, #fff, #ff4c4c 40%, #cc0000);
     box-shadow: 0 0 20px rgba(255, 76, 76, 0.6);
+    opacity: 0.75;
 }
 
 #stop-icon {
@@ -1241,10 +1250,40 @@ main {
     transform: translateY(0);
 }
 
+/* The voice control has to look like a control. It was an unlabelled orb next
+ * to SEND, so the live duplex voice lane went unnoticed entirely — the orb is
+ * now the state ring behind a drawn microphone and a word. */
 .mic-btn {
-    font-size: 1.1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
     border: none;
-    padding: 8px 12px;
+    padding: 8px 14px;
+    position: relative;
+    font-family: var(--font-main);
+    font-size: 0.72rem;
+    font-weight: bold;
+    letter-spacing: 0.06em;
+    color: #efe6ff;
+}
+.mic-glyph {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    position: relative;
+    z-index: 1;
+    filter: drop-shadow(0 0 4px rgba(167, 134, 255, 0.55));
+}
+.mic-label {
+    position: relative;
+    z-index: 1;
+    line-height: 1;
+}
+.mic-btn.active .mic-glyph {
+    filter: drop-shadow(0 0 5px rgba(255, 120, 120, 0.75));
+}
+.mic-btn .hidden {
+    display: none;
 }
 
 .input.hdr-btn {
@@ -5872,4 +5911,20 @@ body.theme-light .thought-card.error {
 
 body.theme-light .thought-card.warning {
     box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.2);
+}
+
+
+/* Memory-kind sigils: the same monoline language as the neural-feed channels,
+ * replacing the emoji that used to stand in for them. */
+.mem-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+.mem-empty-sigil {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    opacity: 0.7;
 }

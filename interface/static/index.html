@@ -465,9 +465,32 @@
                     <div class="input-actions">
                         <button type="button" class="input-btn regen-btn" id="regen-btn" title="Regenerate last response (⌘+Shift+R)" aria-label="Regenerate response" style="display:none;">↻</button>
                         <button type="submit" class="input-btn send-btn" aria-label="Send message">SEND</button>
-                        <button type="button" class="input-btn mic-btn" id="mic-btn" title="Toggle voice" aria-label="Toggle voice input">
-                            <div id="mic-orb"></div>
-                            <div id="stop-icon" class="hidden">■</div>
+                        <!-- The voice affordance was an unlabelled purple orb
+                             beside SEND. It reads as decoration, so the whole
+                             duplex voice lane — live, governed, and going
+                             through the same CognitiveEngine as the text box —
+                             was undiscoverable. The orb stays as the state
+                             ring; a drawn microphone and a word say what the
+                             control is. Monoline SVG rather than an emoji:
+                             the emoji path rendered as a bare ■ here. -->
+                        <button type="button" class="input-btn mic-btn" id="mic-btn"
+                                title="Talk to Aura out loud" aria-label="Start voice conversation"
+                                aria-pressed="false">
+                            <div id="mic-orb" aria-hidden="true"></div>
+                            <svg class="mic-glyph" id="mic-glyph" viewBox="0 0 24 24" aria-hidden="true"
+                                 fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="2.75" width="6" height="11" rx="3"></rect>
+                                <path d="M5.5 11a6.5 6.5 0 0 0 13 0"></path>
+                                <path d="M12 17.5V21"></path>
+                                <path d="M8.75 21h6.5"></path>
+                            </svg>
+                            <svg class="mic-glyph mic-glyph-stop hidden" id="stop-icon" viewBox="0 0 24 24"
+                                 aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6"
+                                 stroke-linejoin="round">
+                                <rect x="6.5" y="6.5" width="11" height="11" rx="2"></rect>
+                            </svg>
+                            <span class="mic-label">VOICE</span>
                         </button>
                     </div>
                 </form>

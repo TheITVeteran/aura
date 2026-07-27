@@ -3036,6 +3036,29 @@ function plainLanguageThought(text) {
     return body;
 }
 
+
+// Emoji are not this interface's iconography. The neural feed already draws
+// its channels as monoline sigils; memory kinds were still 🗂/🧠/🎯, which
+// renders as a different visual language — and, in fonts without them, as a
+// row of boxes. Same 24-grid, same stroke weight, same currentColor.
+const MEMORY_KIND_SIGILS = {
+    // Episodic: a moment on a timeline.
+    episodic: '<path d="M3.5 12h17"/><circle cx="9" cy="12" r="2.2"/><path d="M9 6.4v3.4M9 14.2v3.4"/>',
+    // Semantic: linked concepts.
+    semantic: '<circle cx="6" cy="8" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="12" cy="17" r="2"/><path d="M7.7 9.4 10.5 15.3M16.3 9.4 13.5 15.3M8 8h8"/>',
+    // Goals: an intended end point.
+    goals: '<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3"/>',
+};
+const MEMORY_KIND_FALLBACK =
+    '<rect x="3.6" y="6" width="16.8" height="12.6" rx="2"/><path d="M3.6 9.6h16.8M9 6V4.2h6V6"/>';
+
+function memoryKindSigil(kind) {
+    const glyph = MEMORY_KIND_SIGILS[kind] || MEMORY_KIND_FALLBACK;
+    return `<svg class="mem-empty-sigil" viewBox="0 0 24 24" aria-hidden="true" fill="none" ` +
+        `stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ` +
+        `stroke-linejoin="round">${glyph}</svg>`;
+}
+
 const NEURAL_CHANNELS = {
     thinking: {
         label: 'Thinking',
@@ -6486,8 +6509,8 @@ async function loadMemory(type) {
         const cont = $('mem-content');
         const items = d.items || [];
         if (items.length === 0) {
-            const icons = { episodic: '🗂', semantic: '🧠', goals: '🎯' };
-            cont.innerHTML = `<div class="mem-empty">${icons[type] || '📁'} No ${escHtml(type)} memories yet</div>`;
+            cont.innerHTML = `<div class="mem-empty">${memoryKindSigil(type)}` +
+                `<span>No ${escHtml(type)} memories yet</span></div>`;
             return;
         }
         cont.innerHTML = items.map(item => {
@@ -6889,6 +6912,25 @@ if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
 // ── Voice toggle ─────────────────────────────────────────
 let audioContext = null;
 
+
+// One place that owns how the voice control looks, so no caller has to reach
+// into the button's children and no caller can delete them.
+function setMicButtonState(mode) {
+    const btn = document.getElementById('mic-btn');
+    if (!btn) return;
+    const listening = mode === 'listening';
+    btn.classList.toggle('active', listening);
+    btn.setAttribute('aria-pressed', listening ? 'true' : 'false');
+    btn.title = listening ? 'Stop the voice conversation' : 'Talk to Aura out loud';
+    btn.setAttribute('aria-label', listening ? 'Stop voice conversation' : 'Start voice conversation');
+    const glyph = document.getElementById('mic-glyph');
+    const stop = document.getElementById('stop-icon');
+    if (glyph) glyph.classList.toggle('hidden', listening);
+    if (stop) stop.classList.toggle('hidden', !listening);
+    const label = btn.querySelector('.mic-label');
+    if (label) label.textContent = listening ? 'STOP' : 'VOICE';
+}
+
 async function toggleVoice(desiredState = null, { quiet = false } = {}) {
     const targetState = typeof desiredState === 'boolean' ? desiredState : !state.voiceActive;
     if (targetState === state.voiceActive) return true;
@@ -6907,7 +6949,11 @@ async function toggleVoice(desiredState = null, { quiet = false } = {}) {
     const orb = $('voice-orb');
     state.voiceActive = targetState;
     $('voice-orb-wrap').classList.toggle('active', state.voiceActive);
-    $('mic-btn').textContent = state.voiceActive ? '⏹️' : '🔮';
+    // Setting textContent on the button deletes #mic-orb and #stop-icon —
+    // the very elements that show the state — and replaced them with an emoji
+    // that rendered as a bare ■. State is a class and a hidden toggle now; the
+    // drawn icons stay in the DOM.
+    setMicButtonState(state.voiceActive ? 'listening' : 'idle');
 
     if (state.voiceActive) {
         orb.className = 'voice-orb listening';
@@ -6979,7 +7025,7 @@ async function toggleVoice(desiredState = null, { quiet = false } = {}) {
             state.voiceActive = false;
             $('voice-orb-wrap').classList.remove('active');
             orb.className = 'voice-orb';
-            $('mic-btn').textContent = '🎙';
+            setMicButtonState('idle');
             const voiceOrb = $('voice-orb');
             if (voiceOrb) {
                 voiceOrb.style.transform = '';
