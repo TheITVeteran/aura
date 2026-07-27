@@ -1460,7 +1460,7 @@ class DesktopTaskSkill(BaseSkill):
             deep_search = False
             num_results = 3
             pressure_limited = True
-        step_context = dict(context or {})
+        step_context = self._child_step_context(context)
         step_context.update(
             {
                 "origin": step_context.get("origin") or "desktop_task",
@@ -3034,6 +3034,43 @@ class DesktopTaskSkill(BaseSkill):
         return looks_like_desktop_objective(objective)
 
 
+
+    # A step proves the step's effect. The task proves the task's.
+    #
+    # Child contexts were built with `dict(task_context)`, which carries the
+    # task-level action expectation down into every step — so a `create_folder`
+    # step was required to produce `steps_requested` and `steps_completed`,
+    # fields only the task result has. It could not, so the contract layer
+    # failed it with "expectation incomplete: steps_requested; steps_completed"
+    # and the whole objective died on a step that had, in fact, worked.
+    # Measured live 2026-07-27 on "create a file on my Desktop".
+    #
+    # No step of any desktop objective can satisfy a task-level contract, so
+    # this was never one action misbehaving — it was every multi-step desktop
+    # objective inheriting a contract its parts cannot meet.
+    _TASK_LEVEL_EXPECTATION_KEYS: tuple[str, ...] = (
+        "action_expectation",
+        "expectation",
+        "acceptance_criteria",
+        "criteria",
+        "required_evidence",
+        "evidence_required",
+        "required_evidence_present",
+        "user_visible_effect",
+        "visible_effect",
+        "repair_hint",
+        "rollback_hint",
+        "allow_partial",
+    )
+
+    @classmethod
+    def _child_step_context(cls, task_context: dict[str, Any] | None) -> dict[str, Any]:
+        """A step's context, without the contract that belongs to the task."""
+        child = dict(task_context or {})
+        for key in cls._TASK_LEVEL_EXPECTATION_KEYS:
+            child.pop(key, None)
+        return child
+
     @staticmethod
     def _failure_cause(failures: list[dict[str, Any]], *, objective: str = "") -> str:
         """Why the desktop task failed, in the words of the step that failed.
@@ -3117,7 +3154,7 @@ class DesktopTaskSkill(BaseSkill):
         objective: str,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        step_context = dict(context or {})
+        step_context = self._child_step_context(context)
         document_body = (
             self._document_body(objective, step_context)
             if self._objective_requests_written_artifact(objective)
@@ -3478,7 +3515,7 @@ class DesktopTaskSkill(BaseSkill):
                 "x": int(resolved_step.x),
                 "y": int(resolved_step.y),
             }
-            step_context = dict(task_context)
+            step_context = self._child_step_context(task_context)
             target_text = str(target or "").lower()
             write_commit_action = (
                 resolved_step.action == "type"
