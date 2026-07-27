@@ -145,6 +145,22 @@ def _is_python_resource_tracker_process(proc: Any) -> bool:
     )
 
 
+def _is_keep_awake_assertion_process(proc: Any) -> bool:
+    """Return true for the macOS sleep assertion Aura spawns for itself.
+
+    ``core.runtime.keep_awake`` starts ``caffeinate`` through the subprocess
+    gateway and owns its lifecycle, so it is never a rogue child. Matching the
+    binary AND its assertion flags keeps this from adopting an unrelated
+    ``caffeinate`` a user happened to start.
+    """
+
+    name = _process_name(proc).lower()
+    cmdline = " ".join(_process_cmdline(proc)).lower()
+    if "caffeinate" not in name and "caffeinate" not in cmdline:
+        return False
+    return "-i" in _process_cmdline(proc) or "-m" in _process_cmdline(proc)
+
+
 def _is_python_multiprocessing_spawn_process(proc: Any) -> bool:
     """Return true for Python multiprocessing worker children owned by this runtime.
 
@@ -1672,6 +1688,27 @@ class RuntimeHygieneManager:
                 # child process(es)" StabilityGuardian alert.
                 if _process_ppid(child) == int(os.getpid()):
                     child_name = _process_name(child)
+                    # The keep-awake assertion is Aura's own: core.runtime.
+                    # keep_awake spawns it through the subprocess gateway as a
+                    # direct child and owns its lifecycle. It is named for the
+                    # macOS binary rather than for Aura, so it matched none of
+                    # the worker tags below and was reported as an unregistered
+                    # child on EVERY boot — a permanent DEGRADED card in the
+                    # user's neural feed for a process the runtime deliberately
+                    # started.
+                    if child_name and _is_keep_awake_assertion_process(child):
+                        self.register_process_handle(
+                            child,
+                            kind="subprocess",
+                            name="keep_awake.caffeinate",
+                            source="psutil.adopt_keep_awake_during_summary",
+                            command=" ".join(_process_cmdline(child))[:240],
+                        )
+                        active_registered += 1
+                        active_subprocesses += 1
+                        if child_pid > 0:
+                            active_registered_pids.add(child_pid)
+                        continue
                     if child_name and any(
                         tag in child_name for tag in ("MLXWorker", "AuraWorker", "Aura")
                     ):
