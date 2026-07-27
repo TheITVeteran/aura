@@ -209,11 +209,11 @@ _ANCHOR_STOPWORDS = frozenset({
 _SEARCH_QUERY_DIRECT_PATTERNS = (
     re.compile(
         r"^.*?\buse\s+(?:web_search|search_web|free_search|grounded_search|(?:the\s+)?web\s+search|(?:the\s+)?search)\b"
-        r".{0,120}?\b(?:about|on|for)\s+(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
+        r".{0,120}?\b(?:about|on|for)\s+(?!me\b|us\b|you\b)(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
         re.IGNORECASE,
     ),
     re.compile(
-        r"^.*?\b(?:check|find|research|look up)\b.{0,120}?\b(?:about|on|for)\s+(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
+        r"^.*?\b(?:check|find|research|look up)\b.{0,120}?\b(?:about|on|for)\s+(?!me\b|us\b|you\b)(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
         re.IGNORECASE,
     ),
     re.compile(
@@ -880,10 +880,51 @@ def _looks_like_grounded_followup(state: AuraState, text: str) -> bool:
     return False
 
 
+# A search request rarely arrives alone at the start of a sentence.
+#
+# Every pattern below is anchored with .match(), so a preamble defeats all of
+# them and the extractor falls through to "use the entire message as the
+# query". Measured live 2026-07-27: "Now something outside yourself: look up
+# who won the most recent Formula 1 world championship and tell me where you
+# got it" was sent to the search engine verbatim, preamble, instruction and all.
+# It found something, which is the worst version of the failure — a bad query
+# that returns results looks like it worked.
+#
+# Two trims, both conservative. Drop a conversational preamble that ends at a
+# colon or sentence break before the trigger, and drop a trailing instruction
+# addressed to HER rather than to the search engine.
+_SEARCH_TRIGGER_RE = re.compile(
+    r"\b(?:search|google|look\s+up|look\s+it\s+up|find\s+out|check\s+online|"
+    r"web\s+search|research)\b",
+    re.IGNORECASE,
+)
+_SEARCH_PREAMBLE_BREAK_RE = re.compile(r"(?:^|[.!?;:]\s+|,\s+(?=(?:then|now|next)\b))")
+# "and tell me where you got it" is a requirement on the ANSWER, not a term.
+_SEARCH_TRAILING_INSTRUCTION_RE = re.compile(
+    r"\s+(?:and|then|,)\s+(?:tell|let|show|give|cite|say|report|summari[sz]e|explain|"
+    r"answer|include|mention|link)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_search_preamble(raw: str) -> str:
+    """Return the request from its search trigger onward."""
+    trigger = _SEARCH_TRIGGER_RE.search(raw)
+    if trigger is None:
+        return raw
+    # The last clause break before the trigger is where the request begins.
+    start = 0
+    for match in _SEARCH_PREAMBLE_BREAK_RE.finditer(raw[: trigger.start()]):
+        start = match.end()
+    trimmed = raw[start:].strip()
+    return trimmed or raw
+
+
 def extract_search_query_focus(text: str) -> str:
     raw = str(text or "").strip()
     if not raw:
         return ""
+    raw = _strip_search_preamble(raw)
 
     url_match = re.search(r'https?://[^\s<>"\')\]]+', raw)
     if url_match:
@@ -899,6 +940,7 @@ def extract_search_query_focus(text: str) -> str:
         match = pattern.match(raw)
         if match:
             candidate = extract_search_query_focus(match.group(1))
+            candidate = _SEARCH_TRAILING_INSTRUCTION_RE.sub("", candidate).strip()
             if candidate:
                 return candidate
 
@@ -908,6 +950,7 @@ def extract_search_query_focus(text: str) -> str:
         if not match:
             continue
         candidate = " ".join(match.group(1).split()).strip(" .?!,:;")
+        candidate = _SEARCH_TRAILING_INSTRUCTION_RE.sub("", candidate).strip()
         candidate = _SEARCH_QUERY_FILLER_PREFIX_RE.sub("", candidate).strip()
         candidate = _SEARCH_QUERY_FILLER_SUFFIX_RE.sub("", candidate).strip()
         candidate = re.sub(r"\s+is\s*$", "", candidate, flags=re.IGNORECASE).strip()
@@ -917,6 +960,7 @@ def extract_search_query_focus(text: str) -> str:
             return candidate[:180]
 
     candidate = " ".join(raw.split())
+    candidate = _SEARCH_TRAILING_INSTRUCTION_RE.sub("", candidate).strip()
     candidate = _SEARCH_QUERY_FILLER_PREFIX_RE.sub("", candidate).strip()
     candidate = _SEARCH_QUERY_FILLER_SUFFIX_RE.sub("", candidate).strip()
     candidate = candidate.strip(" .?!,:;")
