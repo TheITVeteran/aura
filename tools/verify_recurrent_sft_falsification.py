@@ -39,6 +39,12 @@ from core.learning.recurrent_sft_falsification import (  # noqa: E402
     build_falsification_verdict,
     sha256_json,
 )
+from core.learning.recurrent_sft_kernel_probe import (  # noqa: E402
+    RecurrentSFTKernelProbeError,
+    execute_kernel_probe,
+    validate_kernel_probe_receipt,
+    validate_kernel_probe_spec,
+)
 from core.learning.recurrent_sft_sampling import (  # noqa: E402
     FAMILY_BALANCED_SAMPLER,
 )
@@ -54,6 +60,7 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     validate_authority,
 )
 from core.learning.structured_sft_research_state import (  # noqa: E402
+    CHECKPOINT_SCHEMA,
     StructuredSFTResearchStateError,
     validate_checkpoint_state,
 )
@@ -165,6 +172,15 @@ def _verify_contract(contract: Mapping[str, Any], report: Mapping[str, Any]) -> 
         or sha256_bytes(_read_bytes(Path(command[0]), role="sandbox_executable")) != sandbox_sha256
     ):
         _fail("recurrent_sft_verification_contract_execution_invalid")
+    kernel_probe_path = contract.get("kernel_probe_path")
+    kernel_probe = contract.get("kernel_probe")
+    if (
+        not isinstance(kernel_probe_path, str)
+        or Path(kernel_probe_path).parent != Path(profile_path).parent
+        or not isinstance(kernel_probe, Mapping)
+    ):
+        _fail("recurrent_sft_verification_kernel_probe_contract_invalid")
+    validate_kernel_probe_spec(kernel_probe)
 
 
 def _verify_source_closure(source_closure: Any) -> None:
@@ -309,6 +325,7 @@ def _verify_adapters(report: Mapping[str, Any]) -> dict[str, str]:
         != {
             "checkpoint",
             "adapter",
+            "initial_adapter_sha256",
             "optimizer_updates",
             "step",
             "trainer_config_sha256",
@@ -320,6 +337,10 @@ def _verify_adapters(report: Mapping[str, Any]) -> dict[str, str]:
         or not isinstance(fingerprints, Mapping)
         or set(fingerprints) != set(ALL_ARMS)
         or fingerprints.get(BASE_ARM) is not None
+        or (
+            trained.get("initial_adapter_sha256") is not None
+            and not _is_sha256(trained.get("initial_adapter_sha256"))
+        )
     ):
         _fail("recurrent_sft_verification_adapter_evidence_invalid")
     _verify_binding(trained["checkpoint"], role="trained_checkpoint")
@@ -344,6 +365,49 @@ def _verify_adapters(report: Mapping[str, Any]) -> dict[str, str]:
     return observed
 
 
+def _verify_reference_initialization(
+    trained: Mapping[str, Any],
+    checkpoint: Mapping[str, Any],
+    *,
+    authority: Mapping[str, Any],
+) -> str | None:
+    """Bind balanced treatment and controls to one adapter initialization."""
+
+    reported = trained.get("initial_adapter_sha256")
+    checkpoint_value = checkpoint.get("initial_adapter_sha256")
+    balanced = authority["trainer"].get("sampler") == FAMILY_BALANCED_SAMPLER
+    if balanced:
+        if not _is_sha256(reported) or checkpoint_value != reported:
+            _fail("recurrent_sft_verification_reference_initialization_mismatch")
+        return str(reported)
+    if reported is not None or checkpoint_value is not None:
+        _fail("recurrent_sft_verification_unexpected_reference_initialization")
+    return None
+
+
+def _validate_reference_checkpoint_state(
+    checkpoint: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the state inside an exact balanced-checkpoint envelope."""
+
+    if checkpoint.get("schema") != CHECKPOINT_SCHEMA:
+        _fail("recurrent_sft_verification_reference_checkpoint_schema_invalid")
+    state = {
+        key: value
+        for key, value in checkpoint.items()
+        if key
+        not in {
+            "schema",
+            "adapter",
+            "optimizer",
+            "checkpoint_id",
+            "created_unix",
+        }
+    }
+    validate_checkpoint_state(state)
+    return state
+
+
 def _verify_equal_work(
     report: Mapping[str, Any],
     *,
@@ -360,19 +424,12 @@ def _verify_equal_work(
         role="equal_work_checkpoint",
     )
     if authority["trainer"].get("sampler") == FAMILY_BALANCED_SAMPLER:
-        validate_checkpoint_state(
-            {
-                key: value
-                for key, value in checkpoint.items()
-                if key
-                not in {
-                    "adapter",
-                    "optimizer",
-                    "checkpoint_id",
-                    "created_unix",
-                }
-            }
-        )
+        _validate_reference_checkpoint_state(checkpoint)
+    reference_initial_adapter_sha256 = _verify_reference_initialization(
+        trained,
+        checkpoint,
+        authority=authority,
+    )
     if (
         checkpoint.get("optimizer_updates") != trained["optimizer_updates"]
         or checkpoint.get("step") != trained["step"]
@@ -399,12 +456,7 @@ def _verify_equal_work(
         expected_execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
         expected_reference_optimizer_updates=trained["optimizer_updates"],
         expected_trainer_config_sha256=trainer_config_sha256,
-        expected_reference_initial_adapter_sha256=(
-            checkpoint.get("initial_adapter_sha256")
-            if authority["trainer"].get("sampler")
-            == FAMILY_BALANCED_SAMPLER
-            else None
-        ),
+        expected_reference_initial_adapter_sha256=reference_initial_adapter_sha256,
     )
     for arm in CONTROL_ARMS:
         binding = bindings[arm]
@@ -532,6 +584,43 @@ def _verify_receipt(
         _fail("recurrent_sft_verification_detached_receipt_invalid")
 
 
+def _verify_kernel_probe(
+    path: Path,
+    *,
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected_path = Path(str(contract.get("kernel_probe_path") or ""))
+    if path.expanduser().is_symlink():
+        _fail("recurrent_sft_verification_kernel_probe_symlink_rejected")
+    try:
+        resolved = path.expanduser().resolve(strict=True)
+        expected = expected_path.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise RecurrentSFTFalsificationVerificationError(
+            "recurrent_sft_verification_kernel_probe_unreadable"
+        ) from exc
+    if resolved != expected:
+        _fail("recurrent_sft_verification_kernel_probe_path_mismatch")
+    spec = contract.get("kernel_probe")
+    environment = contract.get("environment")
+    if not isinstance(spec, Mapping) or not isinstance(environment, Mapping):
+        _fail("recurrent_sft_verification_kernel_probe_contract_invalid")
+    receipt = validate_kernel_probe_receipt(
+        _read_json(resolved, role="kernel_probe"),
+        spec=spec,
+        contract_sha256=str(contract["contract_sha256"]),
+    )
+    replay = execute_kernel_probe(
+        spec,
+        contract_sha256=str(contract["contract_sha256"]),
+        environment={str(key): str(value) for key, value in environment.items()},
+        cwd=REPO_ROOT,
+    )
+    if replay != receipt:
+        _fail("recurrent_sft_verification_kernel_probe_replay_mismatch")
+    return replay
+
+
 def _run(arguments: argparse.Namespace) -> int:
     if arguments.report.expanduser().is_symlink():
         _fail("recurrent_sft_verification_report_symlink_rejected")
@@ -555,9 +644,7 @@ def _run(arguments: argparse.Namespace) -> int:
     decisions = _verify_decisions(report)
     receipt = _read_json(arguments.detached_receipt, role="detached_receipt")
     _verify_receipt(receipt, contract=contract)
-    kernel_probe = _read_json(arguments.kernel_probe, role="kernel_probe")
-    if not kernel_probe or any(value is not True for value in kernel_probe.values()):
-        _fail("recurrent_sft_verification_kernel_probe_invalid")
+    kernel_probe = _verify_kernel_probe(arguments.kernel_probe, contract=contract)
 
     authority_path = Path(
         contract["command"][contract["command"].index("--reference-authority") + 1]
@@ -662,6 +749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RecurrentSFTBehaviorCanaryError,
         RecurrentSFTEvaluationError,
         RecurrentSFTFalsificationVerificationError,
+        RecurrentSFTKernelProbeError,
         StructuredSFTResearchAuthorityError,
         StructuredSFTResearchStateError,
         ValueError,

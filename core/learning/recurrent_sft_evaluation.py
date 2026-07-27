@@ -47,6 +47,7 @@ EVALUATION_SOURCE_ROLES: Final = (
     "file_read_gateway",
     "generated_behavior_canaries",
     "independent_verifier",
+    "kernel_probe",
     "latent_cortex_engine",
     "latent_cortex_governance",
     "latent_optimizer",

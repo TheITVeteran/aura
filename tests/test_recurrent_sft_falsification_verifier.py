@@ -25,6 +25,9 @@ from core.learning.recurrent_sft_falsification import (
     build_falsification_verdict,
     sha256_json,
 )
+from core.learning.recurrent_sft_kernel_probe import build_kernel_probe_spec
+from core.learning.recurrent_sft_sampling import FAMILY_BALANCED_SAMPLER
+from core.learning.structured_sft_research_state import CHECKPOINT_SCHEMA
 from tools import verify_recurrent_sft_falsification as verifier
 
 
@@ -45,6 +48,22 @@ def _contract(tmp_path: Path) -> tuple[dict, dict]:
         "evaluator.py",
     ]
     environment = {"PYTHONHASHSEED": "0"}
+    targets = {}
+    for role in (
+        "evaluator_read",
+        "production_write",
+        "resident_read",
+        "training_write",
+    ):
+        target = tmp_path / role
+        target.write_bytes(role.encode("ascii"))
+        targets[role] = target
+    kernel_probe = build_kernel_probe_spec(
+        sandbox_executable=Path("/usr/bin/sandbox-exec"),
+        profile=profile,
+        python=Path("/usr/bin/python3"),
+        targets=targets,
+    )
     body = {
         "source_closure": source_closure,
         "authority_sha256": "2" * 64,
@@ -68,6 +87,8 @@ def _contract(tmp_path: Path) -> tuple[dict, dict]:
         "command_sha256": sha256_json(command),
         "environment": environment,
         "environment_sha256": sha256_json(environment),
+        "kernel_probe": kernel_probe,
+        "kernel_probe_path": str(tmp_path / "kernel_probe.json"),
     }
     contract = {**body, "contract_sha256": sha256_json(body)}
     report = {
@@ -313,6 +334,76 @@ def test_generated_behavior_failure_forces_final_gate_failure() -> None:
     replay = verifier._verify_decisions(report)
     assert replay["all_small_checkpoint_gates_passed"] is False
     assert replay["generated_behavior_canaries"]["right_to_wrong"] == 1
+
+
+def test_reference_initialization_binds_balanced_checkpoint_and_report() -> None:
+    initial_sha256 = "a" * 64
+    authority = {"trainer": {"sampler": FAMILY_BALANCED_SAMPLER}}
+    trained = {"initial_adapter_sha256": initial_sha256}
+    checkpoint = {"initial_adapter_sha256": initial_sha256}
+
+    assert (
+        verifier._verify_reference_initialization(
+            trained,
+            checkpoint,
+            authority=authority,
+        )
+        == initial_sha256
+    )
+
+    checkpoint["initial_adapter_sha256"] = "b" * 64
+    with pytest.raises(
+        verifier.RecurrentSFTFalsificationVerificationError,
+        match="reference_initialization_mismatch",
+    ):
+        verifier._verify_reference_initialization(
+            trained,
+            checkpoint,
+            authority=authority,
+        )
+
+
+def test_reference_initialization_rejects_unexpected_legacy_commitment() -> None:
+    with pytest.raises(
+        verifier.RecurrentSFTFalsificationVerificationError,
+        match="unexpected_reference_initialization",
+    ):
+        verifier._verify_reference_initialization(
+            {"initial_adapter_sha256": "a" * 64},
+            {"initial_adapter_sha256": None},
+            authority={"trainer": {"sampler": "legacy_sampler.v1"}},
+        )
+
+
+def test_reference_checkpoint_state_strips_exact_completion_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict = {}
+    monkeypatch.setattr(
+        verifier,
+        "validate_checkpoint_state",
+        lambda state: observed.update(state),
+    )
+    checkpoint = {
+        "schema": CHECKPOINT_SCHEMA,
+        "adapter": {"path": "adapter"},
+        "optimizer": {"path": "optimizer"},
+        "checkpoint_id": "step-00000001-test",
+        "created_unix": 1.0,
+        "state_field": "bound",
+    }
+
+    assert verifier._validate_reference_checkpoint_state(checkpoint) == {
+        "state_field": "bound"
+    }
+    assert observed == {"state_field": "bound"}
+
+    checkpoint["schema"] = "forged"
+    with pytest.raises(
+        verifier.RecurrentSFTFalsificationVerificationError,
+        match="reference_checkpoint_schema_invalid",
+    ):
+        verifier._validate_reference_checkpoint_state(checkpoint)
 
 
 def test_decision_replay_rejects_generation_contract_or_arm_drift() -> None:

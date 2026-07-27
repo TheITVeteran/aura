@@ -173,12 +173,38 @@ def test_verdict_requires_all_trained_cases_and_zero_regressions() -> None:
     assert failed["trained_failure_case_ids"] == [case["case_id"]]
 
 
-def test_engine_success_requires_nonempty_integrity_evidence() -> None:
-    observations = _observations(arm="base_recurrent")
-    observations[0]["params_after"] = "d" * 64
-    observations[0]["params_unchanged"] = False
-    with pytest.raises(
-        RecurrentSFTBehaviorCanaryError,
-        match="engine_evidence_invalid",
-    ):
-        validate_generated_behavior_observations(observations)
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("decode_termination", "wall_reserve", "decode_termination:wall_reserve"),
+        ("fallback_used", True, "fallback_used"),
+        ("params_after", "d" * 64, "parameter_integrity_failed"),
+    ],
+)
+def test_valid_negative_engine_evidence_is_reported_not_rejected(
+    field: str,
+    value: object,
+    reason: str,
+) -> None:
+    base = _observations(arm="base_recurrent")
+    trained = _observations(arm="trained_recurrent")
+    trained[0][field] = value
+    if field == "params_after":
+        trained[0]["params_unchanged"] = False
+
+    validated = validate_generated_behavior_observations(trained)
+    verdict = generated_behavior_verdict(
+        base,
+        validated,
+        expected_generation_contract_sha256=_CONTRACT["contract_sha256"],
+        expected_trained_adapter_fingerprint=_ADAPTER_SHA,
+    )
+
+    assert verdict["passed"] is False
+    assert verdict["trained_failure_case_ids"] == [trained[0]["case_id"]]
+    assert verdict["trained_failure_reasons"] == [
+        {
+            "case_id": trained[0]["case_id"],
+            "reasons": [reason],
+        }
+    ]

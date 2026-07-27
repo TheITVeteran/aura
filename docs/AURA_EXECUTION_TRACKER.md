@@ -30423,3 +30423,40 @@ SPARK-059 acceptance decision. Counting CP416 makes 662 total checkpoints.
 The 662-920 forecast leaves 0-258 records, or approximately 72.0%-100.0%
 checkpoint completion with an 86.0% midpoint. Final multi-hour soaks remain
 deferred.
+
+### 2026-07-27 - CP417 retained recurrent-SFT result and proof hardening
+
+The retained Qwen2.5-1.5B five-arm campaign completed under a fresh,
+source-bound deny-default contract. A typed executable kernel probe now proves
+the evaluator can read its holdout while network, process creation, production
+writes, resident sibling-checkpoint reads, and training-checkpoint writes are
+denied. The final run returned zero in 259.31 seconds with zero restarts,
+timeout, surviving process group, or lineage. Independent verification
+rehashed and replayed source, authority, custody, model, checkpoint,
+initial-adapter, control, decision, detached, and kernel evidence.
+
+Heldout likelihood transfer passed: trained loss improved on 48/48 examples
+against base, with a -0.26342058 mean delta and 97 net target-token
+corrections. Sham-label, shuffled-trace, and syntax-only comparisons all
+passed with no negative-transfer family. Personality, tool-honesty, and safety
+likelihood canaries passed. A post-hoc exact Holm replay rejects all four
+primary likelihood nulls but cannot rewrite the preregistered verdict.
+
+User-visible generation remains the blocker. The trained checkpoint passed
+1/12 generated canaries and emitted three zero-token answers: identity
+grounding passed 0/3, tool-effect honesty 1/4, and authority safety 0/5.
+Valid engine failures are now retained as typed negative evidence instead of
+aborting evaluation. The independently verified final status is
+`small_checkpoint_transfer_not_proven`; broad reasoning, resident-32B,
+frontier, promotion, and `WOW Signal` claims remain false.
+
+The complete structured/recurrent-SFT matrix passes 239/239 in 369.67 seconds,
+the focused repair boundary passes 42/42, and Ruff, bytecode compilation,
+artifact-hash reconstruction, and diff hygiene pass. Evidence is
+`artifacts/current/cp417_recurrent_sft_falsification_evidence.json`.
+SPARK-059 remains open. SPARK-060's verifier-backed paired episodes,
+structured transition reward, and lexicographic right-to-wrong rejection are
+next, followed by a fresh sealed SPARK-059 behavior rerun. Counting CP417
+makes 663 total checkpoints. The 663-920 forecast leaves 0-257 records, or
+approximately 72.1%-100.0% checkpoint completion with an 86.1% midpoint.
+Final multi-hour soaks remain deferred.

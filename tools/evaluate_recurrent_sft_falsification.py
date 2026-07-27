@@ -54,6 +54,11 @@ from core.learning.recurrent_sft_falsification import (  # noqa: E402
     build_falsification_verdict,
     sha256_json,
 )
+from core.learning.recurrent_sft_kernel_probe import (  # noqa: E402
+    RecurrentSFTKernelProbeError,
+    validate_kernel_probe_receipt,
+    validate_kernel_probe_spec,
+)
 from core.learning.recurrent_sft_sampling import (  # noqa: E402
     FAMILY_BALANCED_SAMPLER,
 )
@@ -177,6 +182,9 @@ def evaluation_source_paths() -> dict[str, Path]:
         "evaluator": Path(__file__),
         "evaluator_launcher": (REPO_ROOT / "tools/launch_recurrent_sft_falsification.py"),
         "independent_verifier": (REPO_ROOT / "tools/verify_recurrent_sft_falsification.py"),
+        "kernel_probe": (
+            REPO_ROOT / "core/learning/recurrent_sft_kernel_probe.py"
+        ),
         "execution_spec": (REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"),
         "fast_weights": (REPO_ROOT / "core/brain/llm/latent_cortex/fast_weights.py"),
         "fast_weight_learning": (
@@ -363,7 +371,13 @@ def _reference_adapter(
             key: value
             for key, value in checkpoint.items()
             if key
-            not in {"adapter", "optimizer", "checkpoint_id", "created_unix"}
+            not in {
+                "schema",
+                "adapter",
+                "optimizer",
+                "checkpoint_id",
+                "created_unix",
+            }
         }
         validate_checkpoint_state(state_view)
     adapter = checkpoint.get("adapter")
@@ -405,6 +419,20 @@ def _reference_adapter(
             "initial_adapter_sha256"
         ),
     }
+
+
+def _reference_initial_adapter_sha256(
+    authority: Mapping[str, Any],
+    trained_binding: Mapping[str, Any],
+) -> str | None:
+    """Return the initialization commitment required by balanced controls."""
+
+    if authority["trainer"].get("sampler") != FAMILY_BALANCED_SAMPLER:
+        return None
+    value = trained_binding.get("initial_adapter_sha256")
+    if not _is_sha256(value):
+        _fail("recurrent_sft_evaluation_reference_initial_adapter_invalid")
+    return str(value)
 
 
 def _control_adapters(
@@ -710,6 +738,21 @@ def _validated_containment_contract(
         or contract.get("resume_contract") != "none"
     ):
         _fail("recurrent_sft_evaluation_containment_contract_invalid")
+    kernel_probe_path = contract.get("kernel_probe_path")
+    kernel_probe_spec = contract.get("kernel_probe")
+    if (
+        not isinstance(kernel_probe_path, str)
+        or Path(kernel_probe_path).parent != path.resolve(strict=True).parent
+        or not isinstance(kernel_probe_spec, Mapping)
+    ):
+        _fail("recurrent_sft_evaluation_kernel_probe_contract_invalid")
+    validate_kernel_probe_spec(kernel_probe_spec, rebind_files=False)
+    validate_kernel_probe_receipt(
+        _read_json(Path(kernel_probe_path), role="kernel_probe"),
+        spec=kernel_probe_spec,
+        contract_sha256=str(contract["contract_sha256"]),
+        rebind_files=False,
+    )
     return contract
 
 
@@ -768,11 +811,9 @@ def _run(arguments: argparse.Namespace) -> int:
         expected_reference_checkpoint_sha256=(arguments.expected_reference_checkpoint_sha256),
         expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
         expected_trainer_config_sha256=expected_trainer_config_sha256,
-        expected_reference_initial_adapter_sha256=(
-            trained_binding["initial_adapter_sha256"]
-            if authority["trainer"].get("sampler")
-            == FAMILY_BALANCED_SAMPLER
-            else None
+        expected_reference_initial_adapter_sha256=_reference_initial_adapter_sha256(
+            authority,
+            trained_binding,
         ),
     )
     containment_contract = _validated_containment_contract(
@@ -1032,6 +1073,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         MemoryError,
         OSError,
         RecurrentSFTEvaluationError,
+        RecurrentSFTKernelProbeError,
         RecurrentSFTExecutionError,
         RecurrentSFTFalsificationError,
         RecurrentSFTFalsificationEvaluationError,

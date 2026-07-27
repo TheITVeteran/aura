@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,10 +11,12 @@ import pytest
 from core.learning import recurrent_sft_evaluation as evaluation
 from core.learning.recurrent_sft_evaluation import EVALUATION_SOURCE_ROLES
 from core.learning.recurrent_sft_falsification import CONTROL_ARMS, sha256_json
+from core.learning.recurrent_sft_sampling import FAMILY_BALANCED_SAMPLER
 from core.learning.structured_sft import (
     STRUCTURED_SFT_CANDIDATE_FILES,
     STRUCTURED_SFT_EVALUATOR_FILES,
 )
+from core.learning.structured_sft_research_state import CHECKPOINT_SCHEMA
 from tools import evaluate_recurrent_sft_falsification as evaluator_tool
 
 
@@ -361,6 +364,104 @@ def test_control_report_rejects_reference_workload_drift() -> None:
             expected_execution_spec_sha256="d" * 64,
             expected_reference_optimizer_updates=21,
             expected_trainer_config_sha256="f" * 64,
+        )
+
+
+def test_reference_adapter_replays_state_from_completion_envelope(tmp_path: Path) -> None:
+    adapter_payload = b"adapter"
+    adapter_path = tmp_path / "quarantine_adapter.safetensors"
+    adapter_path.write_bytes(adapter_payload)
+    state = {
+        "authority_sha256": "a" * 64,
+        "dataset_sha256": "b" * 64,
+        "tokenization_identity_sha256": "c" * 64,
+        "model_identity_sha256": "d" * 64,
+        "source_closure_sha256": "e" * 64,
+        "execution_spec_sha256": "f" * 64,
+        "trainer_config_sha256": "1" * 64,
+        "step": 1,
+        "optimizer_updates": 1,
+        "epoch": 1,
+        "cursor": 0,
+        "order": [0],
+        "sampler": FAMILY_BALANCED_SAMPLER,
+        "seed": 7,
+        "train_example_count": 1,
+        "validation_example_count": 1,
+        "elapsed_training_s": 1.0,
+        "invocation_count": 1,
+        "loss_trail": [{"step": 1, "loss": 1.0}],
+        "validation_trail": [],
+        "pending_losses": [],
+        "baseline_validation": {"loss": 1.0},
+        "last_step_committed": True,
+        "terminal": True,
+        "initial_adapter_sha256": "2" * 64,
+    }
+    completion = {
+        **state,
+        "schema": CHECKPOINT_SCHEMA,
+        "checkpoint_id": "step-00000001-test",
+        "created_unix": 1.0,
+        "adapter": {
+            "path": adapter_path.name,
+            "sha256": hashlib.sha256(adapter_payload).hexdigest(),
+            "size_bytes": len(adapter_payload),
+        },
+        "optimizer": {
+            "path": "optimizer.safetensors",
+            "sha256": "3" * 64,
+            "size_bytes": 1,
+        },
+    }
+    checkpoint_payload = json.dumps(
+        completion,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    checkpoint_path = tmp_path / "complete.json"
+    checkpoint_path.write_bytes(checkpoint_payload)
+    authority = {
+        "authority_sha256": state["authority_sha256"],
+        "model": {"identity_sha256": state["model_identity_sha256"]},
+        "execution_spec": {"semantic_sha256": state["execution_spec_sha256"]},
+        "trainer": {"sampler": FAMILY_BALANCED_SAMPLER},
+    }
+
+    observed_path, binding = evaluator_tool._reference_adapter(
+        checkpoint_path,
+        expected_checkpoint_sha256=hashlib.sha256(checkpoint_payload).hexdigest(),
+        authority=authority,
+    )
+
+    assert observed_path == adapter_path
+    assert binding["step"] == 1
+    assert binding["optimizer_updates"] == 1
+    assert binding["initial_adapter_sha256"] == "2" * 64
+
+
+def test_reference_initial_adapter_is_required_only_for_balanced_sampling() -> None:
+    balanced = {"trainer": {"sampler": FAMILY_BALANCED_SAMPLER}}
+    legacy = {"trainer": {"sampler": "sha256_stateless_epoch_permutation.v1"}}
+
+    assert evaluator_tool._reference_initial_adapter_sha256(
+        balanced,
+        {"initial_adapter_sha256": "2" * 64},
+    ) == "2" * 64
+    assert (
+        evaluator_tool._reference_initial_adapter_sha256(
+            legacy,
+            {"initial_adapter_sha256": None},
+        )
+        is None
+    )
+    with pytest.raises(
+        evaluator_tool.RecurrentSFTFalsificationEvaluationError,
+        match="reference_initial_adapter_invalid",
+    ):
+        evaluator_tool._reference_initial_adapter_sha256(
+            balanced,
+            {"initial_adapter_sha256": None},
         )
 
 

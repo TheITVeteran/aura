@@ -19,6 +19,11 @@ from core.learning.recurrent_sft_evaluation import (  # noqa: E402
     RecurrentSFTEvaluationError,
     evaluator_holdout_rows,
 )
+from core.learning.recurrent_sft_kernel_probe import (  # noqa: E402
+    RecurrentSFTKernelProbeError,
+    build_kernel_probe_spec,
+    execute_kernel_probe,
+)
 from core.learning.structured_sft import (  # noqa: E402
     STRUCTURED_SFT_CANDIDATE_FILES,
     STRUCTURED_SFT_EVALUATOR_FILES,
@@ -35,6 +40,7 @@ from tools.evaluate_recurrent_sft_falsification import (  # noqa: E402
     RecurrentSFTFalsificationEvaluationError,
     _control_adapters,
     _reference_adapter,
+    _reference_initial_adapter_sha256,
     evaluation_source_closure,
 )
 from tools.launch_recurrent_sft_controls import (  # noqa: E402
@@ -100,6 +106,27 @@ def _forbidden_roots(*, model_dir: Path) -> tuple[Path, ...]:
             key=lambda path: os.fsencode(path),
         )
     )
+
+
+def _resident_probe_target(*, model_dir: Path) -> Path:
+    """Choose one real sibling-checkpoint file the profile must deny."""
+
+    siblings = sorted(
+        (
+            sibling.resolve(strict=True)
+            for sibling in model_dir.parent.iterdir()
+            if sibling != model_dir and sibling.is_dir() and not sibling.is_symlink()
+        ),
+        key=lambda path: os.fsencode(path),
+    )
+    for sibling in siblings:
+        preferred = sibling / "config.json"
+        if preferred.is_file() and not preferred.is_symlink():
+            return preferred.resolve(strict=True)
+        for candidate in sorted(sibling.iterdir(), key=lambda path: os.fsencode(path)):
+            if candidate.is_file() and not candidate.is_symlink():
+                return candidate.resolve(strict=True)
+    _fail("evaluator_containment_resident_probe_target_unavailable")
 
 
 def _artifact_files(root: Path, names: Sequence[str], *, role: str) -> tuple[Path, ...]:
@@ -263,6 +290,10 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         expected_reference_checkpoint_sha256=arguments.expected_checkpoint_sha256,
         expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
         expected_trainer_config_sha256=expected_trainer_config_sha256,
+        expected_reference_initial_adapter_sha256=_reference_initial_adapter_sha256(
+            authority,
+            trained_binding,
+        ),
     )
     candidate_dir = _existing_directory(
         arguments.candidate_dir,
@@ -389,6 +420,18 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
     )
     profile_path = contract_dir / "recurrent-sft-evaluator.sb"
     _write_create_or_verify(profile_path, profile.encode("utf-8"))
+    kernel_probe_path = contract_dir / "kernel_probe.json"
+    kernel_probe = build_kernel_probe_spec(
+        sandbox_executable=SANDBOX_PATH,
+        profile=profile_path,
+        python=python,
+        targets={
+            "evaluator_read": evaluator_dir / "holdout.private.json",
+            "training_write": checkpoint_path,
+            "production_write": REPO_ROOT / "aura_main.py",
+            "resident_read": _resident_probe_target(model_dir=model_dir),
+        },
+    )
     command = [
         str(SANDBOX_PATH),
         "-f",
@@ -459,6 +502,8 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
         "command_sha256": _sha256_json(command),
         "environment": environment,
         "environment_sha256": _sha256_json(environment),
+        "kernel_probe": kernel_probe,
+        "kernel_probe_path": str(kernel_probe_path),
         "read_paths": [str(path) for path in reads],
         "write_paths": [str(path) for path in writes],
         "forbidden_roots": [str(path) for path in forbidden],
@@ -486,6 +531,16 @@ def build_contract(arguments: argparse.Namespace) -> dict[str, Any]:
     _write_create_or_verify(
         contract_dir / "containment_contract.json",
         canonical_json_bytes(contract),
+    )
+    kernel_probe_receipt = execute_kernel_probe(
+        kernel_probe,
+        contract_sha256=contract["contract_sha256"],
+        environment=environment,
+        cwd=REPO_ROOT,
+    )
+    _write_create_or_verify(
+        kernel_probe_path,
+        canonical_json_bytes(kernel_probe_receipt),
     )
     return contract
 
@@ -585,6 +640,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RecurrentSFTControlContainmentError,
         RecurrentSFTEvaluationError,
         RecurrentSFTFalsificationEvaluationError,
+        RecurrentSFTKernelProbeError,
         RecurrentSFTEvaluatorContainmentError,
         StructuredSFTResearchAuthorityError,
         ValueError,

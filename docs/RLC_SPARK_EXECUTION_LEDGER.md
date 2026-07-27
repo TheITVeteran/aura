@@ -2946,11 +2946,17 @@ before those dependencies close is not admissible.
     masking offset, model, adapter, recurrence program, optimizer, scheduler,
     RNG, and compute budget into a resumable trainer receipt. Candidate
     filenames must remain unloadable until this authority is present.
-  - [ ] Run small-checkpoint falsification before resident expense: exact
+  - [x] Run small-checkpoint falsification before resident expense: exact
     reconstruction, target learnability, heldout transfer, negative-transfer,
     right-to-wrong/error-introduction, personality/tool/safety regressions,
     sham labels, shuffled traces, syntax-only traces, and equal-token/equal-
     compute controls.
+    CP417 completed and independently verified the complete retained five-arm
+    run. Heldout likelihood transfer passed against base and every equal-work
+    control, and all teacher-forced regression families passed. The generated
+    behavior gate failed at 1/12 trained canaries, including three zero-token
+    answers. This completes the experiment requirement but does not complete
+    SPARK-059 or authorize resident training.
   - [ ] Train the resident 32B only after all prior gates pass. Compare frozen
     base/adapter vanilla, base/adapter RLC, trained adapter vanilla/RLC,
     ablations, and equal-compute controls on fresh externally sealed tasks.
@@ -3943,3 +3949,51 @@ five-arm generated-behavior evaluator, and independent verification. Counting
 CP416 makes 662 total checkpoints. The 662-920 forecast leaves 0-258 records,
 or approximately 72.0%-100.0% checkpoint completion with an 86.0% midpoint.
 Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP417 independently verified retained-campaign boundary
+
+The retained Qwen2.5-1.5B five-arm campaign completed under a fresh deny-
+default evaluator contract. Its executable kernel probe binds exact files and
+replays the real sandbox command: evaluator read succeeded, while network,
+process fork, production write, resident sibling-checkpoint read, and training-
+checkpoint write each failed with kernel `EPERM`. The final detached run
+returned zero after 259.31 seconds with no restart, timeout, surviving process
+group, or lineage. The independent verifier rehashed and reconstructed the
+complete source, authority, custody, checkpoint, initial adapter, control,
+model, decision, containment, and kernel-probe chain.
+
+The scientific result is mixed and remains negative at the required boundary.
+The trained arm improved heldout loss against base on all 48 examples
+(1.42289607 to 1.15947549; mean delta -0.26342058), with 124 wrong-to-right,
+27 right-to-wrong, and 97 net target-token corrections. It beat sham labels,
+shuffled traces, and syntax-only controls with no negative-transfer family.
+Personality, tool-honesty, and safety likelihood canaries all passed.
+
+Generated behavior did not pass. The trained checkpoint satisfied only 1/12
+behavior canaries: 0/3 identity-grounding, 1/4 tool-effect-honesty, and 0/5
+authority-safety. Three outputs contained zero generated tokens. The valid
+negative observations are now classified in the report instead of crashing
+the evaluator. A supplemental exact Holm replay rejects all four primary
+likelihood nulls, but is explicitly post-hoc and cannot replace the
+preregistered behavior gate. The final status is
+`small_checkpoint_transfer_not_proven`; reasoning gain, resident-32B gain,
+frontier performance, promotion, and `WOW Signal` remain false.
+
+Four failed proof attempts remain preserved as engineering evidence: a missing
+initial-adapter verifier field, an absent executable kernel probe, forbidden
+target rebinding inside the sandbox, and completion-envelope/state-schema
+drift. The final typed probe and verifier independently bind and replay each
+repair. The complete structured/recurrent-SFT matrix passes 239/239 in 369.67
+seconds; the repaired focused boundary passes 42/42. Ruff, bytecode
+compilation, JSON/hash reconstruction, and diff hygiene pass. Sanitized
+evidence is
+`artifacts/current/cp417_recurrent_sft_falsification_evidence.json`.
+
+SPARK-059 stays open until generated identity, tool-effect, and authority
+behavior passes under the same sealed standard. The next constructive
+checkpoint is SPARK-060's immutable verifier-backed paired episode, followed
+by structured delta reward and lexicographic error-introduction rejection.
+Those mechanisms must drive a fresh SPARK-059 rerun; they do not erase this
+negative result. Counting CP417 makes 663 total checkpoints. The 663-920
+forecast leaves 0-257 records, or approximately 72.1%-100.0% checkpoint
+completion with an 86.1% midpoint. Final multi-hour soaks remain deferred.

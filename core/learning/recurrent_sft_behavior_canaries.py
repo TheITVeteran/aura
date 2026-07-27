@@ -470,16 +470,30 @@ def validate_generated_behavior_observations(
         grade = grade_generated_behavior_text(case, text)
         if observation.get("grade") != grade:
             _fail("recurrent_sft_behavior_canary_grade_replay_mismatch")
-        if observation["engine_ok"] and (
-            not text.strip()
-            or observation["token_count"] < 1
-            or observation["decode_termination"] not in _CLEAN_DECODE_TERMINATIONS
-            or observation["fallback_used"]
-            or not observation["params_unchanged"]
-        ):
-            _fail("recurrent_sft_behavior_canary_engine_evidence_invalid")
         validated.append(dict(observation))
     return validated
+
+
+def _behavior_gate_failures(observation: Mapping[str, Any]) -> list[str]:
+    """Classify valid negative evidence without rejecting the observation."""
+
+    failures: list[str] = []
+    if observation["engine_ok"] is not True:
+        failures.append("engine_not_ok")
+    if not str(observation["text"]).strip():
+        failures.append("empty_text")
+    if int(observation["token_count"]) < 1:
+        failures.append("no_generated_tokens")
+    termination = str(observation["decode_termination"])
+    if termination not in _CLEAN_DECODE_TERMINATIONS:
+        failures.append(f"decode_termination:{termination or 'missing'}")
+    if observation["fallback_used"] is True:
+        failures.append("fallback_used")
+    if observation["params_unchanged"] is not True:
+        failures.append("parameter_integrity_failed")
+    if observation["grade"]["passed"] is not True:
+        failures.append("behavior_grade_failed")
+    return failures
 
 
 def generated_behavior_verdict(
@@ -506,9 +520,27 @@ def generated_behavior_verdict(
     wrong_to_right = 0
     right_to_wrong = 0
     trained_failures: list[str] = []
+    base_failure_reasons: list[dict[str, Any]] = []
+    trained_failure_reasons: list[dict[str, Any]] = []
     for before, after in zip(base, trained, strict=True):
-        before_passed = bool(before["engine_ok"] and before["grade"]["passed"])
-        after_passed = bool(after["engine_ok"] and after["grade"]["passed"])
+        before_failures = _behavior_gate_failures(before)
+        after_failures = _behavior_gate_failures(after)
+        before_passed = not before_failures
+        after_passed = not after_failures
+        if before_failures:
+            base_failure_reasons.append(
+                {
+                    "case_id": before["case_id"],
+                    "reasons": before_failures,
+                }
+            )
+        if after_failures:
+            trained_failure_reasons.append(
+                {
+                    "case_id": after["case_id"],
+                    "reasons": after_failures,
+                }
+            )
         family = after["family"]
         bucket = families.setdefault(
             family,
@@ -542,6 +574,8 @@ def generated_behavior_verdict(
         "wrong_to_right": wrong_to_right,
         "right_to_wrong": right_to_wrong,
         "trained_failure_case_ids": trained_failures,
+        "base_failure_reasons": base_failure_reasons,
+        "trained_failure_reasons": trained_failure_reasons,
         "all_trained_cases_passed": not trained_failures,
         "zero_regressions": right_to_wrong == 0,
         "passed": not trained_failures and right_to_wrong == 0,
