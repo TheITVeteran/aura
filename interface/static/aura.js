@@ -5453,6 +5453,18 @@ function reconcileRuntimeShellRevision(payload) {
     if (state.runtimeRevisionReloading) return false;
     if (!evidence) {
         if (healthSnapshotRevisionIsAuthoritative(payload)) {
+            // A direct/source launch has no signed revision token and never
+            // will: the runtime says so with required === false, and the
+            // server's own blocker treats that as no blocker at all. Calling
+            // it 'untrusted' made every heartbeat WITHOUT a runtime_revision
+            // key report `runtime_revision_unverified`, so the header badge
+            // read RUNTIME_REVISION_UNVERIFIED instead of ONLINE while
+            // /api/health simultaneously reported zero blockers. Absence of a
+            // requirement is not a failed check.
+            if (payload?.runtime_revision?.required === false) {
+                state.runtimeRevisionTrust = 'not_required';
+                return false;
+            }
             const hadTrustedShell = Boolean(
                 state.runtimeRevisionTrust === 'trusted'
                 || state.runtimeRevision

@@ -1651,6 +1651,31 @@ def test_legacy_shell_handoff_preserves_draft_active_and_queued_turns():
         assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA, {{ expired: true }})), false);
         assert.equal(replacements.length, 0);
 
+        // A shell that CLAIMS a required revision and cannot prove it is
+        // untrusted, and a heartbeat carrying no runtime_revision key at all
+        // must inherit that verdict.
+        assert.equal(state.runtimeRevisionTrust, 'untrusted');
+        assert.equal(runtimeRevisionPolicyBlocker({{}}), 'runtime_revision_unverified');
+
+        // A direct/source launch has no signed revision and never will: the
+        // runtime says required === false, and the server's own blocker treats
+        // that as no blocker. Calling it 'untrusted' made every keyless
+        // heartbeat report runtime_revision_unverified, so the header badge
+        // read RUNTIME_REVISION_UNVERIFIED while /api/health reported none.
+        const sourceLaunch = revisionPayload('', {{ required: false, verified: false }});
+        assert.equal(reconcileRuntimeShellRevision(sourceLaunch), false);
+        assert.equal(state.runtimeRevisionTrust, 'not_required');
+        assert.equal(runtimeRevisionPolicyBlocker(sourceLaunch), '');
+        assert.equal(runtimeRevisionPolicyBlocker({{}}), '');
+        assert.equal(replacements.length, 0);
+        assert.equal(reloads.length, 0);
+
+        // ...and it must not have quietly disarmed the signed-app check.
+        assert.equal(
+            runtimeRevisionPolicyBlocker(revisionPayload(revisionA, {{ verified: false }})),
+            'runtime_revision_unverified',
+        );
+
         assert.equal(reconcileRuntimeShellRevision(revisionPayload(revisionA.toUpperCase())), false);
         assert.equal(state.runtimeRevision, revisionA);
         let revisionRecord = JSON.parse(values.get(RUNTIME_REVISION_STORAGE_KEY));
