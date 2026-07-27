@@ -800,6 +800,17 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
         "too_thin_for_status_turn",
         "too_thin_for_operational_status_turn",
         "too_thin_for_expansion_request",
+        # The reliability-flavoured thinness verdicts belong with the rest of
+        # the family. They were the only two "the draft is thinner than we
+        # wanted" reasons that killed the turn instead of delivering it, and
+        # the failure was measured live: a correct 276-character answer about
+        # re-prefilling — mechanism plus a numeric threshold — was discarded,
+        # and the user was told "I couldn't get to an answer I'd stand behind".
+        # Thinness is not a safety or honesty defect; a short true answer is
+        # strictly better than a refusal, and worst of all on a turn that ASKED
+        # about reliability.
+        "reliability_diagnostic_too_thin",
+        "too_thin_for_reliability_turn",
         "low_signal_acknowledgement_placeholder",
         "generic_assistant_language",
     }
@@ -5709,6 +5720,19 @@ def _mlx_worker_loop(
                                 "[WORKER] One-token warmup precompile produced no visible text; "
                                 "the required visible readiness probe will verify conversation output."
                             )
+                        elif token_count > 0:
+                            # The decoder DID produce tokens; something
+                            # downstream (quality gate, salvage, role-drift
+                            # truncation) discarded them. Saying "ZERO tokens"
+                            # here sent every investigation at the sampler and
+                            # the KV cache, which were both working — measured
+                            # live as "yielded ZERO tokens ... token_count: 75".
+                            logger.warning(
+                                "⚠️ [WORKER] Generation produced %d token(s) but no text "
+                                "survived to the caller — discarded downstream, not a decode "
+                                "failure. Prompt length: %d, stop_sequences: %s",
+                                token_count, len(prompt), list(stop_sequences)[:4],
+                            )
                         else:
                             logger.warning(
                                 "⚠️ [WORKER] Generation yielded ZERO tokens. "
@@ -5717,21 +5741,25 @@ def _mlx_worker_loop(
                             )
                         if len(prompt) > 2000:
                             logger.debug("Prompt snippet: %s...", prompt[:100])
-                        # Outside the explicit one-token precompile, a zero-token
-                        # generation almost always means the prompt cache picked
-                        # up a stale/corrupt KV state
-                        # (MLX sampler hit EOS on the first step because the
-                        # cached KV disagreed with the fresh prompt).  Nuke
-                        # the per-model prompt cache AND the Metal cache so
-                        # the very next request starts from a clean state
-                        # instead of looping in "Cortex returned no text".
-                        try:
-                            if prompt_cache_lru is not None:
-                                prompt_cache_lru.clear()
-                        except (AttributeError, RuntimeError) as exc:
-                            logger.debug("Prompt cache clear failed after zero-token generation: %s", exc)
-                        if mx and device != "cpu":
-                            _clear_mlx_cache(mx)
+                        # A genuinely zero-token generation outside the explicit
+                        # one-token precompile usually means the prompt cache
+                        # handed over a stale/corrupt KV state (the sampler hit
+                        # EOS on the first step because cached KV disagreed with
+                        # the fresh prompt), so clear it and the Metal cache.
+                        #
+                        # But when tokens WERE produced, KV is exonerated by the
+                        # decode itself, and clearing here punished the cache for
+                        # a downstream rejection — throwing away the conversation
+                        # prefix that keeps later turns inside their budget, on
+                        # exactly the turns already going badly.
+                        if token_count == 0:
+                            try:
+                                if prompt_cache_lru is not None:
+                                    prompt_cache_lru.clear()
+                            except (AttributeError, RuntimeError) as exc:
+                                logger.debug("Prompt cache clear failed after zero-token generation: %s", exc)
+                            if mx and device != "cpu":
+                                _clear_mlx_cache(mx)
 
                     try:
                         if engine is not None:

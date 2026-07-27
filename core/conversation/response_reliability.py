@@ -598,6 +598,42 @@ _RELIABILITY_DIAGNOSTIC_SUBSTANCE_MARKERS = (
     "ui",
     "warmup",
     "worker",
+    # Inference-path vocabulary. The list above is all runtime-plumbing
+    # nouns, so a correct answer phrased in the language of the thing being
+    # diagnosed scored ZERO markers: "every turn would re-prefill from token
+    # zero ... latency climbs" was rejected as having no diagnostic substance
+    # because it said "prefill" instead of "lane". These are exactly as
+    # diagnostic as "warmup".
+    "cache hit",
+    "hit rate",
+    "kv",
+    "latency",
+    "prefill",
+    "prompt cache",
+    "throughput",
+    "token",
+)
+# Naming a causal mechanism is diagnostic substance in its own right. The
+# action family below answers "what will you do about it"; a question like
+# "what happens, and where does it break" is answered by explaining the
+# mechanism, and demanding a remediation verb rejected correct answers to
+# questions that never asked for one.
+_RELIABILITY_DIAGNOSTIC_MECHANISM_MARKERS = (
+    "as a result",
+    "because",
+    "climb",
+    "compound",
+    "degrade",
+    "grow",
+    "leads to",
+    "means that",
+    "results in",
+    "scales with",
+    "so each",
+    "so every",
+    "start over",
+    "which is why",
+    "which means",
 )
 _TINY_DIRECT_MARKERS = (
     "do you know my name",
@@ -4132,6 +4168,8 @@ def _has_reliability_diagnostic_substance(reply_text: Any) -> bool:
     marker_hits = sum(1 for marker in _RELIABILITY_DIAGNOSTIC_SUBSTANCE_MARKERS if marker in reply)
     if marker_hits < 2:
         return False
+    if any(marker in reply for marker in _RELIABILITY_DIAGNOSTIC_MECHANISM_MARKERS):
+        return True
     return any(
         action in reply
         for action in (

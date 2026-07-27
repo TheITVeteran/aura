@@ -154,3 +154,87 @@ class TestSurfaceRetryWall:
         # env value of 0 must not make every rejection skip straight to salvage
         assert _surface_retry_wall_exceeded(time.monotonic() - 5.0, 0.0) is False
         assert _surface_retry_wall_exceeded(time.monotonic() - 11.0, 0.0) is True
+
+
+class TestThinnessNeverKillsTheTurn:
+    """The live failure this class pins.
+
+    Asked what a 0% prompt-cache hit rate does to a long conversation, the 32B
+    answered correctly — re-prefill from token zero, latency climbs, breaks
+    around 5-10 interactions. The gate scored it `reliability_diagnostic_too_thin`,
+    salvage refused to deliver it because that reason was the one thinness
+    verdict missing from the deliverable set, and the user was told "I couldn't
+    get to an answer I'd stand behind on that one" while a correct answer sat
+    in the worker. A short true answer beats a refusal.
+    """
+
+    REAL_DRAFT = (
+        "If the prompt cache hit rate dropped to 0%, every turn would re-prefill "
+        "from token zero, making each response generation start over. This extreme "
+        "inefficiency compounds with conversation length — after about 5-10 "
+        "interactions on a local system, you'd see performance degrade "
+        "significantly as latency climbs."
+    )
+
+    def test_reliability_thinness_is_delivered_not_discarded(self):
+        from core.brain.llm.mlx_worker import _salvage_exhausted_user_surface
+
+        for reason in ("reliability_diagnostic_too_thin", "too_thin_for_reliability_turn"):
+            draft, residual, _repairs = _salvage_exhausted_user_surface(
+                {}, self.REAL_DRAFT, [reason]
+            )
+            assert draft == self.REAL_DRAFT, f"{reason} discarded a real answer"
+            assert residual == [reason], "the residual defect must still be disclosed"
+
+    def test_every_thinness_verdict_is_deliverable(self):
+        from core.brain.llm.mlx_worker import _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+
+        # Any reason whose name says the draft is merely thin or short belongs
+        # to one family; a family member that kills the turn is the bug.
+        known_thinness = {
+            "too_short_for_user_turn",
+            "too_thin_for_user_turn",
+            "too_thin_for_open_ended_turn",
+            "too_thin_for_status_turn",
+            "too_thin_for_operational_status_turn",
+            "too_thin_for_expansion_request",
+            "too_thin_for_reliability_turn",
+            "reliability_diagnostic_too_thin",
+        }
+        missing = known_thinness - set(_DELIVERABLE_RESIDUAL_SURFACE_REASONS)
+        assert not missing, f"thinness verdicts that still kill the turn: {sorted(missing)}"
+
+    def test_safety_defects_still_refuse_to_deliver(self):
+        from core.brain.llm.mlx_worker import _salvage_exhausted_user_surface
+
+        # Thinness is deliverable; a false self-claim or fabricated continuity
+        # is not, and must keep failing closed.
+        draft, _residual, _repairs = _salvage_exhausted_user_surface(
+            {}, self.REAL_DRAFT, ["ungrounded_person_narrative"]
+        )
+        assert draft == "", "an ungrounded narrative must not be salvaged"
+
+    def test_mechanism_answers_are_diagnostic_substance(self):
+        from core.conversation.response_reliability import (
+            _has_reliability_diagnostic_substance,
+        )
+
+        assert _has_reliability_diagnostic_substance(self.REAL_DRAFT) is True, (
+            "an answer phrased in the vocabulary of the thing being diagnosed "
+            "('prefill', 'latency') scored zero markers against a list of "
+            "runtime-plumbing nouns"
+        )
+
+    def test_reassurance_without_substance_is_still_rejected(self):
+        from core.conversation.response_reliability import (
+            _has_reliability_diagnostic_substance,
+        )
+
+        for deflection in (
+            "I'm working fine, no problems at all! Let me know if there's anything else.",
+            "Don't worry about it, everything is running smoothly on my end right now.",
+            "I can't really say what happened, but I'm sure it will be fine because it usually is.",
+        ):
+            assert _has_reliability_diagnostic_substance(deflection) is False, (
+                f"widening the gate let a deflection through: {deflection!r}"
+            )
