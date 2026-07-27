@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
@@ -1083,6 +1083,57 @@ def exact_adjoint_sampled_group_value_and_grad(
     )
 
 
+def exact_adjoint_verified_transition_group_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    samples: Sequence[RecurrentPolicySample],
+    reward_receipt: Mapping[str, Any],
+    transition_evidence: Sequence[Any],
+    *,
+    transition_store: Any,
+    independent_scorer: Any,
+    token_encoder: Any,
+    token_decoder: Any,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int] = (),
+    config: RecurrentGRPOConfig | None = None,
+) -> ExactAdjointRecurrentGRPOResult:
+    """Admit only independently replayed CP419 transitions to the adjoint.
+
+    Validation, EIR admission, and exact sample/trace binding all happen before
+    recurrent policy hashing or gradient construction.  A caller-supplied
+    scalar reward therefore has no path into this proof-grade objective.
+    """
+
+    from core.learning.verified_transition_reward import (
+        rewards_for_recurrent_samples,
+        validate_verified_transition_reward_batch,
+    )
+
+    validated = validate_verified_transition_reward_batch(
+        transition_store,
+        reward_receipt,
+        transition_evidence,
+        independent_scorer=independent_scorer,
+        token_encoder=token_encoder,
+        token_decoder=token_decoder,
+    )
+    rewards = rewards_for_recurrent_samples(
+        validated,
+        samples,
+        prompt_tokens,
+    )
+    return exact_adjoint_sampled_group_value_and_grad(
+        model,
+        prompt_tokens,
+        samples,
+        rewards,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+        config=config,
+    )
+
+
 __all__ = [
     "RECURRENT_GRPO_SCHEMA",
     "RECURRENT_SAMPLING_SCHEMA",
@@ -1098,6 +1149,7 @@ __all__ = [
     "clipped_recurrent_grpo_objective",
     "cortex_config_from_execution_spec",
     "exact_adjoint_sampled_group_value_and_grad",
+    "exact_adjoint_verified_transition_group_value_and_grad",
     "exact_adjoint_verifier_group_value_and_grad",
     "recurrent_policy_sha256",
     "recurrent_completion_token_logprobs",

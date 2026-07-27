@@ -4347,3 +4347,41 @@ before a fresh small-checkpoint behavior campaign. Counting CP419 makes 665
 total checkpoints. The 665-920 forecast leaves 0-255 records, or approximately
 72.3%-100.0% checkpoint completion with an 86.1% midpoint. Final multi-hour
 soaks remain deferred.
+
+### 2026-07-27 - CP420A independently reconstructed transition reward
+
+The first CP420 slice removes caller-authored labels and scalar rewards from
+the proof-grade recurrent objective. Each reward row now starts by replaying
+the complete CP419 episode and both independent verifier authorities. It
+derives correctness transition, verified parse/correctness information gain,
+independently normalized answer change, actual token/process cost, and
+unsupported behavior-policy confidence in integer micro-units. Correctness
+delta is mathematically larger than every auxiliary term combined.
+
+Wrong-to-right and right-to-wrong are reported separately. EIR is reconstructed
+as right-to-wrong over the initially-correct opportunities; a zero denominator
+is recorded as undefined rather than numeric zero. Any right-to-wrong event is
+the first lexicographic rejection regardless of aggregate scalar reward. The
+proof entry point replays the reward receipt and binds prompt tokens, output
+tokens, policy digest, and exact behavior log probabilities before delegating
+to gradient construction.
+
+The real signed test matrix creates independent wrong-to-right,
+right-to-right, and right-to-wrong CP419 episodes. A clean improvement plus
+anchor reaches the gradient delegate only after complete replay; an improvement
+paired with a regression never reaches it. Rehashed reward forgery and duplicate
+episodes fail closed. The focused suite passes 59/59 in 32.93 seconds, and the
+adjacent recurrent/adapter/resident proof matrix passes 103/103 in 35.11
+seconds. Ruff and diff hygiene pass. Evidence is
+`artifacts/current/cp420a_verified_transition_reward_evidence.json`.
+
+CP420 and SPARK-060 remain open. The producing branch, seed, and sampling
+configuration are not yet signed into a preregistered group; group completeness
+and anti-cherry-picking custody are not yet proven; raw reward APIs and the
+existing CLI can still bypass this proof entry point; and validation, immediate
+policy rehash, one optimizer mutation, durable anti-replay, and post-update
+receipt do not yet form one transaction. No model was loaded or trained, and no
+reasoning, resident-32B, frontier, promotion, or `WOW Signal` claim follows.
+Counting CP420A makes 666 total checkpoints. The 666-920 forecast leaves 0-254
+records, or approximately 72.4%-100.0% checkpoint completion with an 86.2%
+midpoint. Final multi-hour soaks remain deferred.

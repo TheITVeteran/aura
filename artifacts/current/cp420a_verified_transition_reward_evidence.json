@@ -1,0 +1,81 @@
+{
+  "schema": "aura.closeout.cp420a_verified_transition_reward_evidence.v1",
+  "checkpoint": "CP420A",
+  "recorded_date": "2026-07-27",
+  "reward_reconstruction": {
+    "caller_supplied_labels_forbidden": true,
+    "caller_supplied_scalar_rewards_forbidden": true,
+    "correctness_from_sealed_verifier_authority": true,
+    "fixed_point_integer_components": true,
+    "information_gain_from_verified_parse_and_correctness_state": true,
+    "diversity_from_independently_normalized_answer_change": true,
+    "compute_cost_from_bound_token_trace_and_signed_process_timing": true,
+    "unsupported_confidence_from_bound_behavior_logprobs": true,
+    "correctness_delta_dominates_all_combined_shaping_terms": true
+  },
+  "error_introduction": {
+    "wrong_to_right_reported_separately": true,
+    "right_to_wrong_reported_separately": true,
+    "eir_numerator": "right_to_wrong",
+    "eir_denominator": "right_to_wrong_plus_right_to_right",
+    "zero_denominator_representation": "undefined",
+    "right_to_wrong_lexicographic_rejection": true,
+    "rejection_precedes_gradient_construction": true
+  },
+  "sample_binding": {
+    "prompt_tokens_bound": true,
+    "output_tokens_bound": true,
+    "policy_sha256_bound": true,
+    "behavior_logprobs_bound_exactly": true,
+    "producing_branch_bound": false,
+    "sample_seed_bound": false,
+    "sampling_configuration_bound": false
+  },
+  "signed_outcome_matrix": {
+    "wrong_to_right_episode": true,
+    "right_to_right_anchor_episode": true,
+    "right_to_wrong_episode": true,
+    "positive_group_reached_gradient_delegate_after_replay": true,
+    "regression_group_reached_gradient_delegate": false,
+    "duplicate_episode_rejected": true,
+    "rehashed_scalar_reward_forgery_rejected": true
+  },
+  "validation": {
+    "focused_failures": 0,
+    "focused_tests": 59,
+    "focused_time_seconds": 32.93,
+    "adjacent_failures": 0,
+    "adjacent_tests": 103,
+    "adjacent_time_seconds": 35.11,
+    "ruff_passed": true,
+    "diff_hygiene_passed": true
+  },
+  "experiment": {
+    "capability_evaluation": false,
+    "model_loaded": false,
+    "optimizer_updated": false,
+    "training_run": false
+  },
+  "open_before_cp420_closure": [
+    "task_issuer_signed_group membership before generation",
+    "group completeness and anti_cherry_pick custody",
+    "producing recurrent branch seed and sampling configuration binding",
+    "exclusive non_bypassable production training entry point",
+    "immediate pre_update policy rehash",
+    "single atomic optimizer update receipt",
+    "durable anti_replay update ledger",
+    "CP418 adapter identity replay of CP420 source evidence"
+  ],
+  "status": {
+    "spark_060_complete": false,
+    "cp420_complete": false,
+    "next_checkpoint": "CP420B"
+  },
+  "claims_not_supported": [
+    "reasoning_gain",
+    "resident_32b_result",
+    "frontier_performance",
+    "production_promotion",
+    "wow_signal"
+  ]
+}

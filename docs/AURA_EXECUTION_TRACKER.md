@@ -30536,3 +30536,41 @@ reward, EIR, and lexicographic right-to-wrong rejection, followed by a fresh
 sealed behavior campaign. Counting CP419 makes 665 total checkpoints. The
 665-920 forecast leaves 0-255 records, or approximately 72.3%-100.0% checkpoint
 completion with an 86.1% midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420A verified transition reward reconstruction
+
+The proof-grade recurrent reward path now independently replays each complete
+CP419 episode and reconstructs correctness transition, verifier-state
+information gain, independently normalized answer change, actual token/process
+cost, and unsupported behavior-policy confidence in fixed-point integer units.
+No caller-authored correctness label or scalar reward enters this path, and
+correctness delta dominates every auxiliary shaping term combined.
+
+Wrong-to-right and right-to-wrong are counted separately. EIR is the exact
+right-to-wrong numerator over initially-correct opportunities; a zero
+denominator remains explicitly undefined. Any right-to-wrong transition rejects
+the group before gradient construction, even when other rows improve or the
+aggregate scalar would be positive. Prompt/output tokens, policy identity, and
+exact behavior log probabilities are rebound to the sampled group before the
+gradient delegate can run.
+
+Three separately signed CP419 episodes exercise wrong-to-right,
+right-to-right, and right-to-wrong outcomes. A clean improvement plus anchor
+replays and reaches the gradient delegate; an improvement plus regression never
+does. Rehashed scalar reward forgery and duplicate episode submission fail.
+Focused validation passes 59/59 in 32.93 seconds and the adjacent recurrent,
+adapter, preregistration, and post-training matrix passes 103/103 in 35.11
+seconds. Evidence is
+`artifacts/current/cp420a_verified_transition_reward_evidence.json`.
+
+This is an intermediate checkpoint, not CP420 closure. A task-issuer-signed
+group manifest and completeness ledger must still prevent cherry-picking and
+bind branch, seed, and sampling configuration. The verified path must become
+the exclusive production mutation API and own validation, immediate policy
+rehash, exactly one optimizer update, durable anti-replay, and the post-update
+receipt. CP418 independent adapter validation must replay those source
+artifacts. No model was loaded or trained and no reasoning, resident-32B,
+frontier, promotion, or `WOW Signal` result is claimed. Counting CP420A makes
+666 total checkpoints. The 666-920 forecast leaves 0-254 records, or
+approximately 72.4%-100.0% checkpoint completion with an 86.2% midpoint.
+Final multi-hour soaks remain deferred.

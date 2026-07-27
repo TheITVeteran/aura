@@ -7,7 +7,7 @@ import json
 import os
 from dataclasses import replace
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -32,7 +32,9 @@ from core.brain.llm.latent_cortex.frontier_tasks import (
     FINAL_ANSWER_MARKER,
     generate_task,
 )
+from core.learning import recurrent_grpo as recurrent_grpo_runtime
 from core.learning import verified_transition_episode as transition_runtime
+from core.learning import verified_transition_reward as reward_runtime
 from core.learning.verified_transition_episode import (
     ExternalAttemptLedger,
     TransitionArtifactStore,
@@ -65,6 +67,15 @@ from core.learning.verified_transition_episode import (
     validate_reasoning_pass_receipt,
     validate_verified_transition_episode,
     verifier_implementation_identity,
+)
+from core.learning.verified_transition_reward import (
+    TransitionRewardConfig,
+    VerifiedTransitionEvidence,
+    VerifiedTransitionRewardAdmissionError,
+    VerifiedTransitionRewardError,
+    build_verified_transition_reward_batch,
+    require_optimizer_admission,
+    validate_verified_transition_reward_batch,
 )
 from core.runtime.resource_observation import HostResourceObserver, ObservationSource
 from tools.independent_paired_campaign_scoring import (
@@ -375,6 +386,7 @@ def _issue_authority(
 def _pass_context(
     store: TransitionArtifactStore,
     *,
+    episode_id: str = "spark-060-episode-0001",
     generated_at: int,
     latent_label: str,
     task: Any,
@@ -456,7 +468,7 @@ def _pass_context(
         }.items()
     }
     return {
-        "episode_id": "spark-060-episode-0001",
+        "episode_id": episode_id,
         "case_id": "math-case-0001",
         "family": "mathematics-prime-count",
         "depth": 3,
@@ -604,12 +616,15 @@ def _append_attempt_event(
     return attestation, hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
 
 
-@pytest.fixture(scope="module")
-def complete_episode(
+def _build_complete_episode(
     tmp_path_factory: pytest.TempPathFactory,
     request: pytest.FixtureRequest,
+    *,
+    episode_id: str = "spark-060-episode-0001",
+    pass_0_correct: bool = False,
+    pass_1_correct: bool = True,
 ) -> dict[str, Any]:
-    tmp_path = tmp_path_factory.mktemp("verified-transition")
+    tmp_path = tmp_path_factory.mktemp(f"verified-transition-{episode_id[-4:]}")
     task = generate_task("mathematics", seed=817_231, difficulty=2)
     store = TransitionArtifactStore(tmp_path / "evidence")
     component_roots = _component_roots(tmp_path / "components")
@@ -682,10 +697,19 @@ def complete_episode(
         trust_context,
         task_issuer_attestation=task_issuer_attestation,
     )
-    pass_0_response = _wrong_response(task)
-    pass_1_response = _correct_response(task, prefix="Rechecked independently.")
+    pass_0_response = (
+        _correct_response(task, prefix="Initial independently checked answer.")
+        if pass_0_correct
+        else _wrong_response(task)
+    )
+    pass_1_response = (
+        _correct_response(task, prefix="Rechecked independently.")
+        if pass_1_correct
+        else _wrong_response(task)
+    )
     context_0 = _pass_context(
         store,
+        episode_id=episode_id,
         generated_at=PASS_0_AT,
         latent_label="latent-shared",
         task=task,
@@ -693,6 +717,7 @@ def complete_episode(
     )
     context_1 = _pass_context(
         store,
+        episode_id=episode_id,
         generated_at=PASS_1_AT,
         latent_label="latent-shared",
         task=task,
@@ -1043,6 +1068,61 @@ def complete_episode(
     }
 
 
+@pytest.fixture(scope="module")
+def complete_episode(
+    tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
+) -> dict[str, Any]:
+    return _build_complete_episode(tmp_path_factory, request)
+
+
+@pytest.fixture(scope="module")
+def transition_outcome_episodes(
+    complete_episode: dict[str, Any],
+    tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "wrong_to_right": complete_episode,
+        "right_to_right": _build_complete_episode(
+            tmp_path_factory,
+            request,
+            episode_id="spark-060-episode-anchor",
+            pass_0_correct=True,
+            pass_1_correct=True,
+        ),
+        "right_to_wrong": _build_complete_episode(
+            tmp_path_factory,
+            request,
+            episode_id="spark-060-episode-regression",
+            pass_0_correct=True,
+            pass_1_correct=False,
+        ),
+    }
+
+
+def _transition_evidence(case: MappingProxyType | dict[str, Any]) -> VerifiedTransitionEvidence:
+    return VerifiedTransitionEvidence(
+        store=case["store"],
+        episode=case["episode"],
+        task=case["task"],
+        expected_authority=case["expected"],
+        trust_context=case["trust_context"],
+    )
+
+
+def _transition_sample(case: dict[str, Any], prompt_sha256: str) -> SimpleNamespace:
+    receipt = case["pass_1"]
+    return SimpleNamespace(
+        prompt_tokens_sha256=prompt_sha256,
+        tokens=tuple(receipt["output_token_ids"]),
+        policy_sha256=receipt["policy_sha256"],
+        behavior_logprobs=tuple(
+            float(value) for value in receipt["behavior_policy_logprobs"]
+        ),
+    )
+
+
 def test_complete_episode_reconstructs_from_bytes_and_dual_signed_authorities(
     complete_episode: dict[str, Any],
 ) -> None:
@@ -1058,6 +1138,381 @@ def test_complete_episode_reconstructs_from_bytes_and_dual_signed_authorities(
         trust_context=case["trust_context"],
     )
     assert validated == case["episode"]
+
+
+def test_verified_transition_reward_reconstructs_only_from_sealed_authorities(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    evidence = (
+        VerifiedTransitionEvidence(
+            store=case["store"],
+            episode=case["episode"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            trust_context=case["trust_context"],
+        ),
+    )
+    batch = build_verified_transition_reward_batch(
+        case["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+
+    assert batch["wrong_to_right"] == 1
+    assert batch["right_to_wrong"] == 0
+    assert batch["eir_defined"] is False
+    assert batch["eir_micros"] is None
+    assert batch["optimizer_admitted"] is False
+    assert batch["optimizer_admission_reason"] == (
+        "eir_undefined_no_initially_correct_control"
+    )
+    transition = batch["transitions"][0]
+    assert transition["transition_kind"] == "wrong_to_right"
+    expected_resource = (
+        len(case["pass_1"]["output_token_ids"]) * 1_000_000 // 1024
+    )
+    expected_compute_cost = -(expected_resource * 100_000 // 1_000_000)
+    assert transition["reward_components_micros"] == {
+        "correctness_delta_micros": 1_000_000,
+        "information_gain_micros": 100_000,
+        "diversity_gain_micros": 100_000,
+        "compute_cost_micros": expected_compute_cost,
+        "unsupported_confidence_micros": 0,
+    }
+    assert transition["resource_1_micros"] == expected_resource
+    assert transition["reward_micros"] == 1_200_000 + expected_compute_cost
+    assert validate_verified_transition_reward_batch(
+        case["store"],
+        batch,
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+    ) == batch
+    with pytest.raises(
+        VerifiedTransitionRewardAdmissionError,
+        match="eir_undefined_no_initially_correct_control",
+    ):
+        require_optimizer_admission(batch)
+
+
+def test_verified_transition_reward_rejects_rehashed_scalar_reward_forgery(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    evidence = (
+        VerifiedTransitionEvidence(
+            store=case["store"],
+            episode=case["episode"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            trust_context=case["trust_context"],
+        ),
+    )
+    batch = build_verified_transition_reward_batch(
+        case["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    forged = copy.deepcopy(batch)
+    forged["transitions"][0]["reward_micros"] += 1
+    unsigned = dict(forged)
+    unsigned.pop("receipt_sha256")
+    forged["receipt_sha256"] = hashlib.sha256(
+        canonical_json_bytes(unsigned)
+    ).hexdigest()
+
+    with pytest.raises(
+        VerifiedTransitionRewardError,
+        match="transition_reward_reconstruction_mismatch",
+    ):
+        validate_verified_transition_reward_batch(
+            case["store"],
+            forged,
+            evidence,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+        )
+
+
+def test_transition_reward_config_makes_correctness_lexicographically_dominant() -> None:
+    with pytest.raises(ValueError, match="correctness delta must dominate"):
+        TransitionRewardConfig(
+            correctness_delta_weight_micros=650_000,
+        )
+
+
+def test_rejected_transition_batch_never_reaches_gradient_construction(
+    complete_episode: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = complete_episode
+    evidence = (
+        VerifiedTransitionEvidence(
+            store=case["store"],
+            episode=case["episode"],
+            task=case["task"],
+            expected_authority=case["expected"],
+            trust_context=case["trust_context"],
+        ),
+    )
+    batch = build_verified_transition_reward_batch(
+        case["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+
+    def _gradient_must_not_run(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("gradient construction ran before reward admission")
+
+    monkeypatch.setattr(
+        recurrent_grpo_runtime,
+        "exact_adjoint_sampled_group_value_and_grad",
+        _gradient_must_not_run,
+    )
+    with pytest.raises(VerifiedTransitionRewardAdmissionError):
+        recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
+            None,
+            case["pass_1"]["input_token_ids"],
+            (),
+            batch,
+            evidence,
+            transition_store=case["store"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            spec=None,
+        )
+
+
+def test_transition_reward_aggregate_rejects_regression_before_scalar_score() -> None:
+    records = (
+        {"transition_kind": "wrong_to_right", "reward_micros": 975_000},
+        {"transition_kind": "right_to_right", "reward_micros": -25_000},
+        {"transition_kind": "right_to_wrong", "reward_micros": 9_000_000},
+    )
+    batch = reward_runtime._assemble_reward_batch(
+        records=records,
+        episode_artifacts=({"row": 0}, {"row": 1}, {"row": 2}),
+        task_id="aggregate-test",
+        config=TransitionRewardConfig(),
+        created_at_unix_ns=1,
+    )
+
+    assert batch["right_to_wrong"] == 1
+    assert batch["eir_defined"] is True
+    assert batch["eir_numerator"] == 1
+    assert batch["eir_denominator"] == 2
+    assert batch["eir_micros"] == 500_000
+    assert batch["optimizer_admitted"] is False
+    assert batch["optimizer_admission_reason"] == "right_to_wrong_regression"
+
+
+def test_transition_reward_aggregate_admits_improvement_with_clean_anchor() -> None:
+    prompt_tokens = (7, 8)
+    records = (
+        {
+            "transition_kind": "wrong_to_right",
+            "reward_micros": 975_000,
+            "pass_1_input_token_ids": list(prompt_tokens),
+            "pass_1_output_token_ids": [11],
+            "pass_1_policy_sha256": "a" * 64,
+            "pass_1_behavior_policy_logprobs": ["-1.25"],
+        },
+        {
+            "transition_kind": "right_to_right",
+            "reward_micros": -25_000,
+            "pass_1_input_token_ids": list(prompt_tokens),
+            "pass_1_output_token_ids": [12],
+            "pass_1_policy_sha256": "a" * 64,
+            "pass_1_behavior_policy_logprobs": ["-0.75"],
+        },
+    )
+    batch = reward_runtime._assemble_reward_batch(
+        records=records,
+        episode_artifacts=({"row": 0}, {"row": 1}),
+        task_id="aggregate-test",
+        config=TransitionRewardConfig(),
+        created_at_unix_ns=1,
+    )
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        SimpleNamespace(
+            prompt_tokens_sha256=prompt_sha256,
+            tokens=(11,),
+            policy_sha256="a" * 64,
+            behavior_logprobs=(-1.25,),
+        ),
+        SimpleNamespace(
+            prompt_tokens_sha256=prompt_sha256,
+            tokens=(12,),
+            policy_sha256="a" * 64,
+            behavior_logprobs=(-0.75,),
+        ),
+    )
+
+    assert batch["optimizer_admitted"] is True
+    assert batch["eir_defined"] is True
+    assert batch["eir_micros"] == 0
+    assert reward_runtime.rewards_for_recurrent_samples(
+        batch, samples, prompt_tokens
+    ) == (0.975, -0.025)
+
+
+def test_signed_transition_group_replays_and_reaches_gradient_only_after_admission(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    anchor = transition_outcome_episodes["right_to_right"]
+    evidence = (_transition_evidence(improved), _transition_evidence(anchor))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    assert prompt_tokens == tuple(anchor["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(anchor, prompt_sha256),
+    )
+    observed: dict[str, Any] = {}
+    sentinel = object()
+
+    def _capture_gradient(
+        _model: Any,
+        _prompt: Any,
+        _samples: Any,
+        rewards: Any,
+        **_kwargs: Any,
+    ) -> object:
+        observed["rewards"] = tuple(rewards)
+        return sentinel
+
+    monkeypatch.setattr(
+        recurrent_grpo_runtime,
+        "exact_adjoint_sampled_group_value_and_grad",
+        _capture_gradient,
+    )
+    result = (
+        recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
+            None,
+            prompt_tokens,
+            samples,
+            batch,
+            evidence,
+            transition_store=improved["store"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            spec=None,
+        )
+    )
+
+    assert result is sentinel
+    assert batch["optimizer_admitted"] is True
+    assert batch["wrong_to_right"] == 1
+    assert batch["right_to_wrong"] == 0
+    assert batch["eir_defined"] is True
+    assert batch["eir_micros"] == 0
+    assert observed["rewards"] == tuple(
+        transition["reward_micros"] / 1_000_000
+        for transition in batch["transitions"]
+    )
+    assert validate_verified_transition_reward_batch(
+        improved["store"],
+        batch,
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+    ) == batch
+
+
+def test_signed_right_to_wrong_rejects_before_gradient_even_with_improvement(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    regressed = transition_outcome_episodes["right_to_wrong"]
+    evidence = (_transition_evidence(improved), _transition_evidence(regressed))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+
+    def _gradient_must_not_run(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("gradient construction ran after a verified regression")
+
+    monkeypatch.setattr(
+        recurrent_grpo_runtime,
+        "exact_adjoint_sampled_group_value_and_grad",
+        _gradient_must_not_run,
+    )
+    assert batch["wrong_to_right"] == 1
+    assert batch["right_to_wrong"] == 1
+    assert batch["eir_numerator"] == 1
+    assert batch["eir_denominator"] == 1
+    assert batch["eir_micros"] == 1_000_000
+    assert batch["optimizer_admission_reason"] == "right_to_wrong_regression"
+    with pytest.raises(
+        VerifiedTransitionRewardAdmissionError,
+        match="right_to_wrong_regression",
+    ):
+        recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
+            None,
+            improved["pass_1"]["input_token_ids"],
+            (),
+            batch,
+            evidence,
+            transition_store=improved["store"],
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            spec=None,
+        )
+
+
+def test_transition_group_rejects_duplicate_signed_episode(
+    complete_episode: dict[str, Any],
+) -> None:
+    evidence = _transition_evidence(complete_episode)
+    with pytest.raises(
+        VerifiedTransitionRewardError,
+        match="transition_reward_duplicate_episode",
+    ):
+        build_verified_transition_reward_batch(
+            complete_episode["store"],
+            (evidence, evidence),
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+            created_at_unix_ns=1_800_000_224_000_000_000,
+        )
 
 
 @pytest.mark.parametrize(
