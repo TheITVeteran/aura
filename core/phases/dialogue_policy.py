@@ -575,10 +575,66 @@ def _ground_live_voice_surface(text: str, contract: object | None) -> str:
     elif getattr(contract, "requires_recent_specific_grounding", False):
         grounding = "From the recent conversation context, "
 
-    if body[:1].islower():
+    # The body becomes a CONTINUATION of a clause ending in ", " — so its first
+    # letter must not be capitalised. This did the opposite: it uppercased the
+    # body first, producing "From my conversation memory, Forgetting is a
+    # mercy." on the live surface (and, in the July recall defect,
+    # "From my conversation memory, The code you gave me earlier was...").
+    # Grammar the user can see is not a detail.
+    if grounding.rstrip().endswith((",", ":")):
+        body = _lowercase_continuation_start(body)
+    elif body[:1].islower():
         body = body[:1].upper() + body[1:]
     grounded = f"{grounding}{body}"
     return grounded.strip()
+
+
+# Words that are safe to down-case when a grounding clause is prepended: they
+# are never personal or product names, so mistaking one for a name is
+# impossible. Anything NOT listed here keeps its capital — a capitalised word
+# after a comma reads fine, whereas lower-casing someone's name does not.
+_CONTINUATION_SAFE_OPENERS = frozenset(
+    {
+        "a", "actually", "all", "an", "and", "another", "any", "anything",
+        "both", "but", "each", "either", "enough", "even", "every",
+        "everything", "few", "for", "from", "given", "here", "his", "her",
+        "honestly", "how", "if", "in", "it", "its", "just", "many", "maybe",
+        "more", "most", "my", "neither", "no", "none", "not", "nothing", "now",
+        "of", "on", "one", "or", "other", "our", "perhaps", "probably",
+        "right", "she", "so", "some", "something", "still", "that", "the",
+        "their", "them", "then", "there", "these", "they", "this", "those",
+        "three", "to", "two", "we", "well", "what", "when", "where", "which",
+        "while", "who", "why", "with", "yes", "yet", "you", "your",
+    }
+)
+
+
+def _lowercase_continuation_start(body: str) -> str:
+    """Down-case the first word of a clause continuation, never a name.
+
+    Conservative by construction: only a known safe opener or an ``-ing``
+    gerund ("Forgetting is a mercy") is down-cased. "Bryan", "Aura", "RAM" and
+    anything unrecognised keep their capital, because a capitalised word after
+    a comma is merely slightly formal while a lower-cased name is an error.
+    """
+
+    text = str(body or "")
+    if not text or not text[:1].isupper():
+        return text
+    first_word = text.split(maxsplit=1)[0].strip(".,;:!?\"'")
+    if not first_word or first_word.isupper() or not first_word[1:].islower():
+        return text
+    lowered = first_word.lower()
+    # Contractions open sentences constantly ("That's", "There's", "It's"), and
+    # the stem is what identifies them.
+    stem = lowered.split("'", 1)[0]
+    if (
+        lowered not in _CONTINUATION_SAFE_OPENERS
+        and stem not in _CONTINUATION_SAFE_OPENERS
+        and not (len(lowered) > 4 and lowered.endswith("ing"))
+    ):
+        return text
+    return text[:1].lower() + text[1:]
 
 
 def build_dialogue_repair_block(contract: object | None, validation: DialogueValidation, failed_text: str) -> str:
