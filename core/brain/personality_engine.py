@@ -919,6 +919,18 @@ class PersonalityEngine:
         applies the Data honesty floor so personality shaping cannot preserve
         deceptive overclaiming.
         """
+        # Nothing to shape is not a failure to shape. Blank text in means blank
+        # text out of both the shaper and the honesty guard, and that path
+        # recorded a degradation on a module that is fail-closed — so every
+        # empty draft became a CRITICAL, then an emergency incident, and
+        # deg_threat pinned at 1.00. existential_threat is
+        # max(memory, degradation), so it pinned too, which tripped the Ulysses
+        # covenant "no heavy compute while survival is threatened" and refused
+        # to build anything Bryan asked for, on a host at 4% memory pressure.
+        # An expected condition escalated into a standing emergency.
+        if not str(text or "").strip():
+            return text
+
         shaped = text
         try:
             from core.synthesis import cure_personality_leak
@@ -947,8 +959,15 @@ class PersonalityEngine:
             # An empty or non-string refusal is the guard declining to pass
             # this text. Shaped text that did not clear the honesty floor is
             # exactly what must not be emitted, so fall back to the ORIGINAL.
+            # The input was non-empty (checked above), so shaping or the guard
+            # emptied it. That is worth recording — and it is the shaper's
+            # doing, not an emergency, so it says which stage lost the text.
             _record_personality_degradation(
-                RuntimeError("user-facing guard returned no usable text"),
+                RuntimeError(
+                    "honesty guard rejected shaped text"
+                    if str(shaped or "").strip()
+                    else "personality shaping emptied a non-empty reply"
+                ),
                 action="returned the original text because shaping did not clear the honesty floor",
                 severity="warning",
             )
