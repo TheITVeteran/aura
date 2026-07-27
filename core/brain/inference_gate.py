@@ -300,7 +300,13 @@ def _should_pass_user_facing_draft_downstream(
                 "too_thin_for_status_turn",
             }
         )
-    if not reasons.issubset(repairable_reasons):
+    # The shared policy is the floor: anything that is a SHORTFALL rather than
+    # an integrity failure may go downstream to be repaired, whatever this
+    # module's own historical list happens to contain. See
+    # core/conversation/surface_disposition.py.
+    from core.conversation.surface_disposition import draft_is_servable
+
+    if not reasons.issubset(repairable_reasons) and not draft_is_servable(reasons):
         return False
     stripped = str(text or "").strip()
     if reasons == {"missing_requested_word_count"}:

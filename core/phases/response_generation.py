@@ -2246,10 +2246,22 @@ class ResponseGenerationPhase(BasePhase):
                             )
                         reliability_reasons = set(reliability.reasons or ())
                         response_text_s = str(response_text or "").strip()
+                        # One shared policy, not a third private opinion. A
+                        # draft is discarded only when something in it must not
+                        # be SPOKEN; a draft that merely fell short is kept and
+                        # repaired. See core/conversation/surface_disposition.py
+                        # for why the three gates were unified.
+                        from core.conversation.surface_disposition import (
+                            draft_is_servable,
+                        )
+
                         if (
                             reliability_reasons
-                            and reliability_reasons.issubset(
-                                _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS
+                            and (
+                                reliability_reasons.issubset(
+                                    _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS
+                                )
+                                or draft_is_servable(reliability_reasons)
                             )
                             and len(response_text_s) >= 48
                             and len(response_text_s.split()) >= 8

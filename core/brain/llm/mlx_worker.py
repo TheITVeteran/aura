@@ -737,7 +737,17 @@ def _surface_quality_failure_reasons(
     # person than the derivation itself.
     #
     # The route keeps the signal and has the budget to act on it.
-    reasons = [reason for reason in reasons if reason != "final_answer_missing"]
+    #
+    # Generalised: the worker vetoes on INTEGRITY only — text that must not be
+    # spoken. A draft that merely fell short of what the turn wanted is real
+    # content, and the worker is the one participant with no budget to improve
+    # it. See core/conversation/surface_disposition.py.
+    try:
+        from core.conversation.surface_disposition import integrity_failures
+
+        reasons = list(integrity_failures(reasons))
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        reasons = [reason for reason in reasons if reason != "final_answer_missing"]
     if not reasons:
         return []
     if bool(job.get("capability_inventory_contract", False)):
