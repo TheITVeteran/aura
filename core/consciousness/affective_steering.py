@@ -1224,6 +1224,31 @@ class AffectiveSteeringHook:
             return
         if self._inject_count % self._phi_sample_every != 0:
             return
+        # PhiCore does `np.asarray(hidden_state)`, which on MLX is a blocking
+        # device sync AND a full materialisation of whatever it is handed. This
+        # hook runs inside the forward pass of all 64 blocks, so measuring here
+        # collapses MLX's lazy pipeline on the one path where latency decides
+        # whether a turn survives.
+        #
+        # During PREFILL `h` is the whole sequence — [1, seq, 5120] — so a
+        # single sample copied tens of megabytes off the GPU and stalled the
+        # graph, repeatedly. Measured live 2026-07-26: ~3k-token prompts took
+        # 58-82s to a first token, roughly 50 tok/s, about twenty times slower
+        # than this model should prefill; turns 5-7 of a conversation died on
+        # that alone.
+        #
+        # Prefill is not a thought moment anyway — the signal Φ wants is the
+        # per-token dynamics of generation. So sample only single-token decode
+        # steps, and hand over one already-sliced position rather than a
+        # sequence, so the transfer is a 5120-float vector instead of a tensor.
+        try:
+            shape = tuple(getattr(h, "shape", ()) or ())
+        except (AttributeError, TypeError):
+            return
+        if len(shape) >= 3 and shape[-2] > 1:
+            return
+        if len(shape) == 2 and shape[0] > 1:
+            return
         try:
             from core.container import ServiceContainer
 
@@ -1231,7 +1256,10 @@ class AffectiveSteeringHook:
                 return
             phi_core = ServiceContainer.get("phi_core", default=None)
             if phi_core is not None and hasattr(phi_core, "record_residual_stream"):
-                phi_core.record_residual_stream(h, layer_idx=self._layer_idx, token_position=-1)
+                sample = h[0, -1, :] if len(shape) >= 3 else h
+                phi_core.record_residual_stream(
+                    sample, layer_idx=self._layer_idx, token_position=-1
+                )
         except (ImportError, AttributeError, RuntimeError) as exc:
             _emit_affective_fault(
                 exc,
