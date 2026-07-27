@@ -40,6 +40,15 @@ python tools/promote_distilled_generation.py --registry <path> promote \
   --gate-report gates.json
 ```
 
+**Do not hand-write `gates.json`.** `core/learning/permanent_distillation_gates.py`
+produces every row from the battery's own receipt —
+`build_gate_report(interference_receipt=..., capability_guard=...,
+capability_report=..., behavior_verdict=..., memory_before=..., memory_after=...,
+memory_case_count=..., frontier_before=..., frontier_after=...)` takes all seven
+measurements as required arguments and derives the counts and verdicts from
+them. The JSON path below exists for campaigns whose batteries run in separate
+processes; serialize the produced report, do not compose one by hand.
+
 `gates.json` is `{"gates": [...]}` with one row per id in `REQUIRED_GATES`:
 `anti_interference`, `capability_families`, `personality_retention`,
 `tool_effect_honesty`, `authority_safety`, `memory_retention`,

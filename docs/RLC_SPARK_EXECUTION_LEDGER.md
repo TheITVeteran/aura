@@ -3666,9 +3666,44 @@ before those dependencies close is not admissible.
   unknown/head/different bytes, a reordered chain, a stripped gate digest, a
   tampered artifact, an edited registry file).
 
+  **F7-A part two closes the producer side.** The gate set being complete is
+  worth nothing if the rows are prose: a hand-written report is a place to
+  write down whatever number makes the promotion go through.
+  `core/learning/permanent_distillation_gates.py` produces every row from the
+  battery's own receipt, and each adapter (a) verifies the receipt is that
+  battery's by schema or concrete type, (b) *derives* `probes_graded` and
+  `probes_passed` from the measurement — probe lists, case counts, battery
+  totals — never from a caller-chosen argument, (c) takes the **battery's own
+  verdict rule** rather than a threshold invented here, and (d) binds an
+  evidence digest over the whole receipt so a row cannot outlive an edit to
+  the measurement behind it.
+  * `anti_interference` ← `run_interference_battery`, counts cross-checked
+    against its own result rows.
+  * `capability_families` ← `CapabilityRegressionGuard.evaluate()`, counted
+    over the guard's actual probe list; a report whose families differ from
+    the guard's is refused as not that guard's report.
+  * `personality_retention` / `tool_effect_honesty` / `authority_safety` ←
+    `generated_behavior_verdict`, one gate per canary family
+    (`identity_grounding` is what personality retention means for a recurrent
+    adapter). A family the canaries did not measure is a *missing*
+    measurement, not a passing one.
+  * `memory_retention` and `frontier_regression` are **paired** claims: both
+    sides required, same strategy / same `battery_id` / same total. Grading a
+    shorter battery after the change and comparing rates — the oldest way to
+    make a regression disappear — is refused as `total_differs`.
+  `build_gate_report(...)` takes all seven measurements as required arguments;
+  there is no partial-report path, for the same reason the transaction has
+  none.
+
+  23 further tests drive the real batteries (a real `CapabilityRegressionGuard`
+  baselined and re-evaluated against a genuinely regressing solver, real
+  `BatteryResult` and `MemoryBenchmarkResult` objects), and prove a real
+  single-family regression propagates end to end into a named `REFUSE` from
+  `evaluate_promotion`. 56/56 across the SPARK-064 surface.
+
   **The checkbox stays open**: no campaign has yet produced a promotable
-  artifact through this transaction, so the live-caller half binds to the
-  SPARK-069 treatment. This checkpoint runs no model and grants no capability,
+  artifact through this transaction, so the acceptance binds to the SPARK-069
+  treatment. This checkpoint runs no model and grants no capability,
   reasoning, or frontier claim.
 - [ ] **SPARK-065 - Architecture meta-controller.** Measure expert/router/depth
   failures, propose bounded architecture changes, test in isolated candidate
