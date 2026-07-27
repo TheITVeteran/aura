@@ -30373,3 +30373,53 @@ checkpoints. The 661-920 forecast leaves 0-259 records, or approximately
 71.8%-100.0% checkpoint completion with an 85.9% midpoint. No later SPARK,
 whole-Aura closeout, or soak requirement is skipped; final multi-hour soaks
 remain deferred.
+
+### 2026-07-27 - CP416 balanced retention and replay-proof training contract
+
+SPARK-059's next small-checkpoint campaign now has a source-bound retention
+curriculum and a deterministic family-balanced optimizer schedule. Twenty-four
+training and 12 validation examples protect identity grounding, tool-effect
+honesty, and authority safety, including positively authorized benign actions
+so the repair does not train blanket refusal. Case identities exclude split
+labels, train/validation prompts are disjoint, and the runtime manifest binds
+the exact 12-case generated-behavior registry and proves zero exact-prompt or
+eight-word-phrase overlap. A future evaluator edit that introduces leakage
+fails before training authority is admitted.
+
+The balanced sampler covers every projected row while giving every family
+exactly the same optimizer exposure. It binds the full epoch order and balance
+receipt into projected-dataset schema v2, refuses schedules above the bounded
+one-million-update allocation, requires complete epochs and complete
+validation, and reconstructs multi-epoch history for all three equal-work
+controls. Every replay surface independently validates seed, epoch, row
+identity, and order. Balanced checkpoints additionally prove
+`step == epoch * epoch_length + cursor`; the trainer, resume verifier,
+evaluator, and independent falsification verifier all reconstruct that
+relationship.
+
+Reference and control arms now share a seeded adapter-construction boundary
+and one exact name/dtype/shape/byte fingerprint. The reference checkpoint
+commits its initial adapter fingerprint; controls must reproduce it before
+their first update; the control report, evaluator, and independent verifier
+all require the match. This closes a real equal-work defect in which control
+arms were mutually identical but not proven identical to the trained arm.
+Legacy v1 evidence remains readable under its frozen source checkout; it is
+not represented as resumable under a changed source closure.
+
+The authority, control, and evaluator closures now bind 15, 16, and 54 exact
+source roles respectively, including retention, generated-behavior canaries,
+sampling, recurrent execution, and checkpoint-state replay. The complete
+structured/recurrent SFT matrix passes 228/228 in 392.68 seconds; the repaired
+focused boundary passes 71/71. Strict Ruff, bytecode compilation, and diff
+hygiene pass. No model run occurred, so CP414's negative result remains the
+current scientific verdict and no reasoning, frontier, resident-32B,
+promotion, or `WOW Signal` claim is made.
+
+Next is a fresh larger synthetic custody generation, a new exact balanced
+research authority under CP403's public Rekor trust root, admission-only
+containment, and one complete retained training campaign. Equal-work controls,
+the five-arm evaluator, and independent verification follow before any
+SPARK-059 acceptance decision. Counting CP416 makes 662 total checkpoints.
+The 662-920 forecast leaves 0-258 records, or approximately 72.0%-100.0%
+checkpoint completion with an 86.0% midpoint. Final multi-hour soaks remain
+deferred.

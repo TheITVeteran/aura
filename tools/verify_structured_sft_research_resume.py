@@ -16,6 +16,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.learning.recurrent_sft_retention import retention_manifest  # noqa: E402
+from core.learning.recurrent_sft_sampling import (  # noqa: E402
+    FAMILY_BALANCED_SAMPLER,
+    family_balance_receipt,
+    family_balanced_epoch_order,
+)
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     StructuredSFTResearchAuthorityError,
     sha256_json,
@@ -76,7 +82,7 @@ def _read_json(path: Path, *, role: str) -> dict[str, Any]:
 
 
 def _validate_dataset(raw: dict[str, Any]) -> dict[str, Any]:
-    required = {
+    legacy_required = {
         "schema",
         "candidate_identity_sha256",
         "train",
@@ -85,12 +91,22 @@ def _validate_dataset(raw: dict[str, Any]) -> dict[str, Any]:
         "verified_replay",
         "dataset_sha256",
     }
+    balanced_required = legacy_required | {"retention", "sampler"}
+    schema = raw.get("schema")
+    required = (
+        balanced_required
+        if schema == "aura.rlc.synthetic_recurrent_sft_projected_dataset.v2"
+        else legacy_required
+    )
     body = dict(raw)
     observed = body.pop("dataset_sha256", None)
     if (
         set(raw) != required
-        or raw.get("schema")
-        != "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1"
+        or schema
+        not in {
+            "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1",
+            "aura.rlc.synthetic_recurrent_sft_projected_dataset.v2",
+        }
         or not isinstance(raw.get("train"), list)
         or not raw["train"]
         or not isinstance(raw.get("validation"), list)
@@ -100,6 +116,12 @@ def _validate_dataset(raw: dict[str, Any]) -> dict[str, Any]:
         or observed != sha256_json(body)
     ):
         _fail("resume_verifier_dataset_manifest_invalid")
+    if schema.endswith(".v2") and (
+        raw.get("retention") != retention_manifest()
+        or not isinstance(raw.get("sampler"), dict)
+        or raw["sampler"].get("name") != FAMILY_BALANCED_SAMPLER
+    ):
+        _fail("resume_verifier_dataset_sampling_invalid")
     return raw
 
 
@@ -228,6 +250,37 @@ def build_verdict(
     )
     events = validate_journal(run_dir)
     state = inspected.state
+    if authority["trainer"]["sampler"] == FAMILY_BALANCED_SAMPLER:
+        epoch_zero_order = family_balanced_epoch_order(
+            dataset["train"],
+            seed=authority["trainer"]["seed"],
+            epoch=0,
+        )
+        current_order = family_balanced_epoch_order(
+            dataset["train"],
+            seed=authority["trainer"]["seed"],
+            epoch=state["epoch"],
+        )
+        if (
+            dataset.get("schema")
+            != "aura.rlc.synthetic_recurrent_sft_projected_dataset.v2"
+            or dataset.get("sampler")
+            != {
+                "name": FAMILY_BALANCED_SAMPLER,
+                "epoch_zero_order": epoch_zero_order,
+                "epoch_zero_balance": family_balance_receipt(
+                    dataset["train"],
+                    epoch_zero_order,
+                ),
+            }
+            or state["sampler"] != FAMILY_BALANCED_SAMPLER
+            or state["order"] != current_order
+        ):
+            _fail("resume_verifier_balanced_sampler_drift")
+    elif dataset.get("schema") != (
+        "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1"
+    ):
+        _fail("resume_verifier_legacy_sampler_drift")
     if state["terminal"]:
         completion_path = run_dir / "research_completion.json"
         if completion_path.exists() or completion_path.is_symlink():

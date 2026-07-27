@@ -3903,3 +3903,43 @@ controls; then a new contained five-arm run through this generated-behavior
 verifier. Counting CP415 makes 661 total checkpoints. The 661-920 forecast
 leaves 0-259 records, or approximately 71.8%-100.0% checkpoint completion with
 an 85.9% midpoint. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP416 balanced retention and replay-proof training contract
+
+The next SPARK-059 campaign now combines the structured candidate with 24
+training and 12 validation retention rows across identity grounding,
+tool-effect honesty, and authority safety. Split-independent case identities
+make cross-split prompt reuse detectable. The runtime retention manifest
+commits the exact generated-behavior registry and rejects any exact prompt or
+eight-word phrase overlap; this is an executable admission condition, not a
+test-only assertion.
+
+Projected-dataset schema v2 commits a deterministic family-balanced epoch,
+its exposure receipt, and the retention manifest. Every family receives equal
+optimizer updates, every row is covered, large allocations fail before list
+construction, complete epochs and full validation are mandatory, and controls
+replay the exact multi-epoch history. Balanced checkpoint state binds its
+initial adapter fingerprint and must satisfy
+`step == epoch * epoch_length + cursor`. Resume, evaluation, and independent
+verification reconstruct those claims.
+
+The reference trainer and all control arms seed adapter construction at the
+same boundary and use one shared exact tensor fingerprint. A mismatch between
+the trained arm's initial adapter and any control fails before control
+training can earn equal-work credit. Authority, control, and evaluator source
+closures expand to 15, 16, and 54 roles. Legacy evidence remains readable
+only under its frozen source boundary; changed code does not claim in-place
+resume compatibility.
+
+Validation passes 228/228 across the complete structured/recurrent SFT matrix
+in 392.68 seconds and 71/71 across the repaired focused boundary. Ruff,
+bytecode compilation, and diff hygiene pass. CP416 runs no model, does not
+alter CP414's negative verdict, and grants no reasoning, frontier,
+resident-32B, promotion, or `WOW Signal` claim.
+
+SPARK-059 remains open. Next is fresh larger synthetic custody, exact balanced
+authority, contained admission and training, equal-work controls, the
+five-arm generated-behavior evaluator, and independent verification. Counting
+CP416 makes 662 total checkpoints. The 662-920 forecast leaves 0-258 records,
+or approximately 72.0%-100.0% checkpoint completion with an 86.0% midpoint.
+Final multi-hour soaks remain deferred.

@@ -18,6 +18,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     MAX_AUTHORITY_TTL_S,
+    SAMPLER,
+    SUPPORTED_SAMPLERS,
     RecurrentSFTTrainerConfig,
     StructuredSFTResearchAuthorityError,
     build_authority,
@@ -96,6 +98,13 @@ def _source_paths() -> dict[str, Path]:
             REPO_ROOT / "core/learning/structured_sft_research_state.py"
         ),
         "structured_sft": REPO_ROOT / "core/learning/structured_sft.py",
+        "retention_curriculum": (
+            REPO_ROOT / "core/learning/recurrent_sft_retention.py"
+        ),
+        "behavior_canaries": (
+            REPO_ROOT / "core/learning/recurrent_sft_behavior_canaries.py"
+        ),
+        "sampling": REPO_ROOT / "core/learning/recurrent_sft_sampling.py",
         "tokenization": REPO_ROOT / "tools/validate_structured_sft_tokenization.py",
         "recurrence_objective": (
             REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
@@ -105,6 +114,9 @@ def _source_paths() -> dict[str, Path]:
         ),
         "recurrence_adapter": (
             REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
+        ),
+        "recurrent_sft_execution": (
+            REPO_ROOT / "core/learning/recurrent_sft_execution.py"
         ),
         "resume_verifier": (
             REPO_ROOT / "tools/verify_structured_sft_research_resume.py"
@@ -120,6 +132,7 @@ def _trainer_config(arguments: argparse.Namespace) -> RecurrentSFTTrainerConfig:
     )
     return RecurrentSFTTrainerConfig(
         max_steps=arguments.max_steps,
+        sampler=arguments.sampler,
         batch_size=1,
         learning_rate=arguments.learning_rate,
         optimizer="AdamW",
@@ -281,6 +294,11 @@ def _add_shared(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--execution-spec", type=Path, required=True)
     parser.add_argument("--max-steps", type=int, default=60)
+    parser.add_argument(
+        "--sampler",
+        choices=SUPPORTED_SAMPLERS,
+        default=SAMPLER,
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--lora-rank", type=int, default=8)

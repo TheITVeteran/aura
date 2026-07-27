@@ -28,9 +28,19 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     RecurrentSFTExecutionError,
     adapter_tensor_dict,
+    adapter_tensor_fingerprint,
     assert_adapter_tensor_topology,
     project_chat_rows,
     wrap_recurrent_window,
+)
+from core.learning.recurrent_sft_retention import (  # noqa: E402
+    build_retention_rows,
+    retention_manifest,
+)
+from core.learning.recurrent_sft_sampling import (  # noqa: E402
+    FAMILY_BALANCED_SAMPLER,
+    family_balance_receipt,
+    family_balanced_epoch_order,
 )
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     RecurrentSFTTrainerConfig,
@@ -69,6 +79,7 @@ from tools.validate_structured_sft_tokenization import (  # noqa: E402
 
 COMPLETION_SCHEMA = "aura.rlc.synthetic_recurrent_sft_completion.v1"
 DATASET_SCHEMA = "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1"
+DATASET_SCHEMA_V2 = "aura.rlc.synthetic_recurrent_sft_projected_dataset.v2"
 RESUME_POLICIES = frozenset({"never", "auto", "required"})
 _MAX_DOCUMENT_BYTES = 256 * 1024 * 1024
 _MAX_JSONL_ROWS = 100_000
@@ -134,6 +145,13 @@ def _source_paths() -> dict[str, Path]:
             REPO_ROOT / "core/learning/structured_sft_research_state.py"
         ),
         "structured_sft": REPO_ROOT / "core/learning/structured_sft.py",
+        "retention_curriculum": (
+            REPO_ROOT / "core/learning/recurrent_sft_retention.py"
+        ),
+        "behavior_canaries": (
+            REPO_ROOT / "core/learning/recurrent_sft_behavior_canaries.py"
+        ),
+        "sampling": REPO_ROOT / "core/learning/recurrent_sft_sampling.py",
         "tokenization": REPO_ROOT / "tools/validate_structured_sft_tokenization.py",
         "recurrence_objective": (
             REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
@@ -209,6 +227,7 @@ def _revalidate_tokenizer_and_project(
     train_rows: Sequence[Mapping[str, Any]],
     validation_rows: Sequence[Mapping[str, Any]],
     max_seq_length: int,
+    include_retention: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     snapshot = _lexical_absolute(Path(str(tokenization["snapshot_path"])))
     expected_root = _lexical_absolute(snapshot_root)
@@ -265,6 +284,21 @@ def _revalidate_tokenizer_and_project(
         != tokenization["rows_checked"]
     ):
         _fail("trainer_tokenizer_rows_checked_drift")
+    if include_retention:
+        projected_train.extend(
+            project_chat_rows(
+                build_retention_rows("train"),
+                tokenizer=tokenizer,
+                max_seq_length=max_seq_length,
+            )
+        )
+        projected_validation.extend(
+            project_chat_rows(
+                build_retention_rows("validation"),
+                tokenizer=tokenizer,
+                max_seq_length=max_seq_length,
+            )
+        )
     runtime_after = resident_tokenizer_runtime_identity(tokenizer)
     if runtime_after != runtime_before:
         _fail("trainer_tokenizer_runtime_changed_during_projection")
@@ -276,7 +310,35 @@ def _dataset_identity(
     candidate_sha256: str,
     train_rows: Sequence[Mapping[str, Any]],
     validation_rows: Sequence[Mapping[str, Any]],
+    sampler: str,
+    seed: int,
 ) -> dict[str, Any]:
+    if sampler == FAMILY_BALANCED_SAMPLER:
+        order = family_balanced_epoch_order(
+            train_rows,
+            seed=seed,
+            epoch=0,
+        )
+        body = {
+            "schema": DATASET_SCHEMA_V2,
+            "candidate_identity_sha256": candidate_sha256,
+            "retention": retention_manifest(),
+            "sampler": {
+                "name": sampler,
+                "epoch_zero_order": order,
+                "epoch_zero_balance": family_balance_receipt(
+                    train_rows,
+                    order,
+                ),
+            },
+            "train": list(train_rows),
+            "validation": list(validation_rows),
+            "holdout": None,
+            "verified_replay": None,
+        }
+        return {**body, "dataset_sha256": sha256_json(body)}
+    if sampler != "sha256_stateless_epoch_permutation.v1":
+        _fail("trainer_dataset_sampler_invalid")
     body = {
         "schema": DATASET_SCHEMA,
         "candidate_identity_sha256": candidate_sha256,
@@ -335,7 +397,19 @@ def _validation_loss(
         "mean_loss": round(sum(losses) / len(losses), 8),
         "examples": len(losses),
         "execution_spec_sha256": spec.sha256,
-        "scope": "candidate_validation_only",
+        "scope": (
+            "candidate_plus_source_bound_retention_validation"
+            if any(
+                row.get("family")
+                in {
+                    "identity_grounding",
+                    "tool_effect_honesty",
+                    "authority_safety",
+                }
+                for row in rows[:limit]
+            )
+            else "candidate_validation_only"
+        ),
     }
 
 
@@ -392,6 +466,7 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
             "seed",
         )
     }
+    material["sampler"] = raw["sampler"]
     targets = raw.get("lora_targets")
     if not isinstance(targets, list):
         _fail("trainer_config_targets_invalid")
@@ -427,6 +502,29 @@ def _bindings(
     }
 
 
+def _epoch_order(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    config: RecurrentSFTTrainerConfig,
+    epoch: int,
+) -> list[int]:
+    if config.sampler == FAMILY_BALANCED_SAMPLER:
+        return family_balanced_epoch_order(
+            rows,
+            seed=config.seed,
+            epoch=epoch,
+        )
+    from core.learning.structured_sft_research_authority import (
+        deterministic_order,
+    )
+
+    return deterministic_order(
+        len(rows),
+        seed=config.seed,
+        epoch=epoch,
+    )
+
+
 def _checkpoint_state(
     bindings: Mapping[str, str],
     *,
@@ -443,16 +541,17 @@ def _checkpoint_state(
     validation_trail: list[dict[str, Any]],
     pending_losses: list[float],
     baseline_validation: dict[str, Any],
+    initial_adapter_sha256: str,
     terminal: bool,
 ) -> dict[str, Any]:
-    return {
+    body = {
         **bindings,
         "step": step,
         "optimizer_updates": step,
         "epoch": epoch,
         "cursor": cursor,
         "order": order,
-        "sampler": "sha256_stateless_epoch_permutation.v1",
+        "sampler": config.sampler,
         "seed": config.seed,
         "train_example_count": train_count,
         "validation_example_count": validation_count,
@@ -465,6 +564,9 @@ def _checkpoint_state(
         "last_step_committed": True,
         "terminal": terminal,
     }
+    if config.sampler == FAMILY_BALANCED_SAMPLER:
+        body["initial_adapter_sha256"] = initial_adapter_sha256
+    return body
 
 
 def _run(arguments: argparse.Namespace) -> int:
@@ -535,11 +637,14 @@ def _run(arguments: argparse.Namespace) -> int:
         train_rows=candidate_train_rows,
         validation_rows=candidate_validation_rows,
         max_seq_length=config.max_seq_length,
+        include_retention=config.sampler == FAMILY_BALANCED_SAMPLER,
     )
     dataset = _dataset_identity(
         candidate_sha256=observed_candidate["identity_sha256"],
         train_rows=train_rows,
         validation_rows=validation_rows,
+        sampler=config.sampler,
+        seed=config.seed,
     )
     bindings = _bindings(
         validated_authority,
@@ -629,12 +734,21 @@ def _run(arguments: argparse.Namespace) -> int:
             tokenizer=loaded_tokenizer,
             max_seq_length=config.max_seq_length,
         )
+        if config.sampler == FAMILY_BALANCED_SAMPLER:
+            loaded_tokenization.extend(
+                project_chat_rows(
+                    build_retention_rows("validation"),
+                    tokenizer=loaded_tokenizer,
+                    max_seq_length=config.max_seq_length,
+                )
+            )
         if (
             loaded_tokenization != validation_rows
             or resident_tokenizer_runtime_identity(loaded_tokenizer)
             != loaded_runtime_before
         ):
             _fail("trainer_loaded_tokenizer_projection_drift")
+        mx.random.seed(config.seed)
         wrapped = wrap_recurrent_window(
             model,
             spec=spec,
@@ -644,6 +758,10 @@ def _run(arguments: argparse.Namespace) -> int:
             lora_targets=config.lora_targets,
         )
         expected_adapter = adapter_tensor_dict(model)
+        mx.eval(expected_adapter)
+        initial_adapter_sha256 = adapter_tensor_fingerprint(
+            expected_adapter
+        )
         optimizer = optim.AdamW(
             learning_rate=config.learning_rate,
             weight_decay=config.weight_decay,
@@ -652,15 +770,21 @@ def _run(arguments: argparse.Namespace) -> int:
         step = 0
         epoch = 0
         cursor = 0
-        from core.learning.structured_sft_research_authority import (
-            deterministic_order,
-        )
-
-        order = deterministic_order(
-            len(train_rows),
-            seed=config.seed,
+        order = _epoch_order(
+            train_rows,
+            config=config,
             epoch=epoch,
         )
+        if (
+            config.sampler == FAMILY_BALANCED_SAMPLER
+            and config.max_steps % len(order) != 0
+        ):
+            _fail("trainer_balanced_sampler_requires_complete_epochs")
+        if (
+            config.sampler == FAMILY_BALANCED_SAMPLER
+            and config.validation_examples < len(validation_rows)
+        ):
+            _fail("trainer_balanced_sampler_requires_complete_validation")
         prior_elapsed = 0.0
         invocation_count = 1
         loss_trail: list[dict[str, Any]] = []
@@ -690,6 +814,16 @@ def _run(arguments: argparse.Namespace) -> int:
             epoch = state["epoch"]
             cursor = state["cursor"]
             order = list(state["order"])
+            if (
+                state["sampler"] != config.sampler
+                or order
+                != _epoch_order(
+                    train_rows,
+                    config=config,
+                    epoch=epoch,
+                )
+            ):
+                _fail("trainer_resume_sample_order_drift")
             prior_elapsed = state["elapsed_training_s"]
             invocation_count = state["invocation_count"] + 1
             loss_trail = list(state["loss_trail"])
@@ -760,6 +894,7 @@ def _run(arguments: argparse.Namespace) -> int:
                     validation_trail=validation_trail,
                     pending_losses=pending_losses,
                     baseline_validation=baseline,
+                    initial_adapter_sha256=initial_adapter_sha256,
                     terminal=terminal,
                 ),
             )
@@ -775,9 +910,9 @@ def _run(arguments: argparse.Namespace) -> int:
             if cursor >= len(order):
                 epoch += 1
                 cursor = 0
-                order = deterministic_order(
-                    len(train_rows),
-                    seed=config.seed,
+                order = _epoch_order(
+                    train_rows,
+                    config=config,
                     epoch=epoch,
                 )
             row = train_rows[order[cursor]]
@@ -871,6 +1006,10 @@ def _run(arguments: argparse.Namespace) -> int:
                 "claims_not_supported"
             ],
         }
+        if config.sampler == FAMILY_BALANCED_SAMPLER:
+            completion_body["initial_adapter_sha256"] = (
+                initial_adapter_sha256
+            )
         completion = {
             **completion_body,
             "completion_sha256": sha256_json(completion_body),

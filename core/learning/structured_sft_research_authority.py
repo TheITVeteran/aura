@@ -29,6 +29,7 @@ from core.learning.external_monotonic_witness import (
     validate_rekor_witness_bundle,
     validate_spark_059_production_audit_packet,
 )
+from core.learning.recurrent_sft_sampling import FAMILY_BALANCED_SAMPLER
 from core.learning.structured_sft import (
     STRUCTURED_SFT_CANDIDATE_FILES,
     validate_candidate_dataset_artifacts,
@@ -46,6 +47,7 @@ SOURCE_CLOSURE_SCHEMA: Final = "aura.rlc.synthetic_recurrent_sft_source_closure.
 TRAINING_AUTHORITY: Final = "synthetic_small_checkpoint_recurrent_sft_research_only"
 TRAINING_MODE: Final = "recurrent_latent_slot_sft"
 SAMPLER: Final = "sha256_stateless_epoch_permutation.v1"
+SUPPORTED_SAMPLERS: Final = (SAMPLER, FAMILY_BALANCED_SAMPLER)
 MAX_AUTHORITY_TTL_S: Final = 7 * 24 * 60 * 60
 MAX_SMALL_MODEL_PARAMETERS: Final = 2_500_000_000
 MAX_SMALL_MODEL_WEIGHT_BYTES: Final = 2 * 1024 * 1024 * 1024
@@ -60,10 +62,14 @@ _SOURCE_ROLES: Final = (
     "detached_supervisor",
     "checkpoint_state",
     "structured_sft",
+    "retention_curriculum",
+    "behavior_canaries",
+    "sampling",
     "tokenization",
     "recurrence_objective",
     "execution_spec",
     "recurrence_adapter",
+    "recurrent_sft_execution",
     "resume_verifier",
 )
 _MODEL_BEHAVIOR_FILES: Final = (
@@ -195,6 +201,7 @@ class RecurrentSFTTrainerConfig:
     """Bounded optimizer and recurrent-window adaptation contract."""
 
     max_steps: int = 60
+    sampler: str = SAMPLER
     batch_size: int = 1
     learning_rate: float = 1e-5
     optimizer: str = "AdamW"
@@ -213,6 +220,8 @@ class RecurrentSFTTrainerConfig:
 
     def __post_init__(self) -> None:
         _positive_int(self.max_steps, code="trainer_max_steps_invalid", maximum=500)
+        if self.sampler not in SUPPORTED_SAMPLERS:
+            _fail("trainer_sampler_invalid")
         if self.batch_size != 1:
             _fail("trainer_batch_size_must_be_one_for_exact_resume")
         _finite_positive(
@@ -277,11 +286,15 @@ class RecurrentSFTTrainerConfig:
         return {
             "schema": TRAINER_CONFIG_SCHEMA,
             "training_mode": TRAINING_MODE,
-            "sampler": SAMPLER,
+            "sampler": self.sampler,
             "loss": "recurrent_live_path_final_assistant_cross_entropy",
             "adapter_activation": "latent_slot_positions_only",
             "ordinary_lexical_activation": False,
-            "validation_scope": "candidate_validation_only_no_evaluator_holdout",
+            "validation_scope": (
+                "candidate_and_source_bound_retention_validation_no_evaluator_holdout"
+                if self.sampler == FAMILY_BALANCED_SAMPLER
+                else "candidate_validation_only_no_evaluator_holdout"
+            ),
             **material,
         }
 
@@ -692,7 +705,7 @@ def build_authority(
         "resumability": {
             "checkpoint_state": "adapter_optimizer_cursor_and_evidence",
             "publication": "immutable_generation_then_atomic_latest_pointer",
-            "sample_order": SAMPLER,
+            "sample_order": trainer_config.sampler,
             "hidden_rng_state": False,
             "adapter_only_resume_accepted": False,
             "checkpoint_interval_steps": trainer_config.checkpoint_every,
@@ -826,6 +839,11 @@ def validate_authority(
         or source_sha != sha256_json(source_body)
     ):
         _fail("structured_sft_research_sources_invalid")
+    expected_validation_scope = (
+        "candidate_and_source_bound_retention_validation_no_evaluator_holdout"
+        if trainer.get("sampler") == FAMILY_BALANCED_SAMPLER
+        else "candidate_validation_only_no_evaluator_holdout"
+    )
     if (
         raw.get("schema") != AUTHORITY_SCHEMA
         or raw.get("version") != AUTHORITY_VERSION
@@ -845,10 +863,9 @@ def validate_authority(
         != candidate.get("custody_commit_sha256")
         or trainer.get("schema") != TRAINER_CONFIG_SCHEMA
         or trainer.get("training_mode") != TRAINING_MODE
-        or trainer.get("sampler") != SAMPLER
+        or trainer.get("sampler") not in SUPPORTED_SAMPLERS
         or trainer.get("ordinary_lexical_activation") is not False
-        or trainer.get("validation_scope")
-        != "candidate_validation_only_no_evaluator_holdout"
+        or trainer.get("validation_scope") != expected_validation_scope
         or tokenization.get("max_seq_length") != trainer.get("max_seq_length")
         or model.get("resident_checkpoint_allowed") is not False
         or model.get("estimated_dense_parameters", MAX_SMALL_MODEL_PARAMETERS + 1)
@@ -881,7 +898,7 @@ def validate_authority(
         != {
             "checkpoint_state": "adapter_optimizer_cursor_and_evidence",
             "publication": "immutable_generation_then_atomic_latest_pointer",
-            "sample_order": SAMPLER,
+            "sample_order": trainer.get("sampler"),
             "hidden_rng_state": False,
             "adapter_only_resume_accepted": False,
             "checkpoint_interval_steps": trainer.get("checkpoint_every"),
@@ -1106,6 +1123,7 @@ __all__ = [
     "MODEL_IDENTITY_SCHEMA",
     "RecurrentSFTTrainerConfig",
     "SAMPLER",
+    "SUPPORTED_SAMPLERS",
     "SOURCE_CLOSURE_SCHEMA",
     "StructuredSFTResearchAuthorityError",
     "TOKENIZATION_BINDING_SCHEMA",

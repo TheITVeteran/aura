@@ -211,6 +211,8 @@ def _control_report() -> dict:
         "execution_spec_sha256": "d" * 64,
         "trainer_config_sha256": "f" * 64,
         "initial_adapter_sha256": "4" * 64,
+        "reference_initial_adapter_sha256": "4" * 64,
+        "reference_initialization_match": True,
         "equal_sample_order": True,
         "equal_per_step_token_counts": True,
         "equal_optimizer_and_hyperparameters": True,
@@ -239,6 +241,7 @@ def test_control_report_binds_equal_work_and_adapters() -> None:
         expected_execution_spec_sha256="d" * 64,
         expected_reference_optimizer_updates=20,
         expected_trainer_config_sha256="f" * 64,
+        expected_reference_initial_adapter_sha256="4" * 64,
     )
     assert set(bindings) == set(CONTROL_ARMS)
     assert bindings["syntax_only"]["filename"] == "syntax_only.safetensors"

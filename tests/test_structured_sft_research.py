@@ -10,6 +10,10 @@ import pytest
 
 from core.learning import structured_sft_research_authority as authority
 from core.learning import structured_sft_research_state as state
+from core.learning.recurrent_sft_sampling import (
+    FAMILY_BALANCED_SAMPLER,
+    family_balanced_epoch_order,
+)
 from tools import train_structured_sft_research as trainer
 from tools import verify_structured_sft_research_resume as resume_verifier
 
@@ -27,7 +31,11 @@ def _source_closure() -> dict[str, Any]:
     return {**body, "closure_sha256": authority.sha256_json(body)}
 
 
-def _authority(*, max_seq_length: int = 512) -> dict[str, Any]:
+def _authority(
+    *,
+    max_seq_length: int = 512,
+    sampler: str = authority.SAMPLER,
+) -> dict[str, Any]:
     upstream = _identified(
         {
             "status": "externally_witnessed_audit_head_verified_offline",
@@ -66,6 +74,7 @@ def _authority(*, max_seq_length: int = 512) -> dict[str, Any]:
     )
     config = authority.RecurrentSFTTrainerConfig(
         max_steps=10,
+        sampler=sampler,
         checkpoint_every=5,
         evaluate_every=5,
         validation_examples=2,
@@ -233,6 +242,111 @@ def test_deterministic_order_has_no_hidden_rng_state() -> None:
     assert first == authority.deterministic_order(31, seed=42, epoch=3)
     assert first != authority.deterministic_order(31, seed=42, epoch=4)
     assert sorted(first) == list(range(31))
+
+
+def test_balanced_sampler_authority_is_explicit_and_legacy_evidence_is_readable() -> None:
+    legacy = _authority()
+    balanced = _authority(
+        sampler="sha256_stateless_family_balanced_epoch.v1"
+    )
+    assert authority.validate_authority(legacy)["trainer"]["sampler"] == (
+        authority.SAMPLER
+    )
+    validated = authority.validate_authority(balanced)
+    assert validated["trainer"]["sampler"] == (
+        "sha256_stateless_family_balanced_epoch.v1"
+    )
+    assert validated["trainer"]["validation_scope"] == (
+        "candidate_and_source_bound_retention_validation_no_evaluator_holdout"
+    )
+    assert validated["resumability"]["sample_order"] == (
+        "sha256_stateless_family_balanced_epoch.v1"
+    )
+
+
+def test_checkpoint_state_accepts_bounded_repeated_balanced_order() -> None:
+    document = _authority(sampler=FAMILY_BALANCED_SAMPLER)
+    dataset = _dataset()
+    rows = [
+        {
+            "example_id": f"{index + 1:064x}",
+            "family": "small" if index < 2 else "large",
+        }
+        for index in range(6)
+    ]
+    order = family_balanced_epoch_order(rows, seed=7, epoch=0)
+    checkpoint = _checkpoint_state(_bindings(document, dataset))
+    checkpoint.update(
+        {
+            "step": len(order),
+            "optimizer_updates": len(order),
+            "cursor": len(order),
+            "order": order,
+            "sampler": FAMILY_BALANCED_SAMPLER,
+            "train_example_count": len(rows),
+            "initial_adapter_sha256": SHA_C,
+        }
+    )
+    assert state.validate_checkpoint_state(checkpoint) == checkpoint
+
+    checkpoint["order"][0] = len(rows)
+    with pytest.raises(
+        state.StructuredSFTResearchStateError,
+        match="state_order_invalid",
+    ):
+        state.validate_checkpoint_state(checkpoint)
+
+    valid_order = family_balanced_epoch_order(rows, seed=7, epoch=0)
+    history_tamper = _checkpoint_state(_bindings(document, dataset))
+    history_tamper.update(
+        {
+            "step": len(valid_order) + 1,
+            "optimizer_updates": len(valid_order) + 1,
+            "cursor": len(valid_order),
+            "order": valid_order,
+            "sampler": FAMILY_BALANCED_SAMPLER,
+            "train_example_count": len(rows),
+            "initial_adapter_sha256": SHA_C,
+        }
+    )
+    with pytest.raises(
+        state.StructuredSFTResearchStateError,
+        match="sample_history_invalid",
+    ):
+        state.validate_checkpoint_state(history_tamper)
+
+
+def test_balanced_dataset_identity_commits_retention_and_epoch_order() -> None:
+    rows = [
+        {
+            "example_id": f"{index + 1:064x}",
+            "family": "logic" if index < 2 else "tool",
+        }
+        for index in range(6)
+    ]
+    dataset = trainer._dataset_identity(
+        candidate_sha256=SHA_A,
+        train_rows=rows,
+        validation_rows=[{"family": "validation"}],
+        sampler=FAMILY_BALANCED_SAMPLER,
+        seed=7,
+    )
+    assert dataset["schema"] == trainer.DATASET_SCHEMA_V2
+    assert dataset["retention"]["split_case_overlap_count"] == 0
+    assert dataset["sampler"]["name"] == FAMILY_BALANCED_SAMPLER
+    assert dataset["sampler"]["epoch_zero_order"] == (
+        family_balanced_epoch_order(rows, seed=7, epoch=0)
+    )
+    assert dataset["sampler"]["epoch_zero_balance"][
+        "exact_family_balance"
+    ] is True
+    assert dataset["dataset_sha256"] == authority.sha256_json(
+        {
+            key: value
+            for key, value in dataset.items()
+            if key != "dataset_sha256"
+        }
+    )
 
 
 def _prevalidated_candidate_material() -> tuple[

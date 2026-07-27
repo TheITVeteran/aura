@@ -39,6 +39,9 @@ from core.learning.recurrent_sft_falsification import (  # noqa: E402
     build_falsification_verdict,
     sha256_json,
 )
+from core.learning.recurrent_sft_sampling import (  # noqa: E402
+    FAMILY_BALANCED_SAMPLER,
+)
 from core.learning.structured_sft import (  # noqa: E402
     STRUCTURED_SFT_CANDIDATE_FILES,
     STRUCTURED_SFT_EVALUATOR_FILES,
@@ -49,6 +52,10 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     canonical_json_bytes,
     small_model_identity,
     validate_authority,
+)
+from core.learning.structured_sft_research_state import (  # noqa: E402
+    StructuredSFTResearchStateError,
+    validate_checkpoint_state,
 )
 from core.runtime.atomic_writer import atomic_write_bytes  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
@@ -352,6 +359,20 @@ def _verify_equal_work(
         checkpoint_payload,
         role="equal_work_checkpoint",
     )
+    if authority["trainer"].get("sampler") == FAMILY_BALANCED_SAMPLER:
+        validate_checkpoint_state(
+            {
+                key: value
+                for key, value in checkpoint.items()
+                if key
+                not in {
+                    "adapter",
+                    "optimizer",
+                    "checkpoint_id",
+                    "created_unix",
+                }
+            }
+        )
     if (
         checkpoint.get("optimizer_updates") != trained["optimizer_updates"]
         or checkpoint.get("step") != trained["step"]
@@ -378,6 +399,12 @@ def _verify_equal_work(
         expected_execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
         expected_reference_optimizer_updates=trained["optimizer_updates"],
         expected_trainer_config_sha256=trainer_config_sha256,
+        expected_reference_initial_adapter_sha256=(
+            checkpoint.get("initial_adapter_sha256")
+            if authority["trainer"].get("sampler")
+            == FAMILY_BALANCED_SAMPLER
+            else None
+        ),
     )
     for arm in CONTROL_ARMS:
         binding = bindings[arm]
@@ -636,6 +663,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RecurrentSFTEvaluationError,
         RecurrentSFTFalsificationVerificationError,
         StructuredSFTResearchAuthorityError,
+        StructuredSFTResearchStateError,
         ValueError,
     ) as exc:
         print(

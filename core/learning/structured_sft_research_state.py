@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Never
 
+from core.learning.recurrent_sft_sampling import FAMILY_BALANCED_SAMPLER
 from core.learning.structured_sft_research_authority import (
     SAMPLER,
     deterministic_order,
@@ -117,6 +118,8 @@ def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
         "last_step_committed",
         "terminal",
     }
+    if isinstance(state, Mapping) and state.get("sampler") == FAMILY_BALANCED_SAMPLER:
+        required.add("initial_adapter_sha256")
     if not isinstance(state, Mapping) or set(state) != required:
         _fail("structured_sft_state_schema_invalid")
     for role in (
@@ -158,15 +161,37 @@ def validate_checkpoint_state(state: Mapping[str, Any]) -> dict[str, Any]:
     ):
         _fail("structured_sft_state_cursor_invalid")
     order = state.get("order")
-    if (
-        not isinstance(order, list)
-        or len(order) != train_count
-        or cursor > len(order)
-        or order != deterministic_order(train_count, seed=seed, epoch=epoch)
-    ):
+    sampler = state.get("sampler")
+    if not isinstance(order, list) or cursor > len(order):
         _fail("structured_sft_state_order_invalid")
-    if state.get("sampler") != SAMPLER:
+    if sampler == SAMPLER:
+        if (
+            len(order) != train_count
+            or order != deterministic_order(
+                train_count,
+                seed=seed,
+                epoch=epoch,
+            )
+        ):
+            _fail("structured_sft_state_order_invalid")
+    elif sampler == FAMILY_BALANCED_SAMPLER:
+        if (
+            not order
+            or len(order) > _MAX_ORDER_SIZE
+            or not _is_sha256(state.get("initial_adapter_sha256"))
+            or any(
+                type(index) is not int or not 0 <= index < train_count
+                for index in order
+            )
+        ):
+            _fail("structured_sft_state_order_invalid")
+    else:
         _fail("structured_sft_state_sampler_invalid")
+    if (
+        sampler == FAMILY_BALANCED_SAMPLER
+        and step != epoch * len(order) + cursor
+    ):
+        _fail("structured_sft_state_sample_history_invalid")
     _finite_nonnegative(state.get("elapsed_training_s"), role="elapsed")
     _trail(state.get("loss_trail"), role="loss_trail")
     _trail(state.get("validation_trail"), role="validation_trail")

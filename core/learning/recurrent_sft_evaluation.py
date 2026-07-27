@@ -32,6 +32,7 @@ EVALUATION_SOURCE_ROLES: Final = (
     "code_repl",
     "cognitive_operators",
     "control_containment",
+    "checkpoint_state",
     "depth_conditioned_lora",
     "detached_supervisor",
     "epistemic_state",
@@ -64,7 +65,9 @@ EVALUATION_SOURCE_ROLES: Final = (
     "recurrent_loop_core",
     "recurrent_sft_execution",
     "resource_accounting",
+    "retention_curriculum",
     "runtime_errors",
+    "sampling",
     "sandbox_profile_builder",
     "sandbox_runner",
     "structured_sft",
@@ -204,6 +207,7 @@ def validate_control_report(
     expected_execution_spec_sha256: str,
     expected_reference_optimizer_updates: int,
     expected_trainer_config_sha256: str,
+    expected_reference_initial_adapter_sha256: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Validate an equal-work control report and return adapter bindings."""
 
@@ -225,6 +229,17 @@ def validate_control_report(
         or report.get("equal_per_step_token_counts") is not True
         or report.get("equal_optimizer_and_hyperparameters") is not True
         or report.get("identical_initial_adapter_for_all_controls") is not True
+        or (
+            expected_reference_initial_adapter_sha256 is not None
+            and (
+                not _is_sha256(expected_reference_initial_adapter_sha256)
+                or report.get("reference_initial_adapter_sha256")
+                != expected_reference_initial_adapter_sha256
+                or report.get("initial_adapter_sha256")
+                != expected_reference_initial_adapter_sha256
+                or report.get("reference_initialization_match") is not True
+            )
+        )
         or report.get("base_weights_unchanged") is not True
         or report.get("evaluator_access") is not False
         or report.get("production_effect") is not False

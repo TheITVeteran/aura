@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Any, Never
 
@@ -186,6 +188,32 @@ def adapter_tensor_dict(model: Any) -> dict[str, Any]:
     return tensors
 
 
+def adapter_tensor_fingerprint(tensors: Mapping[str, Any]) -> str:
+    """Hash exact adapter names, dtypes, shapes, and tensor bytes."""
+
+    import numpy as np
+
+    assert_adapter_tensor_topology(tensors, tensors)
+    digest = hashlib.sha256()
+    for name in sorted(tensors):
+        array = np.asarray(tensors[name])
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(array.dtype).encode("ascii"))
+        digest.update(b"\0")
+        digest.update(
+            json.dumps(
+                list(array.shape),
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        )
+        digest.update(b"\0")
+        digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
+
+
 def assert_adapter_tensor_topology(
     expected: Mapping[str, Any],
     observed: Mapping[str, Any],
@@ -206,6 +234,7 @@ def assert_adapter_tensor_topology(
 __all__ = [
     "RecurrentSFTExecutionError",
     "adapter_tensor_dict",
+    "adapter_tensor_fingerprint",
     "assert_adapter_tensor_topology",
     "project_chat_rows",
     "wrap_recurrent_window",

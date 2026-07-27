@@ -54,6 +54,9 @@ from core.learning.recurrent_sft_falsification import (  # noqa: E402
     build_falsification_verdict,
     sha256_json,
 )
+from core.learning.recurrent_sft_sampling import (  # noqa: E402
+    FAMILY_BALANCED_SAMPLER,
+)
 from core.learning.structured_sft import (  # noqa: E402
     STRUCTURED_SFT_CANDIDATE_FILES,
     STRUCTURED_SFT_EVALUATOR_FILES,
@@ -65,6 +68,10 @@ from core.learning.structured_sft_research_authority import (  # noqa: E402
     execution_spec_identity,
     small_model_identity,
     validate_authority,
+)
+from core.learning.structured_sft_research_state import (  # noqa: E402
+    StructuredSFTResearchStateError,
+    validate_checkpoint_state,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
@@ -130,6 +137,7 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
         "validation_scope",
     }
     material = {key: value for key, value in raw.items() if key not in fixed}
+    material["sampler"] = raw.get("sampler")
     targets = material.get("lora_targets")
     if not isinstance(targets, list):
         _fail("recurrent_sft_evaluation_lora_targets_invalid")
@@ -158,6 +166,9 @@ def evaluation_source_paths() -> dict[str, Path]:
         "code_repl": REPO_ROOT / "core/skills/code_repl.py",
         "cognitive_operators": (REPO_ROOT / "core/brain/llm/latent_cortex/cognitive_operators.py"),
         "control_containment": (REPO_ROOT / "tools/launch_recurrent_sft_controls.py"),
+        "checkpoint_state": (
+            REPO_ROOT / "core/learning/structured_sft_research_state.py"
+        ),
         "depth_conditioned_lora": (REPO_ROOT / "core/learning/depth_conditioned_lora.py"),
         "detached_supervisor": REPO_ROOT / "tools/run_detached_step.py",
         "evaluation_contract": (REPO_ROOT / "core/learning/recurrent_sft_evaluation.py"),
@@ -193,7 +204,11 @@ def evaluation_source_paths() -> dict[str, Path]:
         "recurrence_runner": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"),
         "recurrence_objective": (REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"),
         "resource_accounting": (REPO_ROOT / "core/brain/llm/latent_cortex/resource_accounting.py"),
+        "retention_curriculum": (
+            REPO_ROOT / "core/learning/recurrent_sft_retention.py"
+        ),
         "runtime_errors": REPO_ROOT / "core/runtime/errors.py",
+        "sampling": REPO_ROOT / "core/learning/recurrent_sft_sampling.py",
         "recurrent_sft_execution": (REPO_ROOT / "core/learning/recurrent_sft_execution.py"),
         "sandbox_profile_builder": (REPO_ROOT / "tools/launch_structured_sft_research.py"),
         "sandbox_runner": REPO_ROOT / "core/sandbox/runner.py",
@@ -343,6 +358,14 @@ def _reference_adapter(
     if sha256_bytes(payload) != expected_checkpoint_sha256:
         _fail("recurrent_sft_evaluation_reference_checkpoint_sha256_mismatch")
     checkpoint = strict_json_bytes(payload, role="reference_checkpoint")
+    if authority["trainer"].get("sampler") == FAMILY_BALANCED_SAMPLER:
+        state_view = {
+            key: value
+            for key, value in checkpoint.items()
+            if key
+            not in {"adapter", "optimizer", "checkpoint_id", "created_unix"}
+        }
+        validate_checkpoint_state(state_view)
     adapter = checkpoint.get("adapter")
     if (
         checkpoint.get("schema") != REFERENCE_COMPLETION_SCHEMA
@@ -378,6 +401,9 @@ def _reference_adapter(
         "optimizer_updates": checkpoint.get("optimizer_updates"),
         "step": checkpoint.get("step"),
         "trainer_config_sha256": checkpoint.get("trainer_config_sha256"),
+        "initial_adapter_sha256": checkpoint.get(
+            "initial_adapter_sha256"
+        ),
     }
 
 
@@ -389,6 +415,7 @@ def _control_adapters(
     expected_reference_checkpoint_sha256: str,
     expected_reference_optimizer_updates: int,
     expected_trainer_config_sha256: str,
+    expected_reference_initial_adapter_sha256: str | None,
 ) -> tuple[dict[str, Path], dict[str, Any]]:
     if report_path.is_symlink():
         _fail("recurrent_sft_evaluation_control_report_symlink_rejected")
@@ -405,6 +432,9 @@ def _control_adapters(
         expected_execution_spec_sha256=authority["execution_spec"]["semantic_sha256"],
         expected_reference_optimizer_updates=expected_reference_optimizer_updates,
         expected_trainer_config_sha256=expected_trainer_config_sha256,
+        expected_reference_initial_adapter_sha256=(
+            expected_reference_initial_adapter_sha256
+        ),
     )
     paths: dict[str, Path] = {}
     adapter_bindings: dict[str, Any] = {}
@@ -738,6 +768,12 @@ def _run(arguments: argparse.Namespace) -> int:
         expected_reference_checkpoint_sha256=(arguments.expected_reference_checkpoint_sha256),
         expected_reference_optimizer_updates=trained_binding["optimizer_updates"],
         expected_trainer_config_sha256=expected_trainer_config_sha256,
+        expected_reference_initial_adapter_sha256=(
+            trained_binding["initial_adapter_sha256"]
+            if authority["trainer"].get("sampler")
+            == FAMILY_BALANCED_SAMPLER
+            else None
+        ),
     )
     containment_contract = _validated_containment_contract(
         arguments.containment_contract.expanduser().resolve(strict=True),
@@ -1000,6 +1036,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         RecurrentSFTFalsificationError,
         RecurrentSFTFalsificationEvaluationError,
         StructuredSFTResearchAuthorityError,
+        StructuredSFTResearchStateError,
         ValueError,
     ) as exc:
         print(

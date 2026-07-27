@@ -29,6 +29,7 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
 from core.learning.recurrent_sft_execution import (  # noqa: E402
     RecurrentSFTExecutionError,
     adapter_tensor_dict,
+    adapter_tensor_fingerprint,
     assert_adapter_tensor_topology,
     wrap_recurrent_window,
 )
@@ -37,6 +38,13 @@ from core.learning.recurrent_sft_falsification import (  # noqa: E402
     RecurrentSFTFalsificationError,
     sha256_json,
     transform_control_rows,
+)
+from core.learning.recurrent_sft_retention import retention_manifest  # noqa: E402
+from core.learning.recurrent_sft_sampling import (  # noqa: E402
+    FAMILY_BALANCED_SAMPLER,
+    family_balance_receipt,
+    family_balanced_epoch_order,
+    sample_history,
 )
 from core.learning.structured_sft_research_authority import (  # noqa: E402
     RecurrentSFTTrainerConfig,
@@ -55,6 +63,7 @@ from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
 REPORT_SCHEMA = "aura.rlc.synthetic_recurrent_sft_control_training.v1"
 PROJECTED_DATASET_SCHEMA = "aura.rlc.synthetic_recurrent_sft_projected_dataset.v1"
+PROJECTED_DATASET_SCHEMA_V2 = "aura.rlc.synthetic_recurrent_sft_projected_dataset.v2"
 REFERENCE_COMPLETION_SCHEMA = "aura.rlc.synthetic_recurrent_sft_checkpoint.v1"
 _MAX_DOCUMENT_BYTES = 256 * 1024 * 1024
 
@@ -113,6 +122,13 @@ def control_source_paths() -> dict[str, Path]:
         "file_read_gateway": REPO_ROOT / "core/runtime/file_read_gateway.py",
         "memory_guard": REPO_ROOT / "core/runtime/mlx_memory_guard.py",
         "model_lane": REPO_ROOT / "core/runtime/model_lane_control.py",
+        "retention_curriculum": (
+            REPO_ROOT / "core/learning/recurrent_sft_retention.py"
+        ),
+        "behavior_canaries": (
+            REPO_ROOT / "core/learning/recurrent_sft_behavior_canaries.py"
+        ),
+        "sampling": REPO_ROOT / "core/learning/recurrent_sft_sampling.py",
         "recurrence_adapter": (
             REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"
         ),
@@ -143,6 +159,9 @@ def control_source_closure() -> dict[str, Any]:
         "file_read_gateway",
         "memory_guard",
         "model_lane",
+        "retention_curriculum",
+        "behavior_canaries",
+        "sampling",
         "recurrence_adapter",
         "recurrence_identity",
         "recurrence_objective",
@@ -198,6 +217,7 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
         "validation_scope",
     }
     material = {key: value for key, value in raw.items() if key not in fixed_fields}
+    material["sampler"] = raw.get("sampler")
     targets = material.get("lora_targets")
     if not isinstance(targets, list):
         _fail("control_training_lora_targets_invalid")
@@ -214,7 +234,7 @@ def _trainer_config(raw: Mapping[str, Any]) -> RecurrentSFTTrainerConfig:
 
 
 def _projected_dataset(raw: Mapping[str, Any]) -> dict[str, Any]:
-    fields = {
+    legacy_fields = {
         "schema",
         "candidate_identity_sha256",
         "train",
@@ -223,9 +243,16 @@ def _projected_dataset(raw: Mapping[str, Any]) -> dict[str, Any]:
         "verified_replay",
         "dataset_sha256",
     }
+    balanced_fields = legacy_fields | {"retention", "sampler"}
+    schema = raw.get("schema")
+    expected_fields = (
+        balanced_fields
+        if schema == PROJECTED_DATASET_SCHEMA_V2
+        else legacy_fields
+    )
     if (
-        set(raw) != fields
-        or raw.get("schema") != PROJECTED_DATASET_SCHEMA
+        set(raw) != expected_fields
+        or schema not in {PROJECTED_DATASET_SCHEMA, PROJECTED_DATASET_SCHEMA_V2}
         or raw.get("holdout") is not None
         or raw.get("verified_replay") is not None
         or not isinstance(raw.get("train"), list)
@@ -238,6 +265,17 @@ def _projected_dataset(raw: Mapping[str, Any]) -> dict[str, Any]:
     observed = body.pop("dataset_sha256", None)
     if observed != sha256_json(body):
         _fail("control_training_projected_dataset_commitment_mismatch")
+    if schema == PROJECTED_DATASET_SCHEMA_V2:
+        sampler = raw.get("sampler")
+        if (
+            raw.get("retention") != retention_manifest()
+            or not isinstance(sampler, Mapping)
+            or sampler.get("name") != FAMILY_BALANCED_SAMPLER
+            or not isinstance(sampler.get("epoch_zero_order"), list)
+            or not sampler["epoch_zero_order"]
+            or not isinstance(sampler.get("epoch_zero_balance"), Mapping)
+        ):
+            _fail("control_training_projected_dataset_sampling_invalid")
     return json.loads(canonical_json_bytes(raw))
 
 
@@ -250,6 +288,42 @@ def _reference_checkpoint(
     adapter = raw.get("adapter")
     optimizer = raw.get("optimizer")
     order = raw.get("order")
+    sampler = authority["trainer"].get("sampler")
+    if sampler == FAMILY_BALANCED_SAMPLER:
+        step = raw.get("step")
+        if type(step) is int and step > 0:
+            first_order = family_balanced_epoch_order(
+                projected_dataset["train"],
+                seed=authority["trainer"]["seed"],
+                epoch=0,
+            )
+            expected_epoch = (step - 1) // len(first_order)
+            expected_cursor = step - expected_epoch * len(first_order)
+            expected_order = family_balanced_epoch_order(
+                projected_dataset["train"],
+                seed=authority["trainer"]["seed"],
+                epoch=expected_epoch,
+            )
+        else:
+            expected_epoch = -1
+            expected_cursor = -1
+            expected_order = []
+        order_valid = (
+            isinstance(order, list)
+            and order == expected_order
+            and raw.get("epoch") == expected_epoch
+            and raw.get("cursor") == expected_cursor
+        )
+    else:
+        order_valid = (
+            isinstance(order, list)
+            and len(order) == len(projected_dataset["train"])
+            and sorted(order) == list(range(len(order)))
+            and raw.get("epoch") == 0
+            and raw.get("cursor") == raw.get("step")
+            and isinstance(raw.get("step"), int)
+            and raw["step"] <= len(order)
+        )
     if (
         raw.get("schema") != REFERENCE_COMPLETION_SCHEMA
         or raw.get("terminal") is not True
@@ -263,12 +337,11 @@ def _reference_checkpoint(
         or type(raw.get("step")) is not int
         or raw["step"] < 1
         or raw.get("optimizer_updates") != raw["step"]
-        or raw.get("epoch") != 0
-        or raw.get("cursor") != raw["step"]
-        or not isinstance(order, list)
-        or len(order) != len(projected_dataset["train"])
-        or sorted(order) != list(range(len(order)))
-        or raw["step"] > len(order)
+        or not order_valid
+        or (
+            sampler == FAMILY_BALANCED_SAMPLER
+            and not _is_sha256(raw.get("initial_adapter_sha256"))
+        )
         or not isinstance(adapter, Mapping)
         or not isinstance(optimizer, Mapping)
         or set(adapter) != {"path", "sha256", "size_bytes"}
@@ -349,22 +422,6 @@ def _save_adapter(
     }
 
 
-def _tensor_fingerprint(tensors: Mapping[str, Any]) -> str:
-    import numpy as np
-
-    digest = hashlib.sha256()
-    for name in sorted(tensors):
-        array = np.asarray(tensors[name])
-        digest.update(name.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(str(array.dtype).encode("ascii"))
-        digest.update(b"\0")
-        digest.update(canonical_json_bytes(list(array.shape)))
-        digest.update(b"\0")
-        digest.update(array.tobytes(order="C"))
-    return digest.hexdigest()
-
-
 def _validate_checkpoint_artifacts(
     checkpoint_path: Path,
     checkpoint: Mapping[str, Any],
@@ -396,6 +453,27 @@ def _run(arguments: argparse.Namespace) -> int:
     projected = _projected_dataset(
         _read_json(arguments.projected_dataset, role="projected_dataset")
     )
+    if config.sampler == FAMILY_BALANCED_SAMPLER:
+        expected_order = family_balanced_epoch_order(
+            projected["train"],
+            seed=config.seed,
+            epoch=0,
+        )
+        if (
+            projected.get("schema") != PROJECTED_DATASET_SCHEMA_V2
+            or projected.get("sampler")
+            != {
+                "name": FAMILY_BALANCED_SAMPLER,
+                "epoch_zero_order": expected_order,
+                "epoch_zero_balance": family_balance_receipt(
+                    projected["train"],
+                    expected_order,
+                ),
+            }
+        ):
+            _fail("control_training_projected_dataset_sampling_drift")
+    elif projected.get("schema") != PROJECTED_DATASET_SCHEMA:
+        _fail("control_training_legacy_dataset_schema_invalid")
     reference_checkpoint_path = arguments.reference_checkpoint.expanduser().resolve(
         strict=True
     )
@@ -440,7 +518,15 @@ def _run(arguments: argparse.Namespace) -> int:
     from core.runtime.model_lane_control import standalone_model_lane
 
     train_rows = list(projected["train"])
-    sample_indices = list(reference["order"][: reference["step"]])
+    sample_indices = (
+        sample_history(
+            train_rows,
+            seed=config.seed,
+            steps=reference["step"],
+        )["indices"]
+        if config.sampler == FAMILY_BALANCED_SAMPLER
+        else list(reference["order"][: reference["step"]])
+    )
     sample_token_counts = [
         train_rows[index]["full_token_count"] for index in sample_indices
     ]
@@ -463,8 +549,8 @@ def _run(arguments: argparse.Namespace) -> int:
         if getattr(lease, "active", False) is not True:
             _fail("control_training_model_lane_not_active")
         base_weights_before = full_weight_checkpoint_identity(arguments.model_dir)
-        mx.random.seed(config.seed)
         model, tokenizer = load(str(arguments.model_dir))
+        mx.random.seed(config.seed)
         wrapped = wrap_recurrent_window(
             model,
             spec=spec,
@@ -475,7 +561,15 @@ def _run(arguments: argparse.Namespace) -> int:
         )
         initial_adapter = adapter_tensor_dict(model)
         mx.eval(initial_adapter)
-        initial_adapter_sha256 = _tensor_fingerprint(initial_adapter)
+        initial_adapter_sha256 = adapter_tensor_fingerprint(initial_adapter)
+        reference_initial_adapter_sha256 = reference.get(
+            "initial_adapter_sha256"
+        )
+        if (
+            config.sampler == FAMILY_BALANCED_SAMPLER
+            and initial_adapter_sha256 != reference_initial_adapter_sha256
+        ):
+            _fail("control_training_reference_initialization_drift")
         surfaces = _token_surfaces(tokenizer, train_rows)
         neutral_token = _neutral_token_id(tokenizer)
         arm_reports: dict[str, Any] = {}
@@ -489,7 +583,7 @@ def _run(arguments: argparse.Namespace) -> int:
             )
             model.load_weights(list(initial_adapter.items()), strict=False)
             mx.eval(model.trainable_parameters())
-            starting_adapter_sha256 = _tensor_fingerprint(
+            starting_adapter_sha256 = adapter_tensor_fingerprint(
                 adapter_tensor_dict(model)
             )
             if starting_adapter_sha256 != initial_adapter_sha256:
@@ -575,6 +669,16 @@ def _run(arguments: argparse.Namespace) -> int:
         "initialization_seed": config.seed,
         "initial_adapter_sha256": initial_adapter_sha256,
         "identical_initial_adapter_for_all_controls": True,
+        "reference_initial_adapter_sha256": (
+            reference_initial_adapter_sha256
+            if config.sampler == FAMILY_BALANCED_SAMPLER
+            else None
+        ),
+        "reference_initialization_match": (
+            initial_adapter_sha256 == reference_initial_adapter_sha256
+            if config.sampler == FAMILY_BALANCED_SAMPLER
+            else None
+        ),
         "reference_optimizer_updates": reference["optimizer_updates"],
         "control_optimizer_updates": {
             arm: arm_reports[arm]["optimizer_updates"] for arm in CONTROL_ARMS
