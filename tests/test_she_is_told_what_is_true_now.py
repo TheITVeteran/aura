@@ -205,3 +205,31 @@ def test_the_terse_inventory_contract_is_left_alone() -> None:
     src = ENGINE.read_text(encoding="utf-8")
     block = src[src.index("if not capability_inventory_contract:") :]
     assert "present_moment_block" in block[:1200]
+
+
+# ── "What's your uptime?" must never come back without a number ───────────
+
+def test_uptime_is_always_readable() -> None:
+    """The orchestrator lookup was the only source, and it returned nothing.
+
+    Asked for uptime and memory read from her own runtime, the instruments
+    block arrived with no uptime line at all — so the honest answer was
+    unavailable to her, which is the precondition for inventing one. The
+    process knows when it started, always.
+    """
+    from core.brain.self_state_report import _uptime_line
+
+    line = _uptime_line()
+    assert line.startswith("- Uptime:")
+    assert any(char.isdigit() for char in line)
+
+
+def test_the_gpu_claim_is_only_made_when_the_numbers_support_it() -> None:
+    """RSS understates her — but only where it actually does."""
+    from core.brain.self_state_report import _memory_lines
+
+    lines = _memory_lines()
+    gpu = [line for line in lines if "GPU memory" in line]
+    assert gpu, "the accelerator must always be accounted for, even as an absence"
+    if "bulk of what you are actually holding" in gpu[0]:
+        assert "active" in gpu[0]

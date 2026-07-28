@@ -39,7 +39,26 @@ def _humanize(seconds: float) -> str:
     return f"{seconds / 86400:.1f} days"
 
 
+def _process_start_time() -> float:
+    """When this process began, from the OS. Never unavailable, never wrong.
+
+    The orchestrator's own ``start_time`` is preferred because it marks when
+    *she* came up rather than when the interpreter did, but asked "what's your
+    current uptime", omitting the line is the one answer that is certainly
+    useless — and the process knows, always. A live instance answered that
+    question with no number at all because the orchestrator lookup was the only
+    source and it returned nothing.
+    """
+    try:
+        import psutil
+
+        return float(psutil.Process(os.getpid()).create_time())
+    except _RECOVERABLE:
+        return 0.0
+
+
 def _uptime_line() -> str:
+    start = 0.0
     try:
         from core.runtime.service_registry import get_runtime_service
 
@@ -49,21 +68,29 @@ def _uptime_line() -> str:
             getattr(getattr(orch, "status", None), "start_time", None),
         ):
             try:
-                start = float(candidate or 0.0)
+                value = float(candidate or 0.0)
             except (TypeError, ValueError):
                 continue
-            if start > 0.0:
-                elapsed = max(0.0, time.time() - start)
-                started = time.strftime("%H:%M", time.localtime(start))
-                return f"- Uptime: {_humanize(elapsed)} (this runtime started at {started})."
+            if value > 0.0:
+                start = value
+                break
     except _RECOVERABLE as exc:
-        record_degradation("self_state_report", exc, severity="info", action="omitted uptime line")
-    return ""
+        record_degradation(
+            "self_state_report", exc, severity="info", action="fell back to process start time"
+        )
+    if start <= 0.0:
+        start = _process_start_time()
+    if start <= 0.0:
+        return ""
+    elapsed = max(0.0, time.time() - start)
+    started = time.strftime("%H:%M", time.localtime(start))
+    return f"- Uptime: {_humanize(elapsed)} (this runtime started at {started})."
 
 
 def _memory_lines() -> list[str]:
     """RSS understates her badly on Apple Silicon; say both numbers."""
     lines: list[str] = []
+    rss_gb = 0.0
     try:
         import psutil
 
@@ -75,12 +102,47 @@ def _memory_lines() -> list[str]:
             f"{virt.percent:.0f}% of {virt.total / 1e9:.0f}GB with "
             f"{virt.available / 1e9:.1f}GB available."
         )
-        lines.append(
-            "- Your model's weights live in wired GPU memory and do NOT appear "
-            "in that resident figure — the real total is larger."
-        )
     except _RECOVERABLE as exc:
         record_degradation("self_state_report", exc, severity="info", action="omitted memory lines")
+
+    # RSS is close to a lie about her. The weights live in unified GPU memory
+    # and never appear in it — the live process reports ~2GB resident while
+    # holding a 32B model. Saying only "the real total is larger" turns the
+    # honest answer into a hedge, and the accelerator knows the number.
+    try:
+        from core.runtime.resource_observation import get_resource_observer
+
+        accelerator = get_resource_observer().accelerator()
+        if getattr(accelerator, "available", False):
+            active_gb = float(getattr(accelerator, "active_bytes", 0) or 0) / 1e9
+            cache_gb = float(getattr(accelerator, "cache_bytes", 0) or 0) / 1e9
+            if active_gb > 0.05:
+                lines.append(
+                    f"- Your model's weights are in unified GPU memory, which RSS "
+                    f"does not count: {active_gb:.1f}GB active"
+                    + (f" plus {cache_gb:.1f}GB cached" if cache_gb > 0.05 else "")
+                    + (
+                        # Only claim this when the numbers say it. On the live
+                        # instance they do, by an order of magnitude; in a bare
+                        # process they do not, and asserting it anyway would be
+                        # the same species of plausible-sounding wrongness this
+                        # whole module exists to stop.
+                        ". That is the bulk of what you are actually holding."
+                        if active_gb > rss_gb
+                        else "."
+                    )
+                )
+    except _RECOVERABLE as exc:
+        record_degradation(
+            "self_state_report", exc, severity="info", action="omitted accelerator memory line"
+        )
+
+    if not any("GPU memory" in line for line in lines):
+        lines.append(
+            "- Your model's weights live in wired GPU memory and do NOT appear "
+            "in that resident figure — the real total is larger, and you cannot "
+            "read the exact figure right now."
+        )
     return lines
 
 

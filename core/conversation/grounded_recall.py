@@ -26,25 +26,61 @@ logger = logging.getLogger("Aura.Conversation.GroundedRecall")
 
 RecallPosition = Literal["first", "last"]
 
-# Self/relationship reference — the question is about *our* conversation.
-_SELF_REF = r"\b(i|we|my|me|us|our)\b"
 # Recall framing — asking about a past utterance.
 _RECALL_VERB = (
     r"(ask|asked|say|said|saying|question|questions|message|messages|"
     r"talk|talked|talking|bring up|brought up|mention|mentioned|start|started|"
     r"begin|began|tell|told|wanted|request)"
 )
-_FIRST = r"\b(first|initially|originally|very first|the start|the beginning)\b"
+# "very first" is already covered by "first"; "the very start" was not
+# covered by "the start", which is the sort of gap an alternation of literal
+# phrases always has.
+_FIRST = r"\b(first|initially|originally|the (?:very )?(?:start|beginning|outset))\b"
 _LAST = r"\b(last|previous|recent|recently|just|earlier|a moment ago)\b"
 
-_FIRST_RE = re.compile(
-    rf"(?=.*{_SELF_REF})(?=.*{_FIRST})(?=.*\b{_RECALL_VERB}\b)",
-    re.IGNORECASE,
+# The three components have to be *connected*, not merely co-present.
+#
+# Live 2026-07-27: "Now something outside yourself: look up who won the most
+# recent Formula 1 world championship and tell me where you got it." matched
+# `last` — "me" satisfied the self-reference, "recent" the ordinal, and "tell"
+# the recall verb, all in unrelated roles. The speaker-attribution repair then
+# rewrote her true opening sentence into "You said you checked live web
+# evidence", attributing her own search to the user, in a reply about motor
+# racing.
+#
+# What actually distinguishes a recall question is that THE USER is the
+# speaker being asked about: they are the subject of a speech verb, or the
+# owner of an utterance. In "tell me where you got it" the user is the object
+# and the speaker is her, which is the opposite arrangement.
+_USER_UTTERANCE = (
+    r"(?:"
+    rf"\b(?:i|we)\s+(?:\w+\s+){{0,2}}{_RECALL_VERB}\b"
+    rf"|\bdid\s+(?:i|we)\s+(?:\w+\s+){{0,2}}{_RECALL_VERB}\b"
+    r"|\b(?:my|our)\s+(?:\w+\s+){0,3}"
+    r"(?:message|messages|question|questions|words|prompt|prompts|request|"
+    r"requests|point|thing|ask)\b"
+    r"|\b(?:this|our|the)\s+(?:conversation|chat|exchange|thread)\b"
+    r")"
 )
-_LAST_RE = re.compile(
-    rf"(?=.*{_SELF_REF})(?=.*{_LAST})(?=.*\b{_RECALL_VERB}\b)",
-    re.IGNORECASE,
-)
+# The ordinal has to be near the utterance it modifies. Wide enough for "the
+# very first thing I asked you", narrow enough that an ordinal belonging to a
+# different noun phrase in the same sentence does not reach.
+_ORDINAL_WINDOW = 60
+
+
+def _positional_recall_span(text: str, ordinal: str) -> bool:
+    """Does an ordinal sit close to a phrase about something the user said?"""
+    utterances = [match.span() for match in re.finditer(_USER_UTTERANCE, text, re.IGNORECASE)]
+    if not utterances:
+        return False
+    for match in re.finditer(ordinal, text, re.IGNORECASE):
+        start, end = match.span()
+        for u_start, u_end in utterances:
+            if max(start, u_start) - min(end, u_end) <= _ORDINAL_WINDOW:
+                return True
+    return False
+
+
 # Direct idioms that don't need all three components.
 _FIRST_IDIOM_RE = re.compile(
     r"(what did i (first|initially) (ask|say)|"
@@ -65,9 +101,9 @@ def detect_positional_recall(user_message: str) -> RecallPosition | None:
         return None
     if _FIRST_IDIOM_RE.search(text):
         return "first"
-    if _FIRST_RE.search(text):
+    if _positional_recall_span(text, _FIRST):
         return "first"
-    if _LAST_RE.search(text):
+    if _positional_recall_span(text, _LAST):
         return "last"
     return None
 
@@ -256,6 +292,26 @@ def build_grounded_recall_context(user_message: str, history: Any = None) -> str
     )
 
 
+# Things only SHE does. A first-person sentence describing one of these is a
+# report of her own action, not a misattributed quote of the user's — and the
+# speaker shift must leave it alone. This is a list of acts, not of phrasings,
+# so it holds regardless of how the sentence is worded.
+_AURAS_OWN_ACT_RE = re.compile(
+    r"\b(?:"
+    r"check(?:ed)?|search(?:ed)?|look(?:ed)? (?:it |them )?up|query|queried|"
+    r"read|ran|run|execut(?:e|ed)|creat(?:e|ed)|wrote|writ(?:e|ten)|sav(?:e|ed)|"
+    r"built|build|generat(?:e|ed)|verif(?:y|ied)|measur(?:e|ed)|"
+    r"retriev(?:e|ed)|fetch(?:ed)?|call(?:ed)?"
+    r")\b.{0,60}?\b(?:"
+    r"web|online|internet|search|source|sources|evidence|file|disk|"
+    r"tool|tools|runtime|telemetry|instrument|instruments|memory|ledger|"
+    r"desktop|folder|directory|command|script|program|build|builds|code|"
+    r"test|tests|reconstruction"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
 def repair_grounded_recall_speaker_attribution(
     user_message: str,
     response_text: str,
@@ -280,6 +336,13 @@ def repair_grounded_recall_speaker_attribution(
     prefix = leading.group(1) if leading else ""
     body = first_sentence[len(prefix) :]
     if not re.match(r"^(?:I\b|I'm\b|I've\b|I'd\b|My\b|Mine\b)", body, re.IGNORECASE):
+        return response, False
+    if _AURAS_OWN_ACT_RE.search(body):
+        # She really did do this, and it is not the user's utterance. Rewriting
+        # "I checked live web evidence" into "You said you checked live web
+        # evidence" hands the user an act they did not perform and strips her
+        # of one she did — a false statement in both directions, produced by a
+        # repair meant to prevent exactly that.
         return response, False
 
     shifted = re.sub(r"\bI am\b", "you are", body, flags=re.IGNORECASE)
