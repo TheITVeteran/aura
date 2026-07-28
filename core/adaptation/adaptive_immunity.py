@@ -660,35 +660,144 @@ class TissueField:
     @staticmethod
     def _clip(value: float) -> float:
         return float(max(0.0, min(1.0, value)))
+#: The coevolution lab swaps process-global singletons to run a rule against a
+#: copy of the world. CP126 3da4c199: it did so with no lock, so concurrent
+#: live code could observe or mutate the SIMULATION while believing it held
+#: the real world model. One lab run at a time, and a flag live code can read.
+_SIMULATION_ISOLATION_LOCK = threading.RLock()
+_simulation_active = threading.Event()
+
+
+def simulation_isolation_active() -> bool:
+    """True while the coevolution lab holds the global world-model swap."""
+    return _simulation_active.is_set()
+
+
+#: Distinguishes "caller did not supply a vocabulary, look one up" from
+#: "there IS no vocabulary". Conflating them meant a caller could not express
+#: the second, and the live lookup silently supplied the toy sensors instead.
+_VOCABULARY_UNSET: Any = object()
+
+
+def _live_rule_vocabulary() -> dict[str, list[str]] | None:
+    """Sensors and actuators that ACTUALLY exist in this runtime.
+
+    CP126 956ba926: rule generation drew from a hardcoded maritime vocabulary
+    — port_east_load, vessel_alpha_speed, reallocate_flow(Port_East,
+    Port_West). The immune system exists to repair Aura's subsystems, so a
+    learning lane that can only express opinions about a logistics toy was
+    optimizing something unrelated to its purpose and reporting the result as
+    repair fitness.
+
+    Returns None when neither registry can be read, which is the honest answer
+    and makes the caller refuse to author a rule rather than fall back to the
+    toy.
+    """
+    sensors: list[str] = []
+    actuators: list[str] = []
+    try:
+        from core.sensors.sensor_registry import get_sensor_registry
+
+        sensors = sorted(str(name) for name in get_sensor_registry().read_all())
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        logger.debug("Immune rule vocabulary: sensors unavailable: %s", exc)
+    try:
+        from core.actuators.actuator_registry import get_actuator_registry
+
+        actuators = sorted(str(name) for name in get_actuator_registry().actuators)
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        logger.debug("Immune rule vocabulary: actuators unavailable: %s", exc)
+    if not sensors or not actuators:
+        return None
+    return {"sensors": sensors, "actuators": actuators}
+
+
+def _system_pressure(model: Any) -> float | None:
+    """Total strain across EVERY entity, whatever they are.
+
+    CP126 691b21ed: fitness was the Port_East/Port_West load imbalance plus
+    total latency. On any runtime without those two entities the metric raised
+    KeyError, the broad except returned 0.0, and every rule scored identically
+    — so the evolution was noise that looked like learning.
+
+    Latency plus over-capacity overflow is defined for any entity set and
+    reduces to the old intent on a logistics world. Returns None when there is
+    nothing to measure, because a pressure of zero over zero entities is not a
+    healthy system.
+    """
+    try:
+        entities = list(getattr(model, "entities", {}).values())
+    except (AttributeError, TypeError):
+        return None
+    if not entities:
+        return None
+    total = 0.0
+    for entity in entities:
+        latency = _unit_free_float(getattr(entity, "latency", 0.0))
+        load = _unit_free_float(getattr(entity, "load", 0.0))
+        capacity = _unit_free_float(getattr(entity, "capacity", 0.0))
+        total += latency
+        if capacity > 0.0 and load > capacity:
+            total += (load - capacity) / capacity
+    return total
+
+
+def _unit_free_float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
 
 
 def _mutate_behavioral_rule(
-    rule: dict[str, Any] | None, rng: np.random.Generator
-) -> dict[str, Any]:
+    rule: dict[str, Any] | None,
+    rng: np.random.Generator,
+    *,
+    vocabulary: Any = _VOCABULARY_UNSET,
+) -> dict[str, Any] | None:
+    """Seed or mutate one condition-action rule over the LIVE vocabulary.
+
+    CP126 956ba926: seeding and sensor mutation drew from a hardcoded maritime
+    list, so every B-cell Aura ever evolved was an opinion about Port East and
+    Port West. Returns None when no live vocabulary can be read — refusing to
+    author a rule is correct, because a rule over sensors that do not exist can
+    never fire and would occupy a population slot pretending otherwise.
+    """
     import re
 
+    vocab = (
+        _live_rule_vocabulary() if vocabulary is _VOCABULARY_UNSET else vocabulary
+    )
+
     if rule is None:
-        # Generate a default condition-action rule targeting the maritime network
+        if not vocab:
+            logger.debug(
+                "Immune rule generation skipped: no live sensor/actuator vocabulary"
+            )
+            return None
+        sensor = str(rng.choice(vocab["sensors"]))
+        actuator = str(rng.choice(vocab["actuators"]))
         return {
             "conditions": [
                 {
-                    "sensor": "port_east_load",
+                    "sensor": sensor,
                     "operator": ">",
-                    "value": float(rng.uniform(600.0, 900.0)),
+                    # Relative to the sensor's own reading, since sensors now
+                    # span every subsystem and share no common scale.
+                    "value": float(rng.uniform(0.5, 0.95)),
+                    "relative_to_reading": True,
                 }
             ],
             "actions": [
                 {
-                    "actuator": "reallocate_flow",
+                    "actuator": actuator,
                     "params": {
-                        "source_id": "Port_East",
-                        "target_id": "Port_West",
-                        "amount": f"$port_east_load * {rng.uniform(0.1, 0.4):.2f}",
-                        # Relieving part of a bottleneck is still relief, so
-                        # this lane accepts a clipped transfer explicitly
-                        # (CP126 e2148790) — the receipt reports what actually
-                        # moved, which is what the 2026-07-25 idle-window
-                        # incident needed the executor to see.
+                        # Partial relief is still relief (CP126 e2148790); the
+                        # receipt reports what actually moved, which is what
+                        # the 2026-07-25 idle-window incident needed.
                         "allow_partial": True,
                     },
                 }
@@ -724,94 +833,131 @@ def _mutate_behavioral_rule(
                 params[k] = float(v + rng.normal(0.0, 5.0))
     elif choice == "sensor" and conditions:
         cond = rng.choice(conditions)
-        cond["sensor"] = rng.choice(
-            [
-                "port_east_load",
-                "port_west_load",
-                "port_east_latency",
-                "port_west_latency",
-                "vessel_alpha_speed",
-                "warehouse_load",
-            ]
-        )
+        if vocab and vocab["sensors"]:
+            cond["sensor"] = str(rng.choice(vocab["sensors"]))
+        # With no vocabulary the existing sensor is kept: replacing it with a
+        # hardcoded maritime name is what this finding is about, and inventing
+        # one would be worse than leaving the rule as it is.
 
     return new_rule
 
 
-def _evaluate_causal_fitness(rule: dict[str, Any] | None) -> float:
+def _clone_world(model: Any) -> Any:
+    """An independent copy of the world, for running a rule against."""
+    from core.world.world_model import PhysicsWorldModel, WorldEntity
+
+    clone = PhysicsWorldModel()
+    clone.entities = {}
+    for entity in model.entities.values():
+        clone.add_entity(
+            WorldEntity(
+                entity_id=entity.entity_id,
+                kind=entity.kind,
+                capacity=entity.capacity,
+                load=entity.load,
+                flow_rate=entity.flow_rate,
+                max_flow_rate=entity.max_flow_rate,
+                latency=entity.latency,
+                coordinates=entity.coordinates,
+                attributes=entity.attributes.copy(),
+            )
+        )
+    return clone
+
+
+def _evaluate_causal_fitness(rule: dict[str, Any] | None) -> float | None:
+    """How much this rule actually relieves system pressure, against a control.
+
+    Returns None when fitness cannot be MEASURED, which is distinct from 0.0
+    meaning "measured, changed nothing". CP126 691b21ed: the old version
+    scored Port_East/Port_West load imbalance, so on any runtime without those
+    entities it raised KeyError, the broad except returned 0.0, and every rule
+    scored identically — evolution over pure noise, reported as causal repair
+    fitness. A metric that silently returns the same number for every input is
+    worse than no metric, because the lane still looks like it is learning.
+
+    Two changes make the score mean something:
+
+    * pressure is :func:`_system_pressure`, defined over whatever entities
+      exist, so it measures the world Aura actually has;
+    * a SHAM arm runs the identical simulation WITHOUT executing the rule, and
+      its drift is subtracted. Without that control a rule is credited for
+      improvement the world would have produced on its own, which is the
+      difference between "this rule helps" and "things got better".
+    """
     if not rule:
-        return 0.0
+        return None
 
     try:
         import core.sensors.sensor_registry as sr
         import core.world.world_model as wm
         from core.adaptation.immune_executor import ImmuneHeuristicExecutor
-        from core.world.world_model import PhysicsWorldModel, WorldEntity, get_physics_world_model
+        from core.world.world_model import get_physics_world_model
 
         main_model = get_physics_world_model()
-        sim_model = PhysicsWorldModel()
-        sim_model.entities = {}
-        for ent in main_model.entities.values():
-            sim_model.add_entity(
-                WorldEntity(
-                    entity_id=ent.entity_id,
-                    kind=ent.kind,
-                    capacity=ent.capacity,
-                    load=ent.load,
-                    flow_rate=ent.flow_rate,
-                    max_flow_rate=ent.max_flow_rate,
-                    latency=ent.latency,
-                    coordinates=ent.coordinates,
-                    attributes=ent.attributes.copy(),
-                )
-            )
+        treatment_model = _clone_world(main_model)
+        control_model = _clone_world(main_model)
 
-        original_model = wm._instance
-        original_registry = sr._instance
+        before = _system_pressure(treatment_model)
+        if before is None:
+            # Nothing to measure. Saying so is the point.
+            logger.debug("Causal fitness unmeasurable: the world model has no entities")
+            return None
 
-        try:
-            wm._instance = sim_model
-            sim_registry = sr.SensorRegistry()
-            sim_registry.sync_from_world_model()
-            sr._instance = sim_registry
-
-            initial_latency = sum(ent.latency for ent in sim_model.entities.values())
-            initial_load_imbalance = abs(
-                sim_model.entities["Port_East"].load - sim_model.entities["Port_West"].load
-            )
-
-            executor = ImmuneHeuristicExecutor()
-            exec_res = executor.execute_rule(
-                rule,
-                context={
-                    "source": "causal_fitness_lab",
-                    "isolated_simulation": True,
-                    "world_model_isolated": True,
-                    "priority": 0.2,
-                },
-            )
-
-            if exec_res.get("conditions_met") and exec_res.get("success"):
-                sim_model.simulate(10.0)
+        # CP126 3da4c199: the swap below replaces PROCESS-GLOBAL singletons.
+        # One lab at a time, and live code can ask whether a simulation holds
+        # them via simulation_isolation_active().
+        with _SIMULATION_ISOLATION_LOCK:
+            original_model = wm._instance
+            original_registry = sr._instance
+            _simulation_active.set()
+            try:
+                wm._instance = treatment_model
+                sim_registry = sr.SensorRegistry()
                 sim_registry.sync_from_world_model()
+                sr._instance = sim_registry
 
-                final_latency = sum(ent.latency for ent in sim_model.entities.values())
-                final_load_imbalance = abs(
-                    sim_model.entities["Port_East"].load - sim_model.entities["Port_West"].load
+                executor = ImmuneHeuristicExecutor()
+                exec_res = executor.execute_rule(
+                    rule,
+                    context={
+                        "source": "causal_fitness_lab",
+                        "isolated_simulation": True,
+                        "world_model_isolated": True,
+                        "priority": 0.2,
+                    },
                 )
+                fired = bool(
+                    exec_res.get("conditions_met") and exec_res.get("success")
+                )
+                if fired:
+                    treatment_model.simulate(10.0)
+                    sim_registry.sync_from_world_model()
+            finally:
+                wm._instance = original_model
+                sr._instance = original_registry
+                _simulation_active.clear()
 
-                latency_improvement = initial_latency - final_latency
-                load_improvement = initial_load_imbalance - final_load_imbalance
+        if not fired:
+            # The rule was measured and did not apply. That is a real 0, not
+            # an absence of measurement.
+            return 0.0
 
-                return float(latency_improvement * 5.0 + load_improvement * 0.01 + 0.1)
-            else:
-                return 0.0
-        finally:
-            wm._instance = original_model
-            sr._instance = original_registry
-    except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
+        # Sham arm: the same elapsed simulation with no rule executed.
+        control_model.simulate(10.0)
+
+        after = _system_pressure(treatment_model)
+        control_after = _system_pressure(control_model)
+        if after is None or control_after is None:
+            return None
+
+        treatment_relief = before - after
+        control_relief = before - control_after
+        # Credit only the relief the CONTROL did not also produce.
+        return float(treatment_relief - control_relief)
+    except (AttributeError, ImportError, KeyError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Failed evaluating causal fitness in coevolution lab: %s", exc)
-        return 0.0
+        return None
 
 
 class OfflineCoevolutionLab:
@@ -886,7 +1032,14 @@ class OfflineCoevolutionLab:
                 # Incorporate causal health fitness for B and MEMORY cells
                 if cell.kind in {CellKind.B, CellKind.MEMORY}:
                     causal_fit = _evaluate_causal_fitness(cell.behavioral_rule)
-                    score += causal_fit * 2.5
+                    # None means fitness could not be MEASURED (no entities, no
+                    # rule, lab unavailable). Scoring it as 0.0 would rank an
+                    # unmeasured cell against measured ones as though it had
+                    # been tested and found useless — the selection pressure
+                    # would then be an artefact of what happened to be
+                    # measurable, not of what repairs anything.
+                    if causal_fit is not None:
+                        score += causal_fit * 2.5
 
                 scored.append((score, cell))
 

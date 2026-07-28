@@ -122,9 +122,17 @@ class TestMeasuredEffect:
 
         from core.adaptation import adaptive_immunity
 
-        source = inspect.getsource(adaptive_immunity)
-        block = source.split('"actuator": "reallocate_flow"', 1)[1].split("},", 1)[0]
-        assert '"allow_partial": True' in block
+        # CP126 956ba926 removed the hardcoded maritime rule, so this checks
+        # the property directly on a GENERATED rule rather than scanning for a
+        # literal that no longer exists.
+        import numpy as np
+
+        rule = adaptive_immunity._mutate_behavioral_rule(
+            None,
+            np.random.default_rng(0),
+            vocabulary={"sensors": ["s"], "actuators": ["reallocate_flow"]},
+        )
+        assert rule["actions"][0]["params"]["allow_partial"] is True
 
     def test_a_transfer_that_moves_nothing_is_a_failure(self, patch_world):
         """The old code called this a success and claimed the full amount."""
