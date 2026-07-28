@@ -524,7 +524,15 @@ def improvement_goal(model: CognitiveSelfModel | None = None) -> dict[str, Any] 
     to say should say nothing; inventing a target would be the same
     manufactured confidence this codebase keeps removing.
     """
-    self_model = model if model is not None else get_faculty_registry().assess()
+    if model is not None:
+        self_model = model
+    else:
+        try:
+            from core.metacognition.default_faculties import ensure_default_faculties
+
+            self_model = ensure_default_faculties().assess()
+        except _RECOVERABLE:
+            self_model = get_faculty_registry().assess()
 
     ranked = self_model.ranked()
     if ranked and (ranked[0].priority or 0.0) > 0.0:
