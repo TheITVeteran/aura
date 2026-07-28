@@ -31,6 +31,42 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+
+#: Exception class names that mean "the peer's transport is gone".
+#:
+#: Matched by NAME rather than imported, because the concrete classes live in
+#: the ASGI server and web-framework packages (starlette, uvicorn, websockets)
+#: and core.voice must not depend on the transport it is served over.
+_PEER_DISCONNECT_NAMES = frozenset(
+    {
+        "ClientDisconnected",
+        "ConnectionClosed",
+        "ConnectionClosedError",
+        "ConnectionClosedOK",
+        "WebSocketDisconnect",
+    }
+)
+
+
+def _is_peer_disconnect(exc: BaseException | None) -> bool:
+    """True when this exception means the person's transport went away.
+
+    Walks the cause/context chain: the disconnect usually arrives wrapped, as
+    ConnectionClosedOK -> ClientDisconnected -> WebSocketDisconnect, and only
+    the outermost type is visible to an except clause.
+    """
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if type(current).__name__ in _PEER_DISCONNECT_NAMES:
+            return True
+        message = str(current)
+        if 'once a close message has been sent' in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 from core.voice.duplex import protocol
 from core.voice.duplex.audio import (
     FrameSplitter,
@@ -173,12 +209,32 @@ class DuplexVoiceSession:
         self._id = session_id
 
         async def guarded_json(payload: dict[str, Any]) -> None:
-            if not self._closed:
+            if self._closed:
+                return
+            try:
                 await send_json(payload)
+            except BaseException as exc:  # noqa: BLE001 - classified below
+                if not _is_peer_disconnect(exc):
+                    raise
+                # The person ended voice mode. Their transport going away is the
+                # normal end of a session, not a fault: `_closed` only tracks
+                # OUR close, so a client-initiated close left this flag False and
+                # the next send raised into a done-callback as an unhandled
+                # error. Measured live, after "Can you hear what I'm saying?":
+                #   Cannot call "send" once a close message has been sent
+                #   ... WebSocketDisconnect ... Exception in callback
+                # and she answered "My response was cut short."
+                self._closed = True
 
         async def guarded_binary(payload: bytes) -> None:
-            if not self._closed:
+            if self._closed:
+                return
+            try:
                 await send_binary(payload)
+            except BaseException as exc:  # noqa: BLE001 - classified below
+                if not _is_peer_disconnect(exc):
+                    raise
+                self._closed = True
 
         self._send_json = guarded_json
         self._send_binary = guarded_binary
@@ -1357,7 +1413,19 @@ class DuplexVoiceSession:
             return
         try:
             task.result()
-        except (RuntimeError, ValueError, AttributeError, TypeError, OSError) as exc:
+        except BaseException as exc:  # noqa: BLE001 - done-callback boundary
+            if _is_peer_disconnect(exc):
+                # Ending voice mode is a thing people do. It is not a failure,
+                # and reporting it as one produced a full traceback in the
+                # neural feed every single time.
+                self._closed = True
+                return
+            if isinstance(exc, asyncio.CancelledError):
+                return
+            if not isinstance(
+                exc, (RuntimeError, ValueError, AttributeError, TypeError, OSError)
+            ):
+                raise
             record_degradation(
                 "voice_duplex.session.background_task",
                 exc,

@@ -750,6 +750,51 @@ class DesktopTaskSkill(BaseSkill):
             body = re.sub(pattern, "", body, flags=re.IGNORECASE | re.DOTALL).strip()
         return body[:9000]
 
+    #: Text that is unmistakably TALKING TO the user rather than being the
+    #: artifact: an offer, a question back, or the capability boilerplate.
+    _CONVERSATIONAL_REPLY_RE = re.compile(
+        r"(?i)("
+        r"\bi\s+(?:could|can|would be happy to)\s+help\s+you\b"
+        r"|\bwould\s+you\s+like\s+me\s+to\b"
+        r"|\bwant\s+me\s+to\b"
+        r"|\bshall\s+i\b"
+        r"|\blet\s+me\s+know\s+(?:if|what|whether)\b"
+        r"|\bif\s+that(?:'s|\s+is)\s+useful\b"
+        r"|\bwhat\s+specific\s+aspects\b"
+        r"|\bi\s+can\s+use\s+governed\s+(?:web|desktop|file)\b"
+        r"|\bwhen\s+the\s+runtime\s+authorizes\b"
+        r"|\bhow\s+can\s+i\s+help\b"
+        r")"
+    )
+
+    @classmethod
+    def _looks_like_conversational_reply(cls, body: str) -> bool:
+        """True when this text is the CONVERSATION, not the artifact.
+
+        The conversation must never be written into the artifact. Measured live:
+        asked to "open the Notes app and write a new note with three sentences
+        about humpback whales", the note was created and this was pasted into it:
+
+            "But I could help you draft the content for a note about humpback
+             whales if that's useful! What specific aspects of them are you
+             interested in highlighting? I can use governed web, desktop, file,
+             and document tools when the runtime authorizes the requested
+             effects."
+
+        Every earlier filter passed it — it is fluent, it is not dispatch
+        narration, it is not truncated, and it even mentions the requested topic,
+        so the topic gate was satisfied. What it is NOT is a note about humpback
+        whales. It is an offer to write one.
+
+        This is the "note that opens with no text" the demo kept producing: the
+        note is not empty, it contains her reply instead of her writing.
+        """
+
+        text = str(body or "").strip()
+        if not text:
+            return False
+        return bool(cls._CONVERSATIONAL_REPLY_RE.search(text))
+
     @classmethod
     def _usable_freeform_document_body(cls, objective: str, value: str) -> str:
         """Return value only if it is actual requested prose, not instructions."""
@@ -763,6 +808,8 @@ class DesktopTaskSkill(BaseSkill):
         if not body:
             return ""
         if cls._looks_like_dispatch_narration(body):
+            return ""
+        if cls._looks_like_conversational_reply(body):
             return ""
         if cls._looks_like_incomplete_document_body(body):
             return ""
