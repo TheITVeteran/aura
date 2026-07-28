@@ -342,6 +342,26 @@ class RootedFlowHandle:
 # Mycelial Network (Singleton)
 # ---------------------------------------------------------------------------
 
+#: How long a telemetry pulse may wait for the topology lock. Short on purpose:
+#: the pulse is worth far less than the latency of waiting for it.
+_PULSE_LOCK_TIMEOUT_S = 0.05
+_DROPPED_PULSES: dict[str, int] = {}
+
+
+def _note_dropped_pulse(source: str, target: Optional[str]) -> None:
+    """Count dropped pulses so sustained contention is visible, not silent."""
+    key = f"{source}->{target or '*'}"
+    _DROPPED_PULSES[key] = _DROPPED_PULSES.get(key, 0) + 1
+    count = _DROPPED_PULSES[key]
+    if count in (1, 100) or count % 1000 == 0:
+        logger.warning(
+            "Mycelial pulse dropped under lock contention (%s, %d so far); the "
+            "edge statistic is lost, the caller is not blocked.",
+            key,
+            count,
+        )
+
+
 class MycelialNetwork:
     """The Unoverridable Root System."""
 
@@ -832,9 +852,21 @@ class MycelialNetwork:
         *,
         success: bool = True,
     ) -> bool:
-        """Pulse the current owned edge without leaking a mutable object."""
+        """Pulse the current owned edge without leaking a mutable object.
+
+        NEVER blocks the caller waiting for the topology lock. A pulse is
+        telemetry: one dropped under contention costs a single edge statistic,
+        while waiting for the lock on the event loop costs the whole mind.
+
+        Measured live: the loop sat in ``pulse_hypha`` -> ``MycelialNetwork._lock``
+        during a desktop task and the hypervisor reported "severe event-loop lag
+        97.192s". Ninety-seven seconds of a frozen runtime for a counter.
+        """
         hypha_id = self._hypha_id(source, target)
-        with MycelialNetwork._lock:
+        if not MycelialNetwork._lock.acquire(timeout=_PULSE_LOCK_TIMEOUT_S):
+            _note_dropped_pulse(source, target)
+            return False
+        try:
             owner = self._active_owner_locked()
             if owner is None:
                 return False
@@ -846,6 +878,8 @@ class MycelialNetwork:
             hypha.pulse(success=success)
             self._mark_topology_mutated_locked()
             return True
+        finally:
+            MycelialNetwork._lock.release()
 
     def log_hypha(self, source: str, target: Optional[str], message: str) -> bool:
         """Append an owned trace entry to the current edge."""
