@@ -157,12 +157,27 @@ def test_a_fabricated_tool_result_is_caught_however_it_is_phrased():
         "calculation with Python. Python code: 2 + 2 Output: 4",
         "I ran the snippet and it gave me 18 cores.",
         "It printed 23756 for the pid.",
-        "The result was: 18",
         "The value came from the sandbox: 18 cores.",
+        "The result of running the script was 18.",
     )
     for reply in fabricated:
         assert claims(reply, tool_receipts=None) is True, (
             f"a fabricated execution report slipped through: {reply[:60]!r}"
+        )
+
+    # Deliberately NOT flagged: a bare result statement with nothing attributing
+    # it to something that ran. "The result is 19/66" ends an ordinary
+    # probability derivation, and this reason DESTROYS a reply rather than
+    # repairing it, so flagging the bare form annihilated correct arithmetic for
+    # phrasing its answer the way anyone would. The claim needs an execution to
+    # be attributed to; the attributed forms above are all still caught.
+    ambiguous = (
+        "The result was: 18",
+        "The result is 19/66.",
+    )
+    for reply in ambiguous:
+        assert claims(reply, tool_receipts=None) is False, (
+            f"a bare conclusion must not be destroyed as a receipt: {reply!r}"
         )
 
     # Honest replies — offers, refusals, explanations, hypotheticals — must pass.

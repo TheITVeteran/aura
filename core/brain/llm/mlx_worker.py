@@ -2589,11 +2589,18 @@ def _prompt_cache_entry_budget_for_model(model_path: str) -> int:
     weight_class = model_size_class(str(model_path or ""))
     if weight_class == "72b":
         return 0
+    # These are ENTRY counts, not the memory bound — total retained KV is capped
+    # separately by _prompt_cache_total_token_budget_for_model. While the entry
+    # count was the only bound it had to stay tiny, and 2 entries on the 32B
+    # meant the internal lane held exactly one: its many distinct prompt
+    # families then evicted each other on every tick, measured repeatedly live as
+    # "trimmed hit — reused 3/792 tokens". With memory bounded directly, entries
+    # can be generous and the eviction that matters is by total size.
     if weight_class == "32b":
-        return 2
+        return 12
     if weight_class in ("14b", "7b"):
-        return 6
-    return 12
+        return 16
+    return 24
 
 
 def _prompt_cache_entry_token_cap_for_model(model_path: str) -> int:
@@ -3564,7 +3571,16 @@ class _PromptCacheLRU:
     def _lane_budget(self, lane: str) -> int:
         if self.max_size <= 1 or lane == "shared":
             return self.max_size
-        reserved = max(1, self.max_size // 2)
+        # Asymmetric on purpose. The conversation is already protected by having
+        # its OWN queue, and only its newest entry is ever reused — turn N+1
+        # extends turn N, so older conversation entries are dead weight holding
+        # the largest KV in the cache. The internal lane is the opposite: it
+        # carries many DISTINCT prompt families (the reflective persona, the
+        # pre-linguistic decision narrator, enrichment, dreaming), and with a
+        # 50/50 split they evicted each other on every tick. Measured live,
+        # repeatedly: "trimmed hit — reused 3/792 tokens", the same two families
+        # taking turns destroying each other's prefix.
+        reserved = max(1, min(3, self.max_size - 1))
         return reserved if lane == "user_surface" else self.max_size - reserved
 
     def _queue_for(self, lane: str) -> deque:

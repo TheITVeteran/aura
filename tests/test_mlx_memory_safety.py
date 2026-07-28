@@ -467,18 +467,34 @@ def test_desktop_safe_boot_keeps_bounded_primary_prompt_cache(monkeypatch):
     Budget 0 under the desktop guard forced every conversation turn to
     re-prefill the whole history; per-turn latency grew with context and
     the endurance runs saturated to the turn timeout by turn ~9-15 (the
-    "15-turn resident ceiling", endurance-0715-clean). RAM stays bounded
-    by the per-entry token cap (~256KB/token of KV at 32B geometry).
+    "15-turn resident ceiling", endurance-0715-clean).
+
+    This asserts the PROPERTY — nonzero and memory-bounded — rather than a
+    specific entry count. It used to pin the count at 2 as a proxy for "RAM
+    stays bounded", because the entry count was the only bound there was. Total
+    retained KV is now capped directly, which is a strictly stronger bound, so
+    the entry count is free to be large enough that distinct prompt families
+    stop evicting each other.
     """
     from core.brain.llm.mlx_worker import (
         _prompt_cache_entry_budget_for_model,
         _prompt_cache_entry_token_cap_for_model,
+        _prompt_cache_kv_bytes_per_token,
+        _prompt_cache_total_token_budget_for_model,
     )
 
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
 
-    assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 2
-    assert _prompt_cache_entry_token_cap_for_model("/models/Qwen2.5-32B-Instruct-8bit") == 6144
+    primary = "/models/Qwen2.5-32B-Instruct-8bit"
+    assert _prompt_cache_entry_budget_for_model(primary) > 0, "the cache must not be zeroed"
+    assert _prompt_cache_entry_token_cap_for_model(primary) == 6144
+    worst_case_bytes = (
+        _prompt_cache_total_token_budget_for_model(primary)
+        * _prompt_cache_kv_bytes_per_token(primary)
+    )
+    assert worst_case_bytes <= 4 * 1024**3, (
+        f"retained KV is not bounded: {worst_case_bytes / 1024**3:.1f}GB"
+    )
     # The 72B lane stays cacheless: its KV would dwarf the envelope.
     assert _prompt_cache_entry_budget_for_model("/models/Qwen2.5-72B-Instruct-4bit") == 0
 
@@ -1320,3 +1336,65 @@ def test_prompt_cache_registers_itself_on_the_oom_ladder_at_construction():
     finally:
         client._process = None
         reset_oom_policy_for_test()
+
+
+def test_distinct_internal_prompt_families_stop_evicting_each_other():
+    """One slot for the whole internal lane made its families thrash.
+
+    The internal lane carries many DISTINCT prompt families — the reflective
+    persona, the pre-linguistic decision narrator, enrichment, dreaming. With a
+    50/50 split of a 2-entry budget it held exactly one, and the live log showed
+    the same two families taking turns destroying each other's prefix, over and
+    over: "trimmed hit — reused 3/792 tokens".
+    """
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=12, max_total_tokens=100_000, kv_bytes_per_token=1)
+    internal = (9, "default")
+
+    families = {
+        "persona": [1, 2, 3] + list(range(100, 400)),
+        "prelinguistic": [1, 2, 4] + list(range(400, 700)),
+        "enrichment": [1, 2, 5] + list(range(700, 1000)),
+        "dreaming": [1, 2, 6] + list(range(1000, 1300)),
+    }
+    for tokens in families.values():
+        lru.insert_cache(internal, tokens, ["kv"])
+
+    # Every family must still be reusable, not just the most recent one.
+    for name, tokens in families.items():
+        hit, remaining = lru.fetch_nearest_cache(
+            internal, tokens + [99_999],
+            can_trim_prompt_cache=lambda _pc: True,
+            trim_prompt_cache=lambda _pc, _n: None,
+        )
+        assert hit is not None, f"{name} was evicted by its siblings"
+        assert len(remaining) <= 2, (
+            f"{name} reused almost nothing ({len(remaining)} of "
+            f"{len(tokens) + 1} to prefill)"
+        )
+
+
+def test_the_conversation_lane_keeps_its_own_reserved_slots():
+    """Widening the internal lane must not cost the conversation its guarantee."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=12, max_total_tokens=100_000, kv_bytes_per_token=1)
+    surface = (9, "user_surface")
+    internal = (9, "default")
+
+    conversation = list(range(1, 601))
+    lru.insert_cache(surface, conversation, ["kv-conversation"])
+    for tick in range(40):
+        lru.insert_cache(internal, [50_000 + tick, tick, tick + 1], ["kv-internal"])
+
+    hit, _ = lru.fetch_nearest_cache(
+        surface, conversation + [7777],
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == ["kv-conversation"], "internal churn took the conversation's slot"
+    assert lru._lane_budget("user_surface") >= 1
+    assert lru._lane_budget("default") > lru._lane_budget("user_surface"), (
+        "the lane with many distinct families needs the larger share"
+    )

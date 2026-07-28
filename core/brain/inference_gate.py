@@ -8199,10 +8199,43 @@ class InferenceGate:
         # read-not-inferred ground truth (clock, receipts, felt state) that
         # stops her narrating a present she was never given.
         if volatile_grounding_blocks and isinstance(messages, list) and messages:
-            messages = [*messages, {
+            # BEFORE the final user turn, not after it.
+            #
+            # Riding dead last put a multi-thousand-character block of self-state
+            # between the person's question and the model's turn, and the model
+            # continued the nearest thing instead of answering. Measured live:
+            # asked to run a real sandbox calculation and report the result, the
+            # entire reply was "Things feel unusually settled right now. My
+            # attention is on internal monitoring..." — the grounding text
+            # continued as prose, with no answer, no code, and no refusal, on a
+            # turn whose plan read scaffold=7023 request=518 (ratio 13.6x).
+            #
+            # Sitting just ahead of the last user message keeps the whole point
+            # of volatile-last — every stable token, system prompt through prior
+            # history, is still a reusable KV prefix, and the only thing behind
+            # the churn is the new turn that had to be prefilled anyway — while
+            # the last words before the model's turn are the person's own.
+            grounding_message = {
                 "role": "system",
                 "content": "\n\n".join(volatile_grounding_blocks),
-            }]
+            }
+            final_user_index = next(
+                (
+                    index
+                    for index in range(len(messages) - 1, -1, -1)
+                    if isinstance(messages[index], dict)
+                    and str(messages[index].get("role", "")).strip().lower() == "user"
+                ),
+                None,
+            )
+            if final_user_index is None:
+                messages = [*messages, grounding_message]
+            else:
+                messages = [
+                    *messages[:final_user_index],
+                    grounding_message,
+                    *messages[final_user_index:],
+                ]
         elif volatile_grounding_blocks:
             # No message list to ride behind (single-prompt lanes): keep the old
             # behaviour rather than dropping the grounding entirely.
