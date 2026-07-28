@@ -649,7 +649,8 @@ def test_api_health_status_never_regresses_to_booting_while_answering():
         boot_snapshot=degraded_but_serving,
     ) == "degraded"
 
-    # Mid-turn on that same degraded runtime is still degraded, not booting.
+    # Mid-turn on that same degraded runtime is still degraded, not booting —
+    # carried by the snapshot's own verdict, not by "busy".
     assert _derive_api_health_status(
         healthy_ready=False,
         service_ok=False,
@@ -659,6 +660,19 @@ def test_api_health_status_never_regresses_to_booting_while_answering():
         conversation_busy=True,
         boot_snapshot=degraded_but_serving,
     ) == "degraded"
+
+    # A COLD boot is busy while it warms the lane. That must still read
+    # "booting" — caught on a genuine first start whose blockers still included
+    # critical:inference_gate. Busy is not evidence of having served.
+    assert _derive_api_health_status(
+        healthy_ready=False,
+        service_ok=False,
+        lane_is_standby=False,
+        lane_state="warming",
+        conversation_ready=False,
+        conversation_busy=True,
+        boot_snapshot={"status": "booting", "boot_phase": "kernel_warming"},
+    ) == "booting"
 
     # A genuine cold boot — nothing has served yet — must still say "booting".
     assert _derive_api_health_status(

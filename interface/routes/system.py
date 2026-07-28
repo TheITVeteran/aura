@@ -5449,9 +5449,16 @@ def _derive_api_health_status(
     # Not fully ready. "booting" is only honest while this process has never
     # served — otherwise it is a degradation, and saying "booting" tells the
     # user to wait for something that already happened.
+    #
+    # `conversation_busy` is deliberately NOT evidence of having served: a COLD
+    # boot is busy while it warms the lane, and counting that as degradation
+    # made a genuine first boot report "degraded" instead of "booting" (caught
+    # on a fresh start whose blockers still included critical:inference_gate).
+    # A busy lane on a ready system is already answered by the "working" rung
+    # above. The boot snapshot's own status/phase carries the has-ever-served
+    # latch, so defer to it.
     if (
         conversation_ready
-        or conversation_busy
         or str(snapshot.get("boot_phase") or "").strip().lower()
         in {"conversation_operational", "runtime_degraded"}
         or str(snapshot.get("status") or "").strip().lower() == "degraded"
