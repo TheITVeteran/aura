@@ -415,6 +415,9 @@ class LLMCodeGenerator:
             "temperature": request.temperature,
             "origin": request.origin,
             "is_background": request.is_background,
+            # This is source, not speech. Without it the reply pipeline shapes
+            # the output as conversation and the indentation does not survive.
+            "code_generation_contract": True,
         }
         if self.prefer_endpoint:
             kwargs["prefer_endpoint"] = self.prefer_endpoint

@@ -6857,12 +6857,26 @@ class InferenceGate:
         strict_answer_contract = bool(context.get("strict_answer_contract", False))
         strict_value_contract = bool(context.get("strict_value_contract", False))
         web_interlocutor_contract = bool(context.get("web_interlocutor_contract", False))
+        # Source code is not prose, and the conversational pipeline exists to
+        # shape prose for a person: it repairs sentences, normalises
+        # whitespace, and enforces a reply contract. Every one of those is
+        # wrong for Python. Measured live 2026-07-28, the 2048 rules came back
+        # through this path as
+        #
+        #   import randomdef move(case): board = case['board'] direction = ...
+        #
+        # — newlines gone, indentation collapsed, and therefore
+        # "invalid syntax at line 1" on a generation the model had written
+        # correctly. Code generation now declares itself isolated, like every
+        # other non-conversational contract here.
+        code_generation_contract = bool(context.get("code_generation_contract", False))
         isolated_generation_contract = bool(
             strict_answer_contract
             or strict_value_contract
             or proof_evaluation_contract
             or operator_evidence_contract
             or web_interlocutor_contract
+            or code_generation_contract
         )
         # Sealed proof prompts (<answer> envelope) get a micro budget so a
         # one-word answer cannot ramble; a caller-pinned max_tokens always
