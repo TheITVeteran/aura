@@ -548,11 +548,27 @@ class LatentCortexEngine:
     # ── Typed cognitive ingress into the workspace ──────────────────────
     _MAX_COGNITIVE_CONTEXT_TOKENS = 64
 
+    @property
+    def _cognitive_context_truncations(self) -> list[dict]:
+        # Lazily created so no __init__ change is needed on a class with
+        # several construction paths.
+        existing = getattr(self, "_cognitive_context_truncations_store", None)
+        if existing is None:
+            existing = []
+            self._cognitive_context_truncations_store = existing
+        return existing
+
+    @_cognitive_context_truncations.setter
+    def _cognitive_context_truncations(self, value: list[dict]) -> None:
+        self._cognitive_context_truncations_store = list(value)
+
     def _validate_cognitive_context(self, cognitive_context: list | None) -> list[dict]:
         from core.brain.llm.latent_cortex.cognitive_context import (
             normalize_cognitive_context,
         )
 
+        # Each validation starts a fresh admission record for the episode.
+        self._cognitive_context_truncations = []
         return normalize_cognitive_context(cognitive_context)
 
     def _embed_cognitive_context(self, items: list[dict]) -> list[tuple[str, object]]:
@@ -586,14 +602,65 @@ class LatentCortexEngine:
                 encoded = self.tokenizer.encode(embedding_text, add_special_tokens=False)
             except TypeError:
                 encoded = self.tokenizer.encode(embedding_text)
-            tokens = list(encoded)[: self._MAX_COGNITIVE_CONTEXT_TOKENS]
+            # CP126: "Cognitive context is silently dropped at three
+            # independent limits... the receipt does not state requested
+            # versus admitted context or dropped content. Consumers can
+            # believe the full context influenced reasoning when it did not."
+            #
+            # Two of the three limits already REJECT rather than truncate
+            # (normalize_cognitive_context raises past 6 items and past 400
+            # characters), so a caller cannot quietly over-send. This one
+            # truncates: encoding a 400-character memory can exceed 64
+            # tokens, and the tail was dropped with nothing recorded — so a
+            # slot seeded from half a memory was indistinguishable from one
+            # seeded from all of it.
+            full = list(encoded)
+            tokens = full[: self._MAX_COGNITIVE_CONTEXT_TOKENS]
             if not tokens:
                 continue
+            if len(full) > len(tokens):
+                dropped = len(full) - len(tokens)
+                self._cognitive_context_truncations.append(
+                    {
+                        "source": str(item.get("source", ""))[:40],
+                        "context_role": str(item.get("context_role", "") or "untyped"),
+                        "requested_tokens": len(full),
+                        "admitted_tokens": len(tokens),
+                        "dropped_tokens": dropped,
+                    }
+                )
             h = inner.embed_tokens(mx.array([tokens]))
             pooled = mx.mean(h, axis=1, keepdims=True)  # (1,1,D)
             mx.eval(pooled)
             seeds.append((item["source"], pooled))
         return seeds
+
+    def cognitive_context_admission(self) -> dict:
+        """What of the requested context actually reached the workspace.
+
+        A consumer reading a latent receipt otherwise has no way to tell a
+        slot seeded from a whole memory from one seeded from its first 64
+        tokens, and the reasoning that follows differs.
+        """
+        truncations = list(self._cognitive_context_truncations)
+        from core.brain.llm.latent_cortex.cognitive_context import (
+            MAX_COGNITIVE_CONTEXT_CHARS,
+            MAX_COGNITIVE_CONTEXT_ITEMS,
+        )
+
+        return {
+            "schema": "aura.cognitive_context_admission.v1",
+            "max_tokens_per_item": self._MAX_COGNITIVE_CONTEXT_TOKENS,
+            "max_items": MAX_COGNITIVE_CONTEXT_ITEMS,
+            "max_chars": MAX_COGNITIVE_CONTEXT_CHARS,
+            "truncated_items": len(truncations),
+            "dropped_tokens_total": sum(t["dropped_tokens"] for t in truncations),
+            "complete": not truncations,
+            "truncations": truncations,
+        }
+
+    def reset_cognitive_context_admission(self) -> None:
+        self._cognitive_context_truncations = []
 
     def _embed_action_controls(self) -> dict[OperationKind, object]:
         """Embed each neural cognitive operator once per episode."""
