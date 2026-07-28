@@ -46,38 +46,20 @@ from core.runtime.file_read_gateway import (
     read_stable_bytes,
 )
 
-PRE_MEASUREMENT_INTENT_SCHEMA = (
-    "aura.verified_transition.pre_measurement_intent.v1"
-)
-PRE_MEASUREMENT_GENERATION_SCHEMA = (
-    "aura.verified_transition.pre_measurement_generation.v1"
-)
-PRE_MEASUREMENT_RECONCILIATION_SCHEMA = (
-    "aura.verified_transition.pre_measurement_reconciliation.v1"
-)
-PRE_MEASUREMENT_ORIGIN_SCHEMA = (
-    "aura.verified_transition.pre_measurement_origin.v1"
-)
-PRE_MEASUREMENT_STATE_SOURCE_SCHEMA = (
-    "aura.verified_transition.pre_measurement_state_source.v1"
-)
-RECURRENT_GRPO_CONFIG_CONTRACT_SCHEMA = (
-    "aura.recurrent_grpo_config.exact_float.v1"
-)
-BRIDGE_TOKEN_BINDING_SCHEMA = (
-    "aura.verified_transition.bridge_token_binding.v1"
-)
+PRE_MEASUREMENT_INTENT_SCHEMA = "aura.verified_transition.pre_measurement_intent.v1"
+PRE_MEASUREMENT_GENERATION_SCHEMA = "aura.verified_transition.pre_measurement_generation.v1"
+PRE_MEASUREMENT_RECONCILIATION_SCHEMA = "aura.verified_transition.pre_measurement_reconciliation.v1"
+PRE_MEASUREMENT_ORIGIN_SCHEMA = "aura.verified_transition.pre_measurement_origin.v1"
+PRE_MEASUREMENT_STATE_SOURCE_SCHEMA = "aura.verified_transition.pre_measurement_state_source.v1"
+RECURRENT_GRPO_CONFIG_CONTRACT_SCHEMA = "aura.recurrent_grpo_config.exact_float.v1"
+BRIDGE_TOKEN_BINDING_SCHEMA = "aura.verified_transition.bridge_token_binding.v1"
 
 _INTENT_DIRECTORY = "00000000-intent"
 _ABANDONED_DIRECTORY = "00000001-abandoned"
 _INTENT_FILES = frozenset({"pre-measurement.json", "generation.json"})
 _ABANDONED_FILES = frozenset({"reconciliation.json", "generation.json"})
-_ENTRY_RE = re.compile(
-    r"^seq-(?P<sequence>[0-9]{8})-(?P<admission>[0-9a-f]{64})$"
-)
-_TEMP_RE = re.compile(
-    r"^\.tmp-(?:00000000-intent|00000001-abandoned)-[0-9a-f]{32}$"
-)
+_ENTRY_RE = re.compile(r"^seq-(?P<sequence>[0-9]{8})-(?P<admission>[0-9a-f]{64})$")
+_TEMP_RE = re.compile(r"^\.tmp-(?:00000000-intent|00000001-abandoned)-[0-9a-f]{32}$")
 _MAX_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 
@@ -166,9 +148,7 @@ def _private_metadata(
     try:
         metadata = path.stat()
     except OSError as exc:
-        raise VerifiedTransitionMeasurementChainError(
-            f"pre_measurement_{role}_unreadable"
-        ) from exc
+        raise VerifiedTransitionMeasurementChainError(f"pre_measurement_{role}_unreadable") from exc
     expected = stat.S_ISDIR if directory else stat.S_ISREG
     if (
         not expected(metadata.st_mode)
@@ -176,10 +156,7 @@ def _private_metadata(
         or stat.S_IMODE(metadata.st_mode) & 0o077
         or (not directory and metadata.st_nlink != 1)
     ):
-        _fail(
-            f"pre_measurement_{role}_not_private_owned_"
-            f"{'directory' if directory else 'file'}"
-        )
+        _fail(f"pre_measurement_{role}_not_private_owned_{'directory' if directory else 'file'}")
     return metadata
 
 
@@ -263,15 +240,11 @@ def _tensor_maps_equal(
         import mlx.core as mx
 
         for key in sorted(left):
-            if (
-                tuple(left[key].shape) != tuple(right[key].shape)
-                or str(left[key].dtype) != str(right[key].dtype)
+            if tuple(left[key].shape) != tuple(right[key].shape) or str(left[key].dtype) != str(
+                right[key].dtype
             ):
                 return False
-        comparisons = [
-            mx.array_equal(left[key], right[key])
-            for key in sorted(left)
-        ]
+        comparisons = [mx.array_equal(left[key], right[key]) for key in sorted(left)]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
     except Exception:
@@ -325,10 +298,7 @@ def _load_bound_safetensors(
             f"pre_measurement_{role}_load_failed"
         ) from exc
     keys = sorted(tensors)
-    if (
-        len(keys) != expected_count
-        or _digest(keys) != expected_keys_digest
-    ):
+    if len(keys) != expected_count or _digest(keys) != expected_keys_digest:
         _fail(f"pre_measurement_{role}_tensor_inventory_mismatch")
     return dict(tensors)
 
@@ -345,9 +315,7 @@ def recurrent_grpo_config_contract(
         "clip_epsilon_hex": float(config.clip_epsilon).hex(),
         "kl_coefficient_hex": float(config.kl_coefficient).hex(),
         "advantage_clip_hex": float(config.advantage_clip).hex(),
-        "max_initial_clip_fraction_hex": (
-            float(config.max_initial_clip_fraction).hex()
-        ),
+        "max_initial_clip_fraction_hex": (float(config.max_initial_clip_fraction).hex()),
         "max_initial_old_policy_approx_kl_hex": (
             float(config.max_initial_old_policy_approx_kl).hex()
         ),
@@ -373,9 +341,7 @@ def validate_recurrent_grpo_config_contract(value: Any) -> dict[str, Any]:
             clip_epsilon=float.fromhex(document["clip_epsilon_hex"]),
             kl_coefficient=float.fromhex(document["kl_coefficient_hex"]),
             advantage_clip=float.fromhex(document["advantage_clip_hex"]),
-            max_initial_clip_fraction=float.fromhex(
-                document["max_initial_clip_fraction_hex"]
-            ),
+            max_initial_clip_fraction=float.fromhex(document["max_initial_clip_fraction_hex"]),
             max_initial_old_policy_approx_kl=float.fromhex(
                 document["max_initial_old_policy_approx_kl_hex"]
             ),
@@ -389,10 +355,24 @@ def validate_recurrent_grpo_config_contract(value: Any) -> dict[str, Any]:
     return document
 
 
+def recurrent_grpo_config_from_contract(value: Any) -> RecurrentGRPOConfig:
+    """Reconstruct the exact objective configuration from sealed hex values."""
+
+    document = validate_recurrent_grpo_config_contract(value)
+    return RecurrentGRPOConfig(
+        clip_epsilon=float.fromhex(document["clip_epsilon_hex"]),
+        kl_coefficient=float.fromhex(document["kl_coefficient_hex"]),
+        advantage_clip=float.fromhex(document["advantage_clip_hex"]),
+        max_initial_clip_fraction=float.fromhex(document["max_initial_clip_fraction_hex"]),
+        max_initial_old_policy_approx_kl=float.fromhex(
+            document["max_initial_old_policy_approx_kl_hex"]
+        ),
+    )
+
+
 def bridge_token_binding(tokens: Sequence[int]) -> dict[str, Any]:
     if isinstance(tokens, (str, bytes, bytearray)) or any(
-        type(token) is not int or token < 0
-        for token in tokens
+        type(token) is not int or token < 0 for token in tokens
     ):
         _fail("pre_measurement_bridge_tokens_invalid")
     normalized = list(tokens)
@@ -527,11 +507,7 @@ def validate_pre_measurement_state_source(value: Any) -> dict[str, Any]:
     source_sequence = document.get("source_sequence")
     source_admission = document.get("source_admission_sha256")
     if kind == "initial_policy_state":
-        if (
-            ordinal != 1
-            or source_sequence is not None
-            or source_admission is not None
-        ):
+        if ordinal != 1 or source_sequence is not None or source_admission is not None:
             _fail("pre_measurement_initial_state_source_invalid")
     else:
         _integer(
@@ -605,28 +581,17 @@ def validate_pre_measurement_intent(value: Any) -> dict[str, Any]:
         ) from exc
     if (
         source_binding["schema"] != VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
-        or source_binding["group_admission_sha256"]
-        != document["group_admission_sha256"]
-        or source_binding["policy_sha256"]
-        != document["policy_before_sha256"]
-        or source_binding["execution_spec_sha256"]
-        != document["execution_spec_sha256"]
+        or source_binding["group_admission_sha256"] != document["group_admission_sha256"]
+        or source_binding["policy_sha256"] != document["policy_before_sha256"]
+        or source_binding["execution_spec_sha256"] != document["execution_spec_sha256"]
         or source_binding["config"].get("intervention_config") is None
     ):
         _fail("pre_measurement_trajectory_source_binding_mismatch")
-    config = validate_recurrent_grpo_config_contract(
-        document.get("recurrent_grpo_config")
-    )
-    if float.fromhex(config["advantage_clip_hex"]) != float(
-        source_binding["advantage_clip"]
-    ):
+    config = validate_recurrent_grpo_config_contract(document.get("recurrent_grpo_config"))
+    if float.fromhex(config["advantage_clip_hex"]) != float(source_binding["advantage_clip"]):
         _fail("pre_measurement_advantage_clip_mismatch")
-    bridge = _validate_bridge_token_binding(
-        document.get("bridge_token_binding")
-    )
-    state_source = validate_pre_measurement_state_source(
-        document.get("state_source")
-    )
+    bridge = _validate_bridge_token_binding(document.get("bridge_token_binding"))
+    state_source = validate_pre_measurement_state_source(document.get("state_source"))
     if state_source["policy_sha256"] != document["policy_before_sha256"]:
         _fail("pre_measurement_state_policy_mismatch")
     objective_inputs = {
@@ -662,9 +627,7 @@ def _state_source(
         "adapter_artifact": dict(adapter_artifact),
         "optimizer_artifact": dict(optimizer_artifact),
     }
-    return validate_pre_measurement_state_source(
-        {**body, "state_source_sha256": _digest(body)}
-    )
+    return validate_pre_measurement_state_source({**body, "state_source_sha256": _digest(body)})
 
 
 class VerifiedTransitionMeasurementChainStore:
@@ -700,9 +663,7 @@ class VerifiedTransitionMeasurementChainStore:
             role="training_protocol",
         )
         try:
-            custody = validate_initial_policy_state_custody(
-                initial_policy_state_custody
-            )
+            custody = validate_initial_policy_state_custody(initial_policy_state_custody)
             observed_adapter = inspect_initial_adapter_snapshot(
                 custody["initial_adapter_path"],
                 execution_spec_sha256=custody["execution_spec_sha256"],
@@ -796,9 +757,7 @@ class VerifiedTransitionMeasurementChainStore:
                     "generation": 0 if name == _INTENT_DIRECTORY else 1,
                     "kind": generation_kind,
                     "sequence": document["sequence"],
-                    "group_admission_sha256": document[
-                        "group_admission_sha256"
-                    ],
+                    "group_admission_sha256": document["group_admission_sha256"],
                     "document": {
                         "path": document_name,
                         "sha256": hashlib.sha256(payload).hexdigest(),
@@ -838,9 +797,7 @@ class VerifiedTransitionMeasurementChainStore:
         )
         if stat.S_IMODE(metadata.st_mode) & 0o222:
             _fail("pre_measurement_generation_is_writable")
-        expected_files = (
-            _INTENT_FILES if name == _INTENT_DIRECTORY else _ABANDONED_FILES
-        )
+        expected_files = _INTENT_FILES if name == _INTENT_DIRECTORY else _ABANDONED_FILES
         if {path.name for path in generation_dir.iterdir()} != expected_files:
             _fail("pre_measurement_generation_file_set_invalid")
         generation = _read_document(
@@ -858,10 +815,8 @@ class VerifiedTransitionMeasurementChainStore:
         }
         if (
             set(generation) != required
-            or generation.get("schema")
-            != PRE_MEASUREMENT_GENERATION_SCHEMA
-            or generation.get("generation")
-            != (0 if name == _INTENT_DIRECTORY else 1)
+            or generation.get("schema") != PRE_MEASUREMENT_GENERATION_SCHEMA
+            or generation.get("generation") != (0 if name == _INTENT_DIRECTORY else 1)
             or generation.get("kind") != expected_kind
         ):
             _fail("pre_measurement_generation_schema_invalid")
@@ -877,19 +832,14 @@ class VerifiedTransitionMeasurementChainStore:
         if binding.get("path") != document_name:
             _fail("pre_measurement_generation_binding_path_invalid")
         path = generation_dir / document_name
-        document = document_validator(
-            _read_document(path, role="generation_document")
-        )
+        document = document_validator(_read_document(path, role="generation_document"))
         payload = _canonical_json_bytes(document)
         if (
             generation["sequence"] != document["sequence"]
-            or generation["group_admission_sha256"]
-            != document["group_admission_sha256"]
-            or binding.get("sha256")
-            != hashlib.sha256(payload).hexdigest()
+            or generation["group_admission_sha256"] != document["group_admission_sha256"]
+            or binding.get("sha256") != hashlib.sha256(payload).hexdigest()
             or binding.get("size_bytes") != len(payload)
-            or binding.get("receipt_sha256")
-            != document["receipt_sha256"]
+            or binding.get("receipt_sha256") != document["receipt_sha256"]
         ):
             _fail("pre_measurement_generation_binding_mismatch")
         return document
@@ -901,9 +851,7 @@ class VerifiedTransitionMeasurementChainStore:
         admission_sha256: str,
     ) -> dict[str, Any] | None:
         entry = self._entry_dir(sequence, admission_sha256)
-        with interprocess_file_lock(
-            self.root / f".seq-{sequence:08d}-{admission_sha256}.lock"
-        ):
+        with interprocess_file_lock(self.root / f".seq-{sequence:08d}-{admission_sha256}.lock"):
             if not os.path.lexists(entry):
                 return None
             if entry.is_symlink():
@@ -937,9 +885,7 @@ class VerifiedTransitionMeasurementChainStore:
                     directory=True,
                     role="inventory_entry",
                 )
-                observed.append(
-                    (int(match.group("sequence")), match.group("admission"))
-                )
+                observed.append((int(match.group("sequence")), match.group("admission")))
             observed.sort()
             sequences = [sequence for sequence, _admission in observed]
             if len(sequences) != len(set(sequences)):
@@ -979,9 +925,7 @@ class VerifiedTransitionMeasurementChainStore:
                 int(transaction.pending_step["sequence"]),
                 str(transaction.pending_step["group_admission_sha256"]),
             ): transaction
-            for transaction in self.transaction_store.inventory(
-                load_tensors=False
-            )
+            for transaction in self.transaction_store.inventory(load_tensors=False)
         }
         for intent in self.inventory():
             key = (
@@ -996,10 +940,7 @@ class VerifiedTransitionMeasurementChainStore:
             transaction = transactions.get(key)
             if transaction is not None:
                 pending = transaction.pending_step
-                if (
-                    pending.get("pre_measurement_sha256")
-                    != intent["receipt_sha256"]
-                ):
+                if pending.get("pre_measurement_sha256") != intent["receipt_sha256"]:
                     _fail("pre_measurement_transaction_binding_mismatch")
 
     def reconcile_interrupted_admissions(
@@ -1021,19 +962,11 @@ class VerifiedTransitionMeasurementChainStore:
         )
         transactions = {
             str(transaction.pending_step["group_admission_sha256"]): transaction
-            for transaction in self.transaction_store.inventory(
-                load_tensors=False
-            )
+            for transaction in self.transaction_store.inventory(load_tensors=False)
         }
-        intents = {
-            str(intent["group_admission_sha256"]): intent
-            for intent in self.inventory()
-        }
+        intents = {str(intent["group_admission_sha256"]): intent for intent in self.inventory()}
         journal_inventory = update_journal.inventory()
-        journal_entries = {
-            str(entry["admission_sha256"]): entry
-            for entry in journal_inventory
-        }
+        journal_entries = {str(entry["admission_sha256"]): entry for entry in journal_inventory}
         if len(journal_entries) != len(journal_inventory):
             _fail("pre_measurement_journal_duplicate_admission")
 
@@ -1043,16 +976,13 @@ class VerifiedTransitionMeasurementChainStore:
                 _fail("pre_measurement_reservation_missing")
             reservation = entry["reservation"]
             if (
-                reservation.get("receipt_sha256")
-                != intent["reservation_sha256"]
-                or reservation.get("policy_before_sha256")
-                != intent["policy_before_sha256"]
+                reservation.get("receipt_sha256") != intent["reservation_sha256"]
+                or reservation.get("policy_before_sha256") != intent["policy_before_sha256"]
             ):
                 _fail("pre_measurement_reservation_binding_mismatch")
             objective = entry["objective"]
             if objective is not None and (
-                objective.get("pre_measurement_sha256")
-                != intent["receipt_sha256"]
+                objective.get("pre_measurement_sha256") != intent["receipt_sha256"]
             ):
                 _fail("pre_measurement_objective_binding_mismatch")
 
@@ -1060,8 +990,7 @@ class VerifiedTransitionMeasurementChainStore:
         for entry in journal_inventory:
             reservation = entry["reservation"]
             if (
-                reservation.get("schema")
-                != VERIFIED_TRANSITION_RESERVATION_SCHEMA_V2
+                reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA_V2
                 or reservation.get("pre_measurement_required") is not True
             ):
                 continue
@@ -1079,11 +1008,7 @@ class VerifiedTransitionMeasurementChainStore:
                     )
                     or pending.get("sequence") != sequence
                     or pending.get("pre_measurement_sha256")
-                    != (
-                        intent["receipt_sha256"]
-                        if intent is not None
-                        else None
-                    )
+                    != (intent["receipt_sha256"] if intent is not None else None)
                 ):
                     _fail("pre_measurement_staged_recovery_conflict")
                 continue
@@ -1092,21 +1017,17 @@ class VerifiedTransitionMeasurementChainStore:
             if intent is not None and (
                 intent["sequence"] != sequence
                 or intent["trainer_step"] != reservation["trainer_step"]
-                or intent["execution_spec_sha256"]
-                != reservation["execution_spec_sha256"]
-                or intent["group_manifest_sha256"]
-                != reservation["group_manifest_sha256"]
+                or intent["execution_spec_sha256"] != reservation["execution_spec_sha256"]
+                or intent["group_manifest_sha256"] != reservation["group_manifest_sha256"]
             ):
                 _fail("pre_measurement_reservation_scope_mismatch")
             if entry["objective"] is not None and intent is None:
                 _fail("pre_measurement_objective_without_intent")
 
             before = str(reservation["policy_before_sha256"])
-            _source, expected_adapter, expected_optimizer = (
-                self._resolve_source(
-                    sequence=sequence,
-                    policy_before_sha256=before,
-                )
+            _source, expected_adapter, expected_optimizer = self._resolve_source(
+                sequence=sequence,
+                policy_before_sha256=before,
             )
             if not _tensor_maps_equal(
                 expected_adapter,
@@ -1121,25 +1042,19 @@ class VerifiedTransitionMeasurementChainStore:
                 changed = policy != before
                 reconciliation = update_journal.reconcile(
                     admission_sha256=admission,
-                    reservation_sha256=str(
-                        reservation["receipt_sha256"]
-                    ),
+                    reservation_sha256=str(reservation["receipt_sha256"]),
                     policy_before_sha256=before,
                     observed_policy_sha256=policy,
                     classification=(
-                        "policy_changed_without_commit"
-                        if changed
-                        else "reserved_no_policy_change"
+                        "policy_changed_without_commit" if changed else "reserved_no_policy_change"
                     ),
                     reconciled_at_unix_ns=reconciled_at,
                 )
             if (
                 reconciliation.get("policy_before_sha256") != before
                 or reconciliation.get("observed_policy_sha256") != policy
-                or reconciliation.get("classification")
-                != "reserved_no_policy_change"
-                or reconciliation.get("requires_checkpoint_recovery")
-                is not False
+                or reconciliation.get("classification") != "reserved_no_policy_change"
+                or reconciliation.get("requires_checkpoint_recovery") is not False
             ):
                 _fail("pre_measurement_checkpoint_state_not_restored")
 
@@ -1162,9 +1077,7 @@ class VerifiedTransitionMeasurementChainStore:
                         entry_dir,
                         name=_ABANDONED_DIRECTORY,
                         document_name="reconciliation.json",
-                        document_validator=(
-                            validate_pre_measurement_reconciliation
-                        ),
+                        document_validator=(validate_pre_measurement_reconciliation),
                         expected_kind="pre_measurement_abandoned",
                     )
             recovered.append(
@@ -1172,9 +1085,7 @@ class VerifiedTransitionMeasurementChainStore:
                     "sequence": sequence,
                     "admission_sha256": admission,
                     "update_reconciliation": reconciliation,
-                    "measurement_reconciliation": (
-                        measurement_reconciliation
-                    ),
+                    "measurement_reconciliation": (measurement_reconciliation),
                     "requires_fresh_campaign": True,
                 }
             )
@@ -1256,9 +1167,7 @@ class VerifiedTransitionMeasurementChainStore:
         else:
             latest = transactions[-1]
             source_sequence = int(latest.pending_step["sequence"])
-            source_admission = str(
-                latest.pending_step["group_admission_sha256"]
-            )
+            source_admission = str(latest.pending_step["group_admission_sha256"])
             if source_sequence >= sequence:
                 _fail("pre_measurement_future_or_cyclic_state_source")
             if tuple(event["kind"] for event in latest.events) != (
@@ -1277,17 +1186,9 @@ class VerifiedTransitionMeasurementChainStore:
                 admission_sha256=source_admission,
                 load_tensors=True,
             )
-            if (
-                loaded is None
-                or loaded.adapter_tensors is None
-                or loaded.optimizer_tensors is None
-            ):
+            if loaded is None or loaded.adapter_tensors is None or loaded.optimizer_tensors is None:
                 _fail("pre_measurement_prior_transaction_tensors_missing")
-            stage_dir = (
-                loaded.transaction_dir
-                / "generations"
-                / "00000000-staged"
-            )
+            stage_dir = loaded.transaction_dir / "generations" / "00000000-staged"
             source = _state_source(
                 kind="prior_transaction_post_state",
                 successful_update_ordinal=len(transactions) + 1,
@@ -1431,9 +1332,7 @@ class VerifiedTransitionMeasurementChainStore:
         )
         intent = validate_pre_measurement_intent(intent)
         entry = self._entry_dir(sequence, admission)
-        with interprocess_file_lock(
-            self.root / f".seq-{sequence:08d}-{admission}.lock"
-        ):
+        with interprocess_file_lock(self.root / f".seq-{sequence:08d}-{admission}.lock"):
             if not os.path.lexists(entry):
                 entry.mkdir(mode=0o700)
                 _fsync_directory(self.entries)
@@ -1472,11 +1371,14 @@ class VerifiedTransitionMeasurementChainStore:
         )
         if intent is None:
             _fail("pre_measurement_orphan_intent_missing")
-        if self.transaction_store.load(
-            sequence=sequence,
-            admission_sha256=admission_sha256,
-            load_tensors=False,
-        ) is not None:
+        if (
+            self.transaction_store.load(
+                sequence=sequence,
+                admission_sha256=admission_sha256,
+                load_tensors=False,
+            )
+            is not None
+        ):
             _fail("pre_measurement_orphan_has_transaction")
         source, expected_adapter, expected_optimizer = self._resolve_source(
             sequence=sequence,
@@ -1509,9 +1411,7 @@ class VerifiedTransitionMeasurementChainStore:
             }
         )
         entry = self._entry_dir(sequence, admission_sha256)
-        with interprocess_file_lock(
-            self.root / f".seq-{sequence:08d}-{admission_sha256}.lock"
-        ):
+        with interprocess_file_lock(self.root / f".seq-{sequence:08d}-{admission_sha256}.lock"):
             self._publish_generation(
                 entry=entry,
                 name=_ABANDONED_DIRECTORY,
@@ -1548,8 +1448,7 @@ def validate_pre_measurement_reconciliation(value: Any) -> dict[str, Any]:
     document = cast(dict[str, Any], _clone(value, role="reconciliation"))
     if (
         document.get("schema") != PRE_MEASUREMENT_RECONCILIATION_SCHEMA
-        or document.get("classification")
-        != "abandoned_before_post_state_stage"
+        or document.get("classification") != "abandoned_before_post_state_stage"
         or document.get("admission_reusable") is not False
         or document.get("requires_fresh_admission") is not True
     ):
@@ -1604,6 +1503,36 @@ def load_pre_measurement_for_transaction(
     return document
 
 
+def load_pre_measurement_state_tensors(
+    intent: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load the exact private adapter and optimizer in one validated intent."""
+
+    document = validate_pre_measurement_intent(intent)
+    source = validate_pre_measurement_state_source(document["state_source"])
+    adapter_binding = source["adapter_artifact"]
+    optimizer_binding = source["optimizer_artifact"]
+    adapter = _load_bound_safetensors(
+        Path(adapter_binding["path"]),
+        adapter_binding,
+        role="external_replay_adapter",
+    )
+    optimizer = _load_bound_safetensors(
+        Path(optimizer_binding["path"]),
+        optimizer_binding,
+        role="external_replay_optimizer",
+    )
+    if (
+        recurrent_policy_tensor_map_sha256(
+            adapter,
+            document["execution_spec_sha256"],
+        )
+        != document["policy_before_sha256"]
+    ):
+        _fail("pre_measurement_external_replay_policy_mismatch")
+    return adapter, optimizer
+
+
 __all__ = [
     "BRIDGE_TOKEN_BINDING_SCHEMA",
     "PRE_MEASUREMENT_INTENT_SCHEMA",
@@ -1615,6 +1544,8 @@ __all__ = [
     "VerifiedTransitionMeasurementChainStore",
     "bridge_token_binding",
     "load_pre_measurement_for_transaction",
+    "load_pre_measurement_state_tensors",
+    "recurrent_grpo_config_from_contract",
     "recurrent_grpo_config_contract",
     "validate_pre_measurement_intent",
     "validate_pre_measurement_reconciliation",

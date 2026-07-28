@@ -31,6 +31,9 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     externally_custodied_roles,
     prepare_role_signature_request,
 )
+from core.learning.durable_external_verifier_job import (
+    DurableExternalVerifierJob,
+)
 from core.learning.recurrent_grpo import (
     RecurrentSamplingConfig,
     recurrent_policy_sha256,
@@ -80,17 +83,11 @@ from core.runtime.file_read_gateway import read_stable_bytes
 
 JIT_PROVIDER_CONFIG_SCHEMA = "aura.verified_transition.jit_provider_config.v1"
 JIT_PLAN_PACKAGE_SCHEMA = "aura.verified_transition.jit_plan_package.v1"
-SAMPLING_CONFIG_CONTRACT_SCHEMA = (
-    "aura.recurrent_sampling_config.fixed_point.v1"
-)
+SAMPLING_CONFIG_CONTRACT_SCHEMA = "aura.recurrent_sampling_config.fixed_point.v1"
 COMMAND_SIGNER_REQUEST_SCHEMA = "aura.external_role_signer.request.v1"
 COMMAND_SIGNER_RESPONSE_SCHEMA = "aura.external_role_signer.response.v1"
-COMMAND_EVIDENCE_VERIFIER_REQUEST_SCHEMA = (
-    "aura.external_evidence_verifier.request.v2"
-)
-COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA = (
-    "aura.external_evidence_verifier.response.v1"
-)
+COMMAND_EVIDENCE_VERIFIER_REQUEST_SCHEMA = "aura.external_evidence_verifier.request.v2"
+COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA = "aura.external_evidence_verifier.response.v1"
 
 _JIT_CONFIG_KEYS = frozenset(
     {
@@ -120,12 +117,8 @@ _PLAN_PACKAGE_KEYS = frozenset(
         "receipt_sha256",
     }
 )
-_SIGNER_RESPONSE_KEYS = frozenset(
-    {"schema", "request_sha256", "signature_b64"}
-)
-_VERIFIER_RESPONSE_KEYS = frozenset(
-    {"schema", "request_sha256", "verification_receipt"}
-)
+_SIGNER_RESPONSE_KEYS = frozenset({"schema", "request_sha256", "signature_b64"})
+_VERIFIER_RESPONSE_KEYS = frozenset({"schema", "request_sha256", "verification_receipt"})
 _SAMPLING_FIXED_FIELDS = (
     "temperature",
     "top_p",
@@ -136,8 +129,7 @@ _SAMPLING_FIXED_FIELDS = (
     "max_old_policy_approx_kl",
 )
 _SAMPLING_CONTRACT_KEYS = frozenset(
-    {"schema", "max_tokens"}
-    | {f"{field}_micros" for field in _SAMPLING_FIXED_FIELDS}
+    {"schema", "max_tokens"} | {f"{field}_micros" for field in _SAMPLING_FIXED_FIELDS}
 )
 _TRAINING_ARGV_SHA256_KEY = "training_argv_sha256"
 
@@ -175,10 +167,7 @@ def _identifier(value: Any, *, role: str) -> str:
         or value != value.strip()
         or len(value) > 256
         or not value[0].isalnum()
-        or any(
-            not (character.isalnum() or character in "._:/;=+-")
-            for character in value
-        )
+        or any(not (character.isalnum() or character in "._:/;=+-") for character in value)
     ):
         _fail(f"{role}_invalid")
     return value
@@ -316,6 +305,7 @@ class CommandRoleSignerBroker:
         arguments: Sequence[str] = (),
         timeout_seconds: float = 30.0,
         inherited_environment_names: Sequence[str] = ("HOME", "TMPDIR"),
+        durable_policy_state_replay_job: DurableExternalVerifierJob | None = None,
     ) -> None:
         self._identity = _identifier(identity, role="signer_broker_identity")
         candidate = Path(executable).expanduser()
@@ -331,9 +321,7 @@ class CommandRoleSignerBroker:
         if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
             _fail("signer_broker_executable_invalid")
         self._executable = resolved
-        self._executable_sha256 = _sha256(
-            executable_sha256, role="signer_broker_executable_sha256"
-        )
+        self._executable_sha256 = _sha256(executable_sha256, role="signer_broker_executable_sha256")
         self._release_manifest = self._regular_artifact(
             release_manifest, role="signer_broker_release_manifest"
         )
@@ -341,10 +329,7 @@ class CommandRoleSignerBroker:
             custody_evidence, role="signer_broker_custody_evidence"
         )
         self._arguments = tuple(arguments)
-        if any(
-            not isinstance(argument, str) or "\x00" in argument
-            for argument in self._arguments
-        ):
+        if any(not isinstance(argument, str) or "\x00" in argument for argument in self._arguments):
             _fail("signer_broker_arguments_invalid")
         if (
             isinstance(timeout_seconds, bool)
@@ -363,6 +348,7 @@ class CommandRoleSignerBroker:
         ):
             _fail("signer_broker_environment_names_invalid")
         self._environment_names = names
+        self._durable_policy_state_replay_job = durable_policy_state_replay_job
         self._assert_executable_identity()
 
     @property
@@ -398,9 +384,7 @@ class CommandRoleSignerBroker:
             resolved = path.resolve(strict=True)
             metadata = resolved.stat()
         except OSError as exc:
-            raise VerifiedTransitionProductionFactoryError(
-                f"{role}_unavailable"
-            ) from exc
+            raise VerifiedTransitionProductionFactoryError(f"{role}_unavailable") from exc
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             _fail(f"{role}_invalid")
         return resolved
@@ -417,11 +401,7 @@ class CommandRoleSignerBroker:
         environment = {
             "LANG": "C",
             "LC_ALL": "C",
-            **{
-                name: os.environ[name]
-                for name in self._environment_names
-                if name in os.environ
-            },
+            **{name: os.environ[name] for name in self._environment_names if name in os.environ},
         }
         self._assert_executable_identity()
         try:
@@ -467,16 +447,12 @@ class CommandRoleSignerBroker:
         """Require the pinned verifier process to replay exact package bytes."""
 
         purpose = _identifier(purpose, role="evidence_verifier_purpose")
-        evidence = validate_causal_campaign_evidence_manifest(
-            evidence_manifest
-        )
+        evidence = validate_causal_campaign_evidence_manifest(evidence_manifest)
         verifier_pin = policy.role_pin(EVIDENCE_VERIFIER)
         if (
-            self.implementation_sha256
-            != verifier_pin["implementation_sha256"]
+            self.implementation_sha256 != verifier_pin["implementation_sha256"]
             or self.release_sha256 != verifier_pin["release_sha256"]
-            or self.custody_evidence_sha256
-            != verifier_pin["custody_evidence_sha256"]
+            or self.custody_evidence_sha256 != verifier_pin["custody_evidence_sha256"]
         ):
             _fail("signer_broker_artifact_identity_mismatch")
         body = {
@@ -499,14 +475,12 @@ class CommandRoleSignerBroker:
         response = self._execute(request)
         if (
             self.release_sha256 != verifier_pin["release_sha256"]
-            or self.custody_evidence_sha256
-            != verifier_pin["custody_evidence_sha256"]
+            or self.custody_evidence_sha256 != verifier_pin["custody_evidence_sha256"]
         ):
             _fail("signer_broker_artifact_identity_mismatch")
         if (
             set(response) != _VERIFIER_RESPONSE_KEYS
-            or response.get("schema")
-            != COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA
+            or response.get("schema") != COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA
             or response.get("request_sha256") != request["request_sha256"]
         ):
             _fail("evidence_verifier_response_invalid")
@@ -520,6 +494,28 @@ class CommandRoleSignerBroker:
         ):
             _fail("evidence_verifier_receipt_identity_mismatch")
         return receipt
+
+    def replay_policy_states(
+        self,
+        *,
+        request: Mapping[str, Any],
+        timeout_seconds: float,
+    ) -> Mapping[str, Any]:
+        """Run exact policy-state replay under detached durable custody."""
+
+        purpose = _identifier(
+            request.get("purpose"),
+            role="durable_evidence_verifier_purpose",
+        )
+        job = self._durable_policy_state_replay_job
+        if job is None:
+            _fail("durable_policy_state_replay_job_unavailable")
+        return job.run_file_protocol(
+            request,
+            job.target_command,
+            timeout_seconds,
+            purpose,
+        )
 
     def attest(
         self,
@@ -590,9 +586,7 @@ class JITVerifiedTransitionPlanStore:
 
     def __init__(self, root: str | Path, *, contract_sha256: str) -> None:
         self.root = _private_directory(root, role="jit_plan_store")
-        self.contract_sha256 = _sha256(
-            contract_sha256, role="jit_plan_store_contract"
-        )
+        self.contract_sha256 = _sha256(contract_sha256, role="jit_plan_store_contract")
 
     def _path(self, sequence: int) -> Path:
         value = _integer(sequence, role="jit_plan_sequence")
@@ -616,9 +610,7 @@ class JITVerifiedTransitionPlanStore:
         try:
             value = json.loads(raw)
         except (UnicodeError, json.JSONDecodeError) as exc:
-            raise VerifiedTransitionProductionFactoryError(
-                "jit_plan_json_invalid"
-            ) from exc
+            raise VerifiedTransitionProductionFactoryError("jit_plan_json_invalid") from exc
         if not isinstance(value, dict) or raw != canonical_json_bytes(value):
             _fail("jit_plan_json_noncanonical")
         return self.validate(value, sequence=sequence)
@@ -640,8 +632,7 @@ class JITVerifiedTransitionPlanStore:
             or not isinstance(package.get("group_manifest_attestation"), Mapping)
             or not isinstance(package.get("lineage_plan"), Mapping)
             or not isinstance(package.get("lineage_attestation"), Mapping)
-            or package.get("policy_before_sha256")
-            != manifest["entries"][0]["policy_sha256"]
+            or package.get("policy_before_sha256") != manifest["entries"][0]["policy_sha256"]
             or any(
                 entry["policy_sha256"] != package["policy_before_sha256"]
                 for entry in manifest["entries"]
@@ -727,9 +718,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
     def contract_sha256(self) -> str:
         return self._provider.contract_sha256
 
-    def training_schedule_entry(
-        self, *, sequence: int
-    ) -> VerifiedTransitionTrainingScheduleEntry:
+    def training_schedule_entry(self, *, sequence: int) -> VerifiedTransitionTrainingScheduleEntry:
         return self._provider.training_schedule_entry(sequence=sequence)
 
     def _bind_sampling_config(
@@ -768,9 +757,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
         config_sha256 = sampling_config_document_sha256(self._sampling)
         entries = []
         for index, seed in enumerate(commitment["sample_seeds"]):
-            episode_id = (
-                f"{self._provider.campaign_id}:s{sequence}:e{index}"
-            )
+            episode_id = f"{self._provider.campaign_id}:s{sequence}:e{index}"
             branch_index = index % self._branch_count
             entries.append(
                 TransitionGroupPlanEntry(
@@ -796,9 +783,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                     sampling_config_sha256=config_sha256,
                 )
             )
-        observed = _integer(
-            self._now_unix_ns(), role="jit_provider_observed_at", minimum=1
-        )
+        observed = _integer(self._now_unix_ns(), role="jit_provider_observed_at", minimum=1)
         planned_at = (observed // 1_000_000_000) * 1_000_000_000
         manifest = build_transition_group_manifest(
             group_id=f"{self._provider.campaign_id}:group:{sequence}",
@@ -838,9 +823,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
         body = {
             "schema": JIT_PLAN_PACKAGE_SCHEMA,
             "contract_sha256": self.contract_sha256,
-            "campaign_schedule_root_sha256": (
-                self._provider.campaign_schedule_root_sha256
-            ),
+            "campaign_schedule_root_sha256": (self._provider.campaign_schedule_root_sha256),
             "sequence": sequence,
             "policy_before_sha256": policy_sha256,
             "group_manifest": manifest,
@@ -876,8 +859,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
             or package.get("lineage_plan") != expected_lineage
             or manifest["task_id"] != getattr(task, "task_id", None)
             or manifest["task_id"] != commitment["task_id"]
-            or [entry["sample_seed"] for entry in manifest["entries"]]
-            != commitment["sample_seeds"]
+            or [entry["sample_seed"] for entry in manifest["entries"]] != commitment["sample_seeds"]
             or any(
                 entry["sampling_config_sha256"] != config_sha256
                 or entry["policy_sha256"] != policy_sha256
@@ -888,9 +870,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                     episode_id=entry["episode_id"],
                     prompt_tokens_sha256=prompt_sha256,
                     policy_sha256=policy_sha256,
-                    execution_spec_sha256=entry[
-                        "recurrent_execution_spec_sha256"
-                    ],
+                    execution_spec_sha256=entry["recurrent_execution_spec_sha256"],
                     branch_index=entry["producing_branch_index"],
                     seed=entry["sample_seed"],
                     sampling_config=self._sampling,
@@ -943,9 +923,7 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                 sequence=sequence,
                 policy_before_sha256=policy_sha256,
                 group_manifest=package["group_manifest"],
-                group_manifest_attestation=package[
-                    "group_manifest_attestation"
-                ],
+                group_manifest_attestation=package["group_manifest_attestation"],
                 lineage_attestation=package["lineage_attestation"],
                 admitted_at_unix_ns=package["admitted_at_unix_ns"],
             )
@@ -996,23 +974,13 @@ class ProductionVerifiedTransitionProviderFactory:
         initial_policy_state_custody: dict[str, Any] | None = None
         if custody_value is not None:
             try:
-                initial_policy_state_custody = (
-                    validate_initial_policy_state_custody(custody_value)
-                )
+                initial_policy_state_custody = validate_initial_policy_state_custody(custody_value)
                 adapter_artifact = inspect_initial_adapter_snapshot(
-                    initial_policy_state_custody[
-                        "initial_adapter_path"
-                    ],
-                    execution_spec_sha256=(
-                        initial_policy_state_custody[
-                            "execution_spec_sha256"
-                        ]
-                    ),
+                    initial_policy_state_custody["initial_adapter_path"],
+                    execution_spec_sha256=(initial_policy_state_custody["execution_spec_sha256"]),
                 )
                 optimizer_artifact = inspect_initial_optimizer_snapshot(
-                    initial_policy_state_custody[
-                        "initial_optimizer_path"
-                    ]
+                    initial_policy_state_custody["initial_optimizer_path"]
                 )
             except Exception as exc:
                 raise VerifiedTransitionProductionFactoryError(
@@ -1021,20 +989,10 @@ class ProductionVerifiedTransitionProviderFactory:
             if (
                 initial_policy_state_custody["initial_policy_sha256"]
                 != frozen["initial_policy_sha256"]
-                or initial_policy_state_custody[
-                    "execution_spec_sha256"
-                ]
-                != frozen["task_schedule"][0][
-                    "recurrent_execution_spec_sha256"
-                ]
-                or adapter_artifact
-                != initial_policy_state_custody[
-                    "initial_adapter_artifact"
-                ]
-                or optimizer_artifact
-                != initial_policy_state_custody[
-                    "initial_optimizer_artifact"
-                ]
+                or initial_policy_state_custody["execution_spec_sha256"]
+                != frozen["task_schedule"][0]["recurrent_execution_spec_sha256"]
+                or adapter_artifact != initial_policy_state_custody["initial_adapter_artifact"]
+                or optimizer_artifact != initial_policy_state_custody["initial_optimizer_artifact"]
             ):
                 _fail("production_factory_initial_state_custody_mismatch")
         training_argv = config.get("training_argv")
@@ -1043,9 +1001,7 @@ class ProductionVerifiedTransitionProviderFactory:
             or len(training_argv) < 2
             or training_argv[0] != "tools/train_grpo.py"
             or any(
-                not isinstance(argument, str)
-                or not argument
-                or "\x00" in argument
+                not isinstance(argument, str) or not argument or "\x00" in argument
                 for argument in training_argv
             )
             or config.get(_TRAINING_ARGV_SHA256_KEY)
@@ -1056,59 +1012,47 @@ class ProductionVerifiedTransitionProviderFactory:
         if not isinstance(jit, Mapping) or set(jit) != _JIT_CONFIG_KEYS:
             _fail("production_factory_jit_config_invalid")
         sampling = _sampling_config_from_contract(jit["sampling_config"])
-        if jit.get("reward_config_sha256") != _digest(
-            TransitionRewardConfig().to_dict()
-        ):
+        if jit.get("reward_config_sha256") != _digest(TransitionRewardConfig().to_dict()):
             _fail("production_factory_reward_config_mismatch")
         branch_count = _integer(
             jit.get("branch_count"), role="production_factory_branch_count", minimum=1
         )
         if branch_count > 256:
             _fail("production_factory_branch_count_invalid")
-        if not isinstance(
-            task_issuer_signer_broker, CommandRoleSignerBroker
-        ) or not isinstance(
+        if not isinstance(task_issuer_signer_broker, CommandRoleSignerBroker) or not isinstance(
             evidence_verifier_signer_broker, CommandRoleSignerBroker
         ):
             _fail("production_factory_external_command_signers_required")
         if (
             task_issuer_signer_broker is evidence_verifier_signer_broker
-            or task_issuer_signer_broker.identity
-            == evidence_verifier_signer_broker.identity
+            or task_issuer_signer_broker.identity == evidence_verifier_signer_broker.identity
             or task_issuer_signer_broker.custody_evidence_sha256
             == evidence_verifier_signer_broker.custody_evidence_sha256
         ):
             _fail("production_factory_signer_role_separation_required")
         if (
             jit.get("schema") != JIT_PROVIDER_CONFIG_SCHEMA
-            or jit.get("signer_broker_identity")
-            != task_issuer_signer_broker.identity
-            or jit.get("signer_broker_source_sha256")
-            != task_issuer_signer_broker.source_sha256
+            or jit.get("signer_broker_identity") != task_issuer_signer_broker.identity
+            or jit.get("signer_broker_source_sha256") != task_issuer_signer_broker.source_sha256
         ):
             _fail("production_factory_signer_broker_mismatch")
         issuer_pin = campaign_trust_policy.role_pin(TASK_ISSUER)
         if (
-            issuer_pin["implementation_sha256"]
-            != task_issuer_signer_broker.implementation_sha256
-            or issuer_pin["release_sha256"]
-            != task_issuer_signer_broker.release_sha256
+            issuer_pin["implementation_sha256"] != task_issuer_signer_broker.implementation_sha256
+            or issuer_pin["release_sha256"] != task_issuer_signer_broker.release_sha256
             or issuer_pin["custody_evidence_sha256"]
             != task_issuer_signer_broker.custody_evidence_sha256
-            or issuer_pin["custody_class"]
-            not in {"external_service", "remote_hsm"}
+            or issuer_pin["custody_class"] not in {"external_service", "remote_hsm"}
         ):
             _fail("production_factory_signer_custody_pin_mismatch")
         verifier_pin = campaign_trust_policy.role_pin(EVIDENCE_VERIFIER)
         if (
             verifier_pin["implementation_sha256"]
             != evidence_verifier_signer_broker.implementation_sha256
-            or verifier_pin["release_sha256"]
-            != evidence_verifier_signer_broker.release_sha256
+            or verifier_pin["release_sha256"] != evidence_verifier_signer_broker.release_sha256
             or verifier_pin["custody_evidence_sha256"]
             != evidence_verifier_signer_broker.custody_evidence_sha256
-            or verifier_pin["custody_class"]
-            not in {"external_service", "remote_hsm"}
+            or verifier_pin["custody_class"] not in {"external_service", "remote_hsm"}
         ):
             _fail("production_factory_verifier_custody_pin_mismatch")
         replay_root = Path(frozen["ledger_roots"]["replay_artifacts"])
@@ -1143,9 +1087,7 @@ class ProductionVerifiedTransitionProviderFactory:
             document = commitments.get(schedule["task_id"])
             try:
                 validated = (
-                    validate_public_training_task(document)
-                    if document is not None
-                    else None
+                    validate_public_training_task(document) if document is not None else None
                 )
             except VerifiedTrainingTaskError as exc:
                 raise VerifiedTransitionProductionFactoryError(
@@ -1185,9 +1127,7 @@ class ProductionVerifiedTransitionProviderFactory:
         self._evidence_verifier_broker = evidence_verifier_signer_broker
         self._commitments = commitments
         self._answer_nonces = nonces
-        self._initial_policy_state_custody = (
-            initial_policy_state_custody
-        )
+        self._initial_policy_state_custody = initial_policy_state_custody
         self._created = False
         self._lock = threading.RLock()
 
@@ -1263,17 +1203,13 @@ class ProductionVerifiedTransitionProviderFactory:
             _fail("production_factory_scheduled_task_missing")
         return tuple(bound)
 
-    def create(
-        self, runtime: VerifiedTransitionProviderRuntime
-    ) -> VerifiedTransitionGroupProvider:
+    def create(self, runtime: VerifiedTransitionProviderRuntime) -> VerifiedTransitionGroupProvider:
         with self._lock:
             if self._created:
                 _fail("production_factory_already_created")
             if (
                 runtime.execution_spec.sha256
-                != self._contract["task_schedule"][0][
-                    "recurrent_execution_spec_sha256"
-                ]
+                != self._contract["task_schedule"][0]["recurrent_execution_spec_sha256"]
                 or runtime.execution_spec.branches != self._branch_count
                 or runtime.sampling_max_tokens != self._sampling.max_tokens
                 or runtime.dataset_sha256 != self._contract["dataset_sha256"]
@@ -1289,30 +1225,19 @@ class ProductionVerifiedTransitionProviderFactory:
             ):
                 _fail("production_factory_runtime_graph_mismatch")
             task_ids = {getattr(task, "task_id", None) for task in runtime.training_tasks}
-            if any(
-                row["task_id"] not in task_ids
-                for row in self._contract["task_schedule"]
-            ):
+            if any(row["task_id"] not in task_ids for row in self._contract["task_schedule"]):
                 _fail("production_factory_runtime_task_missing")
-            initial_policy = recurrent_policy_sha256(
-                runtime.model, runtime.execution_spec
-            )
+            initial_policy = recurrent_policy_sha256(runtime.model, runtime.execution_spec)
             if initial_policy != self._contract["initial_policy_sha256"]:
                 _fail("production_factory_initial_policy_mismatch")
             if self._initial_policy_state_custody is not None:
                 try:
                     adapter_artifact = inspect_initial_adapter_snapshot(
-                        self._initial_policy_state_custody[
-                            "initial_adapter_path"
-                        ],
+                        self._initial_policy_state_custody["initial_adapter_path"],
                         execution_spec_sha256=runtime.execution_spec.sha256,
                     )
-                    optimizer_artifact = (
-                        inspect_initial_optimizer_snapshot(
-                            self._initial_policy_state_custody[
-                                "initial_optimizer_path"
-                            ]
-                        )
+                    optimizer_artifact = inspect_initial_optimizer_snapshot(
+                        self._initial_policy_state_custody["initial_optimizer_path"]
                     )
                 except Exception as exc:
                     raise VerifiedTransitionProductionFactoryError(
@@ -1320,17 +1245,11 @@ class ProductionVerifiedTransitionProviderFactory:
                     ) from exc
                 if (
                     adapter_artifact
-                    != self._initial_policy_state_custody[
-                        "initial_adapter_artifact"
-                    ]
+                    != self._initial_policy_state_custody["initial_adapter_artifact"]
                     or optimizer_artifact
-                    != self._initial_policy_state_custody[
-                        "initial_optimizer_artifact"
-                    ]
+                    != self._initial_policy_state_custody["initial_optimizer_artifact"]
                 ):
-                    _fail(
-                        "production_factory_initial_state_custody_mismatch"
-                    )
+                    _fail("production_factory_initial_state_custody_mismatch")
             provider = ProductionVerifiedTransitionGroupProvider(
                 contract=self._contract,
                 provider_config=self._config,

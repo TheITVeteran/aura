@@ -36,8 +36,14 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
 from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
+from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointInterventionConfig,
+)
 from core.learning.recurrent_grpo import (  # noqa: E402
+    RecurrentGRPOConfig,
     RecurrentSamplingConfig,
+    VerifiedTrajectoryGroupConfig,
+    recurrent_policy_optimizer_config,
     recurrent_policy_sample_from_causal_pair,
     recurrent_policy_sha256,
     sample_final_recurrent_transition_pair,
@@ -50,6 +56,7 @@ from core.learning.verified_recurrent_transition_repository import (  # noqa: E4
     produce_verified_recurrent_transition_group,
     recurrent_trace_token_decoder,
     recurrent_trace_token_encoder,
+    replay_recurrent_evidence_manifest_policy_states,
     score_verified_recurrent_training_task,
     verify_recurrent_evidence_manifest_artifacts,
 )
@@ -62,6 +69,8 @@ from core.learning.verified_training_task import (  # noqa: E402
 )
 from core.learning.verified_transition_causal_campaign import (  # noqa: E402
     CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
     CausalCampaignScheduleEntry,
     VerifiedTransitionCausalCampaignLedger,
     build_causal_campaign_manifest,
@@ -76,6 +85,18 @@ from core.learning.verified_transition_group_admission import (  # noqa: E402
     VerifiedTransitionGroupError,
     build_transition_group_manifest,
     sampling_config_sha256,
+)
+from core.learning.verified_transition_measurement_chain import (  # noqa: E402
+    VerifiedTransitionMeasurementChainStore,
+    recurrent_grpo_config_contract,
+)
+from core.learning.verified_transition_policy_probe import (  # noqa: E402
+    build_initial_policy_state_custody,
+    inspect_initial_adapter_snapshot,
+    inspect_initial_optimizer_snapshot,
+)
+from core.learning.verified_transition_policy_state_replay import (  # noqa: E402
+    build_policy_state_replay_contract,
 )
 from core.learning.verified_transition_production_factory import (  # noqa: E402
     ProviderBoundTrainingTask,
@@ -171,9 +192,7 @@ def _trust_material() -> tuple[
     dict[str, Ed25519PrivateKey],
 ]:
     root = Ed25519PrivateKey.generate()
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     body = {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
         "policy_id": "recurrent-external-replay-2026-07",
@@ -185,10 +204,7 @@ def _trust_material() -> tuple[
         "issued_at_unix": BASE_SECOND,
         "not_before_unix": BASE_SECOND + 100,
         "expires_at_unix": BASE_SECOND + 10_000,
-        "roles": {
-            role: _role_pin(role, role_keys[role])
-            for role in CAMPAIGN_TRUST_ROLES
-        },
+        "roles": {role: _role_pin(role, role_keys[role]) for role in CAMPAIGN_TRUST_ROLES},
     }
     signed = canonical_json_bytes(body)
     root_raw = _public_raw(root)
@@ -197,9 +213,7 @@ def _trust_material() -> tuple[
         "root_signature": {
             "algorithm": "Ed25519",
             "key_id": hashlib.sha256(root_raw).hexdigest(),
-            "signature_b64": base64.b64encode(root.sign(signed)).decode(
-                "ascii"
-            ),
+            "signature_b64": base64.b64encode(root.sign(signed)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(signed).hexdigest(),
         },
     }
@@ -208,9 +222,7 @@ def _trust_material() -> tuple[
         document,
         trusted_root_public_key_pem=_public_pem(root),
         expected_campaign_name="recurrent-external-replay",
-        expected_protocol_sha256=_sha(
-            "recurrent-external-replay-protocol"
-        ),
+        expected_protocol_sha256=_sha("recurrent-external-replay-protocol"),
         now_unix=BASE_SECOND + 120,
     )
     return policy, role_keys
@@ -255,6 +267,66 @@ def _execution_spec() -> RLCExecutionSpec:
     )
 
 
+def _trajectory_config() -> VerifiedTrajectoryGroupConfig:
+    return VerifiedTrajectoryGroupConfig(
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1,),
+            causality_weight=0.4,
+            causality_margin=0.1,
+            stopping_steps=(1, 2),
+            stopping_weight=0.3,
+            stopping_ponder_cost=0.01,
+            stopping_temperature=0.2,
+        )
+    )
+
+
+def _save_private_safetensors(
+    path: Path,
+    tensors: Mapping[str, Any],
+) -> None:
+    mx.eval(*tensors.values())
+    mx.save_safetensors(str(path), dict(tensors))
+    os.chmod(path, 0o600)
+
+
+def _initial_state_custody(
+    root: Path,
+    *,
+    model: Any,
+    optimizer: Any,
+    spec: RLCExecutionSpec,
+) -> dict[str, Any]:
+    adapter_path = root / "initial-adapter.safetensors"
+    optimizer_path = root / "initial-optimizer.safetensors"
+    adapter = dict(tree_flatten(model.trainable_parameters()))
+    optimizer.init(model.trainable_parameters())
+    optimizer_state = dict(tree_flatten(optimizer.state))
+    _save_private_safetensors(adapter_path, adapter)
+    _save_private_safetensors(optimizer_path, optimizer_state)
+    adapter_artifact = inspect_initial_adapter_snapshot(
+        adapter_path,
+        execution_spec_sha256=spec.sha256,
+    )
+    optimizer_artifact = inspect_initial_optimizer_snapshot(optimizer_path)
+    return build_initial_policy_state_custody(
+        initial_policy_probe_sha256=_sha("external-replay-initial-probe"),
+        initial_policy_sha256=adapter_artifact["policy_sha256"],
+        execution_spec_sha256=spec.sha256,
+        adapter_initialization={
+            "seed": 929,
+            "rank": 2,
+            "layers": 1,
+            "targets": ["o_proj"],
+        },
+        optimizer_initialization=recurrent_policy_optimizer_config(0.01),
+        initial_adapter_artifact=adapter_artifact,
+        initial_optimizer_artifact=optimizer_artifact,
+        initial_adapter_path=adapter_path.resolve(strict=True),
+        initial_optimizer_path=optimizer_path.resolve(strict=True),
+    )
+
+
 def _checkpoint_evidence(
     transaction: Any,
     trainer_step: dict[str, Any],
@@ -295,9 +367,7 @@ def _checkpoint_evidence(
     }
     return TrainerCheckpointEvidence(
         document=document,
-        artifact_sha256=hashlib.sha256(
-            _canonical(document, newline=True)
-        ).hexdigest(),
+        artifact_sha256=hashlib.sha256(_canonical(document, newline=True)).hexdigest(),
     )
 
 
@@ -341,9 +411,7 @@ def _rejection_checkpoint_directory(
             "size_bytes": 1,
         },
     }
-    (directory / "complete.json").write_bytes(
-        _canonical(document, newline=True)
-    )
+    (directory / "complete.json").write_bytes(_canonical(document, newline=True))
     (directory / "complete.json").chmod(0o600)
     return directory
 
@@ -359,18 +427,15 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
                 model,
                 PROMPT_TOKENS,
                 spec=spec,
-                branch_index=0,
+                branch_index=branch_index,
                 seed=seed,
                 sampling=sampling,
                 episode_id=f"updated-{seed}",
             )
         )
-        for seed in (9, 1)
+        for branch_index, seed in enumerate((9, 1))
     )
-    assert tuple(sample.tokens for sample in samples) == (
-        (21, 3),
-        (9, 11),
-    )
+    assert tuple(sample.branch_index for sample in samples) == (0, 1)
 
     source_task = khop_reachability(1, 929)
     public_task, _sealed_task = build_verified_training_task(
@@ -391,9 +456,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         special_token_map={},
         encode_options={},
         decode_options={},
-        implementation_source_sha256=_sha(
-            "external-replay-tokenizer-implementation"
-        ),
+        implementation_source_sha256=_sha("external-replay-tokenizer-implementation"),
     )
 
     class Adapter:
@@ -418,13 +481,10 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         def stream_decode_deltas(cls, tokens: Any) -> tuple[str, ...]:
             token_ids = tuple(tokens)
             rendered = tuple(
-                cls.decode_output(token_ids[:index])
-                for index in range(1, len(token_ids) + 1)
+                cls.decode_output(token_ids[:index]) for index in range(1, len(token_ids) + 1)
             )
             return tuple(
-                value
-                if index == 0
-                else value[len(rendered[index - 1]) :]
+                value if index == 0 else value[len(rendered[index - 1]) :]
                 for index, value in enumerate(rendered)
             )
 
@@ -432,10 +492,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
     contract_sha256 = _sha("external-replay-provider-contract")
     schedule_root_sha256 = _sha("external-replay-schedule-root")
     initial_policy_sha256 = recurrent_policy_sha256(model, spec)
-    assert all(
-        sample.policy_sha256 == initial_policy_sha256
-        for sample in samples
-    )
+    assert all(sample.policy_sha256 == initial_policy_sha256 for sample in samples)
     campaign_planned_second = BASE_SECOND + 150
     campaign_manifest = build_causal_campaign_manifest(
         campaign_id="recurrent-external-replay-campaign",
@@ -480,9 +537,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
                 task_id=task.task_id,
                 rng_root_sha256=sample.rng_root_sha256,
                 policy_sha256=sample.policy_sha256,
-                recurrent_execution_spec_sha256=(
-                    sample.execution_spec_sha256
-                ),
+                recurrent_execution_spec_sha256=(sample.execution_spec_sha256),
                 producing_branch_index=sample.branch_index,
                 sample_seed=sample.seed,
                 sampling_config_sha256=sampling_config_sha256(sample),
@@ -526,8 +581,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         lineage_plan=lineage,
         lineage_attestation=lineage_attestation,
         policy=policy,
-        admitted_at_unix_ns=(group_planned_second + 1)
-        * 1_000_000_000,
+        admitted_at_unix_ns=(group_planned_second + 1) * 1_000_000_000,
     )
 
     roots = {
@@ -548,9 +602,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         prompt_text=source_task.prompt,
         prompt_tokens=PROMPT_TOKENS,
         samples=samples,
-        completions=tuple(
-            Adapter.decode_output(sample.tokens) for sample in samples
-        ),
+        completions=tuple(Adapter.decode_output(sample.tokens) for sample in samples),
         group_manifest=group_manifest,
         group_manifest_attestation=group_attestation,
         provider_config={},
@@ -569,13 +621,10 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
     prepared = produce_verified_recurrent_transition_group(request)
     assert prepared.reward_receipt["optimizer_admitted"] is admitted
     transition_kinds = [
-        transition["transition_kind"]
-        for transition in prepared.reward_receipt["transitions"]
+        transition["transition_kind"] for transition in prepared.reward_receipt["transitions"]
     ]
     assert transition_kinds == (
-        ["wrong_to_right", "right_to_right"]
-        if admitted
-        else ["right_to_right", "right_to_right"]
+        ["wrong_to_right", "right_to_right"] if admitted else ["right_to_right", "right_to_right"]
     )
     assert (prepared.group_admission_receipt is not None) is admitted
     assert (prepared.update_journal is not None) is admitted
@@ -590,9 +639,23 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         answer_channel=answer_channel,
     )
     optimizer = optim.Adam(learning_rate=0.01)
+    state_custody = None
+    replay_config = RecurrentGRPOConfig()
+    trajectory_config = _trajectory_config()
     if admitted:
-        transaction_store = VerifiedTransitionTransactionStore.open(
-            roots["transactions"]
+        transaction_store = VerifiedTransitionTransactionStore.open(roots["transactions"])
+        state_custody = _initial_state_custody(
+            root,
+            model=model,
+            optimizer=optimizer,
+            spec=spec,
+        )
+        measurement_chain = VerifiedTransitionMeasurementChainStore.open(
+            roots["transactions"],
+            transaction_store=transaction_store,
+            initial_policy_state_custody=state_custody,
+            provider_contract_sha256=contract_sha256,
+            training_protocol_sha256=_sha("external-replay-training-protocol"),
         )
         transaction_coordinator = VerifiedTransitionTransactionCoordinator(
             store=transaction_store,
@@ -604,14 +667,11 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
             campaign_manifest_sha256=campaign_manifest["manifest_sha256"],
             campaign_schedule_root_sha256=schedule_root_sha256,
             group_manifest_sha256=group_manifest["manifest_sha256"],
-            reward_receipt_sha256=prepared.reward_receipt[
-                "receipt_sha256"
-            ],
+            reward_receipt_sha256=prepared.reward_receipt["receipt_sha256"],
             trainer_step_static=trainer_step_static,
-            adapter_tensors=lambda: dict(
-                tree_flatten(model.trainable_parameters())
-            ),
+            adapter_tensors=lambda: dict(tree_flatten(model.trainable_parameters())),
             optimizer_tensors=lambda: dict(tree_flatten(optimizer.state)),
+            measurement_chain=measurement_chain,
         )
         update_times = iter(
             (
@@ -626,6 +686,8 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
             samples,
             prepared,
             spec=spec,
+            config=replay_config,
+            trajectory_group_config=trajectory_config,
             now_unix_ns=lambda: next(update_times),
             transaction_coordinator=transaction_coordinator,
         )
@@ -643,9 +705,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
             mutation=mutation,
         )
         assert prepared.group_admission_receipt is not None
-        admission_sha256 = prepared.group_admission_receipt[
-            "receipt_sha256"
-        ]
+        admission_sha256 = prepared.group_admission_receipt["receipt_sha256"]
         transaction = transaction_store.load(
             sequence=0,
             admission_sha256=admission_sha256,
@@ -677,27 +737,19 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         assert transaction.optimizer_tensors
         rejection = None
     else:
-        rejection_store = VerifiedTransitionRejectionTransactionStore.open(
-            roots["transactions"]
-        )
-        rejection_coordinator = (
-            VerifiedTransitionRejectionTransactionCoordinator(
-                store=rejection_store,
-                sequence=0,
-                trainer_step=1,
-                task_id=task.task_id,
-                trainer_sample_seed=929,
-                execution_spec_sha256=spec.sha256,
-                campaign_manifest_sha256=campaign_manifest[
-                    "manifest_sha256"
-                ],
-                campaign_schedule_root_sha256=schedule_root_sha256,
-                group_manifest_sha256=group_manifest["manifest_sha256"],
-                reward_receipt_sha256=prepared.reward_receipt[
-                    "receipt_sha256"
-                ],
-                trainer_step_static=trainer_step_static,
-            )
+        rejection_store = VerifiedTransitionRejectionTransactionStore.open(roots["transactions"])
+        rejection_coordinator = VerifiedTransitionRejectionTransactionCoordinator(
+            store=rejection_store,
+            sequence=0,
+            trainer_step=1,
+            task_id=task.task_id,
+            trainer_sample_seed=929,
+            execution_spec_sha256=spec.sha256,
+            campaign_manifest_sha256=campaign_manifest["manifest_sha256"],
+            campaign_schedule_root_sha256=schedule_root_sha256,
+            group_manifest_sha256=group_manifest["manifest_sha256"],
+            reward_receipt_sha256=prepared.reward_receipt["receipt_sha256"],
+            trainer_step_static=trainer_step_static,
         )
         mutation = apply_prepared_verified_transition_group(
             model,
@@ -727,9 +779,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
             reward_sha256=prepared.reward_receipt["receipt_sha256"],
         )
         assert rejection is not None
-        assert build_rejected_transaction_trainer_step(
-            rejection
-        ) == trainer_step
+        assert build_rejected_transaction_trainer_step(rejection) == trainer_step
         rejection_store.record_trainer_checkpoint(
             sequence=0,
             reward_sha256=prepared.reward_receipt["receipt_sha256"],
@@ -751,10 +801,9 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         transaction = None
         admission_sha256 = None
 
-    package_path = (
-        Path(roots["replay_artifacts"])
-        / "group-00000000.prepared.json"
-    ).resolve(strict=True)
+    package_path = (Path(roots["replay_artifacts"]) / "group-00000000.prepared.json").resolve(
+        strict=True
+    )
     package_bytes = package_path.read_bytes()
     package = json.loads(package_bytes)
     package_row = {
@@ -767,19 +816,22 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         },
         "package_receipt_sha256": package["receipt_sha256"],
         "group_manifest_sha256": group_manifest["manifest_sha256"],
-        "reward_receipt_sha256": prepared.reward_receipt[
-            "receipt_sha256"
-        ],
+        "reward_receipt_sha256": prepared.reward_receipt["receipt_sha256"],
         "group_admission_sha256": admission_sha256,
         "update_receipt_sha256": mutation.update_receipt_sha256,
         "trainer_step_receipt_sha256": trainer_step["receipt_sha256"],
         "sample_receipt_sha256s": package["sample_receipt_sha256s"],
-        "evidence_receipt_sha256s": package[
-            "evidence_receipt_sha256s"
-        ],
+        "evidence_receipt_sha256s": package["evidence_receipt_sha256s"],
     }
+    if admitted:
+        assert transaction is not None
+        package_row["pre_measurement_sha256"] = transaction.pending_step["pre_measurement_sha256"]
     evidence_body = {
-        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "schema": (
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            if admitted
+            else CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA
+        ),
         "contract_sha256": contract_sha256,
         "campaign_schedule_root_sha256": schedule_root_sha256,
         "trust_policy_sha256": policy.policy_sha256,
@@ -796,20 +848,14 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
     evidence_manifest = validate_causal_campaign_evidence_manifest(
         {
             **evidence_body,
-            "manifest_sha256": hashlib.sha256(
-                canonical_json_bytes(evidence_body)
-            ).hexdigest(),
+            "manifest_sha256": hashlib.sha256(canonical_json_bytes(evidence_body)).hexdigest(),
         }
     )
-    transition_blob_root = (
-        Path(roots["transition_artifacts"]) / "blobs"
-    )
+    transition_blob_root = Path(roots["transition_artifacts"]) / "blobs"
     prepared.transition_store.close()
     paths = {
-        "evidence": transition_blob_root
-        / package["evidence_artifacts"][0]["payload_sha256"],
-        "reward": transition_blob_root
-        / package["reward_artifact"]["payload_sha256"],
+        "evidence": transition_blob_root / package["evidence_artifacts"][0]["payload_sha256"],
+        "reward": transition_blob_root / package["reward_artifact"]["payload_sha256"],
     }
     if admitted:
         assert admission_sha256 is not None
@@ -819,8 +865,7 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
             {
                 "admission": transition_blob_root
                 / package["group_admission_artifact"]["payload_sha256"],
-                "update_journal": Path(roots["updates"])
-                / f"{admission_sha256}.committed.json",
+                "update_journal": Path(roots["updates"]) / f"{admission_sha256}.committed.json",
                 "transaction_event": (
                     transaction.transaction_dir
                     / "generations"
@@ -837,13 +882,16 @@ def _build_replay(root: Path, *, admitted: bool) -> dict[str, Any]:
         )
     else:
         assert rejection is not None
-        paths["rejection_event"] = (
-            rejection.transaction_dir / "00000002-trainer-checkpoint.json"
-        )
+        paths["rejection_event"] = rejection.transaction_dir / "00000002-trainer-checkpoint.json"
     return {
         "manifest": evidence_manifest,
         "policy": policy,
         "paths": paths,
+        "state_custody": state_custody,
+        "spec": spec,
+        "trajectory_config": trajectory_config,
+        "replay_config": replay_config,
+        "root": root,
     }
 
 
@@ -872,6 +920,63 @@ def _verify(material: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _policy_replay_contract(
+    material: dict[str, Any],
+) -> dict[str, Any]:
+    root = material["root"]
+    model_root = root / "model"
+    model_root.mkdir(mode=0o700, exist_ok=True)
+    spec_path = root / "execution-spec.json"
+    spec_path.write_bytes(_canonical(material["spec"].to_dict()))
+    os.chmod(spec_path, 0o600)
+    source_path = root / "external-replay-source.py"
+    source_path.write_bytes(b"EXTERNAL_REPLAY_SOURCE = True\n")
+    os.chmod(source_path, 0o600)
+    source_payload = source_path.read_bytes()
+    behavior_files = [
+        {
+            "path": name,
+            "sha256": _sha(name),
+            "size_bytes": 1,
+        }
+        for name in (
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+        )
+    ]
+    behavior_bundle = {
+        "bundle_sha256": hashlib.sha256(canonical_json_bytes(behavior_files)).hexdigest(),
+        "file_count": len(behavior_files),
+        "files": behavior_files,
+    }
+    assert material["state_custody"] is not None
+    return build_policy_state_replay_contract(
+        preregistration_contract_sha256=_sha("external-replay-preregistration"),
+        initial_policy_sha256=material["state_custody"]["initial_policy_sha256"],
+        model_path=model_root,
+        base_checkpoint={
+            "fingerprint": _sha("external-replay-model"),
+            "method": "sha256",
+            "files": 1,
+        },
+        behavior_bundle=behavior_bundle,
+        execution_spec_path=spec_path,
+        execution_spec_document=material["spec"].to_dict(),
+        source_bindings={
+            "external_replay": {
+                "path": str(source_path.resolve(strict=True)),
+                "sha256": hashlib.sha256(source_payload).hexdigest(),
+                "size_bytes": len(source_payload),
+            }
+        },
+        initial_policy_state_custody=material["state_custody"],
+        recurrent_grpo_config=recurrent_grpo_config_contract(material["replay_config"]),
+        verified_trajectory_config=material["trajectory_config"].to_dict(),
+        external_verifier_max_seconds=300,
+    )
+
+
 def _replace_with_corrupt_bytes(path: Path) -> tuple[bytes, int]:
     original = path.read_bytes()
     original_mode = stat.S_IMODE(path.stat().st_mode)
@@ -895,11 +1000,105 @@ def test_updated_group_full_external_replay_is_green(
     receipt = _verify(updated_replay)
 
     assert receipt["verified_package_count"] == 1
-    assert receipt["validation_profile"] == (
-        "recurrent_transition_causal_replay.v2"
+    assert receipt["validation_profile"] == ("recurrent_transition_causal_replay.v3")
+    assert receipt["evidence_manifest_sha256"] == (updated_replay["manifest"]["manifest_sha256"])
+
+
+def test_updated_group_exact_objective_gradient_and_adam_replay_is_green(
+    updated_replay: dict[str, Any],
+) -> None:
+    results = replay_recurrent_evidence_manifest_policy_states(
+        updated_replay["manifest"],
+        policy_state_replay_contract=_policy_replay_contract(updated_replay),
+        campaign_trust_policy=updated_replay["policy"],
+        verifier_identity="independent-recurrent-replay-verifier",
+        verified_at_unix=BASE_SECOND + 200,
+        model=_prepared_model(),
     )
-    assert receipt["evidence_manifest_sha256"] == (
-        updated_replay["manifest"]["manifest_sha256"]
+
+    assert len(results) == 1
+    result = results[0]
+    assert result["sequence"] == 0
+    assert result["policy_state_replay_receipt"]["external_policy_state_replayed"] is True
+    assert result["policy_state_replay_receipt"]["objective_recomputed"] is True
+    assert result["policy_state_replay_receipt"]["adapter_post_state_exact"] is True
+    assert result["policy_state_replay_receipt"]["optimizer_post_state_exact"] is True
+
+
+def test_v5_external_verifier_accepts_only_published_exact_replay(
+    updated_replay: dict[str, Any],
+) -> None:
+    contract = _policy_replay_contract(updated_replay)
+    result = replay_recurrent_evidence_manifest_policy_states(
+        updated_replay["manifest"],
+        policy_state_replay_contract=contract,
+        campaign_trust_policy=updated_replay["policy"],
+        verifier_identity="independent-recurrent-replay-verifier",
+        verified_at_unix=BASE_SECOND + 200,
+        model=_prepared_model(),
+    )[0]
+    result_path = updated_replay["root"] / "published-replay.json"
+    result_payload = canonical_json_bytes(result)
+    result_path.write_bytes(result_payload)
+    result_path.chmod(0o600)
+    row = dict(updated_replay["manifest"]["group_packages"][0])
+    row.update(
+        {
+            "policy_before_sha256": result["policy_before_sha256"],
+            "policy_after_sha256": result["policy_after_sha256"],
+            "objective_receipt_sha256": result["objective_receipt_sha256"],
+            "state_source_sha256": result["state_source_sha256"],
+            "post_state_transaction_stage_sha256": result["post_state_transaction_stage_sha256"],
+            "policy_state_replay_receipt_artifact": {
+                "path": str(result_path.resolve(strict=True)),
+                "sha256": hashlib.sha256(result_payload).hexdigest(),
+                "size_bytes": len(result_payload),
+            },
+            "policy_state_replay_receipt_sha256": result["receipt_sha256"],
+        }
+    )
+    evidence_body = {
+        **{
+            key: value
+            for key, value in updated_replay["manifest"].items()
+            if key != "manifest_sha256"
+        },
+        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
+        "group_packages": [row],
+        "policy_state_replay_contract": contract,
+        "policy_state_replay_contract_sha256": contract["contract_sha256"],
+        "policy_state_replay_receipt_root_sha256": hashlib.sha256(
+            canonical_json_bytes(
+                {
+                    "policy_state_replay_receipts": [
+                        {
+                            "sequence": 0,
+                            "receipt_sha256": result["receipt_sha256"],
+                        }
+                    ]
+                }
+            )
+        ).hexdigest(),
+    }
+    evidence = validate_causal_campaign_evidence_manifest(
+        {
+            **evidence_body,
+            "manifest_sha256": hashlib.sha256(canonical_json_bytes(evidence_body)).hexdigest(),
+        }
+    )
+
+    aggregate = verify_recurrent_evidence_manifest_artifacts(
+        evidence,
+        campaign_trust_policy=updated_replay["policy"],
+        verifier_identity="independent-recurrent-replay-verifier",
+        verified_at_unix=BASE_SECOND + 200,
+    )
+
+    assert aggregate["external_policy_state_replayed"] is True
+    assert aggregate["verified_updated_transition_count"] == 1
+    assert (
+        aggregate["policy_state_replay_receipt_root_sha256"]
+        == (evidence["policy_state_replay_receipt_root_sha256"])
     )
 
 
@@ -935,12 +1134,8 @@ def test_rejected_group_full_external_replay_is_green(
     receipt = _verify(rejected_replay)
 
     assert receipt["verified_package_count"] == 1
-    assert receipt["validation_profile"] == (
-        "recurrent_transition_causal_replay.v2"
-    )
-    assert receipt["evidence_manifest_sha256"] == (
-        rejected_replay["manifest"]["manifest_sha256"]
-    )
+    assert receipt["validation_profile"] == ("recurrent_transition_causal_replay.v2")
+    assert receipt["evidence_manifest_sha256"] == (rejected_replay["manifest"]["manifest_sha256"])
 
 
 def test_rejected_group_external_replay_fails_closed_on_chain_corruption(

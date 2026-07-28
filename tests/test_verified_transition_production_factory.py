@@ -107,9 +107,7 @@ class _TokenizerAdapter:
     @classmethod
     def stream_decode_deltas(cls, tokens: Any) -> tuple[str, ...]:
         values = tuple(tokens)
-        rendered = [
-            cls.decode_output(values[: index + 1]) for index in range(len(values))
-        ]
+        rendered = [cls.decode_output(values[: index + 1]) for index in range(len(values))]
         return tuple(
             value if index == 0 else value[len(rendered[index - 1]) :]
             for index, value in enumerate(rendered)
@@ -190,9 +188,7 @@ def _trust_material(
     role_pin_overrides: dict[str, dict[str, str]] | None = None,
 ) -> tuple[Any, dict[str, Ed25519PrivateKey]]:
     root = Ed25519PrivateKey.generate()
-    role_keys = role_keys or {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = role_keys or {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     body = {
         "schema": CAMPAIGN_TRUST_POLICY_SCHEMA,
         "policy_id": "jit-provider-test-policy",
@@ -210,11 +206,7 @@ def _trust_material(
                 role_keys[role],
                 overrides=(
                     (role_pin_overrides or {}).get(role)
-                    or (
-                        task_issuer_pin_overrides
-                        if role == TASK_ISSUER
-                        else None
-                    )
+                    or (task_issuer_pin_overrides if role == TASK_ISSUER else None)
                 ),
             )
             for role in CAMPAIGN_TRUST_ROLES
@@ -296,21 +288,15 @@ def _external_signer(
     script.chmod(0o700)
     release = tmp_path / f"{role}-external-signer-release.json"
     custody = tmp_path / f"{role}-external-signer-custody.json"
-    release.write_bytes(
-        canonical_json_bytes({"release": f"{role}-test-v1"})
-    )
-    custody.write_bytes(
-        canonical_json_bytes({"custody": f"{role}-external-test"})
-    )
+    release.write_bytes(canonical_json_bytes({"release": f"{role}-test-v1"}))
+    custody.write_bytes(canonical_json_bytes({"custody": f"{role}-external-test"}))
     release.chmod(0o600)
     custody.chmod(0o600)
     executable_sha = hashlib.sha256(script.read_bytes()).hexdigest()
     overrides = {
         "implementation_sha256": executable_sha,
         "release_sha256": hashlib.sha256(release.read_bytes()).hexdigest(),
-        "custody_evidence_sha256": hashlib.sha256(
-            custody.read_bytes()
-        ).hexdigest(),
+        "custody_evidence_sha256": hashlib.sha256(custody.read_bytes()).hexdigest(),
     }
     broker = CommandRoleSignerBroker(
         identity=f"{role}-external-command-test",
@@ -327,9 +313,7 @@ def _external_signer(
 def _command_signer_material(
     tmp_path: Path,
 ) -> tuple[Any, dict[str, Ed25519PrivateKey], CommandRoleSignerBroker, Path]:
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     broker, script, overrides = _external_signer(
         tmp_path,
         role=TASK_ISSUER,
@@ -403,9 +387,7 @@ class _Provider:
         assert sequence == 0
         return dict(self.commitment)
 
-    def training_schedule_entry(
-        self, *, sequence: int
-    ) -> VerifiedTransitionTrainingScheduleEntry:
+    def training_schedule_entry(self, *, sequence: int) -> VerifiedTransitionTrainingScheduleEntry:
         assert sequence == 0
         return VerifiedTransitionTrainingScheduleEntry(
             campaign_sequence=0,
@@ -467,9 +449,7 @@ class _Provider:
             task_id=self.manifest["task_id"],
             policy_sha256=kwargs["policy_sha256"],
             prompt_tokens_sha256=_digest(list(kwargs["prompt_tokens"])),
-            execution_spec_sha256=self.commitment[
-                "recurrent_execution_spec_sha256"
-            ],
+            execution_spec_sha256=self.commitment["recurrent_execution_spec_sha256"],
             entries=entries,
             sampling_config={},
         )
@@ -508,9 +488,7 @@ def _factory_material(
     shared_external_signer: bool = False,
     shared_custody_only: bool = False,
 ) -> dict[str, Any]:
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     broker, _task_script, task_overrides = _external_signer(
         tmp_path,
         role=TASK_ISSUER,
@@ -547,14 +525,10 @@ def _factory_material(
         },
     )
     task_factory_broker: Any = (
-        _SigningBroker(keys[TASK_ISSUER])
-        if use_in_process_signer
-        else broker
+        _SigningBroker(keys[TASK_ISSUER]) if use_in_process_signer else broker
     )
     verifier_factory_broker: Any = (
-        _SigningBroker(keys[EVIDENCE_VERIFIER])
-        if use_in_process_signer
-        else verifier_broker
+        _SigningBroker(keys[EVIDENCE_VERIFIER]) if use_in_process_signer else verifier_broker
     )
     roots = {
         name: str((tmp_path / name).resolve())
@@ -577,30 +551,22 @@ def _factory_material(
             "--model",
             "/models/resident",
         ],
-        "training_argv_sha256": _digest(
-            ["tools/train_grpo.py", "--model", "/models/resident"]
-        ),
+        "training_argv_sha256": _digest(["tools/train_grpo.py", "--model", "/models/resident"]),
         "jit_plan": {
             "schema": JIT_PROVIDER_CONFIG_SCHEMA,
-            "reward_config_sha256": _digest(
-                TransitionRewardConfig().to_dict()
-            ),
+            "reward_config_sha256": _digest(TransitionRewardConfig().to_dict()),
             "sampling_config": sampling_config_contract_document(sampling),
             "branch_count": 2,
             "signer_broker_identity": broker.identity,
             "signer_broker_source_sha256": broker.source_sha256,
-            "plan_store_root": str(
-                (Path(roots["replay_artifacts"]) / "jit-plans").resolve()
-            ),
+            "plan_store_root": str((Path(roots["replay_artifacts"]) / "jit-plans").resolve()),
             "trainer_output_root": str(output_root),
             "transaction_root": str(transaction_root),
         },
     }
     task = khop_reachability(1, 123)
     answer_nonce = b"factory-test-answer-nonce-material" * 2
-    public_task, _sealed_answer = build_verified_training_task(
-        task, answer_nonce=answer_nonce
-    )
+    public_task, _sealed_answer = build_verified_training_task(task, answer_nonce=answer_nonce)
     task_document = public_task.to_dict()
     schedule = [
         {
@@ -640,9 +606,7 @@ def _factory_material(
     ledger_manifest = {
         "campaign_id": contract["campaign_id"],
         "provider_contract_sha256": contract["contract_sha256"],
-        "campaign_schedule_root_sha256": contract[
-            "campaign_schedule_root_sha256"
-        ],
+        "campaign_schedule_root_sha256": contract["campaign_schedule_root_sha256"],
         "trust_policy_sha256": contract["trust_policy_sha256"],
         "initial_policy_sha256": contract["initial_policy_sha256"],
     }
@@ -716,8 +680,7 @@ def test_jit_provider_signs_and_persists_exact_plan_before_sampling(
     assert [entry.sample_seed for entry in plan.entries] == [101, 102]
     assert [entry.producing_branch_index for entry in plan.entries] == [0, 1]
     assert all(
-        entry.sampling_config_sha256
-        == sampling_config_document_sha256(material["sampling"])
+        entry.sampling_config_sha256 == sampling_config_document_sha256(material["sampling"])
         for entry in plan.entries
     )
     assert [purpose.rsplit(":", 1)[-1] for _role, purpose in broker.calls] == [
@@ -791,9 +754,7 @@ def test_durable_plan_rejects_runtime_drift(tmp_path: Path, drift: str) -> None:
     prompt = (11, 13) if drift == "prompt" else material["prompt"]
     policy_sha = _sha("other-policy") if drift == "policy" else _sha("policy")
     sampling = (
-        RecurrentSamplingConfig(max_tokens=3)
-        if drift == "sampling"
-        else material["sampling"]
+        RecurrentSamplingConfig(max_tokens=3) if drift == "sampling" else material["sampling"]
     )
     provider = _Provider(material["policy"], material["commitment"])
     if drift == "policy":
@@ -839,20 +800,14 @@ def test_factory_binds_schedule_and_constructs_only_after_live_policy_exists(
     task = material["task"]
     bound = tuple(factory.bind_training_tasks((task,)))
     assert isinstance(bound[0], ProviderBoundTrainingTask)
-    assert bound[0].verified_transition_task_commitment() == material[
-        "task_document"
-    ]
+    assert bound[0].verified_transition_task_commitment() == material["task_document"]
 
     class LowLevelProvider:
         def __init__(self, **kwargs: Any) -> None:
             self.contract_sha256 = kwargs["contract"]["contract_sha256"]
-            self.expected_policy_sha256 = kwargs["contract"][
-                "initial_policy_sha256"
-            ]
+            self.expected_policy_sha256 = kwargs["contract"]["initial_policy_sha256"]
             self.campaign_id = kwargs["contract"]["campaign_id"]
-            self.campaign_schedule_root_sha256 = kwargs["contract"][
-                "campaign_schedule_root_sha256"
-            ]
+            self.campaign_schedule_root_sha256 = kwargs["contract"]["campaign_schedule_root_sha256"]
 
     monkeypatch.setattr(
         "core.learning.verified_transition_production_factory."
@@ -860,8 +815,7 @@ def test_factory_binds_schedule_and_constructs_only_after_live_policy_exists(
         LowLevelProvider,
     )
     monkeypatch.setattr(
-        "core.learning.verified_transition_production_factory."
-        "recurrent_policy_sha256",
+        "core.learning.verified_transition_production_factory.recurrent_policy_sha256",
         lambda _model, _spec: _sha("initial-policy"),
     )
     provider = factory.create(
@@ -869,9 +823,7 @@ def test_factory_binds_schedule_and_constructs_only_after_live_policy_exists(
             model=object(),
             tokenizer=object(),
             tokenizer_trace_adapter=_TokenizerAdapter(),
-            execution_spec=SimpleNamespace(
-                sha256=_sha("execution"), branches=2
-            ),
+            execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
             training_tasks=bound,
             output_directory=material["output_root"],
             transaction_root=material["transaction_root"],
@@ -890,8 +842,7 @@ def test_factory_rejects_live_initial_policy_substitution(
     material = _factory_material(tmp_path)
     bound = tuple(material["factory"].bind_training_tasks((material["task"],)))
     monkeypatch.setattr(
-        "core.learning.verified_transition_production_factory."
-        "recurrent_policy_sha256",
+        "core.learning.verified_transition_production_factory.recurrent_policy_sha256",
         lambda _model, _spec: _sha("substituted-policy"),
     )
     with pytest.raises(
@@ -903,9 +854,7 @@ def test_factory_rejects_live_initial_policy_substitution(
                 model=object(),
                 tokenizer=object(),
                 tokenizer_trace_adapter=_TokenizerAdapter(),
-                execution_spec=SimpleNamespace(
-                    sha256=_sha("execution"), branches=2
-                ),
+                execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
                 training_tasks=bound,
                 output_directory=material["output_root"],
                 transaction_root=material["transaction_root"],
@@ -978,8 +927,7 @@ def test_factory_rejects_live_runtime_contract_drift(
     material = _factory_material(tmp_path)
     bound = tuple(material["factory"].bind_training_tasks((material["task"],)))
     monkeypatch.setattr(
-        "core.learning.verified_transition_production_factory."
-        "recurrent_policy_sha256",
+        "core.learning.verified_transition_production_factory.recurrent_policy_sha256",
         lambda _model, _spec: _sha("initial-policy"),
     )
     runtime = VerifiedTransitionProviderRuntime(
@@ -989,18 +937,14 @@ def test_factory_rejects_live_runtime_contract_drift(
         execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
         training_tasks=bound,
         output_directory=(
-            tmp_path / "other-output"
-            if drift == "output"
-            else material["output_root"]
+            tmp_path / "other-output" if drift == "output" else material["output_root"]
         ),
         transaction_root=(
             tmp_path / "other-transactions"
             if drift == "transaction"
             else material["transaction_root"]
         ),
-        dataset_sha256=(
-            _sha("other-dataset") if drift == "dataset" else _sha("dataset")
-        ),
+        dataset_sha256=(_sha("other-dataset") if drift == "dataset" else _sha("dataset")),
         group_size=3 if drift == "group_size" else 2,
         sampling_max_tokens=2,
     )
@@ -1020,12 +964,15 @@ def test_command_signer_broker_accepts_only_pinned_canonical_response(
         signed_at_unix=BASE_SECOND + 200,
         purpose="test:manifest",
     )
-    assert verify_role_attestation(
-        policy,
-        attestation,
-        role=TASK_ISSUER,
-        expected_payload=payload,
-    )["payload"] == payload
+    assert (
+        verify_role_attestation(
+            policy,
+            attestation,
+            role=TASK_ISSUER,
+            expected_payload=payload,
+        )["payload"]
+        == payload
+    )
 
     script.chmod(stat.S_IRWXU)
     script.write_text(script.read_text(encoding="ascii") + "# drift\n", encoding="ascii")
@@ -1050,9 +997,7 @@ def test_external_verifier_broker_returns_replay_receipt(
     campaign_manifest = build_causal_campaign_manifest(
         campaign_id=contract["campaign_id"],
         provider_contract_sha256=contract["contract_sha256"],
-        campaign_schedule_root_sha256=contract[
-            "campaign_schedule_root_sha256"
-        ],
+        campaign_schedule_root_sha256=contract["campaign_schedule_root_sha256"],
         trust_policy_sha256=material["policy"].policy_sha256,
         initial_policy_sha256=contract["initial_policy_sha256"],
         schedule=tuple(
@@ -1082,19 +1027,11 @@ def test_external_verifier_broker_returns_replay_receipt(
     body = {
         "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
         "contract_sha256": material["contract"]["contract_sha256"],
-        "campaign_schedule_root_sha256": material["contract"][
-            "campaign_schedule_root_sha256"
-        ],
+        "campaign_schedule_root_sha256": material["contract"]["campaign_schedule_root_sha256"],
         "trust_policy_sha256": material["policy"].policy_sha256,
-        "campaign_ledger_root": material["contract"]["ledger_roots"][
-            "campaign"
-        ],
-        "transition_artifact_root": material["contract"]["ledger_roots"][
-            "transition_artifacts"
-        ],
-        "update_journal_root": material["contract"]["ledger_roots"][
-            "updates"
-        ],
+        "campaign_ledger_root": material["contract"]["ledger_roots"]["campaign"],
+        "transition_artifact_root": material["contract"]["ledger_roots"]["transition_artifacts"],
+        "update_journal_root": material["contract"]["ledger_roots"]["updates"],
         "transaction_root": str(material["transaction_root"]),
         "completed_groups": 0,
         "halt_reason": "preflight",
@@ -1110,22 +1047,90 @@ def test_external_verifier_broker_returns_replay_receipt(
         purpose="fixture:evidence-replay",
     )
     assert receipt["evidence_manifest_sha256"] == evidence["manifest_sha256"]
-    assert (
-        receipt["verifier_identity"]
-        == material["verifier_broker"].identity
+    assert receipt["verifier_identity"] == material["verifier_broker"].identity
+
+
+def test_command_broker_requires_durable_policy_replay_job(
+    tmp_path: Path,
+) -> None:
+    broker, _script, _overrides = _external_signer(
+        tmp_path,
+        role=EVIDENCE_VERIFIER,
+        key=Ed25519PrivateKey.generate(),
     )
+    request = {
+        "schema": "test.durable.request.v1",
+        "purpose": "test:durable-interface",
+        "request_sha256": _sha("durable-interface-request"),
+    }
+
+    with pytest.raises(
+        VerifiedTransitionProductionFactoryError,
+        match="durable_policy_state_replay_job_unavailable",
+    ):
+        broker.replay_policy_states(
+            request=request,
+            timeout_seconds=93_600.0,
+        )
+
+    with pytest.raises(
+        VerifiedTransitionProductionFactoryError,
+        match="durable_evidence_verifier_purpose_invalid",
+    ):
+        broker.replay_policy_states(
+            request={**request, "purpose": ""},
+            timeout_seconds=93_600.0,
+        )
+
+
+def test_command_broker_delegates_only_to_frozen_policy_replay_job(
+    tmp_path: Path,
+) -> None:
+    broker, _script, _overrides = _external_signer(
+        tmp_path,
+        role=EVIDENCE_VERIFIER,
+        key=Ed25519PrivateKey.generate(),
+    )
+    request = {
+        "schema": "test.durable.request.v1",
+        "purpose": "test:durable-interface",
+        "request_sha256": _sha("durable-interface-request"),
+    }
+
+    class Job:
+        target_command = (sys.executable, "target.py", "run")
+        timeout_seconds = 93_600.0
+        calls: list[tuple[Any, ...]] = []
+
+        @classmethod
+        def run_file_protocol(cls, *args):
+            cls.calls.append(args)
+            return {
+                "request_sha256": request["request_sha256"],
+                "accepted": True,
+            }
+
+    broker._durable_policy_state_replay_job = Job()
+    response = broker.replay_policy_states(
+        request=request,
+        timeout_seconds=93_600.0,
+    )
+
+    assert response["accepted"] is True
+    assert Job.calls == [
+        (
+            request,
+            Job.target_command,
+            Job.timeout_seconds,
+            request["purpose"],
+        )
+    ]
 
 
 @pytest.mark.parametrize("artifact", ["release", "custody"])
-def test_command_signer_rejects_root_pinned_artifact_drift(
-    tmp_path: Path, artifact: str
-) -> None:
+def test_command_signer_rejects_root_pinned_artifact_drift(tmp_path: Path, artifact: str) -> None:
     policy, _keys, broker, _script = _command_signer_material(tmp_path)
-    path = (
-        broker._release_manifest
-        if artifact == "release"
-        else broker._custody_evidence
-    )
+    path = broker._release_manifest if artifact == "release" else broker._custody_evidence
     path.write_bytes(canonical_json_bytes({artifact: "substituted"}))
     with pytest.raises(
         VerifiedTransitionProductionFactoryError,
@@ -1181,9 +1186,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
         "schema": "test.preregistration.v1",
         "campaign_id": "jit-provider-test",
     }
-    preregistration_sha256 = hashlib.sha256(
-        canonical_json_bytes(preregistration_body)
-    ).hexdigest()
+    preregistration_sha256 = hashlib.sha256(canonical_json_bytes(preregistration_body)).hexdigest()
     unsigned = {
         "schema": VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA,
         "campaign_name": "jit-provider-test",
@@ -1207,9 +1210,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
                 "release_manifest": str(role_broker._release_manifest),
                 "release_sha256": role_broker.release_sha256,
                 "custody_evidence": str(role_broker._custody_evidence),
-                "custody_evidence_sha256": (
-                    role_broker.custody_evidence_sha256
-                ),
+                "custody_evidence_sha256": (role_broker.custody_evidence_sha256),
                 "arguments": [],
                 "timeout_millis": 5_000,
                 "inherited_environment_names": [],
@@ -1231,9 +1232,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
             {
                 "schema": "aura.verified_transition.task_answer_nonces.v1",
                 "nonces_b64": {
-                    material["task"].task_id: base64.b64encode(answer_nonce).decode(
-                        "ascii"
-                    )
+                    material["task"].task_id: base64.b64encode(answer_nonce).decode("ascii")
                 },
             },
         ),
@@ -1290,9 +1289,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
     ):
         drifted_manifest = dict(original_ledger_manifest)
         drifted_manifest[field] = (
-            "different-campaign"
-            if field == "campaign_id"
-            else _sha(f"drifted-{field}")
+            "different-campaign" if field == "campaign_id" else _sha(f"drifted-{field}")
         )
         monkeypatch.setattr(
             material["ledger"],
@@ -1372,9 +1369,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
     }
     drifted_bundle = {
         **drifted_unsigned,
-        "bundle_sha256": hashlib.sha256(
-            canonical_json_bytes(drifted_unsigned)
-        ).hexdigest(),
+        "bundle_sha256": hashlib.sha256(canonical_json_bytes(drifted_unsigned)).hexdigest(),
     }
     drifted_bundle_path = tmp_path / "drifted-launch-bundle.json"
     drifted_bundle_raw = canonical_json_bytes(drifted_bundle) + b"\n"
@@ -1386,9 +1381,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
     ):
         launch_bundle.load_verified_transition_provider_factory(
             drifted_bundle_path,
-            expected_bundle_sha256=hashlib.sha256(
-                drifted_bundle_raw
-            ).hexdigest(),
+            expected_bundle_sha256=hashlib.sha256(drifted_bundle_raw).hexdigest(),
             expected_preregistration_sha256=drifted_preregistration_sha256,
             components=components,
             now_unix=BASE_SECOND + 200,

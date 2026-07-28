@@ -19,6 +19,12 @@ from core.learning.recurrent_grpo import (
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
 )
+from core.learning.verified_transition_causal_campaign import (
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
+    EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA_V3,
+    validate_causal_campaign_evidence_manifest,
+    validate_external_evidence_verification_receipt,
+)
 from core.learning.verified_transition_episode import (
     TransitionArtifactStore,
     canonical_json_bytes,
@@ -35,6 +41,9 @@ from core.learning.verified_transition_update import (
 
 VERIFIED_TRAINING_EVIDENCE_SCHEMA = "aura.verified_transition.training_evidence.v2"
 VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA = "aura.verified_transition.training_evidence.v3"
+VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA = (
+    "aura.verified_transition.training_evidence.v4"
+)
 
 
 class VerifiedTransitionTrainingEvidenceError(ValueError):
@@ -86,15 +95,34 @@ def validate_verified_transition_training_evidence_receipt(
         "measurement_trust_boundary",
         "external_policy_state_replayed",
     }
+    external_replay_fields = {
+        "causal_campaign_evidence_manifest_sha256",
+        "external_evidence_verification_receipt_sha256",
+        "policy_state_replay_contract_sha256",
+        "policy_state_replay_receipt_root_sha256",
+    }
     schema = receipt.get("schema") if isinstance(receipt, Mapping) else None
-    intervention_evidence = schema == VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
-    required = base_required | intervention_fields if intervention_evidence else base_required
+    intervention_evidence = schema in {
+        VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+        VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+    }
+    externally_replayed = (
+        schema == VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+    )
+    required = (
+        base_required
+        | intervention_fields
+        | (external_replay_fields if externally_replayed else set())
+        if intervention_evidence
+        else base_required
+    )
     if not isinstance(receipt, Mapping) or set(receipt) != required:
         _fail("verified_training_evidence_receipt_schema_invalid")
     normalized = dict(receipt)
     if normalized.get("schema") not in {
         VERIFIED_TRAINING_EVIDENCE_SCHEMA,
         VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+        VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
     }:
         _fail("verified_training_evidence_receipt_version_invalid")
     observed = _sha256(normalized.get("receipt_sha256"), role="verified_training_evidence_receipt")
@@ -130,11 +158,18 @@ def validate_verified_transition_training_evidence_receipt(
         or normalized.get("legacy_scalar_reward_path_used") is not False
     ):
         _fail("verified_training_evidence_receipt_invalid")
-    if intervention_evidence and (
-        normalized.get("measurement_trust_boundary") != INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
-        or normalized.get("external_policy_state_replayed") is not False
-    ):
-        _fail("verified_training_intervention_measurement_boundary_invalid")
+    if intervention_evidence:
+        if (
+            normalized.get("measurement_trust_boundary") != INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
+            or normalized.get("external_policy_state_replayed") is not externally_replayed
+        ):
+            _fail("verified_training_intervention_measurement_boundary_invalid")
+        if externally_replayed:
+            for field in external_replay_fields:
+                _sha256(
+                    normalized.get(field),
+                    role=f"verified_training_{field}",
+                )
     for role, values in (
         ("reward", rewards),
         ("admission", admissions),
@@ -301,10 +336,49 @@ def validate_verified_transition_training_evidence(
         "legacy_scalar_reward_path_used": False,
     }
     if intervention_evidence:
+        close_evidence = close.get("evidence_manifest")
+        close_external = close.get("external_evidence_verification_receipt")
+        externally_replayed = False
+        if isinstance(close_evidence, Mapping) and isinstance(
+            close_external,
+            Mapping,
+        ):
+            causal_evidence = validate_causal_campaign_evidence_manifest(close_evidence)
+            external_receipt = validate_external_evidence_verification_receipt(
+                close_external,
+                evidence_manifest=causal_evidence,
+            )
+            externally_replayed = (
+                causal_evidence["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5
+                and external_receipt["schema"] == EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA_V3
+                and external_receipt["external_policy_state_replayed"] is True
+            )
+        if externally_replayed:
+            evidence_payload["schema"] = (
+                VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+            )
         evidence_payload.update(
             {
                 "measurement_trust_boundary": INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
-                "external_policy_state_replayed": False,
+                "external_policy_state_replayed": externally_replayed,
+                **(
+                    {
+                        "causal_campaign_evidence_manifest_sha256": (
+                            causal_evidence["manifest_sha256"]
+                        ),
+                        "external_evidence_verification_receipt_sha256": (
+                            external_receipt["receipt_sha256"]
+                        ),
+                        "policy_state_replay_contract_sha256": (
+                            causal_evidence["policy_state_replay_contract_sha256"]
+                        ),
+                        "policy_state_replay_receipt_root_sha256": (
+                            causal_evidence["policy_state_replay_receipt_root_sha256"]
+                        ),
+                    }
+                    if externally_replayed
+                    else {}
+                ),
             }
         )
     return validate_verified_transition_training_evidence_receipt(_seal(evidence_payload))
@@ -312,6 +386,7 @@ def validate_verified_transition_training_evidence(
 
 __all__ = [
     "VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA",
+    "VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA",
     "VERIFIED_TRAINING_EVIDENCE_SCHEMA",
     "VerifiedTransitionReplayGroup",
     "VerifiedTransitionTrainingEvidenceError",

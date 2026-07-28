@@ -32,32 +32,36 @@ from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     validate_transition_group_manifest,
 )
+from core.learning.verified_transition_policy_state_replay import (
+    VerifiedTransitionPolicyStateReplayError,
+    validate_policy_state_replay_contract,
+    validate_policy_state_replay_receipt,
+)
 from core.runtime.file_read_gateway import read_stable_bytes
 from core.runtime.file_write_gateway import FileWriteGateway
 
-CAUSAL_CAMPAIGN_MANIFEST_SCHEMA = (
-    "aura.verified_transition.causal_campaign_manifest.v2"
-)
+CAUSAL_CAMPAIGN_MANIFEST_SCHEMA = "aura.verified_transition.causal_campaign_manifest.v2"
 CAUSAL_CAMPAIGN_OPEN_SCHEMA = "aura.verified_transition.causal_campaign_open.v1"
 CAUSAL_GROUP_START_SCHEMA = "aura.verified_transition.causal_group_start.v1"
-CAUSAL_GROUP_TERMINAL_SCHEMA = (
-    "aura.verified_transition.causal_group_terminal.v1"
-)
-CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA = (
-    "aura.verified_transition.causal_campaign_close_payload.v4"
-)
-CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA = (
-    "aura.verified_transition.campaign_evidence_manifest.v3"
-)
+CAUSAL_GROUP_TERMINAL_SCHEMA = "aura.verified_transition.causal_group_terminal.v1"
+CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA = "aura.verified_transition.causal_campaign_close_payload.v4"
+CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA = "aura.verified_transition.campaign_evidence_manifest.v3"
 CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4 = (
     "aura.verified_transition.campaign_evidence_manifest.v4"
+)
+CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5 = (
+    "aura.verified_transition.campaign_evidence_manifest.v5"
 )
 EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA = (
     "aura.verified_transition.external_evidence_verification_receipt.v2"
 )
-CAUSAL_CAMPAIGN_RECEIPT_SCHEMA = (
-    "aura.verified_transition.causal_campaign_receipt.v1"
+EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA_V3 = (
+    "aura.verified_transition.external_evidence_verification_receipt.v3"
 )
+EXTERNAL_POLICY_STATE_REPLAY_RESULT_SCHEMA = (
+    "aura.verified_transition.external_policy_state_replay_result.v1"
+)
+CAUSAL_CAMPAIGN_RECEIPT_SCHEMA = "aura.verified_transition.causal_campaign_receipt.v1"
 LINEAGE_PLAN_SCHEMA = "aura.verified_transition.lineage_plan.v1"
 
 _MAX_GROUPS = 100_000
@@ -76,9 +80,7 @@ _MANIFEST_KEYS = frozenset(
         "manifest_sha256",
     }
 )
-_SCHEDULE_KEYS = frozenset(
-    {"sequence", "task_id", "task_commitment_sha256"}
-)
+_SCHEDULE_KEYS = frozenset({"sequence", "task_id", "task_commitment_sha256"})
 _OPEN_KEYS = frozenset(
     {
         "schema",
@@ -180,6 +182,11 @@ _EVIDENCE_MANIFEST_KEYS = frozenset(
         "manifest_sha256",
     }
 )
+_EVIDENCE_MANIFEST_KEYS_V5 = _EVIDENCE_MANIFEST_KEYS | {
+    "policy_state_replay_contract",
+    "policy_state_replay_contract_sha256",
+    "policy_state_replay_receipt_root_sha256",
+}
 _EVIDENCE_PACKAGE_KEYS_V3 = frozenset(
     {
         "sequence",
@@ -195,8 +202,15 @@ _EVIDENCE_PACKAGE_KEYS_V3 = frozenset(
         "evidence_receipt_sha256s",
     }
 )
-_EVIDENCE_PACKAGE_KEYS_V4 = _EVIDENCE_PACKAGE_KEYS_V3 | {
-    "pre_measurement_sha256"
+_EVIDENCE_PACKAGE_KEYS_V4 = _EVIDENCE_PACKAGE_KEYS_V3 | {"pre_measurement_sha256"}
+_EVIDENCE_PACKAGE_KEYS_V5 = _EVIDENCE_PACKAGE_KEYS_V4 | {
+    "policy_before_sha256",
+    "policy_after_sha256",
+    "objective_receipt_sha256",
+    "state_source_sha256",
+    "post_state_transaction_stage_sha256",
+    "policy_state_replay_receipt_artifact",
+    "policy_state_replay_receipt_sha256",
 }
 _EVIDENCE_ARTIFACT_KEYS = frozenset({"path", "sha256", "size_bytes"})
 _EXTERNAL_VERIFICATION_RECEIPT_KEYS = frozenset(
@@ -211,6 +225,57 @@ _EXTERNAL_VERIFICATION_RECEIPT_KEYS = frozenset(
         "receipt_sha256",
     }
 )
+_EXTERNAL_VERIFICATION_RECEIPT_KEYS_V3 = _EXTERNAL_VERIFICATION_RECEIPT_KEYS | {
+    "policy_state_replay_contract_sha256",
+    "verified_updated_transition_count",
+    "policy_state_replay_receipt_root_sha256",
+    "external_policy_state_replayed",
+}
+_EXTERNAL_POLICY_STATE_REPLAY_RESULT_KEYS = frozenset(
+    {
+        "schema",
+        "policy_state_replay_contract_sha256",
+        "provider_contract_sha256",
+        "campaign_schedule_root_sha256",
+        "campaign_manifest_sha256",
+        "sequence",
+        "group_manifest_sha256",
+        "group_admission_sha256",
+        "update_receipt_sha256",
+        "pre_measurement_sha256",
+        "state_source_sha256",
+        "post_state_transaction_stage_sha256",
+        "execution_spec_sha256",
+        "objective_receipt_sha256",
+        "policy_before_sha256",
+        "policy_after_sha256",
+        "verifier_identity",
+        "verified_at_unix",
+        "policy_state_replay_receipt",
+        "receipt_sha256",
+    }
+)
+_EXTERNAL_POLICY_STATE_REPLAY_RESULT_BINDING_KEYS = frozenset(
+    {
+        "provider_contract_sha256",
+        "campaign_schedule_root_sha256",
+        "campaign_manifest_sha256",
+        "sequence",
+        "group_manifest_sha256",
+        "group_admission_sha256",
+        "update_receipt_sha256",
+        "pre_measurement_sha256",
+        "state_source_sha256",
+        "post_state_transaction_stage_sha256",
+        "objective_receipt_sha256",
+        "policy_before_sha256",
+        "policy_after_sha256",
+    }
+)
+_EXTERNAL_POLICY_STATE_REPLAY_BINDING_KEYS = _EXTERNAL_POLICY_STATE_REPLAY_RESULT_BINDING_KEYS | {
+    "policy_state_replay_receipt_artifact",
+    "policy_state_replay_receipt_sha256",
+}
 _RECEIPT_KEYS = frozenset(
     {
         "schema",
@@ -247,17 +312,59 @@ def _identifier(value: Any, *, role: str) -> str:
         or value != value.strip()
         or len(value) > 192
         or not value[0].isalnum()
-        or any(
-            not (character.isalnum() or character in "._:/;=+-")
-            for character in value
-        )
+        or any(not (character.isalnum() or character in "._:/;=+-") for character in value)
     ):
         _fail(f"{role}_invalid")
     return value
 
 
+def _policy_state_replay_receipt_root(
+    packages: Sequence[Mapping[str, Any]],
+) -> str:
+    ordered = [
+        {
+            "sequence": package["sequence"],
+            "receipt_sha256": package["policy_state_replay_receipt_sha256"],
+        }
+        for package in packages
+        if package["status"] == "updated"
+    ]
+    return _digest({"policy_state_replay_receipts": ordered})
+
+
+def _validate_evidence_artifact_binding(
+    value: Any,
+    *,
+    role: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != _EVIDENCE_ARTIFACT_KEYS:
+        _fail(f"causal_campaign_evidence_{role}_binding_invalid")
+    artifact = _clone(value, role=f"causal_campaign_evidence_{role}")
+    if (
+        not isinstance(artifact.get("path"), str)
+        or not Path(artifact["path"]).is_absolute()
+        or Path(artifact["path"]).resolve(strict=False) != Path(artifact["path"])
+        or type(artifact.get("size_bytes")) is not int
+        or artifact["size_bytes"] <= 0
+    ):
+        _fail(f"causal_campaign_evidence_{role}_binding_invalid")
+    _sha256(
+        artifact.get("sha256"),
+        role=f"causal_campaign_evidence_{role}",
+    )
+    return artifact
+
+
 def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _EVIDENCE_MANIFEST_KEYS:
+    if not isinstance(value, Mapping):
+        _fail("causal_campaign_evidence_manifest_schema_invalid")
+    schema = value.get("schema")
+    expected_keys = (
+        _EVIDENCE_MANIFEST_KEYS_V5
+        if schema == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5
+        else _EVIDENCE_MANIFEST_KEYS
+    )
+    if set(value) != expected_keys:
         _fail("causal_campaign_evidence_manifest_schema_invalid")
     document = _clone(value, role="causal_campaign_evidence_manifest")
     observed = _sha256(
@@ -274,6 +381,7 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
         not in {
             CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
             CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
         }
         or observed != hashlib.sha256(_json_bytes(unsigned)).hexdigest()
         or type(completed) is not int
@@ -306,16 +414,41 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
         if (
             not isinstance(artifact_root, str)
             or not Path(artifact_root).is_absolute()
-            or Path(artifact_root).resolve(strict=False)
-            != Path(artifact_root)
+            or Path(artifact_root).resolve(strict=False) != Path(artifact_root)
         ):
             _fail(f"causal_campaign_evidence_{role}_invalid")
     _identifier(document.get("halt_reason"), role="causal_campaign_halt_reason")
-    package_keys = (
-        _EVIDENCE_PACKAGE_KEYS_V4
-        if document["schema"]
-        == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
-        else _EVIDENCE_PACKAGE_KEYS_V3
+    if document["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5:
+        package_keys = _EVIDENCE_PACKAGE_KEYS_V5
+        try:
+            replay_contract = validate_policy_state_replay_contract(
+                document.get("policy_state_replay_contract"),
+                verify_files=False,
+                verify_model=False,
+            )
+        except (TypeError, ValueError, VerifiedTransitionPolicyStateReplayError) as exc:
+            raise VerifiedTransitionCausalCampaignError(
+                "causal_campaign_policy_state_replay_contract_invalid"
+            ) from exc
+        replay_contract_sha256 = _sha256(
+            document.get("policy_state_replay_contract_sha256"),
+            role="causal_campaign_policy_state_replay_contract",
+        )
+        if replay_contract_sha256 != replay_contract["contract_sha256"]:
+            _fail("causal_campaign_policy_state_replay_contract_digest_mismatch")
+        _sha256(
+            document.get("policy_state_replay_receipt_root_sha256"),
+            role="causal_campaign_policy_state_replay_receipt_root",
+        )
+    elif document["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4:
+        package_keys = _EVIDENCE_PACKAGE_KEYS_V4
+    else:
+        package_keys = _EVIDENCE_PACKAGE_KEYS_V3
+    replay_receipts: list[str] = []
+    expected_policy_before = (
+        cast(str, replay_contract["initial_policy_sha256"])
+        if document["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5
+        else None
     )
     for sequence, package in enumerate(packages):
         if (
@@ -326,25 +459,12 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
             or not isinstance(package.get("sample_receipt_sha256s"), list)
             or not package["sample_receipt_sha256s"]
             or not isinstance(package.get("evidence_receipt_sha256s"), list)
-            or len(package["sample_receipt_sha256s"])
-            != len(package["evidence_receipt_sha256s"])
+            or len(package["sample_receipt_sha256s"]) != len(package["evidence_receipt_sha256s"])
         ):
             _fail("causal_campaign_evidence_package_invalid")
-        artifact = package.get("package_artifact")
-        if (
-            not isinstance(artifact, Mapping)
-            or set(artifact) != _EVIDENCE_ARTIFACT_KEYS
-            or not isinstance(artifact.get("path"), str)
-            or not Path(artifact["path"]).is_absolute()
-            or Path(artifact["path"]).resolve(strict=False)
-            != Path(artifact["path"])
-            or type(artifact.get("size_bytes")) is not int
-            or artifact["size_bytes"] <= 0
-        ):
-            _fail("causal_campaign_evidence_artifact_binding_invalid")
-        _sha256(
-            artifact.get("sha256"),
-            role="causal_campaign_evidence_package_artifact",
+        _validate_evidence_artifact_binding(
+            package.get("package_artifact"),
+            role="package_artifact",
         )
         for role in (
             "package_receipt_sha256",
@@ -359,51 +479,90 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
         for role in ("group_admission_sha256", "update_receipt_sha256"):
             digest = package.get(role)
             if digest is not None:
-                _sha256(
-                    digest, role=f"causal_campaign_evidence_{role}"
-                )
-        if (
-            document["schema"]
-            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
-        ):
+                _sha256(digest, role=f"causal_campaign_evidence_{role}")
+        if document["schema"] in {
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
+        }:
             pre_measurement = package.get("pre_measurement_sha256")
             if pre_measurement is not None:
                 _sha256(
                     pre_measurement,
                     role="causal_campaign_evidence_pre_measurement",
                 )
-        for digest in (
-            package["sample_receipt_sha256s"]
-            + package["evidence_receipt_sha256s"]
-        ):
-            _sha256(
-                digest, role="causal_campaign_evidence_artifact"
-            )
-        if (
-            (package["status"] == "updated")
-            is not (
-                package["group_admission_sha256"] is not None
-                and package["update_receipt_sha256"] is not None
-            )
+        for digest in package["sample_receipt_sha256s"] + package["evidence_receipt_sha256s"]:
+            _sha256(digest, role="causal_campaign_evidence_artifact")
+        if (package["status"] == "updated") is not (
+            package["group_admission_sha256"] is not None
+            and package["update_receipt_sha256"] is not None
         ):
             _fail("causal_campaign_evidence_package_status_invalid")
-        if (
-            document["schema"]
-            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
-            and (
-                (package["status"] == "updated")
-                is not (package["pre_measurement_sha256"] is not None)
-            )
+        if document["schema"] in {
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
+        } and (
+            (package["status"] == "updated") is not (package["pre_measurement_sha256"] is not None)
         ):
-            _fail(
-                "causal_campaign_evidence_pre_measurement_status_invalid"
+            _fail("causal_campaign_evidence_pre_measurement_status_invalid")
+        if document["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5:
+            policy_before = _sha256(
+                package.get("policy_before_sha256"),
+                role="causal_campaign_evidence_policy_before",
             )
-    if updated != [
-        package["sequence"]
-        for package in packages
-        if package["status"] == "updated"
-    ]:
+            policy_after = _sha256(
+                package.get("policy_after_sha256"),
+                role="causal_campaign_evidence_policy_after",
+            )
+            if policy_before != expected_policy_before:
+                _fail("causal_campaign_evidence_policy_state_replay_lineage_invalid")
+            replay_fields = (
+                "objective_receipt_sha256",
+                "state_source_sha256",
+                "post_state_transaction_stage_sha256",
+                "policy_state_replay_receipt_artifact",
+                "policy_state_replay_receipt_sha256",
+            )
+            has_complete_replay = all(package.get(field) is not None for field in replay_fields)
+            has_any_replay = any(package.get(field) is not None for field in replay_fields)
+            if package["status"] == "updated":
+                if not has_complete_replay or policy_before == policy_after:
+                    _fail("causal_campaign_evidence_policy_state_replay_status_invalid")
+                for role in (
+                    "objective_receipt_sha256",
+                    "state_source_sha256",
+                    "post_state_transaction_stage_sha256",
+                    "policy_state_replay_receipt_sha256",
+                ):
+                    _sha256(
+                        package.get(role),
+                        role=f"causal_campaign_evidence_{role}",
+                    )
+                _validate_evidence_artifact_binding(
+                    package.get("policy_state_replay_receipt_artifact"),
+                    role="policy_state_replay_receipt_artifact",
+                )
+                replay_receipts.append(
+                    cast(
+                        str,
+                        package["policy_state_replay_receipt_sha256"],
+                    )
+                )
+            elif (
+                has_any_replay
+                or policy_before != policy_after
+                or package["pre_measurement_sha256"] is not None
+            ):
+                _fail("causal_campaign_evidence_policy_state_replay_status_invalid")
+            expected_policy_before = policy_after
+    if updated != [package["sequence"] for package in packages if package["status"] == "updated"]:
         _fail("causal_campaign_evidence_updated_set_invalid")
+    if document["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5:
+        if len(replay_receipts) != len(set(replay_receipts)):
+            _fail("causal_campaign_evidence_policy_state_replay_receipt_duplicate")
+        if document["policy_state_replay_receipt_root_sha256"] != _policy_state_replay_receipt_root(
+            packages
+        ):
+            _fail("causal_campaign_evidence_policy_state_replay_receipt_root_mismatch")
     return cast(dict[str, Any], document)
 
 
@@ -423,9 +582,7 @@ def _seal(value: Mapping[str, Any], *, field_name: str) -> dict[str, Any]:
     return sealed
 
 
-def _validate_seal(
-    value: Mapping[str, Any], *, field_name: str, role: str
-) -> str:
+def _validate_seal(value: Mapping[str, Any], *, field_name: str, role: str) -> str:
     observed = _sha256(value.get(field_name), role=f"{role}_{field_name}")
     unsigned = dict(value)
     unsigned.pop(field_name, None)
@@ -444,9 +601,7 @@ def _json_bytes(value: Mapping[str, Any]) -> bytes:
             allow_nan=False,
         ).encode("ascii")
     except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
-        raise VerifiedTransitionCausalCampaignError(
-            "causal_campaign_document_invalid"
-        ) from exc
+        raise VerifiedTransitionCausalCampaignError("causal_campaign_document_invalid") from exc
 
 
 def _clone(value: Mapping[str, Any], *, role: str) -> dict[str, Any]:
@@ -551,19 +706,13 @@ def validate_causal_campaign_manifest(value: Any) -> dict[str, Any]:
             CausalCampaignScheduleEntry(
                 sequence=cast(int, raw.get("sequence")),
                 task_id=cast(str, raw.get("task_id")),
-                task_commitment_sha256=cast(
-                    str, raw.get("task_commitment_sha256")
-                ),
+                task_commitment_sha256=cast(str, raw.get("task_commitment_sha256")),
             )
         )
     expected = build_causal_campaign_manifest(
         campaign_id=cast(str, document.get("campaign_id")),
-        provider_contract_sha256=cast(
-            str, document.get("provider_contract_sha256")
-        ),
-        campaign_schedule_root_sha256=cast(
-            str, document.get("campaign_schedule_root_sha256")
-        ),
+        provider_contract_sha256=cast(str, document.get("provider_contract_sha256")),
+        campaign_schedule_root_sha256=cast(str, document.get("campaign_schedule_root_sha256")),
         trust_policy_sha256=cast(str, document.get("trust_policy_sha256")),
         initial_policy_sha256=cast(str, document.get("initial_policy_sha256")),
         schedule=entries,
@@ -571,6 +720,104 @@ def validate_causal_campaign_manifest(value: Any) -> dict[str, Any]:
     )
     if expected != document or document.get("group_count") != len(entries):
         _fail("causal_campaign_manifest_reconstruction_mismatch")
+    return document
+
+
+def validate_external_policy_state_replay_result(
+    value: Any,
+    *,
+    policy_state_replay_contract: Mapping[str, Any],
+    expected_transition: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate one independently replayed update against producer custody."""
+
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != _EXTERNAL_POLICY_STATE_REPLAY_RESULT_KEYS
+        or not isinstance(expected_transition, Mapping)
+        or set(expected_transition) != _EXTERNAL_POLICY_STATE_REPLAY_BINDING_KEYS
+    ):
+        _fail("external_policy_state_replay_result_schema_invalid")
+    document = _clone(value, role="external_policy_state_replay_result")
+    expected = _clone(
+        expected_transition,
+        role="external_policy_state_replay_expected_transition",
+    )
+    try:
+        replay_contract = validate_policy_state_replay_contract(
+            policy_state_replay_contract,
+            verify_files=False,
+            verify_model=False,
+        )
+        replay_receipt = validate_policy_state_replay_receipt(
+            document.get("policy_state_replay_receipt")
+        )
+    except (TypeError, ValueError, VerifiedTransitionPolicyStateReplayError) as exc:
+        raise VerifiedTransitionCausalCampaignError(
+            "external_policy_state_replay_result_nested_contract_invalid"
+        ) from exc
+    observed = _sha256(
+        document.get("receipt_sha256"),
+        role="external_policy_state_replay_result",
+    )
+    unsigned = dict(document)
+    unsigned.pop("receipt_sha256")
+    for role in (
+        "provider_contract_sha256",
+        "campaign_schedule_root_sha256",
+        "campaign_manifest_sha256",
+        "group_manifest_sha256",
+        "group_admission_sha256",
+        "update_receipt_sha256",
+        "pre_measurement_sha256",
+        "state_source_sha256",
+        "post_state_transaction_stage_sha256",
+        "objective_receipt_sha256",
+        "policy_before_sha256",
+        "policy_after_sha256",
+    ):
+        _sha256(
+            expected.get(role),
+            role=f"external_policy_state_replay_expected_{role}",
+        )
+    _integer(
+        expected.get("sequence"),
+        role="external_policy_state_replay_expected_sequence",
+    )
+    expected_receipt_sha256 = _sha256(
+        expected.get("policy_state_replay_receipt_sha256"),
+        role="external_policy_state_replay_expected_receipt",
+    )
+    expected_artifact = _validate_evidence_artifact_binding(
+        expected.get("policy_state_replay_receipt_artifact"),
+        role="external_policy_state_replay_result_artifact",
+    )
+    encoded_document = canonical_json_bytes(document)
+    verifier_identity = document.get("verifier_identity")
+    if (
+        document.get("schema") != EXTERNAL_POLICY_STATE_REPLAY_RESULT_SCHEMA
+        or observed != _digest(unsigned)
+        or document.get("policy_state_replay_contract_sha256") != replay_contract["contract_sha256"]
+        or {key: document.get(key) for key in _EXTERNAL_POLICY_STATE_REPLAY_RESULT_BINDING_KEYS}
+        != {key: expected[key] for key in _EXTERNAL_POLICY_STATE_REPLAY_RESULT_BINDING_KEYS}
+        or expected_receipt_sha256 != observed
+        or expected_artifact["sha256"] != hashlib.sha256(encoded_document).hexdigest()
+        or expected_artifact["size_bytes"] != len(encoded_document)
+        or document.get("execution_spec_sha256")
+        != replay_contract["execution_spec"]["semantic_sha256"]
+        or replay_receipt["execution_spec_sha256"] != document["execution_spec_sha256"]
+        or replay_receipt["objective_receipt_sha256"] != document["objective_receipt_sha256"]
+        or replay_receipt["policy_before_sha256"] != document["policy_before_sha256"]
+        or replay_receipt["policy_after_sha256"] != document["policy_after_sha256"]
+        or replay_receipt["external_policy_state_replayed"] is not True
+        or not isinstance(verifier_identity, str)
+        or not verifier_identity
+        or verifier_identity != verifier_identity.strip()
+        or len(verifier_identity) > 512
+        or type(document.get("verified_at_unix")) is not int
+        or document["verified_at_unix"] <= 0
+    ):
+        _fail("external_policy_state_replay_result_invalid")
     return document
 
 
@@ -582,10 +829,12 @@ def validate_external_evidence_verification_receipt(
     """Validate an external verifier's replay receipt against exact packages."""
 
     evidence = validate_causal_campaign_evidence_manifest(evidence_manifest)
-    if (
-        not isinstance(value, Mapping)
-        or set(value) != _EXTERNAL_VERIFICATION_RECEIPT_KEYS
-    ):
+    expected_receipt_keys = (
+        _EXTERNAL_VERIFICATION_RECEIPT_KEYS_V3
+        if evidence["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5
+        else _EXTERNAL_VERIFICATION_RECEIPT_KEYS
+    )
+    if not isinstance(value, Mapping) or set(value) != expected_receipt_keys:
         _fail("external_evidence_verification_receipt_schema_invalid")
     document = _clone(value, role="external_evidence_verification_receipt")
     observed = _sha256(
@@ -600,47 +849,80 @@ def validate_external_evidence_verification_receipt(
             "package_artifact": package["package_artifact"],
             "package_receipt_sha256": package["package_receipt_sha256"],
             "sample_receipt_sha256s": package["sample_receipt_sha256s"],
-            "evidence_receipt_sha256s": package[
-                "evidence_receipt_sha256s"
-            ],
+            "evidence_receipt_sha256s": package["evidence_receipt_sha256s"],
             "reward_receipt_sha256": package["reward_receipt_sha256"],
-            "group_admission_sha256": package[
-                "group_admission_sha256"
-            ],
+            "group_admission_sha256": package["group_admission_sha256"],
             "update_receipt_sha256": package["update_receipt_sha256"],
-            "trainer_step_receipt_sha256": package[
-                "trainer_step_receipt_sha256"
-            ],
+            "trainer_step_receipt_sha256": package["trainer_step_receipt_sha256"],
+            **(
+                {"pre_measurement_sha256": package["pre_measurement_sha256"]}
+                if evidence["schema"]
+                in {
+                    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+                    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5,
+                }
+                else {}
+            ),
             **(
                 {
-                    "pre_measurement_sha256": package[
-                        "pre_measurement_sha256"
-                    ]
+                    "group_manifest_sha256": package["group_manifest_sha256"],
+                    "policy_before_sha256": package["policy_before_sha256"],
+                    "policy_after_sha256": package["policy_after_sha256"],
+                    "objective_receipt_sha256": package["objective_receipt_sha256"],
+                    "state_source_sha256": package["state_source_sha256"],
+                    "post_state_transaction_stage_sha256": package[
+                        "post_state_transaction_stage_sha256"
+                    ],
+                    "policy_state_replay_receipt_artifact": package[
+                        "policy_state_replay_receipt_artifact"
+                    ],
+                    "policy_state_replay_receipt_sha256": package[
+                        "policy_state_replay_receipt_sha256"
+                    ],
                 }
-                if evidence["schema"]
-                == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+                if evidence["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5
                 else {}
             ),
         }
         for package in evidence["group_packages"]
     ]
+    if evidence["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5:
+        if (
+            document.get("schema") != EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA_V3
+            or observed != hashlib.sha256(_json_bytes(unsigned)).hexdigest()
+            or document.get("evidence_manifest_sha256") != evidence["manifest_sha256"]
+            or not isinstance(document.get("verifier_identity"), str)
+            or not document["verifier_identity"]
+            or document.get("validation_profile") != "recurrent_transition_causal_replay.v4"
+            or document.get("verified_package_count") != len(expected_observations)
+            or document.get("artifact_observation_root_sha256")
+            != _digest({"artifact_observations": expected_observations})
+            or type(document.get("verified_at_unix")) is not int
+            or document["verified_at_unix"] <= 0
+            or document.get("policy_state_replay_contract_sha256")
+            != evidence["policy_state_replay_contract_sha256"]
+            or document.get("verified_updated_transition_count")
+            != len(evidence["updated_replay_sequences"])
+            or document["verified_updated_transition_count"] <= 0
+            or document.get("policy_state_replay_receipt_root_sha256")
+            != evidence["policy_state_replay_receipt_root_sha256"]
+            or document.get("external_policy_state_replayed") is not True
+        ):
+            _fail("external_evidence_verification_receipt_invalid")
+        return document
     if (
-        document.get("schema")
-        != EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA
+        document.get("schema") != EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA
         or observed != hashlib.sha256(_json_bytes(unsigned)).hexdigest()
-        or document.get("evidence_manifest_sha256")
-        != evidence["manifest_sha256"]
+        or document.get("evidence_manifest_sha256") != evidence["manifest_sha256"]
         or not isinstance(document.get("verifier_identity"), str)
         or not document["verifier_identity"]
         or document.get("validation_profile")
         != (
             "recurrent_transition_causal_replay.v3"
-            if evidence["schema"]
-            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            if evidence["schema"] == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
             else "recurrent_transition_causal_replay.v2"
         )
-        or document.get("verified_package_count")
-        != len(expected_observations)
+        or document.get("verified_package_count") != len(expected_observations)
         or document.get("artifact_observation_root_sha256")
         != _digest({"artifact_observations": expected_observations})
         or type(document.get("verified_at_unix")) is not int
@@ -656,17 +938,13 @@ def _private_root(path: str | Path, *, create: bool, gateway: FileWriteGateway) 
         _fail("causal_campaign_root_symlink_rejected")
     if create:
         lexical = Path(
-            gateway.ensure_directory(
-                lexical, source="verified_transition_causal_campaign.ledger"
-            )
+            gateway.ensure_directory(lexical, source="verified_transition_causal_campaign.ledger")
         )
     try:
         resolved = lexical.resolve(strict=True)
         metadata = resolved.stat()
     except OSError as exc:
-        raise VerifiedTransitionCausalCampaignError(
-            "causal_campaign_root_unavailable"
-        ) from exc
+        raise VerifiedTransitionCausalCampaignError("causal_campaign_root_unavailable") from exc
     if (
         not stat.S_ISDIR(metadata.st_mode)
         or metadata.st_uid != os.getuid()
@@ -726,9 +1004,7 @@ class VerifiedTransitionCausalCampaignLedger:
             },
             field_name="receipt_sha256",
         )
-        ledger._write_once(
-            "campaign.open.json", opened, source="causal_campaign.open"
-        )
+        ledger._write_once("campaign.open.json", opened, source="causal_campaign.open")
         return ledger
 
     @classmethod
@@ -880,9 +1156,7 @@ class VerifiedTransitionCausalCampaignLedger:
         if self._exists("campaign.closed.json"):
             _fail("causal_campaign_already_closed")
 
-    def _schedule_entry(
-        self, manifest: Mapping[str, Any], sequence: int
-    ) -> dict[str, Any]:
+    def _schedule_entry(self, manifest: Mapping[str, Any], sequence: int) -> dict[str, Any]:
         sequence = _integer(sequence, role="causal_campaign_sequence")
         if sequence >= cast(int, manifest["group_count"]):
             _fail("causal_campaign_group_not_scheduled")
@@ -903,9 +1177,7 @@ class VerifiedTransitionCausalCampaignLedger:
         )
         return terminal
 
-    def _lineage_head(
-        self, manifest: Mapping[str, Any], sequence: int
-    ) -> tuple[str, str | None]:
+    def _lineage_head(self, manifest: Mapping[str, Any], sequence: int) -> tuple[str, str | None]:
         """Validate the constant-size predecessor link needed for one append."""
 
         sequence = _integer(sequence, role="causal_campaign_sequence")
@@ -967,9 +1239,10 @@ class VerifiedTransitionCausalCampaignLedger:
         if expected_previous_terminal_sha256 is None:
             if previous_terminal is not None:
                 _fail("causal_group_previous_terminal_unexpected")
-        elif _sha256(
-            previous_terminal, role="causal_group_previous_terminal"
-        ) != expected_previous_terminal_sha256:
+        elif (
+            _sha256(previous_terminal, role="causal_group_previous_terminal")
+            != expected_previous_terminal_sha256
+        ):
             _fail("causal_group_previous_terminal_mismatch")
         group = validate_transition_group_manifest(start.get("group_manifest"))
         lineage = start.get("lineage_plan")
@@ -989,23 +1262,17 @@ class VerifiedTransitionCausalCampaignLedger:
             != manifest["campaign_schedule_root_sha256"]
             or start.get("sequence") != sequence
             or start.get("group_id") != group["group_id"]
-            or start.get("task_commitment_sha256")
-            != schedule["task_commitment_sha256"]
+            or start.get("task_commitment_sha256") != schedule["task_commitment_sha256"]
             or start.get("policy_before_sha256") != expected_before
             or group["task_id"] != schedule["task_id"]
             or group["planned_at_unix_ns"] >= admitted_at
-            or any(
-                entry["policy_sha256"] != expected_before
-                for entry in group["entries"]
-            )
+            or any(entry["policy_sha256"] != expected_before for entry in group["entries"])
             or lineage.get("campaign_id") != manifest["campaign_id"]
-            or lineage.get("contract_sha256")
-            != manifest["provider_contract_sha256"]
+            or lineage.get("contract_sha256") != manifest["provider_contract_sha256"]
             or lineage.get("campaign_schedule_root_sha256")
             != manifest["campaign_schedule_root_sha256"]
             or lineage.get("sequence") != sequence
-            or lineage.get("task_commitment_sha256")
-            != schedule["task_commitment_sha256"]
+            or lineage.get("task_commitment_sha256") != schedule["task_commitment_sha256"]
             or lineage.get("policy_before_sha256") != expected_before
             or lineage.get("group_manifest_sha256") != group["manifest_sha256"]
         ):
@@ -1072,33 +1339,33 @@ class VerifiedTransitionCausalCampaignLedger:
         if update is not None:
             _sha256(update, role="causal_group_terminal_update")
         evidence_valid = (
-            status_value == "updated"
-            and reward is not None
-            and admission is not None
-            and update is not None
-            and after is not None
-            and before != after
-        ) or (
-            status_value == "rejected"
-            and reward is not None
-            and admission is None
-            and update is None
-            and before == after
-        ) or (
-            status_value == "aborted"
-            and reward is None
-            and admission is None
-            and update is None
-            and before == after
-        ) or (
-            status_value == "indeterminate"
-            and update is None
-            and after is None
+            (
+                status_value == "updated"
+                and reward is not None
+                and admission is not None
+                and update is not None
+                and after is not None
+                and before != after
+            )
+            or (
+                status_value == "rejected"
+                and reward is not None
+                and admission is None
+                and update is None
+                and before == after
+            )
+            or (
+                status_value == "aborted"
+                and reward is None
+                and admission is None
+                and update is None
+                and before == after
+            )
+            or (status_value == "indeterminate" and update is None and after is None)
         )
         if (
             not evidence_valid
-            or terminal.get("campaign_manifest_sha256")
-            != manifest["manifest_sha256"]
+            or terminal.get("campaign_manifest_sha256") != manifest["manifest_sha256"]
             or terminal.get("campaign_schedule_root_sha256")
             != manifest["campaign_schedule_root_sha256"]
             or terminal.get("sequence") != sequence
@@ -1114,9 +1381,7 @@ class VerifiedTransitionCausalCampaignLedger:
             < cast(int, start["admitted_at_unix_ns"])
         ):
             _fail("causal_group_terminal_reconstruction_mismatch")
-        _identifier(
-            terminal.get("terminal_reason"), role="causal_group_terminal_reason"
-        )
+        _identifier(terminal.get("terminal_reason"), role="causal_group_terminal_reason")
         return dict(terminal)
 
     def _record_pairs_through(
@@ -1128,9 +1393,7 @@ class VerifiedTransitionCausalCampaignLedger:
         """Replay a policy chain once, without recursive or quadratic descent."""
 
         last = _integer(last_sequence, role="causal_campaign_sequence")
-        campaign = (
-            dict(manifest) if manifest is not None else self._open_record()[1]
-        )
+        campaign = dict(manifest) if manifest is not None else self._open_record()[1]
         self._schedule_entry(campaign, last)
         expected_policy = cast(str, campaign["initial_policy_sha256"])
         previous_terminal_sha256: str | None = None
@@ -1162,9 +1425,7 @@ class VerifiedTransitionCausalCampaignLedger:
             records.append((start, terminal))
         return tuple(records)
 
-    def _record_pair(
-        self, sequence: int
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _record_pair(self, sequence: int) -> tuple[dict[str, Any], dict[str, Any]]:
         _opened, manifest = self._open_record()
         expected_policy, previous_terminal = self._lineage_head(manifest, sequence)
         start = self._read(self._record_name(sequence, "started"))
@@ -1206,9 +1467,7 @@ class VerifiedTransitionCausalCampaignLedger:
             opened, manifest = self._open_record()
             sequence = _integer(sequence, role="causal_group_sequence")
             schedule = self._schedule_entry(manifest, sequence)
-            expected_before, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_before, previous_terminal = self._lineage_head(manifest, sequence)
             group = validate_transition_group_manifest(group_manifest)
             admitted_at = _integer(
                 admitted_at_unix_ns,
@@ -1217,11 +1476,8 @@ class VerifiedTransitionCausalCampaignLedger:
             )
             if (
                 campaign_id != manifest["campaign_id"]
-                or campaign_schedule_root_sha256
-                != manifest["campaign_schedule_root_sha256"]
-                or _sha256(
-                    policy_before_sha256, role="causal_group_policy_before"
-                )
+                or campaign_schedule_root_sha256 != manifest["campaign_schedule_root_sha256"]
+                or _sha256(policy_before_sha256, role="causal_group_policy_before")
                 != expected_before
                 or self._exists(self._record_name(sequence, "started"))
                 or self._exists(self._record_name(sequence, "terminal"))
@@ -1238,9 +1494,7 @@ class VerifiedTransitionCausalCampaignLedger:
                     role="causal_group_contract",
                 ),
                 "campaign_id": manifest["campaign_id"],
-                "campaign_schedule_root_sha256": manifest[
-                    "campaign_schedule_root_sha256"
-                ],
+                "campaign_schedule_root_sha256": manifest["campaign_schedule_root_sha256"],
                 "sequence": sequence,
                 "task_commitment_sha256": schedule["task_commitment_sha256"],
                 "policy_before_sha256": expected_before,
@@ -1252,14 +1506,10 @@ class VerifiedTransitionCausalCampaignLedger:
                 {
                     "schema": CAUSAL_GROUP_START_SCHEMA,
                     "campaign_manifest_sha256": manifest["manifest_sha256"],
-                    "campaign_schedule_root_sha256": manifest[
-                        "campaign_schedule_root_sha256"
-                    ],
+                    "campaign_schedule_root_sha256": manifest["campaign_schedule_root_sha256"],
                     "sequence": sequence,
                     "group_id": group["group_id"],
-                    "task_commitment_sha256": schedule[
-                        "task_commitment_sha256"
-                    ],
+                    "task_commitment_sha256": schedule["task_commitment_sha256"],
                     "policy_before_sha256": expected_before,
                     "previous_terminal_sha256": previous_terminal,
                     "group_manifest": group,
@@ -1287,9 +1537,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 start,
                 source="group_start",
             )
-            if opened["campaign_manifest"]["manifest_sha256"] != manifest[
-                "manifest_sha256"
-            ]:
+            if opened["campaign_manifest"]["manifest_sha256"] != manifest["manifest_sha256"]:
                 _fail("causal_campaign_open_changed_during_admission")
             return dict(start)
 
@@ -1301,9 +1549,7 @@ class VerifiedTransitionCausalCampaignLedger:
             _opened, manifest = self._open_record()
             sequence = _integer(sequence, role="causal_group_sequence")
             start = self._read(self._record_name(sequence, "started"))
-            expected_before, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_before, previous_terminal = self._lineage_head(manifest, sequence)
             observed = self._validate_start(
                 sequence=sequence,
                 start=start,
@@ -1336,9 +1582,7 @@ class VerifiedTransitionCausalCampaignLedger:
             _opened, manifest = self._open_record()
             sequence = _integer(sequence, role="causal_group_sequence")
             start = self._read(self._record_name(sequence, "started"))
-            expected_before, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_before, previous_terminal = self._lineage_head(manifest, sequence)
             group = self._validate_start(
                 sequence=sequence,
                 start=start,
@@ -1368,9 +1612,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 {
                     "schema": CAUSAL_GROUP_TERMINAL_SCHEMA,
                     "campaign_manifest_sha256": manifest["manifest_sha256"],
-                    "campaign_schedule_root_sha256": manifest[
-                        "campaign_schedule_root_sha256"
-                    ],
+                    "campaign_schedule_root_sha256": manifest["campaign_schedule_root_sha256"],
                     "sequence": sequence,
                     "group_id": group["group_id"],
                     "group_manifest_sha256": group["manifest_sha256"],
@@ -1416,9 +1658,7 @@ class VerifiedTransitionCausalCampaignLedger:
 
         with self._lock:
             _opened, manifest = self._open_record()
-            expected_policy, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_policy, previous_terminal = self._lineage_head(manifest, sequence)
             start = self._read(self._record_name(sequence, "started"))
             self._validate_start(
                 sequence=sequence,
@@ -1429,16 +1669,12 @@ class VerifiedTransitionCausalCampaignLedger:
             )
             return dict(start)
 
-    def group_start_if_exists(
-        self, *, sequence: int
-    ) -> Mapping[str, Any] | None:
+    def group_start_if_exists(self, *, sequence: int) -> Mapping[str, Any] | None:
         """Return a validated start or ``None`` before first publication."""
 
         with self._lock:
             _opened, manifest = self._open_record()
-            expected_policy, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_policy, previous_terminal = self._lineage_head(manifest, sequence)
             record_name = self._record_name(sequence, "started")
             if not self._exists(record_name):
                 return None
@@ -1452,16 +1688,12 @@ class VerifiedTransitionCausalCampaignLedger:
             )
             return dict(start)
 
-    def group_terminal_if_exists(
-        self, *, sequence: int
-    ) -> Mapping[str, Any] | None:
+    def group_terminal_if_exists(self, *, sequence: int) -> Mapping[str, Any] | None:
         """Return a validated terminal or ``None`` for a valid open group."""
 
         with self._lock:
             _opened, manifest = self._open_record()
-            expected_policy, previous_terminal = self._lineage_head(
-                manifest, sequence
-            )
+            expected_policy, previous_terminal = self._lineage_head(manifest, sequence)
             start = self._read(self._record_name(sequence, "started"))
             self._validate_start(
                 sequence=sequence,
@@ -1542,14 +1774,10 @@ class VerifiedTransitionCausalCampaignLedger:
         )
         if completed_at < latest:
             _fail("causal_campaign_close_time_reversed")
-        evidence = validate_causal_campaign_evidence_manifest(
-            evidence_manifest
-        )
-        external_verification = (
-            validate_external_evidence_verification_receipt(
-                external_evidence_verification_receipt,
-                evidence_manifest=evidence,
-            )
+        evidence = validate_causal_campaign_evidence_manifest(evidence_manifest)
+        external_verification = validate_external_evidence_verification_receipt(
+            external_evidence_verification_receipt,
+            evidence_manifest=evidence,
         )
         completed_groups = next(
             (
@@ -1560,18 +1788,13 @@ class VerifiedTransitionCausalCampaignLedger:
             len(statuses),
         )
         if (
-            evidence["contract_sha256"]
-            != manifest["provider_contract_sha256"]
+            evidence["contract_sha256"] != manifest["provider_contract_sha256"]
             or evidence["campaign_schedule_root_sha256"]
             != manifest["campaign_schedule_root_sha256"]
-            or evidence["trust_policy_sha256"]
-            != manifest["trust_policy_sha256"]
+            or evidence["trust_policy_sha256"] != manifest["trust_policy_sha256"]
             or evidence["campaign_ledger_root"] != str(self.root)
             or evidence["completed_groups"] != completed_groups
-            or [
-                package["status"]
-                for package in evidence["group_packages"]
-            ]
+            or [package["status"] for package in evidence["group_packages"]]
             != statuses[:completed_groups]
         ):
             _fail("causal_campaign_evidence_manifest_campaign_mismatch")
@@ -1581,9 +1804,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 "campaign_id": manifest["campaign_id"],
                 "campaign_manifest_sha256": manifest["manifest_sha256"],
                 "campaign_open_sha256": opened["receipt_sha256"],
-                "campaign_schedule_root_sha256": manifest[
-                    "campaign_schedule_root_sha256"
-                ],
+                "campaign_schedule_root_sha256": manifest["campaign_schedule_root_sha256"],
                 "trust_policy_sha256": manifest["trust_policy_sha256"],
                 "group_count": manifest["group_count"],
                 "group_start_sha256s": starts,
@@ -1596,9 +1817,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 "initial_policy_sha256": manifest["initial_policy_sha256"],
                 "final_policy_sha256": final_policy,
                 "evidence_manifest": evidence,
-                "external_evidence_verification_receipt": (
-                    external_verification
-                ),
+                "external_evidence_verification_receipt": (external_verification),
                 "completed_at_unix_ns": completed_at,
             },
             field_name="payload_sha256",
@@ -1618,9 +1837,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 completed_at_unix_ns=completed_at_unix_ns,
                 policy=policy,
                 evidence_manifest=evidence_manifest,
-                external_evidence_verification_receipt=(
-                    external_evidence_verification_receipt
-                ),
+                external_evidence_verification_receipt=(external_evidence_verification_receipt),
             )
 
     def close(
@@ -1647,9 +1864,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 ),
                 external_evidence_verification_receipt=cast(
                     Mapping[str, Any],
-                    close_payload.get(
-                        "external_evidence_verification_receipt"
-                    ),
+                    close_payload.get("external_evidence_verification_receipt"),
                 ),
             )
             if dict(close_payload) != expected:
@@ -1673,14 +1888,10 @@ class VerifiedTransitionCausalCampaignLedger:
                 },
                 field_name="receipt_sha256",
             )
-            self._write_once(
-                "campaign.closed.json", receipt, source="campaign_close"
-            )
+            self._write_once("campaign.closed.json", receipt, source="campaign_close")
             return dict(receipt)
 
-    def validate_closed(
-        self, *, policy: VerifiedCampaignTrustPolicy
-    ) -> Mapping[str, Any]:
+    def validate_closed(self, *, policy: VerifiedCampaignTrustPolicy) -> Mapping[str, Any]:
         with self._lock:
             self._assert_policy(policy)
             receipt = self._read("campaign.closed.json")
@@ -1710,9 +1921,7 @@ class VerifiedTransitionCausalCampaignLedger:
                 ),
                 external_evidence_verification_receipt=cast(
                     Mapping[str, Any],
-                    close_payload.get(
-                        "external_evidence_verification_receipt"
-                    ),
+                    close_payload.get("external_evidence_verification_receipt"),
                 ),
             )
             if dict(close_payload) != expected:
@@ -1759,12 +1968,15 @@ __all__ = [
     "CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA",
     "CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA",
     "CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4",
+    "CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V5",
     "CAUSAL_CAMPAIGN_MANIFEST_SCHEMA",
     "CAUSAL_CAMPAIGN_OPEN_SCHEMA",
     "CAUSAL_CAMPAIGN_RECEIPT_SCHEMA",
     "CAUSAL_GROUP_START_SCHEMA",
     "CAUSAL_GROUP_TERMINAL_SCHEMA",
     "EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA",
+    "EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA_V3",
+    "EXTERNAL_POLICY_STATE_REPLAY_RESULT_SCHEMA",
     "CausalCampaignScheduleEntry",
     "VerifiedTransitionCausalCampaignError",
     "VerifiedTransitionCausalCampaignLedger",
@@ -1772,4 +1984,5 @@ __all__ = [
     "validate_causal_campaign_manifest",
     "validate_causal_campaign_evidence_manifest",
     "validate_external_evidence_verification_receipt",
+    "validate_external_policy_state_replay_result",
 ]

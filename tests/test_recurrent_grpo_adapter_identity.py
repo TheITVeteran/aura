@@ -86,6 +86,9 @@ SOURCE_ROLES = {
     "transition_recurrent_evidence",
     "transition_recurrent_repository",
     "transition_policy_probe",
+    "transition_policy_state_replay_worker",
+    "transition_policy_state_replay_resume",
+    "durable_external_verifier_job",
     "recurrent_training_prompt",
     "atomic_writer",
     "file_read_gateway",
@@ -106,10 +109,15 @@ def _verified_training_evidence(
     base_identity: dict,
     *,
     intervention: bool = False,
+    externally_replayed: bool = False,
 ) -> dict:
     material = {
         "schema": (
-            transition_evidence_runtime.VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+            (
+                transition_evidence_runtime.VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+                if externally_replayed
+                else transition_evidence_runtime.VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+            )
             if intervention
             else transition_evidence_runtime.VERIFIED_TRAINING_EVIDENCE_SCHEMA
         ),
@@ -132,7 +140,17 @@ def _verified_training_evidence(
                 "measurement_trust_boundary": (
                     "producer_sealed_arithmetic_external_state_replay_required"
                 ),
-                "external_policy_state_replayed": False,
+                "external_policy_state_replayed": externally_replayed,
+                **(
+                    {
+                        "causal_campaign_evidence_manifest_sha256": "1" * 64,
+                        "external_evidence_verification_receipt_sha256": "2" * 64,
+                        "policy_state_replay_contract_sha256": "3" * 64,
+                        "policy_state_replay_receipt_root_sha256": "5" * 64,
+                    }
+                    if externally_replayed
+                    else {}
+                ),
             }
         )
     return {
@@ -796,6 +814,34 @@ def test_verified_identity_preserves_intervention_measurement_boundary(
 
     assert result["verified_transition_evidence"] == intervention_evidence
     assert result["verified_transition_evidence"]["external_policy_state_replayed"] is False
+
+    externally_replayed_evidence = _verified_training_evidence(
+        base_identity,
+        intervention=True,
+        externally_replayed=True,
+    )
+    transition_evidence_runtime.validate_verified_transition_training_evidence_receipt(
+        externally_replayed_evidence
+    )
+    monkeypatch.setattr(
+        transition_evidence_runtime,
+        "validate_verified_transition_training_evidence",
+        lambda *_args, **_kwargs: dict(externally_replayed_evidence),
+    )
+    result = validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+        manifest,
+        adapter_id="verified-adapter",
+        actual_base_checkpoint={},
+        actual_model_behavior_bundle={},
+        actual_personality_adapter={},
+        actual_runtime_environment={},
+        artifacts=artifacts,
+        tensor_metadata=(),
+        transition_campaign_ledger=ledger,
+        transition_policy=object(),
+        transition_groups=groups,
+    )
+    assert result["verified_transition_evidence"]["external_policy_state_replayed"] is True
 
 
 def test_verified_identity_rejects_legacy_step_even_with_matching_campaign(

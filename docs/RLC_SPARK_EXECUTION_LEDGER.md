@@ -5473,3 +5473,50 @@ approximately 75.0%-100.0%, with an 87.5% midpoint. The evidence-adjusted range
 is one checkpoint to the final guarded resident-32B launch boundary, 4-8 to a
 defensible preliminary gain verdict, and 9-18 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S3: durable external replay closes the guarded launch boundary
+
+CP420S1's arithmetic kernel and CP420S2's exact resident inputs now execute
+through a production external lifecycle. The dedicated replay worker loads the
+bound model once, constructs the exact recurrent policy, restores sealed
+adapter and Adam pre-state, rebuilds every verified objective from producer
+evidence, recomputes all gradients, applies the frozen optimizer transition,
+and requires exact adapter and optimizer post-state. The detached broker and
+worker exchange bare canonical JSON request, batch, and result documents,
+eliminating newline or serialization differences from the authenticated
+protocol.
+
+Replay custody survives caller death and sleep through a detached supervisor,
+bounded timeout, process containment, and create-once private request,
+candidate, and authoritative result files. The replay worker is not the close
+signer. A provisional immutable v4 campaign manifest is replayed first; only
+validated per-transition results may then be published and cross-bound into a
+v5 manifest. The v5 verifier independently reconstructs the expected
+objective, source stage, policy lineage, replay-contract identity, and ordered
+receipt root from producer custody. A closed campaign recovers from that
+sealed evidence without rerunning the 32B transition.
+
+The exact production route passed a real tiny-Qwen transition, including
+objective, gradient, adapter, and Adam equality. The combined prelaunch matrix
+passes 332/332 in 115.51 seconds, with Ruff, formatting, compilation, diff
+hygiene, and resident preregistration verification green. The regenerated
+contract binds 51 source roles, resident fingerprint
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`,
+behavior bundle
+`7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674`,
+288 training tasks, 2,877 powered confirmatory tasks, and 17,262 confirmatory
+cells. Evidence:
+`artifacts/current/cp420s3_durable_external_policy_replay_evidence.json`.
+
+The claim boundary remains strict. No resident 32B was loaded, probed,
+replayed, or trained in this checkpoint; therefore production
+`external_policy_state_replayed`, SPARK-060/061/062 closure, reasoning gain,
+frontier gain, promotion, and `WOW Signal` all remain false. CP420S3 reaches
+the guarded launch boundary and pauses there for explicit user authorization
+before the first active resident command.
+
+CP420S3 is total checkpoint 691. The 691-920 completion envelope is
+approximately 75.1%-100.0%, with an 87.6% midpoint. The evidence-adjusted range
+is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to the
+powered conditional `WOW Signal` decision. Final multi-hour soaks remain
+deferred.

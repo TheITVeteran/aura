@@ -31420,3 +31420,54 @@ approximately 75.0%-100.0%, with an 87.5% midpoint. The evidence-adjusted range
 is one checkpoint to the final guarded resident-32B launch boundary, 4-8 to a
 defensible preliminary gain verdict, and 9-18 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S3 durable external policy-transition replay
+
+The final prelaunch replay gap now has a production implementation rather than
+an in-process test substitute. A source-bound external worker loads the model
+once, attaches the exact recurrent adapter topology, restores each sealed
+adapter and Adam pre-state, reconstructs the producer's verified objective,
+recomputes every gradient, applies the frozen Adam transition, and requires
+exact post-state equality. Its request, batch, and result protocols use bare
+canonical JSON so the detached custody broker and replay worker authenticate
+identical bytes.
+
+The external lifecycle is durable across caller exit, process interruption,
+and host sleep. Create-once private request, candidate, and authoritative
+result custody is supervised by a detached runner with bounded timeout,
+containment, and resumable inspection. The ordinary external evidence signer
+remains a separate principal and process from the MLX replay worker. Campaign
+closure is two phase: immutable v4 evidence is the replay input; validated
+per-transition results are published under the replay root; then a v5 manifest
+cross-binds those results, the replay contract, policy lineage, objective
+identity, source stage, and ordered transition receipts before the independent
+close signer may accept it. Completed v5 recovery reuses the sealed result and
+cannot silently rerun or replace the resident computation.
+
+An exact real-checkpoint test on the tiny Qwen architecture proved objective,
+gradient, adapter, and Adam replay through the same production path. The final
+expanded prelaunch matrix passes 332/332 in 115.51 seconds. Ruff, formatting,
+bytecode compilation, diff hygiene, and preregistration verification pass. The
+regenerated resident contract binds 51 executable source roles, checkpoint
+fingerprint
+`8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad`,
+behavior bundle
+`7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674`,
+288 training tasks, 2,877 powered confirmatory tasks, and 17,262 confirmatory
+cells. Evidence:
+`artifacts/current/cp420s3_durable_external_policy_replay_evidence.json`.
+
+This checkpoint closes the implementation-side launch boundary, not the
+scientific result. The resident 32B has not been loaded, probed, replayed, or
+trained in CP420S3, so production
+`external_policy_state_replayed` remains false. SPARK-060/061/062, reasoning
+gain, frontier gain, promotion, and `WOW Signal` remain open until the
+preregistered resident campaign produces independently verifiable evidence.
+The first active resident command is deliberately held for the user's explicit
+green light.
+
+CP420S3 is total checkpoint 691. The 691-920 completion envelope is
+approximately 75.1%-100.0%, with an 87.6% midpoint. The evidence-adjusted range
+is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to the
+powered conditional `WOW Signal` decision. Final multi-hour soaks remain
+deferred.

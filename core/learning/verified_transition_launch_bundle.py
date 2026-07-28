@@ -13,6 +13,7 @@ import inspect
 import json
 import os
 import stat
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,10 +23,16 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     VerifiedCampaignTrustPolicy,
     validate_campaign_trust_policy,
 )
+from core.learning.durable_external_verifier_job import (
+    DurableExternalVerifierJob,
+)
 from core.learning.verified_transition_causal_campaign import (
     VerifiedTransitionCausalCampaignLedger,
 )
 from core.learning.verified_transition_episode import canonical_json_bytes
+from core.learning.verified_transition_policy_state_replay import (
+    validate_policy_state_replay_contract,
+)
 from core.learning.verified_transition_production_factory import (
     CommandRoleSignerBroker,
     ProductionVerifiedTransitionProviderFactory,
@@ -34,11 +41,10 @@ from core.learning.verified_transition_provider import (
     callable_source_sha256,
     validate_verified_transition_provider_contract,
 )
+from core.runtime.atomic_writer import ensure_private_directory
 from core.runtime.file_read_gateway import read_stable_bytes
 
-VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA = (
-    "aura.verified_transition.production_launch_bundle.v3"
-)
+VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA = "aura.verified_transition.production_launch_bundle.v3"
 _BUNDLE_KEYS = frozenset(
     {
         "schema",
@@ -96,12 +102,7 @@ def _sha256(value: Any, *, role: str) -> str:
 
 
 def _identifier(value: Any, *, role: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > 256
-    ):
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 256:
         _fail(f"{role}_invalid")
     return value
 
@@ -150,9 +151,7 @@ def _owned_regular_file(path: str | Path, *, role: str, max_bytes: int) -> bytes
             if current.is_symlink():
                 _fail(f"{role}_path_symlink_rejected")
         except OSError as exc:
-            raise VerifiedTransitionLaunchBundleError(
-                f"{role}_unavailable"
-            ) from exc
+            raise VerifiedTransitionLaunchBundleError(f"{role}_unavailable") from exc
     try:
         resolved = candidate.resolve(strict=True)
         metadata = resolved.stat()
@@ -178,9 +177,7 @@ def _bound_bytes(binding: Any, *, role: str, max_bytes: int) -> bytes:
     size = binding.get("size_bytes")
     if type(size) is not int or size < 1 or size != len(payload):
         _fail(f"{role}_size_mismatch")
-    if hashlib.sha256(payload).hexdigest() != _sha256(
-        binding.get("sha256"), role=f"{role}_sha256"
-    ):
+    if hashlib.sha256(payload).hexdigest() != _sha256(binding.get("sha256"), role=f"{role}_sha256"):
         _fail(f"{role}_digest_mismatch")
     return payload
 
@@ -240,17 +237,13 @@ def _validate_archival_signers(
             or not 100 <= timeout <= 300_000
             or not isinstance(arguments, list)
             or any(
-                not isinstance(argument, str)
-                or "\x00" in argument
-                or len(argument) > 4096
+                not isinstance(argument, str) or "\x00" in argument or len(argument) > 4096
                 for argument in arguments
             )
             or not isinstance(environment, list)
             or len(set(environment)) != len(environment)
             or any(
-                not isinstance(name, str)
-                or not name
-                or not name.replace("_", "a").isalnum()
+                not isinstance(name, str) or not name or not name.replace("_", "a").isalnum()
                 for name in environment
             )
         ):
@@ -288,8 +281,7 @@ def _validate_archival_signers(
             _fail(f"launch_{role}_signer_policy_mismatch")
         documents[role] = document
     if (
-        documents["task_issuer"]["identity"]
-        == documents["evidence_verifier"]["identity"]
+        documents["task_issuer"]["identity"] == documents["evidence_verifier"]["identity"]
         or documents["task_issuer"]["custody_evidence_sha256"]
         == documents["evidence_verifier"]["custody_evidence_sha256"]
     ):
@@ -306,9 +298,7 @@ def validate_verified_transition_launch_archive(
 ) -> VerifiedTransitionLaunchArchive:
     """Reconstruct immutable launch custody without executing signer commands."""
 
-    raw = _owned_regular_file(
-        bundle_path, role="launch_bundle", max_bytes=64 << 20
-    )
+    raw = _owned_regular_file(bundle_path, role="launch_bundle", max_bytes=64 << 20)
     external_bundle_sha256 = hashlib.sha256(raw).hexdigest()
     if external_bundle_sha256 != _sha256(
         expected_bundle_sha256, role="expected_launch_bundle_sha256"
@@ -322,9 +312,7 @@ def validate_verified_transition_launch_archive(
         _fail("launch_bundle_schema_invalid")
     unsigned = dict(bundle)
     claimed_bundle_sha = unsigned.pop("bundle_sha256")
-    if claimed_bundle_sha != hashlib.sha256(
-        canonical_json_bytes(unsigned)
-    ).hexdigest():
+    if claimed_bundle_sha != hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest():
         _fail("launch_bundle_internal_digest_mismatch")
 
     preregistration = _canonical_document(
@@ -337,21 +325,18 @@ def validate_verified_transition_launch_archive(
         allow_bare_canonical=True,
     )
     preregistration_unsigned = dict(preregistration)
-    claimed_preregistration = preregistration_unsigned.pop(
-        "contract_sha256", None
-    )
-    if claimed_preregistration != hashlib.sha256(
-        canonical_json_bytes(preregistration_unsigned)
-    ).hexdigest():
+    claimed_preregistration = preregistration_unsigned.pop("contract_sha256", None)
+    if (
+        claimed_preregistration
+        != hashlib.sha256(canonical_json_bytes(preregistration_unsigned)).hexdigest()
+    ):
         _fail("launch_preregistration_internal_digest_mismatch")
     if claimed_preregistration != _sha256(
         expected_preregistration_sha256,
         role="expected_preregistration_sha256",
     ):
         _fail("launch_preregistration_external_digest_mismatch")
-    campaign_name = _identifier(
-        bundle.get("campaign_name"), role="campaign_name"
-    )
+    campaign_name = _identifier(bundle.get("campaign_name"), role="campaign_name")
     if (
         _identifier(
             preregistration.get("campaign_id"),
@@ -389,9 +374,7 @@ def validate_verified_transition_launch_archive(
         ),
         role="trust_policy",
     )
-    trust_root = _bound_bytes(
-        bundle["trust_root"], role="trust_root", max_bytes=1 << 20
-    )
+    trust_root = _bound_bytes(bundle["trust_root"], role="trust_root", max_bytes=1 << 20)
     policy = validate_campaign_trust_policy(
         policy_document,
         trusted_root_public_key_pem=trust_root,
@@ -429,18 +412,14 @@ def validate_verified_transition_launch_archive(
     )
     if (
         set(commitments_document) != {"schema", "tasks"}
-        or commitments_document.get("schema")
-        != "aura.verified_transition.task_commitments.v1"
+        or commitments_document.get("schema") != "aura.verified_transition.task_commitments.v1"
         or set(nonces_document) != {"schema", "nonces_b64"}
-        or nonces_document.get("schema")
-        != "aura.verified_transition.task_answer_nonces.v1"
+        or nonces_document.get("schema") != "aura.verified_transition.task_answer_nonces.v1"
     ):
         _fail("launch_task_material_schema_invalid")
     commitments = commitments_document.get("tasks")
     encoded_nonces = nonces_document.get("nonces_b64")
-    if not isinstance(commitments, dict) or not isinstance(
-        encoded_nonces, dict
-    ):
+    if not isinstance(commitments, dict) or not isinstance(encoded_nonces, dict):
         _fail("launch_task_material_invalid")
     try:
         nonces = {
@@ -448,9 +427,7 @@ def validate_verified_transition_launch_archive(
             for task_id, value in encoded_nonces.items()
         }
     except (TypeError, ValueError) as exc:
-        raise VerifiedTransitionLaunchBundleError(
-            "launch_task_nonce_invalid"
-        ) from exc
+        raise VerifiedTransitionLaunchBundleError("launch_task_nonce_invalid") from exc
     schedule = contract["task_schedule"]
     task_ids = [row["task_id"] for row in schedule]
     if (
@@ -463,41 +440,25 @@ def validate_verified_transition_launch_archive(
         task_id = row["task_id"]
         if (
             not isinstance(commitments[task_id], Mapping)
-            or hashlib.sha256(
-                canonical_json_bytes(commitments[task_id])
-            ).hexdigest()
+            or hashlib.sha256(canonical_json_bytes(commitments[task_id])).hexdigest()
             != row["immutable_task_sha256"]
             or not 32 <= len(nonces[task_id]) <= 256
         ):
             _fail("launch_task_material_commitment_mismatch")
 
-    ledger_root = Path(
-        _identifier(
-            bundle.get("campaign_ledger_root"), role="campaign_ledger_root"
-        )
-    )
-    if (
-        not ledger_root.is_absolute()
-        or ledger_root.resolve(strict=False) != ledger_root
-    ):
+    ledger_root = Path(_identifier(bundle.get("campaign_ledger_root"), role="campaign_ledger_root"))
+    if not ledger_root.is_absolute() or ledger_root.resolve(strict=False) != ledger_root:
         _fail("campaign_ledger_root_invalid")
-    ledger = VerifiedTransitionCausalCampaignLedger.open(
-        ledger_root, policy=policy
-    )
+    ledger = VerifiedTransitionCausalCampaignLedger.open(ledger_root, policy=policy)
     ledger_manifest = ledger.campaign_manifest()
     ledger_identity = {
         "campaign_id": campaign_name,
         "provider_contract_sha256": contract["contract_sha256"],
-        "campaign_schedule_root_sha256": contract[
-            "campaign_schedule_root_sha256"
-        ],
+        "campaign_schedule_root_sha256": contract["campaign_schedule_root_sha256"],
         "trust_policy_sha256": policy.policy_sha256,
         "initial_policy_sha256": contract["initial_policy_sha256"],
     }
-    if any(
-        ledger_manifest.get(field) != expected
-        for field, expected in ledger_identity.items()
-    ):
+    if any(ledger_manifest.get(field) != expected for field, expected in ledger_identity.items()):
         _fail("launch_causal_campaign_identity_mismatch")
     return VerifiedTransitionLaunchArchive(
         bundle=bundle,
@@ -507,10 +468,7 @@ def validate_verified_transition_launch_archive(
         trust_policy=policy,
         trust_root=trust_root,
         signer_documents=signer_documents,
-        task_commitments={
-            task_id: dict(document)
-            for task_id, document in commitments.items()
-        },
+        task_commitments={task_id: dict(document) for task_id, document in commitments.items()},
         task_answer_nonces=nonces,
         campaign_ledger=ledger,
         external_bundle_sha256=external_bundle_sha256,
@@ -586,6 +544,57 @@ def _validate_component_identities(
             _fail(f"launch_{role}_identity_mismatch")
 
 
+def _policy_state_replay_job(
+    archive: VerifiedTransitionLaunchArchive,
+) -> DurableExternalVerifierJob | None:
+    value = archive.provider_config.get("policy_state_replay_contract")
+    if value is None:
+        return None
+    contract = validate_policy_state_replay_contract(
+        value,
+        verify_files=True,
+        verify_model=False,
+    )
+    sources = contract["source_bindings"]
+
+    def source_path(role: str) -> Path:
+        binding = sources.get(role)
+        if not isinstance(binding, Mapping):
+            _fail(f"launch_policy_state_replay_{role}_missing")
+        path = Path(str(binding.get("path")))
+        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+            _fail(f"launch_policy_state_replay_{role}_invalid")
+        payload = read_stable_bytes(path, max_bytes=32 * 1024 * 1024)
+        if len(payload) != binding.get("size_bytes") or hashlib.sha256(
+            payload
+        ).hexdigest() != binding.get("sha256"):
+            _fail(f"launch_policy_state_replay_{role}_mismatch")
+        return path.resolve(strict=True)
+
+    worker = source_path("transition_policy_state_replay_worker")
+    detached_runner = source_path("detached_supervisor")
+    resume_helper = source_path("transition_policy_state_replay_resume")
+    python = Path(sys.executable).resolve(strict=True)
+    python_sha256 = hashlib.sha256(
+        read_stable_bytes(python, max_bytes=512 * 1024 * 1024)
+    ).hexdigest()
+    replay_root = Path(archive.provider_contract["ledger_roots"]["replay_artifacts"])
+    job_root = ensure_private_directory(replay_root / "external-policy-state-replay-jobs")
+    return DurableExternalVerifierJob(
+        job_root=job_root,
+        executable=python,
+        executable_sha256=python_sha256,
+        cwd=worker.parents[1],
+        detached_runner=detached_runner,
+        resume_helper=resume_helper,
+        arguments=(str(worker), "run"),
+        timeout_seconds=contract["external_verifier_max_seconds"],
+        result_max_bytes=256 * 1024 * 1024,
+        request_max_bytes=512 * 1024 * 1024,
+        require_sleep_protection=True,
+    )
+
+
 def load_verified_transition_provider_factory(
     bundle_path: str | Path,
     *,
@@ -605,6 +614,7 @@ def load_verified_transition_provider_factory(
     contract = archive.provider_contract
     policy = archive.trust_policy
     _validate_component_identities(contract, components)
+    policy_state_replay_job = _policy_state_replay_job(archive)
     brokers: dict[str, CommandRoleSignerBroker] = {}
     for role in sorted(_SIGNER_ROLES):
         signer = archive.signer_documents[role]
@@ -626,12 +636,14 @@ def load_verified_transition_provider_factory(
             arguments=arguments,
             timeout_seconds=timeout / 1000,
             inherited_environment_names=environment,
+            durable_policy_state_replay_job=(
+                policy_state_replay_job if role == "evidence_verifier" else None
+            ),
         )
         if (
             broker.implementation_sha256 != signer["executable_sha256"]
             or broker.release_sha256 != signer["release_sha256"]
-            or broker.custody_evidence_sha256
-            != signer["custody_evidence_sha256"]
+            or broker.custody_evidence_sha256 != signer["custody_evidence_sha256"]
         ):
             _fail(f"launch_{role}_signer_artifact_mismatch")
         brokers[role] = broker

@@ -93,6 +93,9 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_recurrent_evidence",
         "transition_recurrent_repository",
         "transition_policy_probe",
+        "transition_policy_state_replay_worker",
+        "transition_policy_state_replay_resume",
+        "durable_external_verifier_job",
         "recurrent_training_prompt",
         "atomic_writer",
         "file_read_gateway",
@@ -1167,6 +1170,7 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
     )
     from core.learning.verified_transition_training_evidence import (
+        VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
         VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
         VERIFIED_TRAINING_EVIDENCE_SCHEMA,
         validate_verified_transition_training_evidence,
@@ -1216,12 +1220,15 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         and trajectory_group_config.intervention_config is not None
     )
     expected_evidence_schema = (
-        VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+        {
+            VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+            VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+        }
         if intervention_evidence
-        else VERIFIED_TRAINING_EVIDENCE_SCHEMA
+        else {VERIFIED_TRAINING_EVIDENCE_SCHEMA}
     )
     if (
-        evidence.get("schema") != expected_evidence_schema
+        evidence.get("schema") not in expected_evidence_schema
         or evidence.get("source_artifacts_replayed") is not True
         or evidence.get("legacy_scalar_reward_path_used") is not False
         or (
@@ -1229,7 +1236,11 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
             and (
                 evidence.get("measurement_trust_boundary")
                 != INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
-                or evidence.get("external_policy_state_replayed") is not False
+                or evidence.get("external_policy_state_replayed")
+                is not (
+                    evidence.get("schema")
+                    == VERIFIED_EXTERNALLY_REPLAYED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+                )
             )
         )
         or identity.get("optimizer_updates") != evidence.get("optimizer_update_count")

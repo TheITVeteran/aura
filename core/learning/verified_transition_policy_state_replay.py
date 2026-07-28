@@ -899,7 +899,7 @@ def replay_verified_policy_transition(
 ) -> dict[str, Any]:
     """Recompute and exactly replay one producer transition in isolation."""
 
-    from mlx.utils import tree_flatten, tree_unflatten
+    from mlx.utils import tree_flatten, tree_map_with_path
 
     execution_spec = _sha256(
         execution_spec_sha256,
@@ -963,7 +963,10 @@ def replay_verified_policy_transition(
             pre_optimizer,
             role="optimizer",
         )
-        restored_optimizer = tree_unflatten(pre_optimizer)
+        restored_optimizer = tree_map_with_path(
+            lambda path, _value: pre_optimizer[path],
+            optimizer.state,
+        )
         if not isinstance(restored_optimizer, dict):
             _fail("policy_state_replay_optimizer_tree_invalid")
         optimizer.state = restored_optimizer
@@ -996,7 +999,11 @@ def replay_verified_policy_transition(
         _fail("policy_state_replay_gradient_nonfinite")
 
     try:
-        optimizer.update(model, gradients)
+        gradient_tree = tree_map_with_path(
+            lambda path, _value: gradients[path],
+            model.trainable_parameters(),
+        )
+        optimizer.update(model, gradient_tree)
         mx.eval(model.trainable_parameters(), optimizer.state)
         observed_post_adapter = dict(tree_flatten(model.trainable_parameters()))
         observed_post_optimizer = dict(tree_flatten(optimizer.state))

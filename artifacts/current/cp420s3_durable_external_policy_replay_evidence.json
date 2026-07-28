@@ -1,0 +1,51 @@
+{
+  "schema": "aura.spark.cp420s3_durable_external_policy_replay_evidence.v1",
+  "checkpoint": "CP420S3",
+  "claim_boundary": "durable_external_policy_transition_replay_and_v5_campaign_closure_implemented_and_bounded_prelaunch_validated_no_resident_transition_replayed_yet",
+  "implementation": {
+    "preregistration_contract_sha256": "8f16e690849527753f0097a68256faf5d762246aa6d846960aafb2529d12971d",
+    "resident_checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "resident_behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674",
+    "source_bindings": 51,
+    "durable_external_verifier_job_schema": "aura.verified_transition.durable_external_verifier_job.v1",
+    "policy_state_replay_request_schema": "aura.verified_transition.external_policy_state_replay_request.v1",
+    "policy_state_replay_batch_schema": "aura.verified_transition.external_policy_state_replay_batch.v1",
+    "policy_state_replay_result_schema": "aura.verified_transition.external_policy_state_replay_result.v1",
+    "causal_campaign_evidence_manifest_schema": "aura.verified_transition.campaign_evidence_manifest.v5",
+    "external_evidence_verification_receipt_schema": "aura.verified_transition.external_evidence_verification_receipt.v3",
+    "verified_training_evidence_schema": "aura.verified_transition.training_evidence.v4",
+    "producer_and_replayer_gradient_tree_topology_identical": true,
+    "exact_adapter_and_adam_pre_state_restored": true,
+    "exact_objective_and_all_gradients_recomputed": true,
+    "exact_adapter_and_adam_post_state_required": true,
+    "immutable_per_transition_replay_artifacts": true,
+    "two_phase_v4_input_to_v5_close": true,
+    "external_close_signer_separate_from_model_replay_worker": true,
+    "detached_caller_death_recovery": true,
+    "sleep_protection_required": true,
+    "create_once_request_candidate_and_authoritative_result_custody": true,
+    "historical_manifest_and_training_evidence_compatibility_preserved": true,
+    "production_external_policy_state_replayed": false
+  },
+  "verification": {
+    "expanded_prelaunch_matrix": {
+      "passed": 332,
+      "failed": 0,
+      "duration_seconds": 115.51
+    },
+    "resident_preregistration_model_verified": true,
+    "resident_training_tasks": 288,
+    "powered_confirmatory_tasks": 2877,
+    "powered_confirmatory_cells": 17262,
+    "ruff": "pass",
+    "format": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "launch_requires_user_green_light": true,
+  "resident_32b_loaded": false,
+  "resident_32b_trained": false,
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}

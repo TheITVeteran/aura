@@ -30,6 +30,9 @@ from core.learning.verified_transition_episode import (  # noqa: E402
 from core.learning.verified_transition_measurement_chain import (  # noqa: E402
     VerifiedTransitionMeasurementChainError,
     VerifiedTransitionMeasurementChainStore,
+    load_pre_measurement_state_tensors,
+    recurrent_grpo_config_contract,
+    recurrent_grpo_config_from_contract,
     validate_pre_measurement_intent,
 )
 from core.learning.verified_transition_policy_probe import (  # noqa: E402
@@ -65,12 +68,8 @@ def _canonical_with_floats(value: Any) -> bytes:
 
 def _adapter(value: float = 1.0) -> dict[str, Any]:
     return {
-        "model.layers.0.self_attn.q_proj.lora_a": mx.array(
-            [[value, value + 1.0]]
-        ),
-        "model.layers.0.self_attn.q_proj.lora_b": mx.array(
-            [[value + 2.0], [value + 3.0]]
-        ),
+        "model.layers.0.self_attn.q_proj.lora_a": mx.array([[value, value + 1.0]]),
+        "model.layers.0.self_attn.q_proj.lora_b": mx.array([[value + 2.0], [value + 3.0]]),
     }
 
 
@@ -104,9 +103,7 @@ def _binding(path: Path, tensors: dict[str, Any]) -> dict[str, Any]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "size_bytes": len(payload),
         "tensor_count": len(keys),
-        "tensor_keys_sha256": hashlib.sha256(
-            canonical_json_bytes(keys)
-        ).hexdigest(),
+        "tensor_keys_sha256": hashlib.sha256(canonical_json_bytes(keys)).hexdigest(),
     }
 
 
@@ -125,9 +122,7 @@ def _custody(
         adapter_path,
         execution_spec_sha256=execution_spec_sha256,
     )
-    optimizer_artifact = inspect_initial_optimizer_snapshot(
-        optimizer_path
-    )
+    optimizer_artifact = inspect_initial_optimizer_snapshot(optimizer_path)
     return build_initial_policy_state_custody(
         initial_policy_probe_sha256=_sha("initial-probe"),
         initial_policy_sha256=adapter_artifact["policy_sha256"],
@@ -166,14 +161,10 @@ def _trajectory_source(
     body = {
         "schema": VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2,
         "group_admission_sha256": admission_sha256,
-        "reward_receipt_sha256": _sha(
-            f"reward-{admission_sha256}"
-        ),
+        "reward_receipt_sha256": _sha(f"reward-{admission_sha256}"),
         "policy_sha256": policy_sha256,
         "execution_spec_sha256": execution_spec_sha256,
-        "prompt_tokens_sha256": _sha(
-            f"prompt-{admission_sha256}"
-        ),
+        "prompt_tokens_sha256": _sha(f"prompt-{admission_sha256}"),
         "sample_receipt_sha256s": [
             _sha(f"sample-0-{admission_sha256}"),
             _sha(f"sample-1-{admission_sha256}"),
@@ -190,9 +181,7 @@ def _trajectory_source(
     }
     return {
         **body,
-        "source_sha256": hashlib.sha256(
-            _canonical_with_floats(body)
-        ).hexdigest(),
+        "source_sha256": hashlib.sha256(_canonical_with_floats(body)).hexdigest(),
     }
 
 
@@ -225,8 +214,7 @@ class _FakeTransactionStore:
         for transaction in self.transactions:
             if (
                 transaction.pending_step["sequence"] == sequence
-                and transaction.pending_step["group_admission_sha256"]
-                == admission_sha256
+                and transaction.pending_step["group_admission_sha256"] == admission_sha256
             ):
                 return transaction
         return None
@@ -278,16 +266,11 @@ def _begin(
         sequence=sequence,
         trainer_step=sequence + 1,
         group_admission_sha256=admission_sha256,
-        reservation_sha256=(
-            reservation_sha256
-            or _sha(f"reservation-{admission_sha256}")
-        ),
+        reservation_sha256=(reservation_sha256 or _sha(f"reservation-{admission_sha256}")),
         policy_before_sha256=policy_sha256,
         campaign_manifest_sha256=_sha("campaign"),
         campaign_schedule_root_sha256=_sha("schedule"),
-        group_manifest_sha256=_sha(
-            f"group-{admission_sha256}"
-        ),
+        group_manifest_sha256=_sha(f"group-{admission_sha256}"),
         execution_spec_sha256=execution_spec_sha256,
         trainer_step_static=_static(),
         trajectory_source_binding=_trajectory_source(
@@ -326,13 +309,20 @@ def test_initial_intent_precedes_objective_and_optimizer_drift_fails_closed(
     assert validate_pre_measurement_intent(intent) == intent
     assert intent["state_source"]["kind"] == "initial_policy_state"
     assert intent["state_source"]["successful_update_ordinal"] == 1
-    assert not list(
-        (
-            tmp_path
-            / "transactions"
-            / "pre-measurements"
-        ).rglob("*.safetensors")
+    loaded_adapter, loaded_optimizer = load_pre_measurement_state_tensors(intent)
+    assert set(loaded_adapter) == set(adapter)
+    assert set(loaded_optimizer) == set(optimizer)
+    assert all(bool(mx.array_equal(loaded_adapter[key], adapter[key])) for key in adapter)
+    assert all(bool(mx.array_equal(loaded_optimizer[key], optimizer[key])) for key in optimizer)
+    config = RecurrentGRPOConfig(
+        clip_epsilon=0.15,
+        kl_coefficient=0.03,
+        advantage_clip=3.5,
+        max_initial_clip_fraction=0.2,
+        max_initial_old_policy_approx_kl=0.07,
     )
+    assert recurrent_grpo_config_from_contract(recurrent_grpo_config_contract(config)) == config
+    assert not list((tmp_path / "transactions" / "pre-measurements").rglob("*.safetensors"))
     with pytest.raises(
         VerifiedTransitionMeasurementChainError,
         match="pre_measurement_orphan_requires_reconciliation",
@@ -362,11 +352,9 @@ def test_initial_intent_precedes_objective_and_optimizer_drift_fails_closed(
             recorded_at_unix_ns=102,
         )
 
-    fresh_store, fresh_adapter, fresh_optimizer, fresh_custody, fresh_spec = (
-        _store(
-            tmp_path / "drift",
-            transaction_store=_FakeTransactionStore(),
-        )
+    fresh_store, fresh_adapter, fresh_optimizer, fresh_custody, fresh_spec = _store(
+        tmp_path / "drift",
+        transaction_store=_FakeTransactionStore(),
     )
     drifted_optimizer = dict(fresh_optimizer)
     drifted_optimizer["step"] = mx.array(1)
@@ -444,9 +432,7 @@ def test_pre_stage_recovery_burns_intervention_admission_after_restore(
         transaction_store=transactions,
     )
     admission = _sha(f"pre-stage-{publish_intent}")
-    journal = VerifiedTransitionUpdateJournal.open(
-        tmp_path / "update-journal"
-    )
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "update-journal")
     reservation = journal.reserve(
         admission_sha256=admission,
         policy_before_sha256=custody["initial_policy_sha256"],
@@ -482,22 +468,15 @@ def test_pre_stage_recovery_burns_intervention_admission_after_restore(
     assert len(recovered) == 1
     assert recovered[0]["sequence"] == 0
     assert recovered[0]["requires_fresh_campaign"] is True
-    assert (
-        recovered[0]["update_reconciliation"]["classification"]
-        == "reserved_no_policy_change"
-    )
-    assert (
-        recovered[0]["measurement_reconciliation"] is not None
-    ) is publish_intent
+    assert recovered[0]["update_reconciliation"]["classification"] == "reserved_no_policy_change"
+    assert (recovered[0]["measurement_reconciliation"] is not None) is publish_intent
     inventory = journal.inventory()
     assert len(inventory) == 1
     assert inventory[0]["commit"] is None
     assert inventory[0]["reconciliation"] is not None
     if intent is not None:
         assert (
-            recovered[0]["measurement_reconciliation"][
-                "pre_measurement_sha256"
-            ]
+            recovered[0]["measurement_reconciliation"]["pre_measurement_sha256"]
             == intent["receipt_sha256"]
         )
     store.assert_no_orphans()
@@ -521,9 +500,7 @@ def test_pre_stage_recovery_records_drift_and_refuses_abandonment(
         transaction_store=_FakeTransactionStore(),
     )
     admission = _sha("unrestored-admission")
-    journal = VerifiedTransitionUpdateJournal.open(
-        tmp_path / "update-journal"
-    )
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "update-journal")
     reservation = journal.reserve(
         admission_sha256=admission,
         policy_before_sha256=custody["initial_policy_sha256"],
@@ -558,10 +535,7 @@ def test_pre_stage_recovery_records_drift_and_refuses_abandonment(
         )
 
     inventory = journal.inventory()
-    assert (
-        inventory[0]["reconciliation"]["classification"]
-        == "policy_changed_without_commit"
-    )
+    assert inventory[0]["reconciliation"]["classification"] == "policy_changed_without_commit"
     with pytest.raises(
         VerifiedTransitionMeasurementChainError,
         match="pre_measurement_orphan_requires_reconciliation",
@@ -630,15 +604,8 @@ def test_rejection_gap_references_latest_successful_post_state(
         post_adapter,
         execution_spec,
     )
-    transaction_dir = (
-        tmp_path
-        / "transactions"
-        / "transactions"
-        / f"seq-{0:08d}-{first_admission}"
-    )
-    stage_dir = (
-        transaction_dir / "generations" / "00000000-staged"
-    )
+    transaction_dir = tmp_path / "transactions" / "transactions" / f"seq-{0:08d}-{first_admission}"
+    stage_dir = transaction_dir / "generations" / "00000000-staged"
     adapter_path = stage_dir / "adapter.safetensors"
     optimizer_path = stage_dir / "optimizer.safetensors"
     _save(adapter_path, post_adapter)
@@ -691,17 +658,13 @@ def test_transaction_v4_requires_and_reopens_matching_intent(
     tmp_path: Path,
 ) -> None:
     transaction_root = tmp_path / "transactions"
-    transaction_store = VerifiedTransitionTransactionStore.open(
-        transaction_root
-    )
+    transaction_store = VerifiedTransitionTransactionStore.open(transaction_root)
     store, adapter, optimizer, custody, execution_spec = _store(
         tmp_path,
         transaction_store=transaction_store,
     )
     admission = _sha("transaction-admission")
-    journal = VerifiedTransitionUpdateJournal.open(
-        tmp_path / "transaction-journal"
-    )
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "transaction-journal")
     reservation = journal.reserve(
         admission_sha256=admission,
         policy_before_sha256=custody["initial_policy_sha256"],
@@ -750,14 +713,8 @@ def test_transaction_v4_requires_and_reopens_matching_intent(
         optimizer_tensors=post_optimizer,
         pending_trainer_step=pending,
     )
-    assert (
-        staged.pending_step["pre_measurement_sha256"]
-        == intent["receipt_sha256"]
-    )
-    assert (
-        staged.pending_step["reservation_sha256"]
-        == reservation["receipt_sha256"]
-    )
+    assert staged.pending_step["pre_measurement_sha256"] == intent["receipt_sha256"]
+    assert staged.pending_step["reservation_sha256"] == reservation["receipt_sha256"]
     assert (
         store.reconcile_interrupted_admissions(
             update_journal=journal,
