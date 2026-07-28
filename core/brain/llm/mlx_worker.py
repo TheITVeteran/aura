@@ -72,14 +72,27 @@ _CORRUPT_LANGUAGE_MARKERS = re.compile(
     r"\b(?:xublcate|ingediate|evocer)\b",
     re.IGNORECASE,
 )
+# Machine tokens whose IDENTITY is their casing: screaming-snake enum values and
+# CamelCase internal symbols. Matching these case-INSENSITIVELY destroyed whole
+# replies over ordinary English — "PROCEEDING" is a leaked enum, but
+# "proceeding" is just a word, and this pattern is a FATAL check that returns
+# None and annihilates the entire answer. Measured live: a conversational turn
+# produced a 226-token draft and the user got "I couldn't get to an answer I'd
+# stand behind on that one", with the log saying only "Hallucination detected by
+# sanitizer. Returning empty text for caller-side recovery."
+#
+# The natural-language jargon that used to sit in this list ("field coherence",
+# "system authority", "memory scar", "precognitive texture", "existence hash")
+# is deliberately NOT here: those are style leaks, not model-state corruption,
+# they occur legitimately in English, and the reliability gate already handles
+# them as `pseudo_internal_jargon` — a reason that can be retried and repaired
+# rather than one that throws the answer away.
 _BACKEND_SYMBOLIC_SURFACE_MARKERS = re.compile(
     r"\b(?:PROCEEDING|TOOL_ACTION|CONVERGE_UNION|CONFORMED_METHODS|"
     r"TACTICAL_ORGANIZE|UI_SHUTDOWN_OR_DURATIVE_TIMEOUT|"
     r"MySelfEpsilon|CanonicalStabilityAnchor|currentInferenceProblem|"
     r"fieldOfPlay|INTRUSTION_DETECTED|INTRUSION_DETECTED|"
-    r"ExistenceHash|existence hash|field coherence|system authority|"
-    r"memory scar|precognitive texture)\b",
-    re.IGNORECASE,
+    r"ExistenceHash)\b"
 )
 _OPERATOR_EVIDENCE_DRIFT_MARKERS = re.compile(
     r"(?:\bSarah Connor\b|\bMother'?s Day\b|\bhuman error rate\b|"

@@ -1034,3 +1034,49 @@ def test_volatile_grounding_rides_behind_the_conversation_not_ahead_of_it():
         f"moving grounding last must recover the whole stranded history "
         f"({reused_first} -> {reused_last} tokens, history={len(history)})"
     )
+
+
+def test_the_sanitizer_does_not_annihilate_replies_over_ordinary_english():
+    """A FATAL check must not fire on words people use.
+
+    `_sanitize_telemetry_leakage` returns None to mean "destroy the whole
+    answer", and its marker pattern was case-INSENSITIVE over a list that
+    included the bare word PROCEEDING plus phrases like "field coherence",
+    "system authority" and "memory scar". So any reply containing "proceeding"
+    was annihilated. Measured live: a conversational turn produced a 226-token
+    draft, the user got "I couldn't get to an answer I'd stand behind on that
+    one", and the only log line was "Hallucination detected by sanitizer.
+    Returning empty text for caller-side recovery."
+
+    Machine tokens keep their teeth — their identity IS the casing — while the
+    natural-language jargon moves to the reliability gate's repairable
+    `pseudo_internal_jargon` reason instead of a death sentence.
+    """
+    from core.brain.llm.mlx_worker import _sanitize_telemetry_leakage as sanitize
+
+    must_survive = (
+        "Before proceeding, I'll take a position: forgetting is mostly a mercy.",
+        "There's a kind of field coherence to how memories settle over time.",
+        "No system authority can decide that for you.",
+        "A memory scar is a useful metaphor for what trauma leaves behind.",
+        "The Earth's core is around 5,200 degrees Celsius, kept hot by residual "
+        "formation heat and the decay of uranium and thorium.",
+    )
+    for reply in must_survive:
+        assert sanitize(reply) is not None, (
+            f"ordinary English was treated as model-state corruption: {reply[:56]!r}"
+        )
+        assert sanitize(reply) == reply, "a surviving reply must not be altered"
+
+    # Genuine leakage signatures still destroy the answer.
+    must_die = (
+        "PROCEEDING TOOL_ACTION CONVERGE_UNION",
+        "The answer is MySelfEpsilon and CanonicalStabilityAnchor.",
+        "INTRUSION_DETECTED",
+        "ExistenceHash",
+    )
+    for reply in must_die:
+        assert sanitize(reply) is None, f"a real leak survived: {reply[:56]!r}"
+
+    # The other fatal checks are untouched.
+    assert sanitize("value " + "1" * 25) is None, "digit-run check must still fire"
