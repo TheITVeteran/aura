@@ -1928,7 +1928,11 @@ class DesktopTaskSkill(BaseSkill):
                     prompt=prompt,
                     timeout=110.0,
                     temperature=0.6,
-                    max_tokens=1100,
+                    # The prompt above asks for several substantive paragraphs
+                    # across three sources. 1100 tokens could not hold that, and
+                    # the document was cut mid-clause: the live synthesis ended
+                    # "...The increase is a" and then the Sources list began.
+                    max_tokens=2048,
                     # Pin synthesis to the on-device Cortex: it has no external
                     # quota, so the document never degrades to a thin heuristic
                     # fallback because a cloud tier returned 429 RESOURCE_EXHAUSTED.
@@ -1954,7 +1958,20 @@ class DesktopTaskSkill(BaseSkill):
             return ""
         if re.search(r"\b(?:diagnostic|fallback|unavailable|all (?:remote )?endpoints? failed)\b", text.lower()) and len(text) < 200:
             return ""
-        return text[:4000]
+        # Never hand back a document that stops mid-clause. Whether the budget
+        # ran out or the 4000-char clamp lands mid-word, the reader gets a
+        # finished paragraph rather than "...The increase is a" followed by the
+        # Sources list.
+        text = text[:4000]
+        try:
+            from core.conversation.response_reliability import complete_truncated_tail
+
+            completed = complete_truncated_tail(text)
+            if completed and len(completed) >= len(text) * 0.5:
+                text = completed
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        return text
 
     @classmethod
     def _steps_from_payload(cls, payload: Any) -> list[DesktopTaskStep]:
