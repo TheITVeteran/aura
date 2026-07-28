@@ -14,11 +14,18 @@ from core.learning.verified_token_trace import (
     VerifiedTokenTraceError,
     build_tokenizer_bundle_identity,
     build_verified_token_trace,
+    canonical_behavior_logprob,
     tokenizer_adapter_source_sha256,
     tokenizer_file_bindings_from_bytes,
     validate_verified_token_trace,
     validate_verified_token_trace_structure,
 )
+
+
+def test_behavior_logprob_canonicalization_is_stable_for_integral_values() -> None:
+    assert canonical_behavior_logprob(-1.0) == "-1"
+    assert canonical_behavior_logprob(0.0) == "0"
+    assert canonical_behavior_logprob("-1.2500") == "-1.25"
 
 
 def _sha256(value: bytes) -> str:

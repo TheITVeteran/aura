@@ -516,6 +516,8 @@ def task_battery(
     per_cell: int,
     *,
     seed: int,
+    excluded_prompts: Sequence[str] = (),
+    excluded_task_ids: Sequence[str] = (),
 ) -> list[RecurrenceTrainingTask]:
     if (
         isinstance(families, (str, bytes))
@@ -537,8 +539,16 @@ def task_battery(
         raise ValueError("training per_cell is invalid")
     if type(seed) is not int or seed < 0:
         raise ValueError("training seed is invalid")
+    if (
+        isinstance(excluded_prompts, (str, bytes))
+        or any(not isinstance(prompt, str) for prompt in excluded_prompts)
+        or isinstance(excluded_task_ids, (str, bytes))
+        or any(not isinstance(task_id, str) for task_id in excluded_task_ids)
+    ):
+        raise ValueError("training exclusions are invalid")
     tasks: list[RecurrenceTrainingTask] = []
-    all_prompts: set[str] = set()
+    all_prompts = set(excluded_prompts)
+    all_ids = set(excluded_task_ids)
     for family in families:
         generator = TASK_GENERATORS[family]
         for depth in depths:
@@ -553,16 +563,19 @@ def task_battery(
                         attempt=attempt,
                     )
                     task = generator(depth, sample_seed)
-                    if task.prompt not in coordinate_prompts:
+                    if (
+                        task.prompt not in coordinate_prompts
+                        and task.prompt not in all_prompts
+                        and task.task_id not in all_ids
+                    ):
                         break
                 else:  # pragma: no cover - finite generator exhaustion guard
                     raise RuntimeError(
                         f"training generator exhausted unique prompts: {family}/{depth}"
                     )
-                if task.prompt in all_prompts:
-                    raise RuntimeError("training generators produced a cross-cell prompt collision")
                 coordinate_prompts.add(task.prompt)
                 all_prompts.add(task.prompt)
+                all_ids.add(task.task_id)
                 tasks.append(task)
     return tasks
 
@@ -582,6 +595,8 @@ def disjoint_task_split(
         depths,
         holdout_per_cell,
         seed=seed + 7_919,
+        excluded_prompts=tuple(task.prompt for task in train),
+        excluded_task_ids=tuple(task.task_id for task in train),
     )
     train_prompts = {task.prompt for task in train}
     train_ids = {task.task_id for task in train}

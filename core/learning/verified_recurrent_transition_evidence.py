@@ -18,6 +18,7 @@ from core.learning.recurrent_grpo import (
 from core.learning.verified_token_trace import (
     TokenizerTraceAdapter,
     build_verified_token_trace,
+    canonical_behavior_logprob,
     validate_verified_token_trace,
 )
 from core.learning.verified_transition_episode import (
@@ -426,9 +427,15 @@ def validate_verified_recurrent_transition_evidence(
         != pair["parent"]["tokens"]
         or child_trace["generation"]["token_ids"] != pair["child"]["tokens"]
         or parent_trace["generation"]["behavior_logprobs"]
-        != [str(value) for value in pair["parent"]["behavior_logprobs"]]
+        != [
+            canonical_behavior_logprob(value)
+            for value in pair["parent"]["behavior_logprobs"]
+        ]
         or child_trace["generation"]["behavior_logprobs"]
-        != [str(value) for value in pair["child"]["behavior_logprobs"]]
+        != [
+            canonical_behavior_logprob(value)
+            for value in pair["child"]["behavior_logprobs"]
+        ]
         or normalized.get("parent_response_sha256")
         != hashlib.sha256(parent_response.encode("utf-8")).hexdigest()
         or normalized.get("child_response_sha256")

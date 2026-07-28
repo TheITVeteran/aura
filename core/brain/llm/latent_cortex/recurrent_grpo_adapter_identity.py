@@ -39,7 +39,7 @@ from core.learning.verified_transition_trainer import (
 )
 
 MANIFEST_FILE = "recurrence_adapter_manifest.json"
-MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v1"
+MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v2"
 IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_adapter_identity_receipt.v1"
 VERIFIED_IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_verified_adapter_identity_receipt.v1"
 COMPLETION_SCHEMA = "aura.recurrent_grpo_training_completion.v1"
@@ -84,6 +84,15 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_provider",
         "transition_provider_factory",
         "transition_launch_bundle",
+        "transition_launch_runner",
+        "transition_launch_materializer",
+        "transition_recurrent_evidence",
+        "transition_recurrent_repository",
+        "transition_policy_probe",
+        "recurrent_training_prompt",
+        "atomic_writer",
+        "file_read_gateway",
+        "file_write_gateway",
         "transition_transaction",
         "transition_rejection_transaction",
         "transition_causal_campaign",

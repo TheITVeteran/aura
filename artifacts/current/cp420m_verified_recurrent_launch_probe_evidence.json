@@ -1,0 +1,89 @@
+{
+  "schema": "aura.spark.checkpoint_evidence.v1",
+  "checkpoint": "CP420M",
+  "recorded_at": "2026-07-28",
+  "base_commit": "e6e90497758ab40aeb99e93b3551b98438bd7060",
+  "scope": [
+    "production verified-recurrent GRPO launch executable",
+    "deterministic resident policy probe receipt",
+    "replay-authorizing source inventory closure",
+    "collision-free recurrence curriculum train/holdout construction",
+    "crash-recoverable deterministic launch materialization",
+    "distinct externally pinned task-issuer and evidence-verifier custody",
+    "provider-contract-bound causal lineage and idempotent closure",
+    "transitive preregistration-policy-provider-campaign identity",
+    "signer-independent completed-launch archival recovery",
+    "external accepted-update and rejected-group causal replay"
+  ],
+  "verification": {
+    "ruff": "pass",
+    "bytecode_compilation": "pass",
+    "affected_tests": {
+      "passed": 206,
+      "failed": 0,
+      "duration_seconds": 64.52
+    },
+    "disjoint_episode_and_post_training_tests": {
+      "passed": 87,
+      "failed": 0,
+      "duration_seconds": 309.49
+    },
+    "total_disjoint_tests": {
+      "passed": 293,
+      "failed": 0
+    },
+    "real_tiny_mlx_external_causal_replay_subset": {
+      "passed": 9,
+      "failed": 0,
+      "corruption_roles": [
+        "transition evidence",
+        "reward",
+        "group admission",
+        "update journal",
+        "accepted transaction checkpoint event",
+        "staged adapter tensor",
+        "rejected transaction checkpoint event"
+      ]
+    },
+    "direct_runner_cli": "pass",
+    "direct_materializer_cli": "pass",
+    "diff_check": "pass",
+    "repository_wide_ratchets": {
+      "governance_lint": "open after rebase onto origin/main: 31 accumulated ownership regressions and 2 stale buckets",
+      "enterprise_gate": "open: compilation passed but 12 repository-wide baseline maxima are stale",
+      "disposition": "verified on rebased origin/main; not claimed green or baseline-approved by CP420M"
+    }
+  },
+  "findings_closed": [
+    "recurrent training had no executable path for injecting the root-verified post-load provider factory",
+    "new CLI tools only worked when pytest preloaded the repository import path",
+    "new evidence and replay modules were absent from the frozen adapter source inventory",
+    "the initial recurrent policy contract required a value knowable only after resident model and LoRA construction",
+    "an identical initial-policy probe rerun collided with its first immutable timestamp",
+    "holdout generation aborted on deterministic prompt collisions instead of searching for disjoint samples",
+    "launch artifacts had no deterministic crash-resumable materializer",
+    "task issuance and final evidence verification could share one signer custody root",
+    "the causal campaign manifest did not bind the exact provider contract",
+    "completed launch receipt recovery after expiry still required live signer executables",
+    "final evidence did not independently bind optimizer mutation to staged adapter tensors and checkpoint custody",
+    "rejected groups lacked complete external unchanged-policy replay",
+    "campaign finalization after a committed close attempted a second signature",
+    "the preregistered launch accepted a colocated digest without an explicit external bundle digest"
+  ],
+  "claim_boundary": {
+    "resident_model_loaded": false,
+    "resident_policy_probe_executed": false,
+    "training_started": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false,
+    "external_test_trust": "generated fixture roots and separately executed command processes",
+    "production_external_trust_provisioned": false
+  },
+  "remaining_blockers": [
+    "provision a production external trust root and independently operated task-issuer and evidence-verifier services",
+    "execute and externally pin the resident 32B initial-policy probe",
+    "materialize and independently re-open the signed 288-group launch bundle",
+    "run the sealed resident campaign and powered falsification stages"
+  ]
+}

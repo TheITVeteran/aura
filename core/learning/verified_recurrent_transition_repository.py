@@ -11,15 +11,38 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Never, cast
 
-from core.brain.llm.latent_cortex.campaign_trust import EVIDENCE_VERIFIER
+from core.brain.llm.latent_cortex.campaign_trust import (
+    CAMPAIGN_TRUST_ROLES,
+    EVIDENCE_VERIFIER,
+    VerifiedCampaignTrustPolicy,
+)
+from core.learning.answer_channel_curriculum import (
+    TASK_GENERATORS as ANSWER_CHANNEL_TASK_GENERATORS,
+)
+from core.learning.recurrence_curriculum import (
+    TASK_GENERATORS as RECURRENCE_TASK_GENERATORS,
+)
 from core.learning.recurrent_grpo import (
     recurrent_policy_sample_from_receipt,
+    recurrent_policy_tensor_map_sha256,
     validate_recurrent_policy_sample_receipt,
 )
 from core.learning.verified_recurrent_transition_evidence import (
     VerifiedRecurrentTransitionEvidence,
     build_verified_recurrent_transition_evidence,
     validate_verified_recurrent_transition_evidence,
+)
+from core.learning.verified_token_trace import (
+    validate_tokenizer_bundle_identity,
+    validate_verified_token_trace_structure,
+)
+from core.learning.verified_training_task import validate_public_training_task
+from core.learning.verified_transition_causal_campaign import (
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+    EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
+    VerifiedTransitionCausalCampaignLedger,
+    validate_causal_campaign_evidence_manifest,
+    validate_external_evidence_verification_receipt,
 )
 from core.learning.verified_transition_episode import (
     TransitionArtifactStore,
@@ -28,16 +51,32 @@ from core.learning.verified_transition_episode import (
 from core.learning.verified_transition_group_admission import (
     build_verified_transition_group_admission,
     validate_transition_group_manifest,
+    validate_verified_transition_group_admission,
+)
+from core.learning.verified_transition_rejection_transaction import (
+    VerifiedTransitionRejectionTransactionStore,
+    build_rejected_transaction_trainer_step,
 )
 from core.learning.verified_transition_reward import (
     TransitionRewardConfig,
+    bind_rewards_to_recurrent_samples,
     build_verified_transition_reward_batch,
+    rewards_for_recurrent_samples,
+    validate_verified_transition_reward_batch,
 )
 from core.learning.verified_transition_trainer import (
     PreparedVerifiedTransitionGroup,
     VerifiedTransitionCampaignClosure,
 )
-from core.learning.verified_transition_update import VerifiedTransitionUpdateJournal
+from core.learning.verified_transition_transaction import (
+    VerifiedTransitionTransactionStore,
+    build_transaction_trainer_step,
+)
+from core.learning.verified_transition_update import (
+    VerifiedTransitionUpdateJournal,
+    recover_committed_verified_transition_update,
+    validate_verified_transition_update_receipt,
+)
 from core.runtime.atomic_writer import (
     atomic_write_bytes_if_absent,
     ensure_private_directory,
@@ -237,6 +276,617 @@ def _publish_package(root: Path, package: Mapping[str, Any]) -> dict[str, Any]:
     return validated
 
 
+def _read_package(root: Path, sequence: int) -> dict[str, Any]:
+    path = _package_path(root, sequence)
+    if path.is_symlink():
+        _fail("recurrent_replay_package_symlink_rejected")
+    payload = read_stable_bytes(path, max_bytes=256 * 1024 * 1024)
+    try:
+        document = json.loads(payload)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VerifiedRecurrentTransitionRepositoryError(
+            "recurrent_replay_package_json_invalid"
+        ) from exc
+    if not isinstance(document, Mapping) or _json_bytes(document) != payload:
+        _fail("recurrent_replay_package_noncanonical")
+    return validate_recurrent_replay_package(document)
+
+
+def _package_artifact_binding(root: Path, sequence: int) -> dict[str, Any]:
+    path = _package_path(root, sequence).resolve(strict=True)
+    payload = read_stable_bytes(path, max_bytes=256 * 1024 * 1024)
+    return {
+        "path": str(path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def _reconstruct_external_training_task(
+    task_commitment: Mapping[str, Any],
+) -> Any:
+    public = validate_public_training_task(task_commitment)
+    parameters = public["public_parameters"]
+    if public["task_type"] == "recurrence_training":
+        generators = RECURRENCE_TASK_GENERATORS
+    elif public["task_type"] == "answer_channel":
+        generators = ANSWER_CHANNEL_TASK_GENERATORS
+    else:
+        _fail("external_recurrent_task_type_unsupported")
+    generator = generators.get(parameters["family"])
+    if generator is None:
+        _fail("external_recurrent_task_generator_missing")
+    task = generator(public["depth"], parameters["seed"])
+    if (
+        task.task_id != public["task_id"]
+        or task.prompt != public["prompt"]
+        or task.domain != public["domain"]
+    ):
+        _fail("external_recurrent_task_reconstruction_mismatch")
+    return _ExternallyBoundTrainingTask(task, public)
+
+
+class _ExternallyBoundTrainingTask:
+    def __init__(
+        self, source_task: Any, task_commitment: Mapping[str, Any]
+    ) -> None:
+        self._source_task = source_task
+        self._task_commitment = dict(task_commitment)
+
+    def verified_transition_task_commitment(self) -> Mapping[str, Any]:
+        return cast(
+            dict[str, Any],
+            json.loads(canonical_json_bytes(self._task_commitment)),
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._source_task, name)
+
+
+class _RecordedTokenizerTraceAdapter:
+    """Replay only the exact tokenizer observations embedded in one group."""
+
+    def __init__(self, evidence_documents: Sequence[Mapping[str, Any]]) -> None:
+        self._bundle: dict[str, Any] | None = None
+        self._prompts: dict[str, tuple[int, ...]] = {}
+        self._outputs: dict[tuple[int, ...], str] = {}
+        self._streams: dict[tuple[int, ...], tuple[str, ...]] = {}
+        for evidence in evidence_documents:
+            for role in ("parent_token_trace", "child_token_trace"):
+                trace = validate_verified_token_trace_structure(
+                    evidence.get(role)
+                )
+                bundle = validate_tokenizer_bundle_identity(
+                    trace["tokenizer_bundle"]
+                )
+                if self._bundle is None:
+                    self._bundle = bundle
+                elif self._bundle != bundle:
+                    _fail("external_recurrent_tokenizer_bundle_mixed")
+                prompt = trace["prompt"]
+                prompt_text = prompt["text"]
+                prompt_tokens = tuple(prompt["token_ids"])
+                generation = trace["generation"]
+                output_tokens = tuple(generation["token_ids"])
+                response = generation["response_text"]
+                deltas = tuple(generation["streaming_deltas"])
+                if (
+                    prompt_text in self._prompts
+                    and self._prompts[prompt_text] != prompt_tokens
+                ):
+                    _fail("external_recurrent_prompt_encoding_conflict")
+                if (
+                    output_tokens in self._outputs
+                    and (
+                        self._outputs[output_tokens] != response
+                        or self._streams[output_tokens] != deltas
+                    )
+                ):
+                    _fail("external_recurrent_output_decoding_conflict")
+                self._prompts[prompt_text] = prompt_tokens
+                self._outputs[output_tokens] = response
+                self._streams[output_tokens] = deltas
+        if self._bundle is None:
+            _fail("external_recurrent_tokenizer_observations_missing")
+
+    @property
+    def bundle_identity(self) -> Mapping[str, Any]:
+        bundle = self._bundle
+        if bundle is None:
+            _fail("external_recurrent_tokenizer_observations_missing")
+        return cast(dict[str, Any], json.loads(_json_bytes(bundle)))
+
+    def encode_prompt(self, prompt_text: str) -> Sequence[int]:
+        try:
+            return self._prompts[prompt_text]
+        except KeyError as exc:
+            raise VerifiedRecurrentTransitionRepositoryError(
+                "external_recurrent_prompt_observation_missing"
+            ) from exc
+
+    def decode_output(self, token_ids: Sequence[int]) -> str:
+        try:
+            return self._outputs[tuple(token_ids)]
+        except KeyError as exc:
+            raise VerifiedRecurrentTransitionRepositoryError(
+                "external_recurrent_output_observation_missing"
+            ) from exc
+
+    def stream_decode_deltas(
+        self, token_ids: Sequence[int]
+    ) -> Sequence[str]:
+        try:
+            return self._streams[tuple(token_ids)]
+        except KeyError as exc:
+            raise VerifiedRecurrentTransitionRepositoryError(
+                "external_recurrent_stream_observation_missing"
+            ) from exc
+
+
+def campaign_trust_policy_from_verifier_material(
+    value: Any,
+) -> VerifiedCampaignTrustPolicy:
+    """Reconstruct public trust material inside the verifier process."""
+
+    if (
+        not isinstance(value, Mapping)
+        or set(value) != {"document", "policy_sha256", "root_key_id"}
+        or not isinstance(value.get("document"), Mapping)
+    ):
+        _fail("external_recurrent_trust_policy_material_invalid")
+    document = cast(
+        dict[str, Any],
+        json.loads(canonical_json_bytes(value["document"])),
+    )
+    policy_sha256 = _sha256(
+        value.get("policy_sha256"),
+        role="external_recurrent_trust_policy",
+    )
+    root_key_id = _sha256(
+        value.get("root_key_id"),
+        role="external_recurrent_trust_root",
+    )
+    root_signature = document.get("root_signature")
+    if (
+        policy_sha256
+        != hashlib.sha256(canonical_json_bytes(document)).hexdigest()
+        or not isinstance(root_signature, Mapping)
+        or root_signature.get("key_id") != root_key_id
+    ):
+        _fail("external_recurrent_trust_policy_material_mismatch")
+    policy = VerifiedCampaignTrustPolicy(
+        document=document,
+        policy_sha256=policy_sha256,
+        root_key_id=root_key_id,
+    )
+    for role in CAMPAIGN_TRUST_ROLES:
+        pin = policy.role_pin(role)
+        for field in (
+            "implementation_sha256",
+            "release_sha256",
+            "custody_evidence_sha256",
+            "key_id",
+        ):
+            _sha256(
+                pin.get(field),
+                role=f"external_recurrent_{role}_{field}",
+            )
+    return policy
+
+
+def verify_recurrent_evidence_manifest_artifacts(
+    evidence_manifest: Mapping[str, Any],
+    *,
+    campaign_trust_policy: VerifiedCampaignTrustPolicy,
+    verifier_identity: str,
+    verified_at_unix: int,
+) -> dict[str, Any]:
+    """Revalidate every bound causal receipt and accepted update externally."""
+
+    evidence = validate_causal_campaign_evidence_manifest(evidence_manifest)
+    if (
+        not isinstance(campaign_trust_policy, VerifiedCampaignTrustPolicy)
+        or evidence["trust_policy_sha256"]
+        != campaign_trust_policy.policy_sha256
+        or not isinstance(verifier_identity, str)
+        or not verifier_identity
+        or verifier_identity != verifier_identity.strip()
+        or type(verified_at_unix) is not int
+        or verified_at_unix <= 0
+    ):
+        _fail("external_recurrent_verifier_identity_invalid")
+    campaign_ledger = VerifiedTransitionCausalCampaignLedger.open(
+        evidence["campaign_ledger_root"],
+        policy=campaign_trust_policy,
+    )
+    campaign_manifest = campaign_ledger.campaign_manifest()
+    if (
+        campaign_manifest["provider_contract_sha256"]
+        != evidence["contract_sha256"]
+        or campaign_manifest["campaign_schedule_root_sha256"]
+        != evidence["campaign_schedule_root_sha256"]
+        or campaign_manifest["trust_policy_sha256"]
+        != evidence["trust_policy_sha256"]
+    ):
+        _fail("external_recurrent_campaign_manifest_mismatch")
+    transition_store = TransitionArtifactStore(
+        evidence["transition_artifact_root"]
+    )
+    update_journal: VerifiedTransitionUpdateJournal | None = None
+    transaction_store: VerifiedTransitionTransactionStore | None = None
+    rejection_store: VerifiedTransitionRejectionTransactionStore | None = None
+    observations: list[dict[str, Any]] = []
+    try:
+        for row in evidence["group_packages"]:
+            binding = row["package_artifact"]
+            path = Path(binding["path"])
+            if path.is_symlink():
+                _fail("external_recurrent_package_symlink_rejected")
+            payload = read_stable_bytes(
+                path,
+                max_bytes=256 * 1024 * 1024,
+            )
+            if (
+                len(payload) != binding["size_bytes"]
+                or hashlib.sha256(payload).hexdigest()
+                != binding["sha256"]
+            ):
+                _fail("external_recurrent_package_binding_mismatch")
+            try:
+                parsed = json.loads(payload)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise VerifiedRecurrentTransitionRepositoryError(
+                    "external_recurrent_package_json_invalid"
+                ) from exc
+            if not isinstance(parsed, Mapping) or _json_bytes(parsed) != payload:
+                _fail("external_recurrent_package_noncanonical")
+            package = validate_recurrent_replay_package(parsed)
+            if (
+                package["sequence"] != row["sequence"]
+                or package["contract_sha256"]
+                != evidence["contract_sha256"]
+                or package["campaign_schedule_root_sha256"]
+                != evidence["campaign_schedule_root_sha256"]
+                or package["receipt_sha256"]
+                != row["package_receipt_sha256"]
+                or package["group_manifest"]["manifest_sha256"]
+                != row["group_manifest_sha256"]
+                or package["reward_receipt_sha256"]
+                != row["reward_receipt_sha256"]
+                or package["group_admission_sha256"]
+                != row["group_admission_sha256"]
+                or package["sample_receipt_sha256s"]
+                != row["sample_receipt_sha256s"]
+                or package["evidence_receipt_sha256s"]
+                != row["evidence_receipt_sha256s"]
+            ):
+                _fail("external_recurrent_package_manifest_mismatch")
+
+            evidence_documents = [
+                transition_store.read_json(
+                    artifact,
+                    role="external_recurrent_evidence",
+                )
+                for artifact in package["evidence_artifacts"]
+            ]
+            if (
+                not evidence_documents
+                or [
+                    document.get("receipt_sha256")
+                    for document in evidence_documents
+                ]
+                != package["evidence_receipt_sha256s"]
+            ):
+                _fail("external_recurrent_evidence_binding_mismatch")
+            task_commitment = evidence_documents[0].get("task_commitment")
+            if not isinstance(task_commitment, Mapping):
+                _fail("external_recurrent_task_commitment_missing")
+            task = _reconstruct_external_training_task(task_commitment)
+            if task.prompt != package["prompt_text"]:
+                _fail("external_recurrent_task_prompt_mismatch")
+            tokenizer_adapter = _RecordedTokenizerTraceAdapter(
+                evidence_documents
+            )
+            samples = tuple(
+                recurrent_policy_sample_from_receipt(json.loads(encoded))
+                for encoded in package["sample_receipts_json"]
+            )
+            replayed_evidence = tuple(
+                validate_verified_recurrent_transition_evidence(
+                    transition_store,
+                    document,
+                    task=task,
+                    independent_scorer=(
+                        score_verified_recurrent_training_task
+                    ),
+                    tokenizer_trace_adapter=tokenizer_adapter,
+                    expected_tokenizer_bundle_sha256=package[
+                        "tokenizer_bundle_sha256"
+                    ],
+                    campaign_trust_policy=campaign_trust_policy,
+                )
+                for document in evidence_documents
+            )
+            reward = validate_verified_transition_reward_batch(
+                transition_store,
+                transition_store.read_json(
+                    package["reward_artifact"],
+                    role="external_recurrent_reward",
+                ),
+                replayed_evidence,
+                independent_scorer=score_verified_recurrent_training_task,
+                token_encoder=recurrent_trace_token_encoder,
+                token_decoder=recurrent_trace_token_decoder,
+            )
+            if reward["receipt_sha256"] != package["reward_receipt_sha256"]:
+                _fail("external_recurrent_reward_binding_mismatch")
+
+            terminal = campaign_ledger.group_terminal_if_exists(
+                sequence=row["sequence"]
+            )
+            if (
+                not isinstance(terminal, Mapping)
+                or terminal.get("status") != row["status"]
+                or terminal.get("group_manifest_sha256")
+                != row["group_manifest_sha256"]
+                or terminal.get("reward_receipt_sha256")
+                != row["reward_receipt_sha256"]
+                or terminal.get("group_admission_sha256")
+                != row["group_admission_sha256"]
+                or terminal.get("update_receipt_sha256")
+                != row["update_receipt_sha256"]
+            ):
+                _fail("external_recurrent_terminal_binding_mismatch")
+
+            if row["status"] == "updated":
+                if (
+                    reward["optimizer_admitted"] is not True
+                    or package["group_admission_artifact"] is None
+                    or package["group_admission_sha256"] is None
+                    or row["update_receipt_sha256"] is None
+                ):
+                    _fail("external_recurrent_updated_evidence_missing")
+                admission = validate_verified_transition_group_admission(
+                    transition_store,
+                    transition_store.read_json(
+                        package["group_admission_artifact"],
+                        role="external_recurrent_admission",
+                    ),
+                    reward,
+                    replayed_evidence,
+                    samples,
+                    package["prompt_tokens"],
+                    group_manifest=package["group_manifest"],
+                    group_manifest_attestation=package[
+                        "group_manifest_attestation"
+                    ],
+                    independent_scorer=(
+                        score_verified_recurrent_training_task
+                    ),
+                    token_encoder=recurrent_trace_token_encoder,
+                    token_decoder=recurrent_trace_token_decoder,
+                )
+                admission_sha256 = admission["receipt_sha256"]
+                if admission_sha256 != package["group_admission_sha256"]:
+                    _fail("external_recurrent_admission_binding_mismatch")
+                if update_journal is None:
+                    update_journal = VerifiedTransitionUpdateJournal.open(
+                        evidence["update_journal_root"]
+                    )
+                update = recover_committed_verified_transition_update(
+                    update_journal,
+                    admission_sha256,
+                )
+                validate_verified_transition_update_receipt(
+                    update_journal,
+                    update,
+                )
+                if update["receipt_sha256"] != row["update_receipt_sha256"]:
+                    _fail("external_recurrent_update_binding_mismatch")
+                if transaction_store is None:
+                    transaction_store = (
+                        VerifiedTransitionTransactionStore.open(
+                            evidence["transaction_root"]
+                        )
+                    )
+                transaction = transaction_store.load(
+                    sequence=row["sequence"],
+                    admission_sha256=admission_sha256,
+                    load_tensors=True,
+                )
+                if (
+                    transaction is None
+                    or transaction.adapter_tensors is None
+                    or tuple(
+                        event["kind"] for event in transaction.events
+                    )
+                    != (
+                        "update_commit",
+                        "campaign_terminal",
+                        "trainer_checkpoint",
+                    )
+                    or transaction.events[0]["evidence"] != update
+                    or transaction.events[1]["evidence"] != dict(terminal)
+                ):
+                    _fail("external_recurrent_transaction_chain_mismatch")
+                pending = transaction.pending_step
+                group_policy = package["group_manifest"]["entries"][0][
+                    "policy_sha256"
+                ]
+                trainer_step = build_transaction_trainer_step(transaction)
+                if (
+                    pending["sequence"] != row["sequence"]
+                    or pending["task_id"] != package["task_id"]
+                    or pending["execution_spec_sha256"]
+                    != package["group_manifest"]["entries"][0][
+                        "recurrent_execution_spec_sha256"
+                    ]
+                    or pending["campaign_manifest_sha256"]
+                    != campaign_manifest["manifest_sha256"]
+                    or pending["campaign_schedule_root_sha256"]
+                    != evidence["campaign_schedule_root_sha256"]
+                    or pending["group_manifest_sha256"]
+                    != row["group_manifest_sha256"]
+                    or pending["group_admission_sha256"]
+                    != admission_sha256
+                    or pending["reward_receipt_sha256"]
+                    != row["reward_receipt_sha256"]
+                    or pending["policy_before_sha256"] != group_policy
+                    or pending["policy_before_sha256"]
+                    != update["policy_before_sha256"]
+                    or pending["policy_after_sha256"]
+                    != update["policy_after_sha256"]
+                    or terminal.get("policy_before_sha256")
+                    != update["policy_before_sha256"]
+                    or terminal.get("policy_after_sha256")
+                    != update["policy_after_sha256"]
+                    or trainer_step["receipt_sha256"]
+                    != row["trainer_step_receipt_sha256"]
+                    or recurrent_policy_tensor_map_sha256(
+                        transaction.adapter_tensors,
+                        pending["execution_spec_sha256"],
+                    )
+                    != update["policy_after_sha256"]
+                ):
+                    _fail("external_recurrent_transaction_causality_mismatch")
+                structured_rewards = list(
+                    rewards_for_recurrent_samples(
+                        reward,
+                        samples,
+                        package["prompt_tokens"],
+                    )
+                )
+                static = pending["trainer_step_static"]
+                objective = update_journal.read(
+                    admission_sha256, "objective"
+                )["objective_receipt"]
+                if (
+                    static["structured_rewards"] != structured_rewards
+                    or objective["advantage_report"]
+                    != static["advantage_report"]
+                    or objective["completion_count"] != len(samples)
+                    or objective["token_count"]
+                    != sum(len(sample.tokens) for sample in samples)
+                    or objective["branch_indices"]
+                    != [sample.branch_index for sample in samples]
+                ):
+                    _fail("external_recurrent_objective_causality_mismatch")
+            else:
+                if (
+                    reward["optimizer_admitted"] is not False
+                    or package["group_admission_artifact"] is not None
+                    or package["group_admission_sha256"] is not None
+                    or row["update_receipt_sha256"] is not None
+                ):
+                    _fail("external_recurrent_rejection_causality_mismatch")
+                if rejection_store is None:
+                    rejection_store = (
+                        VerifiedTransitionRejectionTransactionStore.open(
+                            evidence["transaction_root"]
+                        )
+                    )
+                rejection = rejection_store.load(
+                    sequence=row["sequence"],
+                    reward_sha256=row["reward_receipt_sha256"],
+                )
+                if (
+                    rejection is None
+                    or tuple(event["kind"] for event in rejection.events)
+                    != ("campaign_terminal", "trainer_checkpoint")
+                    or rejection.events[0]["evidence"] != dict(terminal)
+                ):
+                    _fail("external_recurrent_rejection_chain_mismatch")
+                intent = rejection.intent
+                trainer_step = build_rejected_transaction_trainer_step(
+                    rejection
+                )
+                static = intent["trainer_step_static"]
+                structured_rewards = list(
+                    bind_rewards_to_recurrent_samples(
+                        reward,
+                        samples,
+                        package["prompt_tokens"],
+                    )
+                )
+                if (
+                    intent["sequence"] != row["sequence"]
+                    or intent["task_id"] != package["task_id"]
+                    or intent["execution_spec_sha256"]
+                    != package["group_manifest"]["entries"][0][
+                        "recurrent_execution_spec_sha256"
+                    ]
+                    or intent["campaign_manifest_sha256"]
+                    != campaign_manifest["manifest_sha256"]
+                    or intent["campaign_schedule_root_sha256"]
+                    != evidence["campaign_schedule_root_sha256"]
+                    or intent["group_manifest_sha256"]
+                    != row["group_manifest_sha256"]
+                    or intent["reward_receipt_sha256"]
+                    != row["reward_receipt_sha256"]
+                    or intent["policy_sha256"]
+                    != package["group_manifest"]["entries"][0][
+                        "policy_sha256"
+                    ]
+                    or terminal.get("policy_before_sha256")
+                    != intent["policy_sha256"]
+                    or terminal.get("policy_after_sha256")
+                    != intent["policy_sha256"]
+                    or static["samples"]
+                    != [sample.receipt() for sample in samples]
+                    or static["structured_rewards"] != structured_rewards
+                    or trainer_step["receipt_sha256"]
+                    != row["trainer_step_receipt_sha256"]
+                ):
+                    _fail("external_recurrent_rejection_causality_mismatch")
+
+            observations.append(
+                {
+                    "sequence": row["sequence"],
+                    "package_artifact": binding,
+                    "package_receipt_sha256": row[
+                        "package_receipt_sha256"
+                    ],
+                    "sample_receipt_sha256s": row[
+                        "sample_receipt_sha256s"
+                    ],
+                    "evidence_receipt_sha256s": row[
+                        "evidence_receipt_sha256s"
+                    ],
+                    "reward_receipt_sha256": row[
+                        "reward_receipt_sha256"
+                    ],
+                    "group_admission_sha256": row[
+                        "group_admission_sha256"
+                    ],
+                    "update_receipt_sha256": row[
+                        "update_receipt_sha256"
+                    ],
+                    "trainer_step_receipt_sha256": row[
+                        "trainer_step_receipt_sha256"
+                    ],
+                }
+            )
+    finally:
+        transition_store.close()
+    body = {
+        "schema": EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
+        "evidence_manifest_sha256": evidence["manifest_sha256"],
+        "verifier_identity": verifier_identity,
+        "verified_package_count": len(observations),
+        "artifact_observation_root_sha256": _digest(
+            {"artifact_observations": observations}
+        ),
+        "validation_profile": (
+            "recurrent_transition_causal_replay.v2"
+        ),
+        "verified_at_unix": verified_at_unix,
+    }
+    return validate_external_evidence_verification_receipt(
+        {**body, "receipt_sha256": _digest(body)},
+        evidence_manifest=evidence,
+    )
+
+
 def validate_recurrent_replay_package(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != _PACKAGE_KEYS:
         _fail("recurrent_replay_package_schema_invalid")
@@ -327,19 +977,7 @@ def load_recurrent_replay_packages(request: Any) -> tuple[dict[str, Any], ...]:
         _fail("recurrent_replay_restore_request_invalid")
     packages = []
     for sequence, step in enumerate(request.step_receipts):
-        path = _package_path(root, sequence)
-        if path.is_symlink():
-            _fail("recurrent_replay_package_symlink_rejected")
-        payload = read_stable_bytes(path, max_bytes=256 * 1024 * 1024)
-        try:
-            document = json.loads(payload)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise VerifiedRecurrentTransitionRepositoryError(
-                "recurrent_replay_package_json_invalid"
-            ) from exc
-        if not isinstance(document, Mapping) or _json_bytes(document) != payload:
-            _fail("recurrent_replay_package_noncanonical")
-        package = validate_recurrent_replay_package(document)
+        package = _read_package(root, sequence)
         if (
             package["sequence"] != sequence
             or package["contract_sha256"] != request.contract_sha256
@@ -358,6 +996,106 @@ def load_recurrent_replay_packages(request: Any) -> tuple[dict[str, Any], ...]:
     return tuple(packages)
 
 
+def _prepared_from_existing_package(
+    request: Any,
+    package: Mapping[str, Any],
+    *,
+    store: TransitionArtifactStore,
+) -> PreparedVerifiedTransitionGroup:
+    document = validate_recurrent_replay_package(package)
+    sample_receipts = tuple(sample.receipt() for sample in request.samples)
+    expected_sample_json = tuple(_float_json(receipt) for receipt in sample_receipts)
+    if (
+        document["contract_sha256"] != request.contract_sha256
+        or document["campaign_schedule_root_sha256"]
+        != request.campaign_schedule_root_sha256
+        or document["sequence"] != request.sequence
+        or document["task_id"] != request.task.task_id
+        or document["tokenizer_bundle_sha256"]
+        != request.tokenizer_bundle_sha256
+        or document["prompt_text"] != request.prompt_text
+        or document["prompt_tokens"] != list(request.prompt_tokens)
+        or tuple(document["sample_receipts_json"]) != expected_sample_json
+        or document["group_manifest"] != dict(request.group_manifest)
+        or document["group_manifest_attestation"]
+        != dict(request.group_manifest_attestation)
+    ):
+        _fail("recurrent_replay_orphan_request_mismatch")
+    samples, evidence = reconstruct_recurrent_package_inputs(
+        document,
+        store=store,
+        task=request.task,
+        independent_scorer=request.independent_scorer,
+        tokenizer_trace_adapter=request.tokenizer_trace_adapter,
+        campaign_trust_policy=request.campaign_trust_policy,
+    )
+    decoded = tuple(
+        item.document["child_token_trace"]["generation"]["response_text"]
+        for item in evidence
+    )
+    if decoded != tuple(request.completions):
+        _fail("recurrent_replay_orphan_completion_mismatch")
+    reward = validate_verified_transition_reward_batch(
+        store,
+        store.read_json(
+            document["reward_artifact"], role="recurrent_replay_reward"
+        ),
+        evidence,
+        independent_scorer=request.independent_scorer,
+        token_encoder=request.token_encoder,
+        token_decoder=request.token_decoder,
+    )
+    admission = None
+    journal = None
+    if reward["optimizer_admitted"] is True:
+        admission = validate_verified_transition_group_admission(
+            store,
+            store.read_json(
+                document["group_admission_artifact"],
+                role="recurrent_replay_group_admission",
+            ),
+            reward,
+            evidence,
+            samples,
+            document["prompt_tokens"],
+            group_manifest=document["group_manifest"],
+            group_manifest_attestation=document[
+                "group_manifest_attestation"
+            ],
+            independent_scorer=request.independent_scorer,
+            token_encoder=request.token_encoder,
+            token_decoder=request.token_decoder,
+        )
+        journal = VerifiedTransitionUpdateJournal.open(
+            request.ledger_roots["updates"]
+        )
+    elif (
+        document["group_admission_artifact"] is not None
+        or document["group_admission_sha256"] is not None
+    ):
+        _fail("recurrent_replay_orphan_rejection_invalid")
+    start = request.campaign_ledger.group_start(sequence=request.sequence)
+    return PreparedVerifiedTransitionGroup(
+        campaign_sequence=request.sequence,
+        transition_store=store,
+        reward_receipt=reward,
+        transition_evidence=evidence,
+        group_manifest=document["group_manifest"],
+        group_manifest_attestation=document["group_manifest_attestation"],
+        independent_scorer=request.independent_scorer,
+        token_encoder=request.token_encoder,
+        token_decoder=request.token_decoder,
+        campaign_ledger=request.campaign_ledger,
+        campaign_trust_policy=request.campaign_trust_policy,
+        group_admission_receipt=admission,
+        update_journal=journal,
+        campaign_manifest_sha256=cast(
+            str, start["campaign_manifest_sha256"]
+        ),
+        campaign_schedule_root_sha256=request.campaign_schedule_root_sha256,
+    )
+
+
 def produce_verified_recurrent_transition_group(
     request: Any,
 ) -> PreparedVerifiedTransitionGroup:
@@ -370,6 +1108,13 @@ def produce_verified_recurrent_transition_group(
         _fail("recurrent_evidence_ledger_roots_invalid")
     store = TransitionArtifactStore(roots["transition_artifacts"])
     replay_root = _private_root(roots["replay_artifacts"])
+    existing_path = _package_path(replay_root, request.sequence)
+    if existing_path.exists() or existing_path.is_symlink():
+        return _prepared_from_existing_package(
+            request,
+            _read_package(replay_root, request.sequence),
+            store=store,
+        )
     reward_config = TransitionRewardConfig()
     manifest = validate_transition_group_manifest(request.group_manifest)
     expected_reward_sha256 = hashlib.sha256(
@@ -533,10 +1278,26 @@ def finalize_verified_recurrent_transition_campaign(
 
     if request.schema != "aura.verified_transition.finalize_request.v2":
         _fail("recurrent_campaign_finalize_request_invalid")
-    if type(request.completed_groups) is not int or request.completed_groups < 0:
+    if (
+        type(request.completed_groups) is not int
+        or request.completed_groups < 0
+        or not isinstance(request.step_receipts, tuple)
+        or len(request.step_receipts) != request.completed_groups
+    ):
         _fail("recurrent_campaign_completed_groups_invalid")
+    replay_root = _private_root(request.replay_artifact_root)
+    packages = tuple(
+        _read_package(replay_root, sequence)
+        for sequence in range(request.completed_groups)
+    )
+    replay_by_sequence = {
+        group.sequence: group for group in request.replay_groups
+    }
+    package_rows: list[dict[str, Any]] = []
     latest_terminal = 0
-    for sequence in range(request.completed_groups):
+    for sequence, (step, package) in enumerate(
+        zip(request.step_receipts, packages, strict=True)
+    ):
         terminal = request.campaign_ledger.group_terminal_if_exists(
             sequence=sequence
         )
@@ -546,12 +1307,176 @@ def finalize_verified_recurrent_transition_campaign(
         if type(finished_at) is not int or finished_at <= 0:
             _fail("recurrent_campaign_terminal_time_invalid")
         latest_terminal = max(latest_terminal, finished_at)
+        status = (
+            "updated"
+            if step.get("step_kind") == "verified_optimizer_update"
+            else "rejected"
+            if step.get("step_kind") == "verified_rejected_group"
+            else None
+        )
+        if (
+            status is None
+            or step.get("campaign_sequence") != sequence
+            or package["sequence"] != sequence
+            or package["contract_sha256"] != request.contract_sha256
+            or package["campaign_schedule_root_sha256"]
+            != request.campaign_schedule_root_sha256
+            or package["group_manifest"]["manifest_sha256"]
+            != step.get("group_manifest_sha256")
+            or package["reward_receipt_sha256"]
+            != step.get("reward_receipt_sha256")
+            or package["group_admission_sha256"]
+            != step.get("group_admission_sha256")
+            or terminal.get("status") != status
+            or terminal.get("group_manifest_sha256")
+            != step.get("group_manifest_sha256")
+            or terminal.get("reward_receipt_sha256")
+            != step.get("reward_receipt_sha256")
+            or terminal.get("group_admission_sha256")
+            != step.get("group_admission_sha256")
+            or terminal.get("update_receipt_sha256")
+            != step.get("update_receipt_sha256")
+        ):
+            _fail("recurrent_campaign_evidence_package_mismatch")
+        update_sha256 = step.get("update_receipt_sha256")
+        replay_group = replay_by_sequence.get(sequence)
+        if status == "updated":
+            if (
+                replay_group is None
+                or replay_group.reward_receipt.get("receipt_sha256")
+                != package["reward_receipt_sha256"]
+                or replay_group.group_admission_receipt.get(
+                    "receipt_sha256"
+                )
+                != package["group_admission_sha256"]
+                or replay_group.update_receipt.get("receipt_sha256")
+                != update_sha256
+            ):
+                _fail("recurrent_campaign_updated_replay_mismatch")
+        elif replay_group is not None or update_sha256 is not None:
+            _fail("recurrent_campaign_rejected_replay_mismatch")
+        package_rows.append(
+            {
+                "sequence": sequence,
+                "status": status,
+                "package_artifact": _package_artifact_binding(
+                    replay_root, sequence
+                ),
+                "package_receipt_sha256": package["receipt_sha256"],
+                "group_manifest_sha256": package["group_manifest"][
+                    "manifest_sha256"
+                ],
+                "reward_receipt_sha256": package[
+                    "reward_receipt_sha256"
+                ],
+                "group_admission_sha256": package[
+                    "group_admission_sha256"
+                ],
+                "update_receipt_sha256": update_sha256,
+                "trainer_step_receipt_sha256": step["receipt_sha256"],
+                "sample_receipt_sha256s": package[
+                    "sample_receipt_sha256s"
+                ],
+                "evidence_receipt_sha256s": package[
+                    "evidence_receipt_sha256s"
+                ],
+            }
+        )
+    updated_sequences = [
+        row["sequence"] for row in package_rows if row["status"] == "updated"
+    ]
+    if sorted(replay_by_sequence) != updated_sequences:
+        _fail("recurrent_campaign_replay_group_set_mismatch")
+    existing_close = request.campaign_ledger.validate_closed_if_exists(
+        policy=request.campaign_trust_policy
+    )
+    if existing_close is not None:
+        existing_payload = existing_close.get("close_payload")
+        existing_evidence = (
+            existing_payload.get("evidence_manifest")
+            if isinstance(existing_payload, Mapping)
+            else None
+        )
+        if not isinstance(existing_evidence, Mapping):
+            _fail("recurrent_campaign_existing_close_invalid")
+        existing_created_at = existing_evidence.get("created_at_unix_ns")
+        replay_body = {
+            "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+            "contract_sha256": request.contract_sha256,
+            "campaign_schedule_root_sha256": (
+                request.campaign_schedule_root_sha256
+            ),
+            "trust_policy_sha256": (
+                request.campaign_trust_policy.policy_sha256
+            ),
+            "campaign_ledger_root": request.campaign_ledger_root,
+            "transition_artifact_root": request.transition_artifact_root,
+            "update_journal_root": request.update_journal_root,
+            "transaction_root": request.transaction_root,
+            "completed_groups": request.completed_groups,
+            "halt_reason": request.halt_reason,
+            "group_packages": package_rows,
+            "updated_replay_sequences": updated_sequences,
+            "created_at_unix_ns": existing_created_at,
+        }
+        reconstructed = validate_causal_campaign_evidence_manifest(
+            {
+                **replay_body,
+                "manifest_sha256": _digest(replay_body),
+            }
+        )
+        if dict(existing_evidence) != reconstructed:
+            _fail("recurrent_campaign_existing_close_mismatch")
+        return VerifiedTransitionCampaignClosure(
+            campaign_ledger=request.campaign_ledger,
+            campaign_trust_policy=request.campaign_trust_policy,
+        )
     completed_at = max(time.time_ns(), latest_terminal)
+    evidence_body = {
+        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "contract_sha256": request.contract_sha256,
+        "campaign_schedule_root_sha256": (
+            request.campaign_schedule_root_sha256
+        ),
+        "trust_policy_sha256": request.campaign_trust_policy.policy_sha256,
+        "campaign_ledger_root": request.campaign_ledger_root,
+        "transition_artifact_root": request.transition_artifact_root,
+        "update_journal_root": request.update_journal_root,
+        "transaction_root": request.transaction_root,
+        "completed_groups": request.completed_groups,
+        "halt_reason": request.halt_reason,
+        "group_packages": package_rows,
+        "updated_replay_sequences": updated_sequences,
+        "created_at_unix_ns": completed_at,
+    }
+    evidence_manifest = validate_causal_campaign_evidence_manifest(
+        {
+            **evidence_body,
+            "manifest_sha256": _digest(evidence_body),
+        }
+    )
+    signed_at = (completed_at + 999_999_999) // 1_000_000_000
+    verifier = getattr(
+        request.evidence_verifier_signer,
+        "verify_evidence_manifest",
+        None,
+    )
+    if not callable(verifier):
+        _fail("recurrent_campaign_external_verifier_required")
+    external_verification_receipt = verifier(
+        request.campaign_trust_policy,
+        evidence_manifest=evidence_manifest,
+        verified_at_unix=signed_at,
+        purpose="verified-recurrent-campaign-evidence-replay",
+    )
     payload = request.campaign_ledger.close_payload(
         completed_at_unix_ns=completed_at,
         policy=request.campaign_trust_policy,
+        evidence_manifest=evidence_manifest,
+        external_evidence_verification_receipt=(
+            external_verification_receipt
+        ),
     )
-    signed_at = (completed_at + 999_999_999) // 1_000_000_000
     attestation = request.evidence_verifier_signer.attest(
         request.campaign_trust_policy,
         role=EVIDENCE_VERIFIER,
@@ -586,4 +1511,5 @@ __all__ = [
     "reconstruct_recurrent_package_inputs",
     "score_verified_recurrent_training_task",
     "validate_recurrent_replay_package",
+    "verify_recurrent_evidence_manifest_artifacts",
 ]

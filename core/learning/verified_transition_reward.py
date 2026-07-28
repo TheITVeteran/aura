@@ -695,15 +695,18 @@ def require_optimizer_admission(receipt: Mapping[str, Any]) -> None:
         _fail("transition_reward_admission_invariant_invalid")
 
 
-def rewards_for_recurrent_samples(
+def bind_rewards_to_recurrent_samples(
     receipt: Mapping[str, Any],
     samples: Sequence[Any],
     prompt_tokens: Sequence[int],
 ) -> tuple[float, ...]:
-    """Bind admitted final-pass traces to exact recurrent policy samples."""
+    """Bind final-pass reward rows to exact recurrent policy samples."""
 
-    require_optimizer_admission(receipt)
-    transitions = cast(list[Mapping[str, Any]], receipt["transitions"])
+    _validate_seal(receipt)
+    transitions_value = receipt.get("transitions")
+    if not isinstance(transitions_value, list):
+        _fail("transition_reward_rows_invalid")
+    transitions = cast(list[Mapping[str, Any]], transitions_value)
     if len(transitions) != len(samples):
         _fail("transition_reward_sample_count_mismatch")
     prompt_payload = json.dumps(
@@ -747,6 +750,17 @@ def rewards_for_recurrent_samples(
     return tuple(rewards)
 
 
+def rewards_for_recurrent_samples(
+    receipt: Mapping[str, Any],
+    samples: Sequence[Any],
+    prompt_tokens: Sequence[int],
+) -> tuple[float, ...]:
+    """Bind an optimizer-admitted reward batch to its policy samples."""
+
+    require_optimizer_admission(receipt)
+    return bind_rewards_to_recurrent_samples(receipt, samples, prompt_tokens)
+
+
 __all__ = [
     "MICROS",
     "VERIFIED_TRANSITION_REWARD_CONFIG_SCHEMA",
@@ -755,6 +769,7 @@ __all__ = [
     "VerifiedTransitionEvidence",
     "VerifiedTransitionRewardAdmissionError",
     "VerifiedTransitionRewardError",
+    "bind_rewards_to_recurrent_samples",
     "build_verified_transition_reward_batch",
     "require_optimizer_admission",
     "rewards_for_recurrent_samples",

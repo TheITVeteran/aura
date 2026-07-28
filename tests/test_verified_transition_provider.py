@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -324,7 +325,13 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     producer = _Producer()
     loader = _Loader()
     finalizer = _Finalizer()
-    config = {"evidence_timeout_ms": 30_000, "maximum_group_size": 8}
+    transaction_root = str((tmp_path / "transactions").resolve())
+    Path(transaction_root).mkdir(parents=True)
+    config = {
+        "evidence_timeout_ms": 30_000,
+        "maximum_group_size": 8,
+        "transaction_root": transaction_root,
+    }
     contract = build_verified_transition_provider_contract(
         provider_config=config,
         evidence_producer_identity="external-evidence-service:v1",
@@ -1006,6 +1013,49 @@ def test_acceptance_reconstructs_persisted_lineage_plan(
         match="start_record_reconstruction_mismatch",
     ):
         provider.accept_step_receipt(step)
+
+
+def test_recovered_step_reconstructs_mapping_package(
+    material: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "core.learning.verified_transition_provider.validate_verified_transition_step_receipt",
+        lambda receipt, **_kwargs: copy.deepcopy(receipt),
+    )
+    provider = material["make_provider"]()
+    group = _group_material(
+        material, sequence=0, policy_sha256=material["initial_policy"]
+    )
+    _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
+    step = _step(
+        material,
+        sequence=0,
+        group=group,
+        policy_before=material["initial_policy"],
+        policy_after=_sha("after"),
+    )
+    package = {"schema": "pure-data-package"}
+    material["loader"].groups = (package,)
+    reconstructed = SimpleNamespace(sequence=0)
+    observed: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
+
+    def reconstruct(
+        _self: Any,
+        supplied: Mapping[str, Any],
+        *,
+        step: Mapping[str, Any],
+    ) -> Any:
+        observed.append((supplied, step))
+        return reconstructed
+
+    monkeypatch.setattr(
+        ProductionVerifiedTransitionGroupProvider,
+        "_reconstruct_replay_package",
+        reconstruct,
+    )
+
+    assert provider.accept_recovered_step_receipt(step) == (reconstructed,)
+    assert observed == [(package, step)]
 
 
 def test_finalize_requires_same_causal_schedule_root(material: dict[str, Any]) -> None:

@@ -145,7 +145,7 @@ def _require_token_ids(
     return result
 
 
-def _canonical_logprob(value: Any) -> str:
+def canonical_behavior_logprob(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
         _fail("behavior_logprob_invalid")
     if isinstance(value, float) and not math.isfinite(value):
@@ -164,7 +164,7 @@ def _canonical_logprob(value: Any) -> str:
 def _require_logprobs(value: Any, *, token_count: int) -> list[str]:
     if not isinstance(value, (list, tuple)) or len(value) != token_count:
         _fail("behavior_logprobs_invalid")
-    return [_canonical_logprob(item) for item in value]
+    return [canonical_behavior_logprob(item) for item in value]
 
 
 def _b64(value: bytes) -> str:
@@ -811,6 +811,7 @@ __all__ = [
     "build_resident_tokenizer_trace_adapter",
     "build_tokenizer_bundle_identity",
     "build_verified_token_trace",
+    "canonical_behavior_logprob",
     "tokenizer_adapter_source_sha256",
     "tokenizer_file_bindings",
     "tokenizer_file_bindings_from_bytes",

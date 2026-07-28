@@ -30940,3 +30940,143 @@ completion envelope is approximately 74.0%-100.0% with an 87.0% midpoint. The
 evidence-adjusted range remains 2-4 checkpoints to resident-32B training launch,
 6-10 to a defensible preliminary gain verdict, and 11-20 to the powered
 conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420L replay-complete recurrent transition custody
+
+Commit `e6e90497758ab40aeb99e93b3551b98438bd7060` landed the previously
+unrecorded CP420L implementation under the incorrect historical subject
+`SPARK CP419`. The immutable commit is not rewritten; this tracker entry
+corrects its checkpoint identity.
+
+Verified recurrent transition evidence now replays the real resident tokenizer
+for the exact prompt, parent, and child token streams; binds strict independent
+parent/child scores, task commitment, trust policy, tokenizer bundle, causal
+pair, and sample receipt; and rejects text, token, completion, prompt, scorer,
+or tokenizer substitution. A durable repository publishes canonical
+create-once packages containing numeric samples plus immutable evidence,
+reward, admission, and plan bindings. Restore reconstructs those objects from
+package and artifact bytes under the current trusted runtime instead of
+retaining Python callback objects across process death. Rejected packages are
+loaded and replayed as part of the contiguous campaign history.
+
+The causal campaign close contract now distinguishes a never-started contiguous
+tail, which is sealed as aborted, from a started but unfinished group, which
+still fails closed. The production finalizer externally signs the close
+payload through the evidence-verifier role. The commit reported 245 passing
+tests; the subsequent CP420M pass independently reran the directly affected
+matrix before adding more launch work.
+
+This closes durable replay-complete transition custody, not CP420 or
+SPARK-060. No model was loaded or trained and no reasoning, frontier,
+resident-32B, promotion, or `WOW Signal` claim follows. CP420L is total
+checkpoint 682. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420M executable, recoverable, role-separated launch custody
+
+The root-verified production factory now has a real executable entry point.
+`tools/run_verified_recurrent_grpo_training.py` accepts a launch-bundle path
+and separately supplied SHA-256, reconstructs only the code-selected stable
+runtime component set, validates the entire launch chain, and injects the
+resulting factory into `train_grpo`. Wrapper arguments are removed before the
+trainer parses its own command line, and the original process argument vector
+is restored on every return path.
+
+The trainer can now perform a bounded initial-policy probe: it loads the exact
+resident checkpoint, constructs the deterministic scoped LoRA policy, seals
+the initial recurrent policy hash together with base/model behavior identity,
+dataset, execution graph, tokenizer bundle, adapter initialization, and exact
+source bindings, then exits before evaluation or mutation. Actual training
+must independently reproduce that hash when the post-load factory is created.
+The probe is not a guessed hash and is not itself accepted as a gain result.
+
+The frozen adapter source inventory now includes the launch runner, recurrent
+evidence repository, recurrent evidence schema, and policy-probe validator.
+It also includes the launch materializer and canonical recurrent prompt
+renderer, and the probe validator requires the complete frozen replay source
+role set rather than a permissive subset. The prompt renderer is shared by
+materialization and training so the committed prompt-token digest cannot drift
+from the trainer's actual prompt.
+
+`tools/materialize_verified_recurrent_grpo_launch.py` now converts a
+root-signed preregistration, externally pinned policy probe, trust policy/root,
+and two separately custodied command signers into one immutable launch bundle.
+It publishes the materialization intent, answer nonces, commitments, causal
+campaign open record, exact provider contract/configuration, trust artifacts,
+and external bundle digest before independently reopening the same bundle
+through the production loader. A crash after partial publication resumes from
+the identical intent, nonces, commitments, and campaign manifest; substitution
+or a second completed materialization fails closed.
+
+Completed launch custody is independently recoverable after the policy's live
+validity window and after both signer executables become unavailable. Recovery
+revalidates the immutable receipt, materialization intent, preregistration,
+bundle, task material, policy/root, causal ledger, archived signer release and
+custody pins, and exact input identity at the original sealed time; it does not
+execute a signer or silently extend policy authority. The initial-policy probe
+has the same restart discipline: an identical rerun rebuilds every identity at
+the first sealed time and reuses the exact receipt, while policy, model,
+tokenizer, adapter, source, dataset, or execution drift fails.
+
+The launch format and production factory require distinct task-issuer and
+evidence-verifier command processes, identities, release pins, and custody
+evidence. Sharing a broker, identity, or custody root is rejected. The provider
+contract is bound into the causal campaign manifest and checked through
+lineage and closure. Final evidence rows bind the exact durable replay-package
+path, SHA-256, and byte count. Campaign closure is replay-idempotent after a
+crash and does not request a second verifier signature for an already valid
+closed record. The preregistered launcher requires the externally supplied
+launch-bundle byte digest; a colocated digest file is only a consistency check,
+and the preregistration semantic digest is recomputed rather than trusted.
+
+Campaign identity is now transitive rather than federated. The
+preregistration, trust policy, provider contract, causal campaign open record,
+schedule root, initial policy, launch bundle, task material, and final evidence
+manifest must all name the same campaign and exact digests. The finalizer
+requires a separately executed verifier process to reconstruct canonical
+packages and tasks; replay token observations; rebuild evidence, reward, and
+admission receipts; recover the update journal; validate transaction and
+checkpoint chains; and hash the staged adapter tensors back to the recorded
+post-update recurrent policy. Rejected groups receive equivalent external
+review of their unchanged-policy intent, terminal, static rewards, and trainer
+checkpoint without passing optimizer admission.
+
+The recurrence curriculum also searches deterministically around excluded
+train prompts and task identities when minting holdouts. This fixes the
+large-campaign collision that made the intended 288-train/36-holdout contract
+abort while preserving its original compute budget and globally disjoint
+identities.
+
+Ruff over 29 touched Python files, bytecode compilation, direct invocation of
+both new CLI entry points, and diff checks pass. The reviewed affected matrix
+passes 206/206 in 64.52 seconds; a disjoint transition-episode and resident
+post-training matrix passes 87/87 in 309.49 seconds, for 293/293 current tests
+across the two invocations. The real tiny-MLX causal harness passes 9/9 within
+the affected matrix and fails closed on byte corruption of evidence, reward,
+admission, update journal, transaction event, adapter tensor, and rejected
+checkpoint chain. The materializer contract includes seven injected
+mid-publication crash/retry points, and subprocess tests execute both tools
+from the repository root rather than relying on pytest import state. Evidence is
+`artifacts/current/cp420m_verified_recurrent_launch_probe_evidence.json`.
+The repository-wide governance and enterprise ratchets remain open after
+rebasing and rerunning on current `origin/main`: governance reports 31
+accumulated ownership deltas plus two stale buckets, while enterprise
+compilation passes with 12 baseline maxima exceeded. CP420M does not rewrite
+those global baselines, approve the new ownership sites, or claim either gate
+green.
+
+This closes the executable, deterministic materialization, recovery, and
+knowable-initial-policy ordering, transitive campaign identity, and externally
+replayable optimizer-causality gaps, not CP420 or SPARK-060. The test campaign
+proves the contract with generated fixture roots and separate command
+processes; the repository still contains no reusable production trust root or
+independently operated issuer/verifier service. No production bundle was
+fabricated from self-issued trust. The next bounded checkpoint must provision
+and policy-pin those external principals, execute the resident policy probe,
+materialize and reopen the production 288-group bundle under that trust, and
+only then launch training. No resident 32B was loaded, no training ran, and no
+reasoning, frontier, promotion, or `WOW Signal` claim follows. CP420M is total
+checkpoint 683. The 683-920 completion envelope is approximately
+74.2%-100.0%, with an 87.1% midpoint. The evidence-adjusted range is 2-4
+checkpoints to a sealed resident-32B training launch, 6-10 to a defensible
+preliminary gain verdict, and 11-20 to the powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

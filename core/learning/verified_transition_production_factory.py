@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Never, Protocol, cast
 
 from core.brain.llm.latent_cortex.campaign_trust import (
+    EVIDENCE_VERIFIER,
     TASK_ISSUER,
     VerifiedCampaignTrustPolicy,
     assemble_role_attestation,
@@ -40,6 +41,10 @@ from core.learning.verified_training_task import (
     VerifiedTrainingTaskError,
     build_verified_training_task,
     validate_public_training_task,
+)
+from core.learning.verified_transition_causal_campaign import (
+    validate_causal_campaign_evidence_manifest,
+    validate_external_evidence_verification_receipt,
 )
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
@@ -75,6 +80,12 @@ SAMPLING_CONFIG_CONTRACT_SCHEMA = (
 )
 COMMAND_SIGNER_REQUEST_SCHEMA = "aura.external_role_signer.request.v1"
 COMMAND_SIGNER_RESPONSE_SCHEMA = "aura.external_role_signer.response.v1"
+COMMAND_EVIDENCE_VERIFIER_REQUEST_SCHEMA = (
+    "aura.external_evidence_verifier.request.v2"
+)
+COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA = (
+    "aura.external_evidence_verifier.response.v1"
+)
 
 _JIT_CONFIG_KEYS = frozenset(
     {
@@ -107,6 +118,9 @@ _PLAN_PACKAGE_KEYS = frozenset(
 _SIGNER_RESPONSE_KEYS = frozenset(
     {"schema", "request_sha256", "signature_b64"}
 )
+_VERIFIER_RESPONSE_KEYS = frozenset(
+    {"schema", "request_sha256", "verification_receipt"}
+)
 _SAMPLING_FIXED_FIELDS = (
     "temperature",
     "top_p",
@@ -120,6 +134,7 @@ _SAMPLING_CONTRACT_KEYS = frozenset(
     {"schema", "max_tokens"}
     | {f"{field}_micros" for field in _SAMPLING_FIXED_FIELDS}
 )
+_TRAINING_ARGV_SHA256_KEY = "training_argv_sha256"
 
 
 class VerifiedTransitionProductionFactoryError(RuntimeError):
@@ -267,6 +282,15 @@ class ExternalRoleSignerBroker(Protocol):
         purpose: str,
     ) -> Mapping[str, Any]: ...
 
+    def verify_evidence_manifest(
+        self,
+        policy: VerifiedCampaignTrustPolicy,
+        *,
+        evidence_manifest: Mapping[str, Any],
+        verified_at_unix: int,
+        purpose: str,
+    ) -> Mapping[str, Any]: ...
+
 
 class CommandRoleSignerBroker:
     """Call an absolute, pinned external signer command without a shell.
@@ -383,6 +407,115 @@ class CommandRoleSignerBroker:
         if observed != self._executable_sha256:
             _fail("signer_broker_executable_identity_mismatch")
 
+    def _execute(self, envelope: Mapping[str, Any]) -> dict[str, Any]:
+        request_bytes = canonical_json_bytes(envelope) + b"\n"
+        environment = {
+            "LANG": "C",
+            "LC_ALL": "C",
+            **{
+                name: os.environ[name]
+                for name in self._environment_names
+                if name in os.environ
+            },
+        }
+        self._assert_executable_identity()
+        try:
+            completed = subprocess.run(
+                [str(self._executable), *self._arguments],
+                input=request_bytes,
+                capture_output=True,
+                check=False,
+                timeout=self._timeout_seconds,
+                env=environment,
+                shell=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise VerifiedTransitionProductionFactoryError(
+                "signer_broker_execution_failed"
+            ) from exc
+        self._assert_executable_identity()
+        if completed.returncode != 0:
+            _fail("signer_broker_rejected_request")
+        if len(completed.stdout) > 64 * 1024 or len(completed.stderr) > 64 * 1024:
+            _fail("signer_broker_output_too_large")
+        try:
+            response = json.loads(completed.stdout)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise VerifiedTransitionProductionFactoryError(
+                "signer_broker_response_invalid"
+            ) from exc
+        if (
+            not isinstance(response, dict)
+            or completed.stdout != canonical_json_bytes(response) + b"\n"
+        ):
+            _fail("signer_broker_response_invalid")
+        return response
+
+    def verify_evidence_manifest(
+        self,
+        policy: VerifiedCampaignTrustPolicy,
+        *,
+        evidence_manifest: Mapping[str, Any],
+        verified_at_unix: int,
+        purpose: str,
+    ) -> Mapping[str, Any]:
+        """Require the pinned verifier process to replay exact package bytes."""
+
+        purpose = _identifier(purpose, role="evidence_verifier_purpose")
+        evidence = validate_causal_campaign_evidence_manifest(
+            evidence_manifest
+        )
+        verifier_pin = policy.role_pin(EVIDENCE_VERIFIER)
+        if (
+            self.implementation_sha256
+            != verifier_pin["implementation_sha256"]
+            or self.release_sha256 != verifier_pin["release_sha256"]
+            or self.custody_evidence_sha256
+            != verifier_pin["custody_evidence_sha256"]
+        ):
+            _fail("signer_broker_artifact_identity_mismatch")
+        body = {
+            "schema": COMMAND_EVIDENCE_VERIFIER_REQUEST_SCHEMA,
+            "purpose": purpose,
+            "verifier_identity": self.identity,
+            "verified_at_unix": _integer(
+                verified_at_unix,
+                role="evidence_verifier_verified_at",
+                minimum=1,
+            ),
+            "evidence_manifest": evidence,
+            "campaign_trust_policy": {
+                "document": policy.document,
+                "policy_sha256": policy.policy_sha256,
+                "root_key_id": policy.root_key_id,
+            },
+        }
+        request = {**body, "request_sha256": _digest(body)}
+        response = self._execute(request)
+        if (
+            self.release_sha256 != verifier_pin["release_sha256"]
+            or self.custody_evidence_sha256
+            != verifier_pin["custody_evidence_sha256"]
+        ):
+            _fail("signer_broker_artifact_identity_mismatch")
+        if (
+            set(response) != _VERIFIER_RESPONSE_KEYS
+            or response.get("schema")
+            != COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA
+            or response.get("request_sha256") != request["request_sha256"]
+        ):
+            _fail("evidence_verifier_response_invalid")
+        receipt = validate_external_evidence_verification_receipt(
+            response.get("verification_receipt"),
+            evidence_manifest=evidence,
+        )
+        if (
+            receipt["verifier_identity"] != self.identity
+            or receipt["verified_at_unix"] != verified_at_unix
+        ):
+            _fail("evidence_verifier_receipt_identity_mismatch")
+        return receipt
+
     def attest(
         self,
         policy: VerifiedCampaignTrustPolicy,
@@ -404,16 +537,6 @@ class CommandRoleSignerBroker:
             "purpose": purpose,
             "signature_request": request,
         }
-        request_bytes = canonical_json_bytes(envelope) + b"\n"
-        environment = {
-            "LANG": "C",
-            "LC_ALL": "C",
-            **{
-                name: os.environ[name]
-                for name in self._environment_names
-                if name in os.environ
-            },
-        }
         self._assert_executable_identity()
         issuer_pin = policy.role_pin(role)
         expected_release = _sha256(
@@ -428,41 +551,15 @@ class CommandRoleSignerBroker:
             or self.custody_evidence_sha256 != expected_custody
         ):
             _fail("signer_broker_artifact_identity_mismatch")
-        try:
-            completed = subprocess.run(
-                [str(self._executable), *self._arguments],
-                input=request_bytes,
-                capture_output=True,
-                check=False,
-                timeout=self._timeout_seconds,
-                env=environment,
-                shell=False,
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise VerifiedTransitionProductionFactoryError(
-                "signer_broker_execution_failed"
-            ) from exc
-        self._assert_executable_identity()
+        response = self._execute(envelope)
         if (
             self.release_sha256 != expected_release
             or self.custody_evidence_sha256 != expected_custody
         ):
             _fail("signer_broker_artifact_identity_mismatch")
-        if completed.returncode != 0:
-            _fail("signer_broker_rejected_request")
-        if len(completed.stdout) > 64 * 1024 or len(completed.stderr) > 64 * 1024:
-            _fail("signer_broker_output_too_large")
-        try:
-            response = json.loads(completed.stdout)
-        except (UnicodeError, json.JSONDecodeError) as exc:
-            raise VerifiedTransitionProductionFactoryError(
-                "signer_broker_response_invalid"
-            ) from exc
         if (
-            not isinstance(response, dict)
-            or set(response) != _SIGNER_RESPONSE_KEYS
+            set(response) != _SIGNER_RESPONSE_KEYS
             or response.get("schema") != COMMAND_SIGNER_RESPONSE_SCHEMA
-            or completed.stdout != canonical_json_bytes(response) + b"\n"
             or response.get("request_sha256") != request["request_sha256"]
             or not isinstance(response.get("signature_b64"), str)
         ):
@@ -881,7 +978,8 @@ class ProductionVerifiedTransitionProviderFactory:
         token_encoder: Callable[..., Any],
         token_decoder: Callable[..., Any],
         token_codec_identity: str,
-        signer_broker: ExternalRoleSignerBroker,
+        task_issuer_signer_broker: ExternalRoleSignerBroker,
+        evidence_verifier_signer_broker: ExternalRoleSignerBroker,
         task_commitments: Mapping[str, Mapping[str, Any]],
         task_answer_nonces: Mapping[str, bytes],
     ) -> None:
@@ -889,6 +987,21 @@ class ProductionVerifiedTransitionProviderFactory:
         config = cast(dict[str, Any], _clone(provider_config, role="provider_config"))
         if frozen["provider"]["config"] != config:
             _fail("production_factory_provider_config_mismatch")
+        training_argv = config.get("training_argv")
+        if (
+            not isinstance(training_argv, list)
+            or len(training_argv) < 2
+            or training_argv[0] != "tools/train_grpo.py"
+            or any(
+                not isinstance(argument, str)
+                or not argument
+                or "\x00" in argument
+                for argument in training_argv
+            )
+            or config.get(_TRAINING_ARGV_SHA256_KEY)
+            != hashlib.sha256(canonical_json_bytes(training_argv)).hexdigest()
+        ):
+            _fail("production_factory_training_argv_invalid")
         jit = config.get("jit_plan")
         if not isinstance(jit, Mapping) or set(jit) != _JIT_CONFIG_KEYS:
             _fail("production_factory_jit_config_invalid")
@@ -902,26 +1015,52 @@ class ProductionVerifiedTransitionProviderFactory:
         )
         if branch_count > 256:
             _fail("production_factory_branch_count_invalid")
-        if not isinstance(signer_broker, CommandRoleSignerBroker):
-            _fail("production_factory_external_command_signer_required")
+        if not isinstance(
+            task_issuer_signer_broker, CommandRoleSignerBroker
+        ) or not isinstance(
+            evidence_verifier_signer_broker, CommandRoleSignerBroker
+        ):
+            _fail("production_factory_external_command_signers_required")
+        if (
+            task_issuer_signer_broker is evidence_verifier_signer_broker
+            or task_issuer_signer_broker.identity
+            == evidence_verifier_signer_broker.identity
+            or task_issuer_signer_broker.custody_evidence_sha256
+            == evidence_verifier_signer_broker.custody_evidence_sha256
+        ):
+            _fail("production_factory_signer_role_separation_required")
         if (
             jit.get("schema") != JIT_PROVIDER_CONFIG_SCHEMA
-            or jit.get("signer_broker_identity") != signer_broker.identity
+            or jit.get("signer_broker_identity")
+            != task_issuer_signer_broker.identity
             or jit.get("signer_broker_source_sha256")
-            != signer_broker.source_sha256
+            != task_issuer_signer_broker.source_sha256
         ):
             _fail("production_factory_signer_broker_mismatch")
         issuer_pin = campaign_trust_policy.role_pin(TASK_ISSUER)
         if (
             issuer_pin["implementation_sha256"]
-            != signer_broker.implementation_sha256
-            or issuer_pin["release_sha256"] != signer_broker.release_sha256
+            != task_issuer_signer_broker.implementation_sha256
+            or issuer_pin["release_sha256"]
+            != task_issuer_signer_broker.release_sha256
             or issuer_pin["custody_evidence_sha256"]
-            != signer_broker.custody_evidence_sha256
+            != task_issuer_signer_broker.custody_evidence_sha256
             or issuer_pin["custody_class"]
             not in {"external_service", "remote_hsm"}
         ):
             _fail("production_factory_signer_custody_pin_mismatch")
+        verifier_pin = campaign_trust_policy.role_pin(EVIDENCE_VERIFIER)
+        if (
+            verifier_pin["implementation_sha256"]
+            != evidence_verifier_signer_broker.implementation_sha256
+            or verifier_pin["release_sha256"]
+            != evidence_verifier_signer_broker.release_sha256
+            or verifier_pin["custody_evidence_sha256"]
+            != evidence_verifier_signer_broker.custody_evidence_sha256
+            or verifier_pin["custody_class"]
+            not in {"external_service", "remote_hsm"}
+        ):
+            _fail("production_factory_verifier_custody_pin_mismatch")
         replay_root = Path(frozen["ledger_roots"]["replay_artifacts"])
         expected_plan_root = str((replay_root / "jit-plans").resolve(strict=False))
         if jit.get("plan_store_root") != expected_plan_root:
@@ -975,6 +1114,7 @@ class ProductionVerifiedTransitionProviderFactory:
             _fail("production_factory_task_material_scope_mismatch")
         self._contract = frozen
         self._config = config
+        self._training_argv = tuple(cast(list[str], training_argv))
         self._jit = dict(jit)
         self._sampling = sampling
         self._branch_count = branch_count
@@ -991,7 +1131,8 @@ class ProductionVerifiedTransitionProviderFactory:
         self._encoder = token_encoder
         self._decoder = token_decoder
         self._codec_identity = token_codec_identity
-        self._broker = signer_broker
+        self._task_issuer_broker = task_issuer_signer_broker
+        self._evidence_verifier_broker = evidence_verifier_signer_broker
         self._commitments = commitments
         self._answer_nonces = nonces
         self._created = False
@@ -1000,6 +1141,12 @@ class ProductionVerifiedTransitionProviderFactory:
     @property
     def contract_sha256(self) -> str:
         return cast(str, self._contract["contract_sha256"])
+
+    @property
+    def training_argv(self) -> tuple[str, ...]:
+        """Return the exact externally frozen trainer invocation."""
+
+        return self._training_argv
 
     def bind_training_tasks(self, tasks: Sequence[Any]) -> Sequence[Any]:
         bound = []
@@ -1089,12 +1236,12 @@ class ProductionVerifiedTransitionProviderFactory:
                 token_codec_identity=self._codec_identity,
                 tokenizer_trace_adapter=runtime.tokenizer_trace_adapter,
                 training_tasks=runtime.training_tasks,
-                evidence_verifier_signer=self._broker,
+                evidence_verifier_signer=self._evidence_verifier_broker,
             )
             wrapped = JITAdmittingVerifiedTransitionGroupProvider(
                 provider=provider,
                 policy=self._policy,
-                signer_broker=self._broker,
+                signer_broker=self._task_issuer_broker,
                 plan_store=JITVerifiedTransitionPlanStore(
                     self._jit["plan_store_root"],
                     contract_sha256=self.contract_sha256,
@@ -1108,6 +1255,8 @@ class ProductionVerifiedTransitionProviderFactory:
 
 
 __all__ = [
+    "COMMAND_EVIDENCE_VERIFIER_REQUEST_SCHEMA",
+    "COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA",
     "COMMAND_SIGNER_REQUEST_SCHEMA",
     "COMMAND_SIGNER_RESPONSE_SCHEMA",
     "CommandRoleSignerBroker",

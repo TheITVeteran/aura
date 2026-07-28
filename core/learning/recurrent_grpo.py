@@ -398,21 +398,28 @@ def _valid_sha256(value: Any) -> bool:
     )
 
 
-def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
-    """Hash the exact trainable tensor tree plus its recurrent graph."""
+def recurrent_policy_tensor_map_sha256(
+    tensors: Mapping[str, Any],
+    execution_spec_sha256: str,
+) -> str:
+    """Hash one flat adapter tensor map plus its recurrent graph identity."""
 
+    if (
+        not isinstance(tensors, Mapping)
+        or not tensors
+        or not _valid_sha256(execution_spec_sha256)
+        or any(not isinstance(name, str) or not name for name in tensors)
+    ):
+        raise ValueError("recurrent policy tensor map is invalid")
     import mlx.core as mx
     import numpy as np
-    from mlx.utils import tree_flatten
 
-    tensors = sorted(tree_flatten(model.trainable_parameters()))
-    if not tensors:
-        raise ValueError("recurrent policy has no trainable parameters")
-    mx.eval([value for _name, value in tensors])
+    ordered = sorted(tensors.items())
+    mx.eval([value for _name, value in ordered])
     digest = hashlib.sha256()
     digest.update(b"aura.recurrent_policy.v1\0")
-    digest.update(spec.sha256.encode("ascii"))
-    for name, value in tensors:
+    digest.update(execution_spec_sha256.encode("ascii"))
+    for name, value in ordered:
         name_bytes = name.encode("utf-8")
         dtype = str(value.dtype).encode("ascii")
         shape = json.dumps(list(value.shape), separators=(",", ":")).encode(
@@ -430,6 +437,17 @@ def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
             digest.update(len(part).to_bytes(8, "big"))
             digest.update(part)
     return digest.hexdigest()
+
+
+def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
+    """Hash the exact trainable tensor tree plus its recurrent graph."""
+
+    from mlx.utils import tree_flatten
+
+    return recurrent_policy_tensor_map_sha256(
+        dict(tree_flatten(model.trainable_parameters())),
+        spec.sha256,
+    )
 
 
 def _decode_frozen_recurrent_state(
@@ -2302,6 +2320,7 @@ __all__ = [
     "exact_adjoint_verified_transition_group_value_and_grad",
     "exact_adjoint_verifier_group_value_and_grad",
     "recurrent_policy_sha256",
+    "recurrent_policy_tensor_map_sha256",
     "recurrent_policy_sample_from_causal_pair",
     "recurrent_policy_sample_from_receipt",
     "recurrent_sampling_rng_root_sha256",

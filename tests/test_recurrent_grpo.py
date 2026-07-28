@@ -22,6 +22,7 @@ from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
+from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     LivePathForward,
     live_path_branch_answer_ce_trail,
@@ -38,6 +39,8 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     recurrent_completion_token_logprobs,
     recurrent_policy_sample_from_causal_pair,
     recurrent_policy_sample_from_receipt,
+    recurrent_policy_sha256,
+    recurrent_policy_tensor_map_sha256,
     recurrent_sampling_rng_root_sha256,
     sample_final_recurrent_transition_pair,
     sample_recurrent_completion,
@@ -51,13 +54,18 @@ from core.learning.verified_recurrent_transition_evidence import (  # noqa: E402
     validate_verified_recurrent_transition_evidence,
 )
 from core.learning.verified_recurrent_transition_repository import (  # noqa: E402
+    VerifiedRecurrentTransitionRepositoryError,
     load_recurrent_replay_packages,
     produce_verified_recurrent_transition_group,
     reconstruct_recurrent_package_inputs,
+    score_verified_recurrent_training_task,
 )
 from core.learning.verified_token_trace import (  # noqa: E402
     build_tokenizer_bundle_identity,
     tokenizer_file_bindings_from_bytes,
+)
+from core.learning.verified_training_task import (  # noqa: E402
+    build_verified_training_task,
 )
 from core.learning.verified_transition_episode import (  # noqa: E402
     TransitionArtifactStore,
@@ -66,6 +74,9 @@ from core.learning.verified_transition_group_admission import (  # noqa: E402
     TransitionGroupPlanEntry,
     build_transition_group_manifest,
     sampling_config_sha256,
+)
+from core.learning.verified_transition_production_factory import (  # noqa: E402
+    ProviderBoundTrainingTask,
 )
 from core.learning.verified_transition_reward import (  # noqa: E402
     TransitionRewardConfig,
@@ -257,6 +268,25 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert validated["sample_kind"] == "engine_episode"
     assert validated["episode_id"] == "engine-sample-test-117"
     assert validated["episode_receipt"]["episode_id"] == sample.episode_id
+
+
+def test_flat_transaction_tensors_reproduce_live_policy_identity() -> None:
+    model = _prepared(seed=920)
+    spec = _spec(depth=2)
+    tensors = dict(tree_flatten(model.trainable_parameters()))
+
+    assert recurrent_policy_tensor_map_sha256(
+        tensors,
+        spec.sha256,
+    ) == recurrent_policy_sha256(model, spec)
+
+    name = sorted(tensors)[0]
+    changed = dict(tensors)
+    changed[name] = changed[name] + mx.ones_like(changed[name])
+    assert recurrent_policy_tensor_map_sha256(
+        changed,
+        spec.sha256,
+    ) != recurrent_policy_sha256(model, spec)
 
 
 def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
@@ -475,16 +505,15 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
     )
     sample = recurrent_policy_sample_from_causal_pair(pair)
 
-    class Task:
-        task_id = "replay-package-task"
-
-        @staticmethod
-        def verified_transition_task_commitment():
-            return {
-                "schema": "test.task.v1",
-                "task_id": "replay-package-task",
-                "prompt": "replay",
-            }
+    source_task = khop_reachability(1, 929)
+    public_task, _sealed_task = build_verified_training_task(
+        source_task,
+        answer_nonce=b"replay-package-answer-nonce-32-bytes",
+    )
+    task = ProviderBoundTrainingTask(
+        source_task,
+        public_task.to_dict(),
+    )
 
     bundle = build_tokenizer_bundle_identity(
         tokenizer_class="test.NumericTokenizer",
@@ -506,7 +535,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
 
         @staticmethod
         def encode_prompt(text):
-            assert text == "Prompt"
+            assert text == source_task.prompt
             return prompt
 
         @staticmethod
@@ -524,15 +553,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
                 for index, value in enumerate(rendered)
             ]
 
-    def score(_task, response):
-        return {
-            "parsed": True,
-            "correct": False,
-            "reason": "deterministic_rejected_test_score",
-            "normalized_answer_sha256": hashlib.sha256(
-                response.encode("utf-8")
-            ).hexdigest(),
-        }
+    score = score_verified_recurrent_training_task
 
     roots = {
         name: str((tmp_path / name).resolve())
@@ -555,11 +576,11 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
     ).hexdigest()
     manifest = build_transition_group_manifest(
         group_id="replay-package-group",
-        task_id=Task.task_id,
+        task_id=task.task_id,
         entries=(
             TransitionGroupPlanEntry(
                 episode_id=sample.episode_id,
-                task_id=Task.task_id,
+                task_id=task.task_id,
                 rng_root_sha256=sample.rng_root_sha256,
                 policy_sha256=sample.policy_sha256,
                 recurrent_execution_spec_sha256=(
@@ -579,8 +600,8 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
         contract_sha256="7" * 64,
         campaign_schedule_root_sha256="8" * 64,
         sequence=0,
-        task=Task(),
-        prompt_text="Prompt",
+        task=task,
+        prompt_text=source_task.prompt,
         prompt_tokens=tuple(prompt),
         samples=(sample,),
         completions=(Adapter.decode_output(sample.tokens),),
@@ -602,29 +623,34 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
     )
     prepared = produce_verified_recurrent_transition_group(request)
     assert prepared.reward_receipt["optimizer_admitted"] is False
+    replayed_prepared = produce_verified_recurrent_transition_group(request)
+    assert replayed_prepared.reward_receipt == prepared.reward_receipt
+    assert (
+        replayed_prepared.transition_evidence[0].document
+        == prepared.transition_evidence[0].document
+    )
     step = {
-        "task_id": Task.task_id,
+        "task_id": task.task_id,
         "reward_receipt_sha256": prepared.reward_receipt["receipt_sha256"],
         "group_manifest_sha256": manifest["manifest_sha256"],
         "group_admission_sha256": None,
     }
-    packages = load_recurrent_replay_packages(
-        SimpleNamespace(
-            schema="aura.verified_transition.restore_request.v2",
-            contract_sha256=request.contract_sha256,
-            campaign_schedule_root_sha256=(
-                request.campaign_schedule_root_sha256
-            ),
-            committed_steps=1,
-            step_receipts=(step,),
-            replay_artifact_root=roots["replay_artifacts"],
-        )
+    restore_request = SimpleNamespace(
+        schema="aura.verified_transition.restore_request.v2",
+        contract_sha256=request.contract_sha256,
+        campaign_schedule_root_sha256=(
+            request.campaign_schedule_root_sha256
+        ),
+        committed_steps=1,
+        step_receipts=(step,),
+        replay_artifact_root=roots["replay_artifacts"],
     )
+    packages = load_recurrent_replay_packages(restore_request)
     reopened_store = TransitionArtifactStore(roots["transition_artifacts"])
     samples, evidence = reconstruct_recurrent_package_inputs(
         packages[0],
         store=reopened_store,
-        task=Task(),
+        task=task,
         independent_scorer=score,
         tokenizer_trace_adapter=Adapter(),
         campaign_trust_policy=policy,
@@ -633,6 +659,17 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
     assert evidence[0].document["receipt_sha256"] == (
         prepared.transition_evidence[0].document["receipt_sha256"]
     )
+    package_path = (
+        Path(roots["replay_artifacts"])
+        / "group-00000000.prepared.json"
+    )
+    package_bytes = package_path.read_bytes()
+    package_path.write_bytes(package_bytes + b" ")
+    with pytest.raises(
+        VerifiedRecurrentTransitionRepositoryError,
+        match="recurrent_replay_package_noncanonical",
+    ):
+        load_recurrent_replay_packages(restore_request)
 
 
 def test_causal_samples_enter_the_exact_adjoint_without_identity_loss():

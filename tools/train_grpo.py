@@ -114,6 +114,7 @@ from core.runtime.atomic_writer import (  # noqa: E402
     ensure_private_directory,
     interprocess_file_lock,
 )
+from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from core.runtime.mlx_memory_guard import mlx_memory_envelope  # noqa: E402
 
 GRPO_DATASET_SCHEMA = "aura.grpo_dataset.v1"
@@ -969,32 +970,23 @@ def _publish_recurrent_adapter_bundle(
 
 
 def _render(tokenizer, task) -> str:
-    content = _answer_contract_instruction(task) + "\n\n" + task.prompt
-    if _COT_PREAMBLE:
-        content = _COT_PREAMBLE + "\n\n" + content
-    return tokenizer.apply_chat_template(
-        [{"role": "user", "content": content}],
-        add_generation_prompt=True,
-        tokenize=False,
+    from core.learning.recurrent_training_prompt import (
+        render_recurrent_training_prompt_text,
+    )
+
+    return render_recurrent_training_prompt_text(
+        tokenizer,
+        task,
+        include_chain_of_thought=bool(_COT_PREAMBLE),
     )
 
 
 def _answer_contract_instruction(task: Any) -> str:
     """Serving-side answer-channel scaffold without leaking answer values."""
 
-    keys = []
-    try:
-        expected = task.expected
-    except (AttributeError, TypeError, ValueError):
-        expected = None
-    if isinstance(expected, Mapping):
-        keys = sorted(str(key) for key in expected)
-    key_text = f" Use exactly these JSON keys: {', '.join(keys)}." if keys else ""
-    return (
-        "Solve the task, then end with exactly one final line in this form: "
-        "FINAL_ANSWER: {JSON object}. Do not write anything after that line."
-        f"{key_text}"
-    )
+    from core.learning.recurrent_training_prompt import answer_contract_instruction
+
+    return answer_contract_instruction(task)
 
 
 def _load_execution_spec(mode: str, path: str | None):
@@ -1019,11 +1011,16 @@ def _load_execution_spec(mode: str, path: str | None):
 
 
 def _rendered_task_prompt(tokenizer, task) -> tuple[str, list[int]]:
-    rendered = _render(tokenizer, task)
-    tokens = list(tokenizer.encode(rendered))
-    if not tokens or any(type(token) is not int or token < 0 for token in tokens):
-        raise RuntimeError("rendered task produced invalid prompt tokens")
-    return rendered, tokens
+    from core.learning.recurrent_training_prompt import (
+        render_recurrent_training_prompt,
+    )
+
+    rendered, tokens = render_recurrent_training_prompt(
+        tokenizer,
+        task,
+        include_chain_of_thought=bool(_COT_PREAMBLE),
+    )
+    return rendered, list(tokens)
 
 
 def _task_prompt_tokens(tokenizer, task) -> list[int]:
@@ -1577,6 +1574,22 @@ def main(
     parser.add_argument("--max-minutes", type=float, default=600.0)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
+    parser.add_argument(
+        "--initial-policy-probe",
+        action="store_true",
+        help=(
+            "load the recurrent checkpoint, attach deterministic LoRA sites, "
+            "seal initial_policy_probe.json, and exit before evaluation or training"
+        ),
+    )
+    parser.add_argument(
+        "--read-only-answer-channel-preflight",
+        action="store_true",
+        help=(
+            "load the recurrent checkpoint, run the held-out answer-channel "
+            "diagnostic, publish its receipt, and exit before optimizer construction"
+        ),
+    )
     args = parser.parse_args()
 
     for name in (
@@ -1624,7 +1637,12 @@ def main(
         parser.error(str(exc))
     if args.execution_mode == "recurrent" and args.temperature != 1.0:
         parser.error("recurrent mode requires --temperature 1")
-    if args.execution_mode == "recurrent" and verified_group_provider_factory is None:
+    if (
+        args.execution_mode == "recurrent"
+        and verified_group_provider_factory is None
+        and not args.initial_policy_probe
+        and not args.read_only_answer_channel_preflight
+    ):
         parser.error(
             "recurrent mode requires a post-load verified transition provider "
             "factory; preconstructed providers and raw caller-authored scalar "
@@ -1632,6 +1650,18 @@ def main(
         )
     if args.execution_mode == "standard" and verified_group_provider_factory is not None:
         parser.error("a verified transition provider only applies to recurrent mode")
+    if args.execution_mode == "standard" and (
+        args.initial_policy_probe or args.read_only_answer_channel_preflight
+    ):
+        parser.error("recurrent probes only apply to recurrent mode")
+    if args.initial_policy_probe and args.read_only_answer_channel_preflight:
+        parser.error("select exactly one recurrent probe mode")
+    if verified_group_provider_factory is not None and (
+        args.initial_policy_probe or args.read_only_answer_channel_preflight
+    ):
+        parser.error(
+            "read-only recurrent probes cannot be combined with a training provider"
+        )
     provider_contract_sha256 = None
     if verified_group_provider_factory is not None:
         provider_contract_sha256 = getattr(
@@ -1659,11 +1689,12 @@ def main(
     import mlx.optimizers as optim
 
     global _COT_PREAMBLE
-    if args.cot:
-        _COT_PREAMBLE = (
-            "Work through this step by step, then end with your answer on "
-            "its own line."
-        )
+    _COT_PREAMBLE = (
+        "Work through this step by step, then end with your answer on "
+        "its own line."
+        if args.cot
+        else ""
+    )
 
     config = GRPOConfig(
         group_size=args.group_size, kl_coefficient=args.kl_coefficient
@@ -1779,6 +1810,38 @@ def main(
                 "transition_launch_bundle": (
                     REPO_ROOT
                     / "core/learning/verified_transition_launch_bundle.py"
+                ),
+                "transition_launch_runner": (
+                    REPO_ROOT / "tools/run_verified_recurrent_grpo_training.py"
+                ),
+                "transition_launch_materializer": (
+                    REPO_ROOT
+                    / "tools/materialize_verified_recurrent_grpo_launch.py"
+                ),
+                "transition_recurrent_evidence": (
+                    REPO_ROOT
+                    / "core/learning/verified_recurrent_transition_evidence.py"
+                ),
+                "transition_recurrent_repository": (
+                    REPO_ROOT
+                    / "core/learning/verified_recurrent_transition_repository.py"
+                ),
+                "transition_policy_probe": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_policy_probe.py"
+                ),
+                "recurrent_training_prompt": (
+                    REPO_ROOT
+                    / "core/learning/recurrent_training_prompt.py"
+                ),
+                "atomic_writer": (
+                    REPO_ROOT / "core/runtime/atomic_writer.py"
+                ),
+                "file_read_gateway": (
+                    REPO_ROOT / "core/runtime/file_read_gateway.py"
+                ),
+                "file_write_gateway": (
+                    REPO_ROOT / "core/runtime/file_write_gateway.py"
                 ),
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
@@ -1968,6 +2031,160 @@ def main(
         if not attached:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
+
+        if args.initial_policy_probe:
+            from core.learning.recurrent_grpo import recurrent_policy_sha256
+            from core.learning.verified_transition_policy_probe import (
+                build_initial_recurrent_policy_probe,
+                validate_initial_recurrent_policy_probe_identity,
+            )
+
+            assert execution_spec is not None
+            assert token_trace_adapter is not None
+            probe_path = out_dir / "initial_policy_probe.json"
+            probe_identity = {
+                "campaign_id": args.adapter_id,
+                "initial_policy_sha256": recurrent_policy_sha256(
+                    model, execution_spec
+                ),
+                "dataset_sha256": dataset_sha256,
+                "execution_spec_sha256": execution_spec.sha256,
+                "base_checkpoint": base_identity,
+                "model_behavior_bundle": behavior_identity,
+                "tokenizer_bundle": token_trace_adapter.bundle_identity,
+                "adapter_initialization": {
+                    "seed": _stable_seed(
+                        args.seed, "lora-init", args.adapter_id
+                    ),
+                    "rank": args.lora_rank,
+                    "layers": args.lora_layers,
+                    "targets": list(targets),
+                },
+                "source_bindings": sources,
+            }
+            with interprocess_file_lock(
+                out_dir / ".initial-policy-probe.lock"
+            ):
+                if probe_path.exists() or probe_path.is_symlink():
+                    if probe_path.is_symlink():
+                        raise GRPOCheckpointError(
+                            "initial recurrent policy probe symlink is forbidden"
+                        )
+                    raw_probe = read_stable_bytes(
+                        probe_path,
+                        max_bytes=16 << 20,
+                    )
+                    try:
+                        existing_probe = json.loads(raw_probe)
+                    except (
+                        UnicodeError,
+                        json.JSONDecodeError,
+                    ) as exc:
+                        raise GRPOCheckpointError(
+                            "initial recurrent policy probe is invalid"
+                        ) from exc
+                    if (
+                        not isinstance(existing_probe, Mapping)
+                        or canonical_json_bytes(existing_probe) != raw_probe
+                    ):
+                        raise GRPOCheckpointError(
+                            "initial recurrent policy probe is noncanonical"
+                        )
+                    probe = (
+                        validate_initial_recurrent_policy_probe_identity(
+                            existing_probe,
+                            **probe_identity,
+                        )
+                    )
+                else:
+                    probe = build_initial_recurrent_policy_probe(
+                        **probe_identity,
+                        created_at_unix_ns=time.time_ns(),
+                    )
+                    _publish_immutable_bytes(
+                        probe_path,
+                        canonical_json_bytes(probe),
+                        role="initial recurrent policy probe",
+                    )
+            print(
+                "[policy-probe] "
+                f"policy={probe['initial_policy_sha256']} "
+                f"receipt={probe['receipt_sha256']} path={probe_path}",
+                flush=True,
+            )
+            return 0
+
+        if args.read_only_answer_channel_preflight:
+            assert execution_spec is not None
+            report = evaluate_recurrent_heldout(
+                model,
+                tokenizer,
+                holdout,
+                spec=execution_spec,
+                max_tokens=args.max_tokens,
+                adapters_on=False,
+                seed=_stable_seed(args.seed, "answer-channel-preflight"),
+                progress_label="answer-channel-preflight",
+                envelope=envelope,
+            )
+            episode_receipts = report.get("episode_receipts")
+            if not isinstance(episode_receipts, list) or not episode_receipts:
+                raise RuntimeError(
+                    "answer-channel preflight produced no episode receipts"
+                )
+            valid_contracts = sum(
+                1
+                for receipt in episode_receipts
+                if isinstance(receipt, Mapping)
+                and isinstance(receipt.get("contract"), Mapping)
+                and receipt["contract"].get("valid") is True
+            )
+            correct = sum(
+                1
+                for receipt in episode_receipts
+                if isinstance(receipt, Mapping)
+                and receipt.get("correct") is True
+            )
+            valid_fraction = valid_contracts / len(episode_receipts)
+            body = {
+                "schema": "aura.recurrent_answer_channel_preflight.v1",
+                "campaign_id": args.adapter_id,
+                "dataset_sha256": dataset_sha256,
+                "execution_spec_sha256": execution_spec.sha256,
+                "base_checkpoint": base_identity,
+                "model_behavior_bundle": behavior_identity,
+                "tokenizer_bundle": token_trace_adapter.bundle_identity,
+                "source_bindings": sources,
+                "task_count": len(episode_receipts),
+                "valid_contract_count": valid_contracts,
+                "correct_count": correct,
+                "valid_contract_fraction": round(valid_fraction, 6),
+                "report": report,
+                "created_at_unix_ns": time.time_ns(),
+                "verdict": (
+                    "answer_channel_operational"
+                    if valid_fraction >= 0.5
+                    else "answer_channel_blocked"
+                ),
+            }
+            receipt = {
+                **body,
+                "receipt_sha256": sha256_bytes(canonical_json_bytes(body)),
+            }
+            receipt_path = out_dir / "answer_channel_preflight.json"
+            _publish_immutable_bytes(
+                receipt_path,
+                canonical_json_bytes(receipt),
+                role="recurrent answer-channel preflight",
+            )
+            print(
+                "[answer-channel-preflight] "
+                f"valid={valid_contracts}/{len(episode_receipts)} "
+                f"correct={correct}/{len(episode_receipts)} "
+                f"verdict={receipt['verdict']} path={receipt_path}",
+                flush=True,
+            )
+            return 0 if valid_fraction >= 0.5 else 3
 
         from mlx.utils import tree_flatten, tree_unflatten
 

@@ -222,7 +222,14 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(prereg.run_detached_step, "main", fake_detached_main)
 
-    assert prereg._launch_training(contract_path, resume=False) == 0
+    assert (
+        prereg._launch_training(
+            contract_path,
+            resume=False,
+            expected_launch_bundle_sha256="a" * 64,
+        )
+        == 0
+    )
 
     argv = captured["argv"]
     assert isinstance(argv, list)
@@ -232,6 +239,10 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     assert command[0] == str(venv_python)
     assert str(Path(venv_python).resolve()) not in verifier
     assert str(Path(venv_python).resolve()) not in command
+    assert command[-2:] == [
+        "--expected-launch-bundle-sha256",
+        "a" * 64,
+    ]
 
 
 def test_answer_channel_preflight_command_is_bounded_and_source_separated():
@@ -249,6 +260,7 @@ def test_answer_channel_preflight_command_is_bounded_and_source_separated():
     assert argv[argv.index("--calibrate-minutes") + 1] == "10.0"
     assert "--trajectory-credit" not in argv
     assert "recurrence_curriculum" not in argv
+    assert "--read-only-answer-channel-preflight" in argv
 
 
 def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
@@ -271,6 +283,44 @@ def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
     assert isinstance(argv, list)
     assert argv[0] == "tools/train_grpo.py"
     assert "answer_channel_curriculum" in argv
+    assert "--read-only-answer-channel-preflight" in argv
+
+
+def test_launch_initial_policy_probe_is_detached_and_nonresumable(
+    tmp_path, monkeypatch
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "artifacts/probe"
+    contract_path = tmp_path / "config" / "probe-contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(json.dumps(contract), encoding="ascii")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(__import__("sys").executable))
+    captured: dict[str, object] = {}
+
+    def fake_detached_main(argv):
+        captured["argv"] = list(argv)
+        return 19
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg.sys, "executable", str(venv_python))
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(prereg.run_detached_step, "main", fake_detached_main)
+
+    assert prereg._launch_initial_policy_probe(contract_path) == 19
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "launch"
+    assert argv[argv.index("--resume-contract") + 1] == "none"
+    assert argv[argv.index("--timeout") + 1] == "7200"
+    assert argv[argv.index("--run-dir") + 1] == str(
+        tmp_path / "artifacts" / "probe" / "detached-initial-policy-probe"
+    )
+    command = argv[argv.index("--resume-contract") + 2 :]
+    assert command[0] == str(venv_python)
+    assert command[2:4] == ["run-initial-policy-probe", "--contract"]
 
 
 def test_launch_answer_channel_preflight_is_detached_and_source_bound(

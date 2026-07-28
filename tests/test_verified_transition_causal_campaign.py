@@ -8,6 +8,7 @@ import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,21 +24,24 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     policy_signed_payload,
     validate_campaign_trust_policy,
 )
+from core.learning.verified_recurrent_transition_repository import (
+    finalize_verified_recurrent_transition_campaign,
+)
 from core.learning.verified_transition_causal_campaign import (
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
     CAUSAL_CAMPAIGN_MANIFEST_SCHEMA,
+    EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
     CausalCampaignScheduleEntry,
     VerifiedTransitionCausalCampaignError,
     VerifiedTransitionCausalCampaignLedger,
     build_causal_campaign_manifest,
     validate_causal_campaign_manifest,
+    validate_external_evidence_verification_receipt,
 )
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     TransitionGroupPlanEntry,
     build_transition_group_manifest,
-)
-from core.learning.verified_recurrent_transition_repository import (
-    finalize_verified_recurrent_transition_campaign,
 )
 
 BASE_SECOND = 1_800_000_000
@@ -45,6 +49,131 @@ BASE_SECOND = 1_800_000_000
 
 def _sha(label: str) -> str:
     return hashlib.sha256(label.encode("ascii")).hexdigest()
+
+
+def _evidence_manifest(
+    material: dict[str, Any],
+    statuses: list[str],
+) -> dict[str, Any]:
+    rows = [
+        {
+            "sequence": sequence,
+            "status": status,
+            "package_artifact": {
+                "path": f"/private/replay/group-{sequence:08d}.json",
+                "sha256": _sha(f"package-bytes-{sequence}"),
+                "size_bytes": 128 + sequence,
+            },
+            "package_receipt_sha256": _sha(f"package-{sequence}"),
+            "group_manifest_sha256": _sha(f"group-{sequence}"),
+            "reward_receipt_sha256": _sha(f"reward-{sequence}"),
+            "group_admission_sha256": (
+                _sha(f"admission-{sequence}")
+                if status == "updated"
+                else None
+            ),
+            "update_receipt_sha256": (
+                _sha(f"update-{sequence}")
+                if status == "updated"
+                else None
+            ),
+            "trainer_step_receipt_sha256": _sha(
+                f"trainer-step-{sequence}"
+            ),
+            "sample_receipt_sha256s": [_sha(f"sample-{sequence}")],
+            "evidence_receipt_sha256s": [_sha(f"evidence-{sequence}")],
+        }
+        for sequence, status in enumerate(statuses)
+    ]
+    body = {
+        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "contract_sha256": _sha("provider-contract"),
+        "campaign_schedule_root_sha256": material["schedule_root"],
+        "trust_policy_sha256": material["policy"].policy_sha256,
+        "campaign_ledger_root": str(material["root"].resolve()),
+        "transition_artifact_root": str(
+            (material["root"].parent / "transition-artifacts").resolve()
+        ),
+        "update_journal_root": str(
+            (material["root"].parent / "updates").resolve()
+        ),
+        "transaction_root": str(
+            (material["root"].parent / "transactions").resolve()
+        ),
+        "completed_groups": len(rows),
+        "halt_reason": "max_steps",
+        "group_packages": rows,
+        "updated_replay_sequences": [
+            row["sequence"] for row in rows if row["status"] == "updated"
+        ],
+        "created_at_unix_ns": (BASE_SECOND + 181) * 1_000_000_000,
+    }
+    return {
+        **body,
+        "manifest_sha256": hashlib.sha256(
+            canonical_json_bytes(body)
+        ).hexdigest(),
+    }
+
+
+def _verification_receipt(
+    evidence_manifest: dict[str, Any],
+    *,
+    verifier_identity: str = "fixture-evidence-verifier",
+    verified_at_unix: int = BASE_SECOND + 181,
+) -> dict[str, Any]:
+    observations = [
+        {
+            "sequence": package["sequence"],
+            "package_artifact": package["package_artifact"],
+            "package_receipt_sha256": package["package_receipt_sha256"],
+            "sample_receipt_sha256s": package["sample_receipt_sha256s"],
+            "evidence_receipt_sha256s": package[
+                "evidence_receipt_sha256s"
+            ],
+            "reward_receipt_sha256": package["reward_receipt_sha256"],
+            "group_admission_sha256": package[
+                "group_admission_sha256"
+            ],
+            "update_receipt_sha256": package["update_receipt_sha256"],
+            "trainer_step_receipt_sha256": package[
+                "trainer_step_receipt_sha256"
+            ],
+        }
+        for package in evidence_manifest["group_packages"]
+    ]
+    body = {
+        "schema": EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
+        "evidence_manifest_sha256": evidence_manifest["manifest_sha256"],
+        "verifier_identity": verifier_identity,
+        "verified_package_count": len(observations),
+        "artifact_observation_root_sha256": hashlib.sha256(
+            canonical_json_bytes(
+                {"artifact_observations": observations}
+            )
+        ).hexdigest(),
+        "validation_profile": "recurrent_transition_causal_replay.v2",
+        "verified_at_unix": verified_at_unix,
+    }
+    return {
+        **body,
+        "receipt_sha256": hashlib.sha256(
+            canonical_json_bytes(body)
+        ).hexdigest(),
+    }
+
+
+def test_external_verifier_receipt_stays_compact_at_288_groups(
+    material: dict[str, Any],
+) -> None:
+    evidence = _evidence_manifest(material, ["rejected"] * 288)
+    receipt = _verification_receipt(evidence)
+    validated = validate_external_evidence_verification_receipt(
+        receipt,
+        evidence_manifest=evidence,
+    )
+    assert validated["verified_package_count"] == 288
+    assert len(canonical_json_bytes(validated)) < 1_024
 
 
 def _public_raw(key: Ed25519PrivateKey) -> bytes:
@@ -130,6 +259,7 @@ def _make_material(tmp_path: Path, *, group_count: int = 2) -> dict[str, Any]:
     planned_second = BASE_SECOND + 150
     manifest = build_causal_campaign_manifest(
         campaign_id="causal-campaign-001",
+        provider_contract_sha256=_sha("provider-contract"),
         campaign_schedule_root_sha256=schedule_root,
         trust_policy_sha256=policy.policy_sha256,
         initial_policy_sha256=initial_policy,
@@ -301,9 +431,14 @@ def _complete(material: dict[str, Any]) -> tuple[str, str]:
 
 def _close(material: dict[str, Any]) -> dict[str, Any]:
     completed_second = BASE_SECOND + 181
+    evidence = _evidence_manifest(material, ["updated", "updated"])
     payload = material["ledger"].close_payload(
         completed_at_unix_ns=completed_second * 1_000_000_000,
         policy=material["policy"],
+        evidence_manifest=evidence,
+        external_evidence_verification_receipt=(
+            _verification_receipt(evidence)
+        ),
     )
     attestation = build_role_attestation(
         material["policy"],
@@ -358,6 +493,15 @@ def test_manifest_precommits_only_knowable_schedule_facts(
         match="manifest_schema_invalid",
     ):
         validate_causal_campaign_manifest(attacked)
+
+
+def test_campaign_manifest_accessor_returns_validated_copy(
+    material: dict[str, Any],
+) -> None:
+    observed = material["ledger"].campaign_manifest()
+    observed["campaign_id"] = "mutated-by-caller"
+
+    assert material["ledger"].campaign_manifest() == material["manifest"]
 
 
 def test_jit_groups_follow_actual_policy_lineage_and_reopen(
@@ -511,9 +655,14 @@ def test_unstarted_campaign_tail_closes_as_explicitly_aborted(
     _finish_updated(
         material, sequence=0, policy_after=policy_after
     )
+    evidence = _evidence_manifest(material, ["updated"])
     payload = material["ledger"].close_payload(
         completed_at_unix_ns=(BASE_SECOND + 181) * 1_000_000_000,
         policy=material["policy"],
+        evidence_manifest=evidence,
+        external_evidence_verification_receipt=(
+            _verification_receipt(evidence)
+        ),
     )
     assert payload["group_statuses"] == ["updated", "aborted"]
     assert payload["group_start_sha256s"][1] is None
@@ -532,25 +681,43 @@ def test_started_group_without_terminal_cannot_close(
         VerifiedTransitionCausalCampaignError,
         match="causal_campaign_incomplete:sequence=1",
     ):
+        evidence = _evidence_manifest(material, ["updated"])
         material["ledger"].close_payload(
             completed_at_unix_ns=(BASE_SECOND + 181) * 1_000_000_000,
             policy=material["policy"],
+            evidence_manifest=evidence,
+            external_evidence_verification_receipt=(
+                _verification_receipt(evidence)
+            ),
         )
 
 
 def test_production_finalizer_closes_unstarted_tail_with_external_verifier(
     material: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _admit(material, sequence=0, policy_before=material["initial_policy"])
-    _finish_updated(
+    terminal = _finish_updated(
         material,
         sequence=0,
         policy_after=_sha("production-finalizer-policy-after"),
     )
 
     class Broker:
-        @staticmethod
-        def attest(policy, **kwargs):
+        calls = 0
+        verify_calls = 0
+
+        @classmethod
+        def verify_evidence_manifest(cls, _policy, **kwargs):
+            cls.verify_calls += 1
+            return _verification_receipt(
+                kwargs["evidence_manifest"],
+                verified_at_unix=kwargs["verified_at_unix"],
+            )
+
+        @classmethod
+        def attest(cls, policy, **kwargs):
+            cls.calls += 1
             return build_role_attestation(
                 policy,
                 role=kwargs["role"],
@@ -559,18 +726,88 @@ def test_production_finalizer_closes_unstarted_tail_with_external_verifier(
                 private_key=material["role_keys"][EVIDENCE_VERIFIER],
             )
 
-    closure = finalize_verified_recurrent_transition_campaign(
-        type(
-            "Request",
-            (),
-            {
-                "schema": "aura.verified_transition.finalize_request.v2",
-                "completed_groups": 1,
-                "campaign_ledger": material["ledger"],
-                "campaign_trust_policy": material["policy"],
-                "evidence_verifier_signer": Broker(),
-            },
-        )()
+    step = {
+        "step_kind": "verified_optimizer_update",
+        "campaign_sequence": 0,
+        "group_manifest_sha256": terminal["group_manifest_sha256"],
+        "reward_receipt_sha256": terminal["reward_receipt_sha256"],
+        "group_admission_sha256": terminal["group_admission_sha256"],
+        "update_receipt_sha256": terminal["update_receipt_sha256"],
+        "receipt_sha256": _sha("trainer-step-0"),
+    }
+    package = {
+        "sequence": 0,
+        "contract_sha256": _sha("provider-contract"),
+        "campaign_schedule_root_sha256": material["schedule_root"],
+        "group_manifest": {
+            "manifest_sha256": terminal["group_manifest_sha256"]
+        },
+        "reward_receipt_sha256": terminal["reward_receipt_sha256"],
+        "group_admission_sha256": terminal["group_admission_sha256"],
+        "receipt_sha256": _sha("package-0"),
+        "sample_receipt_sha256s": [_sha("sample-0")],
+        "evidence_receipt_sha256s": [_sha("evidence-0")],
+    }
+    monkeypatch.setattr(
+        "core.learning.verified_recurrent_transition_repository._read_package",
+        lambda *_args, **_kwargs: package,
+    )
+    monkeypatch.setattr(
+        "core.learning.verified_recurrent_transition_repository."
+        "_package_artifact_binding",
+        lambda *_args, **_kwargs: {
+            "path": "/private/replay/group-00000000.json",
+            "sha256": _sha("package-bytes-0"),
+            "size_bytes": 128,
+        },
+    )
+    replay_group = SimpleNamespace(
+        sequence=0,
+        reward_receipt={
+            "receipt_sha256": terminal["reward_receipt_sha256"]
+        },
+        group_admission_receipt={
+            "receipt_sha256": terminal["group_admission_sha256"]
+        },
+        update_receipt={
+            "receipt_sha256": terminal["update_receipt_sha256"]
+        },
+    )
+    request = type(
+        "Request",
+        (),
+        {
+            "schema": "aura.verified_transition.finalize_request.v2",
+            "contract_sha256": _sha("provider-contract"),
+            "campaign_schedule_root_sha256": material["schedule_root"],
+            "completed_groups": 1,
+            "halt_reason": "max_steps",
+            "step_receipts": (step,),
+            "replay_artifact_root": str(
+                material["ledger"].root.parent / "replay"
+            ),
+            "campaign_ledger_root": str(material["ledger"].root),
+            "transition_artifact_root": str(
+                material["ledger"].root.parent / "transition-artifacts"
+            ),
+            "update_journal_root": str(
+                material["ledger"].root.parent / "updates"
+            ),
+            "transaction_root": str(
+                material["ledger"].root.parent / "transactions"
+            ),
+            "replay_groups": (replay_group,),
+            "campaign_ledger": material["ledger"],
+            "campaign_trust_policy": material["policy"],
+            "evidence_verifier_signer": Broker(),
+        },
+    )()
+    closure = finalize_verified_recurrent_transition_campaign(request)
+    recovered = finalize_verified_recurrent_transition_campaign(request)
+    assert (
+        recovered.campaign_ledger is closure.campaign_ledger
+        and Broker.calls == 1
+        and Broker.verify_calls == 1
     )
     closed = closure.campaign_ledger.validate_closed(policy=material["policy"])
     assert closed["close_payload"]["group_statuses"] == ["updated", "aborted"]
@@ -581,9 +818,14 @@ def test_close_requires_external_evidence_verifier_signature(
 ) -> None:
     _policy_1, final_policy = _complete(material)
     completed_second = BASE_SECOND + 181
+    evidence = _evidence_manifest(material, ["updated", "updated"])
     payload = material["ledger"].close_payload(
         completed_at_unix_ns=completed_second * 1_000_000_000,
         policy=material["policy"],
+        evidence_manifest=evidence,
+        external_evidence_verification_receipt=(
+            _verification_receipt(evidence)
+        ),
     )
     wrong_role = build_role_attestation(
         material["policy"],

@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from core.brain.llm.latent_cortex.campaign_trust import (
     CAMPAIGN_TRUST_POLICY_SCHEMA,
     CAMPAIGN_TRUST_ROLES,
+    EVIDENCE_VERIFIER,
     TASK_ISSUER,
     build_role_attestation,
     policy_signed_payload,
@@ -32,6 +33,12 @@ from core.learning.verified_token_trace import (
     tokenizer_file_bindings_from_bytes,
 )
 from core.learning.verified_training_task import build_verified_training_task
+from core.learning.verified_transition_causal_campaign import (
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+    CausalCampaignScheduleEntry,
+    VerifiedTransitionCausalCampaignLedger,
+    build_causal_campaign_manifest,
+)
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     sampling_config_document_sha256,
@@ -43,6 +50,7 @@ from core.learning.verified_transition_launch_bundle import (
     VerifiedTransitionRuntimeComponents,
 )
 from core.learning.verified_transition_production_factory import (
+    COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA,
     COMMAND_SIGNER_RESPONSE_SCHEMA,
     JIT_PROVIDER_CONFIG_SCHEMA,
     CommandRoleSignerBroker,
@@ -179,6 +187,7 @@ def _trust_material(
     *,
     role_keys: dict[str, Ed25519PrivateKey] | None = None,
     task_issuer_pin_overrides: dict[str, str] | None = None,
+    role_pin_overrides: dict[str, dict[str, str]] | None = None,
 ) -> tuple[Any, dict[str, Ed25519PrivateKey]]:
     root = Ed25519PrivateKey.generate()
     role_keys = role_keys or {
@@ -200,7 +209,12 @@ def _trust_material(
                 role,
                 role_keys[role],
                 overrides=(
-                    task_issuer_pin_overrides if role == TASK_ISSUER else None
+                    (role_pin_overrides or {}).get(role)
+                    or (
+                        task_issuer_pin_overrides
+                        if role == TASK_ISSUER
+                        else None
+                    )
                 ),
             )
             for role in CAMPAIGN_TRUST_ROLES
@@ -228,24 +242,49 @@ def _trust_material(
     return policy, role_keys
 
 
-def _command_signer_material(
+def _external_signer(
     tmp_path: Path,
-) -> tuple[Any, dict[str, Ed25519PrivateKey], CommandRoleSignerBroker, Path]:
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
-    private_raw = role_keys[TASK_ISSUER].private_bytes(
+    *,
+    role: str,
+    key: Ed25519PrivateKey,
+) -> tuple[CommandRoleSignerBroker, Path, dict[str, str]]:
+    private_raw = key.private_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PrivateFormat.Raw,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    script = tmp_path / "external-signer.py"
+    script = tmp_path / f"{role}-external-signer.py"
+    verifier_branch = ""
+    if role == EVIDENCE_VERIFIER:
+        verifier_branch = (
+            "if envelope.get('schema') == "
+            "'aura.external_evidence_verifier.request.v2':\n"
+            " from pathlib import Path\n"
+            " sys.path.insert(0,str(Path.cwd()))\n"
+            " from core.learning.verified_recurrent_transition_repository "
+            "import campaign_trust_policy_from_verifier_material,"
+            "verify_recurrent_evidence_manifest_artifacts\n"
+            " policy=campaign_trust_policy_from_verifier_material("
+            "envelope['campaign_trust_policy'])\n"
+            " receipt=verify_recurrent_evidence_manifest_artifacts("
+            "envelope['evidence_manifest'],"
+            "campaign_trust_policy=policy,"
+            "verifier_identity=envelope['verifier_identity'],"
+            "verified_at_unix=envelope['verified_at_unix'])\n"
+            f" response={{'schema':'{COMMAND_EVIDENCE_VERIFIER_RESPONSE_SCHEMA}',"
+            "'request_sha256':envelope['request_sha256'],"
+            "'verification_receipt':receipt}\n"
+            " sys.stdout.write(json.dumps(response,sort_keys=True,"
+            "separators=(',',':'))+'\\n')\n"
+            " raise SystemExit(0)\n"
+        )
     script.write_text(
         f"#!{sys.executable}\n"
         "import base64,json,sys\n"
         "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey\n"
         f"key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex('{private_raw.hex()}'))\n"
         "envelope=json.loads(sys.stdin.buffer.read())\n"
+        f"{verifier_branch}"
         "request=envelope['signature_request']\n"
         "signature=key.sign(base64.b64decode(request['signed_payload_b64']))\n"
         f"response={{'schema':'{COMMAND_SIGNER_RESPONSE_SCHEMA}',"
@@ -255,31 +294,50 @@ def _command_signer_material(
         encoding="ascii",
     )
     script.chmod(0o700)
-    release = tmp_path / "external-signer-release.json"
-    custody = tmp_path / "external-signer-custody.json"
-    release.write_bytes(canonical_json_bytes({"release": "test-v1"}))
-    custody.write_bytes(canonical_json_bytes({"custody": "external-test"}))
+    release = tmp_path / f"{role}-external-signer-release.json"
+    custody = tmp_path / f"{role}-external-signer-custody.json"
+    release.write_bytes(
+        canonical_json_bytes({"release": f"{role}-test-v1"})
+    )
+    custody.write_bytes(
+        canonical_json_bytes({"custody": f"{role}-external-test"})
+    )
     release.chmod(0o600)
     custody.chmod(0o600)
     executable_sha = hashlib.sha256(script.read_bytes()).hexdigest()
-    policy, keys = _trust_material(
-        role_keys=role_keys,
-        task_issuer_pin_overrides={
-            "implementation_sha256": executable_sha,
-            "release_sha256": hashlib.sha256(release.read_bytes()).hexdigest(),
-            "custody_evidence_sha256": hashlib.sha256(
-                custody.read_bytes()
-            ).hexdigest(),
-        },
-    )
+    overrides = {
+        "implementation_sha256": executable_sha,
+        "release_sha256": hashlib.sha256(release.read_bytes()).hexdigest(),
+        "custody_evidence_sha256": hashlib.sha256(
+            custody.read_bytes()
+        ).hexdigest(),
+    }
     broker = CommandRoleSignerBroker(
-        identity="external-command-test",
+        identity=f"{role}-external-command-test",
         executable=script,
         executable_sha256=executable_sha,
         release_manifest=release,
         custody_evidence=custody,
-        timeout_seconds=5.0,
+        timeout_seconds=30.0 if role == EVIDENCE_VERIFIER else 5.0,
         inherited_environment_names=(),
+    )
+    return broker, script, overrides
+
+
+def _command_signer_material(
+    tmp_path: Path,
+) -> tuple[Any, dict[str, Ed25519PrivateKey], CommandRoleSignerBroker, Path]:
+    role_keys = {
+        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
+    }
+    broker, script, overrides = _external_signer(
+        tmp_path,
+        role=TASK_ISSUER,
+        key=role_keys[TASK_ISSUER],
+    )
+    policy, keys = _trust_material(
+        role_keys=role_keys,
+        task_issuer_pin_overrides=overrides,
     )
     return policy, keys, broker, script
 
@@ -444,11 +502,59 @@ def _jit_material(tmp_path: Path) -> dict[str, Any]:
 
 
 def _factory_material(
-    tmp_path: Path, *, use_in_process_signer: bool = False
+    tmp_path: Path,
+    *,
+    use_in_process_signer: bool = False,
+    shared_external_signer: bool = False,
+    shared_custody_only: bool = False,
 ) -> dict[str, Any]:
-    policy, keys, broker, _script = _command_signer_material(tmp_path)
-    factory_broker: Any = (
-        _SigningBroker(keys[TASK_ISSUER]) if use_in_process_signer else broker
+    role_keys = {
+        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
+    }
+    broker, _task_script, task_overrides = _external_signer(
+        tmp_path,
+        role=TASK_ISSUER,
+        key=role_keys[TASK_ISSUER],
+    )
+    verifier_broker, _verifier_script, verifier_overrides = _external_signer(
+        tmp_path,
+        role=EVIDENCE_VERIFIER,
+        key=role_keys[EVIDENCE_VERIFIER],
+    )
+    if shared_external_signer:
+        verifier_broker = broker
+        verifier_overrides = task_overrides
+    elif shared_custody_only:
+        verifier_broker = CommandRoleSignerBroker(
+            identity=verifier_broker.identity,
+            executable=verifier_broker._executable,
+            executable_sha256=verifier_broker.implementation_sha256,
+            release_manifest=verifier_broker._release_manifest,
+            custody_evidence=broker._custody_evidence,
+            arguments=(),
+            timeout_seconds=5.0,
+            inherited_environment_names=(),
+        )
+        verifier_overrides = {
+            **verifier_overrides,
+            "custody_evidence_sha256": broker.custody_evidence_sha256,
+        }
+    policy, keys = _trust_material(
+        role_keys=role_keys,
+        role_pin_overrides={
+            TASK_ISSUER: task_overrides,
+            EVIDENCE_VERIFIER: verifier_overrides,
+        },
+    )
+    task_factory_broker: Any = (
+        _SigningBroker(keys[TASK_ISSUER])
+        if use_in_process_signer
+        else broker
+    )
+    verifier_factory_broker: Any = (
+        _SigningBroker(keys[EVIDENCE_VERIFIER])
+        if use_in_process_signer
+        else verifier_broker
     )
     roots = {
         name: str((tmp_path / name).resolve())
@@ -466,6 +572,14 @@ def _factory_material(
     transaction_root = output_root / "verified-transition-transactions"
     provider_config = {
         "evidence_timeout_ms": 30_000,
+        "training_argv": [
+            "tools/train_grpo.py",
+            "--model",
+            "/models/resident",
+        ],
+        "training_argv_sha256": _digest(
+            ["tools/train_grpo.py", "--model", "/models/resident"]
+        ),
         "jit_plan": {
             "schema": JIT_PROVIDER_CONFIG_SCHEMA,
             "reward_config_sha256": _digest(
@@ -510,7 +624,7 @@ def _factory_material(
         campaign_finalizer_source_sha256=callable_source_sha256(_finalizer),
         trust_policy_sha256=policy.policy_sha256,
         trust_root_key_id=policy.root_key_id,
-        campaign_id="factory-campaign",
+        campaign_id="jit-provider-test",
         initial_policy_sha256=_sha("initial-policy"),
         scorer_identity="independent-scorer",
         scorer_source_sha256=callable_source_sha256(_scorer),
@@ -523,7 +637,19 @@ def _factory_material(
         ledger_roots=roots,
         frozen_at_unix_ns=(BASE_SECOND + 150) * 1_000_000_000,
     )
-    ledger = SimpleNamespace(root=Path(roots["campaign"]))
+    ledger_manifest = {
+        "campaign_id": contract["campaign_id"],
+        "provider_contract_sha256": contract["contract_sha256"],
+        "campaign_schedule_root_sha256": contract[
+            "campaign_schedule_root_sha256"
+        ],
+        "trust_policy_sha256": contract["trust_policy_sha256"],
+        "initial_policy_sha256": contract["initial_policy_sha256"],
+    }
+    ledger = SimpleNamespace(
+        root=Path(roots["campaign"]),
+        campaign_manifest=lambda: dict(ledger_manifest),
+    )
     factory = ProductionVerifiedTransitionProviderFactory(
         contract=contract,
         provider_config=provider_config,
@@ -540,7 +666,8 @@ def _factory_material(
         token_encoder=_encode,
         token_decoder=_decode,
         token_codec_identity="byte-codec",
-        signer_broker=factory_broker,
+        task_issuer_signer_broker=task_factory_broker,
+        evidence_verifier_signer_broker=verifier_factory_broker,
         task_commitments={task.task_id: task_document},
         task_answer_nonces={task.task_id: answer_nonce},
     )
@@ -548,6 +675,7 @@ def _factory_material(
         "factory": factory,
         "policy": policy,
         "broker": broker,
+        "verifier_broker": verifier_broker,
         "contract": contract,
         "provider_config": provider_config,
         "ledger": ledger,
@@ -555,6 +683,7 @@ def _factory_material(
         "task": task,
         "output_root": output_root,
         "transaction_root": transaction_root,
+        "role_keys": keys,
     }
 
 
@@ -790,9 +919,29 @@ def test_factory_rejects_live_initial_policy_substitution(
 def test_factory_rejects_in_process_self_attested_signer(tmp_path: Path) -> None:
     with pytest.raises(
         VerifiedTransitionProductionFactoryError,
-        match="external_command_signer_required",
+        match="external_command_signers_required",
     ):
         _factory_material(tmp_path, use_in_process_signer=True)
+
+
+def test_factory_rejects_shared_signer_identity_and_custody(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        VerifiedTransitionProductionFactoryError,
+        match="signer_role_separation_required",
+    ):
+        _factory_material(tmp_path, shared_external_signer=True)
+
+
+def test_factory_rejects_distinct_signers_with_shared_custody(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        VerifiedTransitionProductionFactoryError,
+        match="signer_role_separation_required",
+    ):
+        _factory_material(tmp_path, shared_custody_only=True)
 
 
 def test_factory_rejects_task_behavior_drift_with_same_task_id(
@@ -893,12 +1042,90 @@ def test_command_signer_broker_accepts_only_pinned_canonical_response(
         )
 
 
+def test_external_verifier_broker_returns_replay_receipt(
+    tmp_path: Path,
+) -> None:
+    material = _factory_material(tmp_path)
+    contract = material["contract"]
+    campaign_manifest = build_causal_campaign_manifest(
+        campaign_id=contract["campaign_id"],
+        provider_contract_sha256=contract["contract_sha256"],
+        campaign_schedule_root_sha256=contract[
+            "campaign_schedule_root_sha256"
+        ],
+        trust_policy_sha256=material["policy"].policy_sha256,
+        initial_policy_sha256=contract["initial_policy_sha256"],
+        schedule=tuple(
+            CausalCampaignScheduleEntry(
+                sequence=row["sequence"],
+                task_id=row["task_id"],
+                task_commitment_sha256=_digest(row),
+            )
+            for row in contract["task_schedule"]
+        ),
+        planned_at_unix_ns=(BASE_SECOND + 150) * 1_000_000_000,
+    )
+    campaign_attestation = build_role_attestation(
+        material["policy"],
+        role=TASK_ISSUER,
+        payload=campaign_manifest,
+        signed_at_unix=BASE_SECOND + 150,
+        private_key=material["role_keys"][TASK_ISSUER],
+    )
+    VerifiedTransitionCausalCampaignLedger.create(
+        contract["ledger_roots"]["campaign"],
+        campaign_manifest=campaign_manifest,
+        campaign_manifest_attestation=campaign_attestation,
+        policy=material["policy"],
+    )
+    material["transaction_root"].mkdir(mode=0o700, parents=True)
+    body = {
+        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "contract_sha256": material["contract"]["contract_sha256"],
+        "campaign_schedule_root_sha256": material["contract"][
+            "campaign_schedule_root_sha256"
+        ],
+        "trust_policy_sha256": material["policy"].policy_sha256,
+        "campaign_ledger_root": material["contract"]["ledger_roots"][
+            "campaign"
+        ],
+        "transition_artifact_root": material["contract"]["ledger_roots"][
+            "transition_artifacts"
+        ],
+        "update_journal_root": material["contract"]["ledger_roots"][
+            "updates"
+        ],
+        "transaction_root": str(material["transaction_root"]),
+        "completed_groups": 0,
+        "halt_reason": "preflight",
+        "group_packages": [],
+        "updated_replay_sequences": [],
+        "created_at_unix_ns": (BASE_SECOND + 200) * 1_000_000_000,
+    }
+    evidence = {**body, "manifest_sha256": _digest(body)}
+    receipt = material["verifier_broker"].verify_evidence_manifest(
+        material["policy"],
+        evidence_manifest=evidence,
+        verified_at_unix=BASE_SECOND + 200,
+        purpose="fixture:evidence-replay",
+    )
+    assert receipt["evidence_manifest_sha256"] == evidence["manifest_sha256"]
+    assert (
+        receipt["verifier_identity"]
+        == material["verifier_broker"].identity
+    )
+
+
 @pytest.mark.parametrize("artifact", ["release", "custody"])
 def test_command_signer_rejects_root_pinned_artifact_drift(
     tmp_path: Path, artifact: str
 ) -> None:
     policy, _keys, broker, _script = _command_signer_material(tmp_path)
-    path = tmp_path / f"external-signer-{artifact}.json"
+    path = (
+        broker._release_manifest
+        if artifact == "release"
+        else broker._custody_evidence
+    )
     path.write_bytes(canonical_json_bytes({artifact: "substituted"}))
     with pytest.raises(
         VerifiedTransitionProductionFactoryError,
@@ -950,23 +1177,47 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
         "size_bytes": root.stat().st_size,
     }
     answer_nonce = b"factory-test-answer-nonce-material" * 2
+    preregistration_body = {
+        "schema": "test.preregistration.v1",
+        "campaign_id": "jit-provider-test",
+    }
+    preregistration_sha256 = hashlib.sha256(
+        canonical_json_bytes(preregistration_body)
+    ).hexdigest()
     unsigned = {
         "schema": VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA,
         "campaign_name": "jit-provider-test",
+        "preregistration_contract": binding(
+            "preregistration-contract.json",
+            {
+                **preregistration_body,
+                "contract_sha256": preregistration_sha256,
+            },
+        ),
         "provider_contract": binding("provider-contract.json", material["contract"]),
         "provider_config": binding("provider-config.json", material["provider_config"]),
         "trust_policy": binding("trust-policy.json", material["policy"].document),
         "trust_root": root_binding,
         "campaign_ledger_root": str(material["ledger"].root),
-        "signer": {
-            "identity": material["broker"].identity,
-            "executable": str(material["broker"]._executable),
-            "executable_sha256": material["broker"].implementation_sha256,
-            "release_manifest": str(material["broker"]._release_manifest),
-            "custody_evidence": str(material["broker"]._custody_evidence),
-            "arguments": [],
-            "timeout_millis": 5_000,
-            "inherited_environment_names": [],
+        "signers": {
+            role: {
+                "identity": role_broker.identity,
+                "executable": str(role_broker._executable),
+                "executable_sha256": role_broker.implementation_sha256,
+                "release_manifest": str(role_broker._release_manifest),
+                "release_sha256": role_broker.release_sha256,
+                "custody_evidence": str(role_broker._custody_evidence),
+                "custody_evidence_sha256": (
+                    role_broker.custody_evidence_sha256
+                ),
+                "arguments": [],
+                "timeout_millis": 5_000,
+                "inherited_environment_names": [],
+            }
+            for role, role_broker in {
+                "task_issuer": material["broker"],
+                "evidence_verifier": material["verifier_broker"],
+            }.items()
         },
         "task_commitments": binding(
             "task-commitments.json",
@@ -1022,11 +1273,47 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
     factory = launch_bundle.load_verified_transition_provider_factory(
         bundle_path,
         expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+        expected_preregistration_sha256=preregistration_sha256,
         components=components,
         now_unix=BASE_SECOND + 200,
     )
 
     assert factory.contract_sha256 == material["contract"]["contract_sha256"]
+    original_ledger_manifest = material["ledger"].campaign_manifest()
+    for field in (
+        "campaign_id",
+        "provider_contract_sha256",
+        "campaign_schedule_root_sha256",
+        "trust_policy_sha256",
+        "initial_policy_sha256",
+    ):
+        drifted_manifest = dict(original_ledger_manifest)
+        drifted_manifest[field] = (
+            "different-campaign"
+            if field == "campaign_id"
+            else _sha(f"drifted-{field}")
+        )
+        monkeypatch.setattr(
+            material["ledger"],
+            "campaign_manifest",
+            lambda manifest=drifted_manifest: dict(manifest),
+        )
+        with pytest.raises(
+            VerifiedTransitionLaunchBundleError,
+            match="launch_causal_campaign_identity_mismatch",
+        ):
+            launch_bundle.load_verified_transition_provider_factory(
+                bundle_path,
+                expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+                expected_preregistration_sha256=preregistration_sha256,
+                components=components,
+                now_unix=BASE_SECOND + 200,
+            )
+    monkeypatch.setattr(
+        material["ledger"],
+        "campaign_manifest",
+        lambda: dict(original_ledger_manifest),
+    )
     with pytest.raises(
         VerifiedTransitionLaunchBundleError,
         match="launch_scorer_identity_mismatch",
@@ -1034,6 +1321,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
         launch_bundle.load_verified_transition_provider_factory(
             bundle_path,
             expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+            expected_preregistration_sha256=preregistration_sha256,
             components=replace(components, scorer_identity="substituted-scorer"),
             now_unix=BASE_SECOND + 200,
         )
@@ -1047,6 +1335,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
         launch_bundle.load_verified_transition_provider_factory(
             linked_parent / bundle_path.name,
             expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+            expected_preregistration_sha256=preregistration_sha256,
             components=components,
             now_unix=BASE_SECOND + 200,
         )
@@ -1058,6 +1347,48 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
         launch_bundle.load_verified_transition_provider_factory(
             bundle_path,
             expected_bundle_sha256="0" * 64,
+            expected_preregistration_sha256=preregistration_sha256,
+            components=components,
+            now_unix=BASE_SECOND + 200,
+        )
+
+    drifted_preregistration_body = {
+        **preregistration_body,
+        "campaign_id": "different-campaign",
+    }
+    drifted_preregistration_sha256 = hashlib.sha256(
+        canonical_json_bytes(drifted_preregistration_body)
+    ).hexdigest()
+    drifted_unsigned = {
+        **unsigned,
+        "preregistration_contract": binding(
+            "drifted-preregistration-contract.json",
+            {
+                **drifted_preregistration_body,
+                "contract_sha256": drifted_preregistration_sha256,
+            },
+        ),
+    }
+    drifted_bundle = {
+        **drifted_unsigned,
+        "bundle_sha256": hashlib.sha256(
+            canonical_json_bytes(drifted_unsigned)
+        ).hexdigest(),
+    }
+    drifted_bundle_path = tmp_path / "drifted-launch-bundle.json"
+    drifted_bundle_raw = canonical_json_bytes(drifted_bundle) + b"\n"
+    drifted_bundle_path.write_bytes(drifted_bundle_raw)
+    drifted_bundle_path.chmod(0o600)
+    with pytest.raises(
+        VerifiedTransitionLaunchBundleError,
+        match="launch_preregistration_campaign_mismatch",
+    ):
+        launch_bundle.load_verified_transition_provider_factory(
+            drifted_bundle_path,
+            expected_bundle_sha256=hashlib.sha256(
+                drifted_bundle_raw
+            ).hexdigest(),
+            expected_preregistration_sha256=drifted_preregistration_sha256,
             components=components,
             now_unix=BASE_SECOND + 200,
         )

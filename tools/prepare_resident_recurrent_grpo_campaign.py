@@ -139,16 +139,58 @@ SOURCE_ROLES: Mapping[str, str] = {
     "transition_launch_bundle": (
         "core/learning/verified_transition_launch_bundle.py"
     ),
+    "transition_launch_runner": "tools/run_verified_recurrent_grpo_training.py",
+    "transition_launch_materializer": (
+        "tools/materialize_verified_recurrent_grpo_launch.py"
+    ),
+    "transition_recurrent_evidence": (
+        "core/learning/verified_recurrent_transition_evidence.py"
+    ),
+    "transition_recurrent_repository": (
+        "core/learning/verified_recurrent_transition_repository.py"
+    ),
+    "transition_policy_probe": (
+        "core/learning/verified_transition_policy_probe.py"
+    ),
+    "recurrent_training_prompt": (
+        "core/learning/recurrent_training_prompt.py"
+    ),
+    "atomic_writer": "core/runtime/atomic_writer.py",
+    "file_read_gateway": "core/runtime/file_read_gateway.py",
+    "file_write_gateway": "core/runtime/file_write_gateway.py",
     "transition_rejection_transaction": (
         "core/learning/verified_transition_rejection_transaction.py"
     ),
     "grpo": "core/learning/grpo.py",
-    "adaptive_curriculum": "core/learning/adaptive_curriculum.py",
-    "training_curriculum": "core/learning/recurrence_curriculum.py",
+    "curriculum": "core/learning/adaptive_curriculum.py",
+    "tasks": "core/learning/recurrence_curriculum.py",
     "checkpoint": "core/learning/grpo_training_state.py",
     "artifact_schema": "core/learning/recurrent_grpo_artifact_schema.py",
     "recurrent_grpo": "core/learning/recurrent_grpo.py",
     "recurrent_objective": "core/learning/recurrence_native_objective_v2.py",
+    "verified_trainer": "core/learning/verified_transition_trainer.py",
+    "transition_campaign": "core/learning/verified_transition_campaign.py",
+    "transition_episode": "core/learning/verified_transition_episode.py",
+    "transition_reward": "core/learning/verified_transition_reward.py",
+    "transition_admission": (
+        "core/learning/verified_transition_group_admission.py"
+    ),
+    "transition_update": "core/learning/verified_transition_update.py",
+    "transition_training_evidence": (
+        "core/learning/verified_transition_training_evidence.py"
+    ),
+    "campaign_trust": (
+        "core/brain/llm/latent_cortex/campaign_trust.py"
+    ),
+    "transition_provider": "core/learning/verified_transition_provider.py",
+    "transition_transaction": (
+        "core/learning/verified_transition_transaction.py"
+    ),
+    "transition_causal_campaign": (
+        "core/learning/verified_transition_causal_campaign.py"
+    ),
+    "verified_training_task": "core/learning/verified_training_task.py",
+    "verified_token_trace": "core/learning/verified_token_trace.py",
     "execution_spec": "core/brain/llm/latent_cortex/execution_spec.py",
     "latent_engine": "core/brain/llm/latent_cortex/engine.py",
     "recurrence": "core/brain/llm/latent_cortex/recurrence.py",
@@ -383,6 +425,13 @@ def build_contract(
     paths = {
         "artifact_root": artifact_root,
         "training_output": f"{artifact_root}/training",
+        "initial_policy_probe": f"{artifact_root}/policy-probe",
+        "verified_launch_bundle": (
+            f"{artifact_root}/verified-launch/launch-bundle.json"
+        ),
+        "verified_launch_bundle_sha256": (
+            f"{artifact_root}/verified-launch/launch-bundle.sha256"
+        ),
         "detached_training": f"{artifact_root}/detached-training",
         "frozen_adapter": f"{artifact_root}/frozen-adapter",
         "directional_campaign": f"{artifact_root}/directional-campaign",
@@ -875,20 +924,47 @@ def _write_once(path: Path, document: Mapping[str, Any]) -> None:
         _fail("contract_publication_raced")
 
 
-def _run_training(contract: Mapping[str, Any]) -> int:
+def _run_training(
+    contract: Mapping[str, Any],
+    *,
+    expected_launch_bundle_sha256: str,
+) -> int:
     validate_contract(contract, verify_model=True)
     not_before = int(contract["launch_not_before_unix"])
     if time.time() < not_before:
         _fail("presentation_window_still_active")
-    from tools import train_grpo
+    from tools import run_verified_recurrent_grpo_training
 
     argv = list(contract["training"]["argv"])
-    previous = list(sys.argv)
-    try:
-        sys.argv = [argv[0], *argv[1:]]
-        result = train_grpo.main()
-    finally:
-        sys.argv = previous
+    bundle_path = _repo_path(
+        str(contract["paths"]["verified_launch_bundle"]),
+        role="verified_launch_bundle",
+    )
+    bundle_digest = str(expected_launch_bundle_sha256)
+    if len(bundle_digest) != 64 or any(
+        character not in "0123456789abcdef" for character in bundle_digest
+    ):
+        _fail("verified_launch_bundle_digest_invalid")
+    informational_digest_path = _repo_path(
+        str(contract["paths"]["verified_launch_bundle_sha256"]),
+        role="verified_launch_bundle_sha256",
+    )
+    informational_digest = informational_digest_path.read_text(
+        encoding="ascii"
+    ).strip()
+    if informational_digest != bundle_digest:
+        _fail("verified_launch_bundle_external_digest_mismatch")
+    result = run_verified_recurrent_grpo_training.main(
+        [
+            "--verified-launch-bundle",
+            str(bundle_path),
+            "--expected-launch-bundle-sha256",
+            bundle_digest,
+            "--expected-preregistration-sha256",
+            str(contract["contract_sha256"]),
+            *argv[1:],
+        ]
+    )
     if result != 0:
         return int(result)
     training_root = _repo_path(
@@ -899,6 +975,27 @@ def _run_training(contract: Mapping[str, Any]) -> int:
     if _sha256(produced_dataset) != contract["training"]["dataset"]["sha256"]:
         _fail("produced_dataset_commitment_mismatch")
     return 0
+
+
+def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:
+    argv = list(contract["training"]["argv"])
+    output_index = argv.index("--out-dir") + 1
+    argv[output_index] = str(contract["paths"]["initial_policy_probe"])
+    argv.append("--initial-policy-probe")
+    return argv
+
+
+def _run_initial_policy_probe(contract: Mapping[str, Any]) -> int:
+    validate_contract(contract, verify_model=True)
+    from tools import train_grpo
+
+    argv = _policy_probe_argv(contract)
+    previous = list(sys.argv)
+    try:
+        sys.argv = [argv[0], *argv[1:]]
+        return int(train_grpo.main())
+    finally:
+        sys.argv = previous
 
 
 def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
@@ -972,6 +1069,7 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
         str(int(params["seed"]) + 311),
         "--calibrate",
         "--cot",
+        "--read-only-answer-channel-preflight",
     ]
 
 
@@ -1026,11 +1124,58 @@ def _launch_answer_channel_preflight(contract_path: Path) -> int:
     return run_detached_step.main(argv)
 
 
-def _launch_training(contract_path: Path, *, resume: bool) -> int:
+def _launch_initial_policy_probe(contract_path: Path) -> int:
+    contract = _strict_json(contract_path)
+    validate_contract(contract, verify_model=True)
+    python = str(Path(sys.executable))
+    if not Path(python).exists():
+        _fail("python_launcher_missing")
+    tool = str(Path(__file__).resolve(strict=True))
+    supplied = contract_path.expanduser()
+    if not supplied.is_absolute():
+        supplied = REPO_ROOT / supplied
+    contract_absolute = str(supplied.resolve(strict=True))
+    root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+        must_exist=False,
+    )
+    argv = [
+        "launch",
+        "--run-dir",
+        str(root / "detached-initial-policy-probe"),
+        "--name",
+        f"{contract['campaign_id']}-initial-policy-probe",
+        "--cwd",
+        str(REPO_ROOT),
+        "--timeout",
+        "7200",
+        "--resume-contract",
+        "none",
+        python,
+        tool,
+        "run-initial-policy-probe",
+        "--contract",
+        contract_absolute,
+    ]
+    return run_detached_step.main(argv)
+
+
+def _launch_training(
+    contract_path: Path,
+    *,
+    resume: bool,
+    expected_launch_bundle_sha256: str,
+) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
     if time.time() < int(contract["launch_not_before_unix"]):
         _fail("presentation_window_still_active")
+    _sha256_value = str(expected_launch_bundle_sha256)
+    if len(_sha256_value) != 64 or any(
+        character not in "0123456789abcdef" for character in _sha256_value
+    ):
+        _fail("verified_launch_bundle_digest_invalid")
     python = str(Path(sys.executable))
     if not Path(python).exists():
         _fail("python_launcher_missing")
@@ -1074,6 +1219,8 @@ def _launch_training(contract_path: Path, *, resume: bool) -> int:
             "run-training",
             "--contract",
             contract_absolute,
+            "--expected-launch-bundle-sha256",
+            _sha256_value,
         ]
     )
     return run_detached_step.main(argv)
@@ -1094,6 +1241,11 @@ def _parser() -> argparse.ArgumentParser:
     verify.add_argument("--skip-model", action="store_true")
     run = subparsers.add_parser("run-training")
     run.add_argument("--contract", default=DEFAULT_CONTRACT)
+    run.add_argument("--expected-launch-bundle-sha256", required=True)
+    probe = subparsers.add_parser("run-initial-policy-probe")
+    probe.add_argument("--contract", default=DEFAULT_CONTRACT)
+    probe_launch = subparsers.add_parser("launch-initial-policy-probe")
+    probe_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     preflight = subparsers.add_parser("run-answer-channel-preflight")
     preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
     preflight_launch = subparsers.add_parser("launch-answer-channel-preflight")
@@ -1101,6 +1253,7 @@ def _parser() -> argparse.ArgumentParser:
     launch = subparsers.add_parser("launch-training")
     launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch.add_argument("--resume", action="store_true")
+    launch.add_argument("--expected-launch-bundle-sha256", required=True)
     resume = subparsers.add_parser("verify-resume")
     resume.add_argument("--contract", default=DEFAULT_CONTRACT)
     return parser
@@ -1122,13 +1275,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             contract = _strict_json(Path(args.contract))
             if args.action == "run-training":
-                return _run_training(contract)
+                return _run_training(
+                    contract,
+                    expected_launch_bundle_sha256=(
+                        args.expected_launch_bundle_sha256
+                    ),
+                )
+            if args.action == "run-initial-policy-probe":
+                return _run_initial_policy_probe(contract)
+            if args.action == "launch-initial-policy-probe":
+                return _launch_initial_policy_probe(Path(args.contract))
             if args.action == "run-answer-channel-preflight":
                 return _run_answer_channel_preflight(contract)
             if args.action == "launch-answer-channel-preflight":
                 return _launch_answer_channel_preflight(Path(args.contract))
             if args.action == "launch-training":
-                return _launch_training(Path(args.contract), resume=args.resume)
+                return _launch_training(
+                    Path(args.contract),
+                    resume=args.resume,
+                    expected_launch_bundle_sha256=(
+                        args.expected_launch_bundle_sha256
+                    ),
+                )
             if args.action == "verify-resume":
                 verdict = build_resume_verdict(
                     contract,

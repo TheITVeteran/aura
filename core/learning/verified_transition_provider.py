@@ -234,6 +234,24 @@ def _root_of(value: Any, *, role: str) -> str:
     return _absolute_root(str(root), role=role)
 
 
+def _transaction_root_from_provider_config(
+    config: Mapping[str, Any],
+) -> str:
+    jit_plan = config.get("jit_plan")
+    nested = (
+        jit_plan.get("transaction_root")
+        if isinstance(jit_plan, Mapping)
+        else None
+    )
+    direct = config.get("transaction_root")
+    if nested is not None and direct is not None and nested != direct:
+        _fail("provider_transaction_root_ambiguous")
+    return _absolute_root(
+        nested if nested is not None else direct,
+        role="provider_transaction",
+    )
+
+
 def provider_implementation_source_sha256() -> str:
     path = Path(__file__).resolve(strict=True)
     if not path.is_file() or path.is_symlink():
@@ -572,6 +590,12 @@ class VerifiedTransitionFinalizeRequest:
     completed_groups: int
     halt_reason: str
     replay_groups: tuple[VerifiedTransitionReplayGroup, ...]
+    step_receipts: tuple[Mapping[str, Any], ...]
+    replay_artifact_root: str
+    campaign_ledger_root: str
+    transition_artifact_root: str
+    update_journal_root: str
+    transaction_root: str
     campaign_ledger: CausalCampaignLedger
     campaign_trust_policy: VerifiedCampaignTrustPolicy
     evidence_verifier_signer: Any
@@ -695,6 +719,11 @@ class ProductionVerifiedTransitionGroupProvider:
 
         self._contract = frozen
         self._provider_config = cast(dict[str, Any], _clone(config, role="provider_config"))
+        self._transaction_root = _transaction_root_from_provider_config(
+            self._provider_config
+        )
+        if self._transaction_root in frozen["ledger_roots"].values():
+            _fail("provider_transaction_root_overlap")
         self._ledger = campaign_ledger
         self._policy = campaign_trust_policy
         self._producer = evidence_producer
@@ -1614,19 +1643,27 @@ class ProductionVerifiedTransitionGroupProvider:
                 ],
             )
             loaded = tuple(self._loader(request))
-            updated = [
-                item
+            if len(loaded) != len(self._accepted_steps):
+                _fail("provider_recovered_package_set_mismatch")
+            replay_groups = []
+            for package, accepted in zip(
+                loaded, self._accepted_steps, strict=True
+            ):
+                if not isinstance(package, Mapping):
+                    _fail("provider_recovered_package_type_invalid")
+                group = self._reconstruct_replay_package(
+                    package, step=accepted
+                )
+                if group is not None:
+                    replay_groups.append(group)
+            expected = [
+                item["campaign_sequence"]
                 for item in self._accepted_steps
                 if item["step_kind"] == "verified_optimizer_update"
             ]
-            if [group.sequence for group in loaded] != [
-                item["campaign_sequence"] for item in updated
-            ]:
+            if [group.sequence for group in replay_groups] != expected:
                 _fail("provider_recovered_group_set_mismatch")
-            return tuple(
-                self._validate_replay_group(group, step=item)
-                for group, item in zip(loaded, updated, strict=True)
-            )
+            return tuple(replay_groups)
 
     def _validate_replay_group(
         self, group: VerifiedTransitionReplayGroup, *, step: Mapping[str, Any]
@@ -1827,6 +1864,19 @@ class ProductionVerifiedTransitionGroupProvider:
             if completed_groups != len(self._accepted_steps):
                 _fail("provider_finalize_group_count_mismatch")
             _identifier(halt_reason, role="provider_halt_reason")
+            updated_steps = [
+                step
+                for step in self._accepted_steps
+                if step["step_kind"] == "verified_optimizer_update"
+            ]
+            if len(replay_groups) != len(updated_steps):
+                _fail("provider_finalize_replay_group_set_mismatch")
+            validated_replay_groups = tuple(
+                self._validate_replay_group(group, step=step)
+                for group, step in zip(
+                    replay_groups, updated_steps, strict=True
+                )
+            )
             request = VerifiedTransitionFinalizeRequest(
                 schema=FINALIZE_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,
@@ -1835,7 +1885,21 @@ class ProductionVerifiedTransitionGroupProvider:
                 ],
                 completed_groups=completed_groups,
                 halt_reason=halt_reason,
-                replay_groups=tuple(replay_groups),
+                replay_groups=validated_replay_groups,
+                step_receipts=tuple(self._accepted_steps),
+                replay_artifact_root=self._contract["ledger_roots"][
+                    "replay_artifacts"
+                ],
+                campaign_ledger_root=self._contract["ledger_roots"][
+                    "campaign"
+                ],
+                transition_artifact_root=self._contract["ledger_roots"][
+                    "transition_artifacts"
+                ],
+                update_journal_root=self._contract["ledger_roots"][
+                    "updates"
+                ],
+                transaction_root=self._transaction_root,
                 campaign_ledger=self._ledger,
                 campaign_trust_policy=self._policy,
                 evidence_verifier_signer=self._evidence_verifier_signer,
@@ -1870,7 +1934,9 @@ class ProductionVerifiedTransitionGroupProvider:
                 for sequence, status in enumerate(statuses[:completed_groups])
                 if status == "updated"
             ]
-            if [group.sequence for group in replay_groups] != expected_updated:
+            if [
+                group.sequence for group in validated_replay_groups
+            ] != expected_updated:
                 _fail("provider_finalize_replay_group_set_mismatch")
             self._finalized = True
             return closure
