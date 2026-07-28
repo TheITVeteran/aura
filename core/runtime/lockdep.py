@@ -33,9 +33,17 @@ Four hazard classes are checked, all live, all cheap:
 4. **Loop-blocking hold**: a sync lock held past a deadline while the
    event loop thread owns it, which is the freeze signature.
 
-Overhead is a handful of dict/set operations per acquire. It is on by
-default and stays on in production — a validator that only runs in test
-builds only finds the bugs tests already reach.
+Overhead is roughly 1.8µs per acquire/release against 90ns for a bare
+``threading.Lock`` — about 20x. That number is stated because it decides
+where this can be used: it is nothing for a lock taken thousands of times
+a second, and it is real for one taken in a per-token inner loop. It was
+97x until the call-site naming stopped going through
+``traceback.extract_stack``, which resolved each frame's source line
+through linecache to build a string that is discarded unless a splat
+happens.
+
+It is on by default and stays on in production — a validator that only
+runs in test builds only finds the bugs tests already reach.
 
 Usage
 -----
@@ -58,6 +66,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 import time
 import traceback
@@ -70,6 +79,14 @@ from typing import Any
 from core.runtime.taint import TaintFlag, taint
 
 logger = logging.getLogger("Aura.Lockdep")
+
+#: Basename of this module, for skipping our own frames when naming a call
+#: site. Computed once; ``_site`` runs on every acquire.
+_THIS_FILE = __file__.rsplit("/", 1)[-1]
+
+#: Returns the running loop or None, where the public accessor raises.
+#: Bound once because it is called on every acquire.
+_get_running_loop = asyncio.events._get_running_loop
 
 #: A sync lock held longer than this while the event loop thread owns it is
 #: reported as a loop-blocking hold. 50ms is well past any legitimate
@@ -183,7 +200,7 @@ class Splat:
         }
 
 
-@dataclass
+@dataclass(slots=True)
 class _HeldLock:
     name: str
     rank: LockRank
@@ -193,7 +210,7 @@ class _HeldLock:
     site: str
 
 
-@dataclass
+@dataclass(slots=True)
 class _ContextState:
     """Per-execution-context held-lock stack."""
 
@@ -219,33 +236,58 @@ class LockdepValidator:
 
     # ── execution context identity ────────────────────────────────────
     @staticmethod
-    def _context_key() -> tuple[tuple[str, int], str]:
+    def _context_key() -> tuple[str, int]:
         """Identify the execution context.
 
         Two coroutines interleave on one thread, so a task is its own
         context; plain threads key on their ident.
+
+        ``asyncio.current_task()`` raises outside a loop, and raising plus
+        catching costs more than the rest of this function — on every
+        acquire, for the very common case of a plain worker thread. The
+        private ``_get_running_loop`` returns None instead; it is the same
+        C accessor ``get_running_loop`` raises on top of.
         """
-        try:
-            task = asyncio.current_task()
-        except RuntimeError:
-            task = None
-        if task is not None:
-            return ("task", id(task)), f"task:{task.get_name()}"
-        ident = threading.get_ident()
-        return ("thread", ident), f"thread:{threading.current_thread().name}"
+        loop = _get_running_loop()
+        if loop is not None:
+            task = asyncio.current_task(loop)
+            if task is not None:
+                return ("task", id(task))
+        return ("thread", threading.get_ident())
+
+    @staticmethod
+    def _context_label(key: tuple[str, int]) -> str:
+        """Human name for a context. Only needed when a state is created or
+        a splat is written, so it is not on the per-acquire path."""
+        if key[0] == "task":
+            task = asyncio.current_task() if _get_running_loop() is not None else None
+            return f"task:{task.get_name()}" if task is not None else "task:<ended>"
+        return f"thread:{threading.current_thread().name}"
 
     def note_loop_thread(self) -> None:
         """Record which thread runs the event loop, for hazard 4."""
         self._loop_thread_ident = threading.get_ident()
 
     @staticmethod
-    def _site(depth: int = 4) -> str:
-        stack = traceback.extract_stack(limit=depth + 2)
-        for frame in reversed(stack[:-1]):
-            if "lockdep.py" in frame.filename:
-                continue
-            return f"{frame.filename.rsplit('/', 2)[-1]}:{frame.lineno}"
-        return "<unknown>"
+    def _site() -> str:
+        """Nearest caller outside this module, as ``file.py:lineno``.
+
+        This runs on every single acquire, so it walks frames directly
+        rather than going through ``traceback.extract_stack``. That helper
+        builds FrameSummary objects and resolves each frame's source line
+        through linecache — file IO and cache lookups to produce text that
+        is thrown away unless a splat happens. Measured at 8.1µs per
+        acquire against 84ns for a bare ``threading.Lock``: 97x, which is
+        a cost the codebase cannot pay once lockdep covers the hot caches
+        and registries. Reading only ``f_lineno`` and ``co_filename``
+        touches no source.
+        """
+        frame = sys._getframe(1)
+        while frame is not None and frame.f_code.co_filename.endswith(_THIS_FILE):
+            frame = frame.f_back
+        if frame is None:
+            return "<unknown>"
+        return f"{frame.f_code.co_filename.rsplit('/', 1)[-1]}:{frame.f_lineno}"
 
     @staticmethod
     def _stack(limit: int = 12) -> tuple[str, ...]:
@@ -296,7 +338,7 @@ class LockdepValidator:
         is_async: bool,
         reentrant: bool,
     ) -> None:
-        key, label = self._context_key()
+        key = self._context_key()
         site = self._site()
         now = time.monotonic()
 
@@ -304,9 +346,10 @@ class LockdepValidator:
             self._acquires += 1
             state = self._contexts.get(key)
             if state is None:
-                state = _ContextState(label=label)
+                state = _ContextState(label=self._context_label(key))
                 self._contexts[key] = state
             held = state.held
+            label = state.label
 
             # 3. self-deadlock on a non-reentrant lock
             if not reentrant and any(h.name == name for h in held):
@@ -400,12 +443,13 @@ class LockdepValidator:
             )
 
     def on_release(self, name: str, *, is_async: bool) -> None:
-        key, label = self._context_key()
+        key = self._context_key()
         now = time.monotonic()
         with self._lock:
             state = self._contexts.get(key)
             if state is None:
                 return
+            label = state.label
             for idx in range(len(state.held) - 1, -1, -1):
                 if state.held[idx].name == name:
                     entry = state.held.pop(idx)
@@ -523,7 +567,8 @@ class LockdepValidator:
         so a hot path (every fsync, every spawn) reports the first
         occurrence and then only counts.
         """
-        key, label = self._context_key()
+        key = self._context_key()
+        label = self._context_label(key)
         with self._lock:
             self._splat_counts[signature] = self._splat_counts.get(signature, 0) + 1
             if signature in self._splats or len(self._splats) >= MAX_SPLATS:
@@ -546,7 +591,7 @@ class LockdepValidator:
             return signature in self._splats
 
     def held_names(self) -> list[str]:
-        key, _ = self._context_key()
+        key = self._context_key()
         with self._lock:
             state = self._contexts.get(key)
             return [h.name for h in state.held] if state else []

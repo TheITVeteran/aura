@@ -204,6 +204,57 @@ def test_assert_no_locks_held_reports_once_and_can_raise():
     assert splats[0]["occurrences"] >= 3
 
 
+class TestAcquireStaysCheapEnoughToLeaveOn:
+    """Lockdep is on in production, so its cost is part of its contract.
+
+    It only sees locks it wraps, which means coverage grows by wrapping
+    more locks — including hot caches and registries. A per-acquire cost
+    that is fine for eight locks is not automatically fine for five
+    hundred, so the cost is pinned here rather than assumed.
+    """
+
+    def test_naming_the_call_site_reads_no_source(self):
+        """The regression that made an acquire 97x a raw lock.
+
+        traceback.extract_stack resolves every frame's source line through
+        linecache to build a string that is thrown away unless a splat
+        happens. Reading f_lineno off the frame costs nothing and says the
+        same thing. linecache staying empty is the structural version of
+        the timing assertion below, and it does not flake.
+        """
+        import linecache
+
+        linecache.clearcache()
+        with checked_lock("cheap_site"):
+            pass
+        assert not linecache.cache, (
+            "acquiring a checked lock read source files: call-site naming is "
+            "going through traceback again"
+        )
+
+    def test_overhead_stays_within_an_order_of_magnitude_or_two(self):
+        import timeit
+
+        raw = threading.Lock()
+        checked = checked_lock("overhead_probe")
+
+        def cost(lock) -> float:
+            def run():
+                with lock:
+                    pass
+
+            # Best of 5: the minimum is the least noisy estimator here,
+            # because scheduler noise only ever adds time.
+            return min(timeit.timeit(run, number=20_000) for _ in range(5))
+
+        ratio = cost(checked) / cost(raw)
+        assert ratio < 45, (
+            f"checked lock is {ratio:.0f}x a raw lock; it was ~20x when this "
+            "was written. Something on the acquire path got expensive, and "
+            "lockdep is on in production."
+        )
+
+
 class TestSanctionedBlockingLocks:
     """A sanction excuses one named lock from one check — and nothing else."""
 
