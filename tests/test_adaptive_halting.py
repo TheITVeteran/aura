@@ -5,6 +5,7 @@ names latent overthinking as the failure mode. A fixed T is not an
 allocation policy, and a flat curve measured at fixed T cannot tell you
 whether depth would have helped.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,6 +19,8 @@ from core.learning.adaptive_halting import (  # noqa: E402
     decide_steps,
     overthinking_report,
     ponder_loss,
+    validate_verified_stopping_teacher_receipt,
+    verified_stopping_teacher,
 )
 
 HIDDEN = 16
@@ -88,9 +91,7 @@ def test_accuracy_beats_efficiency_in_the_objective():
     think_more = [mx.array(0.01), mx.array(0.01), mx.array(0.99)]
     early, _ = ponder_loss(losses, halt_now, policy)
     late, _ = ponder_loss(losses, think_more, policy)
-    assert float(late) < float(early), (
-        "thinking longer must win when it is much more accurate"
-    )
+    assert float(late) < float(early), "thinking longer must win when it is much more accurate"
 
 
 def test_ponder_cost_breaks_ties_toward_less_compute():
@@ -110,11 +111,64 @@ def test_halting_distribution_is_a_distribution():
     """The last step absorbs all remaining mass, so weights sum to one."""
     policy = HaltingPolicy(min_steps=1, max_steps=3)
     losses = [mx.array(1.0)] * 3
-    _, telemetry = ponder_loss(
-        losses, [mx.array(0.3), mx.array(0.3), mx.array(0.3)], policy
-    )
+    _, telemetry = ponder_loss(losses, [mx.array(0.3), mx.array(0.3), mx.array(0.3)], policy)
     assert 1.0 <= telemetry["expected_steps"] <= 3.0
     assert telemetry["expected_loss"] == pytest.approx(1.0, rel=1e-5)
+
+
+def test_verified_stopping_teacher_prefers_early_equal_quality_and_replays():
+    teacher = verified_stopping_teacher(
+        [0.4, 0.4, 0.4],
+        [1, 2, 4],
+        ponder_cost=0.05,
+        temperature=0.1,
+    )
+    receipt = teacher.receipt()
+
+    assert teacher.selected_step == 1
+    assert teacher.probabilities[0] > teacher.probabilities[1]
+    assert teacher.probabilities[1] > teacher.probabilities[2]
+    assert sum(teacher.probabilities) == pytest.approx(1.0)
+    assert validate_verified_stopping_teacher_receipt(receipt) == receipt
+
+
+def test_verified_stopping_teacher_rejects_resealed_false_atoms():
+    import copy
+    import hashlib
+    import json
+
+    receipt = verified_stopping_teacher(
+        [0.9, 0.3],
+        [1, 2],
+        ponder_cost=0.01,
+        temperature=0.2,
+    ).receipt()
+    attacked = copy.deepcopy(receipt)
+    attacked["probabilities"] = list(reversed(attacked["probabilities"]))
+    payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+    attacked["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+    with pytest.raises(ValueError, match="arithmetic"):
+        validate_verified_stopping_teacher_receipt(attacked)
+
+
+@pytest.mark.parametrize("invalid_loss", [True, "0.4", None])
+def test_verified_stopping_teacher_rejects_scalar_type_confusion(invalid_loss):
+    with pytest.raises(ValueError, match="steps and losses"):
+        verified_stopping_teacher(
+            [invalid_loss, 0.3],
+            [1, 2],
+            ponder_cost=0.01,
+            temperature=0.2,
+        )
 
 
 # ── The falsifiable claim ───────────────────────────────────────────────

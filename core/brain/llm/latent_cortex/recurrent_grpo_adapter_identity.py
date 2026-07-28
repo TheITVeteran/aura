@@ -1163,7 +1163,12 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         artifacts=artifacts,
         tensor_metadata=tensor_metadata,
     )
+    from core.learning.recurrence_native_objective_v2 import (
+        INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
+    )
     from core.learning.verified_transition_training_evidence import (
+        VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+        VERIFIED_TRAINING_EVIDENCE_SCHEMA,
         validate_verified_transition_training_evidence,
     )
 
@@ -1206,9 +1211,27 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         trajectory_group_config=trajectory_group_config,
         advantage_clip=advantage_clip,
     )
+    intervention_evidence = bool(
+        trajectory_group_config is not None
+        and trajectory_group_config.intervention_config is not None
+    )
+    expected_evidence_schema = (
+        VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+        if intervention_evidence
+        else VERIFIED_TRAINING_EVIDENCE_SCHEMA
+    )
     if (
-        evidence.get("source_artifacts_replayed") is not True
+        evidence.get("schema") != expected_evidence_schema
+        or evidence.get("source_artifacts_replayed") is not True
         or evidence.get("legacy_scalar_reward_path_used") is not False
+        or (
+            intervention_evidence
+            and (
+                evidence.get("measurement_trust_boundary")
+                != INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
+                or evidence.get("external_policy_state_replayed") is not False
+            )
+        )
         or identity.get("optimizer_updates") != evidence.get("optimizer_update_count")
         or identity.get("final_policy_sha256") != evidence.get("final_policy_sha256")
     ):

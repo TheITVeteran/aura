@@ -26,8 +26,10 @@ from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
 )
 from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointInterventionConfig,
     ExactAdjointTrajectoryConfig,
     LivePathForward,
+    exact_adjoint_composite_live_path_value_and_grad,
     live_path_branch_answer_ce_trail,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
@@ -1262,6 +1264,226 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
             trajectory_group_config=trajectory_config,
             advantage_clip=4.0,
         )
+
+
+def test_verified_intervention_composite_is_quality_weighted_and_replayable(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    model = _prepared(seed=982)
+    _set_adapter_delta(model, 0.02)
+    prompt = [5, 9, 17]
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    sampling = RecurrentSamplingConfig(
+        max_tokens=2,
+        max_abs_logprob_drift=2.0,
+        max_mean_abs_logprob_drift=2.0,
+        max_clipped_token_fraction=1.0,
+        max_old_policy_approx_kl=1.0,
+    )
+    samples = [
+        recurrent_policy_sample_from_causal_pair(
+            sample_final_recurrent_transition_pair(
+                model,
+                prompt,
+                spec=spec,
+                branch_index=branch,
+                seed=seed,
+                sampling=sampling,
+                episode_id=f"intervention-composite-{branch}-{seed}",
+            ),
+            sampling=sampling,
+        )
+        for branch, seed in ((0, 79), (1, 83))
+    ]
+    rewards = (1.0, 0.0)
+    base = exact_adjoint_sampled_group_value_and_grad(
+        model,
+        prompt,
+        samples,
+        rewards,
+        spec=spec,
+        config=RecurrentGRPOConfig(
+            kl_coefficient=0.0,
+            max_initial_clip_fraction=1.0,
+            max_initial_old_policy_approx_kl=1.0,
+        ),
+    )
+    group_config = VerifiedTrajectoryGroupConfig(
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1, 2),
+            causality_weight=0.7,
+            causality_margin=2.0,
+            stopping_steps=(1, 2),
+            stopping_weight=0.5,
+            stopping_ponder_cost=0.02,
+            stopping_temperature=0.2,
+        ),
+        diversity_weight=0.2,
+    )
+    admission_sha256 = "3" * 64
+    reward_sha256 = "4" * 64
+    sample_receipts = [
+        hashlib.sha256(
+            json.dumps(
+                sample.receipt(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        for sample in samples
+    ]
+    monkeypatch.setattr(
+        "core.learning.verified_transition_reward.rewards_for_recurrent_samples",
+        lambda _receipt, _samples, _prompt: rewards,
+    )
+    group_admission = {
+        "receipt_sha256": admission_sha256,
+        "reward_receipt_sha256": reward_sha256,
+        "policy_sha256": samples[0].policy_sha256,
+        "recurrent_execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": samples[0].prompt_tokens_sha256,
+        "group_size": 2,
+        "sample_bindings": [
+            {
+                "schema": "aura.verified_transition.sample_binding.v1",
+                "sample_sha256": digest,
+            }
+            for digest in sample_receipts
+        ],
+    }
+    source = recurrent_grpo_runtime.build_verified_trajectory_group_source_binding(
+        group_admission,
+        {"receipt_sha256": reward_sha256},
+        samples,
+        prompt,
+        spec=spec,
+        trajectory_group_config=group_config,
+        advantage_clip=4.0,
+    )
+    result = recurrent_grpo_runtime._with_verified_trajectory_group_objective(
+        model,
+        prompt,
+        samples,
+        rewards,
+        base,
+        group_admission_receipt=group_admission,
+        reward_receipt={"receipt_sha256": reward_sha256},
+        spec=spec,
+        bridge_tokens=(),
+        trajectory_group_config=group_config,
+        advantage_clip=4.0,
+    )
+    receipt = result.receipt()["trajectory_receipt"]
+    validated = validate_verified_trajectory_group_receipt(
+        receipt,
+        advantage_report=result.receipt()["advantage_report"],
+        expected_source_binding=source,
+    )
+
+    assert source["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+    assert receipt["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    assert validated["positive_completion_indices"] == [0]
+    assert validated["positive_advantage_weights"] == [1.0]
+    assert len(validated["quality_receipts"]) == 1
+    child = validated["quality_receipts"][0]["objective_receipt"]
+    assert child["branch_indices"] == [0]
+    assert child["trajectory_values"]["causality"] > 0.0
+    assert child["trajectory_values"]["stopping"] > 0.0
+    assert child["lesion_losses"].keys() == {"1", "2"}
+    assert len(child["stopping_teacher_receipts"]) == 1
+    assert validated["structural_receipt"] is not None
+
+    def reseal(document):
+        payload = {key: value for key, value in document.items() if key != "receipt_sha256"}
+        document["receipt_sha256"] = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        return document
+
+    attacked = copy.deepcopy(receipt)
+    attacked_child = attacked["quality_receipts"][0]["objective_receipt"]
+    attacked_child["lesion_losses"]["1"][0] += 1.0
+    attacked["quality_receipts"][0]["objective_receipt"] = reseal(attacked_child)
+    with pytest.raises(ValueError, match="causality term does not replay"):
+        validate_verified_trajectory_group_receipt(reseal(attacked))
+
+    attacked = copy.deepcopy(receipt)
+    attacked_child = attacked["quality_receipts"][0]["objective_receipt"]
+    teacher = attacked_child["stopping_teacher_receipts"][0]
+    teacher["probabilities"] = list(reversed(teacher["probabilities"]))
+    attacked_child["stopping_teacher_receipts"][0] = reseal(teacher)
+    attacked["quality_receipts"][0]["objective_receipt"] = reseal(attacked_child)
+    with pytest.raises(ValueError, match="stopping teacher arithmetic"):
+        validate_verified_trajectory_group_receipt(reseal(attacked))
+
+    injected = exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        prompt,
+        samples[0].tokens,
+        spec=spec,
+        trajectory_config=None,
+        intervention_config=group_config.intervention_config,
+        policy_sha256=samples[0].policy_sha256,
+        branch_index=None,
+        diversity_weight=group_config.diversity_weight,
+        diversity_target_cos=group_config.diversity_target_cos,
+        token_loss_weights=(0.0,) * len(samples[0].tokens),
+    )
+    attacked = copy.deepcopy(receipt)
+    previous_structural = attacked["structural_receipt"]["objective_receipt"]
+    attacked["structural_receipt"]["objective_receipt"] = injected.receipt()
+    attacked["trajectory_objective_value"] += injected.value - previous_structural["value"]
+    with pytest.raises(ValueError, match="structural objective differs"):
+        validate_verified_trajectory_group_receipt(
+            reseal(attacked),
+            expected_source_binding=source,
+        )
+
+
+def test_verified_intervention_group_config_rejects_false_measurement_boundary():
+    config = VerifiedTrajectoryGroupConfig(
+        trajectory_config=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=0.2,
+        ),
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1,),
+            causality_weight=0.2,
+            stopping_steps=(1, 2),
+            stopping_weight=0.1,
+        ),
+    )
+    canonical = config.to_dict()
+    assert (
+        canonical["measurement_trust_boundary"]
+        == "producer_sealed_arithmetic_external_state_replay_required"
+    )
+
+    missing = copy.deepcopy(canonical)
+    del missing["measurement_trust_boundary"]
+    with pytest.raises(ValueError, match="fields do not match"):
+        VerifiedTrajectoryGroupConfig.from_dict(missing)
+
+    relabeled = copy.deepcopy(canonical)
+    relabeled["measurement_trust_boundary"] = "independently_replayed"
+    with pytest.raises(ValueError, match="policy is unsupported"):
+        VerifiedTrajectoryGroupConfig.from_dict(relabeled)
+
+    missing_intervention = copy.deepcopy(canonical)
+    missing_intervention["intervention_config"] = None
+    with pytest.raises(ValueError, match="policy is unsupported"):
+        VerifiedTrajectoryGroupConfig.from_dict(missing_intervention)
 
 
 def test_sampled_group_rejects_excess_clip_fraction_before_adjoint():

@@ -1,0 +1,92 @@
+{
+  "schema": "aura.spark.cp420p_verified_intervention_objectives_evidence.v1",
+  "checkpoint": "CP420P",
+  "total_checkpoint": 686,
+  "generated_at_utc": "2026-07-28T17:10:56Z",
+  "base_commit": "e4bb70719eb9aa9d2abdd069a7ca04218c9d0d65",
+  "claim": "verified_causal_lesion_and_cost_aware_stopping_objectives_in_one_exactly_once_optimizer_transaction",
+  "implemented": {
+    "causal_lesion_semantics": "skip one complete exchange-coupled recurrent transition, replay the remaining suffix detached, and compare the resulting answer loss with the intact path",
+    "causal_objective": "mean causality_weight * max(intact_loss + causality_margin - detached_lesion_loss, 0) over preregistered lesion steps",
+    "stopping_teacher": "detached cost-aware soft optimal-stopping distribution over candidate-depth answer loss plus ponder cost, with deterministic earliest hard ties",
+    "stopping_objective": "stopping_weight * expectation of candidate-depth risk under the detached verified stopping teacher",
+    "gradient_semantics": "lesion baselines and teacher probabilities are detached; gradients enter only the intact recurrent policy path at the measured candidate depths",
+    "verified_group_v2": "positive verified-advantage L1 allocation applies to both improvement and intervention quality objectives while structural trajectory and diversity terms remain once per prompt",
+    "transaction_semantics": "terminal GRPO, trajectory quality, causal lesion, stopping, and structural terms enter one reserved, journaled, exactly-once optimizer mutation",
+    "source_custody": "canonical v2 config, admission, reward, samples, prompt, execution spec, objective source, journal, transaction, campaign closure, and final evidence are replay-bound",
+    "aggregate_evidence": "training-evidence v3 preserves the producer-sealed measurement boundary and records external_policy_state_replayed=false; historical non-intervention evidence remains v2-compatible",
+    "preregistration_depth_gate": "trajectory probes, causal lesion steps, and stopping candidate depths must all fit the frozen execution spec before a campaign can be committed",
+    "canonical_candidate_config": "tests/fixtures/verified_intervention_group_config.json",
+    "measurement_trust_boundary": "producer_sealed_arithmetic_external_state_replay_required"
+  },
+  "adversarial_proofs": {
+    "resealed_false_causal_arithmetic": "rejected",
+    "resealed_false_stopping_probabilities": "rejected",
+    "missing_measurement_trust_boundary": "rejected",
+    "relabeled_measurement_trust_boundary": "rejected",
+    "v2_schema_with_null_intervention_config": "rejected",
+    "aggregate_evidence_boundary_drop_or_false_external_replay": "rejected",
+    "lesion_or_stopping_depth_beyond_execution_spec": "rejected_at_preregistration",
+    "intervention_receipt_in_structural_slot": "rejected",
+    "malformed_teacher_sequence_coercion": "rejected",
+    "disabled_causal_or_stopping_term_constrains_depth": "prevented",
+    "legacy_v1_config_and_receipt_path": "retained",
+    "v2_config_journal_reload_and_source_reconstruction": "replayed",
+    "duplicate_update_after_commit_recovery": "prevented"
+  },
+  "validation": {
+    "ruff_lint": "pass",
+    "ruff_format": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "independent_adversarial_review": "approve_high_confidence_no_remaining_findings",
+    "post_rebase_smoke_matrix": {
+      "passed": 10,
+      "failed": 0,
+      "duration_seconds": 25.24
+    },
+    "direct_objective_and_transaction_matrix": {
+      "passed": 191,
+      "failed": 0,
+      "duration_seconds": 102.39
+    },
+    "downstream_external_replay_campaign_and_launch_matrix": {
+      "passed": 148,
+      "failed": 0,
+      "duration_seconds": 18.35
+    },
+    "total_non_overlapping_tests": {
+      "passed": 339,
+      "failed": 0
+    }
+  },
+  "claim_boundary": {
+    "producer_receipt_arithmetic_replayed": true,
+    "external_pre_update_policy_state_custodied": false,
+    "external_latent_measurements_recomputed": false,
+    "production_stop_head_trained_or_calibrated": false,
+    "resident_32b_loaded": false,
+    "resident_32b_trained": false,
+    "intervention_config_enabled_in_default_campaign": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false,
+    "spark_060_closed": false,
+    "spark_061_closed": false,
+    "spark_062_closed": false
+  },
+  "remaining_blockers": [
+    "custody the exact pre-update resident policy tensors and let the external verifier independently reconstruct trajectory, lesion, and stopping measurement atoms",
+    "calibrate lesion margins, stopping temperature and ponder cost, displacement floors, and per-term gradient liveness on the resident 32B operating point",
+    "train and calibrate the production stop-policy head against the verified stopping teacher without replacing Aura's own generated responses with hard-coded output",
+    "give process, mistake-location, and accept-discard heads separate admitted optimizers, resident label producers, checkpoint recovery, and runtime artifact binding",
+    "activate the canonical v2 intervention config in a fresh preregistration and prove exact campaign cardinality across every launch artifact",
+    "provision independently authenticated production trust roots and externally custodied issuer and verifier principals",
+    "execute the resident initial-policy probe, materialize and independently reopen the launch bundle, then run the powered campaign and falsification stages"
+  ],
+  "next": [
+    "Extend external replay with pre-update policy custody and independent exact-adjoint atom recomputation.",
+    "Run bounded resident-32B intervention and stopping calibration before enabling the production campaign.",
+    "Keep the powered frontier verdict and WOW Signal commit reserved for accepted external evidence."
+  ]
+}

@@ -5250,3 +5250,42 @@ seconds. Evidence:
 `artifacts/current/cp420o_verified_trajectory_composite_evidence.json`. No
 resident model was loaded or trained, and no reasoning, frontier, promotion, or
 `WOW Signal` result follows.
+
+### 2026-07-28 - CP420P: verified intervention gradients enter the mutation
+
+The verified optimizer now consumes causal-transition lesions and a learned
+stopping opportunity objective. A lesion skips one full exchange-coupled
+transition, replays the suffix detached, and places the resulting hinge
+gradient only on the intact policy path. The stopping teacher derives a
+cost-aware soft distribution over candidate depths from answer loss plus
+ponder cost; its probabilities are detached supervision, while the candidate
+losses remain differentiable.
+
+The v2 group gives both intervention and improvement terms positive verified-
+advantage L1 credit and retains exactly one structural objective over all
+branches. Its canonical config, source binding, journal, exactly-once
+transaction, campaign close, and final replay are covered end to end.
+Adversarial cases reject false causal arithmetic, reversed stopping
+probabilities, malformed teacher rows, intervention receipts injected into the
+structural slot, and omitted or relabeled trust boundaries.
+
+The proof boundary is explicit. Receipt validation proves arithmetic and
+custody over producer-sealed measurement atoms. It does not independently
+reconstruct the latent states from pre-update policy tensors. The contract now
+requires external state replay, and that custody/recomputation lane is the next
+bounded checkpoint. Until it lands, CP420P does not describe its receipts as
+independent state proof.
+
+Intervention training-evidence v3 carries that limitation into adapter identity
+instead of collapsing it into a broad source-replay boolean. Preregistration
+rejects lesion or stopping depths outside the frozen execution graph. Historical
+non-intervention training evidence remains v2-compatible.
+
+The direct matrix passes 191/191 in 102.39 seconds and the disjoint downstream
+campaign, launch, external-manifest, provider, transaction, and post-training
+matrix passes 148/148 in 18.35 seconds. Evidence:
+`artifacts/current/cp420p_verified_intervention_objectives_evidence.json`.
+The final independent adversarial re-review approved the repaired boundary and
+preregistration contracts with no remaining findings in scope.
+SPARK-060/061/062 remain open; no resident model was loaded or trained, and no
+reasoning, frontier, promotion, or `WOW Signal` result follows.

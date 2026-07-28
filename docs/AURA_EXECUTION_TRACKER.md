@@ -31212,3 +31212,77 @@ approximately 74.5%-100.0%, with an 87.2% midpoint. The evidence-adjusted range
 is 3-6 checkpoints to a sealed resident-32B training launch, 7-12 to a
 defensible preliminary gain verdict, and 12-22 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420P verified causal lesions and learned stopping opportunities
+
+The production verified mutation now carries the two intervention objectives
+that CP420O still lacked. At each preregistered lesion step, the bounded exact
+adjoint skips one complete exchange-coupled recurrent transition and replays
+the remaining suffix as a detached counterfactual. The causal hinge rewards the
+intact path only when its answer loss is not sufficiently better than that
+lesioned baseline. This tests whether the learned recurrent transition matters
+to the verified completion rather than merely whether additional compute was
+spent.
+
+Learned stopping uses a detached, cost-aware soft optimal-stopping teacher over
+answer loss plus ponder cost at preregistered candidate depths. Its probability
+arithmetic, hard earliest-tie choice, expected risk, and canonical receipt are
+recomputed by the validator. The teacher changes gradients at the candidate
+depths without turning inference into a hard-coded response tree. Disabled
+causal or stopping terms do not constrain recurrent depth.
+
+The verified trajectory group advances to v2. Positive verified-advantage L1
+credit allocates both improvement and intervention quality terms, while
+displacement, oscillation, and diversity remain one structural objective over
+the full exchange-coupled ensemble. Structural children must use the
+non-intervention exact-adjoint schema, closing a fully resealed intervention
+injection into that slot. The canonical v2 config survives strict load,
+journal write/commit/reload, source reconstruction, one admitted optimizer
+transaction, campaign closure, and final evidence replay. Historical v1
+configs and receipts remain valid.
+
+An independent adversarial pass exposed an important proof boundary. A
+canonical receipt can recompute every serialized loss, probability, term, and
+seal, but an unkeyed producer receipt cannot prove that the producer measured
+those atoms from the claimed pre-update policy. The v2 config and intervention
+receipt now state
+`producer_sealed_arithmetic_external_state_replay_required`; missing or
+relabeled boundaries fail. This is an honest machine-readable launch blocker,
+not a claim that external state replay already exists.
+
+The same boundary now survives aggregation. Intervention campaigns emit
+training-evidence v3 carrying the measurement boundary and
+`external_policy_state_replayed=false`; the adapter-identity promotion surface
+cross-binds that schema to the frozen intervention config. Historical
+non-intervention evidence remains v2-compatible. Preregistration also validates
+trajectory, lesion, and stopping depths against the frozen execution spec, so
+an impossible intervention campaign cannot be committed and fail only after
+the resident model loads.
+
+Ruff lint and formatting, bytecode compilation, and diff checks pass. The final
+direct objective, receipt, config, persistence, identity, preregistration, and
+real admitted-transaction matrix passes 191/191 in 102.39 seconds. A disjoint
+downstream matrix covering external manifest replay, causal campaign closure,
+launch materialization, the training runner, provider/factory, policy probe,
+rejection and ordinary transactions, and post-training contracts passes
+148/148 in 18.35 seconds. Evidence is
+`artifacts/current/cp420p_verified_intervention_objectives_evidence.json`.
+The final independent adversarial re-review is `APPROVE` at high confidence
+with no remaining findings in its requested scope.
+
+This closes the missing causal-lesion and learned-stopping objective path, not
+SPARK-060/061/062. External verification still needs custody of the exact
+pre-update policy tensors and independent recomputation of trajectory, lesion,
+and stopping atoms. Resident-32B term calibration, production stop-head
+training, the three separately admitted auxiliary-head transactions, fresh
+production preregistration, and real externally custodied trust principals
+remain open. No resident 32B was loaded or trained, and no reasoning, frontier,
+promotion, or `WOW Signal` claim follows.
+
+CP420P is total checkpoint 686. The 686-920 completion envelope is
+approximately 74.6%-100.0%, with an 87.3% midpoint. The objective blocker
+closed, but the newly explicit external state-replay requirement prevents a
+dishonest forecast reduction: the evidence-adjusted range remains 3-6
+checkpoints to a sealed resident-32B training launch, 7-12 to a defensible
+preliminary gain verdict, and 12-22 to the powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

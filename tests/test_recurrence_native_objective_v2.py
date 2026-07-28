@@ -40,9 +40,14 @@ from core.learning.progressive_recurrent_objective import (  # noqa: E402
     progressive_objective_loss,
 )
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
     EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
+    ExactAdjointInterventionConfig,
     ExactAdjointTrajectoryConfig,
+    _advance_recurrent_states,
     _exchange_and_decorrelate,
+    _persist_and_score,
+    _prepare_live_path,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
     exact_adjoint_composite_live_path_value_and_grad,
@@ -327,6 +332,220 @@ def test_bounded_exact_adjoint_matches_full_unroll_trajectory_gradient():
     for name in full_flat:
         difference = float(mx.max(mx.abs(full_flat[name] - exact_flat[name])))
         assert difference < 3e-4, name
+
+
+def test_bounded_exact_adjoint_matches_causal_and_stopping_gradient():
+    """Intervention terms must match one monolithic differentiable oracle."""
+
+    mx.random.seed(20260729)
+    monolithic = _model()
+    mx.random.seed(20260729)
+    streamed = _model()
+    spec = _spec(recurrent_steps=3)
+    config = ExactAdjointInterventionConfig(
+        lesion_steps=(1, 3),
+        causality_weight=0.7,
+        causality_margin=2.0,
+        stopping_steps=(1, 2, 3),
+        stopping_weight=0.6,
+        stopping_ponder_cost=0.02,
+        stopping_temperature=0.3,
+    )
+
+    def full_unroll_loss(current_model):
+        prepared = _prepare_live_path(
+            current_model,
+            PROMPT,
+            ANSWER,
+            spec=spec,
+            bridge_tokens=(),
+        )
+        states = list(prepared.states)
+        history = [tuple(states)]
+        for step in range(spec.recurrent_steps):
+            states = _advance_recurrent_states(
+                current_model,
+                prepared.prompts_at_window,
+                states,
+                prepared.anchors,
+                spec,
+                step,
+                prepared.prelude_end,
+                prepared.coda_start,
+            )
+            history.append(tuple(states))
+        targets = mx.array(ANSWER)[None, :]
+
+        def answer_loss(state):
+            logits = _persist_and_score(
+                current_model,
+                prepared.prompt_embeddings,
+                prepared.seeds[0],
+                state,
+                prepared.tail_embeddings,
+                bridge_count=prepared.bridge_count,
+                answer_count=prepared.answer_count,
+                prelude_end=prepared.prelude_end,
+                coda_start=prepared.coda_start,
+            )
+            return nn.losses.cross_entropy(
+                logits.astype(mx.float32),
+                targets,
+                reduction="mean",
+            )
+
+        losses = [answer_loss(history[step][0]) for step in config.stopping_steps]
+        intact = losses[-1]
+        lesion_losses = []
+        for lesion_step in config.lesion_steps:
+            lesioned = list(history[lesion_step - 1])
+            for replay_step in range(lesion_step, spec.recurrent_steps):
+                lesioned = _advance_recurrent_states(
+                    current_model,
+                    prepared.prompts_at_window,
+                    lesioned,
+                    prepared.anchors,
+                    spec,
+                    replay_step,
+                    prepared.prelude_end,
+                    prepared.coda_start,
+                )
+            lesion_losses.append(answer_loss(lesioned[0]))
+        causality = (
+            config.causality_weight
+            * mx.stack(
+                [
+                    mx.maximum(
+                        intact - mx.stop_gradient(loss) + config.causality_margin,
+                        0.0,
+                    )
+                    for loss in lesion_losses
+                ]
+            ).mean()
+        )
+        risks = mx.stack(
+            [
+                loss + config.stopping_ponder_cost * step
+                for step, loss in zip(config.stopping_steps, losses, strict=True)
+            ]
+        )
+        probabilities = mx.softmax(-mx.stop_gradient(risks) / config.stopping_temperature)
+        stopping = config.stopping_weight * mx.sum(probabilities * risks)
+        return causality + stopping
+
+    full_value, full_gradients = nn.value_and_grad(monolithic, full_unroll_loss)(monolithic)
+    exact = exact_adjoint_composite_live_path_value_and_grad(
+        streamed,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=None,
+        intervention_config=config,
+        policy_sha256=recurrent_policy_sha256(streamed, spec),
+        token_loss_weights=(0.0,) * len(ANSWER),
+    )
+    mx.eval(full_value, full_gradients, exact.gradients)
+    full_flat = dict(tree_flatten(full_gradients))
+    exact_flat = dict(tree_flatten(exact.gradients))
+    receipt = exact.receipt()
+
+    assert receipt["schema"] == EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
+    assert receipt["intervention_config"] == config.to_dict()
+    assert set(receipt["lesion_losses"]) == {"1", "3"}
+    assert len(receipt["stopping_teacher_receipts"]) == 1
+    assert validate_exact_adjoint_live_path_receipt(receipt) == receipt
+    assert exact.value == pytest.approx(float(full_value), abs=2e-5)
+    assert set(full_flat) == set(exact_flat)
+    for name in full_flat:
+        difference = float(mx.max(mx.abs(full_flat[name] - exact_flat[name])))
+        assert difference < 3e-4, name
+
+
+def test_disabled_intervention_terms_do_not_constrain_recurrent_depth():
+    ExactAdjointInterventionConfig(
+        lesion_steps=(1,),
+        causality_weight=0.5,
+        stopping_steps=(1, 2),
+        stopping_weight=0.0,
+    ).validate_depth(1)
+    ExactAdjointInterventionConfig(
+        lesion_steps=(1, 3),
+        causality_weight=0.0,
+        stopping_steps=(1, 2),
+        stopping_weight=0.5,
+    ).validate_depth(2)
+
+
+def test_intervention_receipt_rejects_sequence_coercion_as_teacher_mapping():
+    model = _model()
+    spec = _spec(recurrent_steps=2)
+    receipt = exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=None,
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1,),
+            causality_weight=0.0,
+            stopping_steps=(1, 2),
+            stopping_weight=0.5,
+        ),
+        policy_sha256=recurrent_policy_sha256(model, spec),
+        token_loss_weights=(0.0,) * len(ANSWER),
+    ).receipt()
+    attacked = copy.deepcopy(receipt)
+    attacked["stopping_teacher_receipts"][0] = list(
+        attacked["stopping_teacher_receipts"][0].items()
+    )
+    payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+    attacked["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+    with pytest.raises(ValueError, match="teacher cardinality"):
+        validate_exact_adjoint_live_path_receipt(attacked)
+
+
+def test_intervention_receipt_rejects_resealed_measurement_boundary_change():
+    model = _model()
+    spec = _spec(recurrent_steps=2)
+    receipt = exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=None,
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1,),
+            causality_weight=0.5,
+            stopping_steps=(1, 2),
+            stopping_weight=0.5,
+        ),
+        policy_sha256=recurrent_policy_sha256(model, spec),
+        token_loss_weights=(0.0,) * len(ANSWER),
+    ).receipt()
+    attacked = copy.deepcopy(receipt)
+    attacked["measurement_trust_boundary"] = "independently_replayed"
+    payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+    attacked["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+    with pytest.raises(ValueError, match="measurement boundary is invalid"):
+        validate_exact_adjoint_live_path_receipt(attacked)
 
 
 def test_exact_adjoint_trajectory_selects_one_producing_branch():

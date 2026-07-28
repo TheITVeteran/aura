@@ -309,11 +309,13 @@ def _verified_trajectory_config_commitment(
         _fail("verified_trajectory_config_noncanonical")
     if int(TRAINING_PARAMETERS["group_size"]) != len(spec.branch_roles):
         _fail("verified_trajectory_group_branch_count_mismatch")
-    if config.trajectory_config is not None:
-        try:
+    try:
+        if config.trajectory_config is not None:
             config.trajectory_config.validate_depth(spec.recurrent_steps)
-        except ValueError as exc:
-            raise PreregistrationError("verified_trajectory_config_depth_invalid") from exc
+        if config.intervention_config is not None:
+            config.intervention_config.validate_depth(spec.recurrent_steps)
+    except ValueError as exc:
+        raise PreregistrationError("verified_trajectory_config_depth_invalid") from exc
     return {
         **_binding(declared),
         "config": config.to_dict(),

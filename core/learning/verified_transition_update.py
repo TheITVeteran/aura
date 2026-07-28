@@ -567,13 +567,16 @@ def apply_verified_transition_group_update(
         ):
             _fail("verified_transition_trajectory_config_invalid")
         trajectory = trajectory_group_config.trajectory_config
-        if trajectory is not None:
-            try:
+        intervention = trajectory_group_config.intervention_config
+        try:
+            if trajectory is not None:
                 trajectory.validate_depth(spec.recurrent_steps)
-            except (TypeError, ValueError) as exc:
-                raise VerifiedTransitionUpdateError(
-                    "verified_transition_trajectory_config_invalid"
-                ) from exc
+            if intervention is not None:
+                intervention.validate_depth(spec.recurrent_steps)
+        except (TypeError, ValueError) as exc:
+            raise VerifiedTransitionUpdateError(
+                "verified_transition_trajectory_config_invalid"
+            ) from exc
 
     campaign_ledger.validate_started_group(
         sequence=campaign_sequence,

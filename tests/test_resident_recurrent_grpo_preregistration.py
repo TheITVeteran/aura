@@ -107,6 +107,60 @@ def test_preregistration_archives_enabled_verified_trajectory_config(
     assert receipt["claim_eligible"] is False
 
 
+def test_preregistration_archives_combined_intervention_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parameters = dict(prereg.TRAINING_PARAMETERS)
+    parameters["group_size"] = 2
+    parameters["verified_trajectory_config"] = (
+        "tests/fixtures/verified_intervention_group_config.json"
+    )
+    monkeypatch.setattr(prereg, "TRAINING_PARAMETERS", parameters)
+
+    contract = _contract()
+    receipt = prereg.validate_contract(contract, verify_model=False)
+    artifact = contract["training"]["verified_trajectory_config_artifact"]
+
+    assert artifact["config"]["schema"] == ("aura.recurrent_grpo.verified_trajectory_composite.v2")
+    assert artifact["config"]["intervention_config"]["lesion_steps"] == [1, 2, 4]
+    assert artifact["config"]["intervention_config"]["stopping_steps"] == [1, 2, 4]
+    assert artifact["sha256"] == artifact["semantic_sha256"]
+    assert receipt["claim_eligible"] is False
+
+
+@pytest.mark.parametrize("field", ["lesion_steps", "stopping_steps"])
+def test_preregistration_rejects_intervention_depth_beyond_execution_spec(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+):
+    config = json.loads(
+        (prereg.REPO_ROOT / "tests/fixtures/verified_intervention_group_config.json").read_text(
+            encoding="ascii"
+        )
+    )
+    config["intervention_config"][field] = [1, 2, 5]
+    config_path = tmp_path / "intervention-config.json"
+    config_path.write_bytes(prereg.canonical_json_bytes(config))
+    parameters = {
+        **prereg.TRAINING_PARAMETERS,
+        "group_size": 2,
+        "verified_trajectory_config": config_path.name,
+    }
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "TRAINING_PARAMETERS", parameters)
+    spec = SimpleNamespace(
+        branch_roles=("constructive_solution", "critical_verification"),
+        recurrent_steps=4,
+    )
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="verified_trajectory_config_depth_invalid",
+    ):
+        prereg._verified_trajectory_config_commitment(spec)
+
+
 def test_preregistration_rejects_trajectory_group_branch_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ):

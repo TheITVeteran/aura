@@ -102,9 +102,17 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _verified_training_evidence(base_identity: dict) -> dict:
+def _verified_training_evidence(
+    base_identity: dict,
+    *,
+    intervention: bool = False,
+) -> dict:
     material = {
-        "schema": "aura.verified_transition.training_evidence.v2",
+        "schema": (
+            transition_evidence_runtime.VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+            if intervention
+            else transition_evidence_runtime.VERIFIED_TRAINING_EVIDENCE_SCHEMA
+        ),
         "campaign_receipt_sha256": "a" * 64,
         "campaign_manifest_sha256": "b" * 64,
         "updated_sequences": [0],
@@ -118,6 +126,15 @@ def _verified_training_evidence(base_identity: dict) -> dict:
         "source_artifacts_replayed": True,
         "legacy_scalar_reward_path_used": False,
     }
+    if intervention:
+        material.update(
+            {
+                "measurement_trust_boundary": (
+                    "producer_sealed_arithmetic_external_state_replay_required"
+                ),
+                "external_policy_state_replayed": False,
+            }
+        )
     return {
         **material,
         "receipt_sha256": sha256_bytes(canonical_json_bytes(material)),
@@ -707,6 +724,78 @@ def test_verified_identity_requires_source_replay_and_cross_binds_final_policy(
             transition_policy=object(),
             transition_groups=groups,
         )
+
+
+def test_verified_identity_preserves_intervention_measurement_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    intervention_config = json.loads(
+        (Path(__file__).parent / "fixtures/verified_intervention_group_config.json").read_text(
+            encoding="ascii"
+        )
+    )
+    intervention_config["trajectory_config"]["probe_steps"] = [1, 2]
+    intervention_config["intervention_config"]["lesion_steps"] = [1, 2]
+    intervention_config["intervention_config"]["stopping_steps"] = [1, 2]
+    fixture = _fixture(
+        tmp_path,
+        verified_step=True,
+        trajectory_config=intervention_config,
+    )
+    base_identity = fixture["identity"]
+    manifest, artifacts, ledger, groups = _verified_wrapper_inputs(fixture)
+    monkeypatch.setattr(
+        identity_runtime,
+        "validate_recurrent_grpo_adapter_identity",
+        lambda *_args, **_kwargs: dict(base_identity),
+    )
+    legacy_evidence = _verified_training_evidence(base_identity)
+    monkeypatch.setattr(
+        transition_evidence_runtime,
+        "validate_verified_transition_training_evidence",
+        lambda *_args, **_kwargs: dict(legacy_evidence),
+    )
+    with pytest.raises(
+        RecurrentGRPOAdapterIdentityError,
+        match="verified_transition_identity_cross_binding_mismatch",
+    ):
+        validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+            manifest,
+            adapter_id="verified-adapter",
+            actual_base_checkpoint={},
+            actual_model_behavior_bundle={},
+            actual_personality_adapter={},
+            actual_runtime_environment={},
+            artifacts=artifacts,
+            tensor_metadata=(),
+            transition_campaign_ledger=ledger,
+            transition_policy=object(),
+            transition_groups=groups,
+        )
+
+    intervention_evidence = _verified_training_evidence(base_identity, intervention=True)
+    monkeypatch.setattr(
+        transition_evidence_runtime,
+        "validate_verified_transition_training_evidence",
+        lambda *_args, **_kwargs: dict(intervention_evidence),
+    )
+    result = validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+        manifest,
+        adapter_id="verified-adapter",
+        actual_base_checkpoint={},
+        actual_model_behavior_bundle={},
+        actual_personality_adapter={},
+        actual_runtime_environment={},
+        artifacts=artifacts,
+        tensor_metadata=(),
+        transition_campaign_ledger=ledger,
+        transition_policy=object(),
+        transition_groups=groups,
+    )
+
+    assert result["verified_transition_evidence"] == intervention_evidence
+    assert result["verified_transition_evidence"]["external_policy_state_replayed"] is False
 
 
 def test_verified_identity_rejects_legacy_step_even_with_matching_campaign(

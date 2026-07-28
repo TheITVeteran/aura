@@ -14,6 +14,7 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo import GRPOConfig
 from core.learning.grpo_training_state import canonical_json_bytes
 from core.learning.recurrence_native_objective_v2 import (
+    ExactAdjointInterventionConfig,
     ExactAdjointTrajectoryConfig,
 )
 from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
@@ -325,6 +326,29 @@ def test_verified_trajectory_config_loader_requires_canonical_policy(
     )
 
     assert loaded == config
+    intervention_config = VerifiedTrajectoryGroupConfig(
+        trajectory_config=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=0.5,
+        ),
+        intervention_config=ExactAdjointInterventionConfig(
+            lesion_steps=(1, 2),
+            causality_weight=0.4,
+            causality_margin=0.5,
+            stopping_steps=(1, 2),
+            stopping_weight=0.3,
+            stopping_ponder_cost=0.01,
+            stopping_temperature=0.2,
+        ),
+    )
+    path.write_bytes(canonical_json_bytes(intervention_config.to_dict()))
+    assert (
+        train_grpo._load_verified_trajectory_group_config(
+            "recurrent",
+            str(path),
+        )
+        == intervention_config
+    )
     path.write_bytes(canonical_json_bytes(config.to_dict()) + b"\n")
     with pytest.raises(ValueError, match="not canonical"):
         train_grpo._load_verified_trajectory_group_config(

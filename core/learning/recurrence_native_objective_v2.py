@@ -45,6 +45,11 @@ RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
 EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
 EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v2"
+EXACT_ADJOINT_INTERVENTION_SCHEMA = "aura.exact_adjoint_intervention_objective.v1"
+EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v3"
+INTERVENTION_MEASUREMENT_TRUST_BOUNDARY = (
+    "producer_sealed_arithmetic_external_state_replay_required"
+)
 _EXACT_ADJOINT_INPUT_DOMAIN = b"aura.exact_adjoint_input.v1\0"
 
 
@@ -194,6 +199,101 @@ class ExactAdjointTrajectoryConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ExactAdjointInterventionConfig:
+    """Causal-necessity and cost-aware stopping terms for verified answers."""
+
+    lesion_steps: tuple[int, ...] = (1,)
+    causality_weight: float = 0.0
+    causality_margin: float = 0.02
+    stopping_steps: tuple[int, ...] = (1, 2)
+    stopping_weight: float = 0.0
+    stopping_ponder_cost: float = 0.01
+    stopping_temperature: float = 0.1
+
+    def __post_init__(self) -> None:
+        for name, steps in (
+            ("lesion_steps", self.lesion_steps),
+            ("stopping_steps", self.stopping_steps),
+        ):
+            if (
+                not steps
+                or any(type(step) is not int or step < 1 for step in steps)
+                or tuple(sorted(set(steps))) != steps
+            ):
+                raise ValueError(f"{name} must be strictly increasing positive integers")
+        for name, value, high in (
+            ("causality_weight", self.causality_weight, 100.0),
+            ("causality_margin", self.causality_margin, 10.0),
+            ("stopping_weight", self.stopping_weight, 100.0),
+            ("stopping_ponder_cost", self.stopping_ponder_cost, 1.0),
+            ("stopping_temperature", self.stopping_temperature, 10.0),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0.0 <= float(value) <= high
+            ):
+                raise ValueError(f"{name} must be finite inside [0, {high:g}]")
+        if not 1e-4 <= float(self.stopping_temperature) <= 10.0:
+            raise ValueError("stopping_temperature must be inside [1e-4, 10]")
+        if float(self.stopping_weight) > 0.0 and len(self.stopping_steps) < 2:
+            raise ValueError("stopping objective requires at least two candidate depths")
+        if not any(float(weight) > 0.0 for weight in (self.causality_weight, self.stopping_weight)):
+            raise ValueError("intervention objective must enable at least one term")
+
+    def validate_depth(self, depth: int) -> None:
+        if float(self.causality_weight) > 0.0 and self.lesion_steps[-1] > depth:
+            raise ValueError("causal lesion step exceeds recurrent depth")
+        if float(self.stopping_weight) > 0.0 and self.stopping_steps[-1] > depth:
+            raise ValueError("stopping step exceeds recurrent depth")
+        if float(self.stopping_weight) > 0.0 and self.stopping_steps[-1] != depth:
+            raise ValueError("stopping objective must include the terminal depth")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": EXACT_ADJOINT_INTERVENTION_SCHEMA,
+            "lesion_steps": list(self.lesion_steps),
+            "causality_weight": float(self.causality_weight),
+            "causality_margin": float(self.causality_margin),
+            "stopping_steps": list(self.stopping_steps),
+            "stopping_weight": float(self.stopping_weight),
+            "stopping_ponder_cost": float(self.stopping_ponder_cost),
+            "stopping_temperature": float(self.stopping_temperature),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> ExactAdjointInterventionConfig:
+        required = {
+            "schema",
+            "lesion_steps",
+            "causality_weight",
+            "causality_margin",
+            "stopping_steps",
+            "stopping_weight",
+            "stopping_ponder_cost",
+            "stopping_temperature",
+        }
+        if not isinstance(value, Mapping) or set(value) != required:
+            raise ValueError("intervention objective config fields do not match")
+        if value.get("schema") != EXACT_ADJOINT_INTERVENTION_SCHEMA:
+            raise ValueError("intervention objective config schema is unsupported")
+        if not isinstance(value["lesion_steps"], list) or not isinstance(
+            value["stopping_steps"], list
+        ):
+            raise ValueError("intervention objective steps must be lists")
+        return cls(
+            lesion_steps=tuple(value["lesion_steps"]),
+            causality_weight=value["causality_weight"],
+            causality_margin=value["causality_margin"],
+            stopping_steps=tuple(value["stopping_steps"]),
+            stopping_weight=value["stopping_weight"],
+            stopping_ponder_cost=value["stopping_ponder_cost"],
+            stopping_temperature=value["stopping_temperature"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ExactAdjointLivePathResult:
     """One exact-adjoint value/gradient result with replayable term telemetry."""
 
@@ -221,12 +321,20 @@ class ExactAdjointLivePathResult:
     bridge_tokens_sha256: str
     bridge_token_count: int
     token_loss_weights: tuple[float, ...]
+    lesion_losses: Mapping[int, tuple[float, ...]] = field(default_factory=dict)
+    stopping_teacher_receipts: tuple[Mapping[str, Any], ...] = ()
+    intervention_config: ExactAdjointInterventionConfig | None = None
 
     def receipt(self) -> dict[str, Any]:
         if not _valid_sha256(self.policy_sha256):
             raise ValueError("proof receipt requires a valid policy_sha256")
+        intervention_enabled = self.intervention_config is not None
         payload = {
-            "schema": EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
+            "schema": (
+                EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
+                if intervention_enabled
+                else EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA
+            ),
             "value": float(self.value),
             "terminal_value": float(self.terminal_value),
             "diversity_value": float(self.diversity_value),
@@ -258,6 +366,20 @@ class ExactAdjointLivePathResult:
                 self.trajectory_config.to_dict() if self.trajectory_config is not None else None
             ),
         }
+        if intervention_enabled:
+            payload.update(
+                {
+                    "lesion_losses": {
+                        str(step): [float(value) for value in values]
+                        for step, values in sorted(self.lesion_losses.items())
+                    },
+                    "stopping_teacher_receipts": [
+                        dict(receipt) for receipt in self.stopping_teacher_receipts
+                    ],
+                    "intervention_config": self.intervention_config.to_dict(),
+                    "measurement_trust_boundary": (INTERVENTION_MEASUREMENT_TRUST_BOUNDARY),
+                }
+            )
         input_payload = {
             key: payload[key]
             for key in (
@@ -278,6 +400,9 @@ class ExactAdjointLivePathResult:
                 "trajectory_config",
             )
         }
+        if intervention_enabled:
+            input_payload["intervention_config"] = payload["intervention_config"]
+            input_payload["measurement_trust_boundary"] = payload["measurement_trust_boundary"]
         payload["objective_input_sha256"] = _exact_adjoint_input_sha256(input_payload)
         encoded = json.dumps(
             payload,
@@ -290,9 +415,9 @@ class ExactAdjointLivePathResult:
 
 
 def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
-    """Independently replay an exact-adjoint trajectory objective receipt."""
+    """Validate custody and arithmetic over producer-sealed measurement atoms."""
 
-    required = {
+    base_required = {
         "schema",
         "value",
         "terminal_value",
@@ -320,6 +445,15 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         "trajectory_config",
         "receipt_sha256",
     }
+    intervention_fields = {
+        "lesion_losses",
+        "stopping_teacher_receipts",
+        "intervention_config",
+        "measurement_trust_boundary",
+    }
+    schema = value.get("schema") if isinstance(value, Mapping) else None
+    intervention_enabled = schema == EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA
+    required = base_required | intervention_fields if intervention_enabled else base_required
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError("exact-adjoint trajectory receipt fields do not match")
     receipt = dict(value)
@@ -333,7 +467,10 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     ).encode("ascii")
     if not isinstance(observed, str) or observed != hashlib.sha256(encoded).hexdigest():
         raise ValueError("exact-adjoint trajectory receipt commitment mismatch")
-    if receipt["schema"] != EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA:
+    if receipt["schema"] not in {
+        EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
+        EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
+    }:
         raise ValueError("exact-adjoint trajectory receipt schema is unsupported")
     for role in (
         "execution_spec_sha256",
@@ -393,11 +530,13 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         raise ValueError("exact-adjoint token loss weight is negative")
     total = finite_number(receipt["value"], role="total value")
     terms = receipt["trajectory_values"]
-    if not isinstance(terms, Mapping) or set(terms) != {
+    expected_term_names = {
         "improvement",
         "displacement",
         "oscillation",
-    }:
+        *(("causality", "stopping") if intervention_enabled else ()),
+    }
+    if not isinstance(terms, Mapping) or set(terms) != expected_term_names:
         raise ValueError("exact-adjoint trajectory term set is invalid")
     term_values = {
         str(name): finite_number(number, role=f"{name} value") for name, number in terms.items()
@@ -412,6 +551,17 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     )
     if config is not None:
         config.validate_depth(depth)
+    intervention_config = (
+        ExactAdjointInterventionConfig.from_dict(receipt["intervention_config"])
+        if intervention_enabled
+        else None
+    )
+    if intervention_config is not None:
+        intervention_config.validate_depth(depth)
+    if intervention_enabled and receipt["measurement_trust_boundary"] != (
+        INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
+    ):
+        raise ValueError("exact-adjoint intervention measurement boundary is invalid")
     input_payload = {
         key: receipt[key]
         for key in (
@@ -432,6 +582,9 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
             "trajectory_config",
         )
     }
+    if intervention_enabled:
+        input_payload["intervention_config"] = receipt["intervention_config"]
+        input_payload["measurement_trust_boundary"] = receipt["measurement_trust_boundary"]
     if receipt["objective_input_sha256"] != _exact_adjoint_input_sha256(input_payload):
         raise ValueError("exact-adjoint objective input commitment mismatch")
     step_losses = receipt["step_losses"]
@@ -453,13 +606,56 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         for loss in losses:
             if finite_number(loss, role="step loss") < 0.0:
                 raise ValueError("exact-adjoint step loss is negative")
-    expected_steps = (
-        set(config.probe_steps)
-        if config is not None and float(config.improvement_weight) > 0.0
-        else set()
-    )
+    expected_steps: set[int] = set()
+    if config is not None and float(config.improvement_weight) > 0.0:
+        expected_steps.update(config.probe_steps)
+    if intervention_config is not None:
+        if float(intervention_config.causality_weight) > 0.0:
+            expected_steps.add(depth)
+        if float(intervention_config.stopping_weight) > 0.0:
+            expected_steps.update(intervention_config.stopping_steps)
     if set(normalized_steps) != expected_steps:
         raise ValueError("exact-adjoint step-loss probes do not match the config")
+
+    normalized_lesions: dict[int, list[Any]] = {}
+    stopping_receipts: list[Any] = []
+    if intervention_enabled:
+        lesion_losses = receipt["lesion_losses"]
+        if not isinstance(lesion_losses, Mapping):
+            raise ValueError("exact-adjoint lesion losses must be a mapping")
+        for key, losses in lesion_losses.items():
+            if (
+                not isinstance(key, str)
+                or not key.isdigit()
+                or key != str(int(key))
+                or int(key) < 1
+                or not isinstance(losses, list)
+                or len(losses) != len(branches)
+            ):
+                raise ValueError("exact-adjoint lesion-loss row is invalid")
+            for loss in losses:
+                if finite_number(loss, role="lesion loss") < 0.0:
+                    raise ValueError("exact-adjoint lesion loss is negative")
+            normalized_lesions[int(key)] = losses
+        expected_lesions = (
+            set(intervention_config.lesion_steps)
+            if intervention_config is not None and float(intervention_config.causality_weight) > 0.0
+            else set()
+        )
+        if set(normalized_lesions) != expected_lesions:
+            raise ValueError("exact-adjoint lesion steps do not match the config")
+        stopping_receipts = receipt["stopping_teacher_receipts"]
+        expected_teacher_count = (
+            len(branches)
+            if intervention_config is not None and float(intervention_config.stopping_weight) > 0.0
+            else 0
+        )
+        if (
+            not isinstance(stopping_receipts, list)
+            or len(stopping_receipts) != expected_teacher_count
+            or any(not isinstance(item, Mapping) for item in stopping_receipts)
+        ):
+            raise ValueError("exact-adjoint stopping teacher cardinality is invalid")
 
     for role in ("displacements", "oscillation_cosines", "diversity_cosines"):
         sequence = receipt[role]
@@ -508,11 +704,19 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         raise ValueError("exact-adjoint displacement cardinality is invalid")
     if len(receipt["oscillation_cosines"]) != expected_oscillations:
         raise ValueError("exact-adjoint oscillation cardinality is invalid")
-    if config is None and any(abs(number) > 0.0 for number in term_values.values()):
+    if config is None and any(
+        abs(term_values[name]) > 0.0 for name in ("improvement", "displacement", "oscillation")
+    ):
         raise ValueError("exact-adjoint receipt has terms without a trajectory config")
+    if intervention_config is None and any(
+        abs(term_values.get(name, 0.0)) > 0.0 for name in ("causality", "stopping")
+    ):
+        raise ValueError("exact-adjoint receipt has terms without an intervention config")
     replayed_improvement = 0.0
     replayed_displacement = 0.0
     replayed_oscillation = 0.0
+    replayed_causality = 0.0
+    replayed_stopping = 0.0
     if config is not None:
         if float(config.improvement_weight) > 0.0:
             hinges = [
@@ -548,10 +752,77 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
                 * sum(max(-float(cosine), 0.0) for cosine in receipt["oscillation_cosines"])
                 / len(receipt["oscillation_cosines"])
             )
+    if intervention_config is not None:
+        if float(intervention_config.causality_weight) > 0.0:
+            intact = normalized_steps[depth]
+            hinges = [
+                max(
+                    float(intact[branch])
+                    - float(normalized_lesions[step][branch])
+                    + float(intervention_config.causality_margin),
+                    0.0,
+                )
+                for step in intervention_config.lesion_steps
+                for branch in range(len(branches))
+            ]
+            replayed_causality = (
+                float(intervention_config.causality_weight) * sum(hinges) / len(hinges)
+            )
+        if float(intervention_config.stopping_weight) > 0.0:
+            from core.learning.adaptive_halting import (
+                validate_verified_stopping_teacher_receipt,
+            )
+
+            validated_teachers = [
+                validate_verified_stopping_teacher_receipt(dict(item)) for item in stopping_receipts
+            ]
+            for branch, teacher in enumerate(validated_teachers):
+                if (
+                    teacher["steps"] != list(intervention_config.stopping_steps)
+                    or any(
+                        not math.isclose(
+                            float(loss),
+                            float(normalized_steps[step][branch]),
+                            rel_tol=0.0,
+                            abs_tol=1e-6,
+                        )
+                        for step, loss in zip(
+                            intervention_config.stopping_steps,
+                            teacher["losses"],
+                            strict=True,
+                        )
+                    )
+                    or not math.isclose(
+                        float(teacher["ponder_cost"]),
+                        float(intervention_config.stopping_ponder_cost),
+                        rel_tol=0.0,
+                        abs_tol=1e-12,
+                    )
+                    or not math.isclose(
+                        float(teacher["temperature"]),
+                        float(intervention_config.stopping_temperature),
+                        rel_tol=0.0,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    raise ValueError("exact-adjoint stopping teacher differs from config")
+            replayed_stopping = (
+                float(intervention_config.stopping_weight)
+                * sum(float(teacher["expected_risk"]) for teacher in validated_teachers)
+                / len(validated_teachers)
+            )
     for name, replayed in (
         ("improvement", replayed_improvement),
         ("displacement", replayed_displacement),
         ("oscillation", replayed_oscillation),
+        *(
+            (
+                ("causality", replayed_causality),
+                ("stopping", replayed_stopping),
+            )
+            if intervention_enabled
+            else ()
+        ),
     ):
         if not math.isclose(
             term_values[name],
@@ -1541,6 +1812,7 @@ def _exact_adjoint_live_path_result(
     token_loss_weights: Sequence[float] | None = None,
     branch_index: int | None = None,
     trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    intervention_config: ExactAdjointInterventionConfig | None = None,
     policy_sha256: str | None = None,
     allow_signed_token_loss_weights: bool = False,
 ) -> ExactAdjointLivePathResult:
@@ -1610,6 +1882,10 @@ def _exact_adjoint_live_path_result(
         if not isinstance(trajectory_config, ExactAdjointTrajectoryConfig):
             raise TypeError("trajectory_config must be an ExactAdjointTrajectoryConfig")
         trajectory_config.validate_depth(spec.recurrent_steps)
+    if intervention_config is not None:
+        if not isinstance(intervention_config, ExactAdjointInterventionConfig):
+            raise TypeError("intervention_config must be an ExactAdjointInterventionConfig")
+        intervention_config.validate_depth(spec.recurrent_steps)
 
     def detached(values: Sequence[Any]) -> tuple[Any, ...]:
         result = tuple(mx.stop_gradient(value) for value in values)
@@ -1749,58 +2025,75 @@ def _exact_adjoint_live_path_result(
         "displacement": 0.0,
         "oscillation": 0.0,
     }
+    if intervention_config is not None:
+        trajectory_values.update(
+            {
+                "causality": 0.0,
+                "stopping": 0.0,
+            }
+        )
     step_loss_values: dict[int, tuple[float, ...]] = {}
+    lesion_loss_values: dict[int, tuple[float, ...]] = {}
+    stopping_teacher_receipts: list[Mapping[str, Any]] = []
     measured_displacements: list[float] = []
     measured_oscillation_cosines: list[float] = []
+    probe_steps: set[int] = set()
+    if trajectory_config is not None and float(trajectory_config.improvement_weight) > 0.0:
+        probe_steps.update(trajectory_config.probe_steps)
+    if intervention_config is not None:
+        if float(intervention_config.causality_weight) > 0.0:
+            probe_steps.add(spec.recurrent_steps)
+        if float(intervention_config.stopping_weight) > 0.0:
+            probe_steps.update(intervention_config.stopping_steps)
+    probe_losses: dict[int, list[float]] = {}
+    probe_gradients: dict[int, list[tuple[Any, Any]]] = {}
+    for depth in sorted(probe_steps):
+        depth_losses: list[float] = []
+        depth_gradients: list[tuple[Any, Any]] = []
+        for selected_index in selected_indices:
+            seed = seeds[selected_index]
+
+            def intermediate_loss(
+                parameter_tree: Any,
+                state: Any,
+                _seed: Any = seed,
+            ) -> Any:
+                model.update(parameter_tree)
+                logits = _persist_and_score(
+                    model,
+                    prompt_embeddings,
+                    _seed,
+                    state,
+                    tail_embeddings,
+                    bridge_count=prepared.bridge_count,
+                    answer_count=prepared.answer_count,
+                    prelude_end=prepared.prelude_end,
+                    coda_start=prepared.coda_start,
+                )
+                return nn.losses.cross_entropy(
+                    logits.astype(mx.float32),
+                    targets,
+                    reduction="mean",
+                )
+
+            loss, (parameter_gradient, state_gradient) = mx.value_and_grad(
+                intermediate_loss,
+                argnums=(0, 1),
+            )(parameters, history[depth][selected_index])
+            mx.eval(loss, parameter_gradient, state_gradient)
+            depth_losses.append(float(loss))
+            depth_gradients.append(
+                (
+                    parameter_gradient,
+                    mx.stop_gradient(state_gradient),
+                )
+            )
+        probe_losses[depth] = depth_losses
+        probe_gradients[depth] = depth_gradients
+        step_loss_values[depth] = tuple(depth_losses)
+
     if trajectory_config is not None:
-        probe_losses: dict[int, list[float]] = {}
-        probe_gradients: dict[int, list[tuple[Any, Any]]] = {}
         if float(trajectory_config.improvement_weight) > 0.0:
-            for depth in trajectory_config.probe_steps:
-                depth_losses: list[float] = []
-                depth_gradients: list[tuple[Any, Any]] = []
-                for selected_index in selected_indices:
-                    seed = seeds[selected_index]
-
-                    def intermediate_loss(
-                        parameter_tree: Any,
-                        state: Any,
-                        _seed: Any = seed,
-                    ) -> Any:
-                        model.update(parameter_tree)
-                        logits = _persist_and_score(
-                            model,
-                            prompt_embeddings,
-                            _seed,
-                            state,
-                            tail_embeddings,
-                            bridge_count=prepared.bridge_count,
-                            answer_count=prepared.answer_count,
-                            prelude_end=prepared.prelude_end,
-                            coda_start=prepared.coda_start,
-                        )
-                        return nn.losses.cross_entropy(
-                            logits.astype(mx.float32),
-                            targets,
-                            reduction="mean",
-                        )
-
-                    loss, (parameter_gradient, state_gradient) = mx.value_and_grad(
-                        intermediate_loss,
-                        argnums=(0, 1),
-                    )(parameters, history[depth][selected_index])
-                    mx.eval(loss, parameter_gradient, state_gradient)
-                    depth_losses.append(float(loss))
-                    depth_gradients.append(
-                        (
-                            parameter_gradient,
-                            mx.stop_gradient(state_gradient),
-                        )
-                    )
-                probe_losses[depth] = depth_losses
-                probe_gradients[depth] = depth_gradients
-                step_loss_values[depth] = tuple(depth_losses)
-
             hinge_count = (len(trajectory_config.probe_steps) - 1) * len(selected_indices)
             hinge_scale = float(trajectory_config.improvement_weight) / hinge_count
             improvement_value = 0.0
@@ -1930,6 +2223,100 @@ def _exact_adjoint_live_path_result(
                         )
             trajectory_values["oscillation"] = oscillation_value
 
+    if intervention_config is not None:
+        if float(intervention_config.causality_weight) > 0.0:
+            for lesion_step in intervention_config.lesion_steps:
+                lesion_states = detached(history[lesion_step - 1])
+                for replay_step in range(lesion_step, spec.recurrent_steps):
+                    outputs = _advance_recurrent_states(
+                        model,
+                        prompts,
+                        lesion_states,
+                        anchors,
+                        spec,
+                        replay_step,
+                        prepared.prelude_end,
+                        prepared.coda_start,
+                    )
+                    lesion_states = detached(outputs)
+                    del outputs
+                    mx.clear_cache()
+                losses: list[float] = []
+                for selected_index in selected_indices:
+                    logits = _persist_and_score(
+                        model,
+                        prompt_embeddings,
+                        seeds[selected_index],
+                        lesion_states[selected_index],
+                        tail_embeddings,
+                        bridge_count=prepared.bridge_count,
+                        answer_count=prepared.answer_count,
+                        prelude_end=prepared.prelude_end,
+                        coda_start=prepared.coda_start,
+                    )
+                    loss = nn.losses.cross_entropy(
+                        logits.astype(mx.float32),
+                        targets,
+                        reduction="mean",
+                    )
+                    mx.eval(loss)
+                    losses.append(float(loss))
+                    del logits, loss
+                    mx.clear_cache()
+                lesion_loss_values[lesion_step] = tuple(losses)
+
+            hinge_count = len(intervention_config.lesion_steps) * len(selected_indices)
+            hinge_scale = float(intervention_config.causality_weight) / hinge_count
+            causality_value = 0.0
+            intact_losses = probe_losses[spec.recurrent_steps]
+            for lesion_step in intervention_config.lesion_steps:
+                for offset, selected_index in enumerate(selected_indices):
+                    hinge = max(
+                        intact_losses[offset]
+                        - lesion_loss_values[lesion_step][offset]
+                        + float(intervention_config.causality_margin),
+                        0.0,
+                    )
+                    causality_value += hinge_scale * hinge
+                    if hinge <= 0.0:
+                        continue
+                    parameter_gradient, state_gradient = probe_gradients[spec.recurrent_steps][
+                        offset
+                    ]
+                    add_parameter_gradient(parameter_gradient, hinge_scale)
+                    direct_cotangents[spec.recurrent_steps][selected_index] = mx.stop_gradient(
+                        direct_cotangents[spec.recurrent_steps][selected_index]
+                        + hinge_scale * state_gradient
+                    )
+            trajectory_values["causality"] = causality_value
+
+        if float(intervention_config.stopping_weight) > 0.0:
+            from core.learning.adaptive_halting import verified_stopping_teacher
+
+            stopping_scale = float(intervention_config.stopping_weight) / len(selected_indices)
+            stopping_value = 0.0
+            for offset, selected_index in enumerate(selected_indices):
+                teacher = verified_stopping_teacher(
+                    [probe_losses[step][offset] for step in intervention_config.stopping_steps],
+                    intervention_config.stopping_steps,
+                    ponder_cost=intervention_config.stopping_ponder_cost,
+                    temperature=intervention_config.stopping_temperature,
+                )
+                stopping_teacher_receipts.append(teacher.receipt())
+                stopping_value += stopping_scale * teacher.expected_risk
+                for step, probability in zip(
+                    intervention_config.stopping_steps,
+                    teacher.probabilities,
+                    strict=True,
+                ):
+                    parameter_gradient, state_gradient = probe_gradients[step][offset]
+                    scale = stopping_scale * probability
+                    add_parameter_gradient(parameter_gradient, scale)
+                    direct_cotangents[step][selected_index] = mx.stop_gradient(
+                        direct_cotangents[step][selected_index] + scale * state_gradient
+                    )
+            trajectory_values["stopping"] = stopping_value
+
     cotangents = tuple(direct_cotangents[-1])
     for step in range(spec.recurrent_steps - 1, -1, -1):
         input_states = history[step]
@@ -1987,11 +2374,14 @@ def _exact_adjoint_live_path_result(
         diversity_value=float(diversity_weight) * diversity_value,
         trajectory_values=trajectory_values,
         step_losses=step_loss_values,
+        lesion_losses=lesion_loss_values,
+        stopping_teacher_receipts=tuple(stopping_teacher_receipts),
         displacements=tuple(measured_displacements),
         oscillation_cosines=tuple(measured_oscillation_cosines),
         diversity_cosines=tuple(float(value) for value in cosines),
         branch_indices=selected_indices,
         trajectory_config=trajectory_config,
+        intervention_config=intervention_config,
         execution_spec_sha256=spec.sha256,
         recurrent_depth=spec.recurrent_steps,
         execution_branch_count=len(current),
@@ -2080,6 +2470,7 @@ def exact_adjoint_composite_live_path_value_and_grad(
     *,
     spec: RLCExecutionSpec,
     trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    intervention_config: ExactAdjointInterventionConfig | None = None,
     policy_sha256: str,
     bridge_tokens: Sequence[int] = (),
     branch_index: int | None = None,
@@ -2106,6 +2497,7 @@ def exact_adjoint_composite_live_path_value_and_grad(
         token_loss_weights=token_loss_weights,
         branch_index=branch_index,
         trajectory_config=trajectory_config,
+        intervention_config=intervention_config,
         policy_sha256=policy_sha256,
     )
 
@@ -2181,10 +2573,14 @@ def depth_curriculum_loss_v2(
 
 
 __all__ = [
+    "EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA",
+    "EXACT_ADJOINT_INTERVENTION_SCHEMA",
     "EXACT_ADJOINT_TRAJECTORY_SCHEMA",
     "EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA",
+    "ExactAdjointInterventionConfig",
     "ExactAdjointLivePathResult",
     "ExactAdjointTrajectoryConfig",
+    "INTERVENTION_MEASUREMENT_TRUST_BOUNDARY",
     "LivePathForward",
     "PreparedFinalRecurrentTransition",
     "RECURRENCE_NATIVE_SCHEMA_V2",

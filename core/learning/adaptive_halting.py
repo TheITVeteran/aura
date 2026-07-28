@@ -23,13 +23,18 @@ correlate with required depth.** A halting policy that spends uniformly, or
 spends by prompt length, is not allocating thought -- and that is
 measurable rather than assertable.
 """
+
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 ADAPTIVE_HALTING_SCHEMA = "aura.adaptive_halting.v1"
+VERIFIED_STOPPING_TEACHER_SCHEMA = "aura.verified_stopping_teacher.v1"
 
 
 class HaltingHead:
@@ -83,9 +88,9 @@ class HaltingHead:
     # ── Persistence (the live engine loads a TRAINED head from disk) ────
     def save(self, path: Any) -> None:
         """Serialize weights + threshold so a trained head can go live."""
-        import numpy as np
-
         from pathlib import Path
+
+        import numpy as np
 
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -98,12 +103,12 @@ class HaltingHead:
         )
 
     @classmethod
-    def load(cls, path: Any) -> "HaltingHead":
+    def load(cls, path: Any) -> HaltingHead:
         """Rebuild a head exactly as saved; malformed files fail loudly."""
-        import numpy as np
+        from pathlib import Path
 
         import mlx.core as mx
-        from pathlib import Path
+        import numpy as np
 
         source = Path(path).expanduser()
         with np.load(source) as payload:
@@ -150,6 +155,186 @@ class HaltingPolicy:
             raise ValueError("ponder_cost must be inside [0, 1]")
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedStoppingTeacher:
+    """Detached optimal-stopping target for base-weight training.
+
+    The production stop head cannot inspect an answer key. Training can, but
+    only after the completion has independent positive-verifier credit. This
+    teacher converts those per-depth answer losses into a bounded stop
+    distribution. The probabilities are detached before the exact adjoint
+    uses them, so the model can lower answer risk at useful depths but cannot
+    manipulate the teacher itself.
+    """
+
+    steps: tuple[int, ...]
+    losses: tuple[float, ...]
+    risks: tuple[float, ...]
+    probabilities: tuple[float, ...]
+    selected_step: int
+    expected_loss: float
+    expected_steps: float
+    expected_risk: float
+    ponder_cost: float
+    temperature: float
+
+    def receipt(self) -> dict[str, Any]:
+        payload = {
+            "schema": VERIFIED_STOPPING_TEACHER_SCHEMA,
+            "steps": list(self.steps),
+            "losses": list(self.losses),
+            "risks": list(self.risks),
+            "probabilities": list(self.probabilities),
+            "selected_step": self.selected_step,
+            "expected_loss": self.expected_loss,
+            "expected_steps": self.expected_steps,
+            "expected_risk": self.expected_risk,
+            "ponder_cost": self.ponder_cost,
+            "temperature": self.temperature,
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        return {
+            **payload,
+            "receipt_sha256": hashlib.sha256(encoded).hexdigest(),
+        }
+
+
+def verified_stopping_teacher(
+    step_losses: Sequence[float],
+    steps: Sequence[int],
+    *,
+    ponder_cost: float,
+    temperature: float,
+) -> VerifiedStoppingTeacher:
+    """Build a stable cost-aware soft optimal-stopping target.
+
+    Accuracy remains primary because ``ponder_cost`` is bounded to one loss
+    unit per step. Temperature controls how sharply the teacher concentrates
+    on the lowest answer-loss-plus-compute-risk depth. The earliest depth wins
+    exact ties, which makes the corresponding hard target deterministic.
+    """
+
+    normalized_steps = tuple(steps)
+    raw_losses = tuple(step_losses)
+    if (
+        len(normalized_steps) < 2
+        or len(normalized_steps) != len(raw_losses)
+        or any(type(step) is not int or step < 1 for step in normalized_steps)
+        or tuple(sorted(set(normalized_steps))) != normalized_steps
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+            for value in raw_losses
+        )
+    ):
+        raise ValueError("verified stopping steps and losses are invalid")
+    normalized_losses = tuple(float(value) for value in raw_losses)
+    if (
+        isinstance(ponder_cost, bool)
+        or not isinstance(ponder_cost, (int, float))
+        or not math.isfinite(float(ponder_cost))
+        or not 0.0 <= float(ponder_cost) <= 1.0
+    ):
+        raise ValueError("verified stopping ponder_cost must be inside [0, 1]")
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(float(temperature))
+        or not 1e-4 <= float(temperature) <= 10.0
+    ):
+        raise ValueError("verified stopping temperature must be inside [1e-4, 10]")
+    cost = float(ponder_cost)
+    resolved_temperature = float(temperature)
+    risks = tuple(
+        loss + cost * step for step, loss in zip(normalized_steps, normalized_losses, strict=True)
+    )
+    minimum = min(risks)
+    exponentials = tuple(
+        math.exp(max(-80.0, min(0.0, -(risk - minimum) / resolved_temperature))) for risk in risks
+    )
+    denominator = sum(exponentials)
+    if not math.isfinite(denominator) or denominator <= 0.0:
+        raise FloatingPointError("verified stopping distribution is non-finite")
+    probabilities = tuple(value / denominator for value in exponentials)
+    selected_index = min(range(len(risks)), key=lambda index: (risks[index], index))
+    expected_loss = sum(
+        probability * loss
+        for probability, loss in zip(probabilities, normalized_losses, strict=True)
+    )
+    expected_steps = sum(
+        probability * step
+        for probability, step in zip(probabilities, normalized_steps, strict=True)
+    )
+    expected_risk = expected_loss + cost * expected_steps
+    if not all(
+        math.isfinite(value)
+        for value in (*probabilities, expected_loss, expected_steps, expected_risk)
+    ):
+        raise FloatingPointError("verified stopping teacher produced non-finite values")
+    return VerifiedStoppingTeacher(
+        steps=normalized_steps,
+        losses=normalized_losses,
+        risks=risks,
+        probabilities=probabilities,
+        selected_step=normalized_steps[selected_index],
+        expected_loss=expected_loss,
+        expected_steps=expected_steps,
+        expected_risk=expected_risk,
+        ponder_cost=cost,
+        temperature=resolved_temperature,
+    )
+
+
+def validate_verified_stopping_teacher_receipt(value: Any) -> dict[str, Any]:
+    """Recompute teacher arithmetic over producer-sealed per-depth loss atoms."""
+
+    fields = {
+        "schema",
+        "steps",
+        "losses",
+        "risks",
+        "probabilities",
+        "selected_step",
+        "expected_loss",
+        "expected_steps",
+        "expected_risk",
+        "ponder_cost",
+        "temperature",
+        "receipt_sha256",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("verified stopping teacher receipt fields differ")
+    payload = {key: value[key] for key in fields - {"receipt_sha256"}}
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    if value["receipt_sha256"] != hashlib.sha256(encoded).hexdigest():
+        raise ValueError("verified stopping teacher receipt commitment mismatch")
+    if value["schema"] != VERIFIED_STOPPING_TEACHER_SCHEMA:
+        raise ValueError("verified stopping teacher schema is unsupported")
+    replayed = verified_stopping_teacher(
+        value["losses"],
+        value["steps"],
+        ponder_cost=value["ponder_cost"],
+        temperature=value["temperature"],
+    ).receipt()
+    if replayed != value:
+        raise ValueError("verified stopping teacher arithmetic does not replay")
+    return dict(value)
+
+
 def decide_steps(
     head: HaltingHead,
     states: Sequence[Any],
@@ -170,11 +355,7 @@ def decide_steps(
     for index, state in enumerate(states[: policy.max_steps], start=1):
         probability = float(head.halt_probability(state))
         probabilities.append(round(probability, 6))
-        if (
-            not identity
-            and index >= policy.min_steps
-            and probability >= head.threshold
-        ):
+        if not identity and index >= policy.min_steps and probability >= head.threshold:
             chosen = index
             halted_early = index < min(len(states), policy.max_steps)
             break
@@ -217,7 +398,7 @@ def ponder_loss(
         remaining = remaining * (1.0 - probability)
 
     expected = mx.stack(
-        [weight * loss for weight, loss in zip(weights, step_losses)]
+        [weight * loss for weight, loss in zip(weights, step_losses, strict=True)]
     ).sum()
     expected_steps = mx.stack(
         [weight * float(index + 1) for index, weight in enumerate(weights)]
@@ -249,7 +430,7 @@ def allocation_report(
     spent = [float(s) for _, s in allocations]
     n = len(allocations)
     mean_r, mean_s = sum(required) / n, sum(spent) / n
-    cov = sum((r - mean_r) * (s - mean_s) for r, s in zip(required, spent)) / n
+    cov = sum((r - mean_r) * (s - mean_s) for r, s in zip(required, spent, strict=True)) / n
     var_r = sum((r - mean_r) ** 2 for r in required) / n
     var_s = sum((s - mean_s) ** 2 for s in spent) / n
     if var_s < 1e-12:
@@ -301,8 +482,12 @@ __all__ = [
     "ADAPTIVE_HALTING_SCHEMA",
     "HaltingHead",
     "HaltingPolicy",
+    "VERIFIED_STOPPING_TEACHER_SCHEMA",
+    "VerifiedStoppingTeacher",
     "allocation_report",
     "decide_steps",
     "overthinking_report",
     "ponder_loss",
+    "validate_verified_stopping_teacher_receipt",
+    "verified_stopping_teacher",
 ]

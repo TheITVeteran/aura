@@ -29,6 +29,9 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (
 )
 from core.learning.grpo import group_advantages
 from core.learning.recurrence_native_objective_v2 import (
+    EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
+    INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
+    ExactAdjointInterventionConfig,
     ExactAdjointTrajectoryConfig,
     LivePathForward,
     PreparedFinalRecurrentTransition,
@@ -42,6 +45,8 @@ from core.learning.recurrence_native_objective_v2 import (
 RECURRENT_GRPO_SCHEMA = "aura.recurrent_grpo.v1"
 VERIFIED_TRAJECTORY_GROUP_SCHEMA = "aura.recurrent_grpo.verified_trajectory_composite.v1"
 VERIFIED_TRAJECTORY_SOURCE_SCHEMA = "aura.recurrent_grpo.verified_trajectory_source.v1"
+VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2 = "aura.recurrent_grpo.verified_trajectory_composite.v2"
+VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2 = "aura.recurrent_grpo.verified_trajectory_source.v2"
 RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v4"
 CAUSAL_RECURRENT_DECODE_SCHEMA = "aura.causal_recurrent_decode.v1"
 CAUSAL_RECURRENT_PAIR_SCHEMA = "aura.causal_recurrent_transition_pair.v2"
@@ -1570,6 +1575,7 @@ class VerifiedTrajectoryGroupConfig:
     """
 
     trajectory_config: ExactAdjointTrajectoryConfig | None = None
+    intervention_config: ExactAdjointInterventionConfig | None = None
     diversity_weight: float = 0.0
     diversity_target_cos: float = 0.98
 
@@ -1578,6 +1584,10 @@ class VerifiedTrajectoryGroupConfig:
             self.trajectory_config, ExactAdjointTrajectoryConfig
         ):
             raise TypeError("trajectory_config must be an ExactAdjointTrajectoryConfig")
+        if self.intervention_config is not None and not isinstance(
+            self.intervention_config, ExactAdjointInterventionConfig
+        ):
+            raise TypeError("intervention_config must be an ExactAdjointInterventionConfig")
         for name, value, high in (
             ("diversity_weight", self.diversity_weight, 10.0),
             ("diversity_target_cos", self.diversity_target_cos, 1.0),
@@ -1589,10 +1599,35 @@ class VerifiedTrajectoryGroupConfig:
                 or not 0.0 <= float(value) <= high
             ):
                 raise ValueError(f"{name} must be finite inside [0, {high:g}]")
-        if self.trajectory_config is None and float(self.diversity_weight) == 0.0:
-            raise ValueError("verified trajectory group must enable a trajectory or diversity term")
+        if (
+            self.trajectory_config is None
+            and self.intervention_config is None
+            and float(self.diversity_weight) == 0.0
+        ):
+            raise ValueError(
+                "verified trajectory group must enable a trajectory, intervention, "
+                "or diversity term"
+            )
 
     def to_dict(self) -> dict[str, Any]:
+        if self.intervention_config is not None:
+            return {
+                "schema": VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2,
+                "trajectory_config": (
+                    self.trajectory_config.to_dict() if self.trajectory_config is not None else None
+                ),
+                "intervention_config": self.intervention_config.to_dict(),
+                "diversity_weight": float(self.diversity_weight),
+                "diversity_target_cos": float(self.diversity_target_cos),
+                "quality_credit": "positive_advantage_l1_normalized",
+                "structural_scope": "all_exchange_coupled_branches_once_per_prompt",
+                "anchor_selection": "maximum_verified_reward_then_lowest_index",
+                "causal_lesion_policy": (
+                    "skip_exchange_coupled_transition_detached_lesion_baseline"
+                ),
+                "stopping_policy": "detached_cost_aware_soft_optimal_teacher",
+                "measurement_trust_boundary": (INTERVENTION_MEASUREMENT_TRUST_BOUNDARY),
+            }
         return {
             "schema": VERIFIED_TRAJECTORY_GROUP_SCHEMA,
             "trajectory_config": (
@@ -1607,7 +1642,7 @@ class VerifiedTrajectoryGroupConfig:
 
     @classmethod
     def from_dict(cls, value: Any) -> VerifiedTrajectoryGroupConfig:
-        required = {
+        v1_required = {
             "schema",
             "trajectory_config",
             "diversity_weight",
@@ -1616,20 +1651,59 @@ class VerifiedTrajectoryGroupConfig:
             "structural_scope",
             "anchor_selection",
         }
-        if not isinstance(value, Mapping) or set(value) != required:
+        v2_required = {
+            "schema",
+            "trajectory_config",
+            "intervention_config",
+            "diversity_weight",
+            "diversity_target_cos",
+            "quality_credit",
+            "structural_scope",
+            "anchor_selection",
+            "causal_lesion_policy",
+            "stopping_policy",
+            "measurement_trust_boundary",
+        }
+        if not isinstance(value, Mapping) or frozenset(value) not in {
+            frozenset(v1_required),
+            frozenset(v2_required),
+        }:
             raise ValueError("verified trajectory group config fields do not match")
+        is_v2 = value.get("schema") == VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+        if is_v2:
+            valid_policy = bool(
+                set(value) == v2_required
+                and isinstance(value.get("intervention_config"), Mapping)
+                and value.get("quality_credit") == "positive_advantage_l1_normalized"
+                and value.get("causal_lesion_policy")
+                == "skip_exchange_coupled_transition_detached_lesion_baseline"
+                and value.get("stopping_policy") == "detached_cost_aware_soft_optimal_teacher"
+                and value.get("measurement_trust_boundary")
+                == INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
+            )
+        else:
+            valid_policy = bool(
+                value.get("schema") == VERIFIED_TRAJECTORY_GROUP_SCHEMA
+                and set(value) == v1_required
+                and value.get("improvement_credit") == "positive_advantage_l1_normalized"
+            )
         if (
-            value.get("schema") != VERIFIED_TRAJECTORY_GROUP_SCHEMA
-            or value.get("improvement_credit") != "positive_advantage_l1_normalized"
+            not valid_policy
             or value.get("structural_scope") != "all_exchange_coupled_branches_once_per_prompt"
             or value.get("anchor_selection") != "maximum_verified_reward_then_lowest_index"
         ):
             raise ValueError("verified trajectory group policy is unsupported")
         trajectory = value.get("trajectory_config")
+        intervention = value.get("intervention_config") if is_v2 else None
         return cls(
             trajectory_config=(
                 ExactAdjointTrajectoryConfig.from_dict(trajectory)
                 if trajectory is not None
+                else None
+            ),
+            intervention_config=(
+                ExactAdjointInterventionConfig.from_dict(intervention)
+                if intervention is not None
                 else None
             ),
             diversity_weight=value["diversity_weight"],
@@ -1785,7 +1859,11 @@ def build_verified_trajectory_group_source_binding(
     ):
         raise ValueError("verified trajectory source differs from group admission")
     payload = {
-        "schema": VERIFIED_TRAJECTORY_SOURCE_SCHEMA,
+        "schema": (
+            VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+            if trajectory_group_config.intervention_config is not None
+            else VERIFIED_TRAJECTORY_SOURCE_SCHEMA
+        ),
         "group_admission_sha256": admission_sha256,
         "reward_receipt_sha256": reward_sha256,
         "policy_sha256": policy_sha256,
@@ -1829,7 +1907,10 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
         binding
     ):
         raise ValueError("verified trajectory source binding commitment mismatch")
-    if binding["schema"] != VERIFIED_TRAJECTORY_SOURCE_SCHEMA:
+    if binding["schema"] not in {
+        VERIFIED_TRAJECTORY_SOURCE_SCHEMA,
+        VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2,
+    }:
         raise ValueError("verified trajectory source binding schema is unsupported")
     for role in (
         "group_admission_sha256",
@@ -1871,7 +1952,14 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
         or not 0.0 < float(clip) <= 100.0
     ):
         raise ValueError("verified trajectory source binding values are invalid")
-    VerifiedTrajectoryGroupConfig.from_dict(binding["config"])
+    config = VerifiedTrajectoryGroupConfig.from_dict(binding["config"])
+    expected_schema = (
+        VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+        if config.intervention_config is not None
+        else VERIFIED_TRAJECTORY_SOURCE_SCHEMA
+    )
+    if binding["schema"] != expected_schema:
+        raise ValueError("verified trajectory source schema/config mismatch")
     return dict(value)
 
 
@@ -1883,6 +1971,8 @@ def validate_verified_trajectory_group_receipt(
 ) -> dict[str, Any]:
     """Replay the policy and arithmetic of one verified trajectory composite."""
 
+    schema = value.get("schema") if isinstance(value, Mapping) else None
+    intervention_group = schema == VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
     required = {
         "schema",
         "group_admission_sha256",
@@ -1902,7 +1992,7 @@ def validate_verified_trajectory_group_receipt(
         "positive_advantage_weights",
         "anchor_completion_index",
         "anchor_branch_index",
-        "improvement_receipts",
+        ("quality_receipts" if intervention_group else "improvement_receipts"),
         "structural_receipt",
         "trajectory_objective_value",
         "receipt_sha256",
@@ -1913,7 +2003,10 @@ def validate_verified_trajectory_group_receipt(
     observed_seal = receipt.pop("receipt_sha256")
     if not _valid_sha256(observed_seal) or observed_seal != _seal_receipt(receipt):
         raise ValueError("verified trajectory group receipt commitment mismatch")
-    if receipt["schema"] != VERIFIED_TRAJECTORY_GROUP_SCHEMA:
+    if receipt["schema"] not in {
+        VERIFIED_TRAJECTORY_GROUP_SCHEMA,
+        VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2,
+    }:
         raise ValueError("verified trajectory group receipt schema is unsupported")
     for role in (
         "group_admission_sha256",
@@ -2000,13 +2093,23 @@ def validate_verified_trajectory_group_receipt(
                 raise ValueError(f"verified trajectory {field} differs from admitted source")
 
     config = VerifiedTrajectoryGroupConfig.from_dict(receipt["config"])
+    if intervention_group is not (config.intervention_config is not None):
+        raise ValueError("verified trajectory group schema/config mismatch")
     trajectory = config.trajectory_config
+    intervention = config.intervention_config
     improvement_enabled = bool(
         trajectory is not None and float(trajectory.improvement_weight) > 0.0
     )
+    intervention_enabled = bool(
+        intervention is not None
+        and (
+            float(intervention.causality_weight) > 0.0 or float(intervention.stopping_weight) > 0.0
+        )
+    )
+    quality_enabled = improvement_enabled or intervention_enabled
     expected_positive = (
         [index for index, advantage in enumerate(normalized_advantages) if advantage > 0.0]
-        if improvement_enabled
+        if quality_enabled
         else []
     )
     positive = receipt["positive_completion_indices"]
@@ -2021,7 +2124,7 @@ def validate_verified_trajectory_group_receipt(
     normalized_weights = [
         finite_number(weight, role="positive advantage weight") for weight in weights
     ]
-    if improvement_enabled:
+    if quality_enabled:
         denominator = sum(normalized_advantages[index] for index in expected_positive)
         if denominator <= 0.0:
             raise ValueError("verified trajectory has no positive advantage mass")
@@ -2049,7 +2152,7 @@ def validate_verified_trajectory_group_receipt(
         ):
             raise ValueError("verified trajectory advantage weights do not replay")
     elif normalized_weights:
-        raise ValueError("verified trajectory weights exist without improvement")
+        raise ValueError("verified trajectory weights exist without a quality term")
 
     anchor = receipt["anchor_completion_index"]
     anchor_branch = receipt["anchor_branch_index"]
@@ -2065,14 +2168,14 @@ def validate_verified_trajectory_group_receipt(
     ):
         raise ValueError("verified trajectory structural anchor is invalid")
 
-    improvement_receipts = receipt["improvement_receipts"]
-    if not isinstance(improvement_receipts, list) or len(improvement_receipts) != len(positive):
-        raise ValueError("verified trajectory improvement receipt count is invalid")
+    quality_receipts = receipt["quality_receipts" if intervention_group else "improvement_receipts"]
+    if not isinstance(quality_receipts, list) or len(quality_receipts) != len(positive):
+        raise ValueError("verified trajectory quality receipt count is invalid")
     replayed_total = 0.0
     for completion_index, weight, entry in zip(
         positive,
         normalized_weights,
-        improvement_receipts,
+        quality_receipts,
         strict=True,
     ):
         if not isinstance(entry, Mapping) or set(entry) != {
@@ -2081,29 +2184,46 @@ def validate_verified_trajectory_group_receipt(
             "advantage_weight",
             "objective_receipt",
         }:
-            raise ValueError("verified trajectory improvement receipt is invalid")
+            raise ValueError("verified trajectory quality receipt is invalid")
         if (
             entry["completion_index"] != completion_index
             or entry["completion_tokens_sha256"] != token_receipts[completion_index]
             or not math.isclose(
                 finite_number(
                     entry["advantage_weight"],
-                    role="improvement advantage weight",
+                    role="quality advantage weight",
                 ),
                 weight,
                 rel_tol=0.0,
                 abs_tol=1e-12,
             )
         ):
-            raise ValueError("verified trajectory improvement binding differs")
+            raise ValueError("verified trajectory quality binding differs")
         objective = validate_exact_adjoint_live_path_receipt(entry["objective_receipt"])
-        expected_config = ExactAdjointTrajectoryConfig(
-            probe_steps=trajectory.probe_steps,
-            improvement_weight=(float(trajectory.improvement_weight) * weight),
-            improvement_margin=trajectory.improvement_margin,
-            displacement_weight=0.0,
-            displacement_floor=trajectory.displacement_floor,
-            oscillation_weight=0.0,
+        expected_config = (
+            ExactAdjointTrajectoryConfig(
+                probe_steps=trajectory.probe_steps,
+                improvement_weight=(float(trajectory.improvement_weight) * weight),
+                improvement_margin=trajectory.improvement_margin,
+                displacement_weight=0.0,
+                displacement_floor=trajectory.displacement_floor,
+                oscillation_weight=0.0,
+            )
+            if improvement_enabled
+            else None
+        )
+        expected_intervention = (
+            ExactAdjointInterventionConfig(
+                lesion_steps=intervention.lesion_steps,
+                causality_weight=(float(intervention.causality_weight) * weight),
+                causality_margin=intervention.causality_margin,
+                stopping_steps=intervention.stopping_steps,
+                stopping_weight=(float(intervention.stopping_weight) * weight),
+                stopping_ponder_cost=intervention.stopping_ponder_cost,
+                stopping_temperature=intervention.stopping_temperature,
+            )
+            if intervention_enabled
+            else None
         )
         if (
             objective["policy_sha256"] != receipt["policy_sha256"]
@@ -2115,7 +2235,12 @@ def validate_verified_trajectory_group_receipt(
             or objective["execution_spec_sha256"] != receipt["execution_spec_sha256"]
             or objective["execution_branch_count"] != branch_count
             or objective["branch_indices"] != [branches[completion_index]]
-            or objective["trajectory_config"] != expected_config.to_dict()
+            or objective["trajectory_config"]
+            != (expected_config.to_dict() if expected_config is not None else None)
+            or (
+                objective.get("intervention_config")
+                != (expected_intervention.to_dict() if expected_intervention is not None else None)
+            )
             or float(objective["diversity_weight"]) != 0.0
             or not math.isclose(
                 float(objective["terminal_value"]),
@@ -2139,7 +2264,8 @@ def validate_verified_trajectory_group_receipt(
                 for name in ("displacement", "oscillation")
             )
         ):
-            raise ValueError("verified trajectory improvement objective differs")
+            objective_label = "quality" if intervention_group else "improvement"
+            raise ValueError(f"verified trajectory {objective_label} objective differs")
         replayed_total += float(objective["value"])
 
     structural_enabled = bool(
@@ -2183,7 +2309,8 @@ def validate_verified_trajectory_group_receipt(
             else None
         )
         if (
-            objective["policy_sha256"] != receipt["policy_sha256"]
+            objective["schema"] != EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA
+            or objective["policy_sha256"] != receipt["policy_sha256"]
             or objective["prompt_tokens_sha256"] != receipt["prompt_tokens_sha256"]
             or objective["answer_tokens_sha256"] != token_receipts[anchor]
             or objective["bridge_tokens_sha256"] != _tokens_sha256(())
@@ -2739,8 +2866,11 @@ def _with_verified_trajectory_group_objective(
     if any(not isinstance(sample, RecurrentPolicySample) for sample in samples):
         raise TypeError("verified trajectory samples must be RecurrentPolicySample")
     trajectory = trajectory_group_config.trajectory_config
+    intervention = trajectory_group_config.intervention_config
     if trajectory is not None:
         trajectory.validate_depth(spec.recurrent_steps)
+    if intervention is not None:
+        intervention.validate_depth(spec.recurrent_steps)
     normalized_rewards = tuple(float(reward) for reward in rewards)
     if any(not math.isfinite(reward) for reward in normalized_rewards):
         raise ValueError("verified trajectory rewards must be finite")
@@ -2784,36 +2914,61 @@ def _with_verified_trajectory_group_objective(
     improvement_enabled = bool(
         trajectory is not None and float(trajectory.improvement_weight) > 0.0
     )
+    intervention_enabled = bool(
+        intervention is not None
+        and (
+            float(intervention.causality_weight) > 0.0 or float(intervention.stopping_weight) > 0.0
+        )
+    )
+    quality_enabled = improvement_enabled or intervention_enabled
     positive_indices = (
         [index for index, advantage in enumerate(advantages) if advantage > 0.0]
-        if improvement_enabled
+        if quality_enabled
         else []
     )
     positive_mass = sum(advantages[index] for index in positive_indices)
-    if improvement_enabled and positive_mass <= 0.0:
+    if quality_enabled and positive_mass <= 0.0:
         raise ValueError("verified trajectory objective has no positive credit")
     positive_weights = [advantages[index] / positive_mass for index in positive_indices]
-    improvement_receipts: list[dict[str, Any]] = []
+    quality_receipts: list[dict[str, Any]] = []
     for completion_index, weight in zip(
         positive_indices,
         positive_weights,
         strict=True,
     ):
         sample = samples[completion_index]
-        scaled = ExactAdjointTrajectoryConfig(
-            probe_steps=trajectory.probe_steps,
-            improvement_weight=(float(trajectory.improvement_weight) * weight),
-            improvement_margin=trajectory.improvement_margin,
-            displacement_weight=0.0,
-            displacement_floor=trajectory.displacement_floor,
-            oscillation_weight=0.0,
+        scaled_trajectory = (
+            ExactAdjointTrajectoryConfig(
+                probe_steps=trajectory.probe_steps,
+                improvement_weight=(float(trajectory.improvement_weight) * weight),
+                improvement_margin=trajectory.improvement_margin,
+                displacement_weight=0.0,
+                displacement_floor=trajectory.displacement_floor,
+                oscillation_weight=0.0,
+            )
+            if improvement_enabled
+            else None
+        )
+        scaled_intervention = (
+            ExactAdjointInterventionConfig(
+                lesion_steps=intervention.lesion_steps,
+                causality_weight=(float(intervention.causality_weight) * weight),
+                causality_margin=intervention.causality_margin,
+                stopping_steps=intervention.stopping_steps,
+                stopping_weight=(float(intervention.stopping_weight) * weight),
+                stopping_ponder_cost=intervention.stopping_ponder_cost,
+                stopping_temperature=intervention.stopping_temperature,
+            )
+            if intervention_enabled
+            else None
         )
         exact = exact_adjoint_composite_live_path_value_and_grad(
             model,
             prompt_tokens,
             sample.tokens,
             spec=spec,
-            trajectory_config=scaled,
+            trajectory_config=scaled_trajectory,
+            intervention_config=scaled_intervention,
             policy_sha256=policy_sha256,
             bridge_tokens=bridge_tokens,
             branch_index=sample.branch_index,
@@ -2821,7 +2976,7 @@ def _with_verified_trajectory_group_objective(
         )
         add_gradients(exact.gradients)
         trajectory_value += float(exact.value)
-        improvement_receipts.append(
+        quality_receipts.append(
             {
                 "completion_index": completion_index,
                 "completion_tokens_sha256": _tokens_sha256(sample.tokens),
@@ -2902,7 +3057,11 @@ def _with_verified_trajectory_group_objective(
         advantage_clip=advantage_clip,
     )
     payload = {
-        "schema": VERIFIED_TRAJECTORY_GROUP_SCHEMA,
+        "schema": (
+            VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+            if intervention_enabled
+            else VERIFIED_TRAJECTORY_GROUP_SCHEMA
+        ),
         **{
             field: source_binding[field]
             for field in (
@@ -2925,10 +3084,12 @@ def _with_verified_trajectory_group_objective(
         "positive_advantage_weights": positive_weights,
         "anchor_completion_index": anchor_index,
         "anchor_branch_index": anchor.branch_index,
-        "improvement_receipts": improvement_receipts,
         "structural_receipt": structural_receipt,
         "trajectory_objective_value": trajectory_value,
     }
+    payload["quality_receipts" if intervention_enabled else "improvement_receipts"] = (
+        quality_receipts
+    )
     trajectory_receipt = {
         **payload,
         "receipt_sha256": _seal_receipt(payload),
@@ -3049,7 +3210,9 @@ __all__ = [
     "RECURRENT_GRPO_SCHEMA",
     "RECURRENT_SAMPLING_SCHEMA",
     "VERIFIED_TRAJECTORY_GROUP_SCHEMA",
+    "VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2",
     "VERIFIED_TRAJECTORY_SOURCE_SCHEMA",
+    "VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2",
     "ExactAdjointRecurrentGRPOResult",
     "RecurrentGRPOConfig",
     "RecurrentGRPOObjective",

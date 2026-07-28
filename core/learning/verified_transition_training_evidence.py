@@ -9,6 +9,9 @@ from typing import Any, Never, cast
 
 from core.brain.llm.latent_cortex.campaign_trust import VerifiedCampaignTrustPolicy
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.learning.recurrence_native_objective_v2 import (
+    INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
+)
 from core.learning.recurrent_grpo import (
     VerifiedTrajectoryGroupConfig,
     build_verified_trajectory_group_source_binding,
@@ -31,6 +34,7 @@ from core.learning.verified_transition_update import (
 )
 
 VERIFIED_TRAINING_EVIDENCE_SCHEMA = "aura.verified_transition.training_evidence.v2"
+VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA = "aura.verified_transition.training_evidence.v3"
 
 
 class VerifiedTransitionTrainingEvidenceError(ValueError):
@@ -62,7 +66,7 @@ def validate_verified_transition_training_evidence_receipt(
 ) -> dict[str, Any]:
     """Validate the sealed replay summary embedded in an adapter identity."""
 
-    required = {
+    base_required = {
         "schema",
         "campaign_receipt_sha256",
         "campaign_manifest_sha256",
@@ -78,10 +82,20 @@ def validate_verified_transition_training_evidence_receipt(
         "legacy_scalar_reward_path_used",
         "receipt_sha256",
     }
+    intervention_fields = {
+        "measurement_trust_boundary",
+        "external_policy_state_replayed",
+    }
+    schema = receipt.get("schema") if isinstance(receipt, Mapping) else None
+    intervention_evidence = schema == VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+    required = base_required | intervention_fields if intervention_evidence else base_required
     if not isinstance(receipt, Mapping) or set(receipt) != required:
         _fail("verified_training_evidence_receipt_schema_invalid")
     normalized = dict(receipt)
-    if normalized.get("schema") != VERIFIED_TRAINING_EVIDENCE_SCHEMA:
+    if normalized.get("schema") not in {
+        VERIFIED_TRAINING_EVIDENCE_SCHEMA,
+        VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA,
+    }:
         _fail("verified_training_evidence_receipt_version_invalid")
     observed = _sha256(normalized.get("receipt_sha256"), role="verified_training_evidence_receipt")
     unsigned = dict(normalized)
@@ -116,6 +130,11 @@ def validate_verified_transition_training_evidence_receipt(
         or normalized.get("legacy_scalar_reward_path_used") is not False
     ):
         _fail("verified_training_evidence_receipt_invalid")
+    if intervention_evidence and (
+        normalized.get("measurement_trust_boundary") != INTERVENTION_MEASUREMENT_TRUST_BOUNDARY
+        or normalized.get("external_policy_state_replayed") is not False
+    ):
+        _fail("verified_training_intervention_measurement_boundary_invalid")
     for role, values in (
         ("reward", rewards),
         ("admission", admissions),
@@ -258,28 +277,41 @@ def validate_verified_transition_training_evidence(
         objective_receipts.append(cast(str, update["objective_receipt_sha256"]))
     if len(update_receipts) != close["updated_count"]:
         _fail("verified_training_update_count_mismatch")
-    return validate_verified_transition_training_evidence_receipt(
-        _seal(
+    intervention_evidence = bool(
+        trajectory_group_config is not None
+        and trajectory_group_config.intervention_config is not None
+    )
+    evidence_payload: dict[str, Any] = {
+        "schema": (
+            VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+            if intervention_evidence
+            else VERIFIED_TRAINING_EVIDENCE_SCHEMA
+        ),
+        "campaign_receipt_sha256": campaign["receipt_sha256"],
+        "campaign_manifest_sha256": close["campaign_manifest_sha256"],
+        "updated_sequences": updated_sequences,
+        "reward_receipt_sha256s": reward_receipts,
+        "group_admission_sha256s": admission_receipts,
+        "update_receipt_sha256s": update_receipts,
+        "objective_receipt_sha256s": objective_receipts,
+        "optimizer_update_count": len(update_receipts),
+        "initial_policy_sha256": initial_policy_before,
+        "final_policy_sha256": previous_policy_after,
+        "source_artifacts_replayed": True,
+        "legacy_scalar_reward_path_used": False,
+    }
+    if intervention_evidence:
+        evidence_payload.update(
             {
-                "schema": VERIFIED_TRAINING_EVIDENCE_SCHEMA,
-                "campaign_receipt_sha256": campaign["receipt_sha256"],
-                "campaign_manifest_sha256": close["campaign_manifest_sha256"],
-                "updated_sequences": updated_sequences,
-                "reward_receipt_sha256s": reward_receipts,
-                "group_admission_sha256s": admission_receipts,
-                "update_receipt_sha256s": update_receipts,
-                "objective_receipt_sha256s": objective_receipts,
-                "optimizer_update_count": len(update_receipts),
-                "initial_policy_sha256": initial_policy_before,
-                "final_policy_sha256": previous_policy_after,
-                "source_artifacts_replayed": True,
-                "legacy_scalar_reward_path_used": False,
+                "measurement_trust_boundary": INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
+                "external_policy_state_replayed": False,
             }
         )
-    )
+    return validate_verified_transition_training_evidence_receipt(_seal(evidence_payload))
 
 
 __all__ = [
+    "VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA",
     "VERIFIED_TRAINING_EVIDENCE_SCHEMA",
     "VerifiedTransitionReplayGroup",
     "VerifiedTransitionTrainingEvidenceError",

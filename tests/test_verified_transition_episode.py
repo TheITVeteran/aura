@@ -37,6 +37,11 @@ from core.learning import verified_transition_episode as transition_runtime
 from core.learning import verified_transition_reward as reward_runtime
 from core.learning import verified_transition_training_evidence as training_evidence_runtime
 from core.learning import verified_transition_update as update_runtime
+from core.learning.adaptive_halting import verified_stopping_teacher
+from core.learning.recurrence_native_objective_v2 import (
+    EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
+    INTERVENTION_MEASUREMENT_TRUST_BOUNDARY,
+)
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignError,
     VerifiedTransitionCampaignLedger,
@@ -175,6 +180,9 @@ def _seal_exact_adjoint_receipt(document: dict[str, Any]) -> dict[str, Any]:
             "trajectory_config",
         )
     }
+    if "intervention_config" in body:
+        input_payload["intervention_config"] = body["intervention_config"]
+        input_payload["measurement_trust_boundary"] = body["measurement_trust_boundary"]
     encoded = json.dumps(
         input_payload,
         sort_keys=True,
@@ -296,7 +304,11 @@ def _trajectory_source_binding(
 ) -> dict[str, Any]:
     trajectory = objective_receipt["trajectory_receipt"]
     payload = {
-        "schema": recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA,
+        "schema": (
+            recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+            if trajectory["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+            else recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA
+        ),
         **{
             field: copy.deepcopy(trajectory[field])
             for field in (
@@ -326,6 +338,142 @@ def _trajectory_source_binding(
                 allow_nan=False,
             ).encode("ascii")
         ).hexdigest(),
+    }
+
+
+def _intervention_trajectory_objective_receipt(
+    admission_sha256: str,
+) -> dict[str, Any]:
+    trajectory_config = recurrent_grpo_runtime.ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=0.5,
+        improvement_margin=0.2,
+    )
+    intervention_config = recurrent_grpo_runtime.ExactAdjointInterventionConfig(
+        lesion_steps=(1, 2),
+        causality_weight=0.4,
+        causality_margin=0.5,
+        stopping_steps=(1, 2),
+        stopping_weight=0.3,
+        stopping_ponder_cost=0.01,
+        stopping_temperature=0.2,
+    )
+    step_losses = {1: 1.0, 2: 1.0}
+    lesion_losses = {1: 1.1, 2: 1.1}
+    improvement_value = trajectory_config.improvement_weight * (
+        step_losses[2] - step_losses[1] + trajectory_config.improvement_margin
+    )
+    causality_value = (
+        intervention_config.causality_weight
+        * sum(
+            max(
+                step_losses[2] - lesion_loss + intervention_config.causality_margin,
+                0.0,
+            )
+            for lesion_loss in lesion_losses.values()
+        )
+        / len(lesion_losses)
+    )
+    stopping_teacher = verified_stopping_teacher(
+        [step_losses[step] for step in intervention_config.stopping_steps],
+        intervention_config.stopping_steps,
+        ponder_cost=intervention_config.stopping_ponder_cost,
+        temperature=intervention_config.stopping_temperature,
+    )
+    stopping_value = intervention_config.stopping_weight * stopping_teacher.expected_risk
+    trajectory_value = improvement_value + causality_value + stopping_value
+    exact = _seal_exact_adjoint_receipt(
+        {
+            "schema": EXACT_ADJOINT_INTERVENTION_RECEIPT_SCHEMA,
+            "value": trajectory_value,
+            "terminal_value": 0.0,
+            "diversity_value": 0.0,
+            "trajectory_values": {
+                "improvement": improvement_value,
+                "displacement": 0.0,
+                "oscillation": 0.0,
+                "causality": causality_value,
+                "stopping": stopping_value,
+            },
+            "step_losses": {str(step): [loss] for step, loss in sorted(step_losses.items())},
+            "lesion_losses": {str(step): [loss] for step, loss in sorted(lesion_losses.items())},
+            "stopping_teacher_receipts": [stopping_teacher.receipt()],
+            "displacements": [],
+            "oscillation_cosines": [],
+            "diversity_cosines": [0.0],
+            "branch_indices": [0],
+            "execution_spec_sha256": "2" * 64,
+            "recurrent_depth": 2,
+            "execution_branch_count": 2,
+            "diversity_weight": 0.0,
+            "diversity_target_cos": 0.98,
+            "policy_sha256": "1" * 64,
+            "prompt_tokens_sha256": "4" * 64,
+            "prompt_token_count": 1,
+            "answer_tokens_sha256": "7" * 64,
+            "answer_token_count": 1,
+            "bridge_tokens_sha256": hashlib.sha256(b"[]").hexdigest(),
+            "bridge_token_count": 0,
+            "token_loss_weights": [0.0],
+            "trajectory_config": trajectory_config.to_dict(),
+            "intervention_config": intervention_config.to_dict(),
+            "measurement_trust_boundary": (INTERVENTION_MEASUREMENT_TRUST_BOUNDARY),
+        }
+    )
+    group_config = recurrent_grpo_runtime.VerifiedTrajectoryGroupConfig(
+        trajectory_config=trajectory_config,
+        intervention_config=intervention_config,
+    )
+    group = _seal_float_receipt(
+        {
+            "schema": recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2,
+            "group_admission_sha256": admission_sha256,
+            "reward_receipt_sha256": "3" * 64,
+            "policy_sha256": "1" * 64,
+            "execution_spec_sha256": "2" * 64,
+            "prompt_tokens_sha256": "4" * 64,
+            "sample_receipt_sha256s": ["5" * 64, "6" * 64],
+            "completion_tokens_sha256s": ["7" * 64, "8" * 64],
+            "sample_branch_indices": [0, 1],
+            "execution_branch_count": 2,
+            "verified_rewards": [1.0, 0.0],
+            "advantage_clip": 4.0,
+            "advantages": [1.0, -1.0],
+            "config": group_config.to_dict(),
+            "positive_completion_indices": [0],
+            "positive_advantage_weights": [1.0],
+            "anchor_completion_index": 0,
+            "anchor_branch_index": 0,
+            "quality_receipts": [
+                {
+                    "completion_index": 0,
+                    "completion_tokens_sha256": "7" * 64,
+                    "advantage_weight": 1.0,
+                    "objective_receipt": exact,
+                }
+            ],
+            "structural_receipt": None,
+            "trajectory_objective_value": trajectory_value,
+        }
+    )
+    base = _exact_objective_receipt()
+    return {
+        **base,
+        "mode": "exact_adjoint_trajectory_composite_single_update",
+        "advantage_report": {
+            "schema": "aura.grpo.v2",
+            "advantages": [1.0, -1.0],
+            "mean_reward": 0.5,
+            "reward_std": 0.5,
+            "degenerate": False,
+            "all_correct": False,
+            "all_wrong": False,
+            "uniform_partial": False,
+        },
+        "trajectory_objective_value": trajectory_value,
+        "composite_objective_at_sampling": base["objective_at_sampling"] + trajectory_value,
+        "composite_gradient_surrogate_value": base["gradient_surrogate_value"] + trajectory_value,
+        "trajectory_receipt": group,
     }
 
 
@@ -379,6 +527,70 @@ def _trajectory_objective_receipt_from_source(
     group["anchor_completion_index"] = anchor
     group["anchor_branch_index"] = source_binding["sample_branch_indices"][anchor]
     group["improvement_receipts"] = [
+        {
+            "completion_index": positive[0],
+            "completion_tokens_sha256": source_binding["completion_tokens_sha256s"][positive[0]],
+            "advantage_weight": weights[0],
+            "objective_receipt": exact,
+        }
+    ]
+    group = _seal_float_receipt(group)
+    receipt["advantage_report"] = advantage_report
+    receipt["trajectory_receipt"] = group
+    return receipt
+
+
+def _intervention_objective_receipt_from_source(
+    source_binding: dict[str, Any],
+) -> dict[str, Any]:
+    receipt = _intervention_trajectory_objective_receipt(source_binding["group_admission_sha256"])
+    group = copy.deepcopy(receipt["trajectory_receipt"])
+    for field in (
+        "group_admission_sha256",
+        "reward_receipt_sha256",
+        "policy_sha256",
+        "execution_spec_sha256",
+        "prompt_tokens_sha256",
+        "sample_receipt_sha256s",
+        "completion_tokens_sha256s",
+        "sample_branch_indices",
+        "execution_branch_count",
+        "verified_rewards",
+        "advantage_clip",
+        "config",
+    ):
+        group[field] = copy.deepcopy(source_binding[field])
+
+    advantage_report = recurrent_grpo_runtime.group_advantages(
+        source_binding["verified_rewards"],
+        clip=source_binding["advantage_clip"],
+    )
+    advantages = list(advantage_report["advantages"])
+    positive = [index for index, value in enumerate(advantages) if value > 0.0]
+    assert positive == [0]
+    weights = [advantages[index] / sum(advantages[item] for item in positive) for index in positive]
+    anchor = max(
+        range(len(source_binding["verified_rewards"])),
+        key=lambda index: (source_binding["verified_rewards"][index], -index),
+    )
+
+    exact = copy.deepcopy(group["quality_receipts"][0]["objective_receipt"])
+    exact["execution_spec_sha256"] = source_binding["execution_spec_sha256"]
+    exact["execution_branch_count"] = source_binding["execution_branch_count"]
+    exact["branch_indices"] = [source_binding["sample_branch_indices"][positive[0]]]
+    exact["policy_sha256"] = source_binding["policy_sha256"]
+    exact["prompt_tokens_sha256"] = source_binding["prompt_tokens_sha256"]
+    exact["answer_tokens_sha256"] = source_binding["completion_tokens_sha256s"][positive[0]]
+    exact["trajectory_config"] = copy.deepcopy(source_binding["config"]["trajectory_config"])
+    exact["intervention_config"] = copy.deepcopy(source_binding["config"]["intervention_config"])
+    exact = _seal_exact_adjoint_receipt(exact)
+
+    group["advantages"] = advantages
+    group["positive_completion_indices"] = positive
+    group["positive_advantage_weights"] = weights
+    group["anchor_completion_index"] = anchor
+    group["anchor_branch_index"] = source_binding["sample_branch_indices"][anchor]
+    group["quality_receipts"] = [
         {
             "completion_index": positive[0],
             "completion_tokens_sha256": source_binding["completion_tokens_sha256s"][positive[0]],
@@ -2585,10 +2797,55 @@ def test_trajectory_objective_survives_journal_commit_and_rejects_cross_admissio
         )
 
 
+def test_intervention_objective_survives_journal_commit_and_replay(
+    tmp_path: Path,
+) -> None:
+    admission = "d" * 64
+    before = "1" * 64
+    after = "f" * 64
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "intervention-updates")
+    journal.reserve(
+        admission_sha256=admission,
+        policy_before_sha256=before,
+        reserved_at_unix_ns=1_800_000_225_000_000_000,
+    )
+    objective = _intervention_trajectory_objective_receipt(admission)
+    source = _trajectory_source_binding(objective)
+    record = journal.record_objective(
+        admission_sha256=admission,
+        objective_receipt=objective,
+        trajectory_source_binding=source,
+    )
+
+    receipt = commit_staged_verified_transition_update(
+        journal,
+        admission_sha256=admission,
+        policy_before_sha256=before,
+        policy_after_sha256=after,
+        committed_at_unix_ns=1_800_000_226_000_000_000,
+    )
+
+    assert source["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+    assert (
+        record["objective_receipt"]["trajectory_receipt"]["schema"]
+        == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    )
+    assert (
+        validate_verified_transition_update_receipt(
+            journal,
+            receipt,
+            expected_trajectory_source_binding=source,
+        )
+        == receipt
+    )
+
+
+@pytest.mark.parametrize("intervention_enabled", [False, True])
 def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
     transition_outcome_episodes: dict[str, dict[str, Any]],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    intervention_enabled: bool,
 ) -> None:
     material = _positive_admission_material(
         transition_outcome_episodes,
@@ -2610,6 +2867,19 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
             displacement_floor=0.01,
             oscillation_weight=0.0,
         ),
+        intervention_config=(
+            recurrent_grpo_runtime.ExactAdjointInterventionConfig(
+                lesion_steps=(1, 2),
+                causality_weight=0.4,
+                causality_margin=0.5,
+                stopping_steps=(1, 2),
+                stopping_weight=0.3,
+                stopping_ponder_cost=0.01,
+                stopping_temperature=0.2,
+            )
+            if intervention_enabled
+            else None
+        ),
     )
     recurrent_config = recurrent_grpo_runtime.RecurrentGRPOConfig()
     source_binding = recurrent_grpo_runtime.build_verified_trajectory_group_source_binding(
@@ -2621,7 +2891,11 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
         trajectory_group_config=trajectory_group_config,
         advantage_clip=recurrent_config.advantage_clip,
     )
-    objective_receipt = _trajectory_objective_receipt_from_source(source_binding)
+    objective_receipt = (
+        _intervention_objective_receipt_from_source(source_binding)
+        if intervention_enabled
+        else _trajectory_objective_receipt_from_source(source_binding)
+    )
 
     class Model:
         version = 0
@@ -2710,6 +2984,12 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
         material["admission"]["receipt_sha256"],
         "objective",
     )
+    expected_source_schema = (
+        recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+        if intervention_enabled
+        else recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA
+    )
+    assert source_binding["schema"] == expected_source_schema
     assert objective_record["trajectory_source_binding"] == source_binding
     assert objective_record["objective_receipt"] == objective_receipt
     assert validate_verified_transition_update_receipt(journal, receipt) == receipt
@@ -2759,9 +3039,37 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
     )
     assert training_evidence["source_artifacts_replayed"] is True
     assert training_evidence["optimizer_update_count"] == 1
+    if intervention_enabled:
+        assert training_evidence["schema"] == (
+            training_evidence_runtime.VERIFIED_INTERVENTION_TRAINING_EVIDENCE_SCHEMA
+        )
+        assert training_evidence["measurement_trust_boundary"] == (
+            "producer_sealed_arithmetic_external_state_replay_required"
+        )
+        assert training_evidence["external_policy_state_replayed"] is False
+        attacked = _reseal(
+            {
+                **training_evidence,
+                "external_policy_state_replayed": True,
+            }
+        )
+        with pytest.raises(
+            VerifiedTransitionTrainingEvidenceError,
+            match="verified_training_intervention_measurement_boundary_invalid",
+        ):
+            training_evidence_runtime.validate_verified_transition_training_evidence_receipt(
+                attacked
+            )
+    else:
+        assert training_evidence["schema"] == (
+            training_evidence_runtime.VERIFIED_TRAINING_EVIDENCE_SCHEMA
+        )
+        assert "measurement_trust_boundary" not in training_evidence
+        assert "external_policy_state_replayed" not in training_evidence
 
     wrong_config = recurrent_grpo_runtime.VerifiedTrajectoryGroupConfig(
         trajectory_config=trajectory_group_config.trajectory_config,
+        intervention_config=trajectory_group_config.intervention_config,
         diversity_weight=0.1,
     )
     with pytest.raises(
