@@ -1,0 +1,60 @@
+{
+  "schema": "aura.spark.cp420h.causal_sampling_custody_evidence.v1",
+  "checkpoint": "CP420H",
+  "recorded_date": "2026-07-27",
+  "scope": "pre-admitted causal recurrent sampling and replay-complete optimizer custody",
+  "claims": {
+    "signed_group_plan_exposed_before_sampling": true,
+    "exact_episode_branch_seed_and_rng_root_executed_without_substitution": true,
+    "final_recurrent_edge_parent_and_child_use_matched_randomness": true,
+    "sample_receipt_contains_full_tokens_and_behavior_and_adjoint_logprobs": true,
+    "sample_receipt_binds_measured_runtime_integrity": true,
+    "all_declared_recurrent_adapter_sites_must_fire": true,
+    "causal_sample_enters_exact_adjoint_with_identity_intact": true,
+    "provider_revalidates_complete_sample_before_evidence_production": true,
+    "production_provider_factory_complete": false,
+    "external_signer_broker_complete": false,
+    "durable_replay_repository_complete": false,
+    "rejected_group_lifecycle_transaction_complete": false,
+    "model_loaded_or_trained": false,
+    "reasoning_gain_claimed": false,
+    "wow_signal_claimed": false
+  },
+  "verification": [
+    {
+      "name": "full_verified_transition_recurrent_proof_matrix",
+      "result": "295 passed",
+      "duration_seconds": 236.10
+    },
+    {
+      "name": "paired_campaign_loader_and_training_integration_matrix",
+      "result": "208 passed",
+      "duration_seconds": 15.05
+    },
+    {
+      "name": "site_coverage_and_causal_sampler_matrix",
+      "result": "99 passed",
+      "duration_seconds": 6.53
+    },
+    {
+      "name": "ruff",
+      "result": "pass"
+    },
+    {
+      "name": "python_bytecode_compilation",
+      "result": "pass"
+    },
+    {
+      "name": "git_diff_check",
+      "result": "pass"
+    }
+  ],
+  "remaining_release_blockers": [
+    "construct the provider after resident model, tokenizer, and recurrence adapters exist",
+    "obtain externally signed JIT group and lineage attestations from configured trust roots",
+    "persist and independently reload replay-complete sample and evidence artifacts",
+    "make rejected and pre-update group outcomes crash-recoverable",
+    "run a composed production-provider campaign before any model training credit",
+    "complete the sealed small-checkpoint causal campaign before resident-32B launch"
+  ]
+}

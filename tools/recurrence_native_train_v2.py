@@ -347,11 +347,19 @@ def _wrap_window_layers(
             if parent is None:
                 continue
             base = getattr(parent, target)
-            setattr(parent, target, ScopedLoRALinear.from_base(base, r=rank))
-            wrapped.append(
-                f"model.layers.{layer_index}."
-                f"{'self_attn' if parent is layer.self_attn else 'mlp'}.{target}"
+            parent_name = "self_attn" if parent is layer.self_attn else "mlp"
+            site = f"model.layers.{layer_index}.{parent_name}.{target}"
+            setattr(
+                parent,
+                target,
+                ScopedLoRALinear.from_base(
+                    base,
+                    r=rank,
+                    block_index=layer_index,
+                    site=site,
+                ),
             )
+            wrapped.append(site)
     return wrapped
 
 
@@ -803,10 +811,6 @@ def _run(args: argparse.Namespace, *, model_lane_lease: object) -> int:
     from core.learning.recurrence_native_objective_v3 import (
         RECURRENCE_NATIVE_SCHEMA_V3,
     )
-    from core.learning.recurrence_native_objective_v4 import (
-        RECURRENCE_NATIVE_SCHEMA_V4,
-    )
-
     objective_schema = (
         RECURRENCE_NATIVE_SCHEMA_V3 if args.objective == "v3" else RECURRENCE_NATIVE_SCHEMA_V2
     )

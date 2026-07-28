@@ -37,9 +37,9 @@ from core.learning.recurrence_native_objective_v2 import (
 )
 
 RECURRENT_GRPO_SCHEMA = "aura.recurrent_grpo.v1"
-RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v3"
+RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v4"
 CAUSAL_RECURRENT_DECODE_SCHEMA = "aura.causal_recurrent_decode.v1"
-CAUSAL_RECURRENT_PAIR_SCHEMA = "aura.causal_recurrent_transition_pair.v1"
+CAUSAL_RECURRENT_PAIR_SCHEMA = "aura.causal_recurrent_transition_pair.v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +132,10 @@ class RecurrentPolicySample:
     seed: int
     sampling_config: RecurrentSamplingConfig
     episode_receipt: dict[str, Any]
+    episode_id: str
+    rng_root_sha256: str
+    sample_kind: str = "engine_episode"
+    causal_transition_pair: dict[str, Any] | None = None
 
     def receipt(self) -> dict[str, Any]:
         encoded = json.dumps(
@@ -147,18 +151,25 @@ class RecurrentPolicySample:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("ascii")
+        episode_receipt = dict(self.episode_receipt)
         return {
             "schema": RECURRENT_SAMPLING_SCHEMA,
+            "sample_kind": self.sample_kind,
+            "episode_id": self.episode_id,
+            "rng_root_sha256": self.rng_root_sha256,
             "execution_spec_sha256": self.execution_spec_sha256,
             "policy_sha256": self.policy_sha256,
             "prompt_tokens_sha256": self.prompt_tokens_sha256,
             "seed": self.seed,
             "sampling_config": self.sampling_config.to_dict(),
             "token_count": len(self.tokens),
+            "tokens": list(self.tokens),
             "tokens_sha256": hashlib.sha256(encoded).hexdigest(),
+            "behavior_logprobs": list(self.behavior_logprobs),
             "behavior_logprobs_sha256": hashlib.sha256(
                 behavior_encoded
             ).hexdigest(),
+            "differentiable_logprobs": list(self.differentiable_logprobs),
             "differentiable_logprobs_sha256": hashlib.sha256(
                 differentiable_encoded
             ).hexdigest(),
@@ -171,6 +182,13 @@ class RecurrentPolicySample:
             "clipped_token_fraction": self.clipped_token_fraction,
             "old_policy_approx_kl": self.old_policy_approx_kl,
             "behavior_admitted": self.behavior_admitted,
+            "episode_receipt": episode_receipt,
+            "episode_receipt_sha256": _seal_receipt(episode_receipt),
+            "causal_transition_pair": (
+                dict(self.causal_transition_pair)
+                if self.causal_transition_pair is not None
+                else None
+            ),
             "cached_decode_termination": self.episode_receipt.get(
                 "decode_termination", ""
             ),
@@ -235,17 +253,26 @@ class CausalRecurrentTransitionPair:
     mean_abs_child_logprob_drift: float
     child_behavior_admitted: bool
     policy_sha256: str
+    episode_id: str
+    rng_root_sha256: str
+    recurrence_adapter: dict[str, Any]
+    runtime_integrity: dict[str, Any]
+    params_unchanged: bool
+    sampling_config: RecurrentSamplingConfig
     receipt_sha256: str
 
     def receipt(self) -> dict[str, Any]:
         return {
             "schema": CAUSAL_RECURRENT_PAIR_SCHEMA,
+            "episode_id": self.episode_id,
+            "rng_root_sha256": self.rng_root_sha256,
             "policy_sha256": self.policy_sha256,
             "transition": self.transition.receipt(),
             "parent": self.parent.receipt(),
             "child": self.child.receipt(),
             "common_random_seed": self.parent.seed,
             "fixed_token_budget": self.parent.token_budget,
+            "sampling_config": self.sampling_config.to_dict(),
             "child_differentiable_logprobs": list(
                 self.child_differentiable_logprobs
             ),
@@ -255,6 +282,9 @@ class CausalRecurrentTransitionPair:
             "max_abs_child_logprob_drift": self.max_abs_child_logprob_drift,
             "mean_abs_child_logprob_drift": self.mean_abs_child_logprob_drift,
             "child_behavior_admitted": self.child_behavior_admitted,
+            "recurrence_adapter": dict(self.recurrence_adapter),
+            "runtime_integrity": dict(self.runtime_integrity),
+            "params_unchanged": self.params_unchanged,
             "receipt_sha256": self.receipt_sha256,
         }
 
@@ -322,6 +352,33 @@ def _seal_receipt(body: Mapping[str, Any]) -> str:
         allow_nan=False,
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def recurrent_sampling_rng_root_sha256(
+    *,
+    episode_id: str,
+    prompt_tokens_sha256: str,
+    policy_sha256: str,
+    execution_spec_sha256: str,
+    branch_index: int,
+    seed: int,
+    sampling_config: RecurrentSamplingConfig,
+) -> str:
+    """Commit the complete deterministic categorical stream before sampling."""
+
+    return _seal_receipt(
+        {
+            "schema": "aura.recurrent_sampling_rng_root.v1",
+            "episode_id": episode_id,
+            "prompt_tokens_sha256": prompt_tokens_sha256,
+            "policy_sha256": policy_sha256,
+            "execution_spec_sha256": execution_spec_sha256,
+            "branch_index": branch_index,
+            "seed": seed,
+            "sampling_config": sampling_config.to_dict(),
+            "algorithm": "mlx_categorical_seed_plus_golden_ratio_draw_v1",
+        }
+    )
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -524,51 +581,146 @@ def sample_final_recurrent_transition_pair(
     seed: int,
     sampling: RecurrentSamplingConfig | None = None,
     require_admission: bool = True,
+    episode_id: str | None = None,
+    tokenizer: Any | None = None,
+    model_path: str | None = None,
 ) -> CausalRecurrentTransitionPair:
     """Decode the two ends of one real recurrent edge under matched noise."""
 
     import mlx.core as mx
 
+    from core.brain.llm.latent_cortex.governance import CheckpointInvariant
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        recurrence_adapter_scope,
+        scoped_recurrence_adapter_sites,
+    )
+    from core.brain.llm.latent_cortex.types import EpisodeReceipt
+
     resolved = sampling or RecurrentSamplingConfig()
+    prompt = tuple(prompt_tokens)
+    if not prompt or any(type(token) is not int or token < 0 for token in prompt):
+        raise ValueError("prompt_tokens must contain non-negative integers")
+    if type(seed) is not int or not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("seed must be inside [0, 2^32-1]")
+    resolved_episode_id = episode_id or (
+        f"causal-{_tokens_sha256(prompt)[:16]}-{branch_index}-{seed}"
+    )
+    if (
+        not isinstance(resolved_episode_id, str)
+        or not resolved_episode_id
+        or len(resolved_episode_id) > 192
+        or not resolved_episode_id[0].isalnum()
+        or any(
+            not (character.isalnum() or character in "._:/;=+-")
+            for character in resolved_episode_id
+        )
+    ):
+        raise ValueError("episode_id is not a valid campaign identifier")
+
+    layer_count = len(model.model.layers)
+    prelude_end = max(1, int(layer_count * spec.prelude_frac))
+    coda_start = min(
+        layer_count - 1,
+        layer_count - max(1, int(layer_count * spec.coda_frac)),
+    )
+    expected_adapter_sites = scoped_recurrence_adapter_sites(
+        model,
+        layer_indices=range(prelude_end, coda_start),
+    )
+    invariant = CheckpointInvariant(
+        model,
+        model_path,
+        tokenizer=tokenizer,
+        adapted_layer_indices=tuple(range(prelude_end, coda_start)),
+        adapted_target="o_proj",
+    )
+    integrity_receipt = EpisodeReceipt(
+        episode_id=resolved_episode_id,
+        input_tokens_sha256=_tokens_sha256(prompt),
+        input_token_count=len(prompt),
+        n_layers=layer_count,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+        n_slots=spec.n_slots,
+        n_branches=len(spec.branch_roles),
+        decode_requested_tokens=resolved.max_tokens,
+        decode_generated_tokens=resolved.max_tokens,
+        decode_termination="fixed_token_budget",
+        nonparametric_memory={"status": "disabled_by_policy"},
+    )
+    invariant.pre_episode()
+    integrity_receipt.checkpoint_fingerprint = invariant.file_receipt.get(
+        "fingerprint", ""
+    )
+    integrity_receipt.checkpoint_fingerprint_method = invariant.file_receipt.get(
+        "method", ""
+    )
+    integrity_receipt.checkpoint_file_count = int(
+        invariant.file_receipt.get("files", 0) or 0
+    )
     policy_sha256 = recurrent_policy_sha256(model, spec)
-    transition = prepare_final_recurrent_transition(
-        model,
-        prompt_tokens,
-        spec=spec,
-    )
-    parent = _decode_frozen_recurrent_state(
-        model,
-        prompt_tokens,
-        transition,
-        state=transition.parent_states[branch_index],
-        state_sha256=transition.parent_branch_sha256s[branch_index],
-        ensemble_sha256=transition.parent_ensemble_sha256,
+    rng_root_sha256 = recurrent_sampling_rng_root_sha256(
+        episode_id=resolved_episode_id,
+        prompt_tokens_sha256=_tokens_sha256(prompt),
+        policy_sha256=policy_sha256,
+        execution_spec_sha256=spec.sha256,
         branch_index=branch_index,
-        depth=transition.transition_index,
         seed=seed,
-        token_budget=resolved.max_tokens,
+        sampling_config=resolved,
     )
-    child = _decode_frozen_recurrent_state(
-        model,
-        prompt_tokens,
-        transition,
-        state=transition.child_states[branch_index],
-        state_sha256=transition.child_branch_sha256s[branch_index],
-        ensemble_sha256=transition.child_ensemble_sha256,
-        branch_index=branch_index,
-        depth=transition.transition_index + 1,
-        seed=seed,
-        token_budget=resolved.max_tokens,
-    )
-    differentiable = recurrent_completion_token_logprobs(
-        model,
-        prompt_tokens,
-        child.tokens,
-        spec=spec,
-        branch_index=branch_index,
-    )
-    mx.eval(differentiable)
-    differentiable_values = tuple(float(value) for value in differentiable)
+    with recurrence_adapter_scope() as activation:
+        transition = prepare_final_recurrent_transition(
+            model,
+            prompt,
+            spec=spec,
+        )
+        parent = _decode_frozen_recurrent_state(
+            model,
+            prompt,
+            transition,
+            state=transition.parent_states[branch_index],
+            state_sha256=transition.parent_branch_sha256s[branch_index],
+            ensemble_sha256=transition.parent_ensemble_sha256,
+            branch_index=branch_index,
+            depth=transition.transition_index,
+            seed=seed,
+            token_budget=resolved.max_tokens,
+        )
+        child = _decode_frozen_recurrent_state(
+            model,
+            prompt,
+            transition,
+            state=transition.child_states[branch_index],
+            state_sha256=transition.child_branch_sha256s[branch_index],
+            ensemble_sha256=transition.child_ensemble_sha256,
+            branch_index=branch_index,
+            depth=transition.transition_index + 1,
+            seed=seed,
+            token_budget=resolved.max_tokens,
+        )
+        differentiable = recurrent_completion_token_logprobs(
+            model,
+            prompt,
+            child.tokens,
+            spec=spec,
+            branch_index=branch_index,
+        )
+        mx.eval(differentiable)
+        differentiable_values = tuple(float(value) for value in differentiable)
+    integrity_receipt.recurrence_adapter = {
+        "schema": "aura.recurrence_adapter_activation.v1",
+        "scope": "latent_slots_only",
+        "calls": activation.calls,
+        "adapted_positions": activation.adapted_positions,
+        "observed_positions": activation.observed_positions,
+        "active": activation.calls > 0,
+        "applied_blocks": dict(sorted(activation.applied_blocks.items())),
+        "applied_sites": dict(sorted(activation.applied_sites.items())),
+        "expected_sites": list(expected_adapter_sites),
+        "unfired_sites": activation.unfired_sites(expected_adapter_sites),
+        "complete": not activation.unfired_sites(expected_adapter_sites),
+    }
+    integrity_receipt.params_unchanged = invariant.post_episode(integrity_receipt)
     differences = tuple(
         abs(behavior - target)
         for behavior, target in zip(
@@ -582,17 +734,24 @@ def sample_final_recurrent_transition_pair(
     admitted = (
         maximum <= float(resolved.max_abs_logprob_drift)
         and mean <= float(resolved.max_mean_abs_logprob_drift)
+        and integrity_receipt.params_unchanged is True
+        and activation.calls > 0
+        and activation.adapted_positions > 0
+        and not activation.unfired_sites(expected_adapter_sites)
     )
     if recurrent_policy_sha256(model, spec) != policy_sha256:
         raise RuntimeError("recurrent policy changed during causal pair sampling")
     body = {
         "schema": CAUSAL_RECURRENT_PAIR_SCHEMA,
+        "episode_id": resolved_episode_id,
+        "rng_root_sha256": rng_root_sha256,
         "policy_sha256": policy_sha256,
         "transition": transition.receipt(),
         "parent": parent.receipt(),
         "child": child.receipt(),
         "common_random_seed": seed,
         "fixed_token_budget": resolved.max_tokens,
+        "sampling_config": resolved.to_dict(),
         "child_differentiable_logprobs": list(differentiable_values),
         "child_differentiable_logprobs_sha256": _float_sequence_sha256(
             differentiable_values
@@ -600,6 +759,9 @@ def sample_final_recurrent_transition_pair(
         "max_abs_child_logprob_drift": maximum,
         "mean_abs_child_logprob_drift": mean,
         "child_behavior_admitted": admitted,
+        "recurrence_adapter": dict(integrity_receipt.recurrence_adapter),
+        "runtime_integrity": dict(integrity_receipt.runtime_integrity),
+        "params_unchanged": integrity_receipt.params_unchanged,
     }
     result = CausalRecurrentTransitionPair(
         transition=transition,
@@ -610,6 +772,12 @@ def sample_final_recurrent_transition_pair(
         mean_abs_child_logprob_drift=mean,
         child_behavior_admitted=admitted,
         policy_sha256=policy_sha256,
+        episode_id=resolved_episode_id,
+        rng_root_sha256=rng_root_sha256,
+        recurrence_adapter=dict(integrity_receipt.recurrence_adapter),
+        runtime_integrity=dict(integrity_receipt.runtime_integrity),
+        params_unchanged=bool(integrity_receipt.params_unchanged),
+        sampling_config=resolved,
         receipt_sha256=_seal_receipt(body),
     )
     if require_admission and not admitted:
@@ -625,17 +793,23 @@ def validate_causal_recurrent_transition_pair_receipt(
 ) -> dict[str, Any]:
     required = {
         "schema",
+        "episode_id",
+        "rng_root_sha256",
         "policy_sha256",
         "transition",
         "parent",
         "child",
         "common_random_seed",
         "fixed_token_budget",
+        "sampling_config",
         "child_differentiable_logprobs",
         "child_differentiable_logprobs_sha256",
         "max_abs_child_logprob_drift",
         "mean_abs_child_logprob_drift",
         "child_behavior_admitted",
+        "recurrence_adapter",
+        "runtime_integrity",
+        "params_unchanged",
         "receipt_sha256",
     }
     if not isinstance(receipt, Mapping) or set(receipt) != required:
@@ -689,10 +863,19 @@ def validate_causal_recurrent_transition_pair_receipt(
         ):
             raise ValueError(f"causal_recurrent_pair_{side}_invalid")
     values = normalized.get("child_differentiable_logprobs")
+    activation = normalized.get("recurrence_adapter")
+    try:
+        sampling = RecurrentSamplingConfig(**dict(normalized["sampling_config"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("causal_recurrent_pair_sampling_config_invalid") from exc
     unsigned = dict(normalized)
     observed = unsigned.pop("receipt_sha256", None)
     if (
-        not _valid_sha256(normalized.get("policy_sha256"))
+        not isinstance(normalized.get("episode_id"), str)
+        or not normalized["episode_id"]
+        or len(normalized["episode_id"]) > 192
+        or not _valid_sha256(normalized.get("rng_root_sha256"))
+        or not _valid_sha256(normalized.get("policy_sha256"))
         or not isinstance(values, list)
         or len(values) != child.get("token_count")
         or any(
@@ -704,9 +887,440 @@ def validate_causal_recurrent_transition_pair_receipt(
         or normalized.get("child_differentiable_logprobs_sha256")
         != _float_sequence_sha256(values)
         or type(normalized.get("child_behavior_admitted")) is not bool
+        or type(normalized.get("params_unchanged")) is not bool
+        or not isinstance(activation, Mapping)
+        or activation.get("schema")
+        != "aura.recurrence_adapter_activation.v1"
+        or activation.get("scope") != "latent_slots_only"
+        or type(activation.get("active")) is not bool
+        or type(activation.get("calls")) is not int
+        or activation["calls"] < 0
+        or type(activation.get("adapted_positions")) is not int
+        or activation["adapted_positions"] < 0
+        or type(activation.get("observed_positions")) is not int
+        or activation["observed_positions"] < activation["adapted_positions"]
+        or activation["active"] is not (activation["calls"] > 0)
+        or not isinstance(activation.get("expected_sites"), list)
+        or not activation["expected_sites"]
+        or len(set(activation["expected_sites"]))
+        != len(activation["expected_sites"])
+        or not isinstance(activation.get("applied_sites"), Mapping)
+        or not isinstance(activation.get("unfired_sites"), list)
+        or activation["unfired_sites"]
+        != sorted(
+            set(activation["expected_sites"])
+            - set(activation["applied_sites"])
+        )
+        or type(activation.get("complete")) is not bool
+        or activation["complete"] is not (not activation["unfired_sites"])
+        or normalized.get("fixed_token_budget") != sampling.max_tokens
         or _seal_receipt(unsigned) != observed
     ):
         raise ValueError("causal_recurrent_pair_identity_invalid")
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        validate_runtime_integrity_receipt,
+    )
+
+    try:
+        runtime = validate_runtime_integrity_receipt(
+            normalized.get("runtime_integrity"),
+            require_worker=False,
+            expected_episode_id=normalized["episode_id"],
+            expected_input_tokens_sha256=transition["prompt_tokens_sha256"],
+            expected_fast_weights_applied=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("causal_recurrent_pair_runtime_integrity_invalid") from exc
+    differences = [
+        abs(float(behavior) - float(target))
+        for behavior, target in zip(
+            child["behavior_logprobs"], values, strict=True
+        )
+    ]
+    maximum = max(differences)
+    mean = sum(differences) / len(differences)
+    if (
+        not math.isclose(
+            float(normalized.get("max_abs_child_logprob_drift")),
+            maximum,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or not math.isclose(
+            float(normalized.get("mean_abs_child_logprob_drift")),
+            mean,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        raise ValueError("causal_recurrent_pair_drift_metrics_invalid")
+    runtime_safe = runtime["verdict"]["engine_measurements_complete"] is True
+    expected_admitted = bool(
+        maximum <= float(sampling.max_abs_logprob_drift)
+        and mean <= float(sampling.max_mean_abs_logprob_drift)
+        and runtime_safe
+        and activation["active"] is True
+        and activation["adapted_positions"] > 0
+        and activation["complete"] is True
+    )
+    if (
+        normalized["params_unchanged"] is not runtime_safe
+        or normalized["child_behavior_admitted"] is not expected_admitted
+        or normalized["rng_root_sha256"]
+        != recurrent_sampling_rng_root_sha256(
+            episode_id=normalized["episode_id"],
+            prompt_tokens_sha256=transition["prompt_tokens_sha256"],
+            policy_sha256=normalized["policy_sha256"],
+            execution_spec_sha256=transition["execution_spec_sha256"],
+            branch_index=child["branch_index"],
+            seed=normalized["common_random_seed"],
+            sampling_config=sampling,
+        )
+    ):
+        raise ValueError("causal_recurrent_pair_admission_verdict_invalid")
+    return normalized
+
+
+def recurrent_policy_sample_from_causal_pair(
+    pair: CausalRecurrentTransitionPair,
+    *,
+    sampling: RecurrentSamplingConfig | None = None,
+    require_admission: bool = True,
+) -> RecurrentPolicySample:
+    """Promote one measured final-edge child into the optimizer sample type."""
+
+    resolved = sampling or pair.sampling_config
+    if resolved.to_dict() != pair.sampling_config.to_dict():
+        raise ValueError("sampling config differs from causal pair")
+    pair_receipt = validate_causal_recurrent_transition_pair_receipt(
+        pair.receipt()
+    )
+    behavior = tuple(pair.child.behavior_logprobs)
+    target = tuple(pair.child_differentiable_logprobs)
+    differences = tuple(
+        abs(left - right)
+        for left, right in zip(behavior, target, strict=True)
+    )
+    maximum = max(differences)
+    maximum_index = differences.index(maximum)
+    mean = sum(differences) / len(differences)
+    ratios = tuple(
+        math.exp(target_value - behavior_value)
+        for target_value, behavior_value in zip(target, behavior, strict=True)
+    )
+    clipped_fraction = sum(
+        abs(ratio - 1.0) > float(resolved.clip_epsilon) for ratio in ratios
+    ) / len(ratios)
+    old_policy_approx_kl = sum(
+        (ratio - 1.0) - math.log(ratio) for ratio in ratios
+    ) / len(ratios)
+    admitted = bool(
+        pair.child_behavior_admitted
+        and maximum <= float(resolved.max_abs_logprob_drift)
+        and mean <= float(resolved.max_mean_abs_logprob_drift)
+        and clipped_fraction <= float(resolved.max_clipped_token_fraction)
+        and old_policy_approx_kl <= float(resolved.max_old_policy_approx_kl)
+    )
+    episode_receipt = {
+        "episode_id": pair.episode_id,
+        "input_tokens_sha256": pair.transition.prompt_tokens_sha256,
+        "decode_termination": "fixed_token_budget",
+        "params_unchanged": pair.params_unchanged,
+        "runtime_integrity": dict(pair.runtime_integrity),
+        "nonparametric_memory": {"status": "disabled_by_policy"},
+        "recurrence_adapter": dict(pair.recurrence_adapter),
+        "causal_transition_pair_sha256": pair.receipt_sha256,
+    }
+    sample = RecurrentPolicySample(
+        tokens=tuple(pair.child.tokens),
+        branch_index=pair.child.branch_index,
+        behavior_logprobs=behavior,
+        differentiable_logprobs=target,
+        max_abs_logprob_drift=maximum,
+        mean_abs_logprob_drift=mean,
+        max_abs_logprob_drift_token_index=maximum_index,
+        clipped_token_fraction=clipped_fraction,
+        old_policy_approx_kl=old_policy_approx_kl,
+        behavior_admitted=admitted,
+        execution_spec_sha256=pair.transition.execution_spec_sha256,
+        policy_sha256=pair.policy_sha256,
+        prompt_tokens_sha256=pair.transition.prompt_tokens_sha256,
+        seed=pair.child.seed,
+        sampling_config=resolved,
+        episode_receipt=episode_receipt,
+        episode_id=pair.episode_id,
+        rng_root_sha256=pair.rng_root_sha256,
+        sample_kind="causal_final_transition",
+        causal_transition_pair=pair_receipt,
+    )
+    if require_admission and not admitted:
+        raise RecurrentSamplingAdmissionError(sample)
+    return sample
+
+
+def sample_final_recurrent_transition_completion(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    seed: int,
+    episode_id: str,
+    sampling: RecurrentSamplingConfig | None = None,
+    tokenizer: Any | None = None,
+    model_path: str | None = None,
+    require_admission: bool = True,
+) -> RecurrentPolicySample:
+    """Sample one preidentified causal edge as a replay-complete GRPO member."""
+
+    resolved = sampling or RecurrentSamplingConfig()
+    pair = sample_final_recurrent_transition_pair(
+        model,
+        prompt_tokens,
+        spec=spec,
+        branch_index=branch_index,
+        seed=seed,
+        sampling=resolved,
+        require_admission=False,
+        episode_id=episode_id,
+        tokenizer=tokenizer,
+        model_path=model_path,
+    )
+    return recurrent_policy_sample_from_causal_pair(
+        pair,
+        sampling=resolved,
+        require_admission=require_admission,
+    )
+
+
+def validate_recurrent_policy_sample_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct a v4 behavior sample, including its full replay payload."""
+
+    required = {
+        "schema",
+        "sample_kind",
+        "episode_id",
+        "rng_root_sha256",
+        "execution_spec_sha256",
+        "policy_sha256",
+        "prompt_tokens_sha256",
+        "seed",
+        "sampling_config",
+        "token_count",
+        "tokens",
+        "tokens_sha256",
+        "behavior_logprobs",
+        "behavior_logprobs_sha256",
+        "differentiable_logprobs",
+        "differentiable_logprobs_sha256",
+        "branch_index",
+        "max_abs_logprob_drift",
+        "mean_abs_logprob_drift",
+        "max_abs_logprob_drift_token_index",
+        "clipped_token_fraction",
+        "old_policy_approx_kl",
+        "behavior_admitted",
+        "episode_receipt",
+        "episode_receipt_sha256",
+        "causal_transition_pair",
+        "cached_decode_termination",
+        "cached_params_unchanged",
+        "cached_runtime_integrity",
+        "cached_nonparametric_memory_status",
+        "cached_recurrence_adapter",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        raise ValueError("recurrent_policy_sample_schema_invalid")
+    normalized = dict(receipt)
+    episode_id = normalized.get("episode_id")
+    sample_kind = normalized.get("sample_kind")
+    if (
+        normalized.get("schema") != RECURRENT_SAMPLING_SCHEMA
+        or sample_kind not in {"engine_episode", "causal_final_transition"}
+        or not isinstance(episode_id, str)
+        or not episode_id
+        or len(episode_id) > 192
+        or not _valid_sha256(normalized.get("rng_root_sha256"))
+        or type(normalized.get("seed")) is not int
+        or not 0 <= normalized["seed"] <= 0xFFFFFFFF
+        or type(normalized.get("branch_index")) is not int
+        or normalized["branch_index"] < 0
+        or not all(
+            _valid_sha256(normalized.get(field))
+            for field in (
+                "execution_spec_sha256",
+                "policy_sha256",
+                "prompt_tokens_sha256",
+            )
+        )
+    ):
+        raise ValueError("recurrent_policy_sample_identity_invalid")
+    try:
+        sampling = RecurrentSamplingConfig(**dict(normalized["sampling_config"]))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("recurrent_policy_sample_sampling_config_invalid") from exc
+    tokens = normalized.get("tokens")
+    behavior = normalized.get("behavior_logprobs")
+    differentiable = normalized.get("differentiable_logprobs")
+    if (
+        not isinstance(tokens, list)
+        or not tokens
+        or any(type(token) is not int or token < 0 for token in tokens)
+        or normalized.get("token_count") != len(tokens)
+        or len(tokens) != sampling.max_tokens
+        or normalized.get("tokens_sha256") != _tokens_sha256(tokens)
+        or not isinstance(behavior, list)
+        or not isinstance(differentiable, list)
+        or len(behavior) != len(tokens)
+        or len(differentiable) != len(tokens)
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in (*behavior, *differentiable)
+        )
+        or normalized.get("behavior_logprobs_sha256")
+        != _float_sequence_sha256(behavior)
+        or normalized.get("differentiable_logprobs_sha256")
+        != _float_sequence_sha256(differentiable)
+    ):
+        raise ValueError("recurrent_policy_sample_trace_invalid")
+    differences = [
+        abs(float(left) - float(right))
+        for left, right in zip(behavior, differentiable, strict=True)
+    ]
+    maximum = max(differences)
+    mean = sum(differences) / len(differences)
+    ratios = [
+        math.exp(float(target) - float(old))
+        for old, target in zip(behavior, differentiable, strict=True)
+    ]
+    clipped = sum(
+        abs(ratio - 1.0) > float(sampling.clip_epsilon) for ratio in ratios
+    ) / len(ratios)
+    old_kl = sum(
+        (ratio - 1.0) - math.log(ratio) for ratio in ratios
+    ) / len(ratios)
+    if (
+        not math.isclose(
+            float(normalized.get("max_abs_logprob_drift")),
+            maximum,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or not math.isclose(
+            float(normalized.get("mean_abs_logprob_drift")),
+            mean,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or normalized.get("max_abs_logprob_drift_token_index")
+        != differences.index(maximum)
+        or not math.isclose(
+            float(normalized.get("clipped_token_fraction")),
+            clipped,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or not math.isclose(
+            float(normalized.get("old_policy_approx_kl")),
+            old_kl,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        or type(normalized.get("behavior_admitted")) is not bool
+    ):
+        raise ValueError("recurrent_policy_sample_admission_metrics_invalid")
+    episode = normalized.get("episode_receipt")
+    if (
+        not isinstance(episode, Mapping)
+        or episode.get("episode_id") != episode_id
+        or episode.get("input_tokens_sha256")
+        != normalized["prompt_tokens_sha256"]
+        or normalized.get("episode_receipt_sha256")
+        != _seal_receipt(episode)
+        or normalized.get("cached_decode_termination")
+        != episode.get("decode_termination")
+        or normalized.get("cached_params_unchanged")
+        != episode.get("params_unchanged")
+        or normalized.get("cached_runtime_integrity")
+        != episode.get("runtime_integrity")
+        or normalized.get("cached_nonparametric_memory_status")
+        != episode.get("nonparametric_memory", {}).get("status")
+        or normalized.get("cached_recurrence_adapter")
+        != episode.get("recurrence_adapter")
+    ):
+        raise ValueError("recurrent_policy_sample_episode_binding_invalid")
+    from core.brain.llm.latent_cortex.runtime_integrity import (
+        runtime_integrity_safe,
+    )
+
+    runtime_safe = runtime_integrity_safe(
+        normalized["cached_runtime_integrity"],
+        require_worker=False,
+        expected_episode_id=episode_id,
+        expected_input_tokens_sha256=normalized["prompt_tokens_sha256"],
+    )
+    activation = normalized["cached_recurrence_adapter"]
+    activation_safe = bool(
+        isinstance(activation, Mapping)
+        and activation.get("schema")
+        == "aura.recurrence_adapter_activation.v1"
+        and activation.get("scope") == "latent_slots_only"
+        and activation.get("active") is True
+        and type(activation.get("calls")) is int
+        and activation["calls"] > 0
+        and type(activation.get("adapted_positions")) is int
+        and activation["adapted_positions"] > 0
+    )
+    expected_admitted = bool(
+        maximum <= float(sampling.max_abs_logprob_drift)
+        and mean <= float(sampling.max_mean_abs_logprob_drift)
+        and clipped <= float(sampling.max_clipped_token_fraction)
+        and old_kl <= float(sampling.max_old_policy_approx_kl)
+        and runtime_safe
+        and activation_safe
+        and normalized["cached_nonparametric_memory_status"]
+        == "disabled_by_policy"
+        and not any(
+            str(flag).startswith("fallback_")
+            for flag in episode.get("honest_flags", [])
+        )
+    )
+    if normalized["behavior_admitted"] is not expected_admitted:
+        raise ValueError("recurrent_policy_sample_admission_verdict_invalid")
+    if normalized["rng_root_sha256"] != recurrent_sampling_rng_root_sha256(
+        episode_id=episode_id,
+        prompt_tokens_sha256=normalized["prompt_tokens_sha256"],
+        policy_sha256=normalized["policy_sha256"],
+        execution_spec_sha256=normalized["execution_spec_sha256"],
+        branch_index=normalized["branch_index"],
+        seed=normalized["seed"],
+        sampling_config=sampling,
+    ):
+        raise ValueError("recurrent_policy_sample_rng_root_invalid")
+    causal = normalized.get("causal_transition_pair")
+    if sample_kind == "causal_final_transition":
+        pair = validate_causal_recurrent_transition_pair_receipt(causal)
+        child = pair["child"]
+        if (
+            pair["episode_id"] != episode_id
+            or pair["policy_sha256"] != normalized["policy_sha256"]
+            or pair["transition"]["execution_spec_sha256"]
+            != normalized["execution_spec_sha256"]
+            or pair["transition"]["prompt_tokens_sha256"]
+            != normalized["prompt_tokens_sha256"]
+            or child["branch_index"] != normalized["branch_index"]
+            or child["seed"] != normalized["seed"]
+            or child["tokens"] != tokens
+            or child["behavior_logprobs"] != behavior
+            or pair["child_differentiable_logprobs"] != differentiable
+        ):
+            raise ValueError("recurrent_policy_sample_causal_pair_mismatch")
+    elif causal is not None:
+        raise ValueError("recurrent_policy_sample_unexpected_causal_pair")
     return normalized
 
 
@@ -788,6 +1402,7 @@ def sample_recurrent_completion(
     tokenizer: Any | None = None,
     model_path: str | None = None,
     require_admission: bool = True,
+    episode_id: str | None = None,
 ) -> RecurrentPolicySample:
     """Sample through cached RLC, then admit it as a bounded behavior policy."""
 
@@ -816,6 +1431,7 @@ def sample_recurrent_completion(
         decode_sentence_grace_tokens=0,
         nonparametric_memory_enabled=False,
         sample_seed=seed,
+        episode_id=episode_id,
     )
     if not result.ok:
         raise RuntimeError(f"cached recurrent sampling failed: {result.reason}")
@@ -875,12 +1491,27 @@ def sample_recurrent_completion(
             result.receipt.checkpoint_file_count
         ),
     )
+    activation = result.receipt.recurrence_adapter
+    activation_safe = bool(
+        isinstance(activation, Mapping)
+        and activation.get("schema")
+        == "aura.recurrence_adapter_activation.v1"
+        and activation.get("scope") == "latent_slots_only"
+        and activation.get("active") is True
+        and type(activation.get("calls")) is int
+        and activation["calls"] > 0
+        and type(activation.get("adapted_positions")) is int
+        and activation["adapted_positions"] > 0
+    )
     admitted = (
         maximum <= float(resolved.max_abs_logprob_drift)
         and mean <= float(resolved.max_mean_abs_logprob_drift)
         and clipped_fraction <= float(resolved.max_clipped_token_fraction)
         and old_policy_approx_kl <= float(resolved.max_old_policy_approx_kl)
         and measured_runtime_safe
+        and activation_safe
+        and result.receipt.nonparametric_memory.get("status")
+        == "disabled_by_policy"
         and not any(
             flag.startswith("fallback_")
             for flag in result.receipt.honest_flags
@@ -903,6 +1534,18 @@ def sample_recurrent_completion(
         seed=seed,
         sampling_config=resolved,
         episode_receipt=result.receipt.to_dict(),
+        episode_id=result.receipt.episode_id,
+        rng_root_sha256=recurrent_sampling_rng_root_sha256(
+            episode_id=result.receipt.episode_id,
+            prompt_tokens_sha256=result.receipt.input_tokens_sha256,
+            policy_sha256=policy_sha256,
+            execution_spec_sha256=spec.sha256,
+            branch_index=branch_index,
+            seed=seed,
+            sampling_config=resolved,
+        ),
+        sample_kind="engine_episode",
+        causal_transition_pair=None,
     )
     if require_admission and not admitted:
         raise RecurrentSamplingAdmissionError(sample)
@@ -1429,6 +2072,7 @@ def exact_adjoint_sampled_group_value_and_grad(
     for index, sample in enumerate(samples):
         if not isinstance(sample, RecurrentPolicySample):
             raise TypeError(f"sample {index} is not a RecurrentPolicySample")
+        validate_recurrent_policy_sample_receipt(sample.receipt())
         if not sample.behavior_admitted:
             raise RecurrentSamplingAdmissionError(sample)
         if sample.execution_spec_sha256 != spec.sha256:
@@ -1608,9 +2252,13 @@ __all__ = [
     "exact_adjoint_verified_transition_group_value_and_grad",
     "exact_adjoint_verifier_group_value_and_grad",
     "recurrent_policy_sha256",
+    "recurrent_policy_sample_from_causal_pair",
+    "recurrent_sampling_rng_root_sha256",
     "recurrent_completion_token_logprobs",
+    "sample_final_recurrent_transition_completion",
     "sample_recurrent_completion",
     "sample_final_recurrent_transition_pair",
     "validate_causal_recurrent_transition_pair_receipt",
+    "validate_recurrent_policy_sample_receipt",
     "verifier_group_objective",
 ]

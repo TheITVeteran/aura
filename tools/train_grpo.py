@@ -1034,13 +1034,21 @@ def sample_recurrent_group(
     max_tokens: int,
     seed: int,
     sampling_config: Any | None = None,
+    verified_group_provider: Any | None = None,
+    campaign_sequence: int | None = None,
+    model_path: str | None = None,
 ):
     """Bounded behavior-policy completions from the fixed recurrent graph."""
 
     from core.learning.recurrent_grpo import (
         RecurrentSamplingAdmissionError,
         RecurrentSamplingConfig,
+        recurrent_policy_sha256,
+        sample_final_recurrent_transition_completion,
         sample_recurrent_completion,
+    )
+    from core.learning.verified_transition_group_admission import (
+        sampling_config_sha256,
     )
 
     prompt_tokens = _task_prompt_tokens(tokenizer, task)
@@ -1049,6 +1057,55 @@ def sample_recurrent_group(
         raise TypeError("sampling_config must be a RecurrentSamplingConfig")
     if sampling.max_tokens != max_tokens:
         raise ValueError("sampling_config max_tokens must match max_tokens")
+    if (verified_group_provider is None) is not (campaign_sequence is None):
+        raise ValueError(
+            "verified_group_provider and campaign_sequence must be supplied together"
+        )
+    if verified_group_provider is not None:
+        policy_sha256 = recurrent_policy_sha256(model, spec)
+        plan = verified_group_provider.sampling_plan(
+            sequence=campaign_sequence,
+            task=task,
+            prompt_tokens=prompt_tokens,
+            policy_sha256=policy_sha256,
+        )
+        entries = tuple(plan.entries)
+        if (
+            plan.campaign_sequence != campaign_sequence
+            or plan.task_id != getattr(task, "task_id", None)
+            or plan.policy_sha256 != policy_sha256
+            or plan.execution_spec_sha256 != spec.sha256
+            or len(entries) != size
+        ):
+            raise RuntimeError("verified sampling plan differs from trainer request")
+        samples = []
+        completions: list[str] = []
+        for entry in entries:
+            sample = sample_final_recurrent_transition_completion(
+                model,
+                prompt_tokens,
+                spec=spec,
+                branch_index=entry.producing_branch_index,
+                seed=entry.sample_seed,
+                episode_id=entry.episode_id,
+                sampling=sampling,
+                tokenizer=tokenizer,
+                model_path=model_path,
+            )
+            if (
+                sample.episode_id != entry.episode_id
+                or sample.rng_root_sha256 != entry.rng_root_sha256
+                or sample.branch_index != entry.producing_branch_index
+                or sample.seed != entry.sample_seed
+                or sampling_config_sha256(sample)
+                != entry.sampling_config_sha256
+            ):
+                raise RuntimeError(
+                    "causal recurrent sample differs from signed group plan"
+                )
+            samples.append(sample)
+            completions.append(tokenizer.decode(list(sample.tokens)))
+        return prompt_tokens, samples, completions
     samples = []
     completions: list[str] = []
     rejected_receipts: list[dict[str, Any]] = []
@@ -1804,9 +1861,17 @@ def main(
                     if projection is not None and not isinstance(
                         projection, ScopedLoRALinear
                     ):
+                        site = (
+                            f"model.layers.{index}.{parent_name}.{target}"
+                        )
                         setattr(
                             parent, target,
-                            ScopedLoRALinear.from_base(projection, r=args.lora_rank),
+                            ScopedLoRALinear.from_base(
+                                projection,
+                                r=args.lora_rank,
+                                block_index=index,
+                                site=site,
+                            ),
                         )
                         attached += 1
         if not attached:
@@ -2453,6 +2518,9 @@ def main(
                             size=config.group_size,
                             max_tokens=args.max_tokens,
                             seed=sample_seed,
+                            verified_group_provider=verified_group_provider,
+                            campaign_sequence=step_number - 1,
+                            model_path=args.model,
                         )
                     )
                     active_recurrent_step["samples"] = tuple(recurrent_samples)

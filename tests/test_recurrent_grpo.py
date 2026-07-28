@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,9 +35,12 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     exact_adjoint_sampled_group_value_and_grad,
     exact_adjoint_verifier_group_value_and_grad,
     recurrent_completion_token_logprobs,
+    recurrent_policy_sample_from_causal_pair,
+    recurrent_sampling_rng_root_sha256,
     sample_final_recurrent_transition_pair,
     sample_recurrent_completion,
     validate_causal_recurrent_transition_pair_receipt,
+    validate_recurrent_policy_sample_receipt,
     verifier_group_objective,
 )
 from tools.recurrence_native_train_v2 import _wrap_window_layers  # noqa: E402
@@ -199,8 +205,10 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
         spec=spec,
         seed=117,
         sampling=RecurrentSamplingConfig(max_tokens=3),
+        episode_id="engine-sample-test-117",
     )
     receipt = sample.receipt()
+    validated = validate_recurrent_policy_sample_receipt(receipt)
 
     assert len(sample.tokens) == 3
     assert len(sample.behavior_logprobs) == len(sample.differentiable_logprobs) == 3
@@ -217,6 +225,9 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
         "disabled_by_policy"
     )
     assert receipt["cached_recurrence_adapter"]["active"] is True
+    assert validated["sample_kind"] == "engine_episode"
+    assert validated["episode_id"] == "engine-sample-test-117"
+    assert validated["episode_receipt"]["episode_id"] == sample.episode_id
 
 
 def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
@@ -227,15 +238,25 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
         branch_roles=("constructive_solution", "critical_audit"),
     )
 
+    sampling = RecurrentSamplingConfig(
+        max_tokens=3,
+        max_clipped_token_fraction=1.0,
+    )
     pair = sample_final_recurrent_transition_pair(
         model,
         [5, 9, 17],
         spec=spec,
         branch_index=1,
         seed=117,
-        sampling=RecurrentSamplingConfig(max_tokens=3),
+        sampling=sampling,
+        episode_id="causal-edge-test-117",
     )
     receipt = validate_causal_recurrent_transition_pair_receipt(pair.receipt())
+    sample = recurrent_policy_sample_from_causal_pair(
+        pair,
+        sampling=sampling,
+    )
+    sample_receipt = validate_recurrent_policy_sample_receipt(sample.receipt())
 
     assert pair.transition.transition_index == 2
     assert pair.parent.depth == 2
@@ -246,6 +267,77 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
     assert pair.child.state_sha256 == pair.transition.child_branch_sha256s[1]
     assert pair.child_behavior_admitted is True
     assert receipt["fixed_token_budget"] == 3
+    assert receipt["episode_id"] == "causal-edge-test-117"
+    assert receipt["runtime_integrity"]["verdict"][
+        "engine_measurements_complete"
+    ] is True
+    assert receipt["recurrence_adapter"]["active"] is True
+    assert sample_receipt["sample_kind"] == "causal_final_transition"
+    assert sample.tokens == pair.child.tokens
+
+
+def test_causal_sample_receipt_rejects_trace_substitution():
+    pair = sample_final_recurrent_transition_pair(
+        _prepared(seed=928),
+        [5, 9, 17],
+        spec=_spec(depth=2),
+        branch_index=0,
+        seed=43,
+        sampling=RecurrentSamplingConfig(max_tokens=2),
+        episode_id="causal-trace-tamper-43",
+    )
+    receipt = recurrent_policy_sample_from_causal_pair(pair).receipt()
+    receipt["tokens"][0] = (receipt["tokens"][0] + 1) % 32
+
+    with pytest.raises(ValueError, match="trace"):
+        validate_recurrent_policy_sample_receipt(receipt)
+
+
+def test_causal_samples_enter_the_exact_adjoint_without_identity_loss():
+    model = _prepared(seed=930)
+    _set_adapter_delta(model, 0.02)
+    prompt = [5, 9, 17]
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    sampling = RecurrentSamplingConfig(
+        max_tokens=2,
+        max_clipped_token_fraction=1.0,
+        max_old_policy_approx_kl=1.0,
+    )
+    samples = [
+        recurrent_policy_sample_from_causal_pair(
+            sample_final_recurrent_transition_pair(
+                model,
+                prompt,
+                spec=spec,
+                branch_index=branch,
+                seed=seed,
+                sampling=sampling,
+                episode_id=f"causal-adjoint-{branch}-{seed}",
+            ),
+            sampling=sampling,
+        )
+        for branch, seed in ((0, 47), (1, 53))
+    ]
+
+    result = exact_adjoint_sampled_group_value_and_grad(
+        model,
+        prompt,
+        samples,
+        [1.0, 0.0],
+        spec=spec,
+        config=RecurrentGRPOConfig(
+            kl_coefficient=0.0,
+            max_initial_clip_fraction=1.0,
+            max_initial_old_policy_approx_kl=1.0,
+        ),
+    )
+
+    assert result.gradients is not None
+    assert result.completion_count == 2
+    assert result.branch_indices == (0, 1)
 
 
 def test_causal_pair_rejects_branch_state_substitution():
@@ -289,6 +381,7 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
             return " ".join(str(token) for token in tokens)
 
     class Task:
+        task_id = "trainer-group-task"
         prompt = "solve"
 
     prompt, samples, completions = sample_recurrent_group(
@@ -316,6 +409,110 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
     assert completions == [
         " ".join(str(token) for token in sample.tokens) for sample in samples
     ]
+
+
+def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
+    from core.learning.verified_transition_group_admission import (
+        sampling_config_sha256,
+    )
+    from core.learning.verified_transition_trainer import (
+        VerifiedTransitionSamplingEntry,
+        VerifiedTransitionSamplingPlan,
+    )
+
+    model = _prepared(seed=943)
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    sampling = RecurrentSamplingConfig(
+        max_tokens=2,
+        max_clipped_token_fraction=1.0,
+        max_old_policy_approx_kl=1.0,
+    )
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(_messages, **_kwargs):
+            return "rendered"
+
+        @staticmethod
+        def encode(_text, **_kwargs):
+            return [5, 9, 17]
+
+        @staticmethod
+        def decode(tokens):
+            return " ".join(str(token) for token in tokens)
+
+    class Task:
+        task_id = "signed-causal-task"
+        prompt = "solve"
+
+    class Provider:
+        calls = 0
+
+        def sampling_plan(
+            self, *, sequence, task, prompt_tokens, policy_sha256
+        ):
+            self.calls += 1
+            entries = []
+            prompt_sha256 = hashlib.sha256(
+                json.dumps(
+                    list(prompt_tokens), separators=(",", ":")
+                ).encode("ascii")
+            ).hexdigest()
+            for branch, seed in ((0, 61), (1, 67)):
+                episode_id = f"signed-causal-{branch}-{seed}"
+                template = SimpleNamespace(sampling_config=sampling)
+                entries.append(
+                    VerifiedTransitionSamplingEntry(
+                        episode_id=episode_id,
+                        rng_root_sha256=recurrent_sampling_rng_root_sha256(
+                            episode_id=episode_id,
+                            prompt_tokens_sha256=prompt_sha256,
+                            policy_sha256=policy_sha256,
+                            execution_spec_sha256=spec.sha256,
+                            branch_index=branch,
+                            seed=seed,
+                            sampling_config=sampling,
+                        ),
+                        producing_branch_index=branch,
+                        sample_seed=seed,
+                        sampling_config_sha256=sampling_config_sha256(template),
+                    )
+                )
+            return VerifiedTransitionSamplingPlan(
+                campaign_sequence=sequence,
+                group_manifest_sha256="a" * 64,
+                task_id=task.task_id,
+                policy_sha256=policy_sha256,
+                prompt_tokens_sha256=prompt_sha256,
+                execution_spec_sha256=spec.sha256,
+                entries=tuple(entries),
+            )
+
+    provider = Provider()
+    prompt, samples, _completions = sample_recurrent_group(
+        model,
+        Tokenizer(),
+        Task(),
+        spec=spec,
+        size=2,
+        max_tokens=2,
+        seed=999,
+        sampling_config=sampling,
+        verified_group_provider=provider,
+        campaign_sequence=0,
+    )
+
+    assert prompt == [5, 9, 17]
+    assert provider.calls == 1
+    assert [sample.episode_id for sample in samples] == [
+        "signed-causal-0-61",
+        "signed-causal-1-67",
+    ]
+    assert [sample.seed for sample in samples] == [61, 67]
+    assert all(sample.sample_kind == "causal_final_transition" for sample in samples)
 
 
 def test_live_path_branch_answer_ce_trail_scores_each_recurrent_step():
@@ -446,30 +643,42 @@ def test_sampled_group_rejects_excess_clip_fraction_before_adjoint():
                 behavior, sample.differentiable_logprobs, strict=True
             )
         ]
+        changed = replace(
+            sample,
+            behavior_logprobs=tuple(behavior),
+            max_abs_logprob_drift=max(differences),
+            mean_abs_logprob_drift=sum(differences) / len(differences),
+            max_abs_logprob_drift_token_index=differences.index(
+                max(differences)
+            ),
+            clipped_token_fraction=0.5,
+            old_policy_approx_kl=sum(
+                (math.exp(target - cached) - 1.0) - (target - cached)
+                for target, cached in zip(
+                    sample.differentiable_logprobs,
+                    behavior,
+                    strict=True,
+                )
+            )
+            / len(behavior),
+            behavior_admitted=True,
+            sampling_config=replace(
+                sample.sampling_config,
+                max_mean_abs_logprob_drift=0.1,
+                max_clipped_token_fraction=1.0,
+            ),
+        )
         shifted.append(
             replace(
-                sample,
-                behavior_logprobs=tuple(behavior),
-                max_abs_logprob_drift=max(differences),
-                mean_abs_logprob_drift=sum(differences) / len(differences),
-                max_abs_logprob_drift_token_index=differences.index(
-                    max(differences)
-                ),
-                clipped_token_fraction=0.5,
-                old_policy_approx_kl=sum(
-                    (math.exp(target - cached) - 1.0) - (target - cached)
-                    for target, cached in zip(
-                        sample.differentiable_logprobs,
-                        behavior,
-                        strict=True,
-                    )
-                )
-                / len(behavior),
-                behavior_admitted=True,
-                sampling_config=replace(
-                    sample.sampling_config,
-                    max_mean_abs_logprob_drift=0.1,
-                    max_clipped_token_fraction=1.0,
+                changed,
+                rng_root_sha256=recurrent_sampling_rng_root_sha256(
+                    episode_id=changed.episode_id,
+                    prompt_tokens_sha256=changed.prompt_tokens_sha256,
+                    policy_sha256=changed.policy_sha256,
+                    execution_spec_sha256=changed.execution_spec_sha256,
+                    branch_index=changed.branch_index,
+                    seed=changed.seed,
+                    sampling_config=changed.sampling_config,
                 ),
             )
         )

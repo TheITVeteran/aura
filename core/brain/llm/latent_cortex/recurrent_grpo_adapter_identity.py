@@ -542,6 +542,7 @@ def _validate_step_receipts(
                 measured_runtime_safe = runtime_integrity_safe(
                     sample.get("cached_runtime_integrity"),
                     require_worker=False,
+                    expected_episode_id=str(sample.get("episode_id") or ""),
                     expected_input_tokens_sha256=str(sample.get("prompt_tokens_sha256") or ""),
                 )
             except ImportError:
@@ -549,7 +550,9 @@ def _validate_step_receipts(
             if not isinstance(activation, Mapping):
                 _fail("sample_behavior_not_admitted")
             if (
-                sample.get("schema") != "aura.recurrent_sampling_behavior.v3"
+                sample.get("schema") != "aura.recurrent_sampling_behavior.v4"
+                or not isinstance(sample.get("episode_id"), str)
+                or not sample["episode_id"]
                 or sample.get("behavior_admitted") is not True
                 or sample.get("execution_spec_sha256") != execution_spec_sha256
                 or measured_runtime_safe is not True

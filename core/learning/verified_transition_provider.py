@@ -54,6 +54,8 @@ from core.learning.verified_transition_reward import (
 from core.learning.verified_transition_trainer import (
     PreparedVerifiedTransitionGroup,
     VerifiedTransitionCampaignClosure,
+    VerifiedTransitionSamplingEntry,
+    VerifiedTransitionSamplingPlan,
     validate_verified_transition_step_receipt,
 )
 from core.learning.verified_transition_training_evidence import (
@@ -870,6 +872,67 @@ class ProductionVerifiedTransitionGroupProvider:
         if observed_seeds != commitment["sample_seeds"]:
             _fail("provider_runtime_sample_seed_mismatch")
 
+    def sampling_plan(
+        self,
+        *,
+        sequence: int,
+        task: Any,
+        prompt_tokens: Sequence[int],
+        policy_sha256: str,
+    ) -> VerifiedTransitionSamplingPlan:
+        """Expose one already admitted signed plan before any model sampling."""
+
+        with self._lock:
+            if self._finalized or self._pending_sequence is not None:
+                _fail("provider_sampling_plan_state_invalid")
+            if sequence != len(self._accepted_steps) or sequence not in self._plans:
+                _fail("provider_sampling_plan_missing")
+            expected_policy = self.expected_policy_sha256
+            if _sha256(
+                policy_sha256, role="provider_sampling_plan_policy"
+            ) != expected_policy:
+                _fail("provider_sampling_plan_policy_mismatch")
+            commitment = self._commitment(sequence)
+            plan = self._plans[sequence]
+            manifest = validate_transition_group_manifest(plan.group_manifest)
+            if (
+                getattr(task, "task_id", None) != commitment["task_id"]
+                or _digest(self._task_document(task))
+                != commitment["immutable_task_sha256"]
+                or _digest(list(prompt_tokens))
+                != commitment["prompt_tokens_sha256"]
+                or manifest["task_id"] != commitment["task_id"]
+                or plan.policy_before_sha256 != expected_policy
+            ):
+                _fail("provider_sampling_plan_runtime_binding_mismatch")
+            entries = tuple(
+                VerifiedTransitionSamplingEntry(
+                    episode_id=cast(str, entry["episode_id"]),
+                    rng_root_sha256=cast(str, entry["rng_root_sha256"]),
+                    producing_branch_index=cast(
+                        int, entry["producing_branch_index"]
+                    ),
+                    sample_seed=cast(int, entry["sample_seed"]),
+                    sampling_config_sha256=cast(
+                        str, entry["sampling_config_sha256"]
+                    ),
+                )
+                for entry in manifest["entries"]
+            )
+            return VerifiedTransitionSamplingPlan(
+                campaign_sequence=sequence,
+                group_manifest_sha256=cast(str, manifest["manifest_sha256"]),
+                task_id=cast(str, commitment["task_id"]),
+                policy_sha256=expected_policy,
+                prompt_tokens_sha256=cast(
+                    str, commitment["prompt_tokens_sha256"]
+                ),
+                execution_spec_sha256=cast(
+                    str, commitment["recurrent_execution_spec_sha256"]
+                ),
+                entries=entries,
+            )
+
     def _validate_prepared(
         self,
         prepared: PreparedVerifiedTransitionGroup,
@@ -1012,6 +1075,27 @@ class ProductionVerifiedTransitionGroupProvider:
                 completions=completions,
                 policy_sha256=plan.policy_before_sha256,
             )
+            from core.learning.recurrent_grpo import (
+                validate_recurrent_policy_sample_receipt,
+            )
+
+            for expected, sample in zip(
+                plan.group_manifest["entries"], samples, strict=True
+            ):
+                sample_receipt = validate_recurrent_policy_sample_receipt(
+                    sample.receipt()
+                )
+                if (
+                    sample_receipt["episode_id"] != expected["episode_id"]
+                    or sample_receipt["rng_root_sha256"]
+                    != expected["rng_root_sha256"]
+                    or sample_receipt["branch_index"]
+                    != expected["producing_branch_index"]
+                    or sample_receipt["seed"] != expected["sample_seed"]
+                    or sampling_config_sha256(sample)
+                    != expected["sampling_config_sha256"]
+                ):
+                    _fail("provider_runtime_sample_plan_mismatch")
             request = VerifiedTransitionProductionRequest(
                 schema=PRODUCTION_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,

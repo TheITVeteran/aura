@@ -220,7 +220,8 @@ def _fixture(
     protocol_bytes = training_json_bytes(protocol)
     prompt_tokens_sha256 = "6" * 64
     sample = {
-        "schema": "aura.recurrent_sampling_behavior.v3",
+        "schema": "aura.recurrent_sampling_behavior.v4",
+        "episode_id": "adapter-identity-sample",
         "behavior_admitted": True,
         "execution_spec_sha256": spec.sha256,
         "prompt_tokens_sha256": prompt_tokens_sha256,

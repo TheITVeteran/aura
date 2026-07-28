@@ -90,11 +90,15 @@ def test_scope_validation_and_restoration_are_fail_closed():
 
 
 def test_nested_scope_restores_parent_activation():
+    _, wrapped = _projection()
     with recurrence_adapter_scope() as outer:
         assert current_recurrence_adapter_scope() is outer
         with recurrence_adapter_scope(start=1, stop=2) as inner:
             assert current_recurrence_adapter_scope() is inner
+            wrapped(mx.ones((1, 2, 4)))
         assert current_recurrence_adapter_scope() is outer
+        assert outer.calls == inner.calls == 1
+        assert outer.adapted_positions == inner.adapted_positions == 1
     assert current_recurrence_adapter_scope() is None
 
 

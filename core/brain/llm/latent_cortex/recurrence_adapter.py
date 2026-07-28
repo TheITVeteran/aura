@@ -75,6 +75,19 @@ class RecurrenceAdapterActivation:
 
         return sorted(set(expected_sites) - set(self.applied_sites))
 
+    def absorb(self, nested: RecurrenceAdapterActivation) -> None:
+        """Aggregate a completed nested scope into this enclosing receipt."""
+
+        if nested is self:
+            raise ValueError("recurrence adapter activation cannot absorb itself")
+        self.calls += nested.calls
+        self.adapted_positions += nested.adapted_positions
+        self.observed_positions += nested.observed_positions
+        for block, count in nested.applied_blocks.items():
+            self.applied_blocks[block] = self.applied_blocks.get(block, 0) + count
+        for site, count in nested.applied_sites.items():
+            self.applied_sites[site] = self.applied_sites.get(site, 0) + count
+
 
 _ACTIVE_SCOPE: ContextVar[RecurrenceAdapterActivation | None] = ContextVar(
     "aura_recurrence_adapter_scope",
@@ -85,11 +98,58 @@ _DISABLE_DEPTH: ContextVar[int] = ContextVar(
     default=0,
 )
 
+_KNOWN_SCOPED_PROJECTIONS = (
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+)
+
 
 def current_recurrence_adapter_scope() -> RecurrenceAdapterActivation | None:
     """Return the current task-local activation, if one is open."""
 
     return _ACTIVE_SCOPE.get()
+
+
+def scoped_recurrence_adapter_sites(
+    model: Any,
+    *,
+    layer_indices: Iterable[int],
+) -> tuple[str, ...]:
+    """Enumerate and verify every recurrence-scoped projection in a layer set."""
+
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if not isinstance(layers, (list, tuple)):
+        raise ValueError("model exposes no decoder layer inventory")
+    sites: list[str] = []
+    for index in layer_indices:
+        if type(index) is not int or not 0 <= index < len(layers):
+            raise ValueError("recurrence adapter layer inventory is invalid")
+        layer = layers[index]
+        for parent_name in ("self_attn", "mlp"):
+            parent = getattr(layer, parent_name, None)
+            if parent is None:
+                continue
+            for target in _KNOWN_SCOPED_PROJECTIONS:
+                projection = getattr(parent, target, None)
+                if not isinstance(projection, ScopedLoRALinear):
+                    continue
+                expected = f"model.layers.{index}.{parent_name}.{target}"
+                if (
+                    getattr(projection, "recurrence_block_index", None) != index
+                    or getattr(projection, "recurrence_site", None) != expected
+                ):
+                    raise ValueError(
+                        f"recurrence adapter identity is incomplete: {expected}"
+                    )
+                sites.append(expected)
+    if not sites:
+        raise ValueError("no recurrence-scoped projection is attached")
+    return tuple(sorted(sites))
 
 
 @contextmanager
@@ -131,12 +191,15 @@ def recurrence_adapter_scope(
         or stop <= start
     ):
         raise ValueError("recurrence adapter span must be a non-empty positive slice")
+    parent = _ACTIVE_SCOPE.get()
     activation = RecurrenceAdapterActivation(start=start, stop=stop)
     token = _ACTIVE_SCOPE.set(activation)
     try:
         yield activation
     finally:
         _ACTIVE_SCOPE.reset(token)
+        if parent is not None:
+            parent.absorb(activation)
 
 
 class ScopedLoRALinear(LoRALinear):  # type: ignore[misc]
@@ -235,4 +298,5 @@ __all__ = [
     "current_recurrence_adapter_scope",
     "recurrence_adapter_disabled",
     "recurrence_adapter_scope",
+    "scoped_recurrence_adapter_sites",
 ]

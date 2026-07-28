@@ -2073,6 +2073,7 @@ class LatentCortexEngine:
         capture_decode_logprobs: bool = False,
         decode_sentence_grace_tokens: int | None = None,
         sample_seed: int | None = None,
+        episode_id: str | None = None,
         action_continuation_capture: Callable[[Any], None] | None = None,
         action_continuation_restore: Any | None = None,
         action_continuation_runner_state: Mapping[str, Any] | None = None,
@@ -2091,6 +2092,17 @@ class LatentCortexEngine:
             type(sample_seed) is not int or not 0 <= sample_seed <= 0xFFFFFFFF
         ):
             raise ValueError("sample_seed must be null or an integer inside [0, 2^32-1]")
+        if episode_id is not None and (
+            not isinstance(episode_id, str)
+            or not episode_id
+            or len(episode_id) > 192
+            or not episode_id[0].isalnum()
+            or any(
+                not (character.isalnum() or character in "._:/;=+-")
+                for character in episode_id
+            )
+        ):
+            raise ValueError("episode_id is not a valid campaign identifier")
         if type(action_continuation_capture_only) is not bool:
             raise TypeError("action_continuation_capture_only must be boolean")
         if type(nonparametric_memory_enabled) is not bool:
@@ -2136,7 +2148,9 @@ class LatentCortexEngine:
                 raise ValueError("action continuation requires exact runner state")
             if action_continuation_capture_only and action_continuation_capture is None:
                 raise ValueError("capture-only continuation requires a capture callback")
-        receipt = EpisodeReceipt(episode_id=uuid.uuid4().hex[:12])
+        receipt = EpisodeReceipt(
+            episode_id=(episode_id if episode_id is not None else uuid.uuid4().hex[:12])
+        )
         episode_started = time.monotonic()
         receipt.n_layers = self.n_layers
         receipt.prelude_end = self.prelude_end

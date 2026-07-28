@@ -1732,7 +1732,22 @@ def _load_adapter(model: Any, adapter_dir: Path, manifest: dict[str, Any]) -> in
                     f"adapter tensor dimensions do not match projection: {projection}"
                 )
             originals.append((parent, leaf, original))
-            setattr(parent, leaf, wrapper_type.from_base(original, r=rank))
+            if wrapper_type is ScopedLoRALinear:
+                try:
+                    block_index = int(projection.split(".")[2])
+                except (IndexError, ValueError) as exc:
+                    raise CampaignProducerError(
+                        f"scoped adapter projection has no layer identity: {projection}"
+                    ) from exc
+                wrapped = wrapper_type.from_base(
+                    original,
+                    r=rank,
+                    block_index=block_index,
+                    site=projection,
+                )
+            else:
+                wrapped = wrapper_type.from_base(original, r=rank)
+            setattr(parent, leaf, wrapped)
 
         weights_path = adapter_dir / manifest["adapter"]["path"]
         expected_adapter_sha256 = manifest["adapter"]["sha256"]

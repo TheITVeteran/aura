@@ -30771,3 +30771,48 @@ total checkpoint 677. The 677-920 completion envelope is approximately
 checkpoints to resident-32B training launch, 8-15 to a defensible preliminary
 gain verdict, and 14-25 to the powered conditional `WOW Signal` decision. Final
 multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420H pre-admitted causal sampling custody
+
+Proof-grade recurrent training no longer samples a variable retry stream and
+asks the signed provider to bless the survivors afterward. The production
+provider now exposes an already admitted group plan before generation, and the
+trainer executes exactly its ordered episode IDs, RNG roots, producing
+branches, seeds, sampling configuration, policy, prompt, and recurrent graph.
+There is no retry or replacement lane on this path; a rejected member rejects
+the precommitted group.
+
+The final recurrent edge is now a first-class optimizer sample. Its parent and
+child states are frozen around one actual transition, decoded under matched
+randomness, and bound to full token, cached-policy log-probability, exact-
+adjoint log-probability, runtime-integrity, checkpoint, and adapter-activation
+evidence. The v4 sample receipt is replay-complete rather than hash-only, and
+the exact adjoint reconstructs that receipt before computing any gradient.
+Sampling thresholds and the deterministic categorical RNG algorithm are part
+of the RNG-root commitment, so widening a gate after seeing output invalidates
+the sample.
+
+Nested recurrence scopes now aggregate activation evidence into the enclosing
+causal episode. Native training, GRPO training, and frozen paired-campaign
+loading all attach block and site identity to scoped projections. A causal
+sample is not admitted unless every declared wrapped site fired; aggregate
+"something ran" counters can no longer hide a partial treatment.
+
+The full verified-transition/recurrent proof matrix passes 295/295 in 236.10
+seconds. The paired-campaign loader and training integration matrix passes
+208/208 in 15.05 seconds, and the focused site-coverage/causal-sampler matrix
+passes 99/99 in 6.53 seconds. Ruff, bytecode compilation, and diff hygiene
+pass. Evidence is
+`artifacts/current/cp420h_causal_sampling_custody_evidence.json`.
+
+This closes post-hoc sample selection, not CP420 or SPARK-060. The resident
+launcher still cannot construct the provider after model load, no configured
+external signer broker yet issues the JIT attestations, whole-campaign replay
+storage remains incomplete, and rejected/pre-update outcomes still need their
+own crash-consistent transaction. No model was loaded or trained and no
+reasoning, frontier, resident-32B, promotion, or `WOW Signal` claim follows.
+CP420H is total checkpoint 678. The 678-920 completion envelope is
+approximately 73.7%-100.0% with an 86.8% midpoint. The evidence-adjusted range
+is 3-7 checkpoints to resident-32B training launch, 7-13 to a defensible
+preliminary gain verdict, and 13-23 to the powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

@@ -10,6 +10,11 @@ from typing import Any
 
 import pytest
 
+from core.learning.recurrent_grpo import (
+    RecurrentPolicySample,
+    RecurrentSamplingConfig,
+    recurrent_sampling_rng_root_sha256,
+)
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     TransitionGroupPlanEntry,
@@ -28,6 +33,7 @@ from core.learning.verified_transition_trainer import (
     PreparedVerifiedTransitionGroup,
     VerifiedTransitionCampaignClosure,
 )
+from tests.fixtures.rlc_runtime_integrity import engine_runtime_integrity
 
 
 def _sha(label: str) -> str:
@@ -64,36 +70,66 @@ class _Task:
         }
 
 
-class _SamplingConfig:
-    def to_dict(self) -> dict[str, Any]:
-        return {"max_tokens": 32, "temperature_micros": 1_000_000}
-
-
-class _Sample:
-    def __init__(
-        self,
-        *,
-        seed: int,
-        policy_sha256: str,
-        execution_spec_sha256: str,
-        prompt_tokens_sha256: str,
-        branch_index: int,
-    ) -> None:
-        self.seed = seed
-        self.policy_sha256 = policy_sha256
-        self.execution_spec_sha256 = execution_spec_sha256
-        self.prompt_tokens_sha256 = prompt_tokens_sha256
-        self.branch_index = branch_index
-        self.sampling_config = _SamplingConfig()
-
-    def receipt(self) -> dict[str, Any]:
-        return {
-            "schema": "aura.recurrent_sampling_behavior.v3",
-            "seed": self.seed,
-            "policy_sha256": self.policy_sha256,
-            "execution_spec_sha256": self.execution_spec_sha256,
-            "prompt_tokens_sha256": self.prompt_tokens_sha256,
-        }
+def _sample(
+    *,
+    episode_id: str,
+    seed: int,
+    policy_sha256: str,
+    execution_spec_sha256: str,
+    prompt_tokens_sha256: str,
+    branch_index: int,
+) -> RecurrentPolicySample:
+    sampling = RecurrentSamplingConfig(max_tokens=2)
+    runtime = engine_runtime_integrity(
+        episode_id=episode_id,
+        input_tokens_sha256=prompt_tokens_sha256,
+        checkpoint_required=False,
+    )
+    activation = {
+        "schema": "aura.recurrence_adapter_activation.v1",
+        "scope": "latent_slots_only",
+        "calls": 1,
+        "adapted_positions": 2,
+        "observed_positions": 2,
+        "active": True,
+    }
+    episode = {
+        "episode_id": episode_id,
+        "input_tokens_sha256": prompt_tokens_sha256,
+        "decode_termination": "fixed_token_budget",
+        "params_unchanged": True,
+        "runtime_integrity": runtime,
+        "nonparametric_memory": {"status": "disabled_by_policy"},
+        "recurrence_adapter": activation,
+    }
+    return RecurrentPolicySample(
+        tokens=(1, 2),
+        branch_index=branch_index,
+        behavior_logprobs=(-1.0, -1.0),
+        differentiable_logprobs=(-1.0, -1.0),
+        max_abs_logprob_drift=0.0,
+        mean_abs_logprob_drift=0.0,
+        max_abs_logprob_drift_token_index=0,
+        clipped_token_fraction=0.0,
+        old_policy_approx_kl=0.0,
+        behavior_admitted=True,
+        execution_spec_sha256=execution_spec_sha256,
+        policy_sha256=policy_sha256,
+        prompt_tokens_sha256=prompt_tokens_sha256,
+        seed=seed,
+        sampling_config=sampling,
+        episode_receipt=episode,
+        episode_id=episode_id,
+        rng_root_sha256=recurrent_sampling_rng_root_sha256(
+            episode_id=episode_id,
+            prompt_tokens_sha256=prompt_tokens_sha256,
+            policy_sha256=policy_sha256,
+            execution_spec_sha256=execution_spec_sha256,
+            branch_index=branch_index,
+            seed=seed,
+            sampling_config=sampling,
+        ),
+    )
 
 
 class _CausalLedger:
@@ -337,7 +373,8 @@ def _group_material(
 ) -> dict[str, Any]:
     prompt_sha = _digest(list(material["prompts"][sequence]))
     samples = tuple(
-        _Sample(
+        _sample(
+            episode_id=f"episode-{sequence}-{index}",
             seed=seed,
             policy_sha256=policy_sha256,
             execution_spec_sha256=material["execution"],
@@ -350,7 +387,7 @@ def _group_material(
         TransitionGroupPlanEntry(
             episode_id=f"episode-{sequence}-{index}",
             task_id=f"task-{sequence}",
-            rng_root_sha256=_sha(f"rng-{sequence}-{index}"),
+            rng_root_sha256=sample.rng_root_sha256,
             policy_sha256=policy_sha256,
             recurrent_execution_spec_sha256=material["execution"],
             producing_branch_index=index,
@@ -486,8 +523,41 @@ def test_sampling_requires_pre_admitted_lineage_plan(material: dict[str, Any]) -
     provider = material["make_provider"]()
     group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     material["producer"].prepared = group["prepared"]
+    with pytest.raises(VerifiedTransitionProviderError, match="sampling_plan_missing"):
+        provider.sampling_plan(
+            sequence=0,
+            task=material["tasks"][0],
+            prompt_tokens=material["prompts"][0],
+            policy_sha256=material["initial_policy"],
+        )
     with pytest.raises(VerifiedTransitionProviderError, match="prepare_plan_missing"):
         _prepare(material, provider, group, sequence=0)
+
+
+def test_admitted_sampling_plan_exposes_exact_signed_membership(
+    material: dict[str, Any],
+) -> None:
+    provider = material["make_provider"]()
+    group = _group_material(
+        material, sequence=0, policy_sha256=material["initial_policy"]
+    )
+    _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
+
+    plan = provider.sampling_plan(
+        sequence=0,
+        task=material["tasks"][0],
+        prompt_tokens=material["prompts"][0],
+        policy_sha256=material["initial_policy"],
+    )
+
+    assert plan.group_manifest_sha256 == group["manifest"]["manifest_sha256"]
+    assert [entry.episode_id for entry in plan.entries] == [
+        "episode-0-0",
+        "episode-0-1",
+    ]
+    assert [entry.rng_root_sha256 for entry in plan.entries] == [
+        sample.rng_root_sha256 for sample in group["samples"]
+    ]
 
 
 def test_restart_rehydrates_exact_open_plan_without_duplicate_start(

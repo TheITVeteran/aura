@@ -112,6 +112,30 @@ class PreparedVerifiedTransitionGroup:
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedTransitionSamplingEntry:
+    """One externally signed sample identity exposed before generation."""
+
+    episode_id: str
+    rng_root_sha256: str
+    producing_branch_index: int
+    sample_seed: int
+    sampling_config_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedTransitionSamplingPlan:
+    """Exact admitted group plan consumed by the proof-grade sampler."""
+
+    campaign_sequence: int
+    group_manifest_sha256: str
+    task_id: str
+    policy_sha256: str
+    prompt_tokens_sha256: str
+    execution_spec_sha256: str
+    entries: tuple[VerifiedTransitionSamplingEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class VerifiedTransitionMutationResult:
     """Trainer-facing result with no unverified reward channel."""
 
@@ -140,6 +164,15 @@ class VerifiedTransitionCampaignClosure:
 
 class VerifiedTransitionGroupProvider(Protocol):
     """Trusted campaign producer interface; it never receives the optimizer."""
+
+    def sampling_plan(
+        self,
+        *,
+        sequence: int,
+        task: Any,
+        prompt_tokens: Sequence[int],
+        policy_sha256: str,
+    ) -> VerifiedTransitionSamplingPlan: ...
 
     def prepare_group(
         self,
@@ -629,6 +662,8 @@ __all__ = [
     "VerifiedTransitionCampaignClosure",
     "VerifiedTransitionGroupProvider",
     "VerifiedTransitionMutationResult",
+    "VerifiedTransitionSamplingEntry",
+    "VerifiedTransitionSamplingPlan",
     "VerifiedTransitionTelemetry",
     "apply_prepared_verified_transition_group",
     "build_verified_transition_step_receipt",

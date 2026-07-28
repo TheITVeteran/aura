@@ -34,7 +34,8 @@ class _Sample:
 
     def receipt(self) -> dict:
         return {
-            "schema": "aura.recurrent_sampling_behavior.v3",
+            "schema": "aura.recurrent_sampling_behavior.v4",
+            "episode_id": "verified-transition-trainer-sample",
             "policy_sha256": self.policy_sha256,
         }
 
