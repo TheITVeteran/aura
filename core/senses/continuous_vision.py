@@ -15,6 +15,28 @@ from core.utils.task_tracker import get_task_tracker
 logger = logging.getLogger(__name__)
 
 
+# When a screen frame was last captured, as a monotonic clock reading.
+#
+# The continuous vision feed grabs the screen every couple of seconds and is
+# the reason she can describe what is on it. It is not a tool dispatch and
+# files no receipt, so a reliability gate looking only for receipts concluded
+# that an ACCURATE description of Bryan's screen was fabricated. A fresh
+# frame is the evidence that perception really happened.
+_LAST_SCREEN_FRAME_AT: float = 0.0
+
+
+def _note_screen_frame() -> None:
+    global _LAST_SCREEN_FRAME_AT
+    _LAST_SCREEN_FRAME_AT = time.monotonic()
+
+
+def screen_frame_age_seconds() -> float | None:
+    """Seconds since the last screen capture, or None if there has been none."""
+    if _LAST_SCREEN_FRAME_AT <= 0.0:
+        return None
+    return max(0.0, time.monotonic() - _LAST_SCREEN_FRAME_AT)
+
+
 class ContinuousSensoryBuffer:
     """Maintains a rolling buffer of screen captures for real-time spatial awareness."""
 
@@ -201,6 +223,12 @@ class ContinuousSensoryBuffer:
                         import mss.tools
                         png_bytes = mss.tools.to_png(sct_img.rgb, sct_img.size)
                         self.frame_buffer.append(("image/png", png_bytes))
+                        # A frame IS the evidence for "I can see your screen".
+                        # Recorded so the reliability gate can tell a real
+                        # observation from an invented one without needing a
+                        # per-turn tool dispatch — this feed is continuous and
+                        # never produces one.
+                        _note_screen_frame()
 
                 if self.camera_enabled:
                     if cv2_main_process_blocked():

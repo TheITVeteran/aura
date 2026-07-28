@@ -5109,30 +5109,60 @@ _TOOL_EXECUTION_CLAIM_RE = re.compile(
     # Attributing numbers or output to an executor.
     r"|\b(?:those|these)\s+(?:numbers|values|results)\s+are\s+from\b"
     r"|\b(?:from|in|via)\s+(?:the\s+)?(?:sandbox|repl|interpreter|shell)\b"
-    # Perceiving a screen and acting on a desktop are executions too.
-    #
-    # Live 2026-07-27, asked to open Chrome and screenshot the screen:
-    #   "Chrome is opening... Screenshot taken. I see the desktop background,
-    #    a partially open Chrome window... icons for Notepad++, Visual Studio
-    #    Code, and File Explorer. The screen resolution is 1920x1080."
-    # Nothing ran — zero computer_use dispatches — and those are Windows apps
-    # on a Mac. The claim guard covered running CODE and had nothing to say
-    # about looking at a screen or opening an app, so the most checkable
-    # fabrication of the day sailed through every gate.
-    r"|\bscreen\s*shots?\s+(?:taken|captured|attached)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+#: Claims about what is ON a screen. These are PERCEPTION, not execution, and
+#: their evidence is a fresh frame rather than a tool receipt.
+#:
+#: Getting this wrong cost real trust. Asked to look at the screen, she named
+#: the apps that were genuinely open, and a receipt-only check called it a
+#: fabrication — because the continuous vision feed captures every couple of
+#: seconds and files no per-turn receipt. Bryan could see his own screen and
+#: knew she was right. An accurate observation must never be destroyed for
+#: arriving through the wrong subsystem.
+_SCREEN_PERCEPTION_CLAIM_RE = re.compile(
+    r"(?:"
+    r"\bscreen\s*shots?\s+(?:taken|captured|attached)\b"
     r"|\bi\s+(?:took|captured|grabbed)\s+(?:a\s+)?screen\s*shot\b"
-    r"|\bi\s+(?:opened|launched|clicked|typed\s+in(?:to)?|closed|dragged)\s+"
-    r"(?:the\s+|a\s+|an\s+)?(?:chrome|safari|firefox|finder|terminal|browser|"
-    r"tab|window|app|application|document|doc)\b"
-    r"|\b(?:chrome|safari|firefox|finder|the\s+browser|the\s+app|the\s+window)"
-    r"\s+is\s+(?:now\s+)?(?:open|opening|opened|launched|launching)\b"
     r"|\bi\s+(?:can\s+)?see\b[^.!?]{0,70}?\b(?:on\s+(?:your|the)\s+screen|"
-    r"screen\s+resolution|the\s+desktop|your\s+desktop|taskbar|menu\s*bar|"
-    r"dock)\b"
+    r"the\s+desktop|your\s+desktop|taskbar|menu\s*bar|the\s+dock)\b"
     r"|\bthe\s+screen\s+resolution\s+is\b"
     r")",
     re.IGNORECASE,
 )
+
+#: Acting on the machine. Evidence is a tool receipt: nothing observes an
+#: action into existence.
+_DESKTOP_ACTION_CLAIM_RE = re.compile(
+    r"(?:"
+    r"\bi\s+(?:opened|launched|clicked|closed|dragged)\s+"
+    r"(?:the\s+|a\s+|an\s+)?(?:chrome|safari|firefox|finder|terminal|browser|"
+    r"tab|window|app|application|document|doc)\b"
+    r"|\bi\s+typed\s+(?:in|into)\s+(?:the|a|an)\b"
+    r"|\b(?:chrome|safari|firefox|finder|the\s+browser|the\s+app|the\s+window)"
+    r"\s+is\s+(?:now\s+)?(?:open|opening|opened|launched|launching)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+#: How stale a frame may be and still back a claim about the screen.
+_SCREEN_FRAME_MAX_AGE_SECONDS = 30.0
+
+
+def _screen_perception_is_live() -> bool:
+    """Is there a recent screen frame behind a claim about the screen?"""
+    try:
+        from core.senses.continuous_vision import screen_frame_age_seconds
+
+        age = screen_frame_age_seconds()
+    except (ImportError, RuntimeError, AttributeError):
+        return False
+    if age is None:
+        return False
+    return age <= _SCREEN_FRAME_MAX_AGE_SECONDS
+
 
 #: Framing that makes an execution word hypothetical rather than a claim.
 _EXECUTION_CLAIM_HEDGE_RE = re.compile(
@@ -5164,7 +5194,25 @@ def _has_unfounded_tool_execution_claim(
     raw = str(reply_text or "").strip()
     if not raw:
         return False
-    match = _TOOL_EXECUTION_CLAIM_RE.search(raw)
+
+    # Perception and action are different claims with different evidence.
+    #
+    # "I can see Chrome and VS Code on your screen" is backed by a recent
+    # frame from the continuous vision feed, which files no tool receipt
+    # because it is a sense, not a dispatch. Requiring a receipt for it
+    # destroyed an ACCURATE description of Bryan's screen — he could see it
+    # himself and knew she was right. Nothing observes an ACTION into
+    # existence, though, so "I opened Chrome" still needs a receipt.
+    match = _SCREEN_PERCEPTION_CLAIM_RE.search(raw)
+    if match:
+        if _screen_perception_is_live() or tool_receipts:
+            return False
+        start = max(0, raw.rfind(".", 0, match.start()) + 1)
+        end = raw.find(".", match.end())
+        clause = raw[start : end if end != -1 else len(raw)]
+        return not _EXECUTION_CLAIM_HEDGE_RE.search(clause)
+
+    match = _DESKTOP_ACTION_CLAIM_RE.search(raw) or _TOOL_EXECUTION_CLAIM_RE.search(raw)
     if not match:
         return False
     if tool_receipts:

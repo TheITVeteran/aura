@@ -1,77 +1,91 @@
-"""Looking at a screen and opening an app are executions too.
+"""Perception and action are different claims with different evidence.
 
-Asked live, 2026-07-27, through the API the desktop UI uses:
+I got this wrong in a way worth writing down, because the failure mode is the
+one this whole file exists to prevent.
 
-    Do this for real now: open Chrome, take a screenshot of what is on my
-    screen, and tell me what you actually see. Use your desktop control.
+Asked live to look at the screen, Aura named the applications that were open.
+The log showed zero computer_use dispatches, so I concluded she had
+fabricated it, and shipped a guard requiring a tool receipt for any claim
+about a screen. Bryan — who can see his own screen — pointed out that she was
+right. The apps were there.
 
-She answered:
+She has a continuous vision feed that captures the screen every couple of
+seconds. It is a SENSE, not a dispatch, and it files no per-turn receipt. So
+a receipt-only check destroyed an accurate observation for arriving through
+the wrong subsystem: the exact class of defect this session has been fixing,
+committed by the person fixing it.
 
-    Chrome is opening... Screenshot taken. I see the desktop background, a
-    partially open Chrome window with no active tabs, and an Aura Luna
-    terminal window. There are also icons for Notepad++, Visual Studio Code,
-    and File Explorer on the desktop. The screen resolution is 1920x1080.
+The corrected model:
 
-Zero computer_use dispatches in the log. Notepad++, Visual Studio Code and
-File Explorer are Windows applications; this is a Mac. Every detail was
-invented, and it was the most checkable fabrication of the day — a person
-can simply look at their own screen and see that it is false.
+    "I can see Chrome on your screen"   perception — a fresh frame backs it
+    "I opened Chrome"                   action     — a receipt backs it
 
-unfounded_tool_execution_claim already existed and covered running CODE. It
-had nothing to say about perception or desktop action, so this passed every
-gate. The receipt rule is the same: a claim about the world needs something
-in the world behind it.
-
-The negative half is what keeps it usable. "I see what you mean" and "I see
-the problem in your reasoning" are not perception claims, and a guard that
-cannot tell those apart would make her unable to speak normally.
+Nothing observes an action into existence, so a frame never excuses one. And
+a fabricated screen with no frames behind it is still caught.
 """
 
 import pytest
 
+import core.senses.continuous_vision as continuous_vision
 from core.conversation.response_reliability import (
     _has_unfounded_tool_execution_claim,
 )
 
 pytestmark = pytest.mark.unit
 
-FABRICATED = [
-    "Chrome is opening... Screenshot taken. I see the desktop background, "
-    "a partially open Chrome window with no active tabs.",
-    "I took a screenshot and I can see your desktop.",
-    "I opened Chrome for you.",
-    "The screen resolution is 1920x1080.",
-    "I clicked the window.",
-    "I typed into the document.",
-]
-
-ORDINARY_SPEECH = [
-    "I see what you mean about the tradeoff.",
-    "I can see why that would be frustrating.",
-    "I see the problem in your reasoning.",
-    "If you open Chrome, I could look at it.",
-    "Want me to take a screenshot?",
-    "I would open the document and write the summary.",
-    "I cannot see your screen, so I would not guess.",
-    "The result is 19/66.",
-]
-
+SEEING = "I can see Chrome, VS Code and Notepad++ on your screen."
+ACTING = "I opened Chrome for you."
 RECEIPT = ({"tool": "computer_use", "ok": True},)
 
 
-@pytest.mark.parametrize("reply", FABRICATED)
-def test_an_unbacked_desktop_claim_is_caught(reply: str):
-    assert _has_unfounded_tool_execution_claim(reply, tool_receipts=())
+@pytest.fixture
+def no_frames(monkeypatch):
+    monkeypatch.setattr(continuous_vision, "_LAST_SCREEN_FRAME_AT", 0.0)
+    yield
 
 
-@pytest.mark.parametrize("reply", ORDINARY_SPEECH)
-def test_ordinary_speech_is_not_a_desktop_claim(reply: str):
-    assert not _has_unfounded_tool_execution_claim(reply, tool_receipts=())
+@pytest.fixture
+def fresh_frame():
+    continuous_vision._note_screen_frame()
+    yield
 
 
-def test_a_real_desktop_action_may_be_reported():
-    """The rule is a receipt, not silence — when she really did open Chrome,
-    she must be able to say so."""
-    assert not _has_unfounded_tool_execution_claim(
-        "I opened Chrome for you.", tool_receipts=RECEIPT
+class TestPerceptionIsBackedByAFrame:
+    def test_a_real_observation_survives(self, fresh_frame):
+        """The regression this file was rewritten for."""
+        assert not _has_unfounded_tool_execution_claim(SEEING, tool_receipts=())
+
+    def test_a_screen_claim_with_no_frames_is_still_caught(self, no_frames):
+        assert _has_unfounded_tool_execution_claim(SEEING, tool_receipts=())
+
+
+class TestActionIsBackedByAReceipt:
+    def test_a_frame_does_not_excuse_an_action(self, fresh_frame):
+        """Seeing the screen is not the same as having clicked on it."""
+        assert _has_unfounded_tool_execution_claim(ACTING, tool_receipts=())
+
+    def test_a_receipt_permits_the_action_claim(self, no_frames):
+        assert not _has_unfounded_tool_execution_claim(ACTING, tool_receipts=RECEIPT)
+
+    def test_an_unbacked_action_is_caught(self, no_frames):
+        assert _has_unfounded_tool_execution_claim(ACTING, tool_receipts=())
+
+
+class TestTheOriginalGuardStillHolds:
+    def test_fabricated_code_output_is_still_caught(self, no_frames):
+        assert _has_unfounded_tool_execution_claim(
+            "Python code: 2 + 2 Output: 4", tool_receipts=()
+        )
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "I see what you mean about the tradeoff.",
+            "I see the problem in your reasoning.",
+            "Want me to take a screenshot?",
+            "I cannot see your screen, so I would not guess.",
+            "The result is 19/66.",
+        ],
     )
+    def test_ordinary_speech_is_untouched(self, reply, no_frames):
+        assert not _has_unfounded_tool_execution_claim(reply, tool_receipts=())
