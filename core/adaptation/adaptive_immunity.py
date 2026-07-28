@@ -27,7 +27,7 @@ import math
 import threading
 import time
 from collections import Counter, defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -993,6 +993,47 @@ class OfflineCoevolutionLab:
     def __init__(self, *, rng: np.random.Generator):
         self._rng = rng
 
+    @staticmethod
+    def _objective(
+        cell: ImmuneCell,
+        antigens: Sequence[Antigen],
+        *,
+        tau: float,
+        weights: Any,
+    ) -> float:
+        """The single fitness this lab selects on AND ranks by.
+
+        Kept as one function because CP126 714a9713 was two: generations were
+        selected with causal fitness included and the survivors were then
+        re-sorted without it.
+        """
+        score = 0.0
+        for antigen in antigens:
+            affinity = AdaptiveImmuneSystem.compute_affinity_static(
+                cell.receptor, antigen.vector, tau=tau, weights=weights
+            )
+            if antigen.protected:
+                if cell.kind == CellKind.REGULATORY:
+                    score += 1.1 * affinity
+                else:
+                    score -= 0.7 * affinity
+            else:
+                if cell.kind in {CellKind.B, CellKind.CYTOTOXIC, CellKind.MEMORY}:
+                    score += affinity * antigen.danger * (0.5 + 0.5 * antigen.subsystem_need)
+                elif cell.kind == CellKind.REGULATORY:
+                    score -= 0.2 * affinity * antigen.danger
+
+        if cell.kind in {CellKind.B, CellKind.MEMORY}:
+            causal_fit = _evaluate_causal_fitness(cell.behavioral_rule)
+            # None means fitness could not be MEASURED (no entities, no rule,
+            # lab unavailable). Scoring it as 0.0 would rank an unmeasured
+            # cell against measured ones as though it had been tested and
+            # found useless, making selection pressure an artefact of what
+            # happened to be measurable.
+            if causal_fit is not None:
+                score += causal_fit * 2.5
+        return score
+
     def evolve(
         self,
         cells: Iterable[ImmuneCell],
@@ -1035,39 +1076,7 @@ class OfflineCoevolutionLab:
         for _ in range(max(1, generations)):
             scored: list[tuple[float, ImmuneCell]] = []
             for cell in population:
-                score = 0.0
-                for antigen in antigens:
-                    affinity = AdaptiveImmuneSystem.compute_affinity_static(
-                        cell.receptor,
-                        antigen.vector,
-                        tau=tau,
-                        weights=weights,
-                    )
-                    if antigen.protected:
-                        if cell.kind == CellKind.REGULATORY:
-                            score += 1.1 * affinity
-                        else:
-                            score -= 0.7 * affinity
-                    else:
-                        if cell.kind in {CellKind.B, CellKind.CYTOTOXIC, CellKind.MEMORY}:
-                            score += (
-                                affinity * antigen.danger * (0.5 + 0.5 * antigen.subsystem_need)
-                            )
-                        elif cell.kind == CellKind.REGULATORY:
-                            score -= 0.2 * affinity * antigen.danger
-
-                # Incorporate causal health fitness for B and MEMORY cells
-                if cell.kind in {CellKind.B, CellKind.MEMORY}:
-                    causal_fit = _evaluate_causal_fitness(cell.behavioral_rule)
-                    # None means fitness could not be MEASURED (no entities, no
-                    # rule, lab unavailable). Scoring it as 0.0 would rank an
-                    # unmeasured cell against measured ones as though it had
-                    # been tested and found useless — the selection pressure
-                    # would then be an artefact of what happened to be
-                    # measurable, not of what repairs anything.
-                    if causal_fit is not None:
-                        score += causal_fit * 2.5
-
+                score = self._objective(cell, antigens, tau=tau, weights=weights)
                 scored.append((score, cell))
 
             scored.sort(key=lambda item: item[0], reverse=True)
@@ -1085,13 +1094,15 @@ class OfflineCoevolutionLab:
                 )
                 next_id += 1
 
+        # CP126 714a9713: this used to re-rank by receptor affinity ALONE,
+        # discarding the causal-fitness term that every generation of
+        # selection had just applied. The champions returned to the caller
+        # were therefore the best BINDERS, not the best repairers — the lane
+        # optimized one objective and shipped the winner of another. Ranking
+        # on the same objective selection used is the whole point of having
+        # one.
         population.sort(
-            key=lambda cell: sum(
-                AdaptiveImmuneSystem.compute_affinity_static(
-                    cell.receptor, antigen.vector, tau=tau, weights=weights
-                )
-                for antigen in antigens
-            ),
+            key=lambda cell: self._objective(cell, antigens, tau=tau, weights=weights),
             reverse=True,
         )
         return population[:4]

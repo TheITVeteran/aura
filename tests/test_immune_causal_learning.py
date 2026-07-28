@@ -161,8 +161,31 @@ def test_the_sham_control_is_present():
 def test_unmeasured_cells_are_not_scored_as_useless():
     import inspect
 
-    source = inspect.getsource(mod.OfflineCoevolutionLab.evolve)
+    source = inspect.getsource(mod.OfflineCoevolutionLab._objective)
     assert "if causal_fit is not None:" in source
+
+
+# --- 714a9713: one objective, used for both selection and ranking --------
+
+
+def test_selection_and_final_ranking_share_one_objective():
+    """The lane used to select WITH causal fitness and then re-sort the
+    survivors by receptor affinity alone, so it optimized one objective and
+    shipped the winner of another."""
+    import inspect
+
+    evolve = inspect.getsource(mod.OfflineCoevolutionLab.evolve)
+    assert evolve.count("self._objective(") >= 2
+    # The affinity-only re-sort is gone.
+    assert "key=lambda cell: sum(" not in evolve
+
+
+def test_the_objective_includes_causal_fitness_for_repair_cells():
+    import inspect
+
+    source = inspect.getsource(mod.OfflineCoevolutionLab._objective)
+    assert "_evaluate_causal_fitness" in source
+    assert "CellKind.B" in source
 
 
 # --- 3da4c199: the global swap is serialized ----------------------------
