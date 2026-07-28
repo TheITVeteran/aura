@@ -125,6 +125,31 @@ class TestTheScannerSeesBothLanes:
         assert before.coverage == 0.0
         assert after.coverage == 1.0
 
+    def test_a_skipped_name_above_the_root_does_not_blind_the_scan(self, tmp_path):
+        """A repo checked out under a skipped directory still gets scanned.
+
+        CLAUDE.md tells agents to work in ``.claude/worktrees/<name>`` — a
+        path whose parts include ``.claude``. Testing the skip list against
+        the absolute path made every file in such a checkout invisible, so
+        the scan found nothing and ``fixed_since`` read that as "all 674
+        baseline entries were migrated". Silent, and in the direction that
+        retires the ratchet.
+        """
+        root = tmp_path / ".claude" / "worktrees" / "wt"
+        (root / "core").mkdir(parents=True)
+        (root / "core" / "m.py").write_text(
+            "def f():\n    return threading.Lock()\n", encoding="utf-8"
+        )
+        report = scan_lock_coverage(roots=("core",), repo_root=root)
+        assert [lock.path for lock in report.raw] == ["core/m.py"]
+
+    def test_skips_still_apply_inside_the_root(self, tmp_path):
+        (tmp_path / "core" / "__pycache__").mkdir(parents=True)
+        (tmp_path / "core" / "__pycache__" / "m.py").write_text(
+            "def f():\n    return threading.Lock()\n", encoding="utf-8"
+        )
+        assert scan_lock_coverage(roots=("core",), repo_root=tmp_path).raw == []
+
     def test_the_scanner_records_where(self, tmp_path):
         report = self._module(
             tmp_path,
