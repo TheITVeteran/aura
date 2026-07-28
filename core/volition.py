@@ -601,6 +601,17 @@ class VolitionEngine:
 
         # Competence Drive — lowered from 0.6 to 0.5
         if drive_name == "competence" and drive.urgency > 0.5:
+            # The drive used to produce one fixed sentence every time it fired,
+            # regardless of what was actually limiting her. That is the
+            # difference between wanting to be better and knowing what better
+            # would mean. The faculty model answers the second question, so the
+            # goal names the faculty, the metric and the measured gap — and the
+            # deliberation that follows has reasons it can be judged against.
+            grounded = self._faculty_improvement_goal()
+            if grounded is not None:
+                return grounded
+            # Nothing measurable to want. The generic sweep is the honest
+            # fallback, not a target dressed up as one.
             return {
                 "objective": "Run a self-diagnosis to check system health and fix anything broken.",
                 "id": _unique_goal_id("volition_repair"),
@@ -803,6 +814,31 @@ class VolitionEngine:
             logger.error("Failed to generate duty goal: %s", e)
 
         return None
+
+    def _faculty_improvement_goal(self) -> dict[str, Any] | None:
+        """A competence goal grounded in Aura's model of her own faculties.
+
+        Returns None when the self-model has nothing measured to act on, so
+        the caller falls back rather than this inventing a target. An improved
+        faculty must be a claim she can check, not a sentence she generated.
+        """
+        try:
+            from core.metacognition.faculty_model import improvement_goal
+
+            goal = improvement_goal()
+        except _VOLITION_RECOVERABLE_ERRORS as exc:
+            _record_volition_degradation(
+                "volition.faculty_model",
+                exc,
+                action="competence drive fell back to a generic self-diagnosis goal",
+            )
+            return None
+        if not isinstance(goal, dict) or not goal.get("objective"):
+            return None
+        goal = dict(goal)
+        goal.setdefault("id", _unique_goal_id("volition_faculty"))
+        goal["objective"] = _sanitize_task_text(str(goal["objective"]))
+        return goal
 
     def _generate_reflection_goal(self) -> dict[str, Any]:
         """Generate a goal to reflect on recent learnings or memories."""
