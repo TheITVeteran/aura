@@ -110,23 +110,38 @@ body {
     background-image:
         radial-gradient(ellipse at 50% 0%, #1a0a3520, transparent 60%),
         radial-gradient(ellipse at 0% 100%, #00e5ff06, transparent 40%);
+    /* Text is SELECTABLE by default.
+     *
+     * This was `user-select: none` on the whole body with a small allowlist of
+     * elements that opted back in, so most of what Aura says could not be
+     * selected, copied, or right-clicked — including anything the allowlist had
+     * not been updated for. Selecting text is not a feature to enumerate; it is
+     * how a page behaves. Chrome that should not be selectable (buttons, icons,
+     * tabs, drag handles) opts OUT below instead. */
+    -webkit-user-select: text;
+    user-select: text;
+}
+
+/* Interactive chrome: dragging a selection across a button is never intended,
+ * and a half-selected icon glyph looks broken. */
+button,
+.btn,
+.tab,
+.nav-item,
+.icon,
+.mic-label,
+.chip,
+[role="button"],
+[role="tab"],
+.drag-handle,
+.no-select {
     -webkit-user-select: none;
     user-select: none;
 }
 
 input,
 textarea,
-select,
-pre,
-code,
-.msg,
-.thought-card,
-.sys-box,
-.metric-guide-live,
-.metric-guide-block,
-.memory-list,
-.skill-desc,
-.tool-last-detail {
+select {
     -webkit-user-select: text;
     user-select: text;
 }
