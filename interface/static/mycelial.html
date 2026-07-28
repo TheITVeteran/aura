@@ -388,8 +388,14 @@
         // blue hairball. Both problems have the same cause and the same fix —
         // show the most connected structure, which is also the part worth
         // looking at.
-        const SOUL_MAP_MAX_NODES = 320;
-        const SOUL_MAP_MAX_LINKS = 900;
+        // Show the WHOLE mycelium — every node is the point of the view.
+        //
+        // Cost is dominated by EDGES, not nodes: 2,677 nodes is a busy scene,
+        // 9,384 force-simulated links is what dropped it under 3 FPS. Keeping
+        // every node and thinning only the weakest links preserves the picture
+        // Bryan actually wants while removing the hairball that hid it.
+        const SOUL_MAP_MAX_NODES = 6000;
+        const SOUL_MAP_MAX_LINKS = 2600;
 
         function normalizeGraphPayload(payload) {
             let nodes = Array.isArray(payload.nodes) ? payload.nodes.map(node => ({ ...node })) : [];
