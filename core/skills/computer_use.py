@@ -3270,19 +3270,50 @@ end tell
 
     def _read_screen_text_macos(self) -> str:
         """Use macOS Accessibility API to extract text from the frontmost app with anti-hang limits."""
+        # `entire contents of frontApp` walks the ENTIRE accessibility tree.
+        # On a browser or an IDE that is thousands of elements and routinely
+        # outruns any sane timeout, so the 6s budget meant this effectively
+        # always failed: live 2026-07-27, "take a screenshot and tell me what
+        # you see" returned "read_screen_text failed: AppleScript timed out
+        # after 6s" every time. A capability that cannot finish is not a
+        # capability.
+        #
+        # The bounded query answers the question people actually ask — which
+        # app, which window, what is on it — in a fraction of the time, and
+        # degrades to just the app name rather than to nothing.
         script = """
 tell application "System Events"
     try
         set frontApp to first application process whose frontmost is true
         set appName to name of frontApp
-        set allText to entire contents of frontApp as string
-        return appName & ": " & allText
+        set summary to appName
+        try
+            set winName to name of front window of frontApp
+            set summary to summary & " — " & winName
+        end try
+        try
+            set titles to {}
+            repeat with e in (UI elements of front window of frontApp)
+                try
+                    set t to (name of e)
+                    if t is not missing value and t is not "" then
+                        set end of titles to t
+                    end if
+                end try
+            end repeat
+            if (count of titles) > 0 then
+                set AppleScript's text item delimiters to ", "
+                set summary to summary & " | " & (titles as string)
+                set AppleScript's text item delimiters to ""
+            end if
+        end try
+        return summary
     on error
         return "[Accessibility error or UI unresponsive]"
     end try
 end tell
 """
-        raw = self._run_applescript(script, timeout=6)
+        raw = self._run_applescript(script, timeout=15)
         if len(raw) > 3000:
             return raw[:1500] + "\n... [TRUNCATED] ...\n" + raw[-1500:]
         return raw

@@ -137,10 +137,59 @@ def _probe_writable_home() -> PreconditionState:
         )
 
 
+def _probe_accessibility_permission() -> PreconditionState:
+    """Has macOS granted this process the Accessibility right?
+
+    Reading the screen through the accessibility API needs a grant a person
+    makes once in System Settings. Without it every read returns
+    "[Accessibility error or UI unresponsive]" — which is a fact about
+    permission, not about her, and she should be able to say which.
+    """
+    try:
+        if os.uname().sysname != "Darwin":
+            return PreconditionState(
+                "accessibility_permission", True, "not applicable on this platform"
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Accessibility probe platform check failed: %s", exc)
+        return PreconditionState(
+            "accessibility_permission", True, "permission state is unknown", unknown=True
+        )
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to return name of first '
+                "application process whose frontmost is true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_SECONDS * 4,
+        )
+        output = (result.stdout or "").strip()
+        granted = bool(output) and "not allowed" not in (result.stderr or "").lower()
+        return PreconditionState(
+            "accessibility_permission",
+            granted,
+            "macOS Accessibility access is granted"
+            if granted
+            else "macOS has not granted Accessibility access to this app",
+        )
+    except Exception as exc:  # noqa: BLE001 - a probe may never raise upward
+        logger.debug("Accessibility probe error: %s", exc)
+        return PreconditionState(
+            "accessibility_permission", True, "permission state is unknown", unknown=True
+        )
+
+
 _PROBES: dict[str, Callable[[], PreconditionState]] = {
     "network": _probe_network,
     "desktop_session": _probe_desktop_session,
     "writable_storage": _probe_writable_home,
+    "accessibility_permission": _probe_accessibility_permission,
 }
 
 #: What the world must provide for each capability to be usable at all.
@@ -153,8 +202,9 @@ _CAPABILITY_PRECONDITIONS: dict[str, tuple[str, ...]] = {
     "browser_action": ("network", "desktop_session"),
     "email_adapter": ("network",),
     "reddit_adapter": ("network",),
-    "computer_use": ("desktop_session",),
-    "desktop_task": ("desktop_session",),
+    "computer_use": ("desktop_session", "accessibility_permission"),
+    "desktop_task": ("desktop_session", "accessibility_permission"),
+    "os_manipulation": ("desktop_session", "accessibility_permission"),
     "build_app": ("writable_storage",),
     "file_operation": ("writable_storage",),
 }
