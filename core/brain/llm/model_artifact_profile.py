@@ -35,6 +35,7 @@ import logging
 import math
 import os
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +89,11 @@ class ModelArtifactProfile:
 _PROFILE_CACHE: dict[str, tuple[tuple[float, float], ModelArtifactProfile]] = {}
 _PROFILE_CACHE_LOCK = threading.Lock()
 _PROFILE_CACHE_MAX = 32
+# Zero-syscall fast path keyed on the RAW path string: computing the
+# mtime-validated key above costs realpath + three stats, and that ran on
+# every call from an event-loop status read.
+_PROFILE_FAST_CACHE: dict[str, tuple[float, "ModelArtifactProfile"]] = {}
+_PROFILE_REVALIDATE_INTERVAL_S = 30.0
 
 
 def _class_for_parameters(total_parameters: float) -> str:
@@ -162,8 +168,33 @@ def _cache_key_stamp(config_path: Path, index_path: Path) -> tuple[float, float]
 
 
 def get_model_artifact_profile(model_path: str) -> ModelArtifactProfile:
-    """Return the (cached) measured profile for a model artifact path."""
-    resolved = str(model_path or "")
+    """Return the (cached) measured profile for a model artifact path.
+
+    The mtime-validated cache below is the source of truth, but computing its
+    key was itself the expensive part: ``exists()`` + ``resolve()`` (realpath
+    walks every path component) + two ``stat()`` calls ran on EVERY call,
+    including cache hits. That put four-plus filesystem syscalls on a hot
+    status read — ``get_lane_status`` -> ``_model_is_deep_solver_lane`` ->
+    ``model_size_class`` — which the background compute-budget policy calls
+    from the event loop on every tick. Measured live: TICK STALL, background
+    mean 19,823ms, with the event-loop stack sitting in ``posixpath.realpath``
+    underneath exactly this function.
+
+    So the hot path now does NO filesystem work at all: a monotonic fast cache
+    keyed on the RAW path string answers repeat calls, and the mtime
+    revalidation still runs, just at an interval instead of per call. A model
+    directory's config does not change under a running process, so seconds of
+    staleness is free; seconds of blocked event loop is not.
+    """
+
+    raw_key = str(model_path or "")
+    now = time.monotonic()
+    with _PROFILE_CACHE_LOCK:
+        fresh = _PROFILE_FAST_CACHE.get(raw_key)
+        if fresh is not None and (now - fresh[0]) < _PROFILE_REVALIDATE_INTERVAL_S:
+            return fresh[1]
+
+    resolved = raw_key
     try:
         root = Path(resolved).expanduser()
         real = root.resolve() if root.exists() else root
@@ -177,6 +208,7 @@ def get_model_artifact_profile(model_path: str) -> ModelArtifactProfile:
     with _PROFILE_CACHE_LOCK:
         cached = _PROFILE_CACHE.get(cache_id)
         if cached is not None and cached[0] == stamp:
+            _remember_fresh_profile(raw_key, now, cached[1])
             return cached[1]
 
     profile = _build_profile(resolved, root, config_path, index_path)
@@ -184,7 +216,29 @@ def get_model_artifact_profile(model_path: str) -> ModelArtifactProfile:
         if len(_PROFILE_CACHE) >= _PROFILE_CACHE_MAX:
             _PROFILE_CACHE.pop(next(iter(_PROFILE_CACHE)), None)
         _PROFILE_CACHE[cache_id] = (stamp, profile)
+        _PROFILE_FAST_CACHE[raw_key] = (now, profile)
+        while len(_PROFILE_FAST_CACHE) > _PROFILE_CACHE_MAX:
+            _PROFILE_FAST_CACHE.pop(next(iter(_PROFILE_FAST_CACHE)), None)
     return profile
+
+
+def _remember_fresh_profile(
+    raw_key: str, at: float, profile: ModelArtifactProfile
+) -> None:
+    """Record a revalidated profile under the zero-syscall fast key."""
+
+    with _PROFILE_CACHE_LOCK:
+        _PROFILE_FAST_CACHE[raw_key] = (at, profile)
+        while len(_PROFILE_FAST_CACHE) > _PROFILE_CACHE_MAX:
+            _PROFILE_FAST_CACHE.pop(next(iter(_PROFILE_FAST_CACHE)), None)
+
+
+def reset_model_artifact_profile_cache() -> None:
+    """Drop both caches. For tests and for an artifact swapped under a run."""
+
+    with _PROFILE_CACHE_LOCK:
+        _PROFILE_CACHE.clear()
+        _PROFILE_FAST_CACHE.clear()
 
 
 def _build_profile(

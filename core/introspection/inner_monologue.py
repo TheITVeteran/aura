@@ -666,7 +666,18 @@ Be concise. No preamble. Output only the JSON."""
                 identity = self_model.get("identity", "")
                 values   = self_model.get("core_values", [])
                 if identity:
-                    v_str = ", ".join(values) if values else "truth, curiosity, loyalty"
+                    # Rendered in a STABLE order. This block lands ~125 tokens
+                    # into the system prompt, ahead of the entire conversation,
+                    # so any turn-to-turn churn here invalidates the KV prefix
+                    # for everything behind it. Measured live on the user
+                    # surface: reuse collapsed to 125 of 1391 tokens (9%) and
+                    # the divergence began exactly at "You are Aura. ...\nCore
+                    # values: ..." — the join order of an unordered collection,
+                    # not a real change of values. Order carries no meaning in a
+                    # comma list, so sorting costs nothing and makes the prefix
+                    # cacheable across a conversation.
+                    ordered = sorted({str(v).strip() for v in (values or []) if str(v).strip()})
+                    v_str = ", ".join(ordered) if ordered else "curiosity, loyalty, truth"
                     return (
                         f"You are Aura. {identity}\nCore values: {v_str}.\n"
                         "Speak directly while keeping claims grounded in runtime evidence."

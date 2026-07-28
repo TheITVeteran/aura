@@ -275,3 +275,59 @@ class TestReadyRequiresAValidatedReceipt:
             mlx_client.MLXLocalClient._init_receipt_errors,
         )
         assert "worker_identity_validator_unavailable" in source
+
+
+def test_artifact_profile_hot_path_does_no_filesystem_work(tmp_path):
+    """The cache key was more expensive than the cache saved.
+
+    `exists()` + `resolve()` (realpath walks every path component) + two
+    `stat()` calls ran on EVERY call, cache hits included. That put four-plus
+    filesystem syscalls on a hot status read — get_lane_status ->
+    _model_is_deep_solver_lane -> model_size_class — which the background
+    compute-budget policy calls from the EVENT LOOP on every tick. Measured
+    live: TICK STALL, background mean 19,823ms, event-loop stack sitting in
+    posixpath.realpath underneath this function.
+    """
+    import os
+    from unittest import mock
+
+    from core.brain.llm import model_artifact_profile as profile_mod
+
+    artifact = tmp_path / "Aura-32B-test"
+    artifact.mkdir()
+    (artifact / "config.json").write_text(
+        '{"hidden_size": 5120, "num_hidden_layers": 64, "intermediate_size": 27648,'
+        ' "vocab_size": 152064, "num_attention_heads": 40, "num_key_value_heads": 8}',
+        encoding="utf-8",
+    )
+
+    profile_mod.reset_model_artifact_profile_cache()
+    real_stat = os.stat
+    counter = {"stats": 0}
+
+    def counting_stat(*args, **kwargs):
+        counter["stats"] += 1
+        return real_stat(*args, **kwargs)
+
+    with mock.patch("os.stat", counting_stat):
+        first = profile_mod.get_model_artifact_profile(str(artifact))
+        cost_of_first = counter["stats"]
+        assert cost_of_first > 0, "the first call must actually measure the artifact"
+
+        for _ in range(250):
+            repeat = profile_mod.get_model_artifact_profile(str(artifact))
+
+    assert counter["stats"] == cost_of_first, (
+        f"repeat lookups performed {counter['stats'] - cost_of_first} filesystem "
+        "syscalls; the hot path must do none"
+    )
+    assert repeat is first, "repeat lookups must return the cached profile object"
+    assert first.size_class == "32b"
+
+    # The durable mtime-validated cache is still the source of truth, and a
+    # reset must send the next call back to the filesystem.
+    profile_mod.reset_model_artifact_profile_cache()
+    with mock.patch("os.stat", counting_stat):
+        before = counter["stats"]
+        profile_mod.get_model_artifact_profile(str(artifact))
+        assert counter["stats"] > before, "a reset cache must re-measure"
