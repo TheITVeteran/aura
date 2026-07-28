@@ -177,6 +177,45 @@ STAGE_OP_KINDS: frozenset[str] = frozenset(
 )
 _MAX_VERIFY_PROBES = 4
 
+#: Cost of the non-window ops, in layer-application equivalents.
+#:
+#: CP126 bd211d76: only window ops counted toward the compute ceiling, so
+#: exchange, savepoint and verify_probe were free. They are not: exchange
+#: copies latent state across branches, savepoint snapshots every branch, and
+#: verify_probe DECODES TEXT and invokes the episode verifier — by far the most
+#: expensive instruction in the set. A schedule could therefore stay nominally
+#: under a layer-repeat ceiling while doing a great deal of real work, which is
+#: precisely how a budget stops bounding anything.
+#:
+#: These are declared ESTIMATES, not measurements, and they are deliberately
+#: coarse. Their job is to stop the ceiling being trivially evadable; the
+#: measured cost belongs in the execution receipt, which is the other half of
+#: this finding and is owned by the executor rather than by validation.
+EXCHANGE_LAYER_EQUIVALENT = 1
+SAVEPOINT_LAYER_EQUIVALENT = 1
+VERIFY_PROBE_LAYER_EQUIVALENT = 32
+
+NON_WINDOW_LAYER_EQUIVALENTS: dict[str, int] = {
+    "exchange": EXCHANGE_LAYER_EQUIVALENT,
+    "savepoint": SAVEPOINT_LAYER_EQUIVALENT,
+    "verify_probe": VERIFY_PROBE_LAYER_EQUIVALENT,
+}
+
+
+def op_layer_equivalents(op: StageOp) -> int:
+    """Estimated cost of one op, in layer-application equivalents."""
+    kind = getattr(op, "kind", "window")
+    if kind != "window":
+        return NON_WINDOW_LAYER_EQUIVALENTS.get(kind, 0)
+    try:
+        span = int(op.end) - int(op.start)
+        repeats = int(op.repeats)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    if span <= 0 or repeats < 1:
+        return 0
+    return span * repeats
+
 
 @dataclass
 class LayerSchedule:
@@ -278,7 +317,18 @@ class LayerSchedule:
 
     @property
     def total_layer_repeats(self) -> int:
+        """Exact window-layer applications. Window ops only, by definition."""
         return sum((op.end - op.start) * op.repeats for op in self.ops)
+
+    @property
+    def estimated_layer_equivalents(self) -> int:
+        """Estimated cost of the WHOLE program, non-window ops included.
+
+        Distinct from :attr:`total_layer_repeats`, which is an exact count of
+        one instruction kind. This is an estimate covering all of them, and is
+        named so the difference cannot be mistaken (CP126 bd211d76).
+        """
+        return sum(op_layer_equivalents(op) for op in self.ops)
 
     def validate(self, *, prelude_end: int, coda_start: int) -> list[str]:
         """Human-readable violations; empty ⇒ the program may execute.
@@ -373,6 +423,16 @@ class LayerSchedule:
             problems.append(
                 f"total layer repeats {_safe_display(total_layer_repeats)} exceeds "
                 f"{MAX_TOTAL_LAYER_REPEATS}"
+            )
+        # The ceiling has to cover every instruction that spends compute, or a
+        # schedule can sit under it while decoding and verifying repeatedly
+        # (CP126 bd211d76). Window cost is exact; the rest are declared
+        # estimates, so this is reported as an estimate.
+        estimated = self.estimated_layer_equivalents
+        if estimated > MAX_TOTAL_LAYER_REPEATS and total_layer_repeats <= MAX_TOTAL_LAYER_REPEATS:
+            problems.append(
+                f"estimated total cost {estimated} layer-equivalents exceeds "
+                f"{MAX_TOTAL_LAYER_REPEATS} once non-window ops are counted"
             )
         if self.ops and window_ops == 0:
             problems.append("schedule needs at least one window op")
