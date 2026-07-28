@@ -966,14 +966,50 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                 )
 
             if not isinstance(response, JSONResponse):
-                response = JSONResponse(
-                    {
-                        "response": "The chat route returned an unsupported response format.",
-                        "status": "chat_response_format_rejected",
-                        "response_confidence": "failed",
-                    },
-                    status_code=500,
-                )
+                # A handler that returned the reply TEXT has produced an answer;
+                # the only thing wrong is its envelope. Erasing it and shipping a
+                # 500 destroys real work for a type error — measured live: Aura
+                # opened Notes and wrote the requested note (it is on disk), the
+                # salvage path returned the reply as a bare str, and the person
+                # saw "The chat route returned an unsupported response format."
+                #
+                # Deliver the text and record the envelope defect, rather than
+                # letting a transport detail decide whether the user gets their
+                # answer. The 500 remains for genuinely unusable returns.
+                coerced = response if isinstance(response, str) else None
+                if coerced is not None and coerced.strip():
+                    logger.error(
+                        "Chat handler returned a bare %s instead of a JSONResponse "
+                        "(%d chars); delivering the text and recording the envelope "
+                        "defect rather than discarding a real answer.",
+                        type(response).__name__,
+                        len(coerced),
+                    )
+                    record_degradation(
+                        "chat.response_envelope",
+                        TypeError(
+                            f"chat handler returned {type(response).__name__}, not JSONResponse"
+                        ),
+                        action="delivered the handler's reply text and continued",
+                        severity="warning",
+                    )
+                    response = JSONResponse(
+                        {
+                            "response": coerced,
+                            "status": "chat_response_envelope_coerced",
+                            "response_confidence": "degraded",
+                        },
+                        status_code=200,
+                    )
+                else:
+                    response = JSONResponse(
+                        {
+                            "response": "The chat route returned an unsupported response format.",
+                            "status": "chat_response_format_rejected",
+                            "response_confidence": "failed",
+                        },
+                        status_code=500,
+                    )
 
             payload: dict[str, Any]
             try:
@@ -19803,7 +19839,37 @@ async def api_chat(
                         record_experience=False,
                     )
                     pending_exchange_id = None
-                return salvaged
+                # A JSONResponse, like every other exit from this handler.
+                # `_servable_draft_or_none` returns a STR, and returning it raw
+                # meant the delivery boundary's `isinstance(response,
+                # JSONResponse)` check replaced the salvaged answer with a 500
+                # and the sentence "The chat route returned an unsupported
+                # response format." Measured live: Aura opened Notes and wrote
+                # the requested three-sentence note — the note is on disk — and
+                # the person saw only that error.
+                #
+                # Worst possible polarity: the REFUSAL path below was correctly
+                # formed, so a turn that failed reported cleanly while a turn
+                # that succeeded reported a transport error. The whole
+                # repairable-draft mechanism exists to stop good work being
+                # discarded, and it was being discarded one layer further down.
+                salvage_lane = _mark_conversation_lane_state(status, state="ready")
+                return JSONResponse(
+                    {
+                        "response": salvaged,
+                        "status": f"{response_path}:served_repairable_draft",
+                        "reason": reason,
+                        "conversation_lane": salvage_lane,
+                        "response_confidence": "degraded",
+                        "live_turn_contract": _live_turn_contract(
+                            lane_status=salvage_lane,
+                            response_confidence="degraded",
+                            status=f"{response_path}:served_repairable_draft",
+                            reply_source=f"{response_path}:served_repairable_draft",
+                        ),
+                    },
+                    status_code=200,
+                )
 
             lane = _mark_conversation_lane_state(status, state="failed")
             _live_turn_trace.update(
