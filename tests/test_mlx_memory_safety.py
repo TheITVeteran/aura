@@ -1226,3 +1226,65 @@ def test_prompt_cache_exposes_the_oom_ladders_missing_rung():
     assert freed == expected, "shed must report the bytes it actually released"
     assert lru.retained_tokens() == 0
     assert lru.retained_entries() == 0
+
+
+def test_mlx_client_arms_the_oom_ladder_with_the_prompt_cache():
+    """The rung the ladder was missing, reachable from the parent process.
+
+    The boot verifier warned on EVERY boot: "no organ exposes a shed hook, so
+    the OOM ladder has no rungs: the only available response to memory pressure
+    is a restart" — while the prompt KV cache in the worker was the largest
+    trivially droppable allocation in the tree. It was unreachable because the
+    ladder runs in the parent and the cache lives in the worker; the worker had
+    always accepted a `clear_cache` action and nothing ever sent one.
+    """
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("Aura-32B-crsm-closeout-jul1-20260701-215118")
+
+    # This is exactly the contract core/runtime/foundations.py discovers.
+    assert callable(client.shed_memory)
+    assert callable(client.memory_footprint_bytes)
+    assert client.oom_score_adj > 0, "a pure cache should volunteer, not resist"
+    assert client.oom_recoverable is True
+    assert client.oom_rationale
+
+    # Footprint is read from what the worker reported, not guessed.
+    assert client.memory_footprint_bytes() == 0
+    client._record_surface_control_receipt_from_response(
+        {"status": "ok", "prompt_cache_bytes": 1_234_567, "tokens_used": 5}
+    )
+    assert client.memory_footprint_bytes() == 1_234_567
+
+    # With no live worker, shedding frees nothing and must not raise into the
+    # ladder — a shed loop that explodes under pressure is worse than no rung.
+    assert client.shed_memory() == 0
+
+
+def test_shed_memory_never_claims_more_than_was_held(monkeypatch):
+    """An unverified reclaim number is how a ladder reports progress it did not make."""
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("Aura-32B-crsm-closeout-jul1-20260701-215118")
+    client._record_surface_control_receipt_from_response(
+        {"status": "ok", "prompt_cache_bytes": 1000, "tokens_used": 1}
+    )
+
+    monkeypatch.setattr(
+        client,
+        "_send_worker_control_action",
+        lambda action, timeout_s=10.0: {
+            "status": "ok",
+            "prompt_cache_bytes_freed": 999_999_999,  # worker over-reports
+            "prompt_cache_bytes": 0,
+        },
+    )
+    assert client.shed_memory() == 1000, "must be clamped to what was known held"
+    assert client.memory_footprint_bytes() == 0, "footprint must follow the shed"
+
+    # A control message that fails is reported as zero reclaimed, not as success.
+    def _boom(action, timeout_s=10.0):
+        raise BrokenPipeError("worker gone")
+
+    monkeypatch.setattr(client, "_send_worker_control_action", _boom)
+    assert client.shed_memory() == 0

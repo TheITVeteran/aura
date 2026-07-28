@@ -6312,6 +6312,18 @@ def _mlx_worker_loop(
                         "status": "ok",
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens,
+                        # The parent's OOM footprint probe must not cost an IPC
+                        # round trip, so the size rides along with every result.
+                        "prompt_cache_bytes": (
+                            int(prompt_cache_lru.retained_bytes())
+                            if prompt_cache_lru is not None
+                            else 0
+                        ),
+                        "prompt_cache_entries": (
+                            int(prompt_cache_lru.retained_entries())
+                            if prompt_cache_lru is not None
+                            else 0
+                        ),
                         "soft_cancelled": bool(soft_cancelled),
                         "deadline_exceeded": bool(deadline_hit),
                         "speculative": {
@@ -6915,9 +6927,12 @@ def _mlx_worker_loop(
                 if mx and device != "cpu":
                     _clear_mlx_cache(mx)
                 prompt_cache_cleared = True
+                prompt_cache_bytes_freed = 0
                 try:
                     if prompt_cache_lru is not None:
-                        prompt_cache_lru.clear()
+                        # shed() reports what it released so the OOM ladder can
+                        # record a real reclaim instead of an unverified one.
+                        prompt_cache_bytes_freed = int(prompt_cache_lru.shed())
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     prompt_cache_cleared = False
                     _record_mlx_degradation(
@@ -6933,6 +6948,12 @@ def _mlx_worker_loop(
                         "id": job.get("id") if isinstance(job, dict) else None,
                         "status": "ok",
                         "prompt_cache_cleared": prompt_cache_cleared,
+                        "prompt_cache_bytes_freed": prompt_cache_bytes_freed,
+                        "prompt_cache_bytes": (
+                            int(prompt_cache_lru.retained_bytes())
+                            if prompt_cache_lru is not None
+                            else 0
+                        ),
                     }
                 )
 

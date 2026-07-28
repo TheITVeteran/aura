@@ -216,6 +216,21 @@ _MLX_OPTIONAL_THROTTLE_ERRORS = (
     ValueError,
 )
 
+# Failures a synchronous worker control message can raise and survive: the queue
+# or pipe is gone, the worker died, or the reply never came. A shed request that
+# cannot be delivered must report "freed nothing", never crash the OOM ladder.
+_MLX_CLIENT_RECOVERABLE_ERRORS = (
+    AttributeError,
+    BrokenPipeError,
+    EOFError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+    queue.Full,
+)
+
 
 # Global state for swap management
 _GLOBAL_LAST_SWAP_TIME = 0.0
@@ -3065,7 +3080,104 @@ class MLXLocalClient:
 
         return dict(getattr(self, "_last_surface_control_receipt", {}) or {})
 
+    # ── OOM ladder rung: the worker's KV cache ────────────────────────────
+    #
+    # The boot verifier warned on EVERY boot that the ladder had no rungs —
+    # "no organ exposes a shed hook, so the OOM ladder has no rungs: the only
+    # available response to memory pressure is a restart" — while the prompt KV
+    # cache in the worker was the largest trivially droppable allocation in the
+    # whole process tree. It was unreachable because the ladder runs in the
+    # parent and the cache lives in the worker; the worker has always accepted a
+    # `clear_cache` action and nothing ever sent one.
+    #
+    # `core/runtime/foundations.py` auto-registers any live ServiceContainer
+    # service exposing `shed_memory()`, so implementing that contract here is
+    # all that is needed to arm the ladder.
+    oom_score_adj: int = 300
+    oom_rationale: str = (
+        "prompt KV cache: pure reuse acceleration, costs only re-prefill to rebuild"
+    )
+    oom_recoverable: bool = True
+
+    def memory_footprint_bytes(self) -> int:
+        """Retained KV bytes, as last reported by the worker.
+
+        Read from the value that rides along with every generate result rather
+        than probed over IPC — the ladder may ask repeatedly and under memory
+        pressure, which is the worst moment to add a round trip.
+        """
+        return max(0, int(getattr(self, "_last_prompt_cache_bytes", 0) or 0))
+
+    def shed_memory(self) -> int:
+        """Drop the worker's prompt cache; return bytes actually freed."""
+        before = self.memory_footprint_bytes()
+        freed = 0
+        try:
+            result = self._send_worker_control_action("clear_cache", timeout_s=10.0)
+        except _MLX_CLIENT_RECOVERABLE_ERRORS as exc:
+            _record_mlx_degradation(
+                exc,
+                action="left the prompt cache in place after a shed request failed",
+                severity="warning",
+            )
+            return 0
+        if isinstance(result, dict):
+            try:
+                freed = int(result.get("prompt_cache_bytes_freed") or 0)
+            except (TypeError, ValueError):
+                freed = 0
+            self._last_prompt_cache_bytes = max(
+                0, int(result.get("prompt_cache_bytes") or 0)
+            )
+        # Never claim more than was known to be held: an unverified reclaim
+        # number is how a ladder reports progress it did not make.
+        return max(0, min(freed, before) if before else freed)
+
+    def _send_worker_control_action(
+        self,
+        action: str,
+        *,
+        timeout_s: float = 10.0,
+    ) -> dict[str, Any] | None:
+        """Synchronous control message to the resident worker.
+
+        Deliberately blocking: the OOM ladder is a synchronous shed loop, and a
+        shed that returns before it has happened reports a reclaim that did not
+        occur.
+        """
+        process = getattr(self, "_process", None)
+        if not (process is not None and process.is_alive() and getattr(self, "_init_done", False)):
+            return None
+        request_queue = getattr(self, "_req_q", None)
+        if request_queue is None:
+            return None
+        req_id = uuid.uuid4().hex
+        fut = _new_shared_future()
+        self._pending_generations[req_id] = fut
+        try:
+            request_queue.put(
+                self._authorize_job(
+                    {"id": req_id, "action": action},
+                    principal=f"mlx_client.{action}",
+                ),
+                True,
+                2.0,
+            )
+            return fut.result(timeout=max(1.0, float(timeout_s)))
+        except _MLX_CLIENT_RECOVERABLE_ERRORS:
+            self._pending_generations.pop(req_id, None)
+            raise
+        finally:
+            self._pending_generations.pop(req_id, None)
+
     def _record_surface_control_receipt_from_response(self, response: dict[str, Any]) -> None:
+        if isinstance(response, dict) and "prompt_cache_bytes" in response:
+            try:
+                self._last_prompt_cache_bytes = max(
+                    0, int(response.get("prompt_cache_bytes") or 0)
+                )
+            except (TypeError, ValueError, OverflowError):
+                pass
         receipt = _sanitize_surface_control_receipt(
             response.get("surface_control_receipt") if isinstance(response, dict) else None
         )
@@ -7511,7 +7623,12 @@ class MLXLocalClient:
 
     def _drain_queue(self):
         """Safe non-blocking drain."""
-        import queue as _queue_mod
+        # Module-level `queue`, never a local import: this runs from close(),
+        # which runs from __del__, which can fire during interpreter shutdown
+        # when sys.meta_path is already None. The import then raises ImportError
+        # — outside the except clause below — and every shutdown printed
+        # "Exception ignored in: MLXLocalClient.__del__".
+        _queue_mod = queue
 
         while self._res_q is not None and not self._res_q.empty():
             try:
@@ -9971,9 +10088,13 @@ class MLXLocalClient:
     on_stop = close
 
     def __del__(self):
+        # A finalizer running during interpreter shutdown can hit almost any
+        # failure as modules are torn out from under it; ImportError in
+        # particular escaped the old tuple. Nothing here is recoverable and
+        # nothing here is worth a traceback on exit.
         try:
             self.close()
-        except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
+        except BaseException:  # noqa: BLE001 - finalizer during teardown
             return
 
 
