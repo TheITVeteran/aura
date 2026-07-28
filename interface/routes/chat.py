@@ -11646,7 +11646,29 @@ def _build_stateful_voice_reflex(frame: dict[str, Any], user_message: str = "") 
     return " ".join(parts)
 
 
-def _servable_draft_or_none(draft: Any, user_message: Any = "") -> str:
+def _worth_more_than_a_refusal(candidate: str) -> bool:
+    """Is this substantial enough to beat "ask me again in a moment"?
+
+    The old rule was 80 characters and 12 words, and it discarded correct
+    answers for being brief. "You asked what it's actually like in here right
+    now." is 11 words and 55 characters — the true answer to the memory
+    question, thrown away by a length check, replaced by 35 words of apology.
+    Length was never the property being tested.
+
+    What is actually being excluded is a fragment: half a sentence, a stray
+    clause, the beginning of a thought the generator dropped. So the test is
+    whether the text finishes — a complete sentence is worth serving at any
+    length, and anything that stops mid-thought needs enough substance to
+    stand on its own regardless.
+    """
+    text = candidate.strip()
+    words = text.split()
+    if len(words) < 4 or len(text) < 20:
+        return False
+    return text[-1] in ".!?\"')" or len(words) >= 12
+
+
+def _servable_draft_or_none(draft: Any, user_message: Any = "", turn_id: Any = "") -> str:
     """The draft, if everything wrong with it is a shortfall rather than a leak.
 
     Used at the last-resort refusal site: a reply that three gates already
@@ -11666,16 +11688,31 @@ def _servable_draft_or_none(draft: Any, user_message: Any = "") -> str:
         logger.debug("Servable-draft check unavailable: %s", exc)
         return ""
 
+    # The last source: whatever a gate took from this turn and did not give
+    # back. Preserved drafts and raw output are the layers that MEANT to keep
+    # something; this is the layer that meant to destroy it, and at a refusal
+    # site the thing a gate destroyed is frequently the answer.
+    suppressed = ""
+    if turn_id:
+        try:
+            from core.conversation.turn_arbitration import ledger_for
+
+            suppressed = ledger_for(str(turn_id)).recoverable_text()
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.turn_arbitration", exc, severity="info")
+
     # In order of preference: the draft handed to this site, the best one any
-    # layer deliberately preserved, and finally the model's own raw answer —
-    # the vanilla floor. The second refusal site receives no argument at all,
-    # and the raw draft is the one thing every layer downstream can lose.
+    # layer deliberately preserved, the model's own raw answer — the vanilla
+    # floor — and finally the largest thing a gate suppressed. The second
+    # refusal site receives no argument at all, and the raw draft is the one
+    # thing every layer downstream can lose.
     for candidate in (
         str(draft or "").strip(),
         preserved_draft(),
         raw_model_draft(),
+        suppressed,
     ):
-        if len(candidate) < 80 or len(candidate.split()) < 12:
+        if not _worth_more_than_a_refusal(candidate):
             continue
         try:
             assessment = assess_user_facing_reply(user_message, candidate)
@@ -19540,7 +19577,11 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS:
                 pass
 
-            salvaged = _servable_draft_or_none(rejected_reply, _semantic_user_message)
+            salvaged = _servable_draft_or_none(
+                rejected_reply,
+                _semantic_user_message,
+                _live_turn_trace.get("turn_id") or _live_turn_trace.get("idempotency_key") or "",
+            )
             if salvaged:
                 logger.warning(
                     "Serving the preserved repairable draft (%d chars) rather "
@@ -21259,7 +21300,11 @@ async def api_chat(
             # below judged servable is served rather than traded for an
             # apology. The engine produced no ACCEPTABLE reply, which is not
             # the same as producing nothing.
-            salvaged_no_reply = _servable_draft_or_none("", _semantic_user_message)
+            salvaged_no_reply = _servable_draft_or_none(
+                "",
+                _semantic_user_message,
+                _live_turn_trace.get("turn_id") or _live_turn_trace.get("idempotency_key") or "",
+            )
             if salvaged_no_reply:
                 logger.warning(
                     "Serving the preserved repairable draft (%d chars) rather "

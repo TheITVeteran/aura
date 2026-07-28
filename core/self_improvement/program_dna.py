@@ -909,7 +909,13 @@ def reconstructed(case):
                 synthesis_provenance = "llm_clean_room_generation" if code.strip() else ""
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 generation_error = f"{type(exc).__name__}: {exc}"
-                self._record_degradation("program_dna_reconstruction.cognition", exc, severity="warning")
+                # Severity is decided after the fallback, not before it. Live
+                # 2026-07-27 this recorded `warning` the instant the preferred
+                # lane was refused admission, and the resilience layer answered
+                # with "frustration=1.00 depletion=0.47 state=strain" — over a
+                # lane switch that then served the request perfectly. A busy
+                # preferred tool is backpressure, and only a total failure of
+                # every lane is a degradation.
                 # The code lane failing is not the reconstruction failing.
                 # Live 2026-07-27, the un-steered code model was correctly
                 # refused admission — "cortex request 21.5GB + committed
@@ -949,6 +955,17 @@ def reconstructed(case):
                             fallback_exc,
                             severity="warning",
                         )
+                served = bool(code.strip())
+                self._record_degradation(
+                    "program_dna_reconstruction.cognition",
+                    exc,
+                    severity="info" if served else "warning",
+                    action=(
+                        "fell back to the resident cortex, which served the synthesis"
+                        if served
+                        else "no code lane could serve the synthesis"
+                    ),
+                )
 
         if not code.strip():
             return {
@@ -2917,11 +2934,21 @@ def reconstructed(case):
                 source="core.self_improvement.program_dna.write_artifact",
             )
 
-    def _record_degradation(self, subsystem: str, exc: BaseException, *, severity: str = "warning") -> None:
+    def _record_degradation(
+        self,
+        subsystem: str,
+        exc: BaseException,
+        *,
+        severity: str = "warning",
+        action: str = "",
+    ) -> None:
         try:
             errors = importlib.import_module("core.runtime.errors")
 
-            errors.record_degradation(subsystem, exc, severity=severity)
+            if action:
+                errors.record_degradation(subsystem, exc, severity=severity, action=action)
+            else:
+                errors.record_degradation(subsystem, exc, severity=severity)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             return
 

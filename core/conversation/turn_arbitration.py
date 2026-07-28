@@ -64,6 +64,11 @@ class Suppression:
     suppressed_chars: int
     replaced_with_chars: int
     at: float = field(default_factory=time.time)
+    #: What was removed, bounded. Sizes let this be counted; the text lets it
+    #: be undone. A refusal site holding "the engine produced no acceptable
+    #: reply" is often standing next to the acceptable reply a gate took, and
+    #: without the text there is nothing to hand back.
+    suppressed_text: str = ""
 
     def describe(self) -> str:
         return (
@@ -114,14 +119,20 @@ class TurnLedger:
         tidies 3 characters of whitespace are not the same event, and only the
         sizes distinguish them after the fact.
         """
+        text = str(before or "")
         self.suppressions.append(
             Suppression(
                 gate=str(gate),
                 reason=str(reason)[:200],
-                suppressed_chars=len(str(before or "")),
+                suppressed_chars=len(text),
                 replaced_with_chars=len(str(after or "")),
+                suppressed_text=text[:_MAX_SUPPRESSED_TEXT],
             )
         )
+        # A turn that trips fifty gates is a turn in trouble, not a turn worth
+        # remembering fifty times over. Keep the most recent.
+        if len(self.suppressions) > _MAX_SUPPRESSIONS:
+            del self.suppressions[:-_MAX_SUPPRESSIONS]
 
     def record_served(self, lane: str) -> None:
         self.served_lane = str(lane)
@@ -179,6 +190,19 @@ class TurnLedger:
         parts.append(f"served={self.served_lane or 'nothing'}")
         return " | ".join(parts)
 
+    def recoverable_text(self) -> str:
+        """The largest thing a gate took that is still worth saying, or "".
+
+        No judgement of quality here — the caller reassesses before serving.
+        This only answers "did this turn produce something substantial that
+        never reached the person", which is the question a refusal site cannot
+        otherwise ask.
+        """
+        losses = [item for item in self.lost_work() if item.suppressed_text.strip()]
+        if not losses:
+            return ""
+        return max(losses, key=lambda item: item.suppressed_chars).suppressed_text
+
     def lost_work(self) -> list[Suppression]:
         """Suppressions that discarded more than they served.
 
@@ -193,6 +217,10 @@ class TurnLedger:
             if item.suppressed_chars > max(40, item.replaced_with_chars * 2)
         ]
 
+
+#: Enough for a long reply; small enough that 64 turns of them stay trivial.
+_MAX_SUPPRESSED_TEXT = 8000
+_MAX_SUPPRESSIONS = 24
 
 _LOCK = threading.Lock()
 _LEDGERS: dict[str, TurnLedger] = {}

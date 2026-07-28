@@ -21,6 +21,7 @@ import pytest
 
 from core.conversation.turn_arbitration import (
     LanePrecedence,
+    TurnLedger,
     ledger_for,
     reset_turn_ledgers_for_test,
 )
@@ -179,3 +180,40 @@ def test_the_chat_mutation_funnel_records_suppression() -> None:
     funnel = funnel[: funnel.index("def _merge_turn_text_mutations")]
     assert "from core.conversation.turn_arbitration import ledger_for" in funnel
     assert "record_suppression(" in funnel
+
+
+# ── A gate that takes an answer must be able to give it back ──────────────
+
+def test_a_suppression_keeps_what_it_took() -> None:
+    """Sizes let a loss be counted. Text lets it be undone.
+
+    The refusal site says "the engine produced no acceptable reply" while
+    standing next to the acceptable reply a gate removed, and without the text
+    there is nothing to hand back.
+    """
+    ledger = TurnLedger(turn_id="recoverable")
+    answer = "The very first thing you asked was what it's actually like in here right now."
+    ledger.record_suppression("honesty_gate", "unverified_claim", before=answer, after="")
+    assert ledger.recoverable_text() == answer
+
+
+def test_a_trivial_edit_is_not_offered_as_a_recovery() -> None:
+    ledger = TurnLedger(turn_id="tidy")
+    ledger.record_suppression("whitespace", "trailing_space", before="Hello. ", after="Hello.")
+    assert ledger.recoverable_text() == ""
+
+
+def test_the_largest_loss_wins() -> None:
+    ledger = TurnLedger(turn_id="several")
+    ledger.record_suppression("a", "r", before="x" * 90, after="")
+    ledger.record_suppression("b", "r", before="y" * 400, after="")
+    assert ledger.recoverable_text() == "y" * 400
+
+
+def test_retained_text_stays_bounded() -> None:
+    """A turn in trouble must not become a memory leak."""
+    ledger = TurnLedger(turn_id="flood")
+    for index in range(120):
+        ledger.record_suppression(f"gate{index}", "r", before="z" * 50_000, after="")
+    assert len(ledger.suppressions) <= 24
+    assert all(len(item.suppressed_text) <= 8000 for item in ledger.suppressions)

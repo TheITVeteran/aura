@@ -152,3 +152,21 @@ def test_what_the_model_actually_said_survives_into_the_error() -> None:
     with pytest.raises(RuntimeError, match="I cannot help with that"):
         _generate(_RecordingRouter(reply="I cannot help with that."), {})
     deferral_record.reset_for_test()
+
+
+# ── A lane switch that worked is not a degradation ────────────────────────
+
+def test_a_fallback_that_served_is_not_recorded_as_a_warning() -> None:
+    """Live: a busy preferred lane drove her into strain over nothing.
+
+    The code lane was refused admission — correctly, the host already held the
+    resident 32B — the resident cortex then served the synthesis perfectly, and
+    the resilience layer answered the whole episode with "frustration=1.00
+    depletion=0.47 state=strain". Severity has to be decided after the outcome
+    is known, or backpressure reads as damage.
+    """
+    source = (REPO / "core/self_improvement/program_dna.py").read_text(encoding="utf-8")
+    marker = 'severity="info" if served else "warning"'
+    assert marker in source, "the primary-lane record must key on whether anything served"
+    # And it must be recorded after the fallback runs, not before it.
+    assert source.index('"program_dna_reconstruction.cognition_fallback"') < source.index(marker)
