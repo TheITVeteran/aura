@@ -161,3 +161,43 @@ def test_the_critical_stall_path_does_not_call_a_method_that_never_existed():
     assert "record_degradation" in executable, (
         "a critical stall must be recorded, not silently swallowed"
     )
+
+
+def test_mind_tick_progress_markers_beat_the_watchdog():
+    """Liveness is not throughput.
+
+    The heartbeat fired only once per iteration, at tick_start, under a 30s
+    timeout — so a loop that was alive and DELIBERATELY backing off (foreground
+    headroom reserved, allostasis protecting loop_lag_s, a bounded state-read
+    timeout) looked dead. Measured live: "SYSTEM STALL DETECTED: Component
+    'mind_tick' has not responded for 34.4s!" on a healthy runtime whose loop was
+    choosing not to work. Every _mark_loop_progress call site is a point where
+    the loop demonstrably progressed, which is what a heartbeat should mean;
+    slowness is reported by the tick-rate metric instead.
+    """
+    from core.mind_tick import MindTick
+    from infrastructure.watchdog import get_watchdog
+
+    watchdog = get_watchdog()
+    watchdog.register_component("mind_tick", timeout=30.0)
+    try:
+        tick = MindTick.__new__(MindTick)
+        tick._last_loop_progress_at = 0.0
+        tick._last_progress_label = ""
+
+        # Backdate the heartbeat as if the loop had been quiet a long time.
+        with watchdog._lock:
+            watchdog._heartbeats["mind_tick"] = time.time() - 120.0
+        stale = watchdog._heartbeats["mind_tick"]
+
+        # A yield-without-work still demonstrates the loop is alive.
+        tick._mark_loop_progress("state_load_timeout_yield")
+
+        assert watchdog._heartbeats["mind_tick"] > stale, (
+            "a loop that deliberately yielded is alive and must say so"
+        )
+        assert tick._last_progress_label == "state_load_timeout_yield", (
+            "the honest progress label must still be recorded, not replaced"
+        )
+    finally:
+        watchdog.stop()

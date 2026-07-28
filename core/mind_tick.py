@@ -248,9 +248,30 @@ class MindTick:
             return float(default)
 
     def _mark_loop_progress(self, label: str) -> None:
-        """Record supervised-loop progress without claiming a completed tick."""
+        """Record supervised-loop progress without claiming a completed tick.
+
+        This also beats the system watchdog, because LIVENESS IS NOT THROUGHPUT.
+        The heartbeat used to fire only once per iteration, at tick_start, under
+        a 30s timeout — so a loop that was alive and deliberately backing off
+        (foreground headroom reserved, allostasis protecting loop_lag_s, a
+        bounded state-read timeout) looked dead. Measured live: "SYSTEM STALL
+        DETECTED: Component 'mind_tick' has not responded for 34.4s!" while the
+        runtime was healthy and the loop was choosing not to work. That is the
+        same false-death this repo has been bitten by before.
+
+        Every call site of this method is already a point where the loop
+        demonstrably progressed, which is exactly what a heartbeat should mean.
+        Slowness is still reported — by the tick-rate metric, which is the right
+        instrument for it.
+        """
         self._last_loop_progress_at = time.time()
         self._last_progress_label = str(label or "progress")[:80]
+        try:
+            from infrastructure.watchdog import get_watchdog
+
+            get_watchdog().heartbeat("mind_tick")
+        except _MIND_BOUNDARY_ERRORS as exc:
+            logger.debug("MindTick: watchdog heartbeat unavailable: %s", exc)
 
     def _bootstrap_phases(self):
         """Initialize and register the 8 core cognitive phases."""
