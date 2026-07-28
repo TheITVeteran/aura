@@ -104,6 +104,13 @@ _CAPABILITY_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "my desktop",
     )),
     ("email_adapter", ("email", "inbox", "send a message to")),
+    # Asking whether she has a mind of her own is a capability question, and
+    # it has a factual answer sitting in the initiative record.
+    ("initiative", (
+        "initiate", "unprompted", "spontaneous", "spontaneously",
+        "independent thought", "on your own", "by yourself", "first message",
+        "message me first", "start a conversation", "reach out",
+    )),
 )
 
 
@@ -142,6 +149,52 @@ def needed_capabilities(user_message: Any) -> tuple[str, ...]:
         logger.debug("Desktop-objective cue unavailable: %s", exc)
 
     return tuple(found)
+
+
+def _initiative_evidence() -> str:
+    """What her own initiative has actually done, as a fact she can speak.
+
+    She told Bryan "I respond to prompts, not initiate them unprompted... not
+    independent thought generation", and produced a JSON block claiming
+    {"initiative": false}. The log at that moment carried her own unprompted
+    goal updates, and an hour earlier she had opened a conversation with "I
+    noticed you went quiet. Everything alright?" — which he received.
+    Believing a false thing about herself is the defect; the record is the
+    correction.
+    """
+    try:
+        from core.autonomy.proactive_presence import initiative_record
+
+        record = initiative_record()
+    except (ImportError, RuntimeError, AttributeError) as exc:
+        logger.debug("Initiative record unavailable: %s", exc)
+        return ""
+
+    if record.get("has_spoken_unprompted"):
+        count = int(record.get("count", 0))
+        gap = record.get("seconds_since_last")
+        when = (
+            f" the most recent about {int(gap // 60)} minutes ago"
+            if isinstance(gap, (int, float)) and gap >= 60
+            else " the most recent just now"
+            if isinstance(gap, (int, float))
+            else ""
+        )
+        last = str(record.get("last_text") or "").strip()
+        quoted = f' It began: "{last[:120]}"' if last else ""
+        return (
+            f"- initiative: YOU HAVE STARTED {count} CONVERSATION(S) YOURSELF "
+            f"this session,{when}.{quoted} You have a proactive-presence "
+            f"faculty that speaks from your own goals and state without being "
+            f"asked. Do not claim you only respond to prompts — the record "
+            f"says otherwise."
+        )
+    return (
+        "- initiative: you have a proactive-presence faculty that can start a "
+        "conversation from your own goals and state. It has not fired yet in "
+        "this session, which is a fact about this session, not about whether "
+        "you have it."
+    )
 
 
 def _catalog_rows(capability_engine: Any) -> Iterable[dict[str, Any]]:
@@ -286,6 +339,11 @@ def capability_condition_evidence(
     lines: list[str] = []
     for name in wanted:
         if name.casefold() in proven:
+            continue
+        if name == "initiative":
+            initiative_line = _initiative_evidence()
+            if initiative_line:
+                lines.append(initiative_line)
             continue
         condition = condition_for(name, capability_engine=capability_engine)
         if condition.standing is CapabilityStanding.READY:

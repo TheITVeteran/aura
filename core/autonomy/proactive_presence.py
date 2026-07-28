@@ -28,6 +28,41 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ProactivePresence")
 
+
+# What her initiative has ACTUALLY done, so she can answer for it.
+#
+# Asked outright whether she can start a conversation, she said "I respond to
+# user inputs — that's my primary function... not independent thought
+# generation", and emitted a JSON block reading {"initiative": false}. None of
+# that was read from anywhere; it was asserted.
+#
+# At the same time the log carried
+#   [AUTONOMOUS] proactive_presence:goal_update: "I'm hitting a bit of a wall
+#   with the user privacy research..."
+# and, unprompted an hour earlier, "I noticed you went quiet. Everything
+# alright?" — which Bryan received. The faculty is real and firing; only her
+# self-model disagreed. This is the counter it disagreed with.
+_INITIATIVE_LOG: dict = {"count": 0, "last_at": 0.0, "last_text": ""}
+
+
+def note_unprompted_message(content) -> None:
+    """Record that she spoke without being asked."""
+    body = str(content or "").strip()
+    if not body:
+        return
+    _INITIATIVE_LOG["count"] = int(_INITIATIVE_LOG.get("count", 0)) + 1
+    _INITIATIVE_LOG["last_at"] = time.time()
+    _INITIATIVE_LOG["last_text"] = body[:200]
+
+
+def initiative_record() -> dict:
+    """Live facts about her own initiative, for grounding a self-report."""
+    record = dict(_INITIATIVE_LOG)
+    last_at = float(record.get("last_at") or 0.0)
+    record["seconds_since_last"] = (time.time() - last_at) if last_at > 0 else None
+    record["has_spoken_unprompted"] = int(record.get("count", 0)) > 0
+    return record
+
 # ── Tuning Constants ──────────────────────────────────────────────────────
 SOCIAL_COOLDOWN_SECONDS = 120    # [RELAXED] Minimum user idle before unsolicited visible contact
 IDLE_THRESHOLD_SECONDS  = 60     # [RELAXED] Minimum quiet before autonomous updates are considered
@@ -898,6 +933,7 @@ class ProactivePresence:
         self._outputs_this_hour += 1
         if visible_presence:
             self._consecutive_unprompted += 1
+            note_unprompted_message(content)
             self._last_visible_output_time = time.time()
             # Record proactive send for adaptive backoff
             try:
