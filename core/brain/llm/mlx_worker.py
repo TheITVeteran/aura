@@ -1908,8 +1908,27 @@ def _merge_stop_sequences(job_stops: Any = None) -> list[str]:
     return merged
 
 
-def _truncate_role_continuation(text: str) -> tuple[str, bool]:
-    """Clip generation when the model starts simulating another chat turn."""
+def _truncate_role_continuation(text: str, *, final: bool = False) -> tuple[str, bool]:
+    """Clip generation when the model starts simulating another chat turn.
+
+    ``final`` decides whether trailing whitespace may be trimmed, and it is the
+    whole reason this parameter exists.
+
+    This runs on the ENTIRE accumulated buffer after every token. The trailing
+    ``.strip()`` therefore deleted the newline the model had just emitted,
+    every time it emitted one, before the next token could arrive. Asked for
+    three fruits one per line, the live runtime returned::
+
+        AppleBananaOrange
+
+    and asked to echo a Python block, ``import randomdef f(x): return x + 1``
+    — which is why the 2048 reconstruction kept failing with "invalid syntax
+    at line 1" on code the model had written correctly. In Python, whitespace
+    IS the syntax; in prose it is every paragraph she has ever written.
+
+    Mid-stream the buffer is not finished, so its trailing whitespace is not
+    trailing — it is the next line beginning.
+    """
     cleaned = _strip_leading_chatml_prefix(str(text or ""))
     for _ in range(2):
         stripped = _LEADING_GENERATION_ROLE_RE.sub("", cleaned).lstrip()
@@ -1921,7 +1940,7 @@ def _truncate_role_continuation(text: str) -> tuple[str, bool]:
     cleaned = _ROLE_CONTINUATION_RE.sub("", cleaned)
     cleaned = _USER_CONTINUATION_NO_COLON_RE.sub("", cleaned)
     cleaned = _ROLE_SUFFIX_RE.sub("", cleaned)
-    return cleaned.strip(), cleaned != original
+    return (cleaned.strip() if final else cleaned), cleaned != original
 
 
 def _message_content_to_text(content: Any) -> str:
@@ -2254,7 +2273,7 @@ def _trim_complete_operator_evidence(text: str) -> str:
         return stripped
 
     stripped = _OPERATOR_EVIDENCE_META_TAIL_RE.sub("", stripped).strip()
-    role_trimmed, role_hit = _truncate_role_continuation(stripped)
+    role_trimmed, role_hit = _truncate_role_continuation(stripped, final=True)
     if role_hit:
         stripped = role_trimmed
     if not _proof_evaluation_fragment_incomplete(stripped):
@@ -2565,7 +2584,7 @@ def _normalize_strict_value_response(text: str, *, expected_value: str = "") -> 
     cleaned = _CHAT_CONTROL_TOKEN_RE.sub("", str(text or "")).strip()
     cleaned = _strip_leading_chatml_prefix(cleaned).strip()
     cleaned = _collapse_escape_noise(cleaned)
-    cleaned, _ = _truncate_role_continuation(cleaned)
+    cleaned, _ = _truncate_role_continuation(cleaned, final=True)
     cleaned = _LEADING_GENERATION_ROLE_RE.sub("", cleaned).strip()
     cleaned = _LEADING_ROLE_NO_SEPARATOR_RE.sub("", cleaned).strip()
     for marker in (
