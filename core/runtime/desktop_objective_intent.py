@@ -53,9 +53,36 @@ _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "timestamp",
     "type",
     "write",
+    # Changing a machine setting is a desktop objective too. The list had
+    # every verb for moving files and windows and none for altering the
+    # system itself, so "change my desktop background to an orca" — which
+    # desktop_task can do through system_control — did not route at all and
+    # was answered conversationally. Measured live 2026-07-27.
+    "change",
+    "set",
+    "turn on",
+    "turn off",
+    "enable",
+    "disable",
+    "adjust",
+    "increase",
+    "decrease",
+    "mute",
+    "unmute",
 )
 
 _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
+    # System surfaces a setting verb acts on, so "set the volume" and "change
+    # my wallpaper" reach the lane that can actually do them.
+    "background",
+    "wallpaper",
+    "brightness",
+    "volume",
+    "dark mode",
+    "do not disturb",
+    "night shift",
+    "setting",
+    "settings",
     "app",
     "application",
     "browser",
@@ -86,7 +113,14 @@ _DESKTOP_OBJECTIVE_SURFACE_TERMS = (
 _DIRECT_DESKTOP_ACTION_RE = re.compile(
     r"\b(?:please\s+)?(?:open|create|write|save|export|search|google|look\s+up|"
     r"type|paste|compose|download|navigate|click|show\s+me|arrange|resize|drag|"
-    r"focus|select|switch|close|minimi[sz]e|maximi[sz]e|organize)\b",
+    r"focus|select|switch|close|minimi[sz]e|maximi[sz]e|organize|"
+    # Setting verbs, but only when they act on a machine surface — "change my
+    # wallpaper" is a desktop objective, "change your mind" is not. The verb
+    # alone is far too common in ordinary speech to admit on its own.
+    r"(?:change|set|adjust|increase|decrease|turn\s+(?:on|off)|enable|disable|"
+    r"mute|unmute)\s+(?:the\s+|my\s+|your\s+)?(?:desktop\s+)?"
+    r"(?:background|wallpaper|brightness|volume|dark\s+mode|night\s+shift|"
+    r"do\s+not\s+disturb|setting|settings|screen\s+saver))\b",
     re.IGNORECASE,
 )
 _EXPLANATORY_DESKTOP_QUESTION_RE = re.compile(

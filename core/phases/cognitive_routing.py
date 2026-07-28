@@ -622,10 +622,39 @@ class CognitiveRoutingPhase(BasePhase):
         ):
             cognitive_mode = CognitiveMode.DELIBERATE
 
-        # Casual Bypass: If autonomous or matches casual keywords, force REACTIVE (32B)
-        if is_autonomous or any(kw in lower_input for kw in _CASUAL_KEYWORDS):
+        # Casual Bypass: If autonomous or matches casual keywords, force REACTIVE
+        #
+        # A detected TASK outranks a casual keyword. _CASUAL_KEYWORDS holds
+        # ordinary English — "sentences", "words", "feeling" — and matching
+        # any of them threw away a deterministic task detection. Live
+        # 2026-07-27: "Open the Notes app and write a new note titled Orca
+        # Field Notes with a couple of SENTENCES about orcas" was routed
+        # "intent=TASK via ['desktop_task']" and then immediately bypassed to
+        # REACTIVE, so nothing executed and the conversational lane answered
+        # "I can't actually open apps or write notes" — denying a capability
+        # she has, because the request mentioned sentences.
+        #
+        # Casualness is a guess about TONE. A deterministic intent and a
+        # matched skill are evidence about WHAT WAS ASKED, and evidence wins.
+        # Autonomous turns still bypass: nobody is waiting on those.
+        deterministic_task = bool(
+            analysis.intent_type == "TASK" or matched_skills
+        )
+        if is_autonomous or (
+            any(kw in lower_input for kw in _CASUAL_KEYWORDS)
+            and not deterministic_task
+        ):
             logger.info("🧭 Routing: Casual/Autonomous bypass. Forcing REACTIVE.")
             cognitive_mode = CognitiveMode.REACTIVE
+        elif deterministic_task and any(
+            kw in lower_input for kw in _CASUAL_KEYWORDS
+        ):
+            logger.info(
+                "🧭 Routing: casual keyword present but a task was detected "
+                "(%s, skills=%s) — keeping the task lane.",
+                analysis.intent_type,
+                list(matched_skills or ())[:4],
+            )
 
         # Force DELIBERATE mode for AGI test battery runs (origin "test" or battery env vars active)
         if proof_run_active(origin=routing_origin):
