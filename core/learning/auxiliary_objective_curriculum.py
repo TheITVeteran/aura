@@ -22,17 +22,18 @@ muddled first:
 * ``BASE_WEIGHTS`` — differentiable into the resident weights. Must produce a
   measurable parameter gradient or it is inert.
 * ``AUXILIARY_HEAD`` — trains a separate head (the process critic, the mistake
-  locator, the accept/discard gate). These are real objectives with real
-  gradients, but into their own parameters; summing them into the base loss is
-  a category error that silently steers the base model with a critic's
-  objective.
+  locator, the accept/discard gate). These are real objectives only when a
+  measured gradient reaches that head, its optimizer runs, and its parameter
+  digest changes; summing them into the base loss is a category error that
+  silently steers the base model with a critic's objective.
 * ``DIAGNOSTIC`` — measured and reported, never optimized. Declaring a term
   diagnostic is an honest choice; letting an optimized term *look* diagnostic,
   or a diagnostic term claim gradient, is not.
 
-`term_liveness_report` then measures each term against its own declaration and
-classifies it `live`, `inert_zero_gradient`, `inert_negligible_share`, or
-`misdeclared_target`. A composite with an inert *required* term refuses.
+`build_liveness_report` then measures each term against its own declaration and
+classifies it `live`, `inert_zero_gradient`, `inert_negligible_share`,
+`inert_head_not_updated`, `misdeclared_target`, or `unmeasured`. A composite
+with an inert *required* term refuses.
 
 The depth curriculum is the other half. Its one rule is that **stage
 advancement is bound to measured competence, never to step count**: a schedule
@@ -60,7 +61,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-AUXILIARY_COMPOSITE_SCHEMA = "aura.spark062.auxiliary_composite.v1"
+AUXILIARY_COMPOSITE_SCHEMA = "aura.spark062.auxiliary_composite.v2"
 DEPTH_CURRICULUM_SCHEMA = "aura.spark062.depth_curriculum.v1"
 
 # A weighted term contributing less than this fraction of the composite's total
@@ -200,6 +201,7 @@ TERM_LIVENESS = (
     "live",
     "inert_zero_gradient",
     "inert_negligible_share",
+    "inert_head_not_updated",
     "misdeclared_target",
     "unmeasured",
 )
@@ -251,20 +253,12 @@ def base_weight_loss(
     import mlx.core as mx
 
     declared = validate_term_set(terms)
-    missing = [
-        term.name
-        for term in declared
-        if term.required and term.name not in values
-    ]
+    missing = [term.name for term in declared if term.required and term.name not in values]
     if missing:
-        raise AuxiliaryObjectiveError(
-            f"required terms have no computed value: {sorted(missing)}"
-        )
+        raise AuxiliaryObjectiveError(f"required terms have no computed value: {sorted(missing)}")
     unknown = set(values) - {term.name for term in declared}
     if unknown:
-        raise AuxiliaryObjectiveError(
-            f"values supplied for undeclared terms: {sorted(unknown)}"
-        )
+        raise AuxiliaryObjectiveError(f"values supplied for undeclared terms: {sorted(unknown)}")
 
     total = primary
     contributions: dict[str, float] = {}
@@ -278,9 +272,7 @@ def base_weight_loss(
             total = total + float(term.weight) * value
     mx.eval(total)
     primary_magnitude = abs(float(primary))
-    magnitude = primary_magnitude + sum(
-        abs(value) for value in contributions.values()
-    )
+    magnitude = primary_magnitude + sum(abs(value) for value in contributions.values())
     shares = {
         name: (abs(value) / magnitude if magnitude > 0.0 else 0.0)
         for name, value in contributions.items()
@@ -311,17 +303,21 @@ def build_liveness_report(
     *,
     shares: Mapping[str, float],
     gradient_norms: Mapping[str, float] | None = None,
+    head_gradient_norms: Mapping[str, float] | None = None,
+    head_before_sha256s: Mapping[str, str] | None = None,
+    head_after_sha256s: Mapping[str, str] | None = None,
+    head_optimizer_update_counts: Mapping[str, int] | None = None,
     minimum_share: float = DEFAULT_MINIMUM_SHARE,
     gradient_epsilon: float = DEFAULT_GRADIENT_EPSILON,
     shares_source: str = SHARES_CALLER_SUPPLIED,
 ) -> dict[str, Any]:
     """Classify each declared term against what it actually contributed.
 
-    ``gradient_norms`` maps term name to the parameter-gradient norm produced
-    by that term ALONE. It is optional because measuring it costs one backward
-    pass per term, which is affordable on a probe batch and not on every step —
-    but a report without it cannot certify a base-weight term as live, and says
-    so rather than assuming.
+    ``gradient_norms`` maps term name to its gradient into the resident base
+    weights. Head terms must additionally prove a gradient into their own
+    parameters, an optimizer update, and a changed parameter digest. A large
+    loss share plus absence of a base gradient is exclusion evidence, not proof
+    that a head learned anything.
     """
 
     declared = validate_term_set(terms)
@@ -338,14 +334,43 @@ def build_liveness_report(
     for term in declared:
         share = shares.get(term.name)
         gradient = (gradient_norms or {}).get(term.name)
+        head_gradient = (head_gradient_norms or {}).get(term.name)
+        head_before = (head_before_sha256s or {}).get(term.name)
+        head_after = (head_after_sha256s or {}).get(term.name)
+        head_updates = (head_optimizer_update_counts or {}).get(term.name)
+        if share is not None:
+            share = _finite(share, name=f"{term.name}.share")
+            if not 0.0 <= share <= 1.0:
+                raise AuxiliaryObjectiveError(f"term share is outside [0, 1] for {term.name}")
+        if gradient is not None:
+            gradient = _finite(gradient, name=f"{term.name}.base_gradient_norm")
+            if gradient < 0.0:
+                raise AuxiliaryObjectiveError(f"base gradient norm is negative for {term.name}")
+        if head_gradient is not None:
+            head_gradient = _finite(head_gradient, name=f"{term.name}.head_gradient_norm")
+            if head_gradient < 0.0:
+                raise AuxiliaryObjectiveError(f"head gradient norm is negative for {term.name}")
+        for role, digest in (
+            ("head_before_sha256", head_before),
+            ("head_after_sha256", head_after),
+        ):
+            if digest is not None and (
+                not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise AuxiliaryObjectiveError(f"{role} is invalid for {term.name}")
+        if head_updates is not None and (type(head_updates) is not int or head_updates < 0):
+            raise AuxiliaryObjectiveError(f"head optimizer update count is invalid for {term.name}")
         verdict = "unmeasured"
         if term.target is TermTarget.DIAGNOSTIC:
             # A diagnostic term must NOT have a base-weight gradient path.
-            verdict = (
-                "misdeclared_target"
-                if gradient is not None and float(gradient) > epsilon
-                else "live"
-            )
+            if gradient is None:
+                verdict = "unmeasured"
+            elif gradient > epsilon:
+                verdict = "misdeclared_target"
+            else:
+                verdict = "live"
         elif share is None:
             verdict = "unmeasured"
         elif term.target is TermTarget.BASE_WEIGHTS:
@@ -360,27 +385,42 @@ def build_liveness_report(
         else:  # AUXILIARY_HEAD
             # A head term must be excluded from the base loss; if it produced a
             # base-weight gradient it was summed in where it does not belong.
-            if gradient is not None and float(gradient) > epsilon:
+            if gradient is None:
+                verdict = "unmeasured"
+            elif gradient > epsilon:
                 verdict = "misdeclared_target"
             elif float(share) < floor:
                 verdict = "inert_negligible_share"
+            elif (
+                head_gradient is None
+                or head_before is None
+                or head_after is None
+                or head_updates is None
+            ):
+                verdict = "unmeasured"
+            elif float(head_gradient) <= epsilon:
+                verdict = "inert_zero_gradient"
+            elif head_updates < 1 or head_before == head_after:
+                verdict = "inert_head_not_updated"
             else:
                 verdict = "live"
         rows.append(
             {
                 **term.to_dict(),
                 "share": round(float(share), 9) if share is not None else None,
-                "gradient_norm": (
-                    round(float(gradient), 12) if gradient is not None else None
+                "gradient_norm": (round(float(gradient), 12) if gradient is not None else None),
+                "head_gradient_norm": (
+                    round(float(head_gradient), 12) if head_gradient is not None else None
                 ),
+                "head_before_sha256": head_before,
+                "head_after_sha256": head_after,
+                "head_optimizer_update_count": head_updates,
                 "liveness": verdict,
             }
         )
 
     inert_required = sorted(
-        row["name"]
-        for row in rows
-        if row["required"] and row["liveness"] not in {"live"}
+        row["name"] for row in rows if row["required"] and row["liveness"] not in {"live"}
     )
     payload = {
         "schema": AUXILIARY_COMPOSITE_SCHEMA,
@@ -395,9 +435,7 @@ def build_liveness_report(
         "shares_source": shares_source,
         "minimum_share": round(floor, 9),
         "gradient_epsilon": epsilon,
-        "live_terms": sorted(
-            row["name"] for row in rows if row["liveness"] == "live"
-        ),
+        "live_terms": sorted(row["name"] for row in rows if row["liveness"] == "live"),
         "inert_required_terms": inert_required,
         "supports_training": not inert_required,
     }
@@ -409,6 +447,10 @@ def liveness_from_composite(
     composite_telemetry: Mapping[str, Any],
     *,
     gradient_norms: Mapping[str, float] | None = None,
+    head_gradient_norms: Mapping[str, float] | None = None,
+    head_before_sha256s: Mapping[str, str] | None = None,
+    head_after_sha256s: Mapping[str, str] | None = None,
+    head_optimizer_update_counts: Mapping[str, int] | None = None,
     minimum_share: float = DEFAULT_MINIMUM_SHARE,
     gradient_epsilon: float = DEFAULT_GRADIENT_EPSILON,
 ) -> dict[str, Any]:
@@ -427,13 +469,16 @@ def liveness_from_composite(
     shares = composite_telemetry.get("shares")
     if not isinstance(shares, Mapping):
         raise AuxiliaryObjectiveError(
-            "composite telemetry carries no shares; it did not come from "
-            "base_weight_loss"
+            "composite telemetry carries no shares; it did not come from base_weight_loss"
         )
     return build_liveness_report(
         terms,
         shares={str(name): float(value) for name, value in shares.items()},
         gradient_norms=gradient_norms,
+        head_gradient_norms=head_gradient_norms,
+        head_before_sha256s=head_before_sha256s,
+        head_after_sha256s=head_after_sha256s,
+        head_optimizer_update_counts=head_optimizer_update_counts,
         minimum_share=minimum_share,
         gradient_epsilon=gradient_epsilon,
         shares_source=SHARES_DERIVED_FROM_COMPOSITE,
@@ -501,6 +546,30 @@ def validate_liveness_report(value: Any) -> dict[str, Any]:
                 if row.get("gradient_norm") is not None
             }
             or None,
+            head_gradient_norms={
+                str(row["name"]): float(row["head_gradient_norm"])
+                for row in rows
+                if row.get("head_gradient_norm") is not None
+            }
+            or None,
+            head_before_sha256s={
+                str(row["name"]): str(row["head_before_sha256"])
+                for row in rows
+                if row.get("head_before_sha256") is not None
+            }
+            or None,
+            head_after_sha256s={
+                str(row["name"]): str(row["head_after_sha256"])
+                for row in rows
+                if row.get("head_after_sha256") is not None
+            }
+            or None,
+            head_optimizer_update_counts={
+                str(row["name"]): int(row["head_optimizer_update_count"])
+                for row in rows
+                if row.get("head_optimizer_update_count") is not None
+            }
+            or None,
             minimum_share=float(value["minimum_share"]),
             gradient_epsilon=float(value["gradient_epsilon"]),
             shares_source=str(value["shares_source"]),
@@ -509,9 +578,7 @@ def validate_liveness_report(value: Any) -> dict[str, Any]:
         raise AuxiliaryObjectiveError("liveness term rows are malformed") from exc
     if rebuilt != dict(value):
         differing = sorted(
-            key
-            for key in set(rebuilt) | set(value)
-            if rebuilt.get(key) != value.get(key)
+            key for key in set(rebuilt) | set(value) if rebuilt.get(key) != value.get(key)
         )
         raise AuxiliaryObjectiveError(
             f"liveness report does not replay from its own rows: {differing}"
@@ -521,22 +588,16 @@ def validate_liveness_report(value: Any) -> dict[str, Any]:
             raise AuxiliaryObjectiveError("unknown liveness verdict")
         if row.get("target") not in {item.value for item in TermTarget}:
             raise AuxiliaryObjectiveError("unknown term target")
-    expected_live = sorted(
-        row["name"] for row in rows if row["liveness"] == "live"
-    )
+    expected_live = sorted(row["name"] for row in rows if row["liveness"] == "live")
     expected_inert = sorted(
-        row["name"]
-        for row in rows
-        if row.get("required") and row["liveness"] != "live"
+        row["name"] for row in rows if row.get("required") and row["liveness"] != "live"
     )
     if value["live_terms"] != expected_live:
         raise AuxiliaryObjectiveError("live-term set does not replay")
     if value["inert_required_terms"] != expected_inert:
         raise AuxiliaryObjectiveError("inert-required set does not replay")
     if value["supports_training"] is not (not expected_inert):
-        raise AuxiliaryObjectiveError(
-            "training support must follow the inert-required set exactly"
-        )
+        raise AuxiliaryObjectiveError("training support must follow the inert-required set exactly")
     return dict(value)
 
 
@@ -558,9 +619,7 @@ class DepthStage:
             raise AuxiliaryObjectiveError("stage min_samples must be positive")
         threshold = _finite(self.competence_threshold, name="competence_threshold")
         if not 0.0 <= threshold <= 1.0:
-            raise AuxiliaryObjectiveError(
-                "competence_threshold must be inside [0, 1]"
-            )
+            raise AuxiliaryObjectiveError("competence_threshold must be inside [0, 1]")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -589,9 +648,7 @@ class DepthCurriculum:
             raise AuxiliaryObjectiveError("a curriculum needs at least one stage")
         depths = [stage.depth for stage in stages]
         if depths != sorted(set(depths)):
-            raise AuxiliaryObjectiveError(
-                "curriculum stages must be strictly increasing in depth"
-            )
+            raise AuxiliaryObjectiveError("curriculum stages must be strictly increasing in depth")
         self.stages = tuple(stages)
         self._index = 0
         self._history: list[dict[str, Any]] = []
@@ -680,10 +737,7 @@ def validate_curriculum_receipt(value: Any) -> dict[str, Any]:
         raise AuxiliaryObjectiveError("curriculum receipt commitment mismatch")
     if value["schema"] != DEPTH_CURRICULUM_SCHEMA:
         raise AuxiliaryObjectiveError("unsupported curriculum schema")
-    if (
-        value["advancement_policy"]
-        != "measured_competence_over_minimum_samples_v1"
-    ):
+    if value["advancement_policy"] != "measured_competence_over_minimum_samples_v1":
         raise AuxiliaryObjectiveError(
             "a curriculum advanced by any other policy is not this contract"
         )
@@ -713,16 +767,10 @@ def validate_curriculum_receipt(value: Any) -> dict[str, Any]:
             competence=float(row["competence"]), samples=int(row["samples"])
         )
         if transition != row.get("transition"):
-            raise AuxiliaryObjectiveError(
-                f"curriculum transition {ordinal} does not replay"
-            )
+            raise AuxiliaryObjectiveError(f"curriculum transition {ordinal} does not replay")
         if replay.stage.depth != row.get("next_depth"):
-            raise AuxiliaryObjectiveError(
-                f"curriculum next depth {ordinal} does not replay"
-            )
-    if replay.index != value["current_index"] or (
-        replay.stage.depth != value["current_depth"]
-    ):
+            raise AuxiliaryObjectiveError(f"curriculum next depth {ordinal} does not replay")
+    if replay.index != value["current_index"] or (replay.stage.depth != value["current_depth"]):
         raise AuxiliaryObjectiveError("curriculum final position does not replay")
     return dict(value)
 
@@ -799,9 +847,7 @@ def require_parity(binding: Mapping[str, Any]) -> None:
             if isinstance(binding, Mapping)
             else ["binding_not_a_mapping"]
         )
-        raise AuxiliaryObjectiveError(
-            f"train/inference depth parity refused: {problems}"
-        )
+        raise AuxiliaryObjectiveError(f"train/inference depth parity refused: {problems}")
 
 
 __all__ = [

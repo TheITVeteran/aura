@@ -10,6 +10,7 @@ bound to measured competence rather than a step counter, that it can move back,
 that a receipt replays exactly, and that a stage the inference configuration
 cannot execute is refused before a campaign rather than discovered after one.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -65,6 +66,15 @@ def _head(name: str, weight: float = 1.0) -> AuxiliaryTerm:
     )
 
 
+def _head_evidence(name: str) -> dict[str, dict[str, object]]:
+    return {
+        "head_gradient_norms": {name: 0.4},
+        "head_before_sha256s": {name: "a" * 64},
+        "head_after_sha256s": {name: "b" * 64},
+        "head_optimizer_update_counts": {name: 1},
+    }
+
+
 # ── The seven declarations ──────────────────────────────────────────────
 
 
@@ -82,11 +92,7 @@ def test_the_seven_spark062_objectives_are_declared_and_typed():
     validate_term_set(SPARK062_TERMS)
     # Three of the seven train separate heads. Getting this wrong is the
     # category error the registry exists to prevent, so it is pinned.
-    head_terms = {
-        term.name
-        for term in SPARK062_TERMS
-        if term.target is TermTarget.AUXILIARY_HEAD
-    }
+    head_terms = {term.name for term in SPARK062_TERMS if term.target is TermTarget.AUXILIARY_HEAD}
     assert head_terms == {"process", "mistake_location", "accept_discard"}
     # Every term names a real, importable module rather than a description.
     for term in SPARK062_TERMS:
@@ -171,11 +177,63 @@ def test_a_head_term_that_reached_the_base_weights_is_misdeclared():
     assert report["supports_training"] is False
 
 
+def test_a_head_without_own_gradient_and_mutation_evidence_is_unmeasured():
+    report = build_liveness_report(
+        [_head("process")],
+        shares={"process": 0.5},
+        gradient_norms={"process": 0.0},
+    )
+
+    assert report["terms"][0]["liveness"] == "unmeasured"
+    assert report["supports_training"] is False
+
+
+def test_a_head_without_measured_base_isolation_is_unmeasured():
+    report = build_liveness_report(
+        [_head("process")],
+        shares={"process": 0.5},
+        **_head_evidence("process"),
+    )
+
+    assert report["terms"][0]["liveness"] == "unmeasured"
+    assert report["supports_training"] is False
+
+
+def test_a_head_with_gradient_but_no_parameter_change_is_inert():
+    evidence = _head_evidence("process")
+    evidence["head_after_sha256s"] = {"process": "a" * 64}
+    report = build_liveness_report(
+        [_head("process")],
+        shares={"process": 0.5},
+        gradient_norms={"process": 0.0},
+        **evidence,
+    )
+
+    assert report["terms"][0]["liveness"] == "inert_head_not_updated"
+    assert report["supports_training"] is False
+
+
+@pytest.mark.parametrize(
+    ("shares", "gradients"),
+    [
+        ({"improvement": float("nan")}, {"improvement": 0.5}),
+        ({"improvement": 0.5}, {"improvement": float("inf")}),
+        ({"improvement": 1.1}, {"improvement": 0.5}),
+        ({"improvement": 0.5}, {"improvement": -0.1}),
+    ],
+)
+def test_liveness_refuses_nonfinite_or_out_of_range_measurements(shares, gradients):
+    with pytest.raises(AuxiliaryObjectiveError):
+        build_liveness_report(
+            [_base("improvement")],
+            shares=shares,
+            gradient_norms=gradients,
+        )
+
+
 def test_a_base_term_without_a_gradient_measurement_is_unmeasured_not_live():
     """Absence of a check must never read as a passed check."""
-    report = build_liveness_report(
-        [_base("improvement")], shares={"improvement": 0.5}
-    )
+    report = build_liveness_report([_base("improvement")], shares={"improvement": 0.5})
     assert report["terms"][0]["liveness"] == "unmeasured"
     assert report["supports_training"] is False
 
@@ -186,6 +244,7 @@ def test_a_fully_live_composite_supports_training():
         terms,
         shares={"improvement": 0.4, "diversity": 0.3, "process": 0.3},
         gradient_norms={"improvement": 0.7, "diversity": 0.5, "process": 0.0},
+        **_head_evidence("process"),
     )
     assert report["live_terms"] == ["diversity", "improvement", "process"]
     assert report["inert_required_terms"] == []
@@ -200,9 +259,7 @@ def test_liveness_report_rejects_forged_verdicts():
         shares={"improvement": 0.4, "diversity": 0.4},
         gradient_norms={"improvement": 0.7, "diversity": 0.0},
     )
-    forged = {
-        key: value for key, value in report.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in report.items() if key != "receipt_sha256"}
     forged["inert_required_terms"] = []
     forged["supports_training"] = True
     forged["receipt_sha256"] = canonical_sha256(forged)
@@ -259,9 +316,7 @@ def test_base_loss_gradient_reaches_only_the_base_terms():
         )
         return total
 
-    gradients = mx.grad(loss)(
-        {"improvement": mx.array(0.5), "process": mx.array(0.5)}
-    )
+    gradients = mx.grad(loss)({"improvement": mx.array(0.5), "process": mx.array(0.5)})
     mx.eval(gradients)
     assert float(gradients["improvement"]) != 0.0
     assert float(gradients["process"]) == 0.0
@@ -283,9 +338,7 @@ def test_curriculum_advances_only_on_measured_competence():
     assert curriculum.stage.depth == 2
 
     # Enough competence but not enough samples: a step counter would advance.
-    assert curriculum.observe(competence=0.9, samples=1) == (
-        "held_insufficient_samples"
-    )
+    assert curriculum.observe(competence=0.9, samples=1) == ("held_insufficient_samples")
     assert curriculum.stage.depth == 2
 
     # Enough samples, competence below threshold, already at the first stage.
@@ -345,9 +398,7 @@ def test_curriculum_receipt_replays_every_transition():
     validate_curriculum_receipt(receipt)
 
     # A forged final position must not survive the replay.
-    forged = {
-        key: value for key, value in receipt.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     forged["current_depth"] = 8
     forged["current_index"] = 2
     forged["receipt_sha256"] = canonical_sha256(forged)
@@ -358,9 +409,7 @@ def test_curriculum_receipt_replays_every_transition():
 def test_curriculum_receipt_rejects_a_forged_advancement_policy():
     """A curriculum advanced by a step counter is not this contract."""
     receipt = DepthCurriculum(_stages()).to_receipt()
-    forged = {
-        key: value for key, value in receipt.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
     forged["advancement_policy"] = "fixed_step_schedule_v1"
     forged["receipt_sha256"] = canonical_sha256(forged)
     with pytest.raises(AuxiliaryObjectiveError, match="any other policy"):
@@ -456,9 +505,7 @@ def test_a_relabelled_inert_row_cannot_pass_as_live():
         shares={"improvement": 0.4, "diversity": 0.4},
         gradient_norms={"improvement": 0.7, "diversity": 0.0},
     )
-    forged = {
-        key: value for key, value in report.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in report.items() if key != "receipt_sha256"}
     rows = [dict(row) for row in forged["terms"]]
     for row in rows:
         if row["name"] == "diversity":
@@ -490,9 +537,7 @@ def test_a_forged_share_is_the_boundary_the_receipt_names_honestly():
         shares={"improvement": 0.6, "diversity": 0.00037},
         gradient_norms={"improvement": 0.7, "diversity": 1e-4},
     )
-    forged = {
-        key: value for key, value in report.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in report.items() if key != "receipt_sha256"}
     rows = [dict(row) for row in forged["terms"]]
     for row in rows:
         if row["name"] == "diversity":
@@ -521,6 +566,7 @@ def test_a_forged_share_is_the_boundary_the_receipt_names_honestly():
         terms_live,
         telemetry,
         gradient_norms={"improvement": 0.7, "process": 0.0},
+        **_head_evidence("process"),
     )
     assert derived["shares_source"] == SHARES_DERIVED_FROM_COMPOSITE
     validate_liveness_report(derived)

@@ -105,6 +105,7 @@ from core.learning.recurrence_native_objective_v4 import (
 )
 
 PROGRESSIVE_OBJECTIVE_SCHEMA = "aura.spark061.progressive_recurrent_objective.v1"
+PROGRESSIVE_TRAJECTORY_SET_SCHEMA = "aura.spark061.progressive_trajectory_set.v1"
 
 # DETECTOR floor: normalized per-step displacement below which a *report*
 # calls the operator collapsed. Calibrated against the contraction CP210
@@ -181,9 +182,7 @@ def _validate_scalar(name: str, value: Any, *, low: float, high: float) -> float
         or not math.isfinite(float(value))
         or not low <= float(value) <= high
     ):
-        raise ProgressiveObjectiveError(
-            f"{name} must be a finite number inside [{low}, {high}]"
-        )
+        raise ProgressiveObjectiveError(f"{name} must be a finite number inside [{low}, {high}]")
     return float(value)
 
 
@@ -216,6 +215,34 @@ class ProgressiveTrajectory:
     anchor_drifts: tuple[float, ...]
     answer_token_count: int
 
+    def __post_init__(self) -> None:
+        if type(self.depth) is not int or self.depth < 1:
+            raise ProgressiveObjectiveError("trajectory depth must be positive")
+        count = len(self.probe_steps)
+        if (
+            count < 1
+            or len(self.step_losses) != count
+            or len(self.displacements) != count
+            or len(self.anchor_drifts) != count
+            or tuple(sorted(set(self.probe_steps))) != self.probe_steps
+            or any(step < 1 or step > self.depth for step in self.probe_steps)
+        ):
+            raise ProgressiveObjectiveError(
+                "trajectory probes, losses, displacement, and drift must align"
+            )
+        if type(self.answer_token_count) is not int or self.answer_token_count < 1:
+            raise ProgressiveObjectiveError("answer token count must be positive")
+        if any(
+            not math.isfinite(float(value))
+            for values in (
+                self.step_losses,
+                self.displacements,
+                self.anchor_drifts,
+            )
+            for value in values
+        ):
+            raise ProgressiveObjectiveError("trajectory measurements must be finite")
+
     @property
     def improvement(self) -> float:
         """First probed loss minus last: positive means later states are better."""
@@ -225,35 +252,156 @@ class ProgressiveTrajectory:
 
     @property
     def best_step_index(self) -> int:
-        return min(
-            range(len(self.step_losses)), key=self.step_losses.__getitem__
-        )
+        return min(range(len(self.step_losses)), key=self.step_losses.__getitem__)
 
     @property
     def min_displacement(self) -> float:
         return min(self.displacements) if self.displacements else 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        step_losses = [round(value, 6) for value in self.step_losses]
+        displacements = [round(value, 6) for value in self.displacements]
+        anchor_drifts = [round(value, 6) for value in self.anchor_drifts]
         return {
             "depth": self.depth,
             "probe_steps": list(self.probe_steps),
-            "step_losses": [round(value, 6) for value in self.step_losses],
-            "displacements": [round(value, 6) for value in self.displacements],
-            "anchor_drifts": [round(value, 6) for value in self.anchor_drifts],
+            "step_losses": step_losses,
+            "displacements": displacements,
+            "anchor_drifts": anchor_drifts,
             "answer_token_count": self.answer_token_count,
-            "improvement": round(self.improvement, 6),
-            "best_step_index": self.best_step_index,
-            "min_displacement": round(self.min_displacement, 6),
+            "improvement": round(step_losses[0] - step_losses[-1], 6),
+            "best_step_index": min(range(len(step_losses)), key=step_losses.__getitem__),
+            "min_displacement": min(displacements),
         }
+
+
+@dataclass(frozen=True)
+class ProgressiveTrajectorySet:
+    """Branch-complete measurement of one exchange-coupled recurrent graph."""
+
+    execution_spec_sha256: str
+    branch_roles: tuple[str, ...]
+    trajectories: tuple[ProgressiveTrajectory, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.execution_spec_sha256, str)
+            or len(self.execution_spec_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.execution_spec_sha256)
+        ):
+            raise ProgressiveObjectiveError("execution spec digest is invalid")
+        if (
+            not self.branch_roles
+            or len(set(self.branch_roles)) != len(self.branch_roles)
+            or any(not isinstance(role, str) or not role for role in self.branch_roles)
+        ):
+            raise ProgressiveObjectiveError("branch roles must be unique identifiers")
+        if len(self.branch_roles) != len(self.trajectories):
+            raise ProgressiveObjectiveError("branch roles and progressive trajectories must align")
+        if not self.trajectories:
+            raise ProgressiveObjectiveError("trajectory set cannot be empty")
+        reference = self.trajectories[0]
+        for trajectory in self.trajectories:
+            if (
+                trajectory.depth != reference.depth
+                or trajectory.probe_steps != reference.probe_steps
+                or trajectory.answer_token_count != reference.answer_token_count
+            ):
+                raise ProgressiveObjectiveError(
+                    "all branch trajectories must share depth, probes, and answer"
+                )
+
+    def receipt(self) -> dict[str, Any]:
+        payload = {
+            "schema": PROGRESSIVE_TRAJECTORY_SET_SCHEMA,
+            "execution_spec_sha256": self.execution_spec_sha256,
+            "branch_roles": list(self.branch_roles),
+            "branch_count": len(self.branch_roles),
+            "trajectories": [
+                {
+                    "branch_index": index,
+                    "branch_role": role,
+                    **trajectory.to_dict(),
+                }
+                for index, (role, trajectory) in enumerate(
+                    zip(self.branch_roles, self.trajectories, strict=True)
+                )
+            ],
+        }
+        return {**payload, "receipt_sha256": canonical_sha256(payload)}
+
+
+def validate_progressive_trajectory_set(value: Any) -> dict[str, Any]:
+    """Validate and replay the canonical branch-complete measurement receipt."""
+
+    if not isinstance(value, dict):
+        raise ProgressiveObjectiveError("trajectory-set receipt must be a mapping")
+    required = {
+        "schema",
+        "execution_spec_sha256",
+        "branch_roles",
+        "branch_count",
+        "trajectories",
+        "receipt_sha256",
+    }
+    if set(value) != required:
+        raise ProgressiveObjectiveError("trajectory-set receipt fields do not match")
+    payload = {key: value[key] for key in required - {"receipt_sha256"}}
+    if value["receipt_sha256"] != canonical_sha256(payload):
+        raise ProgressiveObjectiveError("trajectory-set receipt commitment mismatch")
+    if value["schema"] != PROGRESSIVE_TRAJECTORY_SET_SCHEMA:
+        raise ProgressiveObjectiveError("unsupported trajectory-set schema")
+    roles = value["branch_roles"]
+    rows = value["trajectories"]
+    if (
+        not isinstance(roles, list)
+        or not isinstance(rows, list)
+        or value["branch_count"] != len(roles)
+        or len(rows) != len(roles)
+    ):
+        raise ProgressiveObjectiveError("trajectory-set branches do not align")
+    trajectories: list[ProgressiveTrajectory] = []
+    for index, (role, row) in enumerate(zip(roles, rows, strict=True)):
+        if (
+            not isinstance(row, dict)
+            or row.get("branch_index") != index
+            or row.get("branch_role") != role
+        ):
+            raise ProgressiveObjectiveError("trajectory branch identity is invalid")
+        try:
+            trajectory = ProgressiveTrajectory(
+                depth=int(row["depth"]),
+                probe_steps=tuple(int(step) for step in row["probe_steps"]),
+                step_losses=tuple(float(item) for item in row["step_losses"]),
+                displacements=tuple(float(item) for item in row["displacements"]),
+                anchor_drifts=tuple(float(item) for item in row["anchor_drifts"]),
+                answer_token_count=int(row["answer_token_count"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProgressiveObjectiveError("trajectory branch measurement is malformed") from exc
+        expected = {
+            "branch_index": index,
+            "branch_role": role,
+            **trajectory.to_dict(),
+        }
+        if row != expected:
+            raise ProgressiveObjectiveError("trajectory branch summary does not replay")
+        trajectories.append(trajectory)
+    reconstructed = ProgressiveTrajectorySet(
+        execution_spec_sha256=str(value["execution_spec_sha256"]),
+        branch_roles=tuple(str(role) for role in roles),
+        trajectories=tuple(trajectories),
+    )
+    if reconstructed.receipt() != value:
+        raise ProgressiveObjectiveError("trajectory-set receipt does not replay canonically")
+    return dict(value)
 
 
 def _normalized_displacement(previous: Any, current: Any) -> float:
     import mlx.core as mx
 
     numerator = mx.linalg.norm(mx.reshape(current - previous, (-1,)))
-    denominator = mx.maximum(
-        mx.linalg.norm(mx.reshape(previous, (-1,))), 1e-9
-    )
+    denominator = mx.maximum(mx.linalg.norm(mx.reshape(previous, (-1,))), 1e-9)
     return float(numerator / denominator)
 
 
@@ -320,9 +468,7 @@ def measure_progressive_trajectory(
             prelude_end=prepared.prelude_end,
             coda_start=prepared.coda_start,
         )
-        losses.append(
-            float(nn.losses.cross_entropy(logits, targets, reduction="mean"))
-        )
+        losses.append(float(nn.losses.cross_entropy(logits, targets, reduction="mean")))
         displacements.append(_normalized_displacement(previous, states[0]))
         drifts.append(_normalized_displacement(anchor, states[0]))
     return ProgressiveTrajectory(
@@ -332,6 +478,85 @@ def measure_progressive_trajectory(
         displacements=tuple(displacements),
         anchor_drifts=tuple(drifts),
         answer_token_count=len(list(answer_tokens)),
+    )
+
+
+def measure_progressive_trajectories(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    depth: int = 8,
+    probe_steps: Sequence[int] | None = None,
+    bridge_tokens: Sequence[int] = (),
+) -> ProgressiveTrajectorySet:
+    """Measure every branch inside one real exchange-coupled recurrent unroll."""
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    wanted = _probe_steps(depth, probe_steps)
+    resolved = spec.with_depth(depth)
+    prepared = _prepare_live_path(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=resolved,
+        bridge_tokens=tuple(bridge_tokens),
+    )
+    if len(prepared.states) != len(spec.branch_roles):
+        raise ProgressiveObjectiveError("prepared branch states do not match the execution spec")
+    targets = mx.array(list(answer_tokens))[None, :]
+    states = list(prepared.states)
+    losses: list[list[float]] = [[] for _role in spec.branch_roles]
+    displacements: list[list[float]] = [[] for _role in spec.branch_roles]
+    drifts: list[list[float]] = [[] for _role in spec.branch_roles]
+    for step in range(depth):
+        previous = list(states)
+        states = _advance_recurrent_states(
+            model,
+            prepared.prompts_at_window,
+            states,
+            prepared.anchors,
+            resolved,
+            step,
+            prepared.prelude_end,
+            prepared.coda_start,
+        )
+        if (step + 1) not in wanted:
+            continue
+        for index, state in enumerate(states):
+            logits = _persist_and_score(
+                model,
+                prepared.prompt_embeddings,
+                prepared.seeds[index],
+                state,
+                prepared.tail_embeddings,
+                bridge_count=prepared.bridge_count,
+                answer_count=prepared.answer_count,
+                prelude_end=prepared.prelude_end,
+                coda_start=prepared.coda_start,
+            )
+            loss = nn.losses.cross_entropy(logits, targets, reduction="mean")
+            mx.eval(loss)
+            losses[index].append(float(loss))
+            displacements[index].append(_normalized_displacement(previous[index], state))
+            drifts[index].append(_normalized_displacement(prepared.anchors[index], state))
+    return ProgressiveTrajectorySet(
+        execution_spec_sha256=resolved.sha256,
+        branch_roles=tuple(spec.branch_roles),
+        trajectories=tuple(
+            ProgressiveTrajectory(
+                depth=depth,
+                probe_steps=tuple(wanted),
+                step_losses=tuple(losses[index]),
+                displacements=tuple(displacements[index]),
+                anchor_drifts=tuple(drifts[index]),
+                answer_token_count=len(tuple(answer_tokens)),
+            )
+            for index in range(len(spec.branch_roles))
+        ),
     )
 
 
@@ -493,9 +718,7 @@ def _pearson(left: Sequence[float], right: Sequence[float]) -> float | None:
         return None
     mean_left = sum(left) / len(left)
     mean_right = sum(right) / len(right)
-    covariance = sum(
-        (a - mean_left) * (b - mean_right) for a, b in zip(left, right, strict=True)
-    )
+    covariance = sum((a - mean_left) * (b - mean_right) for a, b in zip(left, right, strict=True))
     variance_left = sum((a - mean_left) ** 2 for a in left)
     variance_right = sum((b - mean_right) ** 2 for b in right)
     if variance_left <= 1e-12 or variance_right <= 1e-12:
@@ -529,12 +752,8 @@ def build_progressive_report(
     confound_limit = _validate_scalar(
         "length_confound_limit", length_confound_limit, low=0.0, high=1.0
     )
-    ratio_limit = _validate_scalar(
-        "gradient_ratio_limit", gradient_ratio_limit, low=1.0, high=1e9
-    )
-    improve_margin = _validate_scalar(
-        "improvement_margin", improvement_margin, low=0.0, high=10.0
-    )
+    ratio_limit = _validate_scalar("gradient_ratio_limit", gradient_ratio_limit, low=1.0, high=1e9)
+    improve_margin = _validate_scalar("improvement_margin", improvement_margin, low=0.0, high=10.0)
     if not trajectories:
         raise ProgressiveObjectiveError("a report needs at least one trajectory")
     if any(len(item.step_losses) < 2 for item in trajectories):
@@ -548,8 +767,7 @@ def build_progressive_report(
     improved_count = sum(1 for value in improvements if value > improve_margin)
     min_displacement = min(item.min_displacement for item in trajectories)
     mean_displacement = sum(
-        sum(item.displacements) / max(1, len(item.displacements))
-        for item in trajectories
+        sum(item.displacements) / max(1, len(item.displacements)) for item in trajectories
     ) / len(trajectories)
     length_correlation = _pearson(improvements, lengths)
 
@@ -564,9 +782,7 @@ def build_progressive_report(
     # A step is necessary when removing it made the answer WORSE, i.e. the
     # intact loss was lower than the lesioned loss => delta < -margin.
     idle_steps = [
-        row["step"]
-        for row in necessity_rows
-        if row["delta"] is None or row["delta"] > -margin
+        row["step"] for row in necessity_rows if row["delta"] is None or row["delta"] > -margin
     ]
     gradient_rows = (
         [
@@ -579,16 +795,12 @@ def build_progressive_report(
     finite_norms = [
         row["norm"] for row in gradient_rows if row["norm"] is not None and row["norm"] > 0.0
     ]
-    gradient_ratio = (
-        max(finite_norms) / min(finite_norms) if len(finite_norms) >= 2 else None
-    )
+    gradient_ratio = max(finite_norms) / min(finite_norms) if len(finite_norms) >= 2 else None
     gradient_health = "unmeasured"
     if gradient_rows and len(finite_norms) != len(gradient_rows):
         gradient_health = "dead_gradient"
     elif gradient_ratio is not None:
-        gradient_health = (
-            "healthy" if gradient_ratio <= ratio_limit else "ill_conditioned"
-        )
+        gradient_health = "healthy" if gradient_ratio <= ratio_limit else "ill_conditioned"
 
     sabotage = (
         depth_one_reference is not None
@@ -683,9 +895,7 @@ def validate_progressive_report(value: Any) -> dict[str, Any]:
     if value["trajectory_count"] != len(value["trajectories"]):
         raise ProgressiveObjectiveError("trajectory count differs from rows")
     if value["supports_training"] is not (value["verdict"] == "real_progress"):
-        raise ProgressiveObjectiveError(
-            "training support must follow the verdict exactly"
-        )
+        raise ProgressiveObjectiveError("training support must follow the verdict exactly")
 
     # Rebuild the ENTIRE report from its own trajectory rows and require
     # equality. Checking only the summary fields was a real defect in the
@@ -700,20 +910,14 @@ def validate_progressive_report(value: Any) -> dict[str, Any]:
                 depth=int(row["depth"]),
                 probe_steps=tuple(int(step) for step in row["probe_steps"]),
                 step_losses=tuple(float(item) for item in row["step_losses"]),
-                displacements=tuple(
-                    float(item) for item in row["displacements"]
-                ),
-                anchor_drifts=tuple(
-                    float(item) for item in row["anchor_drifts"]
-                ),
+                displacements=tuple(float(item) for item in row["displacements"]),
+                anchor_drifts=tuple(float(item) for item in row["anchor_drifts"]),
                 answer_token_count=int(row["answer_token_count"]),
             )
             for row in value["trajectories"]
         ]
     except (KeyError, TypeError, ValueError) as exc:
-        raise ProgressiveObjectiveError(
-            "progressive trajectory rows are malformed"
-        ) from exc
+        raise ProgressiveObjectiveError("progressive trajectory rows are malformed") from exc
     rebuilt = build_progressive_report(
         rebuilt_trajectories,
         # A recorded None is an unmeasured value, not an absent row. Feeding
@@ -721,19 +925,13 @@ def validate_progressive_report(value: Any) -> dict[str, Any]:
         # report carrying an unmeasured step still round-trips exactly.
         necessity={
             int(row["step"]): (
-                float(row["delta"])
-                if row.get("delta") is not None
-                else float("nan")
+                float(row["delta"]) if row.get("delta") is not None else float("nan")
             )
             for row in value["necessity"]
         }
         or None,
         gradient_norms={
-            int(row["step"]): (
-                float(row["norm"])
-                if row.get("norm") is not None
-                else float("nan")
-            )
+            int(row["step"]): (float(row["norm"]) if row.get("norm") is not None else float("nan"))
             for row in value["gradient_norms"]
         }
         or None,
@@ -746,9 +944,7 @@ def validate_progressive_report(value: Any) -> dict[str, Any]:
     )
     if rebuilt != dict(value):
         differing = sorted(
-            key
-            for key in set(rebuilt) | set(value)
-            if rebuilt.get(key) != value.get(key)
+            key for key in set(rebuilt) | set(value) if rebuilt.get(key) != value.get(key)
         )
         raise ProgressiveObjectiveError(
             f"progressive report does not replay from its own rows: {differing}"
@@ -822,12 +1018,10 @@ def solve_collapse_barrier(
 
     def monotone(weight: float, floor: float) -> bool:
         penalized = [
-            loss + weight * max(floor - displacement, 0.0)
-            for _alpha, loss, displacement in rows
+            loss + weight * max(floor - displacement, 0.0) for _alpha, loss, displacement in rows
         ]
         return all(
-            later < earlier
-            for earlier, later in zip(penalized[:-1], penalized[1:], strict=True)
+            later < earlier for earlier, later in zip(penalized[:-1], penalized[1:], strict=True)
         )
 
     solution: dict[str, Any] | None = None
@@ -887,9 +1081,7 @@ def displacement_floor_penalty(
     measured: list[float] = []
     for previous, current in zip(states[:-1], states[1:], strict=True):
         numerator = mx.linalg.norm(mx.reshape(current - previous, (-1,)))
-        denominator = mx.maximum(
-            mx.linalg.norm(mx.reshape(previous, (-1,))), 1e-9
-        )
+        denominator = mx.maximum(mx.linalg.norm(mx.reshape(previous, (-1,))), 1e-9)
         displacement = numerator / denominator
         penalty = penalty + mx.maximum(band - displacement, 0.0)
         measured.append(float(displacement))
@@ -932,12 +1124,8 @@ def progressive_objective_loss(
 
     wanted = _probe_steps(depth, probe_steps)
     final_scale = _validate_scalar("final_weight", final_weight, low=0.0, high=10.0)
-    improve_scale = _validate_scalar(
-        "improvement_weight", improvement_weight, low=0.0, high=10.0
-    )
-    oscillate_scale = _validate_scalar(
-        "oscillation_weight", oscillation_weight, low=0.0, high=10.0
-    )
+    improve_scale = _validate_scalar("improvement_weight", improvement_weight, low=0.0, high=10.0)
+    oscillate_scale = _validate_scalar("oscillation_weight", oscillation_weight, low=0.0, high=10.0)
     displace_scale = _validate_scalar(
         "displacement_weight", displacement_weight, low=0.0, high=10.0
     )
@@ -986,18 +1174,12 @@ def progressive_objective_loss(
             prelude_end=prepared.prelude_end,
             coda_start=prepared.coda_start,
         )
-        step_losses.append(
-            nn.losses.cross_entropy(logits, targets, reduction="mean")
-        )
+        step_losses.append(nn.losses.cross_entropy(logits, targets, reduction="mean"))
         probed_states.append(states[0])
 
-    improvement = monotone_improvement_penalty(
-        step_losses, margin=improvement_margin
-    )
+    improvement = monotone_improvement_penalty(step_losses, margin=improvement_margin)
     oscillation, cosines = oscillation_penalty(probed_states)
-    displacement, measured = displacement_floor_penalty(
-        trajectory_states, floor=displacement_floor
-    )
+    displacement, measured = displacement_floor_penalty(trajectory_states, floor=displacement_floor)
     final = step_losses[-1]
     loss = (
         final_scale * final
@@ -1011,13 +1193,9 @@ def progressive_objective_loss(
         "depth": int(depth),
         "probe_steps": list(wanted),
         "step_losses": [round(value, 6) for value in detached],
-        "best_step_index": int(
-            min(range(len(detached)), key=detached.__getitem__)
-        ),
+        "best_step_index": int(min(range(len(detached)), key=detached.__getitem__)),
         "improving_steps": sum(
-            1
-            for index in range(1, len(detached))
-            if detached[index] < detached[index - 1]
+            1 for index in range(1, len(detached)) if detached[index] < detached[index - 1]
         ),
         "final_loss": round(detached[-1], 6),
         "improvement_penalty": _round(improvement),
@@ -1027,9 +1205,7 @@ def progressive_objective_loss(
         "min_displacement": round(min(measured), 6) if measured else None,
         "displacement_floor": round(float(displacement_floor), 6),
         "delta_cosines": [round(value, 6) for value in cosines],
-        "collapse_pressure_active": bool(
-            measured and min(measured) < float(displacement_floor)
-        ),
+        "collapse_pressure_active": bool(measured and min(measured) < float(displacement_floor)),
     }
     return loss, telemetry
 
@@ -1041,16 +1217,20 @@ __all__ = [
     "DEFAULT_LENGTH_CONFOUND_LIMIT",
     "DEFAULT_NECESSITY_MARGIN",
     "PROGRESSIVE_OBJECTIVE_SCHEMA",
+    "PROGRESSIVE_TRAJECTORY_SET_SCHEMA",
     "VERDICTS",
     "ProgressiveObjectiveError",
     "ProgressiveTrajectory",
+    "ProgressiveTrajectorySet",
     "build_progressive_report",
     "canonical_sha256",
     "displacement_floor_penalty",
     "measure_progressive_trajectory",
+    "measure_progressive_trajectories",
     "progressive_objective_loss",
     "solve_collapse_barrier",
     "state_gradient_norms",
     "step_necessity",
     "validate_progressive_report",
+    "validate_progressive_trajectory_set",
 ]

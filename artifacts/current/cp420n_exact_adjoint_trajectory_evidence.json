@@ -1,0 +1,91 @@
+{
+  "schema": "aura.spark.cp420n_exact_adjoint_trajectory_evidence.v1",
+  "checkpoint": "CP420N",
+  "total_checkpoint": 684,
+  "generated_at_utc": "2026-07-28T12:30:44Z",
+  "base_commit": "3c43abcc91b285b729d6386c8e25b759bb1b32b2",
+  "claim": "bounded_exact_adjoint_trajectory_substrate_and_branch_complete_measurement",
+  "implemented": {
+    "bounded_exact_adjoint_terms": [
+      "detached_shallow_monotonic_improvement",
+      "normalized_displacement_floor",
+      "successive_delta_oscillation",
+      "existing_terminal_branch_diversity"
+    ],
+    "branch_semantics": "intermediate answer loss follows the producing branch; structural trajectory terms can cover every exchange-coupled branch",
+    "receipt_replay": [
+      "execution_spec_sha256",
+      "recurrent_depth",
+      "branch_indices",
+      "trajectory_config",
+      "term_arithmetic",
+      "probe_cardinality",
+      "displacement_cardinality",
+      "oscillation_cardinality",
+      "canonical_sha256"
+    ],
+    "progressive_measurement": "all branch trajectories are measured in one real exchange-coupled unroll and sealed with branch role and index",
+    "auxiliary_head_liveness": "a head is live only with own-parameter gradient, optimizer update count, and distinct before/after parameter digests"
+  },
+  "proofs": {
+    "tiny_qwen_full_unroll_vs_exact_adjoint": {
+      "status": "pass",
+      "path": "same real _prepare_live_path/_advance_recurrent_states/_persist_and_score graph",
+      "gradient_comparison": "every trainable tensor max_abs_difference < 0.0003",
+      "value_comparison": "absolute difference < 0.00002"
+    },
+    "multi_branch_producing_arm": {
+      "status": "pass",
+      "branch_index": 1,
+      "branch_roles": [
+        "constructive_solution",
+        "counterexample_search"
+      ]
+    },
+    "resealed_false_arithmetic": "rejected",
+    "resealed_false_branch_summary": "rejected",
+    "head_without_head_gradient_or_mutation": "refused"
+  },
+  "validation": {
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "adjacent_matrix": {
+      "passed": 87,
+      "failed": 0,
+      "duration_seconds": 7.49
+    },
+    "expanded_recurrence_training_matrix": {
+      "passed": 321,
+      "failed": 0,
+      "duration_seconds": 142.55
+    }
+  },
+  "open_blockers": {
+    "verified_trainer_composite": "the new trajectory gradient is not yet admitted into the exactly-once verified group update",
+    "spark062_base_terms": [
+      "causality",
+      "stopping"
+    ],
+    "spark062_heads": {
+      "process": "prototype lacks durable admitted artifact and resident evidence lineage",
+      "mistake_location": "strong reusable head but no resident corpus or exactly-once training transaction",
+      "accept_discard": "reusable calibrated head but no resident label producer or exactly-once training transaction"
+    },
+    "resident_calibration": "32B displacement floor and term-scale liveness have not been measured",
+    "production_trust": "no independently authenticated runtime root or genuine externally custodied production principals",
+    "campaign_identity": "the current preregistration is stale and exactly 288 groups are not yet transitively sealed across preregistration, provider, argv, dataset, execution graph, and launch authorization"
+  },
+  "claim_boundaries": [
+    "No resident 32B model was loaded or trained.",
+    "SPARK-060, SPARK-061, and SPARK-062 remain open.",
+    "No reasoning, frontier, promotion, or WOW Signal result follows.",
+    "This checkpoint is a prerequisite substrate, not a launch authorization."
+  ],
+  "next": [
+    "Wire a policy-bound quality-weighted trajectory composite into the verified exact-adjoint update and its replayable objective receipt.",
+    "Implement and prove causal-lesion and learned-halting training lanes without mixing auxiliary-head gradients into base weights.",
+    "Add separately journaled head optimizers, resident label producers, checkpoint recovery, and runtime artifact binding.",
+    "Seal production launch authorization, external trust roots, principal readiness, and all 288-group transitive invariants before the resident probe and launch."
+  ]
+}

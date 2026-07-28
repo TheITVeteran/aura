@@ -11,8 +11,10 @@ path — the same `_prepare_live_path` / `_advance_recurrent_states` /
 `_persist_and_score` chain the trainer uses — so displacement, necessity, and
 state gradients are measured on genuine recurrence rather than a stub.
 """
+
 from __future__ import annotations
 
+import copy
 import math
 
 import pytest
@@ -29,17 +31,21 @@ from core.learning.progressive_recurrent_objective import (  # noqa: E402
     DEFAULT_DISPLACEMENT_FLOOR,
     MEASURED_1P5B_COLLAPSE_SOLUTION,
     PROGRESSIVE_OBJECTIVE_SCHEMA,
+    PROGRESSIVE_TRAJECTORY_SET_SCHEMA,
     ProgressiveObjectiveError,
     ProgressiveTrajectory,
+    ProgressiveTrajectorySet,
     build_progressive_report,
     canonical_sha256,
     displacement_floor_penalty,
+    measure_progressive_trajectories,
     measure_progressive_trajectory,
     progressive_objective_loss,
     solve_collapse_barrier,
     state_gradient_norms,
     step_necessity,
     validate_progressive_report,
+    validate_progressive_trajectory_set,
 )
 
 # The exact per-alpha means measured on the untrained Qwen2.5-1.5B at depth 4
@@ -141,9 +147,7 @@ def test_a_collapsed_report_cannot_be_relabelled_as_progress():
         displacements=(1e-7, 1e-7),
     )
     report = build_progressive_report([collapsed])
-    forged = {
-        key: value for key, value in report.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in report.items() if key != "receipt_sha256"}
     forged["verdict"] = "real_progress"
     forged["supports_training"] = True
     forged["receipt_sha256"] = canonical_sha256(forged)
@@ -190,18 +194,14 @@ def test_improvement_that_tracks_answer_length_is_confounded():
 
 def test_steps_that_cost_nothing_to_remove_are_causally_idle():
     trajectories = [_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))]
-    idle = build_progressive_report(
-        trajectories, necessity={1: 0.0, 2: 1e-9}
-    )
+    idle = build_progressive_report(trajectories, necessity={1: 0.0, 2: 1e-9})
 
     assert idle["verdict"] == "causally_idle"
     assert idle["idle_steps"] == [1, 2]
     validate_progressive_report(idle)
 
     # Removing step 2 costs 0.4 nats => that step was doing work.
-    working = build_progressive_report(
-        trajectories, necessity={1: 0.0, 2: -0.4}
-    )
+    working = build_progressive_report(trajectories, necessity={1: 0.0, 2: -0.4})
     assert working["verdict"] == "real_progress"
     assert working["idle_steps"] == [1]
 
@@ -215,20 +215,14 @@ def test_no_improvement_is_reported_as_vacuous_not_as_progress():
 
 def test_gradient_health_classifies_the_unrolled_chain():
     trajectories = [_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))]
-    healthy = build_progressive_report(
-        trajectories, gradient_norms={1: 0.9, 2: 1.1}
-    )
+    healthy = build_progressive_report(trajectories, gradient_norms={1: 0.9, 2: 1.1})
     assert healthy["gradient_health"] == "healthy"
 
-    vanishing = build_progressive_report(
-        trajectories, gradient_norms={1: 1e-9, 2: 1.0}
-    )
+    vanishing = build_progressive_report(trajectories, gradient_norms={1: 1e-9, 2: 1.0})
     assert vanishing["gradient_health"] == "ill_conditioned"
     assert vanishing["gradient_ratio"] > 100.0
 
-    dead = build_progressive_report(
-        trajectories, gradient_norms={1: 0.0, 2: 1.0}
-    )
+    dead = build_progressive_report(trajectories, gradient_norms={1: 0.0, 2: 1.0})
     assert dead["gradient_health"] == "dead_gradient"
 
 
@@ -245,9 +239,7 @@ def test_report_refuses_input_it_cannot_reason_about():
 
 
 def test_report_commitment_and_field_set_are_pinned():
-    report = build_progressive_report(
-        [_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))]
-    )
+    report = build_progressive_report([_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))])
     assert report["schema"] == PROGRESSIVE_OBJECTIVE_SCHEMA
     validate_progressive_report(report)
 
@@ -310,9 +302,7 @@ def test_displacement_penalty_gradient_does_not_vanish_at_collapse():
 
 
 def test_trajectory_is_measured_on_a_real_recurrent_unroll(tiny_model):
-    trajectory = measure_progressive_trajectory(
-        tiny_model, PROMPT, ANSWER, spec=_spec(), depth=3
-    )
+    trajectory = measure_progressive_trajectory(tiny_model, PROMPT, ANSWER, spec=_spec(), depth=3)
     assert trajectory.probe_steps == (1, 2, 3)
     assert len(trajectory.step_losses) == 3
     assert len(trajectory.displacements) == 3
@@ -326,9 +316,51 @@ def test_trajectory_is_measured_on_a_real_recurrent_unroll(tiny_model):
 def test_measurement_refuses_a_multi_branch_spec(tiny_model):
     wide = _spec(branch_roles=("constructive_solution", "counterexample_search"))
     with pytest.raises(ProgressiveObjectiveError, match="single-branch"):
-        measure_progressive_trajectory(
-            tiny_model, PROMPT, ANSWER, spec=wide, depth=2
-        )
+        measure_progressive_trajectory(tiny_model, PROMPT, ANSWER, spec=wide, depth=2)
+
+
+def test_branch_complete_measurement_preserves_the_exchange_coupled_graph(tiny_model):
+    wide = _spec(
+        branch_roles=("constructive_solution", "counterexample_search"),
+        exchange_interval=1,
+    )
+    measured = measure_progressive_trajectories(
+        tiny_model,
+        PROMPT,
+        ANSWER,
+        spec=wide,
+        depth=3,
+        probe_steps=(1, 2, 3),
+    )
+    receipt = measured.receipt()
+
+    assert isinstance(measured, ProgressiveTrajectorySet)
+    assert receipt["schema"] == PROGRESSIVE_TRAJECTORY_SET_SCHEMA
+    assert receipt["branch_roles"] == list(wide.branch_roles)
+    assert receipt["branch_count"] == 2
+    assert [row["branch_index"] for row in receipt["trajectories"]] == [0, 1]
+    assert all(
+        len(trajectory.step_losses) == 3 and trajectory.min_displacement > 0.0
+        for trajectory in measured.trajectories
+    )
+    assert validate_progressive_trajectory_set(receipt) == receipt
+
+
+def test_branch_complete_receipt_replays_child_summaries(tiny_model):
+    measured = measure_progressive_trajectories(
+        tiny_model,
+        PROMPT,
+        ANSWER,
+        spec=_spec(branch_roles=("constructive_solution", "counterexample_search")),
+        depth=2,
+    )
+    attacked = copy.deepcopy(measured.receipt())
+    attacked["trajectories"][0]["improvement"] += 1.0
+    payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+    attacked["receipt_sha256"] = canonical_sha256(payload)
+
+    with pytest.raises(ProgressiveObjectiveError, match="summary|replay"):
+        validate_progressive_trajectory_set(attacked)
 
 
 def test_step_necessity_lesions_a_real_step(tiny_model):
@@ -356,9 +388,7 @@ def test_state_gradients_reach_every_probed_depth(tiny_model):
 
 
 def test_progressive_loss_is_differentiable_and_reports_motion(tiny_model):
-    loss, telemetry = progressive_objective_loss(
-        tiny_model, PROMPT, ANSWER, spec=_spec(), depth=3
-    )
+    loss, telemetry = progressive_objective_loss(tiny_model, PROMPT, ANSWER, spec=_spec(), depth=3)
     mx.eval(loss)
     assert math.isfinite(float(loss))
     assert telemetry["schema"] == PROGRESSIVE_OBJECTIVE_SCHEMA
@@ -373,9 +403,7 @@ def test_progressive_loss_is_differentiable_and_reports_motion(tiny_model):
 
     def objective(parameters):
         tiny_model.update(parameters)
-        value, _ = progressive_objective_loss(
-            tiny_model, PROMPT, ANSWER, spec=_spec(), depth=2
-        )
+        value, _ = progressive_objective_loss(tiny_model, PROMPT, ANSWER, spec=_spec(), depth=2)
         return value
 
     gradients = mx.grad(objective)(tiny_model.parameters())
@@ -431,9 +459,10 @@ def test_measured_sweep_shows_collapse_is_a_local_basin_not_the_optimum():
 
     assert solved["collapse_is_global_optimum"] is False
     assert solved["collapse_is_local_basin"] is True
-    assert [
-        (row["from_alpha"], row["to_alpha"]) for row in solved["barriers"]
-    ] == [(0.01, 0.05), (0.05, 0.1)]
+    assert [(row["from_alpha"], row["to_alpha"]) for row in solved["barriers"]] == [
+        (0.01, 0.05),
+        (0.05, 0.1),
+    ]
     assert solved["barrier_total"] == pytest.approx(0.190169, abs=1e-6)
 
 
@@ -466,15 +495,12 @@ def test_solved_constants_actually_remove_the_basin():
         for _alpha, loss, displacement in MEASURED_1P5B_SWEEP
     ]
     assert all(
-        later < earlier
-        for earlier, later in zip(penalized[:-1], penalized[1:], strict=True)
+        later < earlier for earlier, later in zip(penalized[:-1], penalized[1:], strict=True)
     ), f"solved constants left a basin: {penalized}"
 
     # And the recorded reference constants are the ones the solver returns.
     assert MEASURED_1P5B_COLLAPSE_SOLUTION["weight"] == weight
-    assert MEASURED_1P5B_COLLAPSE_SOLUTION["floor"] == pytest.approx(
-        floor, abs=1e-6
-    )
+    assert MEASURED_1P5B_COLLAPSE_SOLUTION["floor"] == pytest.approx(floor, abs=1e-6)
 
 
 def test_barrier_solver_refuses_input_it_cannot_analyze():
@@ -505,9 +531,7 @@ def test_a_forged_summary_cannot_outvote_its_own_trajectory_rows():
     collapsed = _trajectory(losses=(2.4, 1.2), displacements=(1e-7, 1e-7))
     report = build_progressive_report([collapsed])
 
-    forged = {
-        key: value for key, value in report.items() if key != "receipt_sha256"
-    }
+    forged = {key: value for key, value in report.items() if key != "receipt_sha256"}
     forged["min_displacement"] = 0.5
     forged["mean_displacement"] = 0.5
     forged["verdict"] = "real_progress"
@@ -521,8 +545,6 @@ def test_a_forged_summary_cannot_outvote_its_own_trajectory_rows():
 def test_an_unmeasured_necessity_step_still_round_trips():
     """A recorded None is an unmeasured value, not an absent row."""
     trajectories = [_trajectory(losses=(2.0, 1.5), displacements=(0.3, 0.3))]
-    report = build_progressive_report(
-        trajectories, necessity={1: float("nan"), 2: -0.4}
-    )
+    report = build_progressive_report(trajectories, necessity={1: float("nan"), 2: -0.4})
     assert report["necessity"][0]["delta"] is None
     validate_progressive_report(report)

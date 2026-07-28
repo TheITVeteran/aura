@@ -14,6 +14,7 @@ The no-cache view is mathematically equivalent to prompt KV reuse because the
 attention mask is causal and the scoped adapter is zero on prompt/answer
 positions. Tiny-Qwen parity tests compare it directly with the live cache path.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -42,6 +43,323 @@ from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
+EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class ExactAdjointTrajectoryConfig:
+    """Auxiliary trajectory terms replayed through the bounded exact adjoint.
+
+    The terminal policy objective and these terms remain separate. Callers can
+    therefore measure each term's gradient in isolation before admitting a
+    composite, while the resident path still keeps only one recurrent
+    transition graph live at a time.
+    """
+
+    probe_steps: tuple[int, ...] = (1, 2)
+    improvement_weight: float = 0.0
+    improvement_margin: float = 0.02
+    displacement_weight: float = 0.0
+    displacement_floor: float = 0.01
+    oscillation_weight: float = 0.0
+
+    def __post_init__(self) -> None:
+        if (
+            not self.probe_steps
+            or any(type(step) is not int or step < 1 for step in self.probe_steps)
+            or tuple(sorted(set(self.probe_steps))) != self.probe_steps
+        ):
+            raise ValueError("probe_steps must be strictly increasing positive integers")
+        for name, value, high in (
+            ("improvement_weight", self.improvement_weight, 100.0),
+            ("improvement_margin", self.improvement_margin, 10.0),
+            ("displacement_weight", self.displacement_weight, 100.0),
+            ("displacement_floor", self.displacement_floor, 1.0),
+            ("oscillation_weight", self.oscillation_weight, 100.0),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0.0 <= float(value) <= high
+            ):
+                raise ValueError(f"{name} must be finite inside [0, {high:g}]")
+        if float(self.improvement_weight) > 0.0 and len(self.probe_steps) < 2:
+            raise ValueError("improvement requires at least two probe steps")
+        if not any(
+            float(weight) > 0.0
+            for weight in (
+                self.improvement_weight,
+                self.displacement_weight,
+                self.oscillation_weight,
+            )
+        ):
+            raise ValueError("trajectory objective must enable at least one term")
+
+    def validate_depth(self, depth: int) -> None:
+        if self.probe_steps[-1] > depth:
+            raise ValueError("trajectory probe step exceeds recurrent depth")
+        if float(self.oscillation_weight) > 0.0 and depth < 2:
+            raise ValueError("oscillation objective requires at least two transitions")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": EXACT_ADJOINT_TRAJECTORY_SCHEMA,
+            "probe_steps": list(self.probe_steps),
+            "improvement_weight": float(self.improvement_weight),
+            "improvement_margin": float(self.improvement_margin),
+            "displacement_weight": float(self.displacement_weight),
+            "displacement_floor": float(self.displacement_floor),
+            "oscillation_weight": float(self.oscillation_weight),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> ExactAdjointTrajectoryConfig:
+        required = {
+            "schema",
+            "probe_steps",
+            "improvement_weight",
+            "improvement_margin",
+            "displacement_weight",
+            "displacement_floor",
+            "oscillation_weight",
+        }
+        if not isinstance(value, Mapping) or set(value) != required:
+            raise ValueError("trajectory objective config fields do not match")
+        if value.get("schema") != EXACT_ADJOINT_TRAJECTORY_SCHEMA:
+            raise ValueError("trajectory objective config schema is unsupported")
+        probe_steps = value.get("probe_steps")
+        if not isinstance(probe_steps, list):
+            raise ValueError("trajectory objective probe_steps must be a list")
+        return cls(
+            probe_steps=tuple(probe_steps),
+            improvement_weight=value["improvement_weight"],
+            improvement_margin=value["improvement_margin"],
+            displacement_weight=value["displacement_weight"],
+            displacement_floor=value["displacement_floor"],
+            oscillation_weight=value["oscillation_weight"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ExactAdjointLivePathResult:
+    """One exact-adjoint value/gradient result with replayable term telemetry."""
+
+    value: float
+    gradients: Any
+    terminal_value: float
+    diversity_value: float
+    trajectory_values: Mapping[str, float]
+    step_losses: Mapping[int, tuple[float, ...]]
+    displacements: tuple[float, ...]
+    oscillation_cosines: tuple[float, ...]
+    diversity_cosines: tuple[float, ...]
+    branch_indices: tuple[int, ...]
+    trajectory_config: ExactAdjointTrajectoryConfig | None
+    execution_spec_sha256: str
+    recurrent_depth: int
+    execution_branch_count: int
+    diversity_weight: float
+    diversity_target_cos: float
+
+    def receipt(self) -> dict[str, Any]:
+        payload = {
+            "schema": EXACT_ADJOINT_TRAJECTORY_SCHEMA,
+            "value": float(self.value),
+            "terminal_value": float(self.terminal_value),
+            "diversity_value": float(self.diversity_value),
+            "trajectory_values": {
+                name: float(value) for name, value in sorted(self.trajectory_values.items())
+            },
+            "step_losses": {
+                str(step): [float(value) for value in values]
+                for step, values in sorted(self.step_losses.items())
+            },
+            "displacements": [float(value) for value in self.displacements],
+            "oscillation_cosines": [float(value) for value in self.oscillation_cosines],
+            "diversity_cosines": [float(value) for value in self.diversity_cosines],
+            "branch_indices": list(self.branch_indices),
+            "execution_spec_sha256": self.execution_spec_sha256,
+            "recurrent_depth": self.recurrent_depth,
+            "execution_branch_count": self.execution_branch_count,
+            "diversity_weight": self.diversity_weight,
+            "diversity_target_cos": self.diversity_target_cos,
+            "trajectory_config": (
+                self.trajectory_config.to_dict() if self.trajectory_config is not None else None
+            ),
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        return {**payload, "receipt_sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
+    """Independently replay an exact-adjoint trajectory objective receipt."""
+
+    required = {
+        "schema",
+        "value",
+        "terminal_value",
+        "diversity_value",
+        "trajectory_values",
+        "step_losses",
+        "displacements",
+        "oscillation_cosines",
+        "diversity_cosines",
+        "branch_indices",
+        "execution_spec_sha256",
+        "recurrent_depth",
+        "execution_branch_count",
+        "diversity_weight",
+        "diversity_target_cos",
+        "trajectory_config",
+        "receipt_sha256",
+    }
+    if not isinstance(value, Mapping) or set(value) != required:
+        raise ValueError("exact-adjoint trajectory receipt fields do not match")
+    receipt = dict(value)
+    observed = receipt.pop("receipt_sha256")
+    encoded = json.dumps(
+        receipt,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    if not isinstance(observed, str) or observed != hashlib.sha256(encoded).hexdigest():
+        raise ValueError("exact-adjoint trajectory receipt commitment mismatch")
+    if receipt["schema"] != EXACT_ADJOINT_TRAJECTORY_SCHEMA:
+        raise ValueError("exact-adjoint trajectory receipt schema is unsupported")
+    digest = receipt["execution_spec_sha256"]
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError("exact-adjoint execution spec digest is invalid")
+    depth = receipt["recurrent_depth"]
+    branch_count = receipt["execution_branch_count"]
+    branches = receipt["branch_indices"]
+    if (
+        type(depth) is not int
+        or depth < 1
+        or type(branch_count) is not int
+        or branch_count < 1
+        or not isinstance(branches, list)
+        or not branches
+        or any(type(index) is not int or index < 0 for index in branches)
+        or any(index >= branch_count for index in branches)
+        or len(set(branches)) != len(branches)
+    ):
+        raise ValueError("exact-adjoint depth or branch identity is invalid")
+
+    def finite_number(item: Any, *, role: str) -> float:
+        if (
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+        ):
+            raise ValueError(f"exact-adjoint {role} is not finite")
+        return float(item)
+
+    terminal = finite_number(receipt["terminal_value"], role="terminal value")
+    diversity = finite_number(receipt["diversity_value"], role="diversity value")
+    diversity_weight = finite_number(receipt["diversity_weight"], role="diversity weight")
+    diversity_target = finite_number(receipt["diversity_target_cos"], role="diversity target")
+    if not 0.0 <= diversity_weight <= 10.0 or not 0.0 <= diversity_target <= 1.0:
+        raise ValueError("exact-adjoint diversity configuration is invalid")
+    total = finite_number(receipt["value"], role="total value")
+    terms = receipt["trajectory_values"]
+    if not isinstance(terms, Mapping) or set(terms) != {
+        "improvement",
+        "displacement",
+        "oscillation",
+    }:
+        raise ValueError("exact-adjoint trajectory term set is invalid")
+    term_values = {
+        str(name): finite_number(number, role=f"{name} value") for name, number in terms.items()
+    }
+    expected_total = terminal + diversity + sum(term_values.values())
+    if not math.isclose(total, expected_total, rel_tol=0.0, abs_tol=1e-9):
+        raise ValueError("exact-adjoint total does not replay from its terms")
+
+    config_value = receipt["trajectory_config"]
+    config = (
+        ExactAdjointTrajectoryConfig.from_dict(config_value) if config_value is not None else None
+    )
+    if config is not None:
+        config.validate_depth(depth)
+    step_losses = receipt["step_losses"]
+    if not isinstance(step_losses, Mapping):
+        raise ValueError("exact-adjoint step losses must be a mapping")
+    normalized_steps: dict[int, list[Any]] = {}
+    for key, losses in step_losses.items():
+        if not isinstance(key, str) or not key.isdigit() or not isinstance(losses, list):
+            raise ValueError("exact-adjoint step-loss row is invalid")
+        normalized_steps[int(key)] = losses
+        if len(losses) != len(branches):
+            raise ValueError("exact-adjoint step-loss branches do not align")
+        for loss in losses:
+            finite_number(loss, role="step loss")
+    expected_steps = (
+        set(config.probe_steps)
+        if config is not None and float(config.improvement_weight) > 0.0
+        else set()
+    )
+    if set(normalized_steps) != expected_steps:
+        raise ValueError("exact-adjoint step-loss probes do not match the config")
+
+    for role in ("displacements", "oscillation_cosines", "diversity_cosines"):
+        sequence = receipt[role]
+        if not isinstance(sequence, list):
+            raise ValueError(f"exact-adjoint {role} must be a list")
+        for item in sequence:
+            finite_number(item, role=role)
+    expected_diversity_count = branch_count * (branch_count - 1) // 2
+    if len(receipt["diversity_cosines"]) != expected_diversity_count:
+        raise ValueError("exact-adjoint diversity cardinality is invalid")
+    replayed_diversity = (
+        diversity_weight
+        * sum(
+            max(float(cosine) - diversity_target, 0.0) ** 2
+            for cosine in receipt["diversity_cosines"]
+        )
+        / expected_diversity_count
+        if expected_diversity_count
+        else 0.0
+    )
+    if not math.isclose(
+        diversity,
+        replayed_diversity,
+        rel_tol=0.0,
+        # The producer evaluates the penalty in MLX float32 while this replay
+        # uses the sealed Python floats. The tolerance covers that one
+        # representation crossing, not a statistical or model-level margin.
+        abs_tol=1e-6,
+    ):
+        raise ValueError("exact-adjoint diversity does not replay")
+    expected_displacements = (
+        depth * len(branches)
+        if config is not None and float(config.displacement_weight) > 0.0
+        else 0
+    )
+    expected_oscillations = (
+        (depth - 1) * len(branches)
+        if config is not None and float(config.oscillation_weight) > 0.0
+        else 0
+    )
+    if len(receipt["displacements"]) != expected_displacements:
+        raise ValueError("exact-adjoint displacement cardinality is invalid")
+    if len(receipt["oscillation_cosines"]) != expected_oscillations:
+        raise ValueError("exact-adjoint oscillation cardinality is invalid")
+    if config is None and any(abs(number) > 0.0 for number in term_values.values()):
+        raise ValueError("exact-adjoint receipt has terms without a trajectory config")
+    return dict(value)
 
 
 @dataclass
@@ -312,9 +630,7 @@ def recurrent_phase_code(step: int, hidden: int) -> Any:
     import mlx.core as mx
 
     positions = mx.arange(hidden, dtype=mx.float32)
-    frequency = mx.exp(
-        -math.log(10000.0) * (2 * mx.floor(positions / 2)) / hidden
-    )
+    frequency = mx.exp(-math.log(10000.0) * (2 * mx.floor(positions / 2)) / hidden)
     angle = float(step) * frequency
     return mx.where(positions % 2 == 0, mx.sin(angle), mx.cos(angle))
 
@@ -390,24 +706,18 @@ def _exchange_and_decorrelate(
     mean = mx.mean(stack, axis=1, keepdims=True)
 
     def cosine(left: Any, right: Any) -> Any:
-        denominator = mx.maximum(
-            mx.linalg.norm(left) * mx.linalg.norm(right), 1e-6
-        )
+        denominator = mx.maximum(mx.linalg.norm(left) * mx.linalg.norm(right), 1e-6)
         return mx.sum(left * right) / denominator
 
     agreements = mx.stack([cosine(summary, mean) for summary in summaries])
     weights = mx.softmax(agreements, axis=0)
-    consensus = sum(
-        weight * summary
-        for weight, summary in zip(weights, summaries, strict=True)
-    )
+    consensus = sum(weight * summary for weight, summary in zip(weights, summaries, strict=True))
     slot = spec.comm_slot
     exchanged: list[Any] = []
     for state in states:
-        comm = (
-            (1.0 - spec.exchange_gamma) * state[:, slot : slot + 1, :]
-            + spec.exchange_gamma * consensus
-        )
+        comm = (1.0 - spec.exchange_gamma) * state[
+            :, slot : slot + 1, :
+        ] + spec.exchange_gamma * consensus
         exchanged.append(
             mx.concatenate(
                 [state[:, :slot, :], comm, state[:, slot + 1 :, :]],
@@ -424,9 +734,7 @@ def _exchange_and_decorrelate(
                 mx.mean(right, axis=1, keepdims=True),
             )
             gate = (similarity > spec.collapse_cos_threshold).astype(right.dtype)
-            key = mx.random.key(
-                1000 + 31 * left_index + right_index + step_number
-            )
+            key = mx.random.key(1000 + 31 * left_index + right_index + step_number)
             jitter = mx.random.normal(right.shape, key=key)
             jitter = jitter * (
                 spec.jitter_scale
@@ -578,9 +886,7 @@ def _persist_and_score(
 
 
 def _token_sequence_sha256(tokens: Sequence[int]) -> str:
-    encoded = json.dumps(
-        list(tokens), separators=(",", ":"), allow_nan=False
-    ).encode("ascii")
+    encoded = json.dumps(list(tokens), separators=(",", ":"), allow_nan=False).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -605,9 +911,9 @@ def _tensor_sha256(value: Any) -> str:
 
 
 def _ensemble_sha256(branch_sha256s: Sequence[str]) -> str:
-    encoded = json.dumps(
-        list(branch_sha256s), separators=(",", ":"), allow_nan=False
-    ).encode("ascii")
+    encoded = json.dumps(list(branch_sha256s), separators=(",", ":"), allow_nan=False).encode(
+        "ascii"
+    )
     return hashlib.sha256(b"aura.recurrent_ensemble.v1\0" + encoded).hexdigest()
 
 
@@ -970,10 +1276,7 @@ def live_path_branch_answer_ce_trail(
         spec=spec,
         bridge_tokens=bridge_tokens,
     )
-    if (
-        type(branch_index) is not int
-        or not 0 <= branch_index < len(prepared.states)
-    ):
+    if type(branch_index) is not int or not 0 <= branch_index < len(prepared.states):
         raise ValueError("branch_index is outside the live-path branch set")
 
     targets = mx.array(list(answer_tokens))[None, :]
@@ -1001,9 +1304,7 @@ def live_path_branch_answer_ce_trail(
             prelude_end=prepared.prelude_end,
             coda_start=prepared.coda_start,
         )
-        losses = nn.losses.cross_entropy(
-            logits.astype(mx.float32), targets, reduction="none"
-        )
+        losses = nn.losses.cross_entropy(logits.astype(mx.float32), targets, reduction="none")
         value = mx.mean(losses)
         mx.eval(value)
         trail.append(float(value))
@@ -1026,7 +1327,7 @@ def branch_mean_answer_loss(forward: LivePathForward, answer_tokens: Sequence[in
     return sum(losses) / len(losses)
 
 
-def exact_adjoint_live_path_value_and_grad(
+def _exact_adjoint_live_path_result(
     model: Any,
     prompt_tokens: Sequence[int],
     answer_tokens: Sequence[int],
@@ -1037,7 +1338,8 @@ def exact_adjoint_live_path_value_and_grad(
     diversity_target_cos: float = 0.98,
     token_loss_weights: Sequence[float] | None = None,
     branch_index: int | None = None,
-) -> tuple[float, Any, float, list[float]]:
+    trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+) -> ExactAdjointLivePathResult:
     """Compute the exact live-path gradient with bounded graph residency.
 
     Only recurrent LoRA parameters are trainable. Prelude outputs are therefore
@@ -1080,15 +1382,16 @@ def exact_adjoint_live_path_value_and_grad(
     layer_pattern = re.compile(r"model\.layers\.(\d+)\.")
     for path, _value in tree_flatten(parameters):
         match = layer_pattern.match(path)
-        if match is None or not (
-            prepared.prelude_end <= int(match.group(1)) < prepared.coda_start
-        ):
+        if match is None or not (prepared.prelude_end <= int(match.group(1)) < prepared.coda_start):
             raise RuntimeError("exact_adjoint_requires_window_only_trainables")
     if branch_index is not None and (
-        type(branch_index) is not int
-        or not 0 <= branch_index < len(prepared.states)
+        type(branch_index) is not int or not 0 <= branch_index < len(prepared.states)
     ):
         raise ValueError("branch_index is outside the live-path branch set")
+    if trajectory_config is not None:
+        if not isinstance(trajectory_config, ExactAdjointTrajectoryConfig):
+            raise TypeError("trajectory_config must be an ExactAdjointTrajectoryConfig")
+        trajectory_config.validate_depth(spec.recurrent_steps)
 
     def detached(values: Sequence[Any]) -> tuple[Any, ...]:
         result = tuple(mx.stop_gradient(value) for value in values)
@@ -1133,12 +1436,12 @@ def exact_adjoint_live_path_value_and_grad(
 
     targets = mx.array(list(answer_tokens))[None, :]
     token_weights = mx.array(normalized_token_weights, dtype=mx.float32)[None, :]
-    selected_indices = (
-        tuple(range(len(current))) if branch_index is None else (branch_index,)
-    )
+    selected_indices = tuple(range(len(current))) if branch_index is None else (branch_index,)
     branch_scale = 1.0 / len(selected_indices)
     branch_values: list[float] = []
-    state_cotangents: list[Any] = [mx.zeros_like(state) for state in current]
+    direct_cotangents: list[list[Any]] = [
+        [mx.zeros_like(state) for state in states] for states in history
+    ]
     for selected_index in selected_indices:
         seed = seeds[selected_index]
         state = current[selected_index]
@@ -1172,8 +1475,8 @@ def exact_adjoint_live_path_value_and_grad(
         mx.eval(value, parameter_gradient, state_gradient)
         branch_values.append(float(value))
         add_parameter_gradient(parameter_gradient, branch_scale)
-        state_cotangents[selected_index] = mx.stop_gradient(
-            branch_scale * state_gradient
+        direct_cotangents[-1][selected_index] = mx.stop_gradient(
+            direct_cotangents[-1][selected_index] + branch_scale * state_gradient
         )
         del value, parameter_gradient, state_gradient
         mx.clear_cache()
@@ -1215,19 +1518,201 @@ def exact_adjoint_live_path_value_and_grad(
 
         _value, diversity_gradients = mx.value_and_grad(diversity_loss)(current)
         mx.eval(diversity_gradients)
-        state_cotangents = [
+        direct_cotangents[-1] = [
             mx.stop_gradient(existing + float(diversity_weight) * diversity)
-            for existing, diversity in zip(
-                state_cotangents,
-                diversity_gradients,
-                strict=True,
-            )
+            for existing, diversity in zip(direct_cotangents[-1], diversity_gradients, strict=True)
         ]
-        mx.eval(state_cotangents)
+        mx.eval(direct_cotangents[-1])
         del diversity_gradients
         mx.clear_cache()
 
-    cotangents = tuple(state_cotangents)
+    trajectory_values = {
+        "improvement": 0.0,
+        "displacement": 0.0,
+        "oscillation": 0.0,
+    }
+    step_loss_values: dict[int, tuple[float, ...]] = {}
+    measured_displacements: list[float] = []
+    measured_oscillation_cosines: list[float] = []
+    if trajectory_config is not None:
+        probe_losses: dict[int, list[float]] = {}
+        probe_gradients: dict[int, list[tuple[Any, Any]]] = {}
+        if float(trajectory_config.improvement_weight) > 0.0:
+            for depth in trajectory_config.probe_steps:
+                depth_losses: list[float] = []
+                depth_gradients: list[tuple[Any, Any]] = []
+                for selected_index in selected_indices:
+                    seed = seeds[selected_index]
+
+                    def intermediate_loss(
+                        parameter_tree: Any,
+                        state: Any,
+                        _seed: Any = seed,
+                    ) -> Any:
+                        model.update(parameter_tree)
+                        logits = _persist_and_score(
+                            model,
+                            prompt_embeddings,
+                            _seed,
+                            state,
+                            tail_embeddings,
+                            bridge_count=prepared.bridge_count,
+                            answer_count=prepared.answer_count,
+                            prelude_end=prepared.prelude_end,
+                            coda_start=prepared.coda_start,
+                        )
+                        return nn.losses.cross_entropy(
+                            logits.astype(mx.float32),
+                            targets,
+                            reduction="mean",
+                        )
+
+                    loss, (parameter_gradient, state_gradient) = mx.value_and_grad(
+                        intermediate_loss,
+                        argnums=(0, 1),
+                    )(parameters, history[depth][selected_index])
+                    mx.eval(loss, parameter_gradient, state_gradient)
+                    depth_losses.append(float(loss))
+                    depth_gradients.append(
+                        (
+                            parameter_gradient,
+                            mx.stop_gradient(state_gradient),
+                        )
+                    )
+                probe_losses[depth] = depth_losses
+                probe_gradients[depth] = depth_gradients
+                step_loss_values[depth] = tuple(depth_losses)
+
+            hinge_count = (len(trajectory_config.probe_steps) - 1) * len(selected_indices)
+            hinge_scale = float(trajectory_config.improvement_weight) / hinge_count
+            improvement_value = 0.0
+            for previous_depth, current_depth in zip(
+                trajectory_config.probe_steps,
+                trajectory_config.probe_steps[1:],
+                strict=False,
+            ):
+                for offset, selected_index in enumerate(selected_indices):
+                    hinge = max(
+                        probe_losses[current_depth][offset]
+                        - probe_losses[previous_depth][offset]
+                        + float(trajectory_config.improvement_margin),
+                        0.0,
+                    )
+                    improvement_value += hinge_scale * hinge
+                    if hinge <= 0.0:
+                        continue
+                    parameter_gradient, state_gradient = probe_gradients[current_depth][offset]
+                    add_parameter_gradient(parameter_gradient, hinge_scale)
+                    direct_cotangents[current_depth][selected_index] = mx.stop_gradient(
+                        direct_cotangents[current_depth][selected_index]
+                        + hinge_scale * state_gradient
+                    )
+            trajectory_values["improvement"] = improvement_value
+
+        if float(trajectory_config.displacement_weight) > 0.0:
+            term_count = spec.recurrent_steps * len(selected_indices)
+            term_scale = float(trajectory_config.displacement_weight) / term_count
+            displacement_value = 0.0
+            for depth in range(1, spec.recurrent_steps + 1):
+                for selected_index in selected_indices:
+
+                    def displacement_loss(previous: Any, current_state: Any) -> Any:
+                        numerator = mx.linalg.norm(mx.reshape(current_state - previous, (-1,)))
+                        denominator = mx.maximum(
+                            mx.linalg.norm(mx.reshape(previous, (-1,))),
+                            1e-9,
+                        )
+                        return mx.maximum(
+                            float(trajectory_config.displacement_floor) - numerator / denominator,
+                            0.0,
+                        )
+
+                    value, (previous_gradient, current_gradient) = mx.value_and_grad(
+                        displacement_loss,
+                        argnums=(0, 1),
+                    )(
+                        history[depth - 1][selected_index],
+                        history[depth][selected_index],
+                    )
+                    mx.eval(value, previous_gradient, current_gradient)
+                    previous_state = history[depth - 1][selected_index]
+                    current_state = history[depth][selected_index]
+                    displacement = float(
+                        mx.linalg.norm(mx.reshape(current_state - previous_state, (-1,)))
+                        / mx.maximum(
+                            mx.linalg.norm(mx.reshape(previous_state, (-1,))),
+                            1e-9,
+                        )
+                    )
+                    measured_displacements.append(displacement)
+                    displacement_value += term_scale * float(value)
+                    direct_cotangents[depth - 1][selected_index] = mx.stop_gradient(
+                        direct_cotangents[depth - 1][selected_index]
+                        + term_scale * previous_gradient
+                    )
+                    direct_cotangents[depth][selected_index] = mx.stop_gradient(
+                        direct_cotangents[depth][selected_index] + term_scale * current_gradient
+                    )
+            trajectory_values["displacement"] = displacement_value
+
+        if float(trajectory_config.oscillation_weight) > 0.0:
+            pair_count = (spec.recurrent_steps - 1) * len(selected_indices)
+            pair_scale = float(trajectory_config.oscillation_weight) / pair_count
+            oscillation_value = 0.0
+            for depth in range(2, spec.recurrent_steps + 1):
+                for selected_index in selected_indices:
+
+                    def oscillation_loss(
+                        previous: Any,
+                        middle: Any,
+                        current_state: Any,
+                    ) -> Any:
+                        first = mx.reshape(middle - previous, (-1,))
+                        second = mx.reshape(current_state - middle, (-1,))
+                        denominator = mx.maximum(
+                            mx.linalg.norm(first) * mx.linalg.norm(second),
+                            1e-9,
+                        )
+                        cosine = mx.sum(first * second) / denominator
+                        return mx.maximum(-cosine, 0.0)
+
+                    value, gradients = mx.value_and_grad(
+                        oscillation_loss,
+                        argnums=(0, 1, 2),
+                    )(
+                        history[depth - 2][selected_index],
+                        history[depth - 1][selected_index],
+                        history[depth][selected_index],
+                    )
+                    mx.eval(value, gradients)
+                    first = mx.reshape(
+                        history[depth - 1][selected_index] - history[depth - 2][selected_index],
+                        (-1,),
+                    )
+                    second = mx.reshape(
+                        history[depth][selected_index] - history[depth - 1][selected_index],
+                        (-1,),
+                    )
+                    cosine = float(
+                        mx.sum(first * second)
+                        / mx.maximum(
+                            mx.linalg.norm(first) * mx.linalg.norm(second),
+                            1e-9,
+                        )
+                    )
+                    measured_oscillation_cosines.append(cosine)
+                    oscillation_value += pair_scale * float(value)
+                    for state_depth, gradient in zip(
+                        (depth - 2, depth - 1, depth),
+                        gradients,
+                        strict=True,
+                    ):
+                        direct_cotangents[state_depth][selected_index] = mx.stop_gradient(
+                            direct_cotangents[state_depth][selected_index] + pair_scale * gradient
+                        )
+            trajectory_values["oscillation"] = oscillation_value
+
+    cotangents = tuple(direct_cotangents[-1])
     for step in range(spec.recurrent_steps - 1, -1, -1):
         input_states = history[step]
 
@@ -1259,15 +1744,104 @@ def exact_adjoint_live_path_value_and_grad(
         )(parameters, input_states)
         mx.eval(parameter_gradient, input_cotangents)
         add_parameter_gradient(parameter_gradient)
-        cotangents = detached(input_cotangents)
+        cotangents = tuple(
+            mx.stop_gradient(incoming + direct)
+            for incoming, direct in zip(
+                input_cotangents,
+                direct_cotangents[step],
+                strict=True,
+            )
+        )
+        mx.eval(cotangents)
         del parameter_gradient, input_cotangents
         mx.clear_cache()
 
     if accumulated is None:
         raise RuntimeError("exact adjoint parameter gradient is empty")
     base_value = sum(branch_values) / len(branch_values)
-    total_value = base_value + float(diversity_weight) * diversity_value
-    return total_value, accumulated, base_value, [float(value) for value in cosines]
+    total_value = (
+        base_value + float(diversity_weight) * diversity_value + sum(trajectory_values.values())
+    )
+    return ExactAdjointLivePathResult(
+        value=total_value,
+        gradients=accumulated,
+        terminal_value=base_value,
+        diversity_value=float(diversity_weight) * diversity_value,
+        trajectory_values=trajectory_values,
+        step_losses=step_loss_values,
+        displacements=tuple(measured_displacements),
+        oscillation_cosines=tuple(measured_oscillation_cosines),
+        diversity_cosines=tuple(float(value) for value in cosines),
+        branch_indices=selected_indices,
+        trajectory_config=trajectory_config,
+        execution_spec_sha256=spec.sha256,
+        recurrent_depth=spec.recurrent_steps,
+        execution_branch_count=len(current),
+        diversity_weight=float(diversity_weight),
+        diversity_target_cos=float(diversity_target_cos),
+    )
+
+
+def exact_adjoint_live_path_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int] = (),
+    diversity_weight: float = 0.0,
+    diversity_target_cos: float = 0.98,
+    token_loss_weights: Sequence[float] | None = None,
+    branch_index: int | None = None,
+) -> tuple[float, Any, float, list[float]]:
+    """Compatibility surface for the terminal exact-adjoint objective."""
+
+    result = _exact_adjoint_live_path_result(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+        diversity_weight=diversity_weight,
+        diversity_target_cos=diversity_target_cos,
+        token_loss_weights=token_loss_weights,
+        branch_index=branch_index,
+    )
+    return (
+        result.value,
+        result.gradients,
+        result.terminal_value,
+        list(result.diversity_cosines),
+    )
+
+
+def exact_adjoint_trajectory_live_path_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    trajectory_config: ExactAdjointTrajectoryConfig,
+    bridge_tokens: Sequence[int] = (),
+    branch_index: int | None = None,
+    diversity_weight: float = 0.0,
+    diversity_target_cos: float = 0.98,
+    token_loss_weights: Sequence[float] | None = None,
+) -> ExactAdjointLivePathResult:
+    """Compute terminal and trajectory gradients with bounded graph residency."""
+
+    return _exact_adjoint_live_path_result(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        bridge_tokens=bridge_tokens,
+        diversity_weight=diversity_weight,
+        diversity_target_cos=diversity_target_cos,
+        token_loss_weights=token_loss_weights,
+        branch_index=branch_index,
+        trajectory_config=trajectory_config,
+    )
 
 
 def live_path_loss(
@@ -1335,12 +1909,15 @@ def depth_curriculum_loss_v2(
         )
         for depth in depths
     ]
-    return sum(losses) / len(losses) + float(
-        monotonicity_weight
-    ) * detached_monotonicity_penalty(losses)
+    return sum(losses) / len(losses) + float(monotonicity_weight) * detached_monotonicity_penalty(
+        losses
+    )
 
 
 __all__ = [
+    "EXACT_ADJOINT_TRAJECTORY_SCHEMA",
+    "ExactAdjointLivePathResult",
+    "ExactAdjointTrajectoryConfig",
     "LivePathForward",
     "PreparedFinalRecurrentTransition",
     "RECURRENCE_NATIVE_SCHEMA_V2",
@@ -1349,9 +1926,11 @@ __all__ = [
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
     "exact_adjoint_live_path_value_and_grad",
+    "exact_adjoint_trajectory_live_path_value_and_grad",
     "live_path_branch_answer_ce_trail",
     "live_path_forward",
     "live_path_loss",
     "prepare_final_recurrent_transition",
+    "validate_exact_adjoint_live_path_receipt",
     "validate_final_recurrent_transition_receipt",
 ]

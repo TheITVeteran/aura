@@ -1,11 +1,18 @@
 """Live-cache parity and learnability contracts for recurrence objective v2."""
+
 from __future__ import annotations
+
+import copy
+import hashlib
+import json
 
 import pytest
 
 mx = pytest.importorskip("mlx.core")
+nn = pytest.importorskip("mlx.nn")
 pytest.importorskip("mlx_lm")
 
+from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.base import create_attention_mask  # noqa: E402
 from mlx_lm.models.cache import KVCache  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
@@ -29,13 +36,20 @@ from core.brain.llm.latent_cortex.types import (  # noqa: E402
     WorkspaceConfig,
 )
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace  # noqa: E402
+from core.learning.progressive_recurrent_objective import (  # noqa: E402
+    progressive_objective_loss,
+)
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    EXACT_ADJOINT_TRAJECTORY_SCHEMA,
+    ExactAdjointTrajectoryConfig,
     _exchange_and_decorrelate,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
+    exact_adjoint_trajectory_live_path_value_and_grad,
     live_path_forward,
     live_path_loss,
     prepare_final_recurrent_transition,
+    validate_exact_adjoint_live_path_receipt,
     validate_final_recurrent_transition_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
@@ -106,9 +120,7 @@ def _live_cache_logits(model: Model, spec: RLCExecutionSpec):
     runner = WindowRunner(inner, ComputeBudget())
     prelude_end = 1
     coda_start = 3
-    anchor = runner.run(
-        workspace.seed_z, cache, 0, prelude_end, persist=False
-    )
+    anchor = runner.run(workspace.seed_z, cache, 0, prelude_end, persist=False)
     state = anchor
     recurrence = RecurrenceConfig(
         max_steps=spec.recurrent_steps,
@@ -194,24 +206,16 @@ def test_final_transition_freezes_one_real_parent_child_edge() -> None:
     assert transition.transition_index == 2
     assert transition.parent_branch_sha256s != transition.child_branch_sha256s
     assert len(transition.parent_states) == len(transition.child_states) == 2
-    for observed, expected in zip(
-        transition.parent_states, parent.branch_states, strict=True
-    ):
+    for observed, expected in zip(transition.parent_states, parent.branch_states, strict=True):
         assert bool(mx.array_equal(observed, expected))
-    for observed, expected in zip(
-        transition.child_states, child.branch_states, strict=True
-    ):
+    for observed, expected in zip(transition.child_states, child.branch_states, strict=True):
         assert bool(mx.array_equal(observed, expected))
     assert recurrent_policy_sha256(model, spec) == policy_before
-    assert validate_final_recurrent_transition_receipt(
-        transition.receipt()
-    ) == transition.receipt()
+    assert validate_final_recurrent_transition_receipt(transition.receipt()) == transition.receipt()
 
 
 def test_transition_receipt_rejects_resealed_noncausal_state_substitution() -> None:
-    transition = prepare_final_recurrent_transition(
-        _model(), PROMPT, spec=_spec(recurrent_steps=2)
-    )
+    transition = prepare_final_recurrent_transition(_model(), PROMPT, spec=_spec(recurrent_steps=2))
     attacked = transition.receipt()
     attacked["child_branch_sha256s"] = list(attacked["parent_branch_sha256s"])
 
@@ -266,11 +270,132 @@ def test_answer_loss_is_finite_and_recurrence_adapter_receives_gradient():
     assert float(mx.linalg.norm(mx.reshape(gradient, (-1,)))) > 0.0
 
 
-def test_two_branch_exchange_and_depth_curriculum_are_live():
+def test_bounded_exact_adjoint_matches_full_unroll_trajectory_gradient():
+    """Trajectory terms must be mathematically identical, not merely finite."""
+
+    mx.random.seed(20260728)
+    monolithic = _model()
+    mx.random.seed(20260728)
+    streamed = _model()
+    spec = _spec(recurrent_steps=3)
+    config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2, 3),
+        improvement_weight=0.7,
+        improvement_margin=0.2,
+        displacement_weight=0.4,
+        displacement_floor=0.99,
+        oscillation_weight=0.3,
+    )
+
+    def full_unroll_loss(current_model):
+        value, _telemetry = progressive_objective_loss(
+            current_model,
+            PROMPT,
+            ANSWER,
+            spec=spec,
+            depth=3,
+            probe_steps=config.probe_steps,
+            final_weight=0.0,
+            improvement_weight=config.improvement_weight,
+            improvement_margin=config.improvement_margin,
+            oscillation_weight=config.oscillation_weight,
+            displacement_weight=config.displacement_weight,
+            displacement_floor=config.displacement_floor,
+        )
+        return value
+
+    full_value, full_gradients = nn.value_and_grad(monolithic, full_unroll_loss)(monolithic)
+    exact = exact_adjoint_trajectory_live_path_value_and_grad(
+        streamed,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        token_loss_weights=(0.0,) * len(ANSWER),
+    )
+    mx.eval(full_value, full_gradients, exact.gradients)
+    full_flat = dict(tree_flatten(full_gradients))
+    exact_flat = dict(tree_flatten(exact.gradients))
+
+    assert exact.receipt()["schema"] == EXACT_ADJOINT_TRAJECTORY_SCHEMA
+    assert exact.receipt()["branch_indices"] == [0]
+    assert validate_exact_adjoint_live_path_receipt(exact.receipt()) == exact.receipt()
+    assert exact.value == pytest.approx(float(full_value), abs=2e-5)
+    assert set(full_flat) == set(exact_flat)
+    for name in full_flat:
+        difference = float(mx.max(mx.abs(full_flat[name] - exact_flat[name])))
+        assert difference < 3e-4, name
+
+
+def test_exact_adjoint_trajectory_selects_one_producing_branch():
     model = _model()
     spec = _spec(
-        branch_roles=["constructive_solution", "counterexample_search"]
+        recurrent_steps=2,
+        branch_roles=("constructive_solution", "counterexample_search"),
     )
+    config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=1.0,
+        improvement_margin=0.5,
+    )
+
+    result = exact_adjoint_trajectory_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=config,
+        branch_index=1,
+        diversity_weight=0.4,
+        diversity_target_cos=0.5,
+        token_loss_weights=(0.0,) * len(ANSWER),
+    )
+    mx.eval(result.gradients)
+
+    assert result.branch_indices == (1,)
+    assert set(result.step_losses) == {1, 2}
+    assert all(len(losses) == 1 for losses in result.step_losses.values())
+    assert result.receipt()["trajectory_config"] == config.to_dict()
+    assert result.receipt()["execution_branch_count"] == 2
+    assert validate_exact_adjoint_live_path_receipt(result.receipt()) == result.receipt()
+
+
+def test_exact_adjoint_trajectory_receipt_rejects_resealed_false_arithmetic():
+    model = _model()
+    config = ExactAdjointTrajectoryConfig(
+        probe_steps=(1, 2),
+        improvement_weight=1.0,
+        displacement_weight=0.5,
+        displacement_floor=0.99,
+    )
+    receipt = exact_adjoint_trajectory_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=_spec(),
+        trajectory_config=config,
+        token_loss_weights=(0.0,) * len(ANSWER),
+    ).receipt()
+    attacked = copy.deepcopy(receipt)
+    attacked["trajectory_values"]["improvement"] += 1.0
+    payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+    attacked["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+    with pytest.raises(ValueError, match="total does not replay"):
+        validate_exact_adjoint_live_path_receipt(attacked)
+
+
+def test_two_branch_exchange_and_depth_curriculum_are_live():
+    model = _model()
+    spec = _spec(branch_roles=["constructive_solution", "counterexample_search"])
     forward = live_path_forward(model, PROMPT, ANSWER, spec=spec)
     assert len(forward.branch_logits) == 2
     assert forward.exchanges == spec.recurrent_steps

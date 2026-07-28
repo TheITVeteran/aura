@@ -31080,3 +31080,74 @@ checkpoint 683. The 683-920 completion envelope is approximately
 checkpoints to a sealed resident-32B training launch, 6-10 to a defensible
 preliminary gain verdict, and 11-20 to the powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420N exact-adjoint trajectory substrate and honest head liveness
+
+The launch audit exposed a prerequisite more fundamental than materialization:
+the verified trainer updated only the verifier-weighted terminal GRPO objective.
+SPARK-061's progressive loss and SPARK-062's objectives existed as instruments,
+but no causal path carried them into the exactly-once optimizer transaction.
+Launching the resident campaign in that state would have produced a validly
+signed experiment for the wrong training objective.
+
+The bounded exact adjoint now supports three trajectory terms without retaining
+the resident recurrent graph: detached-shallow monotonic improvement, normalized
+displacement-floor pressure against identity collapse, and successive-delta
+oscillation pressure. Intermediate answer losses follow the completion's actual
+producing branch. Direct state cotangents are injected at the measured depths
+and replayed backward one transition at a time, preserving the existing
+bounded-memory property. The existing terminal diversity term composes with
+the same replay.
+
+This is proven against a monolithic full unroll on identical tiny Qwen weights
+through the real `_prepare_live_path`, `_advance_recurrent_states`, and
+`_persist_and_score` path. Objective values agree within `2e-5`; every
+trainable tensor's maximum absolute gradient difference is below `3e-4`.
+The two-branch producing-arm case also passes. The new receipt independently
+replays the execution-spec digest, recurrent depth, branch set, strict
+trajectory config, term arithmetic, probe and state-measurement cardinalities,
+and canonical seal. A resealed false total is rejected.
+
+Progressive measurement is no longer forced through a single-branch surrogate.
+`measure_progressive_trajectories` observes every role inside one real
+exchange-coupled unroll and seals aligned branch roles, indices, losses,
+displacements, and anchor drift. Derived summaries are computed from the
+serialized measurements so independent replay cannot disagree at a rounding
+boundary. A resealed false child summary is rejected.
+
+The SPARK-062 liveness schema advances to v2. An auxiliary head is not `live`
+merely because it contributes loss and has no base-weight gradient. It must
+show a gradient into its own parameters, at least one optimizer update, and
+different before/after parameter digests; otherwise it is `unmeasured`,
+`inert_zero_gradient`, or `inert_head_not_updated`. The side audit found that
+the mistake locator has the strongest reusable artifact and evidence lineage,
+the accept/discard head has a reusable calibrated estimator but no resident
+label/transaction path, and the process critic remains an in-memory research
+prototype. None is falsely counted as resident-trained.
+
+Ruff, bytecode compilation, and diff checks pass. The immediate adjacent
+recurrence/progressive/auxiliary/GRPO matrix passes 87/87 in 7.49 seconds. The
+expanded objective, halting, critic, mistake-locator, update-acceptance,
+verified-transition, preregistration, post-training, launch-runner, and
+materializer matrix passes 321/321 in 142.55 seconds. Evidence is
+`artifacts/current/cp420n_exact_adjoint_trajectory_evidence.json`.
+
+This does not yet wire the new gradient into
+`apply_verified_transition_group_update`; stopping and causal-lesion objectives
+remain absent from the verified composite, and all three auxiliary heads still
+need separately journaled optimizers, resident label producers, checkpoint
+recovery, and runtime artifact binding. The production-launch audit also found
+no independently authenticated runtime trust anchor or real externally
+custodied principals, a stale preregistration, and no single invariant yet
+sealing exactly 288 groups across preregistration, provider schedule, dataset,
+execution graph, argv, and launch authorization. Those are now explicit
+pre-launch blockers.
+
+No resident 32B was loaded or trained. SPARK-060/061/062 remain open, and no
+reasoning, frontier, promotion, or `WOW Signal` claim follows. CP420N is total
+checkpoint 684. The 684-920 completion envelope is approximately
+74.3%-100.0%, with an 87.2% midpoint. Accounting for the newly demonstrated
+objective, head-transaction, and external-authorization work, the
+evidence-adjusted range is 4-7 checkpoints to a sealed resident-32B training
+launch, 8-13 to a defensible preliminary gain verdict, and 13-23 to the powered
+conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.

@@ -5182,3 +5182,38 @@ to remove.
 20/20 matrix contracts including quarantine, refutation, an `off` arm that
 wrongly claims an erase, and a malformed solver outcome; 176 across the
 affected surface; preflight 16/16 READY.
+
+### 2026-07-28 - CP420N: the progressive objective reaches the bounded adjoint
+
+The CP420M launch lane revealed that F8's instruments were still adjacent to
+the optimizer. The production trainer could execute an exactly-once verified
+GRPO update without consulting SPARK-061 or SPARK-062. CP420N closes the
+mathematical substrate, not the final trainer wire.
+
+`recurrence_native_objective_v2` can now replay intermediate-state objective
+cotangents through the same bounded exact adjoint used by resident GRPO:
+detached-shallow improvement hinges, displacement-floor anti-collapse pressure,
+oscillation pressure, and terminal branch diversity. A monolithic full-unroll
+oracle and the streamed adjoint agree on identical tiny-Qwen weights within
+`2e-5` in value and `3e-4` maximum absolute difference for every trainable
+gradient tensor. Producing-branch identity is explicit.
+
+`progressive_recurrent_objective` now measures a real multi-branch graph in one
+exchange-coupled unroll. Its sealed trajectory set carries branch role/index,
+execution graph, loss, displacement, and drift, and independently rebuilds
+derived summaries from the serialized atoms. It does not substitute two
+single-branch runs for a two-branch computation.
+
+The auxiliary liveness report now requires a head's own gradient, optimizer
+mutation, and before/after parameter identity. This corrects an F8 semantic
+hole where absence of a base-weight gradient could be mistaken for evidence
+that a process, mistake-location, or accept/discard head actually learned.
+
+The checkboxes stay open. The verified group update does not yet admit this
+trajectory receipt; causal-lesion and learned-stopping terms are not in the
+composite; the three head objectives lack resident exactly-once transactions;
+and the 32B operating point has not calibrated collapse floors or per-term
+liveness. No resident model was loaded, no training occurred, and no reasoning,
+frontier, promotion, or `WOW Signal` result follows. Evidence:
+`artifacts/current/cp420n_exact_adjoint_trajectory_evidence.json`.
+The expanded affected matrix passes 321/321 in 142.55 seconds.
