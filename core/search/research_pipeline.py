@@ -934,7 +934,11 @@ class ResearchSearchPipeline:
                 else:
                     logger.debug("Page fetch transient error (%d) for %s", status, hit.url)
                 return None
-        except (OSError, ConnectionError, TimeoutError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - one page is optional
+            # Same rule as the browser path below: fetching one source must
+            # never be able to destroy the whole search. Whatever an HTTP
+            # client, a codec, or a redirect chain decides to raise, the
+            # answer is the same — skip this hit, keep the search.
             record_degradation('research_pipeline', exc)
             logger.debug("Page fetch failed for %s: %s", hit.url, exc)
             return None
@@ -989,7 +993,22 @@ class ResearchSearchPipeline:
                 )
             finally:
                 await browser.close()
-        except (ImportError, ConnectionError, OSError, RuntimeError, TimeoutError, AttributeError) as exc:
+        except Exception as exc:  # noqa: BLE001 - see below
+            # Deliberately broad: fetching ONE page is optional enrichment, and
+            # the pipeline already knows how to synthesize from snippets when
+            # no page is fetched. The old list — ImportError, ConnectionError,
+            # OSError, RuntimeError, TimeoutError, AttributeError — does not
+            # include playwright's own Error class, so a single navigation
+            # failure escaped and destroyed the entire search.
+            #
+            # Live 2026-07-27: "Can you look up what the current weather is in
+            # Lisbon right now?" The search itself SUCCEEDED — hits returned,
+            # "Causal Link Recorded: web_search -> Success" — then one
+            # page.goto raised, the whole tool result became ok=False, and the
+            # user was told "the model lane was unavailable and the fallback
+            # was rate-limited", which is not what happened at all.
+            #
+            # A partial result is the thing this pipeline exists to produce.
             record_degradation('research_pipeline', exc)
             logger.debug("Browser fetch failed for %s: %s", hit.url, exc)
             return None
