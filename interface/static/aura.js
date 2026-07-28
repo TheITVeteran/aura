@@ -6680,15 +6680,53 @@ async function loadMemory(type) {
                     const badge = item.success === false ? '<span class="tag error">FAILED</span> ' : (item.success === true ? '<span class="tag success">OK</span> ' : '');
                     return `<div class="mem-item">${badge}<span class="mem-ts">${ts}</span> <strong>${escHtml(ctx)}</strong><br><span class="mem-detail">${escHtml(outcome)}</span></div>`;
                 } else if (type === 'semantic') {
+                    // LIVE DEFECT, 2026-07-27. This read item.key/item.subject
+                    // and item.value/item.predicate. /api/memory/semantic
+                    // returns {id, content, metadata, timestamp} and never has
+                    // any of those four fields, so every row rendered as
+                    // "<strong></strong>: " — the panel showed eight boxes
+                    // each containing a bare colon.
+                    //
+                    // Same disease as the context assembler's "spontaneous:"
+                    // prefix: a consumer's hand-written field list drifted
+                    // from what the producer actually emits, and the symptom
+                    // was silent blankness rather than an error.
+                    const content = item.content || item.text || '';
                     const key = item.key || item.subject || '';
                     const val = item.value || item.predicate || '';
-                    return `<div class="mem-item"><strong>${escHtml(key)}</strong>: ${escHtml(String(val))}</div>`;
+                    const meta = (item.metadata && typeof item.metadata === 'object')
+                        ? item.metadata : {};
+                    const source = meta.source || meta.origin || '';
+                    let body;
+                    if (content) {
+                        body = `${escHtml(String(content))}`;
+                        if (source) {
+                            body += `<br><span class="mem-detail">${escHtml(String(source))}</span>`;
+                        }
+                    } else if (key || val) {
+                        body = `<strong>${escHtml(key)}</strong>: ${escHtml(String(val))}`;
+                    } else {
+                        // Nothing renderable. Drop the row instead of drawing
+                        // an empty box — a panel that says "no memories" is
+                        // honest, and eight blank boxes are not.
+                        return '';
+                    }
+                    return `<div class="mem-item">${body}</div>`;
                 } else if (type === 'goals') {
                     return '';
                 }
             }
             return `<div class="mem-item">${escHtml(String(item))}</div>`;
         }).join('');
+        if (type !== 'goals' && !cont.innerHTML.trim()) {
+            // Items arrived but none of them had anything to show. That is a
+            // producer/consumer mismatch, not an empty memory — say so
+            // rather than presenting a blank panel as a normal state.
+            console.warn('[Memory] %d %s items had no renderable fields', items.length, type);
+            cont.innerHTML = `<div class="mem-empty">${memoryKindSigil(type)}` +
+                `<span>No ${escHtml(type)} memories yet</span></div>`;
+            return;
+        }
         if (type === 'goals') {
             cont.innerHTML = renderGoalMemory(items, d.summary || {});
             return;
