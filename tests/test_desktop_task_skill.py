@@ -2675,7 +2675,10 @@ async def test_collect_research_synthesizes_first_person_opinion_without_hidden_
     class FakeRouter:
         async def generate(self, *, prompt, **kwargs):
             routed["prompt"] = prompt
-            raise AssertionError("desktop_task must not allocate hidden model synthesis by default")
+            raise AssertionError(
+                "desktop_task must not allocate model synthesis for an objective "
+                "that never asked to be written up"
+            )
 
     monkeypatch.setattr(
         ServiceContainer, "get",
@@ -2685,14 +2688,28 @@ async def test_collect_research_synthesizes_first_person_opinion_without_hidden_
     skill = DesktopTaskSkill()
     ctx = await skill._collect_research_context(
         capability_engine=FakeCapabilityEngine(),
+        # Deliberately COLLECT-ONLY: no summarize/synthesize/opinion verb. The
+        # guard this test protects is that background desktop work cannot
+        # quietly spend a second foreground model. An objective that DOES ask to
+        # be written up is covered by
+        # test_collect_research_model_synthesis_is_explicit_and_memory_guarded —
+        # requiring the deterministic composer there is what produced "Taken
+        # together, the reporting points to this: <snippet> <snippet>" in the
+        # live demo, with no takeaway at all.
         objective=(
-            "find 3 different recent articles on climate change and summarize "
-            "them and your own opinion in a Google Doc"
+            "find 3 different recent articles on climate change and put the "
+            "links in a Google Doc"
         ),
         context={},
     )
-    assert "In my view" in ctx["desktop_task_research_synthesis"]
-    assert routed == {}
+    assert ctx["desktop_task_research_synthesis"]
+    # This objective ASKS her to summarize and give an opinion, so authoring it
+    # is the request, not a hidden second allocation. Requiring the deterministic
+    # composer here is what produced "Taken together, the reporting points to
+    # this: <snippet> <snippet>" — concatenation with no takeaway — in the live
+    # demo. The guard that still matters is tested below: an objective that only
+    # collects sources must not spend a model.
+    assert routed == {}, "a collect-only objective must not spend a model"
 
 
 @pytest.mark.asyncio

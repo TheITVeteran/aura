@@ -112,3 +112,94 @@ def test_a_research_document_opens_with_the_synthesis_not_template_filler():
         "her synthesis must be the document, not a preamble to it"
     )
     assert "openai.com/academy" in body, "sources must still be recorded"
+
+
+def test_site_navigation_is_dropped_by_sentence_shape_not_a_phrase_list():
+    """A phrase list cannot generalise; every site's nav has its own words.
+
+    NASA's survived the phrase filter intact and was written into the document
+    as what the reporting said:
+
+      "Taken together, the reporting points to this: Ocean Warming - Earth
+       Indicator - NASA Science Explore Search News & Events News & Events
+       Recently Published Video Series on NASA+ Podcasts & Audio Blogs
+       Newsletters Social Media Media Resources Mult…"
+
+    What separates nav from reporting is grammar. Reporting runs long, carries
+    lowercase function words, and ends in a full stop; navigation is a run of
+    Title Case labels with almost no verbs and almost no periods.
+    """
+    live = (
+        "Ocean Warming - Earth Indicator - NASA Science Explore Search News & "
+        "Events News & Events Recently Published Video Series on NASA+ Podcasts "
+        "& Audio Blogs Newsletters Social Media Media Resources Mult… The "
+        "concentration of the 2023 warming in near-surface waters suggests that "
+        "upper ocean stratification, possibly modulated by large-scale climate "
+        "modes, may have played an important role in the observed heat uptake. "
+        "Extreme Weather Questions (FAQ) Earth Indicators Carbon Dioxide Global "
+        "Temperature Methane Arctic Sea Ice Minimum Extent Ice Sheets"
+    )
+    cleaned = DesktopTaskSkill._strip_page_chrome(live)
+
+    for nav in ("Explore Search", "Podcasts", "Newsletters", "Arctic Sea Ice", "Carbon Dioxide"):
+        assert nav not in cleaned, f"navigation survived: {nav!r}"
+    assert "upper ocean stratification" in cleaned, "the actual finding was lost"
+    assert "may have played an important role" in cleaned
+
+
+def test_ordinary_prose_passes_through_untouched():
+    prose = (
+        "Researchers reported a measurable gain on held-out tasks this quarter, "
+        "and the effect persisted after the controls were tightened."
+    )
+    assert DesktopTaskSkill._strip_page_chrome(prose) == prose
+
+
+def test_a_page_with_no_sentences_degrades_instead_of_vanishing():
+    """Selecting prose must never turn a thin source into nothing at all."""
+    assert DesktopTaskSkill._strip_page_chrome("Short note.") == "Short note."
+
+
+def test_asking_for_a_synthesis_enables_authoring_it():
+    """The synthesis was never attempted, so of course it was never written.
+
+    Model synthesis required an opt-in flag that NOTHING on the live path set,
+    so every "read them and form your own opinion, then write a synthesis in
+    your own words" fell to the deterministic composer, which concatenates
+    source snippets. What came back was "Taken together, the reporting points to
+    this: <snippet> <snippet>" — no takeaway, nothing learned.
+    """
+    demo = (
+        "Open a Google tab and find 3 recent articles about ocean warming, read "
+        "them and form your own opinion. Then open Google Docs, start a new "
+        "document, and write a synthesis of the three articles plus your opinion "
+        "in your own words."
+    )
+    assert DesktopTaskSkill._allow_research_model_synthesis({}, demo) is True, (
+        "authoring the synthesis IS the request; refusing it cannot satisfy it"
+    )
+
+    for phrasing in (
+        "summarize the three articles in a Google Doc",
+        "read them and give me your assessment",
+        "write it up in your own words",
+        "what do you think about these articles?",
+    ):
+        assert DesktopTaskSkill._objective_requests_authored_synthesis(phrasing) is True, phrasing
+
+
+def test_merely_collecting_sources_stays_on_the_cheap_path():
+    """The guard exists so background work cannot quietly spend a second model."""
+    collect = "Find 3 links about ocean warming and paste them into a doc."
+    assert DesktopTaskSkill._allow_research_model_synthesis({}, collect) is False
+    assert DesktopTaskSkill._allow_research_model_synthesis({}, "") is False
+
+
+def test_the_explicit_opt_in_still_works():
+    assert (
+        DesktopTaskSkill._allow_research_model_synthesis(
+            {"allow_desktop_task_model_synthesis": True},
+            "Find 3 links and paste them.",
+        )
+        is True
+    )

@@ -1306,7 +1306,65 @@ class DesktopTaskSkill(BaseSkill):
         body = cls._PAGE_CHROME_RE.sub(" ", body)
         # Collapse the runs of single words nav bars leave behind.
         body = re.sub(r"\s{2,}", " ", body).strip(" -|·•,")
-        return body
+        prose = cls._prose_sentences_only(body)
+        # Only trust the sentence filter when it actually found prose; a page
+        # that is genuinely all fragments should degrade to the cleaned text
+        # rather than to nothing.
+        return prose or body
+
+    @staticmethod
+    def _prose_sentences_only(text: str) -> str:
+        """Keep the sentences and drop the navigation.
+
+        A phrase list cannot generalise: every site's nav has its own
+        vocabulary. NASA's survived the phrase filter intact — "Explore Search
+        News & Events News & Events Recently Published Video Series on NASA+
+        Podcasts & Audio Blogs Newsletters Social Media Media Resources" — and
+        was written into the document as what the reporting said.
+
+        What separates the two is grammar, not words. Reporting is sentences:
+        they run long, they carry lowercase function words, they end in a full
+        stop. Navigation is a run of Title Case fragments with almost no verbs
+        and almost no periods. Selecting by sentence shape keeps the real line
+        from the same page — "The concentration of the 2023 warming in
+        near-surface waters suggests that upper ocean stratification ... may
+        have played an important role" — and drops the menu around it.
+        """
+
+        raw = " ".join(str(text or "").split())
+        if not raw:
+            return ""
+        def _lowercase_ratio(words: list[str]) -> int:
+            return sum(1 for word in words if word[:1].islower() and word.isalpha())
+
+        kept: list[str] = []
+        # The ellipsis is a boundary too: extractors truncate a nav run with "…"
+        # and the sentence that follows would otherwise be welded to it.
+        for chunk in re.split(r"(?<=[.!?])\s+|…\s*", raw):
+            candidate = chunk.strip()
+            words = candidate.split()
+            if len(words) < 8:
+                continue
+            # A chunk can OPEN with the menu and end in a real sentence. Walk
+            # forward to where prose actually starts instead of judging the
+            # whole chunk by its nav prefix.
+            start = 0
+            while start < len(words) - 7:
+                window = words[start : start + 8]
+                if _lowercase_ratio(window) >= 3:
+                    break
+                start += 1
+            else:
+                start = 0
+            candidate_words = words[start:]
+            if len(candidate_words) < 8:
+                continue
+            if _lowercase_ratio(candidate_words) < max(
+                4, len(candidate_words) // 3
+            ):
+                continue
+            kept.append(" ".join(candidate_words))
+        return " ".join(kept).strip()
 
     @staticmethod
     def _research_sources_from_result(result: dict[str, Any]) -> list[dict[str, str]]:
@@ -1566,8 +1624,60 @@ class DesktopTaskSkill(BaseSkill):
         return True
 
     @staticmethod
-    def _allow_research_model_synthesis(context: dict[str, Any] | None) -> bool:
-        return DesktopTaskSkill._allow_desktop_task_model_synthesis(context)
+    def _allow_research_model_synthesis(
+        context: dict[str, Any] | None,
+        objective: str = "",
+    ) -> bool:
+        """Authoring a synthesis is the REQUEST, not a hidden extra allocation.
+
+        The opt-in flag exists so background desktop work cannot quietly spend a
+        second foreground model. Nothing on the live path ever set it, so every
+        request to "read them and form your own opinion... write a synthesis in
+        your own words" fell to the deterministic composer, which concatenates
+        source snippets. What Bryan received was:
+
+          "Taken together, the reporting points to this: <snippet> <snippet>"
+
+        — no takeaway, nothing learned, no summary. Not because synthesis
+        failed, but because it was never attempted.
+
+        When the objective explicitly asks her to synthesize, summarize, or form
+        an opinion in her own words, the model call IS the task and refusing it
+        cannot satisfy the request. Memory pressure still suppresses it, and
+        objectives that merely collect sources still take the cheap path.
+        """
+
+        if DesktopTaskSkill._allow_desktop_task_model_synthesis(context):
+            return True
+        if not DesktopTaskSkill._objective_requests_authored_synthesis(objective):
+            return False
+        # The pressure guard is not waived — only the opt-in default is.
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            return not (
+                bool(getattr(snapshot, "warning", False))
+                or bool(getattr(snapshot, "refuse_heavy_local_generation", False))
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError):
+            return True
+
+    #: Verbs that mean "write it yourself", as opposed to "collect sources".
+    _AUTHORED_SYNTHESIS_RE = re.compile(
+        r"(?i)\b("
+        r"synthes(?:is|ise|ize)"
+        r"|summar(?:y|ise|ize|ising|izing)"
+        r"|in your own words"
+        r"|your own opinion|form an opinion|what (?:do )?you think|your (?:view|take|assessment)"
+        r"|assessment|analy(?:se|ze|sis)"
+        r"|write (?:up|about|a (?:summary|synthesis|piece|report))"
+        r")\b"
+    )
+
+    @classmethod
+    def _objective_requests_authored_synthesis(cls, objective: str) -> bool:
+        return bool(cls._AUTHORED_SYNTHESIS_RE.search(str(objective or "")))
 
     async def _collect_research_context(
         self,
@@ -1695,7 +1805,7 @@ class DesktopTaskSkill(BaseSkill):
         )
         # Optional model synthesis is an explicitly enabled enhancement, not a
         # hidden second foreground allocation during visible desktop work.
-        if self._allow_research_model_synthesis(context):
+        if self._allow_research_model_synthesis(context, objective):
             model_synthesis = await self._synthesize_research_document(
                 objective=objective,
                 query=query,
