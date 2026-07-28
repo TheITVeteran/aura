@@ -336,16 +336,28 @@ class HierarchicalBrain:
             return np.zeros(32, dtype=np.float32)
         # Concatenate and project to fixed dimension
         composite = np.concatenate(vectors)
-        # Hash-project to 64-dim for consistency
+        # Contiguous mean-pool to 64 dims. NOT a hash projection — the old
+        # comment said "hash-project", which describes a different operation
+        # with different collision behaviour, and anyone reasoning about this
+        # vector from the comment alone would have had the wrong model.
+        #
+        # CP126 (high): "For vector lengths not divisible by 64, floor stride
+        # covers only 64 times stride values and ignores the remainder."
+        # With `stride = size // 64`, a 200-element composite used stride 3
+        # and pooled only the first 192 values — the last eight neurons of
+        # the highest region contributed nothing to the composite output, on
+        # every call, silently. Any region whose size pushed the total off a
+        # multiple of 64 lost its tail.
+        #
+        # array_split partitions the WHOLE vector into 64 near-equal
+        # contiguous buckets, so every neuron lands in exactly one bucket
+        # regardless of divisibility.
         target_dim = 64
         if composite.size > target_dim:
-            # Simple averaging projection
-            stride = composite.size // target_dim
             result = np.zeros(target_dim, dtype=np.float32)
-            for i in range(target_dim):
-                start = i * stride
-                end = min(start + stride, composite.size)
-                result[i] = float(np.mean(composite[start:end]))
+            for i, bucket in enumerate(np.array_split(composite, target_dim)):
+                if bucket.size:
+                    result[i] = float(np.mean(bucket))
             return result
         else:
             padded = np.zeros(target_dim, dtype=np.float32)
