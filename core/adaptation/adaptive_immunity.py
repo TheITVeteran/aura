@@ -37,6 +37,7 @@ import numpy as np
 
 from core.adaptation.spatial_receptor_code import annotate_antigen_like
 from core.cognitive.anomaly_detector import FeatureExtractor
+from core.runtime.lockdep import LockRank, checked_lock
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.AdaptiveImmunity")
@@ -108,6 +109,45 @@ def _maintenance_background_deferral_reason() -> str:
             action="deferred heavy immune work after background policy probe failed",
         )
         return "background_policy_unavailable"
+
+
+#: One event is a sighting; history needs more than one (CP126 7c08abf3).
+_MIN_TEMPORAL_HISTORY_EVENTS = 2
+#: A snapshot older than this cannot describe the event it is attached to.
+_MAX_SNAPSHOT_AGE_S = 300.0
+
+
+def _anomaly_score_is_substantive(anomaly_score: Any) -> bool:
+    """Whether an anomaly object actually carries a reading.
+
+    `is not None` credited any object at all, including one whose scoring
+    failed and returned an empty shell (CP126 064f40ec).
+    """
+    if anomaly_score is None:
+        return False
+    for attribute in ("threat_probability", "score", "anomaly_score"):
+        value = getattr(anomaly_score, attribute, None)
+        if value is None and isinstance(anomaly_score, dict):
+            value = anomaly_score.get(attribute)
+        if _optional_unit(value) is not None:
+            return True
+    return False
+
+
+def _snapshot_is_usable(snapshot: Any) -> bool:
+    """Whether a state snapshot has content and is recent enough to count."""
+    if not isinstance(snapshot, dict) or not snapshot:
+        return False
+    stamp = snapshot.get("timestamp") or snapshot.get("at") or snapshot.get("captured_at")
+    if stamp is None:
+        # No declared age. Content is all we can check, and we do not invent
+        # freshness we cannot see.
+        return True
+    try:
+        age = time.time() - float(stamp)
+    except (TypeError, ValueError):
+        return True
+    return age <= _MAX_SNAPSHOT_AGE_S
 
 
 def _artifact_payload_digest(artifact: Any) -> str:
@@ -732,7 +772,9 @@ class TissueField:
 #: copy of the world. CP126 3da4c199: it did so with no lock, so concurrent
 #: live code could observe or mutate the SIMULATION while believing it held
 #: the real world model. One lab run at a time, and a flag live code can read.
-_SIMULATION_ISOLATION_LOCK = threading.RLock()
+_SIMULATION_ISOLATION_LOCK = checked_lock(
+    "adaptive_immunity.simulation_isolation", rank=LockRank.REGISTRY, reentrant=True
+)
 _simulation_active = threading.Event()
 
 
@@ -1221,7 +1263,9 @@ class AdaptiveImmuneSystem:
         self._pending_suppressions: dict[str, list[dict[str, Any]]] = defaultdict(list)
         # Guards the expansion engine alone, so a PCA does not serialize every
         # other immune observation (CP126 ad18eba6).
-        self._expansion_lock = threading.RLock()
+        self._expansion_lock = checked_lock(
+            "adaptive_immunity.expansion", rank=LockRank.LANE, reentrant=True
+        )
         self._suppression_verdict_window_s: float = 600.0
         self._recurrence_tracker: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
@@ -2681,9 +2725,17 @@ class AdaptiveImmuneSystem:
         anomaly_score: Any | None,
         state_snapshot: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        # CP126 064f40ec: every channel counted mere PRESENCE — any non-None
+        # anomaly object, any truthy snapshot, a fuzzy monitor-name match.
+        # Coverage is the number this subsystem reports as "how well was this
+        # observed", and presence is not observation: a channel that exists
+        # but is empty, stale, or carries no reading tells you nothing while
+        # raising the score that says it did.
         component_matches = self._component_monitor_matches(antigen.subsystem)
         channels = {
-            "anomaly_model": anomaly_score is not None,
+            # An anomaly object only corroborates if it actually carries a
+            # reading.
+            "anomaly_model": _anomaly_score_is_substantive(anomaly_score),
             "subsystem_identity": antigen.subsystem not in {"", "unknown"},
             "error_telemetry": antigen.error_load > 0.0
             or bool(event.get("error_count"))
@@ -2693,9 +2745,14 @@ class AdaptiveImmuneSystem:
             "causal_trace": bool(
                 event.get("stack_trace") or event.get("causal_trace") or antigen.stack_trace
             ),
-            "state_snapshot": bool(state_snapshot),
+            # A snapshot must have content and, when it declares its age, be
+            # recent enough to describe the event it is attached to.
+            "state_snapshot": _snapshot_is_usable(state_snapshot),
+            # CP126 7c08abf3: a SINGLE event was credited as temporal history.
+            # One observation is not longitudinal, and calling it that made
+            # first-sightings look as well-understood as recurring failures.
             "temporal_history": antigen.recurrence_pressure > 0.0
-            or self._recent_subsystem_count(antigen.subsystem) > 0,
+            or self._recent_subsystem_count(antigen.subsystem) >= _MIN_TEMPORAL_HISTORY_EVENTS,
         }
         coverage_ratio = sum(1.0 for present in channels.values() if present) / max(
             len(channels), 1

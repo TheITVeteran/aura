@@ -48,6 +48,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import LockRank, checked_lock
 
 Direction = Literal["higher_is_better", "lower_is_better"]
 
@@ -364,7 +365,7 @@ class FacultyRegistry:
     """The declared faculties and their improvement contracts."""
 
     def __init__(self) -> None:
-        self._lock = threading.RLock()
+        self._lock = checked_lock("metacognition.faculty_registry", rank=LockRank.REGISTRY, reentrant=True)
         self._faculties: dict[str, Faculty] = {}
 
     def declare(self, faculty: Faculty) -> Faculty:
@@ -451,7 +452,7 @@ class FacultyRegistry:
         )
 
 
-_registry_lock = threading.RLock()
+_registry_lock = checked_lock("metacognition.faculty_registry_singleton", rank=LockRank.REGISTRY, reentrant=True)
 _registry: FacultyRegistry | None = None
 
 
@@ -549,7 +550,7 @@ def emit_improvement_signals(
     return emitted
 
 
-_proposed_lock = threading.RLock()
+_proposed_lock = checked_lock("metacognition.proposal_history", rank=LockRank.REGISTRY, reentrant=True)
 _last_proposed: dict[str, float] = {}
 
 

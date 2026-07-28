@@ -24,6 +24,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from core.runtime.lockdep import LockRank, checked_lock
 from core.metacognition.faculty_model import (
     Faculty,
     FacultyRegistry,
@@ -31,7 +32,7 @@ from core.metacognition.faculty_model import (
     get_faculty_registry,
 )
 
-_declared_lock = threading.RLock()
+_declared_lock = checked_lock("metacognition.default_faculties", rank=LockRank.REGISTRY, reentrant=True)
 _declared = False
 
 
