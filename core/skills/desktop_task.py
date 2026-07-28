@@ -531,8 +531,16 @@ class DesktopTaskSkill(BaseSkill):
         r"task \(id=[0-9a-f-]{6,}\)|in the background\b.{0,40}follow up|"
         r"(?:opening|open)\s+(?:notes|google docs|chrome|safari)\b.{0,120}(?:creating|writing|typing|following content)|"
         r"(?:i\s+can\s+guide\s+you\s+through|here'?s\s+how|steps\s+to\s+do\s+that|do\s+that\s+yourself)|"
-        r"(?:i(?:'m| am)\s+not\s+(?:actually\s+)?able\s+to\s+(?:interact|access|control|open|write)|"
-        r"i\s+(?:cannot|can'?t)\s+(?:interact|access|control|open|write)\b|"
+        # An adverb between the modal and the verb defeated this. Live
+        # 2026-07-28 the Notes app really was opened and a note really was
+        # created — and its body was "I can't DIRECTLY interact with your
+        # phone or its apps. But I could help you write something about orcas
+        # and give it to you as text!" The refusal became the artifact,
+        # because "can't directly interact" is not "can't interact".
+        r"(?:i(?:'m| am)\s+not\s+(?:\w+ly\s+){0,2}(?:actually\s+)?able\s+to\s+"
+        r"(?:\w+ly\s+)?(?:interact|access|control|open|write|do)|"
+        r"i\s+(?:cannot|can'?t)\s+(?:\w+ly\s+){0,2}"
+        r"(?:interact|access|control|open|write|create|edit)\b|"
         r"you\s+can\s+copy\s+it\s+into\s+notes)|"
         r"(?:the\s+)?task\s+(?:asked|asks|requested|requests)\s+(?:me\s+)?to\s+(?:type|write|open|create|export)|"
         r"i\s+am\s+(?:typing|writing|pasting)\s+(?:here|this)\s+because\s+(?:the\s+)?task\s+(?:asked|requires)|"
