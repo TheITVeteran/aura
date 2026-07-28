@@ -12345,6 +12345,50 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     )
     if any(marker in text for marker in explicit_markers):
         return True
+
+    # A phrase list cannot cover how people ask.
+    #
+    # Live 2026-07-27: "What can you actually do on this computer right now?"
+    # matched none of the literals above, so the registry was never consulted
+    # and she answered from the model's own idea of herself — listing
+    # code_repl and execute_nethack_action while flatly denying web search, a
+    # skill that is registered AND had run successfully minutes earlier. The
+    # literals stay as a fast path; this is the shape underneath them.
+    #
+    # Deliberately requires all three parts: her as the subject, a capability
+    # word, and a question. "Can you do the marble problem?" has the first two
+    # and is a request, not an inventory question, so the capability word must
+    # be about capability-in-general rather than about a task.
+    # "How does confusion change your planning, memory use, and tool
+    # verification?" is about PROCESS, not inventory — it names her, a
+    # capability word and a question, and wants none of the registry. An
+    # inventory question asks WHAT is available; a process question asks HOW
+    # or WHY something works, so those lead-ins disqualify it.
+    if re.search(r"\b(?:how|why|when)\b", text, flags=re.IGNORECASE) and not re.search(
+        r"\b(?:what|which|list|show\s+me)\b", text, flags=re.IGNORECASE
+    ):
+        return False
+    if re.search(
+        r"\bhow\s+(?:does|do|would|did|is|are)\b", text, flags=re.IGNORECASE
+    ):
+        return False
+
+    if re.search(
+        r"\bwhat(?:'s| is| are)?\b[^?]{0,80}?\b(?:you|your|aura|she|her)\b"
+        r"|\b(?:you|your|aura|she|her)\b[^?]{0,80}?\b(?:capable|abilit|"
+        r"capabilit|tools?|skills?)\b",
+        text,
+        flags=re.IGNORECASE,
+    ) and re.search(
+        r"\b(?:capable|capabilit|abilit|tools?|skills?|"
+        r"actually\s+(?:do|use|run)|do\s+(?:right\s+now|on\s+(?:this|my)\s+"
+        r"(?:computer|machine|desktop|mac))|"
+        r"wired\s+up|available\s+to\s+you|access\s+to)\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return True
+
     if not _is_capability_inventory_request(user_message):
         return False
     if re.search(
