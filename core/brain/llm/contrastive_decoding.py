@@ -34,12 +34,124 @@ from typing import Any
 import numpy as np
 
 logger = logging.getLogger("Aura.ContrastiveDecoding")
+# ── Numerical admission for logits ──────────────────────────────────────
+#
+# CP126 (high): "NumPy primitives do not validate empty or non-finite
+# logits. max, exponentiation, and normalization run on arbitrary arrays
+# without checking nonempty rank, finite values, or positive normalizer.
+# Empty arrays raise and NaN/Infinity can produce invalid masks or output."
+#
+# All three were reachable. ``np.max`` on a zero-size array raises
+# ValueError outright; a NaN anywhere makes the softmax NaN everywhere, so
+# the plausibility mask silently selects nothing and every token becomes
+# -inf; and +inf produces a threshold no token can clear. On the decode
+# path a raise kills the generation and a bad mask produces garbage text,
+# and the second is harder to notice because it looks like a bad answer
+# rather than a bug.
+#
+# These run per token, so the check is one pass over the array and nothing
+# more.
+
+
+class LogitsRejected(Exception):
+    """Raised internally when logits cannot be used; never escapes a public call."""
+
+
+def _validated_logits(array: Any, *, name: str) -> np.ndarray:
+    """A finite, non-empty, one-dimensional float view — or refuse.
+
+    Refusing is not the same as failing: every public entry point below
+    turns a refusal into "leave the caller's logits alone", which is the
+    only safe no-op at a decode boundary.
+    """
+    try:
+        values = np.asarray(array, dtype=np.float64).reshape(-1)
+    except (TypeError, ValueError) as exc:
+        raise LogitsRejected(f"{name}: not coercible to float array ({exc})") from exc
+    if values.size == 0:
+        raise LogitsRejected(f"{name}: empty logits")
+    if not np.all(np.isfinite(values)):
+        nonfinite = int(np.count_nonzero(~np.isfinite(values)))
+        raise LogitsRejected(f"{name}: {nonfinite} non-finite value(s)")
+    return values
+
+
+def _record_decode_noop(reason: str) -> None:
+    """Count a no-op so callers can see coverage, not just guess at it.
+
+    CP126 (high), second finding: "Fail-open degradation is not surfaced to
+    the generation receipt. Processors return original logits or None with
+    only debug logging. Callers receive no status indicating contrastive/
+    steering coverage, failure count, fallback reason, or whether advertised
+    reasoning steering causally affected output."
+    """
+    with _DECODE_HEALTH_LOCK:
+        _DECODE_HEALTH["noops"] += 1
+        reasons = _DECODE_HEALTH["reasons"]
+        key = reason.split(":", 1)[0]
+        reasons[key] = reasons.get(key, 0) + 1
+        _DECODE_HEALTH["last_reason"] = reason[:200]
+
+
+def _record_decode_applied() -> None:
+    with _DECODE_HEALTH_LOCK:
+        _DECODE_HEALTH["applied"] += 1
+
+
+_DECODE_HEALTH_LOCK = threading.Lock()
+_DECODE_HEALTH: dict[str, Any] = {
+    "applied": 0,
+    "noops": 0,
+    "reasons": {},
+    "last_reason": "",
+}
+
+
+def decode_health() -> dict[str, Any]:
+    """Coverage for contrastive/steering decoding.
+
+    ``applied`` is the number of calls that actually changed the
+    distribution; ``noops`` is the number that returned the input unchanged,
+    broken down by why. A caller advertising "reasoning steering" can check
+    that it is happening rather than assuming it.
+    """
+    with _DECODE_HEALTH_LOCK:
+        applied = int(_DECODE_HEALTH["applied"])
+        noops = int(_DECODE_HEALTH["noops"])
+        total = applied + noops
+        return {
+            "schema": "aura.contrastive_decode_health.v1",
+            "applied": applied,
+            "noops": noops,
+            "calls": total,
+            "coverage": (applied / total) if total else 0.0,
+            "reasons": dict(_DECODE_HEALTH["reasons"]),
+            "last_reason": str(_DECODE_HEALTH["last_reason"]),
+        }
+
+
+def reset_decode_health() -> None:
+    with _DECODE_HEALTH_LOCK:
+        _DECODE_HEALTH.update(applied=0, noops=0, reasons={}, last_reason="")
+
 
 
 def _log_softmax_np(logits: np.ndarray) -> np.ndarray:
+    """Log-softmax over validated logits.
+
+    Callers must pass a ``_validated_logits`` result: the max-shift makes
+    the exponentials finite, but only if the input was finite to begin with,
+    and the normalizer is positive only if the array is non-empty.
+    """
     m = np.max(logits)
     shifted = logits - m
-    return shifted - np.log(np.sum(np.exp(shifted)))
+    total = float(np.sum(np.exp(shifted)))
+    if not math.isfinite(total) or total <= 0.0:
+        # Unreachable for validated input; kept because a silently wrong
+        # distribution is worse than a refusal, and this is the one place
+        # that can still tell the difference.
+        raise LogitsRejected(f"non-positive softmax normalizer ({total})")
+    return shifted - np.log(total)
 
 
 def plausible_mask_np(logits: np.ndarray, beta: float) -> np.ndarray:
@@ -47,8 +159,9 @@ def plausible_mask_np(logits: np.ndarray, beta: float) -> np.ndarray:
 
     Computed in log space: ``log p ≥ log beta + max log p``. Returns a boolean mask.
     """
-    logp = _log_softmax_np(logits)
-    threshold = math.log(max(beta, 1e-9)) + float(np.max(logp))
+    values = _validated_logits(logits, name="plausible_mask")
+    logp = _log_softmax_np(values)
+    threshold = math.log(max(float(beta), 1e-9)) + float(np.max(logp))
     return logp >= threshold
 
 
@@ -65,18 +178,34 @@ def contrastive_combine_np(
     ``-inf`` so they can never be sampled; among plausible tokens the amateur's
     preference is subtracted. ``alpha`` is the contrast strength.
     """
-    smart = np.asarray(smart, dtype=np.float64).reshape(-1)
-    amateur = np.asarray(amateur, dtype=np.float64).reshape(-1)
-    if smart.shape != amateur.shape:
-        # Shape mismatch ⇒ cannot contrast; fail open to the strong logits.
-        return smart
-    mask = plausible_mask_np(smart, beta)
-    smart_lp = _log_softmax_np(smart)
-    amateur_lp = _log_softmax_np(amateur)
-    combined = (1.0 + alpha) * smart_lp - alpha * amateur_lp
+    # The strong logits are the fallback, so they are coerced without
+    # validation — returning them unchanged is always safe, even if they
+    # are the thing that is malformed.
+    smart_raw = np.asarray(smart, dtype=np.float64).reshape(-1)
+    try:
+        smart_v = _validated_logits(smart, name="smart")
+        amateur_v = _validated_logits(amateur, name="amateur")
+    except LogitsRejected as exc:
+        _record_decode_noop(f"contrastive:{exc}")
+        return smart_raw
+    if smart_v.shape != amateur_v.shape:
+        # Shape mismatch ⇒ cannot contrast; leave the strong logits alone.
+        _record_decode_noop("contrastive:shape_mismatch")
+        return smart_raw
+    try:
+        mask = plausible_mask_np(smart_v, beta)
+        smart_lp = _log_softmax_np(smart_v)
+        amateur_lp = _log_softmax_np(amateur_v)
+    except LogitsRejected as exc:
+        _record_decode_noop(f"contrastive:{exc}")
+        return smart_raw
+    alpha_f = float(alpha) if math.isfinite(float(alpha)) else 0.0
+    combined = (1.0 + alpha_f) * smart_lp - alpha_f * amateur_lp
     out = np.where(mask, combined, -np.inf)
     if not np.any(np.isfinite(out)):  # safety: never return all -inf
-        return smart
+        _record_decode_noop("contrastive:all_masked")
+        return smart_raw
+    _record_decode_applied()
     return out
 
 
@@ -88,14 +217,35 @@ def steering_combine_np(
     scale: float = 1.0,
 ) -> np.ndarray:
     """Apply a bounded logit bias only to plausible tokens (re-rank within the safe set)."""
-    logits = np.asarray(logits, dtype=np.float64).reshape(-1)
+    raw = np.asarray(logits, dtype=np.float64).reshape(-1)
     if not bias:
-        return logits
-    mask = plausible_mask_np(logits, beta)
-    out = logits.copy()
+        return raw
+    # CP126: this had no fail-open envelope at all, so malformed logits or a
+    # non-finite bias raised straight into the decode loop.
+    try:
+        values = _validated_logits(logits, name="steering")
+        mask = plausible_mask_np(values, beta)
+    except LogitsRejected as exc:
+        _record_decode_noop(f"steering:{exc}")
+        return raw
+    scale_f = float(scale) if math.isfinite(float(scale)) else 0.0
+    out = values.copy()
+    changed = False
     for token_id, delta in bias.items():
-        if 0 <= token_id < out.shape[0] and mask[token_id]:
-            out[token_id] += scale * float(delta)
+        try:
+            index = int(token_id)
+            shift = scale_f * float(delta)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(shift):
+            continue
+        if 0 <= index < out.shape[0] and mask[index]:
+            out[index] += shift
+            changed = True
+    if not changed:
+        _record_decode_noop("steering:no_plausible_target")
+        return raw
+    _record_decode_applied()
     return out
 
 
