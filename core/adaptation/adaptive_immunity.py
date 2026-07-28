@@ -110,6 +110,28 @@ def _maintenance_background_deferral_reason() -> str:
         return "background_policy_unavailable"
 
 
+def _artifact_payload_digest(artifact: Any) -> str:
+    """Digest of the concrete effect an artifact would produce.
+
+    Binds a Will approval to THIS payload rather than to the category of
+    action it belongs to (CP126 81f0c6a0).
+    """
+    try:
+        body = json.dumps(
+            {
+                "kind": getattr(getattr(artifact, "kind", None), "value", ""),
+                "component": str(getattr(artifact, "component", "")),
+                "payload": _json_safe(getattr(artifact, "bounded_payload", {})),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+    except (TypeError, ValueError):
+        body = repr(getattr(artifact, "bounded_payload", ""))
+    return hashlib.sha256(body.encode("utf-8", "replace")).hexdigest()
+
+
 def _json_safe(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -2567,6 +2589,11 @@ class AdaptiveImmuneSystem:
             "notes": notes,
         }
 
+    def _cell_generation(self, cell_id: str) -> int:
+        """Generation of the cell that produced an artifact, or -1 if gone."""
+        cell = self._find_cell(cell_id)
+        return int(getattr(cell, "clone_generation", -1)) if cell is not None else -1
+
     def _authorize_protected_action(
         self,
         artifact: EffectorArtifact,
@@ -2578,6 +2605,15 @@ class AdaptiveImmuneSystem:
             )
             from core.will import ActionDomain, get_will
 
+            # CP126 81f0c6a0: Will saw only component, kind, danger and
+            # lineage — it authorized a CATEGORY of action, not the action.
+            # The exact parameters, the behavioural rule that produced them,
+            # the cell generation, and the strategy were all outside the
+            # decision, so an approval for "restart component X" covered any
+            # payload that later arrived under that description. The payload
+            # digest binds the approval to the concrete effect, and the
+            # decision is refused if the payload changes afterwards.
+            payload_digest = _artifact_payload_digest(artifact)
             recovery_context = build_internal_recovery_context(
                 "adaptive_immune_system",
                 artifact.kind.value,
@@ -2589,6 +2625,16 @@ class AdaptiveImmuneSystem:
                     "danger": antigen.danger,
                     "protected": antigen.protected,
                     "lineage_id": artifact.lineage_id,
+                    # What is actually going to be done, not just to what.
+                    "payload_digest": payload_digest,
+                    "bounded_payload": _json_safe(artifact.bounded_payload),
+                    "repair_strategy": self._artifact_strategy_name(artifact.kind),
+                    "source_cell_id": artifact.source_cell_id,
+                    "source_cell_generation": self._cell_generation(artifact.source_cell_id),
+                    "confidence": round(float(artifact.confidence), 4),
+                    "subsystem": antigen.subsystem,
+                    "source_domain": antigen.source_domain,
+                    "error_signature": antigen.error_signature[:200],
                 },
             )
             decision = get_will().decide(
@@ -2598,7 +2644,20 @@ class AdaptiveImmuneSystem:
                 priority=min(0.95, 0.45 + 0.35 * antigen.danger),
                 context=recovery_context,
             )
-            return bool(decision.is_approved())
+            if not bool(decision.is_approved()):
+                return False
+            # The approval covered THIS payload. If anything mutated the
+            # artifact between the decision and here, the approval no longer
+            # describes what would run.
+            if _artifact_payload_digest(artifact) != payload_digest:
+                _record_adaptive_immunity_degradation(
+                    RuntimeError("artifact payload changed after authorization"),
+                    action="refused an immune effector whose payload changed after the Will decision",
+                    severity="degraded",
+                    extra={"artifact_id": artifact.artifact_id},
+                )
+                return False
+            return True
         except (ImportError, AttributeError, RuntimeError) as exc:
             _record_adaptive_immunity_degradation(
                 exc,
