@@ -203,3 +203,40 @@ def test_the_explicit_opt_in_still_works():
         )
         is True
     )
+
+
+def test_she_authors_the_artifact_when_she_must_supply_the_words():
+    """A note that describes what a note should contain is empty of content.
+
+    Only self-summaries and research documents ever reached the model. "Write a
+    note with three sentences about orcas" fell to the deterministic composer,
+    and the entire body was:
+
+        "Notes on the requested subject: The requested subject is the focus of
+         this note. The important part is to describe the subject clearly,
+         ground it in concrete details, and preserve enough context that the
+         note is useful after the moment of writing has passed."
+
+    Correctly created, correctly saved, and saying nothing about orcas.
+    """
+    needs = DesktopTaskSkill._objective_needs_authored_content
+
+    for objective in (
+        "Open the Notes app and write a new note with three sentences about orcas.",
+        "Write a short summary of what you think about whales into a note",
+        "Write me a paragraph about bioluminescence and save it",
+    ):
+        assert needs(objective) is True, objective
+
+
+def test_an_objective_with_its_own_content_source_is_not_authored():
+    """Writing something new would ignore what was actually asked."""
+    needs = DesktopTaskSkill._objective_needs_authored_content
+
+    for objective in (
+        "Create a note from the clipboard.",
+        "Save the clipboard into a file",
+        'Write a note that says "hello world"',
+        "Put the selection into a document",
+    ):
+        assert needs(objective) is False, objective

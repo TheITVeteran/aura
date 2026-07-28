@@ -21,6 +21,19 @@ from core.runtime.os_automation_effects import extract_target_paths
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
 
+#: Failures the artifact-authoring path can survive: the router is absent,
+#: the call times out, or the response is the wrong shape. None of them
+#: justify losing the document — the deterministic composer still runs.
+_DESKTOP_TASK_RECOVERABLE_ERRORS = (
+    AttributeError,
+    ImportError,
+    OSError,
+    RuntimeError,
+    TimeoutError,
+    TypeError,
+    ValueError,
+)
+
 # Sentinel URL resolved at execution time from the most recent
 # fetch_topic_image receipt — derivation cannot know the source page
 # before the fetch runs ("show me where you found it").
@@ -931,6 +944,127 @@ class DesktopTaskSkill(BaseSkill):
                 if authored:
                     return cls._ensure_requested_timestamp(objective, authored)
         return ""
+
+    #: The content already has a source — a clipboard, a file, a quotation.
+    #: Authoring one instead would ignore what the person actually asked for.
+    _CONTENT_SOURCE_RE = re.compile(
+        r"(?i)("
+        # Named sources are a content source wherever they appear: "save the
+        # clipboard into a file" is not a request to write something new.
+        r"\b(clipboard|pasteboard|the selection)\b"
+        r"|\b(from|out of|using|based on)\s+(the\s+)?"
+        r"(that file|this file|the file|the document|the page|the article|"
+        r"the text above|what i (said|wrote|sent))\b"
+        r")"
+    )
+
+    @classmethod
+    def _objective_needs_authored_content(cls, objective: str) -> bool:
+        """True only when SHE has to supply the words.
+
+        "Create a note from the clipboard" names its own content source; writing
+        something new there would ignore the request. "Write a note with three
+        sentences about orcas" does not, and that is the case where the
+        deterministic composer produced a note describing what a note should
+        contain instead of containing it.
+        """
+
+        text = str(objective or "")
+        if not text.strip():
+            return False
+        if cls._CONTENT_SOURCE_RE.search(text):
+            return False
+        if cls._objective_supplies_literal_document_body(text):
+            return False
+        return bool(
+            cls._objective_requests_freeform_written_content(text)
+            or cls._objective_requests_written_artifact(text)
+        )
+
+    async def _synthesize_requested_writing(
+        self,
+        *,
+        objective: str,
+        context: dict[str, Any],
+    ) -> str:
+        """Write the artifact she was asked to write, in her own words.
+
+        Self-summaries and research documents already reached the model;
+        everything else fell to a deterministic composer that describes what a
+        note SHOULD contain instead of containing it. Measured live, the whole
+        body of a note asked to hold three sentences about orcas:
+
+            "Notes on the requested subject: The requested subject is the focus
+             of this note. The important part is to describe the subject
+             clearly, ground it in concrete details, and preserve enough context
+             that the note is useful after the moment of writing has passed."
+
+        Correctly created, correctly saved, and empty of content.
+        """
+
+        topic = self._extract_requested_writing_topic(objective) or objective
+        try:
+            from core.container import ServiceContainer
+
+            router = ServiceContainer.get("llm_router", default=None)
+            generate = getattr(router, "generate", None) if router is not None else None
+            if not callable(generate):
+                return ""
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS:
+            return ""
+
+        prompt = (
+            f"Write the CONTENT of a document about: {topic}\n\n"
+            f"The full request was: {str(objective or '').strip()[:400]}\n\n"
+            "Write the finished text itself — the words that belong inside the "
+            "document. Honour any length or shape the request asked for (a "
+            "number of sentences, a paragraph, a summary). Be concrete and "
+            "specific: real facts, names, numbers where they matter. Write in "
+            "your own voice.\n"
+            "Do NOT describe what the document should contain, do not mention "
+            "tools or steps, do not address the reader about the task, and do "
+            "not restate the instruction. Output only the document text."
+        )
+        try:
+            text = await asyncio.wait_for(
+                generate(
+                    prompt=prompt,
+                    timeout=45.0,
+                    temperature=0.65,
+                    max_tokens=700,
+                    prefer_tier="local",
+                    origin="desktop_task",
+                    purpose="authored_artifact_body",
+                ),
+                timeout=50.0,
+            )
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "desktop_task",
+                exc,
+                action="fell back to the deterministic composer after artifact authorship failed",
+                severity="warning",
+            )
+            return ""
+
+        body = str(text or "").strip()
+        if not body:
+            return ""
+        # The same guards the freeform path already applies: never let the
+        # conversation, dispatch narration, or a truncated clause become the
+        # artifact.
+        usable = self._usable_freeform_document_body(objective, body)
+        if not usable:
+            return ""
+        try:
+            from core.conversation.response_reliability import complete_truncated_tail
+
+            completed = complete_truncated_tail(usable)
+            if completed and len(completed) >= len(usable) * 0.5:
+                usable = completed
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS:
+            pass
+        return usable[:9000]
 
     async def _synthesize_self_summary_document(
         self,
@@ -3687,6 +3821,30 @@ class DesktopTaskSkill(BaseSkill):
                 if self._allow_research_model_synthesis(task_context)
                 else "source_grounded_deterministic_synthesis"
             )
+        elif self._objective_requests_freeform_written_content(
+            objective
+        ) or self._objective_requests_written_artifact(objective):
+            # Author the artifact, the same way a self-summary is authored.
+            #
+            # Only self-summaries and research documents ever reached the model.
+            # Everything else fell to the deterministic composer, so "write a
+            # note with three sentences about orcas" produced, verbatim:
+            #   "Notes on the requested subject: The requested subject is the
+            #    focus of this note. The important part is to describe the
+            #    subject clearly..."
+            # A real note, correctly created, saying nothing about orcas. That
+            # is the "note that opens with no text" — it is not empty, it is
+            # empty of content.
+            if not str(
+                task_context.get("desktop_task_document_body") or ""
+            ).strip() and self._objective_needs_authored_content(objective):
+                authored = await self._synthesize_requested_writing(
+                    objective=objective,
+                    context=task_context,
+                )
+                if authored:
+                    task_context["desktop_task_document_body"] = authored
+                    document_provenance = "local_cortex_authored_artifact"
         if not steps:
             steps = self._derive_steps_from_objective(objective, task_context)
             planner = "heuristic_compat"

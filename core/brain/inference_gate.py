@@ -8418,6 +8418,25 @@ class InferenceGate:
             if marker in str(system_prompt or "")
             or any(marker in str(msg.get("content", "") or "") for msg in messages)
         ]
+        # FINAL word on the budget for an execution turn.
+        #
+        # The earlier raise fired ("raising the reply budget 288 -> 1024") and
+        # was then overwritten by the compact-foreground path, so the caller
+        # still asked for 288 — "Foreground starvation floor raised budget
+        # 284->288 (caller asked 288)" — and a multi-step JSON plan cannot be
+        # written in 288 tokens. Applied here, immediately before dispatch,
+        # after every other budget computation has had its say.
+        if bool(context.get("desktop_execution_contract", False)):
+            _plan_floor_final = 1024
+            if int(max_tokens or 0) < _plan_floor_final:
+                logger.info(
+                    "🖥️ [PLAN BUDGET] Execution turn: %s → %d tokens at dispatch.",
+                    max_tokens,
+                    _plan_floor_final,
+                )
+                max_tokens = _plan_floor_final
+                context["max_tokens"] = max_tokens
+
         logger.info(
             "🧭 [GROUNDING] survived to dispatch: %s (sys_prompt=%d)",
             ",".join(_grounded) or "NONE",
