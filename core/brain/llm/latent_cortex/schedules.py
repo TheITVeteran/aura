@@ -281,8 +281,35 @@ class LayerSchedule:
         return sum((op.end - op.start) * op.repeats for op in self.ops)
 
     def validate(self, *, prelude_end: int, coda_start: int) -> list[str]:
-        """Human-readable violations; empty ⇒ the program may execute."""
+        """Human-readable violations; empty ⇒ the program may execute.
+
+        The recurrent region itself is validated first. CP126 f905e912: these
+        bounds arrive from the caller and were used without any check of their
+        types or their relation to each other, so a false topology could make
+        an invalid program look valid — the ops were compared against numbers
+        that described no real model. An empty list from this method is the
+        module's "safe to execute" claim, and a claim measured against
+        unchecked bounds is not one.
+
+        This still does not bind the bounds to a LOADED MODEL's layer count;
+        that needs a topology receipt from whoever owns the weights, and is
+        the remaining half of f905e912.
+        """
         problems: list[str] = []
+        for name, bound in (("prelude_end", prelude_end), ("coda_start", coda_start)):
+            if isinstance(bound, bool) or not isinstance(bound, int):
+                problems.append(f"{name} must be an int, got {_safe_display(bound)}")
+            elif bound < 0:
+                problems.append(f"{name} must be non-negative, got {bound}")
+        if problems:
+            # The region is unusable, so per-op comparisons against it would be
+            # noise at best and false reassurance at worst.
+            return problems
+        if prelude_end >= coda_start:
+            return [
+                f"recurrent region is empty or inverted "
+                f"(prelude_end={prelude_end} >= coda_start={coda_start})"
+            ]
         if not self.ops:
             problems.append("schedule has no ops")
         total_layer_repeats = 0
@@ -850,6 +877,26 @@ class ScheduleLibrary:
         self, domain: str, *, prelude_end: int, coda_start: int, default_repeats: int
     ) -> LayerSchedule:
         default = LayerSchedule.single_window(prelude_end, coda_start, default_repeats)
+        # CP126 4b6e3234: candidates were validated and the DEFAULT was not,
+        # yet the default is what gets returned whenever no candidate wins —
+        # which is the common case. An inverted region, non-positive repeats
+        # or out-of-topology bounds therefore reached execution through the
+        # one path nothing checked, straight past the module's promise that an
+        # invalid program never touches the model.
+        #
+        # This fails closed rather than degrading: if even the trivial
+        # single-window program is invalid for these bounds, the caller has
+        # asked for a schedule over a region that cannot be executed, and
+        # returning something unrunnable would only move the failure somewhere
+        # less legible.
+        default_problems = default.validate(
+            prelude_end=prelude_end, coda_start=coda_start
+        )
+        if default_problems:
+            raise ValueError(
+                "default schedule is not executable for this topology: "
+                + "; ".join(default_problems[:3])
+            )
         normalized_domain = str(domain or "").strip().lower()
         with self._lock:
             records = list(self._records.items())
