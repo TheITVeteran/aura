@@ -255,6 +255,48 @@ def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample
     )
 
 
+def _shed_registered_organs() -> tuple[int, int]:
+    """Pull every rung on the OOM ladder. Returns (organs_shed, bytes_freed).
+
+    The ladder and this watchdog were two independent answers to memory pressure
+    that did not know about each other. Measured live: "swap exhaustion: managed
+    RSS 33868MB swap 8.3GB ... terminated 0 heavy workers and forced gc
+    out-of-band" — nothing to kill, nothing reclaimed — while the prompt KV
+    cache sat registered as sheddable with a bounded ~3GB footprint.
+
+    Best-effort and never fatal: a reclaim path that raises under memory
+    pressure is worse than one that frees nothing.
+    """
+
+    try:
+        from core.runtime.oom_policy import get_oom_policy
+    except (ImportError, AttributeError):
+        return 0, 0
+    try:
+        policy = get_oom_policy()
+        shed_all = getattr(policy, "shed_all", None)
+        if callable(shed_all):
+            result = shed_all()
+            if isinstance(result, tuple) and len(result) == 2:
+                return int(result[0]), int(result[1])
+        organs = 0
+        freed = 0
+        for policy_entry in list(getattr(policy, "_organs", {}).values()):
+            shed = getattr(policy_entry, "shed", None)
+            if not callable(shed):
+                continue
+            try:
+                released = int(shed() or 0)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if released > 0:
+                organs += 1
+                freed += released
+        return organs, freed
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return 0, 0
+
+
 def terminate_heavy_child_workers(grace_s: float = 2.0) -> int:
     """Terminate inference child workers out-of-band. Returns count killed."""
     killed = 0
@@ -305,6 +347,7 @@ class MemoryWatchdog(threading.Thread):
         sampler: Callable[[], MemorySample] | None = None,
         worker_terminator: Callable[[], int] | None = None,
         gc_collect: Callable[[], int] | None = None,
+        ladder_shed: Callable[[], tuple[int, int]] | None = None,
         process_exit: Callable[[int], None] | None = None,
     ):
         super().__init__(daemon=True, name="AuraMemoryWatchdog")
@@ -324,6 +367,7 @@ class MemoryWatchdog(threading.Thread):
         self._sampler = sampler or default_sampler
         self._worker_terminator = worker_terminator or terminate_heavy_child_workers
         self._gc_collect = gc_collect or gc.collect
+        self._ladder_shed = ladder_shed or _shed_registered_organs
         self._process_exit = process_exit or self._default_process_exit
         self._stop_event = threading.Event()
         self._started_at = time.monotonic()
@@ -501,10 +545,21 @@ class MemoryWatchdog(threading.Thread):
             sample.managed_rss_mb,
             sample.swap_used_gb,
         )
+        # Shed caches BEFORE killing workers. The OOM ladder carries organs that
+        # can give memory back for free — the prompt KV cache alone is bounded at
+        # ~3GB — and this path did not consult it, so the live log read
+        # "terminated 0 heavy workers and forced gc out-of-band" while several
+        # gigabytes sat registered as sheddable. A rung nothing pulls is not a
+        # rung. Killing a worker costs a model reload; dropping a cache costs a
+        # re-prefill.
+        shed_organs, shed_bytes = self._ladder_shed()
         killed = self._worker_terminator()
         collected = self._gc_collect()
         self._remember(
-            "hard", sample, f"{reason}: killed={killed} gc_collected={collected}"
+            "hard",
+            sample,
+            f"{reason}: shed={shed_organs} organs/{shed_bytes >> 20}MB "
+            f"killed={killed} gc_collected={collected}",
         )
         record_degradation(
             "memory_watchdog",
@@ -513,7 +568,10 @@ class MemoryWatchdog(threading.Thread):
                 f"swap {sample.swap_used_gb:.1f}GB"
             ),
             severity="critical",
-            action=f"terminated {killed} heavy workers and forced gc out-of-band",
+            action=(
+                f"shed {shed_organs} cache organ(s) freeing {shed_bytes >> 20}MB, "
+                f"terminated {killed} heavy workers, forced gc out-of-band"
+            ),
         )
         # Also nudge the graceful path in case the loop is still breathing.
         self._schedule_governor_sweep()
@@ -527,12 +585,14 @@ class MemoryWatchdog(threading.Thread):
             # Always try reclaiming before considering the terminal action.
             self._hard_attempted_in_streak = True
             self._last_hard_action_at = now
+            shed_organs, shed_bytes = self._ladder_shed()
             killed = self._worker_terminator()
             collected = self._gc_collect()
             self._remember(
                 "lethal_reclaim",
                 sample,
-                f"pre-abort reclaim: killed={killed} gc_collected={collected}",
+                f"pre-abort reclaim: shed={shed_organs} organs/{shed_bytes >> 20}MB "
+                f"killed={killed} gc_collected={collected}",
             )
             logger.critical(
                 "🚨 [MEMWATCH] LETHAL ceiling: managed RSS %.0fMB ≥ %.0fMB. "

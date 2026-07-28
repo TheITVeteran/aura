@@ -716,6 +716,29 @@ class ResponseGenerationPhase(BasePhase):
             )
         ):
             return True
+        # A PROOF failure after a clean completion is not an exhausted owner.
+        #
+        # The episode ran to its terminal stage and released the resident model;
+        # what failed afterwards was its receipt contract — it could not PROVE
+        # what it had done. The owner is free, an ordinary generation is both
+        # possible and correct, and treating this as exhaustion costs the person
+        # their whole turn to protect an experimental lane's bookkeeping.
+        #
+        # Measured live on the desktop path the moment the latent lane started
+        # running at all: stage=complete, elapsed_s=59.9, then
+        #   receipt_contract_failed:terminal_disposition_unproven,
+        #   answer_replacement_unproven,fast_weight_learning_receipt_unproven
+        # ...and the reply the person received was "I couldn't get to an answer
+        # I'd stand behind on that one." Every turn died that way. An
+        # enhancement lane must never be able to destroy the answer.
+        terminal_stage = str(receipt.get("last_stage") or "").strip().lower()
+        if normalized.startswith("receipt_contract_failed:") and terminal_stage in {
+            "complete",
+            "completed",
+            "finished",
+        }:
+            return False
+
         input_token_count = receipt.get("input_token_count")
         input_evidence = bool(
             type(input_token_count) is int and input_token_count > 0

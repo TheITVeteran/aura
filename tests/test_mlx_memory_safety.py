@@ -1398,3 +1398,65 @@ def test_the_conversation_lane_keeps_its_own_reserved_slots():
     assert lru._lane_budget("default") > lru._lane_budget("user_surface"), (
         "the lane with many distinct families needs the larger share"
     )
+
+
+def test_memory_pressure_sheds_caches_before_killing_workers():
+    """The ladder and the watchdog were two answers that never met.
+
+    Measured live: "swap exhaustion: managed RSS 33868MB swap 8.3GB ...
+    terminated 0 heavy workers and forced gc out-of-band" — nothing to kill,
+    nothing reclaimed — while the prompt KV cache sat registered as sheddable
+    with a bounded ~3GB footprint. A rung nothing pulls is not a rung.
+
+    Killing a worker costs a full model reload; dropping a cache costs a
+    re-prefill. Caches must go first.
+    """
+    from core.resilience import memory_watchdog as mw
+    from core.runtime.oom_policy import register_organ, reset_oom_policy_for_test
+
+    reset_oom_policy_for_test()
+    try:
+        order: list[str] = []
+
+        def _shed_cache():
+            order.append("shed")
+            return 3 * 1024**3
+
+        register_organ(
+            "kv_cache", oom_score_adj=300, footprint=lambda: 3 * 1024**3,
+            shed=_shed_cache, rationale="test cache",
+        )
+
+        organs, freed = mw._shed_registered_organs()
+        assert organs == 1 and freed == 3 * 1024**3
+        assert order == ["shed"]
+
+        # A raising organ must not break the reclaim under pressure.
+        def _explodes():
+            raise RuntimeError("shed failed")
+
+        register_organ("broken", oom_score_adj=10, shed=_explodes, rationale="t")
+        organs_again, _ = mw._shed_registered_organs()
+        assert organs_again >= 1, "one broken organ must not abort the whole reclaim"
+    finally:
+        reset_oom_policy_for_test()
+
+
+def test_the_hard_reclaim_pulls_the_ladder_before_terminating_workers():
+    from core.resilience.memory_watchdog import MemoryWatchdog
+
+    calls: list[str] = []
+
+    watchdog = MemoryWatchdog(
+        worker_terminator=lambda: (calls.append("kill"), 0)[1],
+        gc_collect=lambda: (calls.append("gc"), 0)[1],
+        ladder_shed=lambda: (calls.append("shed"), (1, 3 * 1024**3))[1],
+    )
+    sample = watchdog._sampler()
+    watchdog._handle_hard(sample, 10_000.0, swap_escalation=True)
+
+    assert calls, "the hard tier must attempt a reclaim"
+    assert calls[0] == "shed", (
+        f"caches must be shed before workers are killed, got {calls}"
+    )
+    assert "kill" in calls
