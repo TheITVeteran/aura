@@ -7290,3 +7290,120 @@ body.theme-light .skill-card::before {
     width: 3px;
     left: 6px;
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   QUIET PASS — v15.5
+   The depth and typography passes fixed legibility and then
+   overcorrected into volume: every thought became a filled box with a
+   bright pill on it, so a feed of forty cards read as forty competing
+   objects. "Much uglier" was the right call. Weight was being used to
+   create hierarchy, and weight is the one tool that cannot, because
+   when everything is heavy nothing leads.
+
+   Polish here means the sentence is the only loud thing on the card.
+   Chrome recedes until you reach for it: no card fill, no chip
+   outline, a hairline where a box used to be, and the actions appear
+   on hover instead of sitting there asking to be noticed. Colour stops
+   being decoration and does one job — naming the channel.
+   ══════════════════════════════════════════════════════════ */
+
+/* A thought is text with a mark beside it, not a container. */
+.thought-card {
+    background: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    border-radius: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+    padding: 14px 4px 15px 14px;
+    margin-bottom: 0;
+}
+
+.thought-card:hover {
+    background: rgba(255, 255, 255, 0.018);
+    transform: none;
+    box-shadow: none;
+}
+
+/* The rail is the whole of the card's structure now, so it carries the
+   channel on its own and does not need a chip shouting the same thing. */
+.thought-card::before {
+    left: 0;
+    top: 16px;
+    bottom: 16px;
+    width: 2px;
+    background: color-mix(in srgb, var(--tc) 55%, transparent);
+}
+
+/* The channel label: plain text in its own hue. No pill, no border, no
+   fill — a pill is a button affordance, and this is a label. */
+.thought-tag-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    gap: 6px;
+    color: color-mix(in srgb, var(--tc) 78%, var(--text));
+}
+
+.thought-tag-btn:hover,
+.thought-tag-btn:focus-visible {
+    background: none;
+    border: none;
+    color: var(--tc);
+}
+
+/* The sigil keeps the colour; it just stops sitting in a tinted tile. */
+.thought-sigil {
+    width: 14px;
+    height: 14px;
+    border-radius: 0;
+    background: none;
+    color: color-mix(in srgb, var(--tc) 85%, transparent);
+}
+
+.thought-sigil svg { width: 12px; height: 12px; }
+
+.thought-chan {
+    font-family: var(--font-read);
+    font-size: 0.62rem;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    color: inherit;
+}
+
+/* Metadata sits back until wanted. */
+.thought-ts {
+    color: color-mix(in srgb, var(--text-dim) 72%, transparent);
+    font-size: 0.6rem;
+}
+
+/* Actions are for when you reach for them, not for looking at. */
+.thought-card-actions {
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+
+.thought-card:hover .thought-card-actions,
+.thought-card:focus-within .thought-card-actions {
+    opacity: 1;
+}
+
+/* The sentence, given room. Slightly smaller than the last pass and
+   more open, which reads calmer at the same legibility. */
+.thought-body,
+.thought-preview {
+    font-size: calc(0.795rem * var(--neural-text-scale));
+    line-height: 1.68;
+    color: color-mix(in srgb, var(--text) 92%, transparent);
+    margin-top: 7px;
+}
+
+/* The section shell held the cards in a second box around the boxes. */
+#pane-neural .panel-section {
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding-left: 2px;
+    padding-right: 2px;
+}
