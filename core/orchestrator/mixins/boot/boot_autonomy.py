@@ -151,6 +151,15 @@ class BootAutonomyMixin:
 
             self.world_model = register_causal_world_model(self)
 
+            # The value graph is the OTHER half of the high-risk-tool restraint
+            # pair beside the causal world model. Only the causal half was ever
+            # registered, so the gate saw a permanently "unavailable" value
+            # graph and refused every python_sandbox / shell_executor /
+            # file_operations request outright.
+            from core.adaptation.dynamic_value_graph import register_dynamic_value_graph
+
+            self.dynamic_value_graph = register_dynamic_value_graph(self)
+
             from core.agency.skill_library import register_skill_library
 
             self.skill_library = register_skill_library(self)

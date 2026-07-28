@@ -727,3 +727,35 @@ def get_dynamic_value_graph() -> DynamicValueGraph:
     if _instance is None:
         _instance = DynamicValueGraph()
     return _instance
+
+
+def register_dynamic_value_graph(orchestrator: Any = None) -> DynamicValueGraph:
+    """Put the value graph on the container spine, where restraints look for it.
+
+    This organ existed only as a module-level singleton, so
+    ``ServiceContainer.get("dynamic_value_graph")`` always returned None — and
+    the high-risk-tool gate in ``core/agency/agency_core.py`` treats an absent
+    value graph as "the restraint could not run", which is a refusal. The
+    result, measured live: EVERY high-risk shard tool (python_sandbox,
+    shell_executor, file_operations) was permanently refused with a CRITICAL
+    degradation on each attempt, while the graph itself was healthy and being
+    used by mind_tick through the accessor. Fail-closed was working exactly as
+    designed on a restraint that was never missing — only unregistered.
+    """
+
+    from core.runtime.service_registry import (
+        get_runtime_service,
+        register_runtime_service,
+    )
+
+    existing = get_runtime_service("dynamic_value_graph", default=None)
+    if isinstance(existing, DynamicValueGraph):
+        return existing
+    graph = get_dynamic_value_graph()
+    register_runtime_service(
+        "dynamic_value_graph",
+        graph,
+        owner="core/adaptation/dynamic_value_graph.py",
+        registered_by="register_dynamic_value_graph",
+    )
+    return graph

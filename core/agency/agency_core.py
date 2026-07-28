@@ -497,6 +497,21 @@ CRITICAL: You MUST respond with a valid JSON object matching the following struc
                         continue
                     try:
                         dvg = ServiceContainer.get("dynamic_value_graph", default=None)
+                        if dvg is None:
+                            # The graph is a module singleton first and a
+                            # container entry second. Resolving ONLY through the
+                            # container made an unregistered-but-healthy
+                            # restraint indistinguishable from a broken one, and
+                            # fail-closed then refused every high-risk tool for
+                            # the life of the process.
+                            try:
+                                from core.adaptation.dynamic_value_graph import (
+                                    get_dynamic_value_graph,
+                                )
+
+                                dvg = get_dynamic_value_graph()
+                            except _AGENCY_BOUNDARY_ERRORS:
+                                dvg = None
                         if dvg and name in _HIGH_RISK_SHARD_TOOLS:
                             status_dict = dvg.get_status().get("nodes", {})
                             top_values = sorted(status_dict.values(), key=lambda v: v.get("weight", 0), reverse=True)[:3]
