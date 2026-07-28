@@ -5268,9 +5268,40 @@ _VOCATIVE_ADDRESS_RE = re.compile(
 )
 
 
+def _identity_grounded_person_names() -> set[str]:
+    """Names from Aura's own immutable identity — creator and cornerstones.
+
+    These are the names it is least possible for her to be confabulating, and
+    they were the ONE grounding source this gate did not consult. Measured
+    live: the owner introduced himself in turn 1, she opened turn 2 with
+    "Bryan, let's reset..." — a natural, correctly-addressed reply — and the
+    gate rejected the whole draft as ``ungrounded_person_address`` because the
+    only sources it checked were optional relationship organs that had not
+    learned the name yet. Addressing the owner by the owner's own name is not
+    a hallucination risk.
+    """
+
+    names: set[str] = set()
+    try:
+        from core.identity.heartstone import HeartstoneDirective
+    except (ImportError, AttributeError):
+        return names
+    candidates: list[Any] = [getattr(HeartstoneDirective, "CREATOR_NAME", "")]
+    for cornerstone in getattr(HeartstoneDirective, "CORNERSTONES", ()) or ():
+        if isinstance(cornerstone, dict):
+            candidates.append(cornerstone.get("name", ""))
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        # "Creator" is the redacted placeholder when no profile is installed;
+        # it is a role, not a name, and must not ground a vocative.
+        if text and text.casefold() != "creator":
+            names.add(text.casefold())
+    return names
+
+
 def _registry_grounded_person_names() -> set[str]:
     """Names from in-process person/relationship organs (best effort)."""
-    names: set[str] = set()
+    names: set[str] = _identity_grounded_person_names()
     try:
         from core.runtime.service_registry import get_runtime_service
     except (ImportError, AttributeError):

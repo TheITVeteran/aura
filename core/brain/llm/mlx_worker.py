@@ -938,6 +938,103 @@ def _terminal_contract_refusal(
     return ""
 
 
+def _shrink_scaffold_to_context_window(
+    *,
+    messages: Any,
+    prompt: Any,
+    tokens: list[int],
+    window: int,
+    output_reserve: int,
+    tokenizer: Any,
+    tools: Any,
+) -> tuple[str, list[int], str]:
+    """Trim SCAFFOLD until the prompt fits the model's real context window.
+
+    The window was enforced as a hard refusal and nothing upstream bounded a
+    prompt against it, so any lane that overshot failed every single time.
+    Measured live: a background swarm-debate turn rendered 41,219 tokens for a
+    32,768-token window, and 161,578 of its 171,058 characters were ONE system
+    message — 94% scaffold around a 462-character request. The assembler's cap
+    is a hard-coded character count with no relationship to the target model's
+    window, so it passed a prompt the model could never accept.
+
+    Only ``system`` messages are shortened, longest first, and never below a
+    floor that keeps their opening instructions intact. User and assistant
+    turns are never touched: dropping the actual request to make room for
+    scaffold is the failure this exists to prevent. Returns
+    ``(prompt, tokens, note)`` with an empty note when nothing was trimmed, and
+    leaves the prompt untouched when the non-scaffold content alone cannot fit —
+    there the honest outcome is still a refusal.
+    """
+
+    budget = window - output_reserve
+    if budget <= 0 or len(tokens) <= budget or not isinstance(messages, list):
+        return str(prompt or ""), tokens, ""
+
+    def _render(candidate_messages: list[Any]) -> tuple[str, list[int]] | None:
+        try:
+            rendered = tokenizer.apply_chat_template(
+                candidate_messages, tools=tools, add_generation_prompt=True, tokenize=False
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        try:
+            return str(rendered), list(tokenizer.encode(str(rendered)))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    system_positions = [
+        index
+        for index, msg in enumerate(messages)
+        if isinstance(msg, dict)
+        and str(msg.get("role", "")).strip().lower() == "system"
+        and str(msg.get("content", "") or "").strip()
+    ]
+    if not system_positions:
+        return str(prompt or ""), tokens, ""
+
+    working = [dict(msg) if isinstance(msg, dict) else msg for msg in messages]
+    trimmed_note_parts: list[str] = []
+    # Chars-per-token measured on THIS prompt rather than assumed: a scaffold of
+    # JSON dumps and one of prose have very different ratios, and guessing 4.0
+    # either under-trims (and refuses anyway) or over-trims real instructions.
+    chars_per_token = max(1.0, len(str(prompt or "")) / max(1, len(tokens)))
+    floor_chars = 1200
+
+    for _pass in range(len(system_positions) + 1):
+        overflow_tokens = len(tokens) - budget
+        if overflow_tokens <= 0:
+            break
+        # 10% headroom: template overhead and tokenizer merges mean the retained
+        # slice never costs exactly the predicted number of tokens.
+        need_chars = int(overflow_tokens * chars_per_token * 1.1) + 64
+        target = max(
+            system_positions,
+            key=lambda index: len(str(working[index].get("content", "") or "")),
+        )
+        content = str(working[target].get("content", "") or "")
+        keep = max(floor_chars, len(content) - need_chars)
+        if keep >= len(content):
+            break
+        shortened = (
+            content[:keep]
+            + "\n\n[... scaffold trimmed to fit the model's context window ...]"
+        )
+        working[target]["content"] = shortened
+        trimmed_note_parts.append(f"system[{target}] {len(content)}->{len(shortened)} chars")
+        rendered = _render(working)
+        if rendered is None:
+            return str(prompt or ""), tokens, ""
+        prompt, tokens = rendered
+
+    if len(tokens) > budget:
+        # Nothing safe left to shed — the request itself does not fit. Refusing
+        # is correct; silently deleting the user's turn is not.
+        return str(prompt or ""), tokens, ""
+
+    return str(prompt or ""), tokens, "; ".join(trimmed_note_parts)
+
+
 def _salvage_exhausted_user_surface(
     job: dict[str, Any],
     response_text: Any,
@@ -4913,6 +5010,47 @@ def _mlx_worker_loop(
                                         2048,
                                     )
                                     if len(tokens) + _output_reserve > effective_context_window:
+                                        # Refusing was the ONLY response here, and
+                                        # nothing upstream bounds a prompt against
+                                        # the model's real window — so an
+                                        # overshooting lane failed on every attempt
+                                        # forever. Shed scaffold first; refuse only
+                                        # if the request itself will not fit.
+                                        _oversized_tokens = len(tokens)
+                                        prompt, tokens, _trim_note = _shrink_scaffold_to_context_window(
+                                            messages=messages,
+                                            prompt=prompt,
+                                            tokens=tokens,
+                                            window=effective_context_window,
+                                            output_reserve=_output_reserve,
+                                            tokenizer=tokenizer,
+                                            tools=tools,
+                                        )
+                                        if _trim_note:
+                                            _record_mlx_degradation(
+                                                RuntimeError(
+                                                    "scaffold_exceeded_context_window:"
+                                                    f"prompt_tokens={_oversized_tokens}:"
+                                                    f"window={effective_context_window}:"
+                                                    f"trimmed={_trim_note}"
+                                                ),
+                                                action=(
+                                                    "trimmed oversized system scaffold to fit the "
+                                                    "context window instead of failing the turn"
+                                                ),
+                                                severity="warning",
+                                            )
+                                            logger.warning(
+                                                "✂️ [WORKER] Scaffold exceeded the context window "
+                                                "(%d tokens > %d - %d reserve); trimmed to %d tokens "
+                                                "[%s]. The prompt builder should have bounded this.",
+                                                _oversized_tokens,
+                                                effective_context_window,
+                                                _output_reserve,
+                                                len(tokens),
+                                                _trim_note,
+                                            )
+                                    if len(tokens) + _output_reserve > effective_context_window:
                                         raise RuntimeError(
                                             "context_window_exceeded:"
                                             f"prompt_tokens={len(tokens)}:"
@@ -4985,12 +5123,25 @@ def _mlx_worker_loop(
                                             )
                                         except (AttributeError, RuntimeError, TypeError, ValueError):
                                             _divergent = "<undecodable>"
+                                        try:
+                                            # The REUSED head is the other half of
+                                            # the story: knowing reuse stopped at
+                                            # token 13 is useless without seeing
+                                            # what those 13 tokens were, because
+                                            # that names the block whose volatility
+                                            # is capping every conversation.
+                                            _stable_head = tokenizer.decode(tokens[:_reused])
+                                        except (AttributeError, RuntimeError, TypeError, ValueError):
+                                            _stable_head = "<undecodable>"
                                         logger.info(
                                             "🔍 [PROMPT CACHE] prefix diverges at token %d "
-                                            "(%.0f%% of %d reused); divergent text begins: %r",
+                                            "(%.0f%% of %d reused) scope=%s; stable head: %r; "
+                                            "divergent text begins: %r",
                                             _reused,
                                             100.0 * _reused / max(1, len(tokens)),
                                             len(tokens),
+                                            _prompt_cache_scope_for_job(job),
+                                            _stable_head[:200],
                                             _divergent[:160],
                                         )
 

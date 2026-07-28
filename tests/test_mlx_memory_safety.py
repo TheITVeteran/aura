@@ -863,3 +863,107 @@ def test_worker_deadline_reserves_a_delivery_margin():
 
     # A long budget must not surrender a proportionally huge margin.
     assert 300.0 - worker_budget(300.0) <= 6.0
+
+
+def test_oversized_scaffold_is_trimmed_instead_of_failing_the_lane_forever():
+    """A prompt over the model's window used to be a permanent dead lane.
+
+    The window was enforced only as a hard refusal in the worker and nothing
+    upstream bounded a prompt against it, so a lane that overshot failed on
+    every attempt. Measured live: a background swarm turn rendered 41,219
+    tokens for a 32,768-token window, and 161,578 of its 171,058 characters
+    were ONE system message — 94% scaffold around a 462-character request.
+    """
+    from core.brain.llm.mlx_worker import _shrink_scaffold_to_context_window
+
+    class _Tok:
+        """One token per 4 characters, deterministic."""
+
+        @staticmethod
+        def apply_chat_template(messages, tools=None, add_generation_prompt=True, tokenize=False):
+            return "\n".join(
+                f"<|{m['role']}|>{m['content']}" for m in messages if isinstance(m, dict)
+            )
+
+        @staticmethod
+        def encode(text):
+            return list(range(max(1, len(text) // 4)))
+
+    huge_scaffold = "S" * 160_000
+    request = "R" * 460
+    messages = [
+        {"role": "system", "content": huge_scaffold},
+        {"role": "system", "content": "keep me: short operating rules"},
+        {"role": "user", "content": request},
+    ]
+    prompt = _Tok.apply_chat_template(messages)
+    tokens = _Tok.encode(prompt)
+    window, reserve = 32_768, 92
+    assert len(tokens) + reserve > window, "fixture must actually overshoot"
+
+    new_prompt, new_tokens, note = _shrink_scaffold_to_context_window(
+        messages=messages,
+        prompt=prompt,
+        tokens=tokens,
+        window=window,
+        output_reserve=reserve,
+        tokenizer=_Tok,
+        tools=None,
+    )
+
+    assert note, "a trim must be reported, not applied silently"
+    assert len(new_tokens) + reserve <= window, "the trim must actually make it fit"
+    # The request survives intact; scaffold is what gets shed.
+    assert request in new_prompt, "the user's own turn must never be trimmed away"
+    assert "keep me: short operating rules" in new_prompt
+    assert "scaffold trimmed to fit" in new_prompt
+    # The oversized block keeps its opening instructions rather than vanishing.
+    assert "S" * 1000 in new_prompt
+
+    # A prompt that already fits is returned untouched, with no note.
+    small = [{"role": "user", "content": "hello"}]
+    small_prompt = _Tok.apply_chat_template(small)
+    small_tokens = _Tok.encode(small_prompt)
+    same_prompt, same_tokens, same_note = _shrink_scaffold_to_context_window(
+        messages=small,
+        prompt=small_prompt,
+        tokens=small_tokens,
+        window=window,
+        output_reserve=reserve,
+        tokenizer=_Tok,
+        tools=None,
+    )
+    assert (same_prompt, same_tokens, same_note) == (small_prompt, small_tokens, "")
+
+
+def test_a_request_too_large_to_fit_is_still_refused():
+    """Trimming scaffold must never become "delete the user's question"."""
+    from core.brain.llm.mlx_worker import _shrink_scaffold_to_context_window
+
+    class _Tok:
+        @staticmethod
+        def apply_chat_template(messages, tools=None, add_generation_prompt=True, tokenize=False):
+            return "\n".join(f"<|{m['role']}|>{m['content']}" for m in messages)
+
+        @staticmethod
+        def encode(text):
+            return list(range(max(1, len(text) // 4)))
+
+    messages = [
+        {"role": "system", "content": "small scaffold"},
+        {"role": "user", "content": "U" * 400_000},
+    ]
+    prompt = _Tok.apply_chat_template(messages)
+    tokens = _Tok.encode(prompt)
+
+    _, out_tokens, note = _shrink_scaffold_to_context_window(
+        messages=messages,
+        prompt=prompt,
+        tokens=tokens,
+        window=32_768,
+        output_reserve=92,
+        tokenizer=_Tok,
+        tools=None,
+    )
+    assert note == "", "no trim should be claimed when nothing safe can be shed"
+    assert len(out_tokens) + 92 > 32_768, "the caller must still see the overflow and refuse"
