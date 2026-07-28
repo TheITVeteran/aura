@@ -3120,17 +3120,36 @@ class AdaptiveImmuneSystem:
             interval_ewma = float(stats.get("interval_ewma", 0.0) or 0.0)
             verified = float(stats.get("verified_repairs", 0))
             failed = float(stats.get("failed_repairs", 0))
-            count_term = min(1.0, occurrences / 6.0)
-            streak_term = min(1.0, streak / 4.0)
+            # CP126 61cc8648: occurrences and streak were LIFETIME totals, so
+            # after six events the count term pinned at 1.0 and stayed there
+            # for the life of the process — recurrence pressure stopped
+            # meaning "this is happening again" and started meaning "this
+            # happened six times once". A subsystem that failed a lot last
+            # year looked identical to one failing right now.
+            last_seen = float(stats.get("last_seen", 0.0) or 0.0)
+            window = max(float(self.cfg.recurrence_window_s), 1.0)
+            age = max(0.0, time.time() - last_seen) if last_seen > 0.0 else window
+            # Linear decay to zero across one window: history informs, but
+            # only recent history is pressure.
+            recency = max(0.0, 1.0 - (age / window))
+
+            count_term = min(1.0, occurrences / 6.0) * recency
+            streak_term = min(1.0, streak / 4.0) * recency
             interval_term = 0.0
             if interval_ewma > 0.0:
-                interval_term = 1.0 - min(
-                    1.0, interval_ewma / max(self.cfg.recurrence_window_s, 1.0)
-                )
+                interval_term = 1.0 - min(1.0, interval_ewma / window)
             repair_term = failed / max(verified + failed + 1.0, 1.0)
-            pressures.append(
+            pressure = (
                 0.35 * count_term + 0.25 * streak_term + 0.20 * interval_term + 0.20 * repair_term
             )
+            # A verified repair MORE RECENT than the last occurrence opens a
+            # healthy epoch. Decrementing the streak by one left the old
+            # history dominating, so a fixed subsystem kept reporting the
+            # pressure of the problem that was fixed.
+            last_verified_at = float(stats.get("last_verified_at", 0.0) or 0.0)
+            if last_verified_at > last_seen > 0.0:
+                pressure *= 0.35
+            pressures.append(pressure)
         return float(max(pressures, default=0.0))
 
     def _record_recurrence_observation(self, antigen: Antigen) -> None:
