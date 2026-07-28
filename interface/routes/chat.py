@@ -17020,6 +17020,7 @@ async def _execute_desktop_objective_from_chat(
     completed = int(result.get("steps_completed") or 0)
     requested = int(result.get("steps_requested") or 0)
     summary = str(result.get("summary") or "").strip()
+    observation = _desktop_task_observation(result)
     research_response = _desktop_task_research_response(
         result,
         completed=completed,
@@ -17028,10 +17029,21 @@ async def _execute_desktop_objective_from_chat(
     if result.get("ok") and research_response:
         response = research_response
     elif result.get("ok"):
-        response = (
-            f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
-            f"Completed {completed}/{requested} governed desktop steps."
-        )
+        # Lead with WHAT SHE SAW, not with the step count.
+        #
+        # Live 2026-07-27, "read my screen and tell me what you actually see"
+        # succeeded — 1/1 governed steps — and the person was handed
+        # "Desktop task completed 1/1 governed computer-use steps through
+        # heuristic_compat planning." The observation was in the receipt the
+        # whole time. A step count is what the machine did; the answer is
+        # what it found, and the question was the second one.
+        if observation:
+            response = f"{observation} (Completed {completed}/{requested} governed desktop steps.)"
+        else:
+            response = (
+                f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
+                f"Completed {completed}/{requested} governed desktop steps."
+            )
     else:
         error = str(result.get("error") or result.get("status") or "desktop task failed").strip()
         response = (
@@ -17083,6 +17095,41 @@ def _desktop_task_research_response(
         f"{source_sentence}"
         f"{step_sentence}"
     )
+
+
+def _desktop_task_observation(result: dict[str, Any]) -> str:
+    """The content a desktop task OBSERVED, as opposed to what it did.
+
+    A read-the-screen task returns its finding inside the step receipts,
+    while the top-level `summary` describes the mechanism ("completed 1/1
+    governed computer-use steps through heuristic_compat planning"). Handing
+    someone the mechanism when they asked what is on their screen is the
+    receipt standing in for the answer.
+    """
+    candidates: list[str] = []
+    steps = result.get("steps") or result.get("step_results") or []
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            for key in ("observation", "screen_text", "text", "output", "content", "result"):
+                value = step.get(key)
+                if isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+                    break
+    for key in ("observation", "screen_text", "text", "output"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            candidates.append(value.strip())
+    for candidate in candidates:
+        # Skip the executor's own bookkeeping phrasing.
+        lowered = candidate.casefold()
+        if lowered.startswith(("desktop task completed", "completed ")):
+            continue
+        if len(candidate) < 3:
+            continue
+        return candidate[:1200]
+    return ""
 
 
 async def _write_live_proof_file(path: str, content: str, *, objective: str) -> dict[str, Any]:
