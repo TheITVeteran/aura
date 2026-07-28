@@ -1,0 +1,29 @@
+{
+  "checkpoint": "CP420K",
+  "claim_boundary": {
+    "frontier_reasoning_proven": false,
+    "model_loaded_or_trained": false,
+    "resident_32b_launch_ready": false,
+    "wow_signal": false
+  },
+  "evidence": {
+    "focused_matrix": {
+      "command": "python -m pytest -q tests/test_verified_transition_production_factory.py tests/test_recurrent_grpo_adapter_identity.py tests/test_resident_recurrent_grpo_preregistration.py tests/test_train_grpo_contract.py",
+      "passed": 81,
+      "seconds": 5.55
+    },
+    "static_checks": [
+      "ruff",
+      "py_compile",
+      "git_diff_check"
+    ]
+  },
+  "remaining_blockers": [
+    "production replay component implementation",
+    "sealed resident launch bundle publication",
+    "preregistered runner integration",
+    "small-checkpoint production-path proof"
+  ],
+  "schema": "aura.spark.checkpoint_evidence.v1",
+  "status": "root_verified_launch_loader_proven"
+}

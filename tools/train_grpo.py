@@ -1765,6 +1765,10 @@ def main(
                     REPO_ROOT
                     / "core/learning/verified_transition_production_factory.py"
                 ),
+                "transition_launch_bundle": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_launch_bundle.py"
+                ),
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),

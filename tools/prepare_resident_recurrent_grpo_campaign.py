@@ -136,6 +136,9 @@ SOURCE_ROLES: Mapping[str, str] = {
     "transition_provider_factory": (
         "core/learning/verified_transition_production_factory.py"
     ),
+    "transition_launch_bundle": (
+        "core/learning/verified_transition_launch_bundle.py"
+    ),
     "transition_rejection_transaction": (
         "core/learning/verified_transition_rejection_transaction.py"
     ),

@@ -24,6 +24,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
+from core.learning import verified_transition_launch_bundle as launch_bundle
 from core.learning.recurrence_curriculum import khop_reachability
 from core.learning.recurrent_grpo import RecurrentSamplingConfig
 from core.learning.verified_training_task import build_verified_training_task
@@ -31,6 +32,11 @@ from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     sampling_config_document_sha256,
     validate_transition_group_manifest,
+)
+from core.learning.verified_transition_launch_bundle import (
+    VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA,
+    VerifiedTransitionLaunchBundleError,
+    VerifiedTransitionRuntimeComponents,
 )
 from core.learning.verified_transition_production_factory import (
     COMMAND_SIGNER_RESPONSE_SCHEMA,
@@ -868,3 +874,141 @@ def test_plan_store_rejects_writable_peer_or_digest_tampering(tmp_path: Path) ->
         match="not_private_owned_file",
     ):
         material["store"].load(sequence=0)
+
+
+def test_root_bound_launch_bundle_constructs_only_pinned_factory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    material = _factory_material(tmp_path)
+
+    def binding(name: str, value: Any) -> dict[str, Any]:
+        payload = canonical_json_bytes(value) + b"\n"
+        path = tmp_path / name
+        path.write_bytes(payload)
+        path.chmod(0o600)
+        return {
+            "path": str(path),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+
+    root = tmp_path / "campaign-root.pem"
+    root.write_bytes(b"externally supplied root placeholder\n")
+    root.chmod(0o600)
+    root_binding = {
+        "path": str(root),
+        "sha256": hashlib.sha256(root.read_bytes()).hexdigest(),
+        "size_bytes": root.stat().st_size,
+    }
+    answer_nonce = b"factory-test-answer-nonce-material" * 2
+    unsigned = {
+        "schema": VERIFIED_TRANSITION_LAUNCH_BUNDLE_SCHEMA,
+        "campaign_name": "jit-provider-test",
+        "provider_contract": binding("provider-contract.json", material["contract"]),
+        "provider_config": binding("provider-config.json", material["provider_config"]),
+        "trust_policy": binding("trust-policy.json", material["policy"].document),
+        "trust_root": root_binding,
+        "campaign_ledger_root": str(material["ledger"].root),
+        "signer": {
+            "identity": material["broker"].identity,
+            "executable": str(material["broker"]._executable),
+            "executable_sha256": material["broker"].implementation_sha256,
+            "release_manifest": str(material["broker"]._release_manifest),
+            "custody_evidence": str(material["broker"]._custody_evidence),
+            "arguments": [],
+            "timeout_millis": 5_000,
+            "inherited_environment_names": [],
+        },
+        "task_commitments": binding(
+            "task-commitments.json",
+            {
+                "schema": "aura.verified_transition.task_commitments.v1",
+                "tasks": {material["task"].task_id: material["task_document"]},
+            },
+        ),
+        "task_answer_nonces": binding(
+            "task-answer-nonces.json",
+            {
+                "schema": "aura.verified_transition.task_answer_nonces.v1",
+                "nonces_b64": {
+                    material["task"].task_id: base64.b64encode(answer_nonce).decode(
+                        "ascii"
+                    )
+                },
+            },
+        ),
+    }
+    bundle = {
+        **unsigned,
+        "bundle_sha256": hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest(),
+    }
+    bundle_path = tmp_path / "launch-bundle.json"
+    bundle_raw = canonical_json_bytes(bundle) + b"\n"
+    bundle_path.write_bytes(bundle_raw)
+    bundle_path.chmod(0o600)
+    monkeypatch.setattr(
+        launch_bundle,
+        "validate_campaign_trust_policy",
+        lambda *_args, **_kwargs: material["policy"],
+    )
+    monkeypatch.setattr(
+        launch_bundle.VerifiedTransitionCausalCampaignLedger,
+        "open",
+        lambda *_args, **_kwargs: material["ledger"],
+    )
+    components = VerifiedTransitionRuntimeComponents(
+        evidence_producer=_producer,
+        evidence_producer_identity="evidence-producer",
+        durable_artifact_loader=_loader,
+        durable_artifact_loader_identity="replay-loader",
+        campaign_finalizer=_finalizer,
+        campaign_finalizer_identity="campaign-finalizer",
+        independent_scorer=_scorer,
+        scorer_identity="independent-scorer",
+        token_encoder=_encode,
+        token_decoder=_decode,
+        token_codec_identity="byte-codec",
+    )
+
+    factory = launch_bundle.load_verified_transition_provider_factory(
+        bundle_path,
+        expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+        components=components,
+        now_unix=BASE_SECOND + 200,
+    )
+
+    assert factory.contract_sha256 == material["contract"]["contract_sha256"]
+    with pytest.raises(
+        VerifiedTransitionLaunchBundleError,
+        match="launch_scorer_identity_mismatch",
+    ):
+        launch_bundle.load_verified_transition_provider_factory(
+            bundle_path,
+            expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+            components=replace(components, scorer_identity="substituted-scorer"),
+            now_unix=BASE_SECOND + 200,
+        )
+
+    linked_parent = tmp_path / "linked-parent"
+    linked_parent.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(
+        VerifiedTransitionLaunchBundleError,
+        match="path_symlink_rejected",
+    ):
+        launch_bundle.load_verified_transition_provider_factory(
+            linked_parent / bundle_path.name,
+            expected_bundle_sha256=hashlib.sha256(bundle_raw).hexdigest(),
+            components=components,
+            now_unix=BASE_SECOND + 200,
+        )
+
+    with pytest.raises(
+        VerifiedTransitionLaunchBundleError,
+        match="external_digest_mismatch",
+    ):
+        launch_bundle.load_verified_transition_provider_factory(
+            bundle_path,
+            expected_bundle_sha256="0" * 64,
+            components=components,
+            now_unix=BASE_SECOND + 200,
+        )

@@ -30904,3 +30904,39 @@ approximately 73.9%-100.0% with an 87.0% midpoint. The evidence-adjusted range
 is 2-5 checkpoints to resident-32B training launch, 6-11 to a defensible
 preliminary gain verdict, and 11-21 to the powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420K root-verified production launch loader
+
+The verified-transition provider factory can now be constructed from one
+externally digest-pinned, canonical launch document instead of loose runtime
+arguments. The loader independently rehashes the provider contract and config,
+campaign policy and root, task commitments and answer nonces, signer executable
+and custody artifacts, and campaign-ledger root before constructing anything.
+The separately supplied root authenticates the signed policy; the policy binds
+the provider contract and externally custodied signer.
+
+Production callables are selected by code rather than named by launch JSON.
+Their stable identities and exact function-source hashes must equal the frozen
+provider contract, and closures, bound methods, and `__main__` functions are
+rejected. Every launch artifact must be a private, owner-held, single-link
+regular file; symlinks in any path component, mutable peer files, duplicate
+JSON keys, noncanonical bytes, size drift, digest drift, and bundle-internal or
+external digest substitution fail closed.
+
+The loader is now itself part of the frozen recurrent source-role inventory.
+The production-factory, adapter-identity, resident preregistration, and trainer
+contract matrix passes 81/81 in 5.55 seconds, including callable substitution,
+parent-directory symlink, and external bundle-digest attacks. Ruff, bytecode
+compilation, and diff hygiene pass. Evidence is
+`artifacts/current/cp420k_verified_transition_launch_bundle_evidence.json`.
+
+This proves the root-verified loader, not a launch-ready resident campaign.
+The concrete replay producer/loader/finalizer still needs to be implemented,
+the signed launch artifacts still need to be published, and the preregistered
+runner must consume their externally frozen bundle digest. No model was loaded
+or trained and no reasoning, frontier, resident-32B, promotion, or
+`WOW Signal` claim follows. CP420K is total checkpoint 681. The 681-920
+completion envelope is approximately 74.0%-100.0% with an 87.0% midpoint. The
+evidence-adjusted range remains 2-4 checkpoints to resident-32B training launch,
+6-10 to a defensible preliminary gain verdict, and 11-20 to the powered
+conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.

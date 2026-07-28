@@ -76,6 +76,7 @@ SOURCE_ROLES = {
     "campaign_trust",
     "transition_provider",
     "transition_provider_factory",
+    "transition_launch_bundle",
     "transition_transaction",
     "transition_rejection_transaction",
     "transition_causal_campaign",
