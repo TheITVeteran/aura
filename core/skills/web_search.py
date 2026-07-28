@@ -23,12 +23,28 @@ class _DeepResearchBrainAdapter:
         self.engine = engine
 
     async def generate(self, prompt: str, **kwargs) -> dict[str, str]:
+        # The caller's priority is HONOURED, not discarded.
+        #
+        # This accepted **kwargs and threw them away, hardcoding
+        # is_background=True. So a synthesis the person is waiting for was
+        # admitted as background work, queued behind foreground headroom, and
+        # came back instantly empty — and the deep-research retry that asks for
+        # foreground could not take effect because its request never left this
+        # method. Measured live:
+        #   "Deep research gathered 5 source(s) over 1 quer(ies) in 9.4s but
+        #    could not synthesize them (the model returned no text)"
+        # ...twice, including the retry.
+        #
+        # Background stays the default: ordinary research really is background.
+        foreground = bool(kwargs.get("foreground_request", False))
         raw = await self.engine.generate(
             prompt,
-            origin="system",
+            origin=str(kwargs.get("origin") or ("user" if foreground else "system")),
             purpose="research",
             use_strategies=False,
-            is_background=True,
+            is_background=not foreground,
+            foreground_request=foreground,
+            priority=float(kwargs.get("priority", 1.0 if foreground else 0.5)),
         )
         if isinstance(raw, dict):
             text = raw.get("response") or raw.get("content") or raw.get("result") or ""

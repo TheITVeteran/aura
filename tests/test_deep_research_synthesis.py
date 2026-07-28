@@ -43,3 +43,33 @@ def test_a_first_pass_success_does_not_retry():
     out = asyncio.run(dr.synthesize_answer(_state(), brain))
     assert out.synthesis_status == "ok"
     assert len(brain.calls) == 1, "a working synthesis must not pay for a second call"
+
+
+def test_the_brain_adapter_honours_a_foreground_request():
+    """The adapter accepted **kwargs and threw them away.
+
+    It hardcoded is_background=True, so a synthesis the person was waiting for
+    was admitted as background work, queued behind foreground headroom, and came
+    back instantly empty — and the deep-research foreground retry could not take
+    effect, because its request never left this method. Measured live twice in
+    one turn, including the retry.
+    """
+    from core.skills.web_search import _DeepResearchBrainAdapter
+
+    seen = {}
+
+    class _Engine:
+        async def generate(self, prompt, **kwargs):
+            seen.update(kwargs)
+            return {"response": "ok"}
+
+    adapter = _DeepResearchBrainAdapter(_Engine())
+
+    asyncio.run(adapter.generate("p", foreground_request=True))
+    assert seen.get("is_background") is False, "a foreground request stayed background"
+    assert seen.get("foreground_request") is True
+
+    seen.clear()
+    asyncio.run(adapter.generate("p"))
+    assert seen.get("is_background") is True, "ordinary research must stay background"
+    assert seen.get("foreground_request") is False
