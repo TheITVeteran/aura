@@ -417,6 +417,16 @@ async def _generate_code_with_fallback(
     return extract_python_code(raw) or str(raw or "")
 
 
+def _corrections_from(report: dict[str, Any]) -> list[str]:
+    """What went wrong, phrased so the next attempt can act on it."""
+    corrections = [str(item) for item in (report.get("presentation_failures") or [])]
+    if not report.get("playable") and report.get("play_evidence"):
+        corrections.append(f"did not play: {report['play_evidence']}")
+    if report.get("status") not in ("supported", None) and report.get("reason"):
+        corrections.append(str(report["reason"]))
+    return corrections[:6]
+
+
 async def materialize_program(
     engine: Any,
     spec: ProgramSpec,
@@ -427,11 +437,66 @@ async def materialize_program(
 ) -> dict[str, Any]:
     """Have her reconstruct the program, prove it, then put it on disk.
 
-    Nothing is written unless the rules survived held-out verification and the
-    written module actually played. A file on the Desktop is a claim that the
-    thing works; it should not be possible to make that claim by accident.
+    Nothing is written unless the rules survived held-out verification, the
+    written module actually played, and — where the original has a published
+    surface — it looks and answers like that software. A file on the Desktop is
+    a claim that the thing works; it should not be possible to make that claim
+    by accident.
+
+    However it ends, the attempt is remembered. A rejection is the only record
+    of what she actually gets wrong, and it is worth more to the next build
+    than a success.
     """
+    report = await _materialize(
+        engine, spec, destination, seed=seed, max_repair_attempts=max_repair_attempts
+    )
+    try:
+        from core.self_improvement.reconstruction_memory import (
+            PriorAttempt,
+            remember_attempt,
+        )
+
+        await remember_attempt(
+            PriorAttempt(
+                target=spec.name,
+                summary=spec.objective,
+                entry_points=(spec.fn_name,),
+                invariants=tuple(report.get("presentation_evidence") or ())[:4],
+                corrections=tuple(_corrections_from(report)),
+                succeeded=bool(report.get("written")),
+            )
+        )
+    except _RECOVERABLE as exc:
+        record_degradation(
+            "program_materialization", exc, severity="info", action="attempt was not remembered"
+        )
+    return report
+
+
+async def _materialize(
+    engine: Any,
+    spec: ProgramSpec,
+    destination: Path,
+    *,
+    seed: int = 2048,
+    max_repair_attempts: int = 2,
+) -> dict[str, Any]:
     train, held_out = build_case_sets(spec, seed=seed)
+
+    # Most software is mostly other software. What the gate caught last time is
+    # the only record of what she actually gets wrong, and it was being written
+    # to a ledger nothing read — the machinery existed and no build path ever
+    # called it.
+    transfer = ""
+    try:
+        from core.self_improvement.reconstruction_memory import recall_for
+
+        transfer = recall_for(spec.name, summary=spec.objective).as_prompt_block()
+    except _RECOVERABLE as exc:
+        record_degradation(
+            "program_materialization", exc, severity="info", action="built without prior experience"
+        )
+
     report: dict[str, Any] = {
         "target": spec.name,
         "destination": str(destination),
@@ -447,7 +512,7 @@ async def materialize_program(
 
     outcome = await engine.reconstruct_executable_via_cognition(
         target=spec.name,
-        spec_docs=list(spec.spec_docs),
+        spec_docs=[*spec.spec_docs, *([transfer] if transfer else [])],
         train_examples=train,
         held_out=held_out,
         fn_name=spec.fn_name,
@@ -470,7 +535,7 @@ async def materialize_program(
         )
         return report
 
-    module_source = await _write_playable_module(engine, spec, core_code)
+    module_source = await _write_playable_module(engine, spec, core_code, transfer=transfer)
     if not module_source.strip():
         report["reason"] = "the verified rules were produced but no playable module was"
         return report
@@ -521,9 +586,11 @@ async def materialize_program(
     return report
 
 
-async def _write_playable_module(engine: Any, spec: ProgramSpec, core_code: str) -> str:
+async def _write_playable_module(
+    engine: Any, spec: ProgramSpec, core_code: str, *, transfer: str = ""
+) -> str:
     """Her verified rules, plus the game around them, written by her."""
-    prompt = (
+    prompt = ((f"{transfer}\n\n" if transfer else "") +
         f"You have already written and verified this {spec.name} rule engine "
         f"against held-out positions:\n\n```python\n{core_code}\n```\n\n"
         f"Now produce ONE complete, runnable Python module that keeps these "
@@ -776,6 +843,33 @@ def _play_checkers_headlessly(module: Any) -> tuple[bool, str]:
     return report.passed, report.summary
 
 
+# The board Bryan actually asked for, and the one whose pieces did not move.
+# Draughts' surface is as published as 2048's: an eight-by-eight board in two
+# alternating woods, red and white discs, a crown on a king, and you pick a
+# piece up and put it down.
+_CHECKERS_PRESENTATION = PresentationContract(
+    app_factory="main",
+    title_contains=("checkers",),
+    required_bindings=("<Button-1>",),
+    palette={
+        "light square": "#e8d0aa",
+        "dark square": "#a97b50",
+        "red piece": "#c0392b",
+        "white piece": "#f2f0eb",
+        "king mark": "#f1c40f",
+    },
+    # Wider than 2048's: these five are far apart, and a reconstruction that
+    # finds a plausible board brown deserves to pass. The tolerance is set by
+    # the palette's own spacing, not by taste.
+    colour_tolerance=28.0,
+    palette_coverage=0.6,
+    # Sixty-four squares, drawn. Pieces are extra.
+    min_drawn_cells=64,
+    required_text=("turn",),
+    requires_motion=True,
+    drive_events=("<Button-1>",),
+)
+
 CHECKERS = ProgramSpec(
     name="checkers",
     aliases=("checkers", "draughts", "english draughts", "the game checkers", "checkers game"),
@@ -815,11 +909,26 @@ CHECKERS = ProgramSpec(
     default_filename="checkers.py",
     objective="clean-room reconstruction of English draughts from its published rules",
     playable_module_hint=(
-        "a playable command-line game on top of your verified rules: render the "
-        "board with row and column labels, list the legal moves, read the "
-        "player's choice from input(), play a simple opponent reply, and stop "
-        "when someone wins"
+        "a complete graphical game in tkinter on top of your verified rules. It "
+        "must look and feel like a checkers set, not like a program that knows "
+        "the rules of checkers:\n"
+        "  - a window titled 'Checkers' holding a tk.Canvas with all 64 squares "
+        "drawn, light #e8d0aa and dark #a97b50 alternating\n"
+        "  - pieces as filled circles, red #c0392b and white #f2f0eb, with a "
+        "gold #f1c40f crown mark on kings\n"
+        "  - click to select a piece and click again to move it: bind "
+        "<Button-1> on the canvas, highlight the selected piece and its legal "
+        "destinations, and refuse an illegal click without crashing\n"
+        "  - mandatory captures enforced through your verified rules, chained "
+        "jumps played as one move\n"
+        "  - a label saying whose turn it is, updated every move, and the "
+        "result shown on screen when someone wins\n"
+        "  - motion: move a piece across the board with root.after(...) steps "
+        "rather than teleporting it, so the pieces visibly move\n"
+        "  - a main() that builds and RETURNS the game object without calling "
+        "mainloop(); only the __main__ block calls mainloop()"
     ),
+    presentation=_CHECKERS_PRESENTATION,
 )
 
 KNOWN_PROGRAM_SPECS = (TWENTY_FORTY_EIGHT, CHECKERS)

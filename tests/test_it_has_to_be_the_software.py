@@ -322,7 +322,7 @@ def _materialize(source: str, destination: Path) -> dict:
 
     original = pm._write_playable_module
 
-    async def _stub(engine, spec, core_code):  # noqa: ANN001
+    async def _stub(engine, spec, core_code, *, transfer=""):  # noqa: ANN001
         return source
 
     pm._write_playable_module = _stub
@@ -350,3 +350,44 @@ def test_an_unpolished_program_is_never_written(tmp_path: Path) -> None:
     assert not report["written"]
     assert "not the software" in report["reason"]
     assert not list(tmp_path.iterdir())
+
+
+# ── What the gate caught must reach the next build ────────────────────────
+
+def test_a_rejection_is_remembered_for_the_next_attempt(tmp_path, monkeypatch) -> None:
+    """The ledger existed and no build path ever wrote to it.
+
+    A rejection is the only record of what she actually gets wrong, which
+    makes it worth more to the next reconstruction than a success.
+    """
+    import core.self_improvement.reconstruction_memory as memory
+
+    monkeypatch.setattr(memory, "_ledger_path", lambda root=None: tmp_path / "ledger.jsonl")
+
+    report = _materialize(_without(list(PALETTE.values())), tmp_path / "out")
+    assert not report["written"]
+
+    remembered = memory.load_attempts()
+    assert remembered, "the attempt left no trace"
+    latest = remembered[-1]
+    assert latest.target == "2048"
+    assert not latest.succeeded
+    assert any("palette" in correction for correction in latest.corrections)
+
+
+def test_prior_experience_reaches_the_prompt(tmp_path, monkeypatch) -> None:
+    import core.self_improvement.reconstruction_memory as memory
+
+    monkeypatch.setattr(memory, "_ledger_path", lambda root=None: tmp_path / "ledger.jsonl")
+    asyncio.run(
+        memory.remember_attempt(
+            memory.PriorAttempt(
+                target="2048",
+                summary="sliding tile board game",
+                corrections=("palette: found 0 of 11 published colours",),
+            )
+        )
+    )
+    block = memory.recall_for("2048", summary="sliding tile board game").as_prompt_block()
+    assert "WHAT YOU LEARNED" in block
+    assert "published colours" in block
