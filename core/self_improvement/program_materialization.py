@@ -427,6 +427,43 @@ def _corrections_from(report: dict[str, Any]) -> list[str]:
     return corrections[:6]
 
 
+
+# ── Saying what she is doing while she does it ─────────────────────────────
+#
+# A reconstruction is minutes of work behind a silent turn. Asked to build
+# 2048, Bryan's question was not "did it work" but "how do I know she's
+# building it" — and the honest answer was that he could not: this lane
+# emitted nothing between the request and the verdict.
+#
+# Long work that reports nothing is indistinguishable from work that has
+# died. Each stage now announces itself on the same thought stream every
+# other subsystem uses, with a step index, so the feed shows a build
+# advancing rather than a gap.
+
+_BUILD_STAGES = 6
+
+
+def _say(step: int, state: str, detail: str = "", level: str = "info") -> None:
+    """One line on the neural feed. Never fatal — narration is not the work."""
+    try:
+        from core.thought_stream import get_emitter
+
+        get_emitter().emit(
+            "Reconstruction",
+            f"Step {step}/{_BUILD_STAGES} {state}." + (f" {detail[:240]}" if detail else ""),
+            level=level,
+            category="ToolExecution",
+            step_index=step,
+            step_total=_BUILD_STAGES,
+            action="reconstruct",
+            state=state,
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "program_materialization", exc, severity="info", action="build step went unannounced"
+        )
+
+
 async def materialize_program(
     engine: Any,
     spec: ProgramSpec,
@@ -492,6 +529,8 @@ async def _materialize(
         from core.self_improvement.reconstruction_memory import recall_for
 
         transfer = recall_for(spec.name, summary=spec.objective).as_prompt_block()
+        _say(1, f"recalling what I learned building things like {spec.name}",
+             "found prior attempts" if transfer else "no prior attempts on record")
     except _RECOVERABLE as exc:
         record_degradation(
             "program_materialization", exc, severity="info", action="built without prior experience"
@@ -510,6 +549,8 @@ async def _materialize(
         "reason": "",
     }
 
+    _say(2, f"writing the rules of {spec.name} from the published spec",
+         f"will be graded against {len(held_out)} held-out positions I never see while writing")
     outcome = await engine.reconstruct_executable_via_cognition(
         target=spec.name,
         spec_docs=[*spec.spec_docs, *([transfer] if transfer else [])],
@@ -522,6 +563,10 @@ async def _materialize(
         max_repair_attempts=max_repair_attempts,
         max_tokens=2200,
     )
+    _say(3, "checking the rules against the held-out positions",
+         f"{int(outcome.get('held_out_passed') or 0)}/{len(held_out)} reproduced"
+         f" — {outcome.get('status') or 'conjecture'}",
+         level="info" if str(outcome.get("status")) == "supported" else "warning")
     report["status"] = str(outcome.get("status") or "conjecture")
     report["held_out_passed"] = int(outcome.get("held_out_passed") or 0)
     report["equivalence"] = outcome.get("equivalence", 0.0)
@@ -533,18 +578,24 @@ async def _materialize(
             f"held-out verification did not pass: "
             f"{report['held_out_passed']}/{report['held_out_total']}"
         )
+        _say(3, "stopping — the rules are not right yet", report["reason"], level="warning")
         return report
 
+    _say(4, "building the program around the verified rules",
+         "a window, its controls, and the published look — not a script")
     module_source = await _write_playable_module(engine, spec, core_code, transfer=transfer)
     if not module_source.strip():
         report["reason"] = "the verified rules were produced but no playable module was"
+        _say(4, "stopping — no program came back", report["reason"], level="warning")
         return report
 
+    _say(5, "playing what I wrote, headlessly, to see that it is a game")
     playable, evidence = _verify_playable(spec, module_source)
     report["playable"] = playable
     report["play_evidence"] = evidence
     if not playable:
         report["reason"] = f"the written program did not play: {evidence}"
+        _say(5, "stopping — it is not a game", str(evidence), level="warning")
         return report
 
     # "Pieces didnt move. Nothing was polished. Looked/felt horrible." — the
@@ -553,6 +604,8 @@ async def _materialize(
     # the software. For anything with a published surface, that question is not
     # optional, and a program that fails it is not written to disk.
     if spec.presentation is not None:
+        _say(6, "checking it looks like the real thing",
+             spec.presentation.describe())
         polish = grade_presentation(module_source, spec.presentation)
         report["presentation_evidence"] = list(polish.evidence)
         report["polished"] = bool(polish.passed)
@@ -562,6 +615,8 @@ async def _materialize(
                 "the program works but is not the software: "
                 + "; ".join(str(item) for item in polish.findings[:3])
             )
+            _say(6, "not writing it — it works but it is not the software",
+                 "; ".join(str(item) for item in polish.findings[:2]), level="warning")
             return report
 
     try:
@@ -583,6 +638,7 @@ async def _materialize(
 
     report["written"] = True
     report["destination"] = str(target_path)
+    _say(_BUILD_STAGES, "done — written to disk", str(target_path))
     return report
 
 
