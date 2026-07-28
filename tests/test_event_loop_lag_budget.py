@@ -116,3 +116,96 @@ async def test_event_loop_lag_under_budget():
 
     p99 = sorted(lags)[int(len(lags) * 0.99)] if lags else 0
     assert p99 < 150.0, f"p99 event loop lag {p99:.1f}ms exceeds 150ms budget"
+
+
+def test_hypervisor_explains_a_failed_liveness_check_instead_of_naming_the_probe():
+    """`is_alive() returned False` names the probe, not the fault.
+
+    Two very different faults make the hypervisor's liveness False: the
+    watchdog task is gone, or the watchdog is running perfectly and reporting
+    event-loop lag that has not yet re-confirmed healthy. Health reported both
+    as "hypervisor (is_alive() returned False)", which reads as a dead thread —
+    measured live on a runtime whose watchdog was alive and supervising, and it
+    sent the investigation straight at thread liveness.
+    """
+    import asyncio
+
+    from core.ops.hypervisor import Hypervisor
+
+    hv = Hypervisor()
+
+    # Never started.
+    assert hv.is_alive() is False
+    assert "not running" in hv.liveness_failure_reason()
+
+    async def scenario():
+        await hv.start()
+        try:
+            assert hv.is_alive() is True
+            # Healthy: nothing to explain.
+            assert hv.liveness_failure_reason() == ""
+
+            # Alive, but carrying an unrecovered severe-lag verdict.
+            hv._last_severe_lag_at = time.time()
+            hv._last_failure_reason = "severe event-loop lag 8.411s"
+            hv._healthy_lag_samples_after_failure = 0
+            hv._last_lag = 0.004
+            assert hv.is_alive() is False
+            reason = hv.liveness_failure_reason()
+            assert "alive and supervising" in reason, reason
+            assert "8.411s" in reason, reason
+            assert "0/3 healthy samples" in reason, reason
+            assert "current lag 0.004s" in reason, reason
+        finally:
+            await hv.stop()
+
+    asyncio.run(scenario())
+
+    # Stopped: back to naming the real cause.
+    assert "not running" in hv.liveness_failure_reason()
+
+
+def test_health_contract_prefers_a_services_own_liveness_explanation():
+    from core.runtime import health_contract
+
+    requirement = health_contract.ServiceRequirement(
+        "Widget",
+        "widget",
+        health_contract.ServiceTier.IMPORTANT,
+        "test widget",
+        liveness_check="is_alive",
+        liveness_reason_check="liveness_failure_reason",
+    )
+
+    class _Explains:
+        def is_alive(self):
+            return False
+
+        def liveness_failure_reason(self):
+            return "widget spindle unseated"
+
+    class _Silent:
+        def is_alive(self):
+            return False
+
+    class _Raises:
+        def is_alive(self):
+            return False
+
+        def liveness_failure_reason(self):
+            raise RuntimeError("explaining is broken")
+
+    assert (
+        health_contract._liveness_failure_reason(_Explains(), requirement)
+        == "widget spindle unseated"
+    )
+    # No explanation available, or a broken one, must fall back — never raise.
+    assert health_contract._liveness_failure_reason(_Silent(), requirement) == ""
+    assert health_contract._liveness_failure_reason(_Raises(), requirement) == ""
+    assert health_contract._liveness_failure_reason(None, requirement) == ""
+
+    without_reason = health_contract.ServiceRequirement(
+        "Widget", "widget", health_contract.ServiceTier.IMPORTANT, "t",
+        liveness_check="is_alive",
+    )
+    assert health_contract._liveness_failure_reason(_Explains(), without_reason) == ""

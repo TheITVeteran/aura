@@ -8823,3 +8823,75 @@ def test_desktop_access_open_settings_route_rejects_unknown_permission():
     assert result["opened"] is False
     assert result["permission"] == "unknown"
     assert result["error"] == "unknown_permission"
+
+
+def test_ui_log_publish_from_the_loop_thread_never_writes_the_self_pipe():
+    """A logging call on the event loop must not block the event loop.
+
+    ``run_coroutine_threadsafe`` wakes its target loop by writing a byte to the
+    loop's self-pipe. From a foreign thread that is correct. From the loop
+    thread itself it is both pointless and dangerous: the self-pipe socket
+    buffer is finite, a loop that has fallen behind cannot drain it, and the
+    next ``csock.send`` blocks the loop inside a logging call — deepening the
+    stall that caused the backlog.
+
+    Measured live: an 8.4s event-loop stall whose captured loop stack was
+    logging.warning -> emit -> run_coroutine_threadsafe -> call_soon_threadsafe
+    -> _write_to_self -> csock.send, after which the runtime latched DEGRADED
+    for its whole 48-minute life on that single reading.
+    """
+    import asyncio
+
+    from interface import server
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        threadsafe_calls = []
+        original_threadsafe = asyncio.run_coroutine_threadsafe
+
+        def _tracking_threadsafe(coro, target_loop):
+            threadsafe_calls.append(target_loop)
+            return original_threadsafe(coro, target_loop)
+
+        asyncio.run_coroutine_threadsafe = _tracking_threadsafe
+        try:
+            published = []
+
+            async def _publish():
+                published.append(True)
+
+            server._QueueHandler._publish_without_blocking_the_loop(_publish(), loop)
+            assert threadsafe_calls == [], (
+                "publishing from the loop thread must not go through the "
+                "self-pipe wakeup path"
+            )
+            # The work must still actually happen.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert published == [True], "the log entry was dropped instead of published"
+            assert not server._QueueHandler._inline_publishes, (
+                "completed publish tasks must not be retained"
+            )
+
+            # From a foreign thread the threadsafe path is still the right one.
+            done = threading.Event()
+
+            def _from_other_thread():
+                try:
+                    server._QueueHandler._publish_without_blocking_the_loop(
+                        _publish(), loop
+                    )
+                finally:
+                    done.set()
+
+            worker = threading.Thread(target=_from_other_thread)
+            worker.start()
+            await asyncio.get_running_loop().run_in_executor(None, done.wait, 5.0)
+            worker.join(timeout=5.0)
+            assert threadsafe_calls == [loop], (
+                "a foreign thread must still use run_coroutine_threadsafe"
+            )
+        finally:
+            asyncio.run_coroutine_threadsafe = original_threadsafe
+
+    asyncio.run(scenario())

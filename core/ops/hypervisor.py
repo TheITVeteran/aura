@@ -104,6 +104,42 @@ class Hypervisor:
                 return False
         return True
 
+    def liveness_failure_reason(self) -> str:
+        """Explain a False ``is_alive()`` so health names the fault, not the probe.
+
+        ``is_alive()`` answers one question — "may the runtime be considered
+        supervised AND recently healthy?" — but two very different faults make
+        it False: the watchdog task is gone, or the watchdog is running fine and
+        reporting event-loop lag that has not yet cleared. The health contract
+        could only say "is_alive() returned False", which reads as a dead
+        thread; every investigation started in the wrong place.
+        """
+
+        if not self._running:
+            return "hypervisor watchdog is not running (never started or stopped)"
+        if self._task is None:
+            return "hypervisor watchdog has no supervising task"
+        if self._task.done():
+            exc: BaseException | None = None
+            try:
+                exc = self._task.exception()
+            except (asyncio.CancelledError, asyncio.InvalidStateError):
+                return "hypervisor watchdog task was cancelled"
+            if exc is not None:
+                return f"hypervisor watchdog task died: {type(exc).__name__}: {exc}"
+            return "hypervisor watchdog task exited without an error"
+        if self._last_severe_lag_at:
+            stable_for = time.time() - self._last_severe_lag_at
+            return (
+                "watchdog alive and supervising; event-loop health not yet "
+                f"re-confirmed after {self._last_failure_reason or 'a severe lag event'} "
+                f"({self._healthy_lag_samples_after_failure}/"
+                f"{self._required_recovery_samples} healthy samples, stable for "
+                f"{stable_for:.0f}s of {self._failure_recovery_window_s:.0f}s; "
+                f"current lag {self._last_lag:.3f}s)"
+            )
+        return ""
+
     def get_status(self) -> dict[str, float | bool | str]:
         return {
             "alive": self.is_alive(),

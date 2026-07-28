@@ -619,3 +619,77 @@ def test_boot_health_failing_memory_probe_still_blocks_conversation():
     assert payload["boot_phase"] != "conversation_operational"
     assert payload["ready"] is False
     assert any("memory" in b or "state_repository" in b for b in payload["blockers"])
+
+
+def test_api_health_status_never_regresses_to_booting_while_answering():
+    """The public status word must not say "booting" on a runtime that serves.
+
+    Every branch below "ok" required `service_ok`, which is
+    boot_snapshot["system_ready"] — False whenever ANY important-tier service is
+    degraded. So a degraded-but-conversational runtime fell through to
+    "booting". Measured live: 52 minutes of uptime, chat answering normally,
+    top-level status "booting", while the boot snapshot one layer down had
+    already concluded status="degraded" phase="conversation_operational".
+    """
+    from interface.routes.system import _derive_api_health_status
+
+    degraded_but_serving = {
+        "status": "degraded",
+        "boot_phase": "conversation_operational",
+        "system_ready": False,
+    }
+
+    assert _derive_api_health_status(
+        healthy_ready=False,
+        service_ok=False,          # an important-tier service is degraded
+        lane_is_standby=False,
+        lane_state="ready",
+        conversation_ready=True,   # ...but chat works
+        conversation_busy=False,
+        boot_snapshot=degraded_but_serving,
+    ) == "degraded"
+
+    # Mid-turn on that same degraded runtime is still degraded, not booting.
+    assert _derive_api_health_status(
+        healthy_ready=False,
+        service_ok=False,
+        lane_is_standby=False,
+        lane_state="ready",
+        conversation_ready=False,
+        conversation_busy=True,
+        boot_snapshot=degraded_but_serving,
+    ) == "degraded"
+
+    # A genuine cold boot — nothing has served yet — must still say "booting".
+    assert _derive_api_health_status(
+        healthy_ready=False,
+        service_ok=False,
+        lane_is_standby=False,
+        lane_state="cold",
+        conversation_ready=False,
+        conversation_busy=False,
+        boot_snapshot={"status": "booting", "boot_phase": "kernel_bootstrap"},
+    ) == "booting"
+
+    # And the healthy ladder is unchanged.
+    assert _derive_api_health_status(
+        healthy_ready=True, service_ok=True, lane_is_standby=False,
+        lane_state="ready", conversation_ready=True, conversation_busy=False,
+    ) == "ok"
+    for state, expected in (("failed", "unavailable"), ("recovering", "recovering")):
+        assert _derive_api_health_status(
+            healthy_ready=False, service_ok=True, lane_is_standby=False,
+            lane_state=state, conversation_ready=False, conversation_busy=False,
+        ) == expected
+    assert _derive_api_health_status(
+        healthy_ready=False, service_ok=True, lane_is_standby=True,
+        lane_state="ready", conversation_ready=True, conversation_busy=False,
+    ) == "standby"
+    assert _derive_api_health_status(
+        healthy_ready=False, service_ok=True, lane_is_standby=False,
+        lane_state="ready", conversation_ready=False, conversation_busy=True,
+    ) == "working"
+    assert _derive_api_health_status(
+        healthy_ready=False, service_ok=True, lane_is_standby=False,
+        lane_state="warming", conversation_ready=False, conversation_busy=False,
+    ) == "warming"

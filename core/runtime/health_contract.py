@@ -72,6 +72,13 @@ class ServiceRequirement:
     tier: ServiceTier
     description: str
     liveness_check: str | None = None  # Method name to call for deep health check
+    # Optional method returning a human reason for a FAILED liveness check.
+    # Without it the contract can only report "<check>() returned False", which
+    # names the probe and not the fault — measured live as
+    # "hypervisor (is_alive() returned False)" for a watchdog that was running
+    # fine and merely reporting unrecovered event-loop lag. That message sends
+    # every investigation at thread liveness instead of at the real cause.
+    liveness_reason_check: str | None = None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -298,6 +305,7 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.IMPORTANT,
         "Event-loop and memory watchdog. Without it, severe stalls can go undetected.",
         liveness_check="is_alive",
+        liveness_reason_check="liveness_failure_reason",
     ),
     ServiceRequirement(
         "Event Loop Monitor",
@@ -674,6 +682,32 @@ def _service_status_payload(status: ServiceStatus) -> dict[str, Any]:
     }
 
 
+def _liveness_failure_reason(svc: Any, requirement: "ServiceRequirement") -> str:
+    """Ask a service to explain its own failed liveness check.
+
+    Best-effort and never fatal: a service that cannot explain itself keeps the
+    generic message rather than turning a health probe into an exception.
+    """
+
+    name = requirement.liveness_reason_check
+    if not name or svc is None:
+        return ""
+    try:
+        explain = getattr(svc, name, None)
+        if not callable(explain):
+            return ""
+        reason = explain()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return ""
+    if inspect.isawaitable(reason):
+        close = getattr(reason, "close", None)
+        if callable(close):
+            close()
+        return ""
+    text = str(reason or "").strip()
+    return text[:300]
+
+
 def _coerce_liveness_result(result: Any) -> tuple[bool, str | None]:
     """Accept only explicit liveness success values.
 
@@ -1005,6 +1039,9 @@ def evaluate_health() -> HealthVerdict:
                                 error = f"{req.liveness_check}() returned False"
                             else:
                                 error = result_error or f"{req.liveness_check}() did not return explicit True"
+                            explained = _liveness_failure_reason(svc, req)
+                            if explained:
+                                error = explained
                     else:
                         liveness_ok = False
                         error = f"missing liveness check: {req.liveness_check}()"

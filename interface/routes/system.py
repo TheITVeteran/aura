@@ -4740,20 +4740,14 @@ async def _collect_api_health_payload(
             "recent_degraded_events": _collect_recent_degraded_events(),
         }
 
-        health_status = (
-            "ok"
-            if healthy_ready else
-            "standby"
-            if service_ok and lane_is_standby else
-            "unavailable"
-            if service_ok and str(conversation_lane.get("state", "") or "").lower() == "failed" else
-            "recovering"
-            if service_ok and str(conversation_lane.get("state", "") or "").lower() == "recovering" else
-            "working"
-            if service_ok and conversation_busy else
-            "warming"
-            if service_ok and not conversation_ready else
-            "booting"
+        health_status = _derive_api_health_status(
+            healthy_ready=healthy_ready,
+            service_ok=service_ok,
+            lane_is_standby=lane_is_standby,
+            lane_state=str(conversation_lane.get("state", "") or ""),
+            conversation_ready=conversation_ready,
+            conversation_busy=conversation_busy,
+            boot_snapshot=boot_snapshot,
         )
 
         payload = {
@@ -5407,6 +5401,63 @@ def _heartbeat_probe_blockers(required_probes: Any) -> list[str]:
     every required probe group and every group must report ok.
     """
     return required_probe_blockers(required_probes)
+
+
+def _derive_api_health_status(
+    *,
+    healthy_ready: bool,
+    service_ok: bool,
+    lane_is_standby: bool,
+    lane_state: str,
+    conversation_ready: bool,
+    conversation_busy: bool,
+    boot_snapshot: dict[str, Any] | None = None,
+) -> str:
+    """Public ``/api/health`` status word.
+
+    Every state below "ok" used to require ``service_ok`` — which is
+    ``boot_snapshot["system_ready"]``, and that is False whenever ANY
+    important-tier service is degraded. A runtime with a degraded important
+    service therefore fell through every branch to "booting", no matter how
+    long it had been up or how well it was answering. Measured live: 52 minutes
+    of uptime, chat turns answering normally, top-level ``status: "booting"``,
+    while the boot snapshot one layer down had already correctly concluded
+    ``status="degraded" boot_phase="conversation_operational"``.
+
+    The boot layer learned this exact lesson once already (its own note records
+    "55 minutes of booting, 48%" on a fully conversational instance). This
+    ladder never got the same fix, so it now defers to the snapshot that knows.
+    """
+
+    snapshot = boot_snapshot if isinstance(boot_snapshot, dict) else {}
+    state = lane_state.strip().lower()
+
+    if healthy_ready:
+        return "ok"
+    if service_ok:
+        if lane_is_standby:
+            return "standby"
+        if state == "failed":
+            return "unavailable"
+        if state == "recovering":
+            return "recovering"
+        if conversation_busy:
+            return "working"
+        if not conversation_ready:
+            return "warming"
+
+    # Not fully ready. "booting" is only honest while this process has never
+    # served — otherwise it is a degradation, and saying "booting" tells the
+    # user to wait for something that already happened.
+    if (
+        conversation_ready
+        or conversation_busy
+        or str(snapshot.get("boot_phase") or "").strip().lower()
+        in {"conversation_operational", "runtime_degraded"}
+        or str(snapshot.get("status") or "").strip().lower() == "degraded"
+    ):
+        return "degraded"
+    return "booting"
 
 
 def _normalize_conversation_health_blockers(

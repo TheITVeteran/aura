@@ -188,6 +188,42 @@ class _QueueHandler(logging.Handler):
         level = str(entry.get("level") or "").strip().lower()
         return level in {"warning", "error", "critical", "fatal"}
 
+    # Tasks scheduled from the loop thread are held here so the loop keeps a
+    # strong reference; asyncio only weakly references its tasks, and a
+    # garbage-collected task drops the log line it was publishing.
+    _inline_publishes: set[asyncio.Task] = set()
+
+    @classmethod
+    def _publish_without_blocking_the_loop(cls, publish_coro: Any, loop: Any) -> None:
+        """Schedule a UI log publish, never blocking the event loop to do it.
+
+        ``run_coroutine_threadsafe`` wakes its target loop by writing a byte to
+        the loop's self-pipe. That is correct from a foreign thread, but when
+        the caller IS the loop thread the write is both unnecessary and
+        dangerous: the self-pipe socket buffer is finite, so a loop that has
+        fallen behind cannot drain it, and the next ``csock.send`` blocks —
+        on the loop thread, inside a logging call, deepening the very stall
+        that caused the backlog.
+
+        Measured live: an 8.4s event-loop stall whose captured loop stack was
+        logging.warning -> emit -> run_coroutine_threadsafe ->
+        call_soon_threadsafe -> _write_to_self -> csock.send. The runtime then
+        latched DEGRADED for its whole 48-minute life on that one reading.
+        """
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+
+        if running is not None and running is loop:
+            task = loop.create_task(publish_coro)
+            cls._inline_publishes.add(task)
+            task.add_done_callback(cls._inline_publishes.discard)
+            return
+
+        asyncio.run_coroutine_threadsafe(publish_coro, loop)
+
 
     def emit(self, record: logging.LogRecord) -> None:
         if self._recursion_guard.get():
@@ -238,7 +274,7 @@ class _QueueHandler(logging.Handler):
             if main_loop is not None and not main_loop.is_closed() and main_loop.is_running():
                 publish_coro = broadcast_bus.publish(log_entry)
                 try:
-                    asyncio.run_coroutine_threadsafe(publish_coro, main_loop)
+                    self._publish_without_blocking_the_loop(publish_coro, main_loop)
                 except _SERVER_BOUNDARY_ERRORS:
                     try:
                         publish_coro.close()
