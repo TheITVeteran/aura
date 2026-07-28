@@ -37,6 +37,7 @@ from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.kernel.bridge import Phase
 from core.phases.dialogue_policy import enforce_dialogue_contract, validate_dialogue_response
+from core.self.inner_language import say_focus
 from core.phases.response_contract import (
     ResponseContract,
     build_response_contract,
@@ -746,6 +747,8 @@ class UnitaryResponsePhase(Phase):
     @classmethod
     def _naturalize_focus(cls, raw_focus: Any) -> str:
         focus = cls._normalize_text(raw_focus, 160)
+        # Channel names ("body_pressure") are for logs, not for speech.
+        focus = say_focus(focus, max_len=160)
         if not focus:
             return "the exchange in front of me"
         cleaned = re.sub(r"^cognitive baseline tick\s+\d+\s*:\s*", "", focus, flags=re.IGNORECASE)

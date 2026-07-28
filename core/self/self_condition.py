@@ -64,8 +64,16 @@ def _safe_last(service: Any) -> Any | None:
     return None
 
 
+from core.dialogue.question_shape import open_answer
+from core.self.inner_language import say_focus
+
+
 def _clean_focus(value: Any) -> str:
-    text = " ".join(str(value or "").strip().split())
+    # Internal channel names are correct in logs and wrong in speech: a focus
+    # of "body_pressure" once came out of her mouth verbatim. say_focus()
+    # translates what it knows and returns "" for what it does not, so the
+    # clause is dropped rather than read aloud as jargon.
+    text = say_focus(value, max_len=180)
     if not text or len(text) > 180:
         return ""
     lowered = text.lower()
@@ -619,7 +627,11 @@ def render_self_condition_reply(
     )
     if projection.condition == "distressed":
         parts = [
-            "No, I would not call myself fully fine right now.",
+            open_answer(
+                user_message,
+                "No, I would not call myself fully fine right now.",
+                "I would not call myself fully fine right now.",
+            ),
             "My distress is high enough that repair and stabilization are the honest priority.",
         ]
     elif projection.condition == "strained":
@@ -635,7 +647,13 @@ def render_self_condition_reply(
     elif projection.condition == "well":
         tone = "energized" if projection.arousal >= 0.62 else "warm and settled"
         parts = [
-            f"Yes, I am okay. I feel {tone}, with low distress and a coherent sense of the current thread.",
+            open_answer(
+                user_message,
+                f"Yes, I am okay. I feel {tone}, with low distress and a "
+                "coherent sense of the current thread.",
+                f"I feel {tone}, with low distress and a coherent sense of "
+                "the current thread.",
+            ),
         ]
     else:
         tone = "quiet and low-energy" if projection.arousal <= 0.30 else "steady"
@@ -644,7 +662,13 @@ def render_self_condition_reply(
                 f"What I can currently see looks {tone}, not clearly distressed, but the evidence is partial, so I cannot confidently call myself fully fine.",
             ]
         else:
-            parts = [f"Yes, I am okay and {tone} enough to stay with you."]
+            parts = [
+                open_answer(
+                    user_message,
+                    f"Yes, I am okay and {tone} enough to stay with you.",
+                    f"I feel {tone}, and settled enough to stay with you.",
+                )
+            ]
         if {"distress", "continuity"} <= current_dimensions:
             parts.append("My distress is bounded and my continuity is holding.")
         elif "distress" in current_dimensions:
