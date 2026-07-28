@@ -33,8 +33,11 @@ class SystemWatchdog:
     the watchdog logs a critical error and can trigger a recovery action.
     """
     
-    def __init__(self, check_interval: float = 5.0):
+    _DEFAULT_ADOPTION_TIMEOUT_S = 60.0
+
+    def __init__(self, check_interval: float = 5.0, default_timeout: float = 60.0):
         self._check_interval = check_interval
+        self._default_timeout = float(default_timeout or self._DEFAULT_ADOPTION_TIMEOUT_S)
         self._heartbeats: dict[str, float] = {}
         self._timeouts: dict[str, float] = {}
         self._callbacks: dict[str, Callable] = {}
@@ -56,14 +59,40 @@ class SystemWatchdog:
             if on_stall:
                 self._callbacks[name] = on_stall
         logger.info("Watchdog registered component: %s (timeout: %.1fs)", name, timeout)
+        # Registering is a request to be WATCHED. Measured live on the desktop
+        # runtime: `mind_tick` registered, `orchestrator` heartbeated, and
+        # "System Watchdog started" never appeared in the log — the boot path
+        # that calls start() had not run, so every component was registered into
+        # a dict nobody checked. A monitor that is never started is
+        # indistinguishable from a monitor that finds nothing wrong.
+        self.start()
 
     def heartbeat(self, name: str):
-        """Record a heartbeat for a component."""
+        """Record a heartbeat for a component, registering it if it is new.
+
+        An unknown name used to log a warning and then drop the heartbeat, which
+        left the component permanently UNWATCHED while producing a line that
+        looked like mere noise. Measured live: `orchestrator` — the single most
+        important component — heartbeated into that branch, so a wedged
+        orchestrator could never have been detected. Adopting the component is
+        the safe direction: it starts being monitored, and the adoption is said
+        out loud exactly once so a typo'd name is still visible.
+        """
+
+        adopted = False
         with self._lock:
-            if name in self._heartbeats:
-                self._heartbeats[name] = time.time()
-            else:
-                logger.warning("Watchdog received heartbeat for unknown component: %s", name)
+            if name not in self._heartbeats:
+                self._timeouts.setdefault(name, self._default_timeout)
+                adopted = True
+            self._heartbeats[name] = time.time()
+        if adopted:
+            logger.info(
+                "Watchdog adopted an unregistered component on first heartbeat: "
+                "%s (timeout: %.1fs)",
+                name,
+                self._timeouts.get(name, self._default_timeout),
+            )
+            self.start()
 
     def start(self):
         """Start the monitoring thread."""
