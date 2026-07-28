@@ -392,6 +392,12 @@ def get_escalation_governor() -> _EscalationGovernor:
 # Main API
 # ---------------------------------------------------------------------------
 
+#: The prefix every fail-closed escalation carries. It is a marker, not
+#: prose: the escalation path reads it back to recognise its own output
+#: and refuse to wrap it a second time.
+_ESCALATION_MARKER = "CRITICAL SERVICE FAILURE:"
+
+
 def record_degradation(
     subsystem: str,
     error: BaseException,
@@ -563,11 +569,29 @@ def record_degradation(
             from core.runtime.service_registry import get_service_failure_policy
 
             if get_service_failure_policy(subsystem) == "fail-closed" and not _is_timeout:
-                if severity in ("critical", "degraded", "warning"):
+                # An escalation must never escalate itself. The raised
+                # CRITICAL SERVICE FAILURE propagates and is recorded again for
+                # the same subsystem, and because both wraps are RuntimeError
+                # the rate cap — keyed on (subsystem, error type) — sees them as
+                # one fault and lets the second through. The result is a
+                # message containing itself:
+                #
+                #   CRITICAL SERVICE FAILURE: ... Original error: RuntimeError:
+                #   CRITICAL SERVICE FAILURE: ... Original error: RuntimeError:
+                #   swap exhaustion: managed RSS 34494MB, swap 16.9GB
+                #
+                # and, worse than the ugly text, TWO degradation records for one
+                # underlying event. Measured live 2026-07-28: that doubling is
+                # what pinned deg_threat at 1.00, which pins existential threat,
+                # which is what the Ulysses covenant reads before it refuses
+                # heavy compute — so one swap spike silently blocked every build
+                # she was asked for.
+                _already_escalated = _ESCALATION_MARKER in str(error)
+                if severity in ("critical", "degraded", "warning") and not _already_escalated:
                     if _escalation_governor.allow(subsystem, type(error).__qualname__):
                         failure_policy_violation = True
                         failure_policy_error = (
-                            f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
+                            f"{_ESCALATION_MARKER} Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
                             f"Original error: {type(error).__name__}: {error}"
                         )
                         if severity != "critical":
