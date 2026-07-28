@@ -305,12 +305,42 @@ def _surface_control_alpha(job: dict[str, Any], current_alpha: Any) -> float:
     return max(0.01, requested)
 
 
+#: How deep the recurrent loop may run on a turn a person is waiting for.
+#:
+#: One is the identity depth: CP226 measured a T=1 gap of 0.0 against the live
+#: weights, so a single pass is the model answering normally. Depth 2 is a
+#: different claim, and the evidence for it does not exist — the CP227 accuracy
+#: gate that was supposed to establish it ran with the adapter dark outside
+#: ``recurrence_adapter_scope``, was voided, and has never been re-run.
+#:
+#: Measured live 2026-07-28: a request carrying several action verbs and a
+#: desktop surface is classed "extended", which asked for depth 2, and the
+#: cortex came back with nothing —
+#:
+#:   Cortex returned no text on user-facing request. Retrying once after 2s...
+#:   Cortex-RETRY-1 produced an unsafe user-facing draft (too_short..., len=5)
+#:   Cortex bounded retry failed.
+#:
+#: which then latched the foreground lane busy, so every later message was
+#: refused with "I still have the previous turn open". One unvalidated depth
+#: setting took the whole conversation surface down.
+#:
+#: So the ceiling is 1 until an accuracy gate says otherwise. Raising it is an
+#: experiment and has to be asked for.
+_LIVE_RECURRENT_CEILING_DEFAULT = 1
+
+
+def _live_recurrent_ceiling() -> int:
+    return max(1, _safe_int(os.environ.get("AURA_USER_SURFACE_RECURRENT_MAX_LOOPS"),
+                            _LIVE_RECURRENT_CEILING_DEFAULT))
+
+
 def _surface_control_recurrent_loops(job: dict[str, Any]) -> int:
     configured = job.get(
         "clean_user_surface_recurrent_loops",
         os.environ.get("AURA_USER_SURFACE_RECURRENT_LOOPS", "1"),
     )
-    return max(1, min(_safe_int(configured, 1), 2))
+    return max(1, min(_safe_int(configured, 1), _live_recurrent_ceiling()))
 
 
 # Typed finite-range admission for sampling controls crossing the IPC
