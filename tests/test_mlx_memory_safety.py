@@ -1080,3 +1080,149 @@ def test_the_sanitizer_does_not_annihilate_replies_over_ordinary_english():
 
     # The other fatal checks are untouched.
     assert sanitize("value " + "1" * 25) is None, "digit-run check must still fire"
+
+
+def test_volatile_state_context_is_appended_so_the_kv_prefix_stays_cacheable():
+    """Volatile grounding LAST, or prompt-cache reuse is worthless.
+
+    Mood/energy/focus/substrate-age change on every single turn. Prepending
+    them made the KV prefix diverge inside the first ~20 tokens, so the cache
+    reused essentially nothing. Measured live once the cache started working:
+
+      prefix diverges at token 21 (0% of 31718 reused)
+      stable head: 'System State Context:\\n[Affect: Current Mood: TIRED (Energy: 0.'
+
+    31,697 tokens re-prefilled because 21 were reusable.
+    """
+    import inspect
+
+    from core.brain import llm_health_router
+
+    source = inspect.getsource(llm_health_router)
+    assert 'f"{system_prompt}\\n\\nSystem State Context:\\n{context_header}"' in source, (
+        "the volatile state block must be appended after the stable prompt"
+    )
+    assert 'f"System State Context:\\n{context_header}\\n\\n{system_prompt}"' not in source, (
+        "prepending volatile state destroys prompt-cache reuse for the whole runtime"
+    )
+
+
+def test_prompt_cache_reuse_survives_a_volatile_tail_but_not_a_volatile_head():
+    """The mechanism behind the rule, exercised on the real trie."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    stable = list(range(1, 401))          # identity + contract: identical every turn
+    key = (11, "user_surface")
+
+    # Volatile LAST: turn 1 stored stable+tail+reply; turn 2 shares the stable head.
+    lru = _PromptCacheLRU(max_size=2)
+    lru.insert_cache(key, stable + [9001, 9002] + [7001, 7002], ["kv"])
+    hit, remaining = lru.fetch_nearest_cache(
+        key, stable + [9003, 9004],
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == ["kv"]
+    assert len(remaining) <= 2, (
+        f"a volatile TAIL should leave almost nothing to prefill, got {len(remaining)}"
+    )
+
+    # Volatile FIRST: nothing meaningful is reusable, which is the live failure.
+    lru = _PromptCacheLRU(max_size=2)
+    lru.insert_cache(key, [9001, 9002] + stable + [7001, 7002], ["kv"])
+    hit, remaining = lru.fetch_nearest_cache(
+        key, [9003, 9004] + stable,
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert len(remaining) >= len(stable), (
+        "a volatile HEAD must be shown to destroy reuse — that is why the rule exists"
+    )
+
+
+def test_every_weight_class_caps_per_entry_tokens_and_total_kv():
+    """An entry COUNT is not a memory bound.
+
+    The small classes returned 0 (uncapped) per-entry tokens, which was
+    harmless only while the cache was broken and nothing was ever stored. Once
+    insertion worked, "12 entries, uncapped" meant 12 x however many tokens the
+    caller sent — a 31,718-token prompt was measured live and managed RSS grew
+    73,963MB/h toward the 49GB ceiling.
+    """
+    from core.brain.llm.mlx_worker import (
+        _prompt_cache_entry_budget_for_model,
+        _prompt_cache_entry_token_cap_for_model,
+        _prompt_cache_kv_bytes_per_token,
+        _prompt_cache_total_token_budget_for_model,
+    )
+
+    for path in (
+        "Aura-32B-crsm-closeout-jul1-20260701-215118",
+        "Qwen2.5-7B-Instruct-4bit",
+        "Qwen2.5-1.5B-Instruct-4bit",
+        "Qwen2.5-14B-Instruct-4bit",
+    ):
+        entries = _prompt_cache_entry_budget_for_model(path)
+        if entries <= 0:
+            continue  # nothing retained at all; no bound needed
+        cap = _prompt_cache_entry_token_cap_for_model(path)
+        assert cap > 0, f"{path} retains entries with no per-entry token cap"
+        total = _prompt_cache_total_token_budget_for_model(path)
+        assert total > 0, f"{path} has no total token budget"
+        per_token = _prompt_cache_kv_bytes_per_token(path)
+        assert per_token > 0
+        worst_case_gb = (total * per_token) / (1024 ** 3)
+        assert worst_case_gb <= 4.0, (
+            f"{path} can retain {worst_case_gb:.1f}GB of KV — not a bound"
+        )
+
+
+def test_total_token_budget_evicts_and_drains_internal_lanes_before_the_conversation():
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(
+        max_size=8,
+        max_entry_tokens=0,
+        max_total_tokens=1000,
+        kv_bytes_per_token=1024,
+    )
+    surface = (5, "user_surface")
+    internal = (5, "default")
+
+    lru.insert_cache(surface, list(range(1, 501)), ["kv-conversation"])
+    for batch in range(4):
+        lru.insert_cache(internal, list(range(10_000 + batch * 400, 10_400 + batch * 400)), ["kv-bg"])
+
+    assert lru.retained_tokens() <= 1000, (
+        f"total token budget not enforced: {lru.retained_tokens()} tokens retained"
+    )
+    assert lru.retained_bytes() == lru.retained_tokens() * 1024
+
+    # The conversation's prefix must be the last thing surrendered.
+    hit, _ = lru.fetch_nearest_cache(
+        surface, list(range(1, 501)) + [77],
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    assert hit == ["kv-conversation"], (
+        "internal-lane pressure drained the user conversation's KV first"
+    )
+
+
+def test_prompt_cache_exposes_the_oom_ladders_missing_rung():
+    """The verifier warned on every boot that the ladder had NO rungs."""
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=4, max_total_tokens=10_000, kv_bytes_per_token=2048)
+    lru.insert_cache((1, "user_surface"), list(range(300)), ["kv"])
+    lru.insert_cache((1, "default"), list(range(1000, 1200)), ["kv"])
+
+    assert lru.retained_entries() == 2
+    assert lru.retained_tokens() == 500
+    expected = 500 * 2048
+    assert lru.retained_bytes() == expected
+
+    freed = lru.shed()
+    assert freed == expected, "shed must report the bytes it actually released"
+    assert lru.retained_tokens() == 0
+    assert lru.retained_entries() == 0

@@ -3174,11 +3174,26 @@ class HealthAwareLLMRouter:
             if ctx_summary:
                 context_header = " ".join(ctx_summary)
                 # [Fix] Move Affective and Somatic state to system_prompt instead of user prompt to prevent echoing.
+                #
+                # APPENDED, never prepended. This block is the single most
+                # volatile text in the whole prompt — mood, energy, focus and
+                # substrate age change on EVERY turn — so putting it first made
+                # the KV prefix diverge inside the first ~20 tokens and destroyed
+                # prompt-cache reuse for the entire runtime. Measured live once
+                # the cache started working at all:
+                #
+                #   prefix diverges at token 21 (0% of 31718 reused)
+                #   stable head: 'System State Context:\n[Affect: Current Mood: TIRED (Energy: 0.'
+                #   divergent text begins: '07, Focus: 0.37, Substrate age: 0.1s)]'
+                #
+                # 31,697 tokens re-prefilled because 21 were reusable. Volatile
+                # grounding last means the stable identity and contract text
+                # forms a long shared prefix and only the tail is recomputed.
                 if system_prompt:
-                    system_prompt = f"System State Context:\n{context_header}\n\n{system_prompt}"
+                    system_prompt = f"{system_prompt}\n\nSystem State Context:\n{context_header}"
                 else:
                     system_prompt = f"System State Context:\n{context_header}"
-                
+
                 # We no longer prepend this to the user prompt.
 
         # Mycelial Direction Hook

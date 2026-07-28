@@ -2604,17 +2604,59 @@ def _prompt_cache_entry_token_cap_for_model(model_path: str) -> int:
     so 6144 tokens caps one entry near 1.5GB and the 2-entry budget near
     3GB — visible, fixed, and small next to the ~20GB weights. Longer
     conversations degrade gracefully to today's re-prefill behavior instead
-    of growing the cache without bound. 0 means uncapped (small models).
+    of growing the cache without bound.
+
+    EVERY class is capped. The small classes used to return 0 (uncapped),
+    which was harmless only for as long as the cache was broken and nothing
+    was ever stored. Once insertion actually worked, "12 entries, uncapped"
+    became "12 entries times however many tokens the caller sent" — and a
+    31,718-token prompt was measured live. At ~57KB/token on the 7B geometry
+    that is 1.8GB in ONE entry, and the runtime reported managed RSS growing
+    73,963MB/h toward its 49GB ceiling. An entry COUNT is not a memory bound
+    unless the per-entry size is bounded too.
     """
 
     from core.brain.llm.model_artifact_profile import model_size_class
 
     weight_class = model_size_class(str(model_path or ""))
+    if weight_class == "72b":
+        return 0  # budget is 0 entries; nothing is retained at all
     if weight_class == "32b":
         return 6144
-    if weight_class == "72b":
-        return 0
-    return 0
+    if weight_class in ("14b", "7b"):
+        return 8192
+    return 8192
+
+
+def _prompt_cache_kv_bytes_per_token(model_path: str) -> int:
+    """Approximate fp16 K+V bytes per cached token, by weight class.
+
+    Used to bound TOTAL retained KV, and to report a real footprint to the OOM
+    ladder instead of a guess. Derived from the published geometries: layers x
+    kv_heads x head_dim x 2 (K and V) x 2 bytes.
+    """
+
+    from core.brain.llm.model_artifact_profile import model_size_class
+
+    weight_class = model_size_class(str(model_path or ""))
+    return {
+        "72b": 320 * 1024,
+        "32b": 256 * 1024,   # 64 x 8 x 128 x 2 x 2
+        "14b": 96 * 1024,
+        "7b": 57 * 1024,     # 28 x 4 x 128 x 2 x 2
+    }.get(weight_class, 24 * 1024)
+
+
+def _prompt_cache_total_token_budget_for_model(model_path: str) -> int:
+    """Total tokens the whole cache may retain across every entry and lane.
+
+    The entry budget bounds how many prefixes are reusable; this bounds the
+    MEMORY, which is the thing that actually breaks the host. Sized so total
+    retained KV stays near 3GB on any class.
+    """
+
+    per_token = max(1, _prompt_cache_kv_bytes_per_token(model_path))
+    return max(2048, (3 * 1024 * 1024 * 1024) // per_token)
 
 class IPCWriterThread(threading.Thread):
     """
@@ -3429,12 +3471,24 @@ class _PromptCacheSearchResult:
 
 
 class _PromptCacheLRU:
-    def __init__(self, max_size: int = 12, max_entry_tokens: int = 0):
+    def __init__(
+        self,
+        max_size: int = 12,
+        max_entry_tokens: int = 0,
+        max_total_tokens: int = 0,
+        kv_bytes_per_token: int = 0,
+    ):
         self.max_size = max_size
         # 0 = uncapped. A positive cap refuses to RETAIN prompts longer than
         # this many tokens, bounding per-entry KV RAM on heavy models while
         # leaving generation itself untouched.
         self.max_entry_tokens = max_entry_tokens
+        # An entry COUNT is not a memory bound. Twelve entries of unbounded
+        # length is unbounded memory: once insertion actually worked, a
+        # 31,718-token prompt was measured live and managed RSS grew
+        # 73,963MB/h toward the 49GB ceiling. This bounds the total.
+        self.max_total_tokens = max_total_tokens
+        self.kv_bytes_per_token = kv_bytes_per_token
         self._cache: dict[Any, dict[Any, Any]] = {}
         # One eviction queue PER LANE, not one globally. A single global queue
         # meant Aura's internal lanes (loop ticks, enrichment, dreaming,
@@ -3444,6 +3498,59 @@ class _PromptCacheLRU:
         # the first one thrown away. Lane budgets still sum to max_size, so
         # per-entry KV RAM is bounded exactly as before.
         self._lru: dict[str, deque] = {}
+
+    # ── introspection: what is actually retained right now ───────────────
+    def retained_tokens(self) -> int:
+        """Total cached tokens across every lane. The real memory driver."""
+        return sum(
+            len(tokens)
+            for queue in self._lru.values()
+            for (_model_key, tokens) in queue
+        )
+
+    def retained_entries(self) -> int:
+        return sum(len(queue) for queue in self._lru.values())
+
+    def retained_bytes(self) -> int:
+        """Approximate KV bytes held. Reported to the OOM ladder, not guessed."""
+        if self.kv_bytes_per_token <= 0:
+            return 0
+        return self.retained_tokens() * self.kv_bytes_per_token
+
+    def shed(self) -> int:
+        """Release everything and report the bytes freed.
+
+        This is the OOM ladder's rung. The ladder had none — the verifier said
+        so on every boot ("no organ exposes a shed hook, so the OOM ladder has
+        no rungs: the only available response to memory pressure is a
+        restart") — while this cache was the largest trivially-droppable
+        allocation in the process.
+        """
+        freed = self.retained_bytes()
+        self.clear()
+        return freed
+
+    def _enforce_total_token_budget(self) -> None:
+        """Evict oldest entries until total retained tokens fit the budget.
+
+        Per-lane entry budgets bound how many prefixes stay reusable; this
+        bounds the MEMORY. The user-surface lane is drained last so a
+        conversation keeps its prefix while internal lanes give theirs up.
+        """
+        if self.max_total_tokens <= 0:
+            return
+        lanes_by_drain_order = sorted(
+            self._lru.keys(), key=lambda lane: (lane == "user_surface", lane)
+        )
+        while self.retained_tokens() > self.max_total_tokens:
+            for lane in lanes_by_drain_order:
+                queue = self._lru.get(lane)
+                if queue:
+                    evict_model_key, evict_tokens = queue.popleft()
+                    self._delete(evict_model_key, list(evict_tokens))
+                    break
+            else:
+                return
 
     def _lane_of(self, model_key: Any) -> str:
         # A single-entry budget cannot be split without overspending it, so
@@ -3632,6 +3739,7 @@ class _PromptCacheLRU:
         while len(queue_for_lane) > self._lane_budget(lane):
             evict_model_key, evict_tokens = queue_for_lane.popleft()
             self._delete(evict_model_key, list(evict_tokens))
+        self._enforce_total_token_budget()
 
 class JobWatchdog(threading.Thread):
     """
@@ -4396,10 +4504,14 @@ def _mlx_worker_loop(
 
     prompt_cache_budget = _prompt_cache_entry_budget_for_model(model_path)
     prompt_cache_token_cap = _prompt_cache_entry_token_cap_for_model(model_path)
+    prompt_cache_total_tokens = _prompt_cache_total_token_budget_for_model(model_path)
+    prompt_cache_kv_bytes = _prompt_cache_kv_bytes_per_token(model_path)
     prompt_cache_lru = (
         _PromptCacheLRU(
             max_size=prompt_cache_budget,
             max_entry_tokens=prompt_cache_token_cap,
+            max_total_tokens=prompt_cache_total_tokens,
+            kv_bytes_per_token=prompt_cache_kv_bytes,
         )
         if prompt_cache_budget > 0
         else None
@@ -4408,10 +4520,14 @@ def _mlx_worker_loop(
         logger.info("Prompt cache disabled for %s to protect RAM headroom.", os.path.basename(model_path))
     else:
         logger.info(
-            "Prompt cache budget for %s: %d entries, per-entry token cap %d.",
+            "Prompt cache budget for %s: %d entries, per-entry token cap %d, "
+            "total token budget %d (~%.1fGB of KV at %dKB/token).",
             os.path.basename(model_path),
             prompt_cache_budget,
             prompt_cache_token_cap,
+            prompt_cache_total_tokens,
+            (prompt_cache_total_tokens * prompt_cache_kv_bytes) / (1024 ** 3),
+            prompt_cache_kv_bytes // 1024,
         )
 
     # Expert-adapter residency: at most one domain adapter attached on top of
