@@ -22,6 +22,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import re
 import logging
 import math
 import threading
@@ -3707,8 +3708,36 @@ class AdaptiveImmuneSystem:
         return str(value or "unknown").strip().lower().replace(" ", "_")
 
     def _is_protected_subsystem(self, subsystem: str) -> bool:
-        lowered = subsystem.lower()
-        return any(hint in lowered for hint in self._PROTECTED_SUBSYSTEM_HINTS)
+        """Whether this subsystem is protected tissue.
+
+        CP126 5b472fda: this was bare substring containment, which fails in
+        BOTH directions. "will" matched "goodwill_tracker" and "self_model"
+        matched "self_model_debug_dump", suppressing repair on things that
+        were never protected; meanwhile a genuinely protected component with
+        a novel name matched nothing and got no protection at all.
+
+        Matching is now on underscore/dot TOKENS, so a hint matches a whole
+        name component rather than any letters inside one. This still is not
+        a canonical registry with signed ownership labels — that needs an
+        owner declaration this module does not have — so hint matching remains
+        the mechanism, made precise rather than replaced.
+        """
+        lowered = str(subsystem or "").lower()
+        if not lowered:
+            return False
+        tokens = {token for token in re.split(r"[^a-z0-9]+", lowered) if token}
+        for hint in self._PROTECTED_SUBSYSTEM_HINTS:
+            hint_tokens = [token for token in re.split(r"[^a-z0-9]+", hint) if token]
+            if not hint_tokens:
+                continue
+            if len(hint_tokens) == 1:
+                if hint_tokens[0] in tokens:
+                    return True
+            # A multi-token hint ("memory_guard", "canonical_self") must appear
+            # as a contiguous token run.
+            elif all(token in tokens for token in hint_tokens):
+                return True
+        return False
 
     def _new_cell_id(self, kind: CellKind) -> str:
         digest = hashlib.sha1(
