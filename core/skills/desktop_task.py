@@ -958,6 +958,38 @@ class DesktopTaskSkill(BaseSkill):
         r")"
     )
 
+    #: A label the model wrote ABOUT the document, on the front of the document:
+    #: "Note created in Notes app: Orcas, also known as..." — measured live, in
+    #: the note body. It is narration, not content, and no reader of the note
+    #: wants it.
+    _AUTHORED_LABEL_PREFIX_RE = re.compile(
+        r"(?i)^\s*(?:"
+        r"(?:here(?:'s| is)\s+)?(?:the\s+|your\s+|a\s+)?"
+        r"(?:note|document|file|entry|text|summary|draft)"
+        r"(?:\s+(?:created|written|saved|added|content|body))?"
+        r"(?:\s+(?:in|to|for)\s+[\w\s]{1,40}?)?"
+        r"|note\s+created\s+in\s+[\w\s]{1,40}?"
+        r")\s*[:\-–—]\s*"
+    )
+
+    @classmethod
+    def _strip_authored_label_prefix(cls, body: str) -> str:
+        """Drop a leading label the model wrote about the document.
+
+        The prompt asks for the document text alone and the model still tends to
+        announce it first. Only a leading label immediately followed by real
+        content is removed, and only when enough content survives — a short
+        body that IS the label is left alone for the usability guards to judge.
+        """
+
+        text = str(body or "").strip()
+        if not text:
+            return ""
+        stripped = cls._AUTHORED_LABEL_PREFIX_RE.sub("", text, count=1).strip()
+        if stripped and len(stripped) >= 40:
+            return stripped
+        return text
+
     @classmethod
     def _objective_needs_authored_content(cls, objective: str) -> bool:
         """True only when SHE has to supply the words.
@@ -1047,7 +1079,7 @@ class DesktopTaskSkill(BaseSkill):
             )
             return ""
 
-        body = str(text or "").strip()
+        body = self._strip_authored_label_prefix(str(text or "").strip())
         if not body:
             return ""
         # The same guards the freeform path already applies: never let the

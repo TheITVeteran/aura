@@ -240,3 +240,46 @@ def test_an_objective_with_its_own_content_source_is_not_authored():
         "Put the selection into a document",
     ):
         assert needs(objective) is False, objective
+
+
+def test_a_label_about_the_document_is_not_part_of_the_document():
+    """Measured live, inside the note body:
+
+        "Note created in Notes app:Orcas, also known as killer whales..."
+
+    The prompt asks for the document text alone; the model announced it first.
+    That is narration, and no reader of the note wants it.
+    """
+    strip = DesktopTaskSkill._strip_authored_label_prefix
+
+    assert strip(
+        "Note created in Notes app:Orcas, also known as killer whales, are "
+        "actually the largest species of dolphins. They are highly intelligent."
+    ).startswith("Orcas, also known as")
+
+    assert strip(
+        "Here's the note: Orcas are apex predators with complex social "
+        "structures that persist across generations of a pod."
+    ).startswith("Orcas are apex predators")
+
+    # Real content that merely begins with a word like "Summary:" still loses
+    # only the label, never the substance.
+    assert strip(
+        "Summary: Whales migrate thousands of miles each year between feeding "
+        "and breeding grounds, guided by cues we do not fully understand."
+    ).startswith("Whales migrate")
+
+
+def test_content_without_a_label_is_untouched():
+    strip = DesktopTaskSkill._strip_authored_label_prefix
+    body = (
+        "Orcas are apex predators known for intelligence and complex social "
+        "structures that persist across generations."
+    )
+    assert strip(body) == body
+
+
+def test_a_body_that_is_only_a_label_is_left_for_the_usability_guards():
+    """Stripping must not manufacture an empty document."""
+    strip = DesktopTaskSkill._strip_authored_label_prefix
+    assert strip("Note created in Notes app:") == "Note created in Notes app:"
