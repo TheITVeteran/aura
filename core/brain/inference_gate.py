@@ -7841,6 +7841,24 @@ class InferenceGate:
             # enough) shrinks the budget below what the steps need and the task
             # cannot be attempted at all.
             morpho_kwargs["desktop_execution_contract"] = True
+            # And give the plan room to exist. The origin's conversational
+            # default capped this turn at 288 tokens, which cannot hold a
+            # multi-step JSON plan, so the model emitted prose, the draft was
+            # judged truncated, and nothing executed. Measured live on a
+            # DELIBERATE desktop turn that had already been routed to
+            # desktop_task. Success up to now depended on which planner ran:
+            # the deterministic heuristic needs no tokens, the model one does.
+            _plan_floor = 1024
+            if int(max_tokens or 0) < _plan_floor:
+                logger.info(
+                    "🧾 [CONTRACT] Desktop execution turn: raising the reply "
+                    "budget %s → %d so the plan can be expressed.",
+                    max_tokens,
+                    _plan_floor,
+                )
+                max_tokens = _plan_floor
+                context["max_tokens"] = max_tokens
+                morpho_kwargs["max_tokens"] = max_tokens
             if output_contract_is_user_facing:
                 output_contract_is_user_facing = False
                 logger.info(
