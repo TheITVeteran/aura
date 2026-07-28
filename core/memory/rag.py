@@ -24,6 +24,9 @@ _SEMANTIC_LOCK = threading.Lock()
 _EMBED_ENGINE: Any = None
 _EMBED_ENGINE_FAILED = False
 _WARM_INFLIGHT = False
+#: Set while the dense engine is being built off-loop, so concurrent callers
+#: start exactly one warm thread instead of one each.
+_ENGINE_WARM_INFLIGHT = False
 
 
 _SEMANTIC_RAG_FLAG = None
@@ -45,31 +48,93 @@ def _semantic_enabled() -> bool:
     return bool(_SEMANTIC_RAG_FLAG.value())
 
 
+def _on_event_loop() -> bool:
+    """Whether this call is running on an asyncio event loop thread."""
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+        return True
+    except (RuntimeError, ImportError):
+        return False
+
+
+def _build_embed_engine() -> Any:
+    """Construct and probe the dense embedder. Blocking; never raises."""
+    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED, _ENGINE_WARM_INFLIGHT
+    with _SEMANTIC_LOCK:
+        if _EMBED_ENGINE is not None or _EMBED_ENGINE_FAILED:
+            _ENGINE_WARM_INFLIGHT = False
+            return _EMBED_ENGINE
+    try:
+        from core.memory.vector_memory_engine import EmbeddingEngine
+
+        engine = EmbeddingEngine()
+        # This is the expensive call: it loads SentenceTransformer (~5s) and
+        # is why the construction must never happen on the event loop.
+        probe = engine.embed("semantic backend probe")
+        ok = getattr(engine, "_model", None) is not None and probe is not None
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+        with _SEMANTIC_LOCK:
+            _EMBED_ENGINE_FAILED = True
+            _ENGINE_WARM_INFLIGHT = False
+        logger.info("Semantic RAG backend failed to initialize (%s); TF-IDF only.", exc)
+        return None
+    with _SEMANTIC_LOCK:
+        _ENGINE_WARM_INFLIGHT = False
+        if not ok:
+            _EMBED_ENGINE_FAILED = True
+            logger.info("Semantic RAG backend unavailable; TF-IDF only.")
+            return None
+        _EMBED_ENGINE = engine
+    return engine
+
+
 def _get_embed_engine() -> Any:
-    """The real dense embedder, or None. Never raises; one failure latches."""
-    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED
+    """The real dense embedder, or None. Never raises; one failure latches.
+
+    Building the engine loads a SentenceTransformer model, which takes about
+    five seconds. That used to happen inline on whatever thread asked first —
+    including the event loop, where it froze the runtime for the whole load.
+    Lockdep saw it once the vector engine's lifecycle lock became visible:
+
+        loop_blocking_hold: 'vector_memory_engine.lifecycle_lock' held 5368ms
+        on the event loop thread (limit 50ms)
+
+    and mind_tick was declared stalled 33s later, which is what a user
+    experiences as the app hanging on launch.
+
+    The lock was never the defect — a five-second synchronous model load on
+    the loop is. So on the loop we decline to build, start the build in a
+    background thread, and answer with TF-IDF for this query. The next query
+    gets the dense engine. Crucially this does NOT latch _EMBED_ENGINE_FAILED:
+    declining is not failing, and treating it as failure would disable
+    semantic retrieval permanently for the lifetime of the process.
+    """
+    global _ENGINE_WARM_INFLIGHT
     if _EMBED_ENGINE_FAILED or not _semantic_enabled():
         return None
     if _EMBED_ENGINE is not None:
         return _EMBED_ENGINE
+
+    if not _on_event_loop():
+        return _build_embed_engine()
+
     with _SEMANTIC_LOCK:
         if _EMBED_ENGINE is not None or _EMBED_ENGINE_FAILED:
             return _EMBED_ENGINE
-        try:
-            from core.memory.vector_memory_engine import EmbeddingEngine
-
-            engine = EmbeddingEngine()
-            probe = engine.embed("semantic backend probe")
-            if getattr(engine, "_model", None) is None or probe is None:
-                _EMBED_ENGINE_FAILED = True
-                logger.info("Semantic RAG backend unavailable; TF-IDF only.")
-                return None
-            _EMBED_ENGINE = engine
-            return engine
-        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
-            _EMBED_ENGINE_FAILED = True
-            logger.info("Semantic RAG backend failed to initialize (%s); TF-IDF only.", exc)
-            return None
+        already_warming = _ENGINE_WARM_INFLIGHT
+        _ENGINE_WARM_INFLIGHT = True
+    if not already_warming:
+        logger.info(
+            "Semantic RAG engine warming off-loop; this query uses TF-IDF."
+        )
+        threading.Thread(
+            target=_build_embed_engine,
+            name="rag-embed-engine-warm",
+            daemon=True,
+        ).start()
+    return None
 
 
 def _text_key(text: str) -> str:
