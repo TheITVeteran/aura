@@ -7816,6 +7816,39 @@ class InferenceGate:
                 or requested_tier in {"primary", "secondary"}
             )
         )
+        # On a turn that EXECUTES something, a shape phrase describes the
+        # ARTIFACT, not her reply.
+        #
+        # "Open the Notes app and write a new note with three sentences about
+        # humpback whales" parses to sentence_count=3, and that was applied to
+        # the chat reply: it forced the compact foreground context and clamped
+        # the budget to max_tokens=288 — far too small to emit a multi-step
+        # desktop plan. She produced conversational filler instead, nothing
+        # executed, and the gate then vetoed the filler for not matching the
+        # three-sentence shape it had itself imposed.
+        #
+        # Measured live twice, and confirmed by removing the phrase: the same
+        # request without "three sentences" planned and executed, and the note
+        # is on disk. Every demo instruction carries this kind of clause ("3
+        # articles", "a coherent summary", "a short note"), so the artifact
+        # spec was systematically starving the plan that would have produced it.
+        #
+        # The executor already owns artifact shape through `document_body`;
+        # here it must not also become a ceiling on the report she gives back.
+        if bool(context.get("desktop_execution_contract", False)):
+            # Carry the flag to the client so the unified-memory clamp keeps a
+            # floor under the PLAN. Without it, pressure (a screen recorder is
+            # enough) shrinks the budget below what the steps need and the task
+            # cannot be attempted at all.
+            morpho_kwargs["desktop_execution_contract"] = True
+            if output_contract_is_user_facing:
+                output_contract_is_user_facing = False
+                logger.info(
+                    "🧾 [CONTRACT] Output-shape request treated as the ARTIFACT's "
+                    "shape on a desktop-execution turn; the reply keeps its full "
+                    "budget (would have capped at %s tokens).",
+                    getattr(output_contract, "hard_token_ceiling", None),
+                )
         if (
             output_contract_is_user_facing
             and output_contract_payload is not None

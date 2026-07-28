@@ -5472,8 +5472,16 @@ def _enforce_final_requested_output_contract(
     *,
     user_message: str,
     reply_text: str,
+    desktop_execution_contract: bool | None = None,
 ) -> str:
-    """Revalidate the typed output contract after every late chat mutation."""
+    """Revalidate the typed output contract after every late chat mutation.
+
+    On an EXECUTION turn the shape phrase belongs to the artifact, not the
+    reply. "write a new note with three sentences about humpback whales" parses
+    to sentence_count=3; enforcing that against her report of what she did
+    vetoed a completed task for not being three sentences long. The executor
+    already owns artifact shape via ``document_body``.
+    """
 
     trace.update(
         {
@@ -5494,6 +5502,29 @@ def _enforce_final_requested_output_contract(
         )
 
         contract = requested_output_contract(user_message)
+        # Derived here, not threaded. Three call sites sit in scopes that never
+        # had this value, and a shape contract silently enforced against a
+        # completed task report is precisely the failure this guards.
+        is_execution_turn = (
+            _looks_like_desktop_objective(user_message)
+            if desktop_execution_contract is None
+            else bool(desktop_execution_contract)
+        )
+        if is_execution_turn and contract.constrained:
+            trace.update(
+                {
+                    "final_requested_output_contract_evaluated": True,
+                    "final_requested_output_contract_required": False,
+                    "final_requested_output_contract_kind": str(
+                        getattr(contract, "kind", "") or ""
+                    ),
+                    "final_requested_output_contract_satisfied": True,
+                    "final_requested_output_contract_reasons": [
+                        "artifact_shape_not_reply_shape"
+                    ],
+                }
+            )
+            return reply_text
         if not contract.constrained:
             trace.update(
                 {

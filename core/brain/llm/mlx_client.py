@@ -1555,9 +1555,26 @@ def _apply_memory_pressure_generation_controls(
     if max_token_cap is None:
         return options
 
+    # A turn that must EMIT A PLAN cannot be shrunk below the plan.
+    #
+    # Clamping a conversational reply under pressure is right: it costs some
+    # words. Clamping an execution turn below its plan budget costs the whole
+    # task — she cannot express the steps, so nothing runs, and the surface
+    # reports conversational filler instead of doing the work. Being slower is
+    # recoverable; being unable to attempt the request is not.
+    #
+    # This is why the desktop demo degrades exactly when a screen recorder is
+    # running: the recorder raises unified-memory pressure, the cap drops, and
+    # the plan no longer fits in the budget it was given.
+    if bool(options.get("desktop_execution_contract", False)):
+        plan_floor = int(options.get("desktop_plan_token_floor", 1024) or 1024)
+        effective_cap = max(int(max_token_cap or 0), plan_floor)
+    else:
+        effective_cap = max_token_cap
+
     options["max_tokens"] = _bounded_max_tokens(
         options.get("max_tokens"),
-        max_token_cap,
+        effective_cap,
         default_max_tokens,
     )
     if (
