@@ -113,6 +113,12 @@ def _maintenance_background_deferral_reason() -> str:
 
 #: One event is a sighting; history needs more than one (CP126 7c08abf3).
 _MIN_TEMPORAL_HISTORY_EVENTS = 2
+#: Bumped when the persisted immune-state layout changes incompatibly. State
+#: from another version is quarantined to a reseed rather than parsed
+#: field-by-field into a live repair-capable population (CP126 5c214831).
+IMMUNE_STATE_SCHEMA_VERSION = 1
+#: A state file larger than this is not immune state; refuse to parse it.
+MAX_IMMUNE_STATE_BYTES = 32 * 1024 * 1024
 #: A snapshot older than this cannot describe the event it is attached to.
 _MAX_SNAPSHOT_AGE_S = 300.0
 
@@ -148,6 +154,16 @@ def _snapshot_is_usable(snapshot: Any) -> bool:
     except (TypeError, ValueError):
         return True
     return age <= _MAX_SNAPSHOT_AGE_S
+
+
+def _immune_state_digest(payload: dict[str, Any]) -> str:
+    """Digest over the state body, excluding the integrity block itself."""
+    body = {key: value for key, value in payload.items() if key != "integrity"}
+    try:
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        encoded = repr(sorted(body))
+    return hashlib.sha256(encoded.encode("utf-8", "replace")).hexdigest()
 
 
 def _artifact_payload_digest(artifact: Any) -> str:
@@ -3352,6 +3368,15 @@ class AdaptiveImmuneSystem:
             },
             "expansion_engine": self.expansion_engine.to_dict(),
         }
+        payload["schema_version"] = IMMUNE_STATE_SCHEMA_VERSION
+        # An unkeyed digest over the body: it detects CORRUPTION and truncation,
+        # not tampering by anyone who can write the file. Labelled as what it
+        # is rather than as a trust root — a signed state file needs a key this
+        # subsystem does not hold (CP126 5c214831).
+        payload["integrity"] = {
+            "algorithm": "sha256-unkeyed",
+            "digest": _immune_state_digest(payload),
+        }
         try:
             # Route through the governed file-write gateway: a repair-capable,
             # behavior-evolving state file is a consequential write and must
@@ -3381,7 +3406,28 @@ class AdaptiveImmuneSystem:
         if not self._state_path.exists():
             return False
         try:
+            size = self._state_path.stat().st_size
+            if size > MAX_IMMUNE_STATE_BYTES:
+                raise ValueError(
+                    f"immune state file is {size} bytes, over the "
+                    f"{MAX_IMMUNE_STATE_BYTES} bound"
+                )
             payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("immune state must be a JSON object")
+            # A file written by a different layout is quarantined to a reseed
+            # rather than parsed field-by-field into a live repair-capable
+            # population (CP126 5c214831).
+            found_version = int(payload.get("schema_version", 0) or 0)
+            if found_version != IMMUNE_STATE_SCHEMA_VERSION:
+                raise ValueError(
+                    f"immune state schema {found_version} != "
+                    f"{IMMUNE_STATE_SCHEMA_VERSION}"
+                )
+            integrity = payload.get("integrity")
+            if isinstance(integrity, dict) and integrity.get("digest"):
+                if _immune_state_digest(payload) != str(integrity["digest"]):
+                    raise ValueError("immune state digest does not match its contents")
             if "expansion_engine" in payload:
                 from core.adaptation.dimensional_expansion import DimensionalExpansionEngine
 
