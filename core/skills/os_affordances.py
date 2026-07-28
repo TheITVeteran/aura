@@ -77,8 +77,23 @@ def _extract_wallpaper(text: str) -> str | None:
             return None
         return query
 
+    # "find an ORCA IMAGE online" — the adjective form, which is how people
+    # actually ask. The pattern above only covers "image OF an orca".
+    attributive_match = re.search(
+        r"\b(?:find|search|look\s+up|get)\b[^.;\n]{0,60}?\b(?:a|an|some)?\s*"
+        r"([A-Za-z][\w'-]{2,40})\s+(?:image|picture|photo)\b"
+        r"[^.;\n]{0,120}?\b(?:make|set|use)\b[^.;\n]{0,50}?"
+        r"\b(?:my\s+)?(?:wallpaper|desktop\s+background|background)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+
     if image_topic_match:
         topic = _clean(image_topic_match.group(1))
+        if topic:
+            return topic
+    if attributive_match:
+        topic = _clean(attributive_match.group(1))
         if topic:
             return topic
     if not direct_match:
@@ -86,6 +101,25 @@ def _extract_wallpaper(text: str) -> str | None:
     topic = _clean(direct_match.group(1))
     if topic:
         return topic
+
+    # The target is a pronoun: "find an orca image online, set IT as my
+    # wallpaper". `_clean` rightly refuses to treat "it" as a search topic, but
+    # refusing is not the same as not knowing — the referent is in the same
+    # sentence. Resolving it is the difference between the wallpaper leg
+    # planning at all and being silently dropped from the objective, which is
+    # what happened live: the chain reported success and the desktop picture
+    # never changed.
+    referent = re.search(
+        r"\b(?:image|picture|photo)\s+of\s+(?:a|an|the)?\s*([^.;,\n]+)",
+        text,
+        flags=re.IGNORECASE,
+    ) or re.search(
+        r"\b(?:a|an|some)\s+([A-Za-z][\w'-]{2,40})\s+(?:image|picture|photo)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if referent:
+        return _clean(referent.group(1))
     return None
 
 
