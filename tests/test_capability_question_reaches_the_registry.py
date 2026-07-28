@@ -38,6 +38,11 @@ ASKING_ABOUT_HERSELF = [
     "what's actually wired up for you right now?",
     "what capabilities do you have",
     "list your tools",
+    # Imperative phrasing is still a question about herself.
+    "Describe whether you can open apps, use the browser, and work with PDFs "
+    "on my desktop.",
+    "tell me what you can do on this machine",
+    "explain what tools you have",
 ]
 
 #: Process questions name her, a capability word and a question mark, and want

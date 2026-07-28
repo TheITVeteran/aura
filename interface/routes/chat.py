@@ -12399,8 +12399,16 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     # "Aura, Bryan sent me and I owe you an apology... I could not find a tool
     # dispatch in the logs" was answered with a recitation of all 75 skill
     # surfaces. Nobody had asked anything.
+    # An inventory question can be phrased as an imperative — "Describe
+    # whether you can open apps", "tell me what you can do" — so the test is
+    # interrogative FORM, not a question mark. Statements that merely mention
+    # her tools still fall through.
     if "?" not in text and not re.match(
-        r"\s*(?:what|which|list|show\s+me|tell\s+me\s+(?:what|which))\b",
+        r"\s*(?:what|which|list|show\s+me|"
+        r"(?:tell|describe|explain)\s+(?:me\s+)?(?:what|which|whether|if)\b|"
+        r"describe\s+(?:your|the)\s+(?:capabilit|tool|skill)|"
+        r"(?:tell|explain)\s+me\s+(?:about\s+)?(?:your|the)\s+"
+        r"(?:capabilit|tool|skill))",
         text,
         flags=re.IGNORECASE,
     ):
