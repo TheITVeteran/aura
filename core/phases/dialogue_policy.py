@@ -203,6 +203,33 @@ def _word_list() -> set[str]:
     return words
 
 
+#: Letter shapes that no English-like word has. Corruption is a property of
+#: how a token is BUILT, not of whether some word list happens to contain it.
+_NO_VOWEL_RE = re.compile(r"^[^aeiouy]+$")
+_IMPOSSIBLE_RUN_RE = re.compile(
+    r"[bcdfghjklmnpqrstvwxz]{5,}"          # five consonants with no break
+    r"|(.)\1{2,}"                          # the same letter three times running
+    r"|[qwrtypsdfghjklzxcvbnm]{4,}$"       # a consonant wall at the end
+)
+
+
+def _looks_like_a_word(token: str) -> bool:
+    """Whether a token is SHAPED like language, regardless of any dictionary.
+
+    "webhook", "misordered" and "kubernetes" are absent from
+    /usr/share/dict/words and are obviously words. "asdkfj" and "zxcvbn" are
+    in no dictionary either, and are obviously not. The difference is shape:
+    real words carry vowels and do not stack five consonants or repeat a
+    letter three times.
+    """
+    body = str(token or "").lower()
+    if len(body) < 4:
+        return True
+    if _NO_VOWEL_RE.match(body):
+        return False
+    return not _IMPOSSIBLE_RUN_RE.search(body)
+
+
 def contains_corrupted_language(text: str) -> bool:
     """Detect visibly corrupted lexical output before it reaches a user."""
     body = str(text or "")
@@ -235,9 +262,28 @@ def contains_corrupted_language(text: str) -> bool:
 
     if any(token in _KNOWN_CORRUPT_TOKENS for token in unknown):
         return True
+
+    # Unknown is not corrupt.
+    #
+    # This is a FATAL check — _sanitize_telemetry_leakage returns None on it
+    # and the entire reply is thrown away, in every mode. It was backed by
+    # /usr/share/dict/words, a word list with no modern technical vocabulary,
+    # so "Your repo config has a stale webhook and the auth middleware is
+    # misordered" was classified as corrupted output and destroyed. Measured
+    # 2026-07-27; meanwhile actual steering collapse ("Do product of multiple
+    # exponent term simplify reflexion") passed, because every word in it is
+    # in the dictionary.
+    #
+    # A missing word means the list is old. Corruption is a property of the
+    # token's shape, so only unknown tokens that are not shaped like language
+    # count as evidence — which makes this both far less destructive and
+    # strictly better at catching the garbage it exists for.
+    malformed = [token for token in unknown if not _looks_like_a_word(token)]
+    if len(malformed) >= 2:
+        return True
     if checked < 8:
-        return len(unknown) >= 3
-    return len(unknown) >= 3 and (len(unknown) / checked) >= 0.20
+        return len(malformed) >= 1 and len(unknown) >= 3
+    return len(malformed) >= 1 and (len(unknown) / checked) >= 0.20
 
 
 @dataclass(frozen=True)
