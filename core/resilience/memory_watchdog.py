@@ -96,9 +96,11 @@ class MemorySample:
     system_percent: float
     total_ram_gb: float
     sampled_at: float
-    #: What is left in the swap file. This, not ``swap_used_gb``, is the live
-    #: signal — see ``_swap_is_exhausted``.
+    #: What is left in the swap file. Corroborating evidence only — on macOS
+    #: this runs near zero as a matter of course. See ``_swap_is_exhausted``.
     swap_free_gb: float = 0.0
+    #: RAM the host can still hand out. This is the signal that decides it.
+    available_gb: float = 0.0
     observation_source: str = "unavailable"
     observation_scenario_id: str = ""
 
@@ -245,6 +247,7 @@ def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample
             child_rss = max(0.0, managed_rss - core_rss)
     swap_used_gb = float(memory.swap_used_bytes) / float(1024**3)
     swap_free_gb = float(getattr(memory, "swap_free_bytes", 0) or 0) / float(1024**3)
+    available_gb = float(getattr(memory, "available_bytes", 0) or 0) / float(1024**3)
     system_percent = float(memory.percent) if memory.available else 100.0
     total_ram_gb = float(memory.total_bytes) / float(1024**3)
     return MemorySample(
@@ -252,6 +255,7 @@ def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample
         child_rss_mb=child_rss,
         swap_used_gb=swap_used_gb,
         swap_free_gb=swap_free_gb,
+        available_gb=available_gb,
         system_percent=system_percent,
         total_ram_gb=total_ram_gb,
         sampled_at=time.time(),
@@ -261,29 +265,45 @@ def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample
 
 
 def _swap_is_exhausted(sample: MemorySample, thresholds: _Thresholds) -> bool:
-    """Is the host swapping *now*, or did it swap once an hour ago?
+    """Is the host actually out of memory, or is this just macOS being macOS?
 
-    ``swap used`` is a high-water mark on macOS: pages written to the swap file
-    stay accounted there long after the pressure that caused them has gone, and
-    the figure does not fall when memory frees up. Testing ``swap_used >= 8GB``
-    therefore latches — measured live 2026-07-28, the host sat at 17.9 GB used
-    with 24.8 GB of RAM available and 64% utilisation, and every check with the
-    model resident declared "swap exhaustion" on a number describing the past.
+    Two readings had to be discarded before this one, and both were discarded
+    against measurements taken on the live host while it was perfectly
+    responsive.
 
-    Each of those declarations was a fail-closed CRITICAL, which is what pinned
-    deg_threat and, through it, blocked her builds.
+    ``swap used`` was the original test. It is a high-water mark: pages written
+    to the swap file stay accounted there long after the pressure that caused
+    them is gone. It latched at 17.9 GB against a 7.7 GB threshold and declared
+    an emergency on every check, for an event an hour past.
 
-    What actually indicates present danger is headroom: the swap file being
-    nearly full means the next allocation has nowhere to go, and that is when
-    the event loop stalls. Free space falls when pressure is real and recovers
-    when it passes, which is the property the old test lacked.
+    ``swap free`` replaced it, and was better but still wrong. macOS sizes the
+    swap file dynamically and runs it close to full by design — measured here
+    at 1.10 GB free of 11.8 GB, having grown to 18.4 GB and shrunk back on its
+    own. Low swap headroom on this platform is ordinary housekeeping.
+
+    What decides it is RAM the host can still hand out, because that is what
+    the next allocation draws on and what stalls the event loop when it runs
+    out. At the moment of the loudest false alarm: 31.6 GB available, 54% used.
+    Nothing was wrong.
+
+    So availability is the gate, and swap headroom is corroboration: both have
+    to be tight before this is an emergency.
     """
     free_floor_gb = max(1.0, thresholds.swap_hard_gb * 0.25)
-    if sample.swap_free_gb > 0.0:
-        return sample.swap_free_gb <= free_floor_gb
-    # No free-space reading available: fall back to the old high-water test
-    # rather than silently never firing. Better a stale signal than none.
-    return sample.swap_used_gb >= thresholds.swap_hard_gb
+    swap_tight = (
+        sample.swap_free_gb <= free_floor_gb
+        if sample.swap_free_gb > 0.0
+        else sample.swap_used_gb >= thresholds.swap_hard_gb
+    )
+    if not swap_tight:
+        return False
+    if sample.available_gb <= 0.0:
+        # Nothing to gate on; fall back to the swap evidence alone rather than
+        # going blind. A stale signal beats a watchdog that can never fire.
+        return True
+    # A host with real headroom is not in a memory emergency, whatever the
+    # swap file happens to look like.
+    return sample.available_gb <= max(2.0, sample.total_ram_gb * 0.08)
 
 
 def _shed_registered_organs() -> tuple[int, int]:
