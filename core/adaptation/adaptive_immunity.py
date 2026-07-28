@@ -1263,6 +1263,11 @@ class AdaptiveImmuneSystem:
         self._pending_suppressions: dict[str, list[dict[str, Any]]] = defaultdict(list)
         # Guards the expansion engine alone, so a PCA does not serialize every
         # other immune observation (CP126 ad18eba6).
+        # Coalescing state for _save_state (CP126 df9f2a05).
+        self._state_dirty = False
+        self._last_save_at = 0.0
+        self._save_min_interval_s = 2.0
+        self._deferred_saves = 0
         self._expansion_lock = checked_lock(
             "adaptive_immunity.expansion", rank=LockRank.LANE, reentrant=True
         )
@@ -1316,7 +1321,7 @@ class AdaptiveImmuneSystem:
         if not self._load_state():
             self._cells = self._seed_population()
             self._assign_species()
-            self._save_state()
+            self._save_state(force=True)
 
         logger.info(
             "AdaptiveImmuneSystem online (population=%d, state=%s)",
@@ -1783,7 +1788,7 @@ class AdaptiveImmuneSystem:
                     self._cells.remove(cell)
                     removed += 1
 
-            self._save_state()
+            self._save_state(force=True)
             self._last_dream_at = self._observation_count
             return {
                 "promotions": promotions,
@@ -2959,7 +2964,11 @@ class AdaptiveImmuneSystem:
                         "all_clear": response.diagnostic_verdict.get("all_clear", False),
                     }
                 )
-            self._save_state()
+            # The last write of an observation is the durable one: the
+            # intermediate writes above coalesce into it, so one event
+            # costs one snapshot instead of three (CP126 df9f2a05)
+            # without giving up recurrence memory across a reload.
+            self._save_state(force=True)
 
     def _component_monitor_matches(self, subsystem: str) -> list[str]:
         """Match a subsystem to registered health monitors — exact-first.
@@ -3263,7 +3272,30 @@ class AdaptiveImmuneSystem:
         )
         return float(scale), float(max(0.0, min(1.0, entropy_pressure)))
 
-    def _save_state(self) -> None:
+    def _save_state(self, *, force: bool = False) -> None:
+        """Persist the immune ecology, coalescing bursts.
+
+        CP126 df9f2a05: core observation writes state, reinforcement can write
+        again, and the response summary writes again — so ONE event
+        serialized the whole ecology several times. During a failure storm,
+        which is exactly when many events arrive at once, that multiplied I/O
+        and lock time in the subsystem meant to be responding to the storm.
+
+        Writes inside the coalescing interval are deferred, not dropped: the
+        dirty flag survives and the next call past the interval writes the
+        latest state. The honest cost is that a crash can lose up to
+        ``_save_min_interval_s`` of fitness updates — which is a far better
+        trade than amplifying the storm that causes the crash, and callers
+        that need a durable point (boot seeding, consolidation) pass
+        force=True.
+        """
+        now = time.time()
+        self._state_dirty = True
+        if not force and (now - self._last_save_at) < self._save_min_interval_s:
+            self._deferred_saves += 1
+            return
+        self._last_save_at = now
+        self._state_dirty = False
         payload = {
             "cells": [cell.to_dict() for cell in self._cells],
             "tissue": self._tissue.to_dict(),
