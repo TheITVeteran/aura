@@ -1288,3 +1288,35 @@ def test_shed_memory_never_claims_more_than_was_held(monkeypatch):
 
     monkeypatch.setattr(client, "_send_worker_control_action", _boom)
     assert client.shed_memory() == 0
+
+
+def test_prompt_cache_registers_itself_on_the_oom_ladder_at_construction():
+    """Boot-time discovery cannot see a lazily-created organ.
+
+    core/runtime/foundations.py registers services that are ALREADY
+    instantiated, and this client is built when a model first loads — long
+    after that sweep. So the live ladder kept reporting "0 sheddable organs"
+    and the verifier kept warning that its only response to memory pressure
+    was a restart, with a working shed_memory() sitting right there.
+    """
+    from core.brain.llm.mlx_client import MLXLocalClient
+    from core.runtime.oom_policy import oom_report, reset_oom_policy_for_test
+
+    reset_oom_policy_for_test()
+    assert oom_report()["sheddable_organs"] == 0
+
+    client = MLXLocalClient("Aura-32B-crsm-closeout-jul1-20260701-215118")
+    try:
+        client._record_surface_control_receipt_from_response(
+            {"status": "ok", "prompt_cache_bytes": 3 * 1024**3, "tokens_used": 1}
+        )
+        report = oom_report()
+        assert report["sheddable_organs"] >= 1, "the ladder still has no rungs"
+        rows = [r for r in report["scoring_table"] if r["organ"] == "mlx_prompt_cache"]
+        assert rows, "the prompt cache did not register itself"
+        assert rows[0]["sheddable"] is True
+        assert rows[0]["footprint_bytes"] == 3 * 1024**3
+        assert rows[0]["oom_score_adj"] > 0
+    finally:
+        client._process = None
+        reset_oom_policy_for_test()

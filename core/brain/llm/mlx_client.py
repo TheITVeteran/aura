@@ -2662,6 +2662,38 @@ class MLXLocalClient:
         self._cancel_seq = self._mp_context.Value("Q", 0, lock=False)
         self._job_seq_counter = 0
         self._current_request_seq = 0
+        self._last_prompt_cache_bytes = 0
+        self._register_as_sheddable_organ()
+
+    def _register_as_sheddable_organ(self) -> None:
+        """Announce this cache to the OOM ladder at construction.
+
+        Boot-time discovery in core/runtime/foundations.py walks services that
+        are ALREADY instantiated, and this client is created lazily when a model
+        first loads — long after that sweep. So the ladder kept reporting
+        "0 sheddable organs" and the verifier kept warning that its only
+        response to memory pressure was a restart, even with a working
+        shed_memory() right here. Registering from __init__ is order-independent
+        and idempotent: register() replaces by name.
+        """
+
+        try:
+            from core.runtime.oom_policy import register_organ
+
+            register_organ(
+                "mlx_prompt_cache",
+                oom_score_adj=int(self.oom_score_adj),
+                footprint=self.memory_footprint_bytes,
+                shed=self.shed_memory,
+                rationale=self.oom_rationale,
+                recoverable=bool(self.oom_recoverable),
+            )
+        except _MLX_OPTIONAL_THROTTLE_ERRORS as exc:
+            _record_mlx_degradation(
+                exc,
+                action="continued without registering the prompt cache on the OOM ladder",
+                severity="warning",
+            )
 
     def _is_primary_or_deep_lane(self) -> bool:
         """Whether this lane is one of the big resident models.
