@@ -104,10 +104,19 @@ def test_campaign_records_paired_outcomes_end_to_end(fake_load, tmp_path):
     receipt = campaign.run_campaign(args)
 
     assert receipt["schema"] == campaign.CAMPAIGN_SCHEMA
-    assert receipt["paired_outcomes_recorded"] == 3
     assert receipt["holdout_tasks"] == 3
     assert receipt["winner_schedule_hash"]
-    assert receipt["library_status"]["observations"] == 3
+    if receipt["winner_is_default"]:
+        # CP126 78c85746: the search is seeded with the default, so on a
+        # random model it legitimately returns it. Pairing a schedule against
+        # ITSELF would credit it with wins over its own results, so no trials
+        # run and the receipt says why.
+        assert receipt["paired_outcomes_recorded"] == 0
+        assert "against itself" in receipt["paired_trials_skipped_reason"]
+        assert receipt["library_status"]["observations"] == 0
+    else:
+        assert receipt["paired_outcomes_recorded"] == 3
+        assert receipt["library_status"]["observations"] == 3
     # Promotion needs MIN_TRIALS and a real win rate; three tie trials on a
     # random model must NOT promote — and the receipt says so honestly.
     assert isinstance(receipt["promotion_happened"], bool)
@@ -115,7 +124,7 @@ def test_campaign_records_paired_outcomes_end_to_end(fake_load, tmp_path):
     from core.brain.llm.latent_cortex.schedules import ScheduleLibrary
 
     reloaded = ScheduleLibrary(Path(args.library))
-    assert reloaded.status()["observations"] == 3
+    assert reloaded.status()["observations"] == receipt["paired_outcomes_recorded"]
 
 
 def test_campaign_refuses_overlapping_splits(fake_load, tmp_path, monkeypatch):
@@ -134,6 +143,11 @@ def test_campaign_refuses_overlapping_splits(fake_load, tmp_path, monkeypatch):
 def test_per_task_commitments_are_distinct(fake_load, tmp_path):
     args = _args(tmp_path, fake_load, holdout_per_cell=4)
     receipt = campaign.run_campaign(args)
+    if receipt["winner_is_default"]:
+        # Nothing is paired against itself (CP126 78c85746), so there are no
+        # commitments to be distinct.
+        assert receipt["paired_outcomes_recorded"] == 0
+        return
     assert receipt["paired_outcomes_recorded"] == 4
     from core.brain.llm.latent_cortex.schedules import ScheduleLibrary
 

@@ -270,7 +270,17 @@ def run_campaign(args: argparse.Namespace) -> dict[str, Any]:
         n_slots=args.n_slots, max_steps=max(2, default_schedule.total_layer_repeats),
     )
     recorded = 0
-    for index, task in enumerate(holdout_tasks):
+    # CP126 78c85746: the search is SEEDED with the default, so it can quite
+    # legitimately conclude the default is best. Running paired trials then
+    # compares a schedule against itself and credits it with "wins" over its
+    # own results — which is exactly the baseline-aliasing this binding
+    # exists to prevent. There is nothing to promote, and the receipt says so
+    # rather than manufacturing three tie trials.
+    winner_is_default = winner.schedule_hash == default_schedule.schedule_hash
+    # NB: holdout_tasks is left intact — how many tasks were AVAILABLE is a
+    # fact about the run, independent of whether trials were worth running.
+    trial_tasks = [] if winner_is_default else holdout_tasks
+    for index, task in enumerate(trial_tasks):
         candidate_first = index % 2 == 0
         first_engine, second_engine = (
             (candidate_engine, default_engine)
@@ -315,6 +325,10 @@ def run_campaign(args: argparse.Namespace) -> dict[str, Any]:
             evaluator_build_sha256=tool_sha,
             model_checkpoint_sha256=model_sha,
             evidence_protocol_sha256=protocol_sha,
+            # CP126 78c85746: name the baseline this candidate was actually
+            # compared against, so trials against different defaults cannot
+            # aggregate as one comparator.
+            default_schedule_hash=default_schedule.schedule_hash,
         )
         library.record_paired_outcome(winner, args.domain, outcome)
         recorded += 1
@@ -347,6 +361,11 @@ def run_campaign(args: argparse.Namespace) -> dict[str, Any]:
         "generalization_gap": result.generalization_gap(),
         "overfit_warning": result.overfit_warning(),
         "paired_outcomes_recorded": recorded,
+        "winner_is_default": winner_is_default,
+        "paired_trials_skipped_reason": (
+            "search returned the seed default; a schedule cannot be paired "
+            "against itself" if winner_is_default else ""
+        ),
         "library_status": library.status(),
         "promoted_schedule_hash": promoted.schedule_hash,
         "promotion_happened": promoted.schedule_hash != default_schedule.schedule_hash,

@@ -479,9 +479,52 @@ class ScheduleComputeReceipt:
         }
 
 
+def _resolve_receipts(
+    resolver: Callable[[str, str], bool] | None,
+    *,
+    scorer_receipt_sha256: str,
+    verifier_receipt_sha256: str,
+) -> bool:
+    """Whether the referenced receipts were actually resolved and accepted.
+
+    CP126 487e7c0a: validation checked that these fields LOOK like SHA-256
+    strings and never loaded what they point at, so a self-asserted digest
+    satisfied the promotion gate. Resolution needs a store this module does
+    not own, so the caller supplies one — and when none is supplied the answer
+    is False, which is the honest reading of "nothing was checked".
+    """
+    if resolver is None:
+        return False
+    try:
+        return bool(
+            resolver("scorer", scorer_receipt_sha256)
+            and resolver("verifier", verifier_receipt_sha256)
+        )
+    except (TypeError, ValueError, KeyError, OSError, RuntimeError):
+        return False
+
+
 @dataclass(frozen=True)
 class PairedScheduleOutcome:
-    """One held-out candidate/default comparison with tamper-evident provenance."""
+    """One held-out candidate/default comparison and its provenance.
+
+    It used to say "tamper-evident provenance". It is not tamper-evident, and
+    CP126 bf285ef2 is that claim: every provenance field and both success
+    booleans are supplied by the caller, and ``evidence_binding_sha256`` is an
+    UNKEYED canonical hash over those same values. Anyone who can edit or
+    construct the ledger can change an outcome and recompute a valid binding.
+    That makes the binding an integrity CHECKSUM — it detects accidental
+    corruption and mismatched fields — not a defence against a party who can
+    write the file.
+
+    The distinction is now explicit rather than implied.
+    :attr:`evidence_authenticity` reports which one a consumer is holding, and
+    :meth:`verified_provenance` answers whether the referenced receipts were
+    actually resolved or merely asserted (CP126 487e7c0a). Real tamper
+    evidence needs the Ed25519 issuer in core/governance/capability_chain.py
+    signing the binding under an authority registry; until that is wired, a
+    promotion gate reading this must treat it as self-reported.
+    """
 
     task_id: str
     task_commitment_sha256: str
@@ -499,6 +542,16 @@ class PairedScheduleOutcome:
     model_checkpoint_sha256: str
     evidence_protocol_sha256: str
     evidence_binding_sha256: str
+    #: CP126 78c85746: the binding named the CANDIDATE schedule but never the
+    #: baseline it was compared against, so different defaults could each be
+    #: labelled "default" and aggregated as though they were one comparator.
+    #: A paired result means nothing without both halves identified.
+    default_schedule_hash: str = ""
+    #: What the binding actually proves. See the class docstring.
+    evidence_authenticity: str = "unsigned_checksum"
+    #: True only when the referenced receipts were resolved and checked, not
+    #: when they merely looked like digests (CP126 487e7c0a).
+    receipts_resolved: bool = False
 
     @classmethod
     def create(
@@ -521,6 +574,8 @@ class PairedScheduleOutcome:
         evaluator_build_sha256: str,
         model_checkpoint_sha256: str,
         evidence_protocol_sha256: str,
+        default_schedule_hash: str = "",
+        receipt_resolver: Callable[[str, str], bool] | None = None,
     ) -> PairedScheduleOutcome:
         if not isinstance(candidate_compute, ScheduleComputeReceipt) or not isinstance(
             default_compute, ScheduleComputeReceipt
@@ -541,6 +596,10 @@ class PairedScheduleOutcome:
             "evaluation_run_id": evaluation_run_id,
             "evaluator_build_sha256": evaluator_build_sha256,
             "model_checkpoint_sha256": model_checkpoint_sha256,
+            # CP126 78c85746: the baseline is half the comparison, so it is
+            # part of the binding. Without it, two trials against DIFFERENT
+            # defaults both say "default" and aggregate as one comparator.
+            "default_schedule_hash": default_schedule_hash,
             "evidence_protocol_sha256": evidence_protocol_sha256,
         }
         binding = cls.binding_sha256(
@@ -565,6 +624,12 @@ class PairedScheduleOutcome:
             model_checkpoint_sha256=model_checkpoint_sha256,
             evidence_protocol_sha256=evidence_protocol_sha256,
             evidence_binding_sha256=binding,
+            default_schedule_hash=default_schedule_hash,
+            receipts_resolved=_resolve_receipts(
+                receipt_resolver,
+                scorer_receipt_sha256=scorer_receipt_sha256,
+                verifier_receipt_sha256=verifier_receipt_sha256,
+            ),
         )
         outcome.validate(schedule_hash=schedule_hash, domain=domain)
         return outcome
@@ -606,8 +671,12 @@ class PairedScheduleOutcome:
             "model_checkpoint_sha256",
             "evidence_protocol_sha256",
             "evidence_binding_sha256",
+            "default_schedule_hash",
         }
-        if not isinstance(payload, dict) or set(payload) != expected:
+        # Verification metadata is optional on the wire: it is not part of the
+        # binding, and a ledger written before it existed is still readable.
+        optional = {"evidence_authenticity", "receipts_resolved"}
+        if not isinstance(payload, dict) or not expected <= set(payload) <= (expected | optional):
             raise ValueError("paired schedule outcome has an invalid schema")
         outcome = cls(
             task_id=payload["task_id"],
@@ -625,14 +694,35 @@ class PairedScheduleOutcome:
             evaluator_build_sha256=payload["evaluator_build_sha256"],
             model_checkpoint_sha256=payload["model_checkpoint_sha256"],
             evidence_protocol_sha256=payload["evidence_protocol_sha256"],
+            # Absent on pre-baseline-identity ledgers; validate() then refuses
+            # the record, which is correct — an outcome that cannot name its
+            # comparator is not usable as paired evidence (CP126 78c85746).
+            default_schedule_hash=str(payload.get("default_schedule_hash") or ""),
+            receipts_resolved=bool(payload.get("receipts_resolved", False)),
             evidence_binding_sha256=payload["evidence_binding_sha256"],
         )
         outcome.validate(schedule_hash=schedule_hash, domain=domain)
         return outcome
 
+    def verified_provenance(self) -> bool:
+        """Whether this outcome rests on anything a third party could check.
+
+        False means every provenance claim is self-reported: the flags are the
+        caller's booleans and the binding is an unkeyed hash the same caller
+        could recompute. A promotion gate that treats such an outcome as
+        evidence is trusting the thing it is supposed to be checking.
+        """
+        return bool(self.receipts_resolved) and self.evidence_authenticity != "unsigned_checksum"
+
     def _binding_values(self) -> dict[str, Any]:
         payload = self.to_dict()
         payload.pop("evidence_binding_sha256")
+        # Verification METADATA is excluded: it records who checked the
+        # evidence, not what the evidence claims. Including it would mean a
+        # producer could alter the binding simply by asserting it had verified
+        # itself.
+        payload.pop("evidence_authenticity", None)
+        payload.pop("receipts_resolved", None)
         return payload
 
     def validate(self, *, schedule_hash: str, domain: str) -> None:
@@ -642,10 +732,21 @@ class PairedScheduleOutcome:
             raise ValueError("paired schedule outcomes must contain boolean arm results")
         if self.run_order not in _RUN_ORDERS:
             raise ValueError("run_order must be candidate_first or default_first")
+        # CP126 487e7c0a: these are SELF-ASSERTED booleans. Requiring them to
+        # be True stops an outcome that admits it was contaminated, and stops
+        # nothing else — a caller that sets them satisfies the gate. They are
+        # still required, because an honest producer must state them, but
+        # `receipts_resolved` is what says whether anything was checked, and a
+        # promotion gate must read that rather than these.
         if self.held_out is not True:
             raise ValueError("schedule promotion evidence must be held out")
         if self.contamination_scan_passed is not True:
             raise ValueError("schedule promotion evidence failed contamination screening")
+        # CP126 78c85746: a paired outcome without its baseline identified is
+        # not a paired outcome.
+        _require_sha256(self.default_schedule_hash, field_name="default_schedule_hash")
+        if self.default_schedule_hash == schedule_hash:
+            raise ValueError("candidate and default schedule hashes are identical")
         for field_name in (
             "scorer_receipt_sha256",
             "verifier_receipt_sha256",
@@ -687,7 +788,15 @@ class PairedScheduleOutcome:
             "evaluator_build_sha256": self.evaluator_build_sha256,
             "model_checkpoint_sha256": self.model_checkpoint_sha256,
             "evidence_protocol_sha256": self.evidence_protocol_sha256,
+            # Part of the binding: the comparison is meaningless without it.
+            "default_schedule_hash": self.default_schedule_hash,
             "evidence_binding_sha256": self.evidence_binding_sha256,
+            # NOT part of the binding — these describe how much anyone
+            # CHECKED the evidence, not what the evidence says. Binding them
+            # would let a producer change the claim by asserting it verified
+            # itself, and would break every existing binding.
+            "evidence_authenticity": self.evidence_authenticity,
+            "receipts_resolved": self.receipts_resolved,
         }
 
 

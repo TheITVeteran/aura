@@ -89,6 +89,7 @@ def _paired_outcome(
         evaluator_build_sha256=_digest(evaluator_build),
         model_checkpoint_sha256=_digest("checkpoint-v1"),
         evidence_protocol_sha256=_digest("schedule-protocol-v1"),
+        default_schedule_hash=_digest("baseline-default-schedule"),
     )
 
 
@@ -239,7 +240,17 @@ def test_library_rejects_profile_drift_and_commitment_replay(tmp_path):
         schedule_hash=candidate.schedule_hash,
         domain="math",
         values={
-            key: value for key, value in replay_payload.items() if key != "evidence_binding_sha256"
+            key: value
+            for key, value in replay_payload.items()
+            # Verification metadata is excluded from the binding (it records
+            # who CHECKED the evidence, not what it claims), so a producer
+            # recomputing the binding must exclude it too.
+            if key
+            not in {
+                "evidence_binding_sha256",
+                "evidence_authenticity",
+                "receipts_resolved",
+            }
         },
     )
     replay = PairedScheduleOutcome.from_dict(
