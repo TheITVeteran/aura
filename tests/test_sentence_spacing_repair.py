@@ -71,6 +71,9 @@ def test_it_runs_before_the_cutoff_trim() -> None:
     from pathlib import Path
 
     src = Path("core/brain/cognitive_engine.py").read_text(encoding="utf-8")
+    # The trim is reached through _complete_reply_tail, which is what the
+    # serving path calls; asserting on the wrapper keeps this test honest
+    # across the rename rather than pinning a call site that moved.
     assert src.index("_restore_sentence_spacing(text)") < src.index(
-        "_trim_midsentence_cutoff(text)\n        if trimmed_cutoff"
+        "_complete_reply_tail(text)"
     )

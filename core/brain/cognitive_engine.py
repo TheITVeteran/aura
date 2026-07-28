@@ -126,7 +126,28 @@ _MIN_SALVAGEABLE_REPLY_CHARS = 12
 # that starts a lowercase word. Digits are excluded so decimals and version
 # numbers survive, and a single capital (U.S.A, initials) will not match because
 # the following character must be lowercase.
-_RUN_ON_SENTENCE_RE = re.compile(r"(?<=[a-z])([.!?])([A-Z][a-z])")
+# Three shapes of run-on, because the first version only caught one of them.
+#
+# Measured live 2026-07-27: "...leading into Q3?Finally, think about how
+# critical this rewrite is" and "...certain states get reinforced.I wouldn't
+# call it preference". The original required a LOWERCASE letter before the
+# terminator and a capital-plus-lowercase after, so a digit before ("Q3?") and
+# a lone capital after (".I ") both slipped through.
+#
+# "?" and "!" never appear inside an identifier, so a digit may precede them
+# safely. The "." case stays conservative — lowercase before, and either a
+# normal capitalised word or the pronoun "I" after — because "config.Name" has
+# the same shape as a run-on and must not be broken.
+_RUN_ON_SENTENCE_RE = re.compile(
+    r"(?<=[a-z0-9])([?!])([A-Z])"
+    r"|(?<=[a-z])([.])([A-Z][a-z])"
+    r"|(?<=[a-z])([.])(I\s)"
+)
+
+
+def _rejoin_run_on(match: "re.Match[str]") -> str:
+    groups = [group for group in match.groups() if group is not None]
+    return f"{groups[0]} {groups[1]}"
 
 
 
@@ -180,7 +201,7 @@ def _restore_sentence_spacing(text: str) -> str:
     # space there would corrupt an identifier, so prose-only is the safe scope.
     if not body or "`" in body:
         return body
-    return _RUN_ON_SENTENCE_RE.sub(r"\1 \2", body)
+    return _RUN_ON_SENTENCE_RE.sub(_rejoin_run_on, body)
 
 
 def _trim_midsentence_cutoff(text: str) -> tuple[str, bool]:
