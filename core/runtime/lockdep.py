@@ -86,6 +86,56 @@ MAX_SPLATS = 256
 #: the wedge this module exists to find.
 ACQUIRE_BUDGET_S = 30.0
 
+#: Locks where a blocking call inside the critical section is the design,
+#: not an accident — mapped to the reason that was established before the
+#: entry was made. Keyed by the name passed to :func:`checked_lock`.
+#:
+#: Two rules keep this from becoming a place to file inconvenient reports:
+#:
+#: 1. An entry suppresses only :func:`assert_no_locks_held`, which asks
+#:    "should this blocking call be under *any* lock?". It does NOT
+#:    suppress the loop-blocking-hold check, which measures what actually
+#:    happened on the event loop thread. A sanction is a claim about
+#:    intent; it is not a promise about latency, so the check that
+#:    measures latency has to survive it. If a sanctioned lock is ever
+#:    genuinely held past the budget on the loop thread, lockdep still
+#:    reports it.
+#: 2. The reason has to name the invariant that requires the hold. "It has
+#:    always been this way" is not one. Every entry below was traced to
+#:    the call sites that reach it before it was written down.
+SANCTIONED_BLOCKING_LOCKS: dict[str, str] = {
+    "audit_chain.lock": (
+        "The fsync IS the commit step of a hash-chained append: read the "
+        "predecessor hash, compute the entry hash, write the line, make it "
+        "durable, then publish the new head. Moving the fsync outside the "
+        "lock would let append() hand back an entry it calls committed "
+        "while the serialising lock is already released and the next "
+        "writer is assigning seq+1 against an undurable predecessor. Kept "
+        "off the event loop by GhostLine.advance_async and, for receipts, "
+        "by the emit path's own thread hop."
+    ),
+    "ghost_line.advance_lock": (
+        "Wraps audit_chain.append_with_body for one frame, so it inherits "
+        "the same commit point. It exists because the frame body and its "
+        "chain entry must be assigned one sequence together — a periodic "
+        "tick racing a substrate-change event is the case that desyncs "
+        "bodies from the chain. Ghost._schedule_advance calls the "
+        "synchronous path only when there is no running loop; with a loop "
+        "it goes through advance_async, which hops to a thread."
+    ),
+    "vector_memory_engine.lifecycle_lock": (
+        "Held across model-lane admission, which writes its ledger through "
+        "the atomic writer and therefore fsyncs. The hold is what stops two "
+        "threads each admitting a 0.5 GB embedding lane for the same "
+        "engine, so it cannot be narrowed to exclude admission without "
+        "reintroducing double admission. Off-loop on every path that "
+        "reaches it: the async API goes through asyncio.to_thread, the RAG "
+        "bridge through asyncio.to_thread(search, ...), the cache warm "
+        "through its own SemanticRagWarm thread, and the lane "
+        "evict/compensate callbacks through asyncio.to_thread."
+    ),
+}
+
 
 class LockRank(IntEnum):
     """Optional declared nesting levels, mirroring lockdep's subclasses.
@@ -510,6 +560,12 @@ class LockdepValidator:
             self._splats.clear()
             self._splat_counts.clear()
             self._acquires = 0
+            # The loop-thread ident has to go too. A test that calls
+            # note_loop_thread() to exercise hazard 4 otherwise leaves the
+            # main thread marked as the event loop for the rest of the
+            # process, and every later test that holds a checked lock for
+            # 50ms on that thread splats for a loop that is not running.
+            self._loop_thread_ident = None
 
 
 _VALIDATOR = LockdepValidator()
@@ -670,23 +726,36 @@ def assert_no_locks_held(operation: str, *, strict: bool = False) -> list[str]:
     fsync, subprocess spawn, and thread joins are the recorded offenders.
     Returns the offending lock names (empty when clean); raises in strict
     mode, otherwise reports and lets the caller proceed.
+
+    Locks in :data:`SANCTIONED_BLOCKING_LOCKS` are not offenders — the
+    blocking call under them is the stated design — so they are filtered
+    out of both the return value and the report. A section holding a
+    sanctioned lock *and* an unsanctioned one still reports the
+    unsanctioned one, which is the case worth catching: the sanction
+    covers a named lock, never everything nested inside it.
     """
     held = _VALIDATOR.held_names()
     if not held:
         return []
+    offenders = [name for name in held if name not in SANCTIONED_BLOCKING_LOCKS]
+    if not offenders:
+        # Every lock held here has a written, checked reason to be held.
+        # The loop-blocking-hold check still watches these; see
+        # SANCTIONED_BLOCKING_LOCKS.
+        return []
     message = (
-        f"{operation} attempted while holding {held} — a blocking operation "
+        f"{operation} attempted while holding {offenders} — a blocking operation "
         "under a lock is how the runtime freezes"
     )
     _VALIDATOR.report_external(
         kind="blocking_op_under_lock",
-        signature=f"blocking:{operation}:{','.join(sorted(held))}",
+        signature=f"blocking:{operation}:{','.join(sorted(offenders))}",
         message=message,
-        held=held,
+        held=offenders,
     )
     if strict:
         raise LockHeldError(message)
-    return held
+    return offenders
 
 
 def lockdep_report() -> dict[str, Any]:
@@ -708,6 +777,7 @@ def reset_lockdep_for_test() -> None:
 
 __all__ = [
     "LOOP_BLOCKING_HOLD_S",
+    "SANCTIONED_BLOCKING_LOCKS",
     "CheckedAsyncLock",
     "CheckedLock",
     "LockHeldError",

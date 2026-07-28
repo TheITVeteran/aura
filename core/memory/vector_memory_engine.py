@@ -65,6 +65,7 @@ from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
 from core.runtime.effect_boundary import effect_sink
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.VectorMemory")
 
@@ -153,7 +154,7 @@ class EmbeddingEngine:
         self._tfidf_fallback = None
         self._initialized = False
         self._lane_lease: Any | None = None
-        self._lifecycle_lock = threading.RLock()
+        self._lifecycle_lock = checked_lock("vector_memory_engine.lifecycle_lock", reentrant=True)
         self._closing = False
 
     async def _evict_model_lane(self, _owner: Any, reason: str) -> bool:

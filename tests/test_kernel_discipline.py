@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -201,6 +202,81 @@ def test_assert_no_locks_held_reports_once_and_can_raise():
     splats = [s for s in lockdep_report()["splats"] if s["kind"] == "blocking_op_under_lock"]
     assert len(splats) == 1
     assert splats[0]["occurrences"] >= 3
+
+
+class TestSanctionedBlockingLocks:
+    """A sanction excuses one named lock from one check — and nothing else."""
+
+    def test_a_sanctioned_lock_is_not_an_offender(self, monkeypatch):
+        monkeypatch.setitem(
+            lockdep_mod.SANCTIONED_BLOCKING_LOCKS, "chain.commit", "the fsync is the commit"
+        )
+        with checked_lock("chain.commit"):
+            assert assert_no_locks_held("fsync") == []
+            assert_no_locks_held("fsync", strict=True)  # does not raise
+        assert not [
+            s for s in lockdep_report()["splats"] if s["kind"] == "blocking_op_under_lock"
+        ]
+
+    def test_an_unsanctioned_lock_nested_inside_one_still_reports(self, monkeypatch):
+        """The sanction covers a named lock, never everything under it."""
+        monkeypatch.setitem(
+            lockdep_mod.SANCTIONED_BLOCKING_LOCKS, "chain.commit", "the fsync is the commit"
+        )
+        with checked_lock("chain.commit"), checked_lock("some.cache"):
+            assert assert_no_locks_held("fsync") == ["some.cache"]
+
+        splats = [
+            s for s in lockdep_report()["splats"] if s["kind"] == "blocking_op_under_lock"
+        ]
+        assert len(splats) == 1
+        assert splats[0]["held"] == ["some.cache"]
+
+    def test_a_sanction_does_not_silence_the_loop_blocking_check(self, monkeypatch):
+        """The reason this is safe to have at all.
+
+        A sanction states that a blocking call belongs under a lock. It
+        states nothing about how long the lock is held on the event loop
+        thread, so the check that measures exactly that must survive it —
+        otherwise sanctioning a lock would quietly retire the detector for
+        the freeze it was written for.
+        """
+        monkeypatch.setitem(
+            lockdep_mod.SANCTIONED_BLOCKING_LOCKS, "chain.commit", "the fsync is the commit"
+        )
+        lockdep_mod.get_validator().note_loop_thread()
+        with checked_lock("chain.commit"):
+            time.sleep(lockdep_mod.LOOP_BLOCKING_HOLD_S * 1.5)
+
+        assert "loop_blocking_hold" in {s["kind"] for s in lockdep_report()["splats"]}
+
+    def test_every_entry_states_a_reason(self):
+        """An entry with no reason is an exemption, not a sanction."""
+        for name, reason in lockdep_mod.SANCTIONED_BLOCKING_LOCKS.items():
+            assert isinstance(reason, str) and len(reason.split()) >= 12, (
+                f"{name} is sanctioned without a reason that names the invariant "
+                "requiring the hold"
+            )
+
+    def test_the_sanctioned_locks_exist_in_the_checked_lane(self):
+        """A sanction for a lock nobody constructs is a stale exemption.
+
+        The names have to match what checked_lock() is actually called
+        with. A typo would leave the entry protecting nothing while the
+        real lock kept reporting — and the reason text would still read
+        as though the question had been settled.
+        """
+        root = Path(__file__).resolve().parent.parent
+        sources = "\n".join(
+            path.read_text(encoding="utf-8", errors="ignore")
+            for base in ("core", "interface")
+            for path in (root / base).rglob("*.py")
+        )
+        for name in lockdep_mod.SANCTIONED_BLOCKING_LOCKS:
+            assert f'checked_lock("{name}"' in sources, (
+                f"nothing constructs a checked_lock named {name!r}; the sanction "
+                "protects nothing"
+            )
 
 
 def test_lockdep_separates_concurrent_threads():

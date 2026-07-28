@@ -52,6 +52,7 @@ from typing import Any
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.audit_chain import AuditChain, canonical_json, hash_receipt_body, sha256_hex
 from core.runtime.errors import record_degradation
+from core.runtime.lockdep import checked_lock
 
 logger = logging.getLogger("Aura.Ghost.GhostLine")
 
@@ -271,7 +272,7 @@ class GhostLine:
         # Serialises the seq→envelope→append critical section so concurrent
         # advances (a periodic tick racing a substrate-change event) cannot
         # desync the frame bodies from the chain.
-        self._advance_lock = threading.RLock()
+        self._advance_lock = checked_lock("ghost_line.advance_lock", reentrant=True)
         self._restore_last()
 
     # ── restore ──────────────────────────────────────────────────────────

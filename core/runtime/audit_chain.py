@@ -39,6 +39,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from core.runtime.lockdep import checked_lock
 from core.runtime.service_registry import runtime_write_bytes, runtime_write_text
 
 logger = logging.getLogger("core.runtime.audit_chain")
@@ -129,7 +130,7 @@ class AuditChain:
         self.root = Path(root)
         self.path = self.root / self.CHAIN_FILENAME
         self.lock_path = self.root / ".chain.lock"
-        self._lock = threading.RLock()
+        self._lock = checked_lock("audit_chain.lock", reentrant=True)
         self._head_hash: str = GENESIS_PREV_HASH
         self._next_seq: int = 0
         self._unsynced_entries: int = 0
