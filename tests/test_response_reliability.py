@@ -81,3 +81,46 @@ def test_identity_block_renders_core_values_in_a_stable_order():
     )
     # Duplicates and blanks must not reintroduce churn either.
     assert isinstance(renders[0], str) and renders[0].startswith("You are Aura.")
+
+
+def test_a_turn_about_aura_herself_does_not_require_a_web_search():
+    """The web cannot adjudicate what Aura's own prompt cache does.
+
+    Routing a self-referential turn to search makes the reply gate demand
+    search grounding, which a correct self-knowledge answer has none of — so it
+    is discarded and the refusal template ships. Measured live: after correctly
+    explaining that a 0% prompt-cache hit rate costs prefill latency and does
+    NOT erase memory, she was told the opposite and asked to confirm it. She
+    neither capitulated nor disagreed; the user got "I don't have a clean
+    grounded answer on that yet."
+    """
+    import inspect
+
+    from core.phases import response_contract as rc
+
+    source = inspect.getsource(rc)
+    start = source.index("self_referential_turn = bool(")
+    block = source[start : source.index("requires_exact_dates = bool(", start)]
+
+    # The exclusion must be built from the self-signals the function already has.
+    for signal in (
+        "requires_memory",
+        "requires_state",
+        "requires_self_preservation",
+        "requires_identity_defense",
+    ):
+        assert signal in block, f"{signal} must participate in the self-referential test"
+
+    # ...and it must actually gate the inferred search triggers.
+    assert "not self_referential_turn" in block
+    for inferred in ("factual_lookup", "factual_followup", "temporal_live_lookup"):
+        assert inferred in block, f"{inferred} must sit behind the exclusion"
+
+    # An explicit ask or a pasted URL must still win: being asked about herself
+    # does not veto "look it up".
+    explicit_region = block[block.index("requires_search = bool("):]
+    assert "explicit_search" in explicit_region
+    assert "has_url" in explicit_region
+    assert explicit_region.index("explicit_search") < explicit_region.index(
+        "not self_referential_turn"
+    ), "explicit search must be evaluated ahead of the self-referential exclusion"

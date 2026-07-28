@@ -7967,21 +7967,37 @@ class InferenceGate:
         if living_mind_context:
             system_prompt = f"{system_prompt}\n\n{living_mind_context}"
         prompt_contract_block = self._prompt_contract_block(context)
-        if prompt_contract_block and not isolated_generation_contract:
-            system_prompt = f"{system_prompt}\n\n{prompt_contract_block}"
 
         # She has no clock. Asked how she is doing at 00:30 she answered "the
         # sun's up ... clouds gathering in the east" — not dishonesty, but the
         # only thing a model can do when asked about a present it was never
         # given. Nothing in this path had ever carried the date or the hour.
         # ~500 chars of read-not-inferred fact, on every non-isolated turn.
+        # Grounding that changes every turn is collected here and delivered
+        # AFTER the conversation instead of inside the system prompt. Inside the
+        # system prompt it sits ~126 tokens in, ahead of the entire history, so
+        # its per-turn churn invalidated the KV prefix for everything behind it:
+        # measured live on the user surface as reuse of 126 of 1774 tokens (7%)
+        # with divergence beginning exactly at "## WHAT YOU ACTUALLY JUST DID".
+        # Delivered last, divergence lands after the history instead of before
+        # it, so a long conversation stops re-prefilling itself from token zero.
+        # The content is unchanged — only its position.
+        volatile_grounding_blocks: list[str] = []
+        # The response contract describes THIS turn — its reason label and the
+        # current local date both change per turn — so it belongs beside the
+        # turn, not in the persistent system prompt. Measured live: it landed at
+        # token 125 and divergence began at "## RESPONSE CONTRACT\n- Reason:
+        # compound_prompt\n- Current local date: ...", stranding 3,884 tokens of
+        # conversation behind it (3% reused).
+        if prompt_contract_block and not isolated_generation_contract:
+            volatile_grounding_blocks.append(prompt_contract_block)
         if not isolated_generation_contract:
             try:
                 from core.brain.present_moment import present_moment_block
 
                 _present = present_moment_block()
                 if _present:
-                    system_prompt = f"{system_prompt}\n\n{_present}"
+                    volatile_grounding_blocks.append(_present)
 
                 # Suppressing the web search is only half the fix; without the
                 # readings she still has to invent them, which is how "I
@@ -7990,7 +8006,7 @@ class InferenceGate:
 
                 _actions = recent_actions_block()
                 if _actions:
-                    system_prompt = f"{system_prompt}\n\n{_actions}"
+                    volatile_grounding_blocks.append(_actions)
 
                 from core.runtime.self_state_intent import asks_about_own_runtime
 
@@ -7999,7 +8015,7 @@ class InferenceGate:
 
                     _instruments = runtime_self_report()
                     if _instruments:
-                        system_prompt = f"{system_prompt}\n\n{_instruments}"
+                        volatile_grounding_blocks.append(_instruments)
             except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 record_degradation(
                     "inference_gate",
@@ -8017,7 +8033,11 @@ class InferenceGate:
 
                 _soma_narrative = get_circumplex().describe()
                 if _soma_narrative:
-                    system_prompt = f"{system_prompt}\n\n## SOMATIC STATE\n{_soma_narrative}"
+                    # Felt state changes on every tick; it travels with the rest
+                    # of the volatile grounding, after the conversation.
+                    volatile_grounding_blocks.append(
+                        f"## SOMATIC STATE\n{_soma_narrative}"
+                    )
             except _INFERENCE_RECOVERABLE_ERRORS as _exc:
                 record_degradation(
                     "inference_gate",
@@ -8172,7 +8192,26 @@ class InferenceGate:
                     budget_profile=foreground_profile,
                     visible_request_chars=len(str(visible_user_prompt or "")),
                 )
-        prompt_chars = sum(len(str(msg.get("content", ""))) for msg in messages)
+        # Volatile grounding rides LAST, behind the conversation, so the KV
+        # prefix covering the history survives from one turn to the next.
+        # Appended after compaction on purpose: compaction rewrites the history
+        # it is given, and this block must not be trimmed away — it is the
+        # read-not-inferred ground truth (clock, receipts, felt state) that
+        # stops her narrating a present she was never given.
+        if volatile_grounding_blocks and isinstance(messages, list) and messages:
+            messages = [*messages, {
+                "role": "system",
+                "content": "\n\n".join(volatile_grounding_blocks),
+            }]
+        elif volatile_grounding_blocks:
+            # No message list to ride behind (single-prompt lanes): keep the old
+            # behaviour rather than dropping the grounding entirely.
+            system_prompt = "\n\n".join(
+                [str(system_prompt or ""), *volatile_grounding_blocks]
+            ).strip()
+        prompt_chars = sum(
+            len(str(msg.get("content", ""))) for msg in (messages or ())
+        )
         prompt_mode = "rich" if use_rich_context else "compact"
         if use_compact_foreground_context:
             prompt_mode = "compact_foreground"

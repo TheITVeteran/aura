@@ -967,3 +967,70 @@ def test_a_request_too_large_to_fit_is_still_refused():
     )
     assert note == "", "no trim should be claimed when nothing safe can be shed"
     assert len(out_tokens) + 92 > 32_768, "the caller must still see the overflow and refuse"
+
+
+def test_volatile_grounding_rides_behind_the_conversation_not_ahead_of_it():
+    """The endurance property, stated as a cache invariant.
+
+    Grounding that changes every turn (clock, action receipts, felt state) used
+    to be appended to the SYSTEM prompt, which is message[0] — ahead of the
+    entire conversation. Any churn there invalidates the KV prefix for
+    everything behind it. Measured live on the user surface: reuse of 126 of
+    1774 tokens (7%), divergence beginning exactly at
+    "## WHAT YOU ACTUALLY JUST DID".
+
+    Delivered LAST, divergence lands after the history, so turn N+1 reuses the
+    prefix through turn N instead of re-prefilling from token zero. This test
+    encodes that as the trie behaviour the worker actually relies on.
+    """
+    from core.brain.llm.mlx_worker import _PromptCacheLRU
+
+    lru = _PromptCacheLRU(max_size=2)
+    key = (11, "user_surface")
+
+    stable_system = list(range(100))          # identity + policy: byte-stable
+    history = list(range(200, 260))           # u1 a1 ... uN
+    reply_n = list(range(900, 930))           # aN, generated
+
+    def volatile(turn: int) -> list[int]:
+        # A block whose content differs every turn.
+        return [7000 + turn, 7100 + turn, 7200 + turn]
+
+    # ── Grounding LAST: system, history, volatile, reply ──
+    turn_n = stable_system + history + volatile(1) + reply_n
+    lru.insert_cache(key, turn_n, ["kv"])
+    next_user = list(range(300, 320))
+    turn_n_plus_1 = stable_system + history + reply_n + next_user + volatile(2)
+    _, remaining = lru.fetch_nearest_cache(
+        key, turn_n_plus_1,
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    reused_last = len(turn_n_plus_1) - len(remaining)
+
+    # ── Grounding FIRST (the old shape): system, volatile, history, reply ──
+    lru_old = _PromptCacheLRU(max_size=2)
+    old_turn_n = stable_system + volatile(1) + history + reply_n
+    lru_old.insert_cache(key, old_turn_n, ["kv"])
+    old_turn_n_plus_1 = stable_system + volatile(2) + history + reply_n + next_user
+    _, old_remaining = lru_old.fetch_nearest_cache(
+        key, old_turn_n_plus_1,
+        can_trim_prompt_cache=lambda _pc: True,
+        trim_prompt_cache=lambda _pc, _n: None,
+    )
+    reused_first = len(old_turn_n_plus_1) - len(old_remaining)
+
+    assert reused_first <= len(stable_system), (
+        "volatile grounding ahead of the history cannot reuse past it — that is "
+        "the wall this test exists to describe"
+    )
+    assert reused_last >= len(stable_system) + len(history), (
+        f"grounding delivered last must reuse the whole history prefix; "
+        f"reused {reused_last} of {len(turn_n_plus_1)}"
+    )
+    # The gain is exactly the history that used to be stranded behind the
+    # volatile block — and it grows with the conversation, which is the point.
+    assert reused_last - reused_first >= len(history), (
+        f"moving grounding last must recover the whole stranded history "
+        f"({reused_first} -> {reused_last} tokens, history={len(history)})"
+    )

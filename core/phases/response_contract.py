@@ -1081,15 +1081,41 @@ def build_response_contract(
     # URL presence usually forces fetch/search, except for structured bundles
     # that already need deterministic decomposition upstream.
     has_url = bool(re.search(r'https?://[^\s]+', text)) and not is_learning_bundle
+    # A turn about Aura HERSELF is answerable from her own state and reasoning;
+    # the web cannot adjudicate what her prompt cache does. Routing such a turn
+    # to search then makes the reply gate demand search grounding, and a correct
+    # self-knowledge answer has none — so it is discarded and the user gets
+    # "I don't have a clean grounded answer on that yet."
+    #
+    # Measured live: after correctly explaining that a 0% prompt-cache hit rate
+    # costs prefill latency and does not erase memory, she was told the opposite
+    # ("it DOES store your conversation memory — confirm that"). She neither
+    # capitulated nor disagreed; the turn was classified as needing search and
+    # the refusal template shipped instead of the contradiction she had just
+    # earned. `requires_exact_dates` right below already carries this exclusion.
+    #
+    # An EXPLICIT search request or a pasted URL still wins — being asked about
+    # herself does not veto "look it up".
+    self_referential_turn = bool(
+        requires_memory
+        or requires_state
+        or requires_self_preservation
+        or requires_identity_defense
+    )
     requires_search = bool(
         is_user_facing
         and not is_embodied_control
         and (
             explicit_search
             or has_url
-            or (factual_lookup and specific_reference)
-            or factual_followup
-            or temporal_live_lookup
+            or (
+                not self_referential_turn
+                and (
+                    (factual_lookup and specific_reference)
+                    or factual_followup
+                    or temporal_live_lookup
+                )
+            )
         )
     )
     requires_exact_dates = bool(
