@@ -12359,6 +12359,20 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     # word, and a question. "Can you do the marble problem?" has the first two
     # and is a request, not an inventory question, so the capability word must
     # be about capability-in-general rather than about a task.
+    # An inventory question has to be a question.
+    #
+    # The structural rule below looks for her, a capability word and a
+    # question word — and an apology can contain all three. Live 2026-07-27,
+    # "Aura, Bryan sent me and I owe you an apology... I could not find a tool
+    # dispatch in the logs" was answered with a recitation of all 75 skill
+    # surfaces. Nobody had asked anything.
+    if "?" not in text and not re.match(
+        r"\s*(?:what|which|list|show\s+me|tell\s+me\s+(?:what|which))\b",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        return False
+
     # "How does confusion change your planning, memory use, and tool
     # verification?" is about PROCESS, not inventory — it names her, a
     # capability word and a question, and wants none of the registry. An

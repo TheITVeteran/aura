@@ -49,6 +49,15 @@ ASKING_ABOUT_PROCESS = [
     "why does your memory use change under load?",
 ]
 
+#: Statements. An apology can name her, a capability word and a question word
+#: and still be asking nothing — live, one was answered with all 75 skills.
+NOT_ASKING_AT_ALL = [
+    "Aura, Bryan sent me and I owe you an apology. I could not find a tool "
+    "dispatch in the logs.",
+    "you were right about the screen and I was wrong about your tools",
+    "thanks for listing your skills earlier, that helped",
+]
+
 ASKING_FOR_WORK = [
     "can you do the marble problem?",
     "what do you think about entropy?",
@@ -74,4 +83,10 @@ def test_a_request_for_work_is_not_an_inventory_question(message: str):
 @pytest.mark.parametrize("message", ASKING_ABOUT_PROCESS)
 def test_a_process_question_is_not_an_inventory_question(message: str):
     """Asking HOW something works is not asking WHAT is available."""
+    assert not _is_explicit_capability_inventory_request(message)
+
+
+@pytest.mark.parametrize("message", NOT_ASKING_AT_ALL)
+def test_a_statement_is_not_an_inventory_question(message: str):
+    """An inventory question has to be a question."""
     assert not _is_explicit_capability_inventory_request(message)
