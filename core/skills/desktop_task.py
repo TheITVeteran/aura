@@ -1235,6 +1235,68 @@ class DesktopTaskSkill(BaseSkill):
             "canonical computer-use gateway."
         )
 
+    #: URL shapes that are never an article: ad redirects, click trackers, and
+    #: search-result pages. Measured live, a DuckDuckGo ad redirect
+    #: (duckduckgo.com/y.js?ad_domain=...&ad_provider=bingv7aa) was counted as
+    #: one of the three "recent articles about AI" and its 600-character
+    #: tracking URL was printed into the document as a citation.
+    _NON_ARTICLE_URL_RE = re.compile(
+        r"(?i)("
+        r"duckduckgo\.com/y\.js"
+        r"|[?&]ad_(?:domain|provider|type)="
+        r"|bing\.com/aclick"
+        r"|googleadservices\.|doubleclick\.net|/aclk\?"
+        r"|/search\?|/results\?q=|[?&]q=.*&(?:ia|iax)="
+        r")"
+    )
+
+    #: Navigation furniture that is on the page but is not the article.
+    _PAGE_CHROME_RE = re.compile(
+        r"(?i)("
+        r"skip to (?:main )?content"
+        r"|\(opens in a new window\)"
+        r"|\btry chatgpt\b|\blog ?in\b|\bsign ?in\b|\bsign ?up\b"
+        r"|\baccept (?:all )?cookies\b|\bcookie (?:policy|settings)\b"
+        r"|\bsubscribe now\b|\bnewsletter\b"
+        r")"
+    )
+
+    @classmethod
+    def _is_article_url(cls, url: str) -> bool:
+        """A source has to be an ARTICLE, not an ad or a search page."""
+        candidate = str(url or "").strip()
+        if not candidate.startswith(("http://", "https://")):
+            return False
+        if cls._NON_ARTICLE_URL_RE.search(candidate):
+            return False
+        # A bare homepage is a product, not a piece of reporting.
+        try:
+            from urllib.parse import urlsplit
+
+            parts = urlsplit(candidate)
+        except (TypeError, ValueError):
+            return False
+        path = (parts.path or "/").rstrip("/")
+        return bool(path and path != "")
+
+    @classmethod
+    def _strip_page_chrome(cls, text: str) -> str:
+        """Remove navigation furniture so a synthesis quotes the article.
+
+        Measured live: the "synthesis" written into the document opened with
+        "Skip to main content Research Products Business Developers Company
+        Foundation (opens in a new window) Log in Try ChatGPT (opens in a new
+        window)..." — the site's nav bar, repeated twice, presented as what the
+        reporting said.
+        """
+        body = " ".join(str(text or "").split())
+        if not body:
+            return ""
+        body = cls._PAGE_CHROME_RE.sub(" ", body)
+        # Collapse the runs of single words nav bars leave behind.
+        body = re.sub(r"\s{2,}", " ", body).strip(" -|·•,")
+        return body
+
     @staticmethod
     def _research_sources_from_result(result: dict[str, Any]) -> list[dict[str, str]]:
         raw_sources = (
@@ -1255,6 +1317,10 @@ class DesktopTaskSkill(BaseSkill):
             snippet = str(item.get("snippet") or item.get("text") or item.get("content") or item.get("summary") or "").strip()
             if not title and not url and not snippet:
                 continue
+            if url and not DesktopTaskSkill._is_article_url(url):
+                # An ad redirect or a search page is not a source she read.
+                continue
+            snippet = DesktopTaskSkill._strip_page_chrome(snippet)
             accessible = not DesktopTaskSkill._looks_inaccessible(snippet)
             sources.append({
                 "title": title[:240],
