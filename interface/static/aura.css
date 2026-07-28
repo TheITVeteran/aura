@@ -5943,3 +5943,1246 @@ body.theme-light .thought-card.warning {
     flex: none;
     opacity: 0.7;
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   MATERIAL DEPTH PASS — v15.3
+   The sidebar panels were flat: every section was a bare label
+   floating over the same surface, so six very different instruments
+   (feed, telemetry, imagination, memory, skills, settings) read as one
+   undifferentiated column. This pass gives the UI a material model —
+   three surface elevations, a recessed "well" for anything that holds a
+   value, and a hairline ring that separates a section from its
+   neighbours — and then applies it consistently to every panel.
+   Tokens live here so themes retune depth instead of overriding rules.
+   ══════════════════════════════════════════════════════════ */
+:root {
+    /* Edges. A lit edge on top, a shaded edge underneath: that pair is
+       what makes a surface read as raised rather than painted. */
+    --d-hi:        rgba(255, 255, 255, 0.075);
+    --d-hi-soft:   rgba(255, 255, 255, 0.045);
+    --d-lo:        rgba(0, 0, 0, 0.42);
+    --d-ring:      rgba(255, 255, 255, 0.075);
+    --d-ring-warm: rgba(180, 77, 255, 0.20);
+    --d-ring-cool: rgba(0, 229, 255, 0.18);
+
+    /* Surfaces, lightest-on-top. s1 is a section shell, s2 a card sitting
+       inside one, s3 a control sitting on the card. */
+    --d-s1:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0.006)),
+        linear-gradient(180deg, rgba(14, 9, 27, 0.62), rgba(8, 5, 17, 0.78));
+    --d-s2:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.042), rgba(255, 255, 255, 0.012)),
+        linear-gradient(180deg, rgba(15, 10, 29, 0.94), rgba(9, 6, 19, 0.94));
+    --d-s3:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+        linear-gradient(180deg, rgba(20, 14, 38, 0.96), rgba(12, 8, 24, 0.96));
+
+    /* A well is carved *into* a surface — used by every track, trough and
+       input, so a thing that holds a reading never looks like a button. */
+    --d-well: linear-gradient(180deg, #050310, #0b0719);
+
+    --d-e1: 0 1px 2px rgba(0, 0, 0, 0.30), 0 3px 8px rgba(0, 0, 0, 0.20);
+    --d-e2: 0 2px 4px rgba(0, 0, 0, 0.32), 0 10px 24px rgba(0, 0, 0, 0.28);
+    --d-e3: 0 4px 9px rgba(0, 0, 0, 0.34), 0 22px 48px rgba(0, 0, 0, 0.36);
+
+    --d-top:  inset 0 1px 0 var(--d-hi);
+    --d-base: inset 0 -1px 0 var(--d-lo);
+    --d-sunk:
+        inset 0 2px 5px rgba(0, 0, 0, 0.62),
+        inset 0 1px 1px rgba(0, 0, 0, 0.55),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.theme-light {
+    --d-hi:        rgba(255, 255, 255, 0.9);
+    --d-hi-soft:   rgba(255, 255, 255, 0.7);
+    --d-lo:        rgba(26, 16, 40, 0.10);
+    --d-ring:      rgba(26, 16, 40, 0.10);
+    --d-ring-warm: rgba(107, 33, 168, 0.22);
+    --d-ring-cool: rgba(8, 145, 178, 0.24);
+    --d-s1: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 246, 252, 0.86));
+    --d-s2: linear-gradient(180deg, #ffffff, #f7f5fb);
+    --d-s3: linear-gradient(180deg, #ffffff, #f3f0f9);
+    --d-well: linear-gradient(180deg, #e6e1f0, #efebf6);
+    --d-e1: 0 1px 2px rgba(26, 16, 40, 0.07), 0 3px 8px rgba(26, 16, 40, 0.05);
+    --d-e2: 0 2px 4px rgba(26, 16, 40, 0.08), 0 10px 24px rgba(26, 16, 40, 0.07);
+    --d-e3: 0 4px 9px rgba(26, 16, 40, 0.09), 0 22px 48px rgba(26, 16, 40, 0.10);
+    --d-sunk:
+        inset 0 2px 4px rgba(26, 16, 40, 0.14),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* ── The section shell ───────────────────────────────────────
+   Every labelled group in every tab is wrapped in one of these, so a
+   section has an actual boundary instead of being implied by whitespace. */
+.panel-section {
+    position: relative;
+    margin: 0 0 14px;
+    padding: 13px 13px 14px;
+    border-radius: 16px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-s1);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+}
+
+/* A lit filament across the top edge — the detail that reads as a bevel
+   catching light rather than a drawn line. Inset from the corners so it
+   never collides with the border radius. */
+.panel-section::before {
+    content: '';
+    position: absolute;
+    inset: -1px 16px auto;
+    height: 1px;
+    border-radius: 1px;
+    background: linear-gradient(90deg,
+        transparent,
+        rgba(180, 77, 255, 0.38) 28%,
+        rgba(0, 229, 255, 0.26) 68%,
+        transparent);
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.panel-section > :last-child {
+    margin-bottom: 0;
+}
+
+/* Sections that carry a live signal get a cool edge; ones reporting a
+   fault get a hot one. Set by the renderers, not decorative. */
+.panel-section[data-tone="live"]   { border-color: var(--d-ring-cool); }
+.panel-section[data-tone="warn"]   { border-color: rgba(255, 170, 0, 0.24); }
+.panel-section[data-tone="error"]  { border-color: rgba(255, 62, 94, 0.24); }
+
+/* Section headers become real headers: an accent tick, then the label,
+   then a hairline that closes the row off from the content beneath. */
+.panel-section > .section-label {
+    justify-content: flex-start;
+    gap: 9px;
+    margin: 0 0 12px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--d-ring);
+    font-size: 0.6rem;
+    letter-spacing: 0.18em;
+    color: rgba(222, 216, 240, 0.86);
+}
+
+.panel-section > .section-label::before {
+    content: '';
+    flex: none;
+    width: 2px;
+    height: 11px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--primary-bright), var(--accent));
+    box-shadow: 0 0 8px rgba(180, 77, 255, 0.5);
+}
+
+.panel-section > .section-label.consciousness-section {
+    margin-top: 0;
+}
+
+/* Nested wells (a stat grid inside a section) lose their own outer margin
+   so the shell owns the spacing. */
+.panel-section > .consciousness-grid:last-child,
+.panel-section > .imagine-list:last-child,
+.panel-section > .imagine-pressures:last-child {
+    margin-bottom: 0;
+}
+
+/* ── Instrument gauges ───────────────────────────────────────
+   A gauge is three materials: a card it sits on, a channel milled into
+   that card, and a lit bar riding in the channel. Previously all three
+   were the same flat rectangle. */
+.gauge-row {
+    padding: 11px 13px 12px;
+    margin-bottom: 9px;
+    border-radius: 13px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.gauge-row:hover {
+    border-color: var(--d-ring-cool);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.gauge-label {
+    align-items: baseline;
+    margin-bottom: 7px;
+    font-family: var(--font-hud);
+    font-size: 0.63rem;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    color: rgba(160, 152, 184, 0.95);
+}
+
+/* The reading itself is the point of the row — give it the mono face and
+   tabular figures so it stops jittering as digits change. */
+.gauge-label > span:last-child {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: rgba(240, 236, 252, 0.94);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 12px rgba(0, 229, 255, 0.18);
+}
+
+.gauge-bar {
+    position: relative;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--d-well);
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    box-shadow: var(--d-sunk);
+}
+
+/* Quarter marks etched into the channel wall. They sit above the fill so
+   the scale stays readable across a bright bar. */
+.gauge-bar::before {
+    content: '';
+    position: absolute;
+    inset: 1px 0;
+    z-index: 2;
+    pointer-events: none;
+    background: repeating-linear-gradient(90deg,
+        transparent 0 calc(25% - 1px),
+        rgba(255, 255, 255, 0.10) calc(25% - 1px) 25%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0 6%, #000 14% 86%, transparent 94%);
+    mask-image: linear-gradient(90deg, transparent 0 6%, #000 14% 86%, transparent 94%);
+}
+
+.gauge-fill {
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+/* Specular curvature: the bar is lit across its top third, which is what
+   makes it read as a cylinder rather than a coloured rectangle. */
+.gauge-fill::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 55% 0;
+    border-radius: 999px 999px 4px 4px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0));
+    pointer-events: none;
+}
+
+/* The travelling highlight was a hard white wipe every 2s on eleven bars
+   at once. Slowed, narrowed and softened to a specular pass. */
+.gauge-fill::after {
+    background: linear-gradient(90deg,
+        transparent 18%,
+        rgba(255, 255, 255, 0.16) 50%,
+        transparent 82%);
+    animation-duration: 4.5s;
+    animation-timing-function: cubic-bezier(0.55, 0, 0.45, 1);
+}
+
+/* A lit meniscus at the leading edge — where the reading actually ends. */
+.gauge-fill.energy,
+.gauge-fill.curiosity,
+.gauge-fill.frustration,
+.gauge-fill.confidence {
+    box-shadow:
+        inset -1px 0 0 rgba(255, 255, 255, 0.55),
+        inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.gauge-fill.energy {
+    background: linear-gradient(90deg, #5b1fa8, var(--primary), var(--primary-bright));
+    filter: drop-shadow(0 0 7px rgba(180, 77, 255, 0.5));
+}
+
+.gauge-fill.curiosity {
+    background: linear-gradient(90deg, #044a8a, #0077ff, var(--accent));
+    filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.42));
+}
+
+.gauge-fill.frustration {
+    background: linear-gradient(90deg, #8a3b00, #ff8800, var(--error));
+    filter: drop-shadow(0 0 7px rgba(255, 62, 94, 0.42));
+}
+
+.gauge-fill.confidence {
+    background: linear-gradient(90deg, #3d3a4a, #8d88a0, #d6d2e4);
+    filter: drop-shadow(0 0 6px rgba(200, 195, 220, 0.32));
+}
+
+/* "No reading" must still look like no reading, not a dim reading. */
+.gauge-fill.gauge-unknown {
+    filter: none;
+    box-shadow: none;
+}
+
+.gauge-fill.gauge-unknown::before,
+.gauge-fill.gauge-unknown::after {
+    display: none;
+}
+
+/* ── Stat tiles ──────────────────────────────────────────────
+   Roughly 70 of these carry the telemetry panel. They needed to read as
+   machined tiles, not table cells. */
+.consciousness-grid {
+    gap: 9px;
+}
+
+.con-box {
+    position: relative;
+    padding: 13px 11px 12px;
+    border-radius: 13px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* Light falls from above-centre: a soft bloom under the top edge that
+   fades before it reaches the label. */
+.con-box::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(120% 80% at 50% -25%, rgba(0, 229, 255, 0.11), transparent 62%);
+}
+
+.con-box > * {
+    position: relative;
+}
+
+.con-box:hover {
+    border-color: var(--d-ring-cool);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.con-val {
+    font-family: var(--font-hud);
+    font-size: 1.2rem;
+    font-weight: 700;
+    letter-spacing: 0.015em;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 5px;
+}
+
+.con-lbl {
+    font-size: 0.53rem;
+    letter-spacing: 0.13em;
+    color: rgba(150, 142, 176, 0.9);
+    line-height: 1.3;
+}
+
+/* ── Narrative + executive surfaces ──────────────────────────── */
+.narrative-box {
+    position: relative;
+    padding: 13px 15px 13px 17px;
+    box-shadow: var(--d-e1), var(--d-top);
+}
+
+.executive-card {
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.executive-line {
+    border-bottom-color: var(--d-ring);
+}
+
+.executive-key {
+    font-family: var(--font-hud);
+    font-weight: 600;
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+}
+
+/* ── Mood-over-time canvas ───────────────────────────────────── */
+.neural-dynamics-wrap {
+    border-radius: 13px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-well);
+    box-shadow: var(--d-sunk);
+    overflow: hidden;
+}
+
+.vad-overlay span {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    border-radius: 999px;
+    background: rgba(6, 4, 14, 0.72);
+    border: 1px solid var(--d-ring);
+    box-shadow: var(--d-e1);
+}
+
+/* ── Neural feed ─────────────────────────────────────────────── */
+.bar-wrap {
+    height: 9px;
+    border-radius: 999px;
+    background: var(--d-well);
+    border: 1px solid rgba(255, 255, 255, 0.055);
+    box-shadow: var(--d-sunk);
+}
+
+.bar-fill.neural {
+    background: linear-gradient(90deg, #5b1fa8, var(--primary), var(--primary-bright));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 0 12px rgba(180, 77, 255, 0.45);
+}
+
+.thought-card {
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+}
+
+.neural-toggle-btn,
+.neural-mode-state {
+    box-shadow: var(--d-e1), inset 0 1px 0 var(--d-hi-soft);
+}
+
+/* ── Imagination workspace ───────────────────────────────────── */
+.imagine-canvas-wrap {
+    position: relative;
+    padding: 8px;
+    border-radius: 14px;
+    border: 1px solid var(--d-ring);
+    background:
+        radial-gradient(120% 90% at 50% 0%, rgba(138, 43, 226, 0.13), transparent 62%),
+        var(--d-well);
+    box-shadow: var(--d-sunk), var(--d-e1);
+    overflow: hidden;
+}
+
+/* A faint field grid behind the graph so nodes have somewhere to sit. */
+.imagine-canvas-wrap::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 26px 26px;
+    -webkit-mask-image: radial-gradient(75% 75% at 50% 45%, #000, transparent);
+    mask-image: radial-gradient(75% 75% at 50% 45%, #000, transparent);
+}
+
+.imagine-canvas {
+    position: relative;
+}
+
+.imagine-objective {
+    border-radius: 4px 12px 12px 4px;
+    padding: 12px 14px;
+    background:
+        linear-gradient(90deg, rgba(138, 43, 226, 0.14), rgba(138, 43, 226, 0.03)),
+        rgba(10, 7, 20, 0.6);
+    box-shadow: var(--d-e1), var(--d-top);
+}
+
+.imagine-attractor {
+    padding: 9px 11px 10px;
+    margin-bottom: 7px;
+    border-radius: 12px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* The winner is the one claim this panel makes — it should be obvious
+   without reading the numbers. */
+.imagine-attractor-win {
+    border-color: var(--d-ring-warm);
+    box-shadow:
+        var(--d-e2),
+        var(--d-top),
+        inset 0 0 0 1px rgba(180, 77, 255, 0.10),
+        0 0 22px rgba(138, 43, 226, 0.13);
+}
+
+.imagine-attractor-head {
+    font-family: var(--font-hud);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    margin-bottom: 6px;
+}
+
+.imagine-attractor-head > span:last-child {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: rgba(238, 233, 252, 0.9);
+}
+
+.imagine-attractor-track {
+    position: relative;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--d-well);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: var(--d-sunk);
+}
+
+.imagine-attractor-fill {
+    position: relative;
+    border-radius: 999px;
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.5);
+}
+
+.imagine-attractor-fill::before {
+    content: '';
+    position: absolute;
+    inset: 0 0 55% 0;
+    border-radius: 999px 999px 4px 4px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0));
+}
+
+.imagine-attractor-win .imagine-attractor-fill {
+    filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.42));
+}
+
+.imagine-pressures {
+    gap: 10px 12px;
+}
+
+.imagine-pressure {
+    padding: 9px 11px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+}
+
+.imagine-pressure-head {
+    font-family: var(--font-hud);
+    font-size: 0.58rem;
+    letter-spacing: 0.11em;
+    margin-bottom: 6px;
+}
+
+.imagine-pressure-head > span:last-child {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: rgba(238, 233, 252, 0.88);
+}
+
+.imagine-item {
+    border-radius: 4px 12px 12px 4px;
+    padding: 10px 12px;
+    background:
+        linear-gradient(90deg, rgba(138, 43, 226, 0.10), rgba(255, 255, 255, 0.012)),
+        rgba(10, 7, 20, 0.5);
+    box-shadow: var(--d-e1), var(--d-top);
+}
+
+.imagine-render-btn {
+    background:
+        linear-gradient(180deg, rgba(180, 77, 255, 0.26), rgba(138, 43, 226, 0.12)),
+        rgba(12, 8, 24, 0.7);
+    box-shadow: var(--d-e1), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.imagine-render-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: var(--d-e2), inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 20px rgba(138, 43, 226, 0.28);
+}
+
+.imagine-render-btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: var(--d-sunk);
+}
+
+.imagine-image-wrap,
+.imagine-thumb {
+    border-radius: 12px;
+    border-color: var(--d-ring);
+    box-shadow: var(--d-e2), var(--d-top);
+}
+
+.imagine-thumb {
+    border-radius: 10px;
+    box-shadow: var(--d-e1), var(--d-top);
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.imagine-thumb:hover {
+    transform: translateY(-2px);
+    border-color: var(--d-ring-warm);
+    box-shadow: var(--d-e3), var(--d-top);
+}
+
+.imagine-world {
+    border-radius: 12px;
+    border-color: var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+}
+
+.imagine-world:hover {
+    border-color: var(--d-ring-warm);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.imagine-empty,
+.imagine-empty-inline {
+    border-radius: 12px;
+    border-color: var(--d-ring);
+    background: rgba(255, 255, 255, 0.014);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+}
+
+.imagine-boundary {
+    border-radius: 12px;
+    box-shadow: var(--d-e1), inset 0 1px 0 rgba(0, 255, 163, 0.10);
+}
+
+/* ── Memory tab ──────────────────────────────────────────────── */
+.mem-sub-tabs {
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid var(--d-ring);
+    background: var(--d-well);
+    box-shadow: var(--d-sunk);
+    gap: 4px;
+}
+
+/* A segmented control: the track is recessed, the active segment is the
+   only thing that rises out of it. */
+.mem-sub-btn {
+    flex: 1;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: transparent;
+    padding: 7px 10px;
+    font-family: var(--font-hud);
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mem-sub-btn:hover:not(.active) {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.035);
+}
+
+.mem-sub-btn.active {
+    color: #fff;
+    border-color: rgba(180, 77, 255, 0.34);
+    background:
+        linear-gradient(180deg, rgba(180, 77, 255, 0.42), rgba(138, 43, 226, 0.24)),
+        rgba(20, 12, 38, 0.9);
+    box-shadow: var(--d-e1), inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 18px rgba(138, 43, 226, 0.22);
+}
+
+.mem-item {
+    padding: 11px 13px;
+    border: 1px solid var(--d-ring);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mem-item:hover {
+    transform: translateY(-1px);
+    border-color: var(--d-ring-warm);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.mem-ts {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ── Skills tab ──────────────────────────────────────────────── */
+.skill-card {
+    position: relative;
+    border: 1px solid var(--d-ring);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* A status rail down the leading edge — colour is the card's state, so
+   the list scans without reading a single badge. */
+.skill-card::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 2px;
+    border-radius: 0 2px 2px 0;
+    background: rgba(255, 255, 255, 0.12);
+    transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+
+.skill-card.ready::before {
+    background: var(--success);
+    box-shadow: 0 0 10px rgba(0, 255, 163, 0.55);
+}
+
+.skill-card.running::before {
+    background: var(--accent);
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.6);
+}
+
+.skill-card.error::before {
+    background: var(--error);
+    box-shadow: 0 0 10px rgba(255, 62, 94, 0.55);
+}
+
+.skill-card:hover {
+    border-color: var(--d-ring-cool);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.skill-badge {
+    font-family: var(--font-hud);
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    padding: 3px 9px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.tool-last-detail {
+    background: var(--d-s1);
+    box-shadow: var(--d-e1), var(--d-top);
+}
+
+/* ── Settings tab ────────────────────────────────────────────── */
+.settings-row {
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-bottom: 0;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    gap: 14px;
+    transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.settings-row:hover {
+    border-color: var(--d-ring);
+    background: rgba(255, 255, 255, 0.022);
+}
+
+.settings-row label {
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+
+.setting-input {
+    background: var(--d-s3);
+    border-color: var(--d-ring);
+    border-radius: 9px;
+    padding: 6px 10px;
+    box-shadow: var(--d-e1), inset 0 1px 0 var(--d-hi-soft);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.setting-input:focus {
+    border-color: var(--d-ring-warm);
+    box-shadow: var(--d-e1), inset 0 1px 0 var(--d-hi-soft), 0 0 0 3px rgba(138, 43, 226, 0.16);
+}
+
+.setting-toggle {
+    width: 38px;
+    height: 21px;
+    flex: none;
+    background: var(--d-well);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: var(--d-sunk);
+    transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.setting-toggle::after {
+    top: 2px;
+    left: 2px;
+    width: 15px;
+    height: 15px;
+    background: linear-gradient(180deg, #b6afcc, #7d768f);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.setting-toggle:checked {
+    border-color: rgba(180, 77, 255, 0.42);
+    background: linear-gradient(180deg, var(--primary), #6a1fb5);
+    box-shadow: var(--d-sunk), 0 0 16px rgba(138, 43, 226, 0.3);
+}
+
+.setting-toggle:checked::after {
+    transform: translateX(17px);
+    background: linear-gradient(180deg, #ffffff, #ded6f2);
+}
+
+.setting-range {
+    background: var(--d-well);
+    box-shadow: var(--d-sunk);
+    height: 5px;
+}
+
+.setting-range::-webkit-slider-thumb {
+    background: linear-gradient(180deg, var(--primary-bright), var(--primary));
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 0 10px rgba(138, 43, 226, 0.4);
+}
+
+.setting-value {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.setting-btn {
+    border-radius: 9px;
+    background:
+        linear-gradient(180deg, rgba(180, 77, 255, 0.24), rgba(138, 43, 226, 0.10)),
+        rgba(12, 8, 24, 0.7);
+    box-shadow: var(--d-e1), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+    transition: transform 0.16s ease, background 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
+}
+
+.setting-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--d-e2), inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 18px rgba(138, 43, 226, 0.26);
+}
+
+.setting-btn:active {
+    transform: translateY(0);
+    box-shadow: var(--d-sunk);
+}
+
+.setting-btn.danger {
+    background:
+        linear-gradient(180deg, rgba(255, 62, 94, 0.2), rgba(255, 62, 94, 0.06)),
+        rgba(16, 6, 12, 0.7);
+}
+
+.settings-view {
+    border-radius: 12px;
+    border-color: var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top), var(--d-base);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.settings-view:hover {
+    transform: translateY(-1px);
+    border-color: var(--d-ring-warm);
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────
+   Six tabs sharing one recessed rail; only the active one is raised. */
+.tab-bar {
+    gap: 4px;
+    padding: 6px;
+    border-bottom: 1px solid var(--d-ring);
+    background:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.30), rgba(0, 0, 0, 0.12));
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.tab-btn {
+    padding: 11px 0 10px;
+    border-radius: 11px;
+    background: transparent;
+    border-color: transparent;
+    font-family: var(--font-hud);
+    font-size: 0.6rem;
+    letter-spacing: 0.13em;
+}
+
+.tab-btn.active {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+        rgba(20, 13, 38, 0.75);
+    border-color: rgba(180, 77, 255, 0.24);
+    box-shadow:
+        var(--d-e1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.11),
+        0 0 20px rgba(138, 43, 226, 0.16);
+}
+
+/* The underline lived at bottom:-2px against a 2px border that no longer
+   exists; anchor it to the pill instead. */
+.tab-btn.active::after {
+    bottom: 4px;
+    left: 50%;
+    width: 22px;
+    height: 2px;
+    border-radius: 2px;
+    transform: translateX(-50%);
+    background: linear-gradient(90deg, var(--primary-bright), var(--accent));
+    box-shadow: 0 0 10px rgba(180, 77, 255, 0.7);
+}
+
+.tab-btn .tab-icon {
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.tab-btn.active .tab-icon {
+    filter: drop-shadow(0 0 8px rgba(180, 77, 255, 0.6));
+}
+
+/* ── Motion budget ───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+    .gauge-fill::after {
+        animation: none;
+        opacity: 0;
+    }
+
+    .con-box:hover,
+    .gauge-row:hover,
+    .mem-item:hover,
+    .skill-card:hover,
+    .imagine-thumb:hover,
+    .settings-view:hover,
+    .setting-btn:hover,
+    .imagine-render-btn:hover {
+        transform: none;
+    }
+}
+
+/* Narrow sidebars: keep the shells but stop them eating the width. */
+@media (max-width: 1100px) {
+    .panel-section {
+        padding: 11px 11px 12px;
+        border-radius: 14px;
+    }
+}
+
+/* ── Pane headers ────────────────────────────────────────────
+   A toolbar label sits above its sections rather than inside one, so it
+   is the pane's title and should carry more weight than a section head. */
+.tab-pane {
+    padding: 16px 16px 20px;
+}
+
+.neural-toolbar,
+.telemetry-toolbar,
+.imagine-toolbar {
+    margin-bottom: 14px;
+    padding-bottom: 11px;
+    border-bottom: 1px solid var(--d-ring);
+}
+
+.neural-toolbar-label,
+.telemetry-toolbar-label,
+.imagine-toolbar-label {
+    gap: 9px;
+    justify-content: flex-start;
+    font-family: var(--font-hud);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: rgba(238, 233, 252, 0.95);
+    text-shadow: 0 0 18px rgba(180, 77, 255, 0.28);
+}
+
+/* The pane title carries the same lit tick as a section head, one size up. */
+.neural-toolbar-label::before,
+.telemetry-toolbar-label::before,
+.imagine-toolbar-label::before {
+    content: '';
+    flex: none;
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, var(--primary-bright), var(--accent));
+    box-shadow: 0 0 10px rgba(180, 77, 255, 0.6);
+}
+
+/* The metric guide is pane-level chrome, not a section — keep it flush
+   with the header it hangs off. */
+.metric-guide-panel {
+    box-shadow: var(--d-e2), var(--d-top), var(--d-base);
+}
+
+.metric-guide-live,
+.metric-guide-block {
+    border-color: var(--d-ring);
+    background: var(--d-s2);
+    box-shadow: var(--d-e1), var(--d-top);
+}
+
+.metric-guide-toggle {
+    box-shadow: var(--d-e1), inset 0 1px 0 var(--d-hi-soft);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.metric-guide-toggle:hover {
+    transform: translateY(-1px);
+    border-color: var(--d-ring-cool);
+    box-shadow: var(--d-e2), inset 0 1px 0 var(--d-hi-soft), 0 0 18px rgba(0, 229, 255, 0.16);
+}
+
+/* A section-level empty state should read as an empty instrument, not a
+   missing one. */
+.mem-empty {
+    color: rgba(150, 142, 176, 0.9);
+    background: var(--d-well);
+    border-color: var(--d-ring);
+    box-shadow: var(--d-sunk);
+    margin-top: 0;
+}
+
+#belief-graph {
+    border-radius: 13px;
+    border-color: var(--d-ring);
+    background:
+        radial-gradient(120% 90% at 50% 0%, rgba(138, 43, 226, 0.10), transparent 60%),
+        var(--d-well);
+    box-shadow: var(--d-sunk);
+}
+
+/* ── Mood chart legend ───────────────────────────────────────
+   Three traces shared one undifferentiated readout, so which number
+   belonged to which line was a guess. Each key now carries its trace
+   colour — the same hex VADStream strokes with. */
+.vad-overlay span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px 2px 6px;
+    font-size: 0.56rem;
+    color: rgba(230, 225, 245, 0.9);
+    text-shadow: none;
+}
+
+.vad-overlay span::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 7px currentColor;
+}
+
+.vad-overlay span[data-trace="v"]::before { color: #00ffa3; }
+.vad-overlay span[data-trace="a"]::before { color: #b44dff; }
+.vad-overlay span[data-trace="d"]::before { color: #00e5ff; }
+
+.neural-dynamics-wrap {
+    height: 132px;
+}
+
+/* ── Mental canvas ───────────────────────────────────────────
+   The frame's objects and relations, drawn with the same material
+   language as the rest of the panel: bodies that catch light, edges that
+   carry direction, and labels that survive crossing an edge. */
+.imagine-orbit {
+    fill: none;
+    stroke: rgba(180, 77, 255, 0.14);
+    stroke-width: 1;
+    stroke-dasharray: 3 5;
+}
+
+.imagine-edge {
+    fill: none;
+    stroke: url(#ic-edge);
+    stroke-width: 1.3;
+    stroke-linecap: round;
+}
+
+.imagine-node {
+    fill: url(#ic-node);
+    stroke: rgba(180, 77, 255, 0.7);
+    stroke-width: 1.1;
+}
+
+.imagine-node-focus {
+    fill: url(#ic-node-focus);
+    stroke: #e5ccff;
+    stroke-width: 1.3;
+}
+
+/* The halo is the object's presence in the frame — bigger and brighter
+   for whatever she is actually attending to. */
+.imagine-node-halo {
+    fill: rgba(138, 43, 226, 0.13);
+    stroke: rgba(180, 77, 255, 0.16);
+    stroke-width: 0.7;
+}
+
+.imagine-node-halo-focus {
+    fill: rgba(180, 77, 255, 0.2);
+    stroke: rgba(229, 204, 255, 0.35);
+}
+
+.imagine-node-spec {
+    fill: rgba(255, 255, 255, 0.3);
+    pointer-events: none;
+}
+
+.imagine-node-label-plate,
+.imagine-edge-label-plate {
+    fill: rgba(6, 4, 13, 0.82);
+    stroke: rgba(255, 255, 255, 0.07);
+    stroke-width: 0.6;
+}
+
+.imagine-node-label {
+    fill: rgba(238, 233, 252, 0.95);
+    font-size: 6.4px;
+    font-family: var(--font-stream);
+    letter-spacing: 0.03em;
+}
+
+.imagine-edge-label {
+    fill: rgba(0, 229, 255, 0.88);
+    font-size: 5.8px;
+    font-family: var(--font-stream);
+    letter-spacing: 0.05em;
+}
+
+.imagine-edge-label-plate {
+    fill: rgba(4, 10, 16, 0.85);
+    stroke: rgba(0, 229, 255, 0.14);
+}
+
+/* ══════════════════════════════════════════════════════════
+   LIGHT THEME — panel legibility
+   The sidebar panels carried near-white text colours written as literal
+   rgba() rather than tokens, so on the light theme the telemetry guide,
+   gauge labels, tile labels and narrative boxes rendered white-on-white
+   and were unreadable. The depth tokens above already retune for light;
+   these are the foreground colours that had no token to retune.
+   ══════════════════════════════════════════════════════════ */
+body.theme-light .section-label,
+body.theme-light .panel-section > .section-label {
+    color: rgba(38, 26, 58, 0.86);
+}
+
+body.theme-light .neural-toolbar-label,
+body.theme-light .telemetry-toolbar-label,
+body.theme-light .imagine-toolbar-label {
+    color: #1f1533;
+    text-shadow: none;
+}
+
+body.theme-light .gauge-label {
+    color: rgba(72, 62, 96, 0.95);
+}
+
+body.theme-light .gauge-label > span:last-child,
+body.theme-light .imagine-attractor-head > span:last-child,
+body.theme-light .imagine-pressure-head > span:last-child {
+    color: #1f1533;
+    text-shadow: none;
+}
+
+body.theme-light .con-val {
+    color: #0e6f86;
+    text-shadow: none;
+}
+
+body.theme-light .con-lbl {
+    color: rgba(88, 78, 112, 0.92);
+}
+
+body.theme-light .con-box::before {
+    background: radial-gradient(120% 80% at 50% -25%, rgba(8, 145, 178, 0.08), transparent 62%);
+}
+
+body.theme-light .metric-guide-name {
+    color: #1a1028;
+}
+
+body.theme-light .metric-guide-live,
+body.theme-light .metric-guide-block p {
+    color: rgba(42, 32, 62, 0.92);
+}
+
+body.theme-light .metric-guide-eyebrow,
+body.theme-light .metric-guide-block-label {
+    color: #0b6f88;
+}
+
+body.theme-light .metric-guide-panel {
+    background: linear-gradient(160deg, rgba(107, 33, 168, 0.05), rgba(8, 145, 178, 0.04)), #ffffff;
+    border-color: rgba(107, 33, 168, 0.16);
+}
+
+body.theme-light .thought-card {
+    background: linear-gradient(180deg, #ffffff, #f7f5fb);
+}
+
+body.theme-light .tool-last-detail,
+body.theme-light .skill-desc,
+body.theme-light .executive-value,
+body.theme-light .state-summary-box,
+body.theme-light .phenomenal-box,
+body.theme-light .narrative-box,
+body.theme-light .mem-item {
+    color: rgba(42, 32, 62, 0.92);
+}
+
+body.theme-light .narrative-box {
+    background: linear-gradient(160deg, rgba(107, 33, 168, 0.05), rgba(8, 145, 178, 0.03)), #ffffff;
+    border-color: rgba(107, 33, 168, 0.14);
+}
+
+body.theme-light .executive-card {
+    background: linear-gradient(160deg, #ffffff, #f6f3fb);
+    border-color: rgba(8, 145, 178, 0.16);
+}
+
+body.theme-light .executive-key,
+body.theme-light .mem-empty,
+body.theme-light .imagine-empty,
+body.theme-light .imagine-empty-inline,
+body.theme-light .flag-chip.neutral {
+    color: rgba(88, 78, 112, 0.92);
+}
+
+body.theme-light .tab-bar {
+    background: linear-gradient(180deg, rgba(26, 16, 40, 0.05), rgba(26, 16, 40, 0.015));
+    box-shadow: inset 0 -1px 0 rgba(26, 16, 40, 0.05);
+}
+
+body.theme-light .tab-btn.active {
+    background: linear-gradient(180deg, #ffffff, #f3eefc);
+    border-color: rgba(107, 33, 168, 0.24);
+    box-shadow: var(--d-e1), inset 0 1px 0 #ffffff;
+}
+
+/* A grey-on-grey bar is invisible on paper; the confidence gauge needs
+   its own ramp in this theme. */
+body.theme-light .gauge-fill.confidence {
+    background: linear-gradient(90deg, #6b6480, #3b3550, #1f1a30);
+    filter: drop-shadow(0 0 5px rgba(60, 50, 90, 0.25));
+}
+
+body.theme-light .gauge-fill::before {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+}
+
+body.theme-light .vad-overlay span {
+    color: #1f1533;
+    background: rgba(255, 255, 255, 0.86);
+    border-color: rgba(26, 16, 40, 0.1);
+}
+
+body.theme-light .imagine-objective,
+body.theme-light .imagine-item {
+    color: rgba(42, 32, 62, 0.92);
+    background: linear-gradient(90deg, rgba(107, 33, 168, 0.08), rgba(107, 33, 168, 0.02)), #ffffff;
+}
+
+body.theme-light .imagine-node-label-plate,
+body.theme-light .imagine-edge-label-plate {
+    fill: rgba(255, 255, 255, 0.9);
+    stroke: rgba(26, 16, 40, 0.12);
+}
+
+body.theme-light .imagine-node-label { fill: #1f1533; }
+body.theme-light .imagine-edge-label { fill: #0b6f88; }
+body.theme-light .imagine-node { fill: #ede7fb; }
+body.theme-light .imagine-canvas-wrap::before {
+    background-image:
+        linear-gradient(rgba(26, 16, 40, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(26, 16, 40, 0.05) 1px, transparent 1px);
+}
+
+body.theme-light .panel-section::before {
+    opacity: 0.35;
+}
+
+body.theme-light .skill-card::before {
+    background: rgba(26, 16, 40, 0.12);
+}

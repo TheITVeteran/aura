@@ -3346,6 +3346,35 @@ class VADStream {
         if ($('vad-d')) $('vad-d').textContent = `D: ${d.toFixed(2)}`;
     }
 
+    // The backing store was fixed at the 300x120 the markup declared while CSS
+    // stretched the element to whatever the panel was — so every trace was
+    // resampled up, and on a Retina panel resampled up twice. Size the buffer
+    // to the element's real device pixels and draw in CSS units.
+    syncBackingStore() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 3);
+        const cssW = Math.max(1, Math.round(this.canvas.clientWidth || this.canvas.width));
+        const cssH = Math.max(1, Math.round(this.canvas.clientHeight || this.canvas.height));
+        const wantW = Math.round(cssW * dpr);
+        const wantH = Math.round(cssH * dpr);
+        if (this.canvas.width !== wantW || this.canvas.height !== wantH) {
+            this.canvas.width = wantW;
+            this.canvas.height = wantH;
+        }
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        return { width: cssW, height: cssH };
+    }
+
+    // x of sample i. Held to the right edge so the newest reading is always
+    // at "now" rather than drifting in from the left as the buffer fills.
+    _x(i, width) {
+        const span = Math.max(1, this.maxLen - 1);
+        return width - ((this.history.length - 1 - i) / span) * width;
+    }
+
+    _y(val, height) {
+        return (height / 2) - (val * (height / 2.2));
+    }
+
     animate() {
         if (!this.ctx) return;
 
@@ -3355,44 +3384,84 @@ class VADStream {
             return;
         }
 
-        const { width, height } = this.canvas;
-        this.ctx.clearRect(0, 0, width, height);
+        const { width, height } = this.syncBackingStore();
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, width, height);
 
-        // Draw grid
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-        this.ctx.lineWidth = 1;
-        this.ctx.beginPath();
-        this.ctx.moveTo(0, height / 2);
-        this.ctx.lineTo(width, height / 2);
-        this.ctx.stroke();
+        // Plot field: quarter gridlines with the zero line held brightest, so
+        // a trace can be read against a scale instead of floating.
+        for (const [frac, alpha] of [[0.25, 0.04], [0.5, 0.10], [0.75, 0.04]]) {
+            const y = Math.round(height * frac) + 0.5;
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
 
         const drawLine = (key, color) => {
             if (this.history.length < 2) return;
-            this.ctx.strokeStyle = color;
-            this.ctx.lineWidth = 2;
-            this.ctx.beginPath();
 
+            // Area under the trace, fading toward the zero line — depth without
+            // obscuring the two traces drawn over it.
+            const grad = ctx.createLinearGradient(0, 0, 0, height);
+            grad.addColorStop(0, `${color}38`);
+            grad.addColorStop(0.5, `${color}12`);
+            grad.addColorStop(1, `${color}00`);
+            ctx.beginPath();
+            ctx.moveTo(this._x(0, width), height / 2);
             for (let i = 0; i < this.history.length; i++) {
-                const x = (i / this.maxLen) * width;
-                // Scale VAD (-1 to 1) to canvas height
-                const val = this.history[i][key];
-                const y = (height / 2) - (val * (height / 2.2));
-
-                if (i === 0) this.ctx.moveTo(x, y);
-                else this.ctx.lineTo(x, y);
+                ctx.lineTo(this._x(i, width), this._y(this.history[i][key], height));
             }
-            this.ctx.stroke();
+            ctx.lineTo(this._x(this.history.length - 1, width), height / 2);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.6;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            for (let i = 0; i < this.history.length; i++) {
+                const x = this._x(i, width);
+                const y = this._y(this.history[i][key], height);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
 
             // Glow effect
-            this.ctx.shadowBlur = 8;
-            this.ctx.shadowColor = color;
-            this.ctx.stroke();
-            this.ctx.shadowBlur = 0;
+            ctx.shadowBlur = 7;
+            ctx.shadowColor = color;
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // The head of the trace is the current reading — mark it.
+            const last = this.history[this.history.length - 1];
+            const hx = this._x(this.history.length - 1, width);
+            const hy = this._y(last[key], height);
+            ctx.beginPath();
+            ctx.arc(hx, hy, 2.6, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.shadowBlur = 9;
+            ctx.shadowColor = color;
+            ctx.fill();
+            ctx.shadowBlur = 0;
         };
 
         drawLine('v', this.colors.v);
         drawLine('a', this.colors.a);
         drawLine('d', this.colors.d);
+
+        if (this.history.length < 2) {
+            ctx.fillStyle = 'rgba(150, 142, 176, 0.65)';
+            ctx.font = '10px ui-monospace, "SF Mono", Menlo, monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('waiting for mood samples', width / 2, height / 2 - 8);
+            ctx.textAlign = 'left';
+        }
 
         requestAnimationFrame(() => this.animate());
     }
@@ -8399,7 +8468,7 @@ const imagination = (() => {
             return;
         }
 
-        const cx = 160, cy = 92, rx = 108, ry = 62;
+        const cx = 160, cy = 95, rx = 102, ry = 56;
         const pos = new Map();
         objects.forEach((obj, i) => {
             const id = String(obj.id ?? obj);
@@ -8408,7 +8477,57 @@ const imagination = (() => {
             pos.set(id, { x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t), role: obj.role });
         });
 
-        const parts = [];
+        // Straight hairlines between flat discs read as a wiring diagram, not
+        // as a frame she is holding. Nodes get depth (halo, gradient body,
+        // specular), edges bow inward and carry direction, and every label
+        // gets a backing plate so it survives crossing an edge.
+        const parts = [`<defs>
+            <radialGradient id="ic-node" cx="34%" cy="28%" r="78%">
+                <stop offset="0%" stop-color="#6c4fb0"/>
+                <stop offset="55%" stop-color="#2a1a52"/>
+                <stop offset="100%" stop-color="#150c2c"/>
+            </radialGradient>
+            <radialGradient id="ic-node-focus" cx="34%" cy="26%" r="78%">
+                <stop offset="0%" stop-color="#f0e2ff"/>
+                <stop offset="45%" stop-color="#b76bff"/>
+                <stop offset="100%" stop-color="#6a24c4"/>
+            </radialGradient>
+            <linearGradient id="ic-edge" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stop-color="#8a2be2" stop-opacity="0.15"/>
+                <stop offset="50%" stop-color="#b44dff" stop-opacity="0.75"/>
+                <stop offset="100%" stop-color="#00e5ff" stop-opacity="0.5"/>
+            </linearGradient>
+            <marker id="ic-arrow" viewBox="0 0 8 8" refX="6.4" refY="4"
+                    markerWidth="4.6" markerHeight="4.6" orient="auto-start-reverse">
+                <path d="M0.6 1 L7 4 L0.6 7 Z" fill="#b44dff" fill-opacity="0.85"/>
+            </marker>
+        </defs>`];
+
+        // The ring the objects are laid out on, drawn so the arrangement
+        // reads as deliberate rather than accidental.
+        if (objects.length > 1) {
+            parts.push(`<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" class="imagine-orbit"/>`);
+        }
+
+        const nodeRadius = (p) => (p.role === 'focus' ? 9.5 : 6.5);
+
+        // Walk `gap` back from (tx,ty) toward (fx,fy) — the control point — so
+        // an edge terminates on a node's rim.
+        const trim = (fx, fy, tx, ty, gap) => {
+            const dx = tx - fx, dy = ty - fy;
+            const len = Math.hypot(dx, dy);
+            if (len < 0.001) return [tx, ty];
+            return [tx - (dx / len) * gap, ty - (dy / len) * gap];
+        };
+
+        const chip = (x, y, text, cls) => {
+            const w = Math.max(14, text.length * 3.15 + 7);
+            return `<g class="${cls}-wrap">` +
+                `<rect x="${(x - w / 2).toFixed(1)}" y="${(y - 5.4).toFixed(1)}" width="${w.toFixed(1)}" height="8.4" rx="4.2" class="${cls}-plate"/>` +
+                `<text x="${x.toFixed(1)}" y="${(y + 0.9).toFixed(1)}" text-anchor="middle" class="${cls}">${escHtml(text)}</text></g>`;
+        };
+
+        const edgeLabels = [];
         const seen = new Set();
         for (const rel of relations) {
             if (!rel || typeof rel !== 'object') continue;
@@ -8418,15 +8537,54 @@ const imagination = (() => {
             const key = `${rel.source}->${rel.target}`;
             if (seen.has(key)) continue;
             seen.add(key);
+            // Bow the edge toward the centre so long chords stop cutting
+            // through the nodes on the far side of the ring.
             const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-            parts.push(`<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" class="imagine-edge"/>`);
-            parts.push(`<text x="${mx.toFixed(1)}" y="${(my - 3).toFixed(1)}" text-anchor="middle" class="imagine-edge-label">${escHtml(String(rel.relation || ''))}</text>`);
+            const qx = mx + (cx - mx) * 0.32, qy = my + (cy - my) * 0.32;
+            // Stop the curve at each node's rim rather than its centre —
+            // otherwise the arrowhead lands underneath the disc that is drawn
+            // over it and the direction of the relation is invisible.
+            const [sx, sy] = trim(qx, qy, a.x, a.y, nodeRadius(a) + 1.5);
+            const [ex, ey] = trim(qx, qy, b.x, b.y, nodeRadius(b) + 3.4);
+            parts.push(
+                `<path d="M${sx.toFixed(1)} ${sy.toFixed(1)} Q${qx.toFixed(1)} ${qy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}" ` +
+                `class="imagine-edge" marker-end="url(#ic-arrow)"/>`
+            );
+            // Midpoint of the quadratic at t=0.5.
+            const lx = 0.25 * a.x + 0.5 * qx + 0.25 * b.x;
+            const ly = 0.25 * a.y + 0.5 * qy + 0.25 * b.y;
+            const label = String(rel.relation || '').trim();
+            if (label) edgeLabels.push(chip(Math.min(302, Math.max(18, lx)), ly, label, 'imagine-edge-label'));
         }
+        // Labels last so an edge drawn later never overprints one.
+        parts.push(...edgeLabels);
+
+        const nodeLabels = [];
         for (const [id, p] of pos) {
             const focus = p.role === 'focus';
-            parts.push(`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${focus ? 9 : 6}" class="imagine-node${focus ? ' imagine-node-focus' : ''}"/>`);
-            parts.push(`<text x="${p.x.toFixed(1)}" y="${(p.y - (focus ? 14 : 11)).toFixed(1)}" text-anchor="middle" class="imagine-node-label">${escHtml(id)}</text>`);
+            const r = nodeRadius(p);
+            parts.push(
+                `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${(r + 5.5).toFixed(1)}" class="imagine-node-halo${focus ? ' imagine-node-halo-focus' : ''}"/>` +
+                `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${r}" class="imagine-node${focus ? ' imagine-node-focus' : ''}"/>` +
+                // Specular: a small offset arc catching light from the upper left.
+                `<circle cx="${(p.x - r * 0.3).toFixed(1)}" cy="${(p.y - r * 0.36).toFixed(1)}" r="${(r * 0.34).toFixed(1)}" class="imagine-node-spec"/>`
+            );
+            // Push the label radially outward, so it never lands on the ring.
+            let lx = p.x, ly = p.y + r + 9;
+            if (pos.size > 1) {
+                const ang = Math.atan2(p.y - cy, p.x - cx);
+                lx = p.x + Math.cos(ang) * (r + 11);
+                ly = p.y + Math.sin(ang) * (r + 11) + 1.4;
+            }
+            nodeLabels.push(chip(
+                Math.min(304, Math.max(16, lx)),
+                Math.min(184, Math.max(9, ly)),
+                id,
+                'imagine-node-label'
+            ));
         }
+        parts.push(...nodeLabels);
+
         svg.innerHTML = parts.join('');
         setText('imagine-canvas-caption', canvas.image_prompt || '');
     }
