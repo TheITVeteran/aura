@@ -60,6 +60,22 @@ _RECOVERABLE = (AttributeError, KeyError, OSError, RuntimeError, TypeError, Valu
 #: Bound on the gates-graph walk, so a cyclic declaration cannot spin.
 MAX_GATE_DEPTH = 8
 
+#: Re-entrancy guard. Probes are arbitrary callables reading live subsystems,
+#: and a subsystem may itself consult the self-model — directly, or through
+#: any number of intermediate calls. Without this, one such probe turns an
+#: assessment into unbounded recursion.
+#:
+#: The guard is thread-local rather than global so concurrent assessments on
+#: different threads stay independent; what it forbids is an assessment
+#: re-entering ITSELF on the same thread.
+_assessing = threading.local()
+
+#: The same faculty must not be re-proposed on every tick. Improvement takes
+#: time to show up in a metric, so a target repeated before its effect could
+#: land is a livelock: the same goal chosen forever, each time believing it is
+#: new. Suppression is per faculty and expires.
+DEFAULT_REPROPOSE_COOLDOWN_S = 900.0
+
 
 def _finite(value: Any) -> float | None:
     try:
@@ -120,7 +136,25 @@ class ImprovementMetric:
         return value <= self.target
 
     def read(self) -> MetricReading:
-        """Measure. Never raises — a broken probe is an unmeasured metric."""
+        """Measure. Never raises — a broken probe is an unmeasured metric.
+
+        A probe that re-enters the self-model is refused rather than followed.
+        The result is an ordinary unmeasured reading, so a recursive probe
+        degrades that one metric instead of hanging the assessment — and the
+        reason says so, which makes the loop findable rather than silent.
+        """
+        # Set around the PROBE CALL, not around the assessment: a probe that
+        # reaches back into the self-model lands here again with the flag
+        # already set and is refused. Setting it in assess() instead would
+        # refuse every probe on the first pass.
+        if getattr(_assessing, "active", False):
+            return MetricReading(
+                metric_id=self.metric_id,
+                value=None,
+                measured=False,
+                reason="probe re-entered the self-model; refused to recurse",
+            )
+        _assessing.active = True
         try:
             raw = self.probe()
         except _RECOVERABLE as exc:
@@ -130,6 +164,11 @@ class ImprovementMetric:
                 measured=False,
                 reason=f"probe raised {type(exc).__name__}: {exc}"[:200],
             )
+        finally:
+            # Always cleared, including on the exception path above — a probe
+            # that raises must not leave the guard latched and silently turn
+            # every later metric into "re-entered".
+            _assessing.active = False
         if raw is None:
             return MetricReading(
                 metric_id=self.metric_id,
@@ -510,7 +549,45 @@ def emit_improvement_signals(
     return emitted
 
 
-def improvement_goal(model: CognitiveSelfModel | None = None) -> dict[str, Any] | None:
+_proposed_lock = threading.RLock()
+_last_proposed: dict[str, float] = {}
+
+
+def _recently_proposed(faculty_id: str, cooldown_s: float) -> bool:
+    """Whether this faculty was proposed too recently to propose again.
+
+    Improvement does not land in a metric instantly, so a target re-chosen
+    before its effect could appear is a livelock: the same goal selected
+    forever, each time believing it is new. This is the same shape as the
+    immune lane re-issuing one remedy 247 times.
+    """
+    if cooldown_s <= 0:
+        return False
+    with _proposed_lock:
+        last = _last_proposed.get(faculty_id)
+    return last is not None and (time.time() - last) < cooldown_s
+
+
+def _mark_proposed(faculty_id: str) -> None:
+    with _proposed_lock:
+        _last_proposed[faculty_id] = time.time()
+        if len(_last_proposed) > 256:
+            oldest = sorted(_last_proposed.items(), key=lambda kv: kv[1])[:128]
+            for key, _ in oldest:
+                _last_proposed.pop(key, None)
+
+
+def clear_proposal_history() -> None:
+    """Forget the cooldown state. For tests and deliberate re-planning."""
+    with _proposed_lock:
+        _last_proposed.clear()
+
+
+def improvement_goal(
+    model: CognitiveSelfModel | None = None,
+    *,
+    cooldown_s: float | None = None,
+) -> dict[str, Any] | None:
     """The goal Aura would set herself, given what she knows about herself.
 
     Her competence drive previously produced one fixed sentence — "run a
@@ -524,6 +601,8 @@ def improvement_goal(model: CognitiveSelfModel | None = None) -> dict[str, Any] 
     to say should say nothing; inventing a target would be the same
     manufactured confidence this codebase keeps removing.
     """
+    if cooldown_s is None:
+        cooldown_s = DEFAULT_REPROPOSE_COOLDOWN_S
     if model is not None:
         self_model = model
     else:
@@ -534,9 +613,13 @@ def improvement_goal(model: CognitiveSelfModel | None = None) -> dict[str, Any] 
         except _RECOVERABLE:
             self_model = get_faculty_registry().assess()
 
-    ranked = self_model.ranked()
-    if ranked and (ranked[0].priority or 0.0) > 0.0:
+    ranked = [
+        a for a in self_model.ranked()
+        if (a.priority or 0.0) > 0.0 and not _recently_proposed(a.faculty_id, cooldown_s)
+    ]
+    if ranked:
         top = ranked[0]
+        _mark_proposed(top.faculty_id)
         unmet = top.unmet()
         if unmet:
             worst = min(unmet, key=lambda r: r.normalized if r.normalized is not None else 1.0)
@@ -566,8 +649,9 @@ def improvement_goal(model: CognitiveSelfModel | None = None) -> dict[str, Any] 
             },
         }
 
-    blind = self_model.blind_spots()
+    blind = [f for f in self_model.blind_spots() if not _recently_proposed(f, cooldown_s)]
     if blind:
+        _mark_proposed(blind[0])
         # Not being able to tell how good a faculty is IS the deficiency, and
         # the honest goal is to build the instrument rather than to tune
         # something unmeasured and call it better.
@@ -599,6 +683,7 @@ __all__ = [
     "MetricReading",
     "Probe",
     "emit_improvement_signals",
+    "clear_proposal_history",
     "improvement_goal",
     "get_faculty_registry",
 ]
