@@ -17,9 +17,22 @@ from core.adaptation.adaptive_immunity import CellKind, get_adaptive_immune_syst
 
 @pytest.fixture()
 def immune():
+    """The live singleton, restored afterwards.
+
+    These tests append a cell and park suppressions on a PROCESS-WIDE object;
+    leaving either behind changed the population other tests observe. Shared
+    state a test mutates is shared state it has to put back.
+    """
     system = get_adaptive_immune_system()
+    cells_before = list(system._cells)
+    pending_before = {k: list(v) for k, v in system._pending_suppressions.items()}
     system._pending_suppressions.clear()
-    return system
+    try:
+        yield system
+    finally:
+        system._cells[:] = cells_before
+        system._pending_suppressions.clear()
+        system._pending_suppressions.update(pending_before)
 
 
 def _regulatory(immune):

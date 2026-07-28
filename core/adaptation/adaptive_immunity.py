@@ -167,9 +167,19 @@ class AdaptiveImmuneConfig:
     max_execution_attempts_per_event: int = 2
     execution_confidence_floor: float = 0.45
     low_coverage_floor: float = 0.42
-    verification_checks: int = 2
-    verification_interval_s: float = 0.01
+    # CP126 ea9e677e: these were 2 checks 10ms apart, so "verified repair"
+    # meant two readings taken within a hundredth of a second — and the
+    # stability-window guard below requires >= 3 samples, so at these defaults
+    # it could never fire. A guard that cannot run is the shape this whole
+    # campaign is about. The window is now long enough to observe whether a
+    # recovery HELD rather than whether it happened.
+    verification_checks: int = 4
+    verification_interval_s: float = 0.25
     min_verified_health_delta: float = 0.02
+    #: Below these, an observation is too short to judge and verification
+    #: fails closed as unverified rather than passing on a transient.
+    min_verification_samples: int = 3
+    min_verification_window_s: float = 0.4
     recurrence_window_s: float = 900.0
     species_min_k: int = 2
     species_max_k: int = 4
@@ -2490,10 +2500,22 @@ class AdaptiveImmuneSystem:
         # decays back is a failed repair, not a verified one.
         if (health_after - health_before) < threshold:
             return False
-        if len(health_samples) >= 3:
-            tail = health_samples[len(health_samples) // 2 :]
-            if (min(tail) - health_before) < threshold:
-                return False
+        # Too few samples to distinguish a recovery from a blip. Unverified is
+        # the honest answer; the caller already reports actuated_unverified.
+        if len(health_samples) < max(2, int(self.cfg.min_verification_samples)):
+            return False
+        # The observation must also have SPANNED enough time. Samples taken
+        # microseconds apart are one measurement repeated.
+        observed_window_s = max(0, len(health_samples) - 1) * float(
+            self.cfg.verification_interval_s
+        )
+        if observed_window_s < float(self.cfg.min_verification_window_s):
+            return False
+        # A spike that decays back is a failed repair, not a verified one:
+        # the tail of the window must hold the gain too.
+        tail = health_samples[len(health_samples) // 2 :]
+        if (min(tail) - health_before) < threshold:
+            return False
         return True
 
     @staticmethod
