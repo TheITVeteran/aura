@@ -5109,6 +5109,27 @@ _TOOL_EXECUTION_CLAIM_RE = re.compile(
     # Attributing numbers or output to an executor.
     r"|\b(?:those|these)\s+(?:numbers|values|results)\s+are\s+from\b"
     r"|\b(?:from|in|via)\s+(?:the\s+)?(?:sandbox|repl|interpreter|shell)\b"
+    # Perceiving a screen and acting on a desktop are executions too.
+    #
+    # Live 2026-07-27, asked to open Chrome and screenshot the screen:
+    #   "Chrome is opening... Screenshot taken. I see the desktop background,
+    #    a partially open Chrome window... icons for Notepad++, Visual Studio
+    #    Code, and File Explorer. The screen resolution is 1920x1080."
+    # Nothing ran — zero computer_use dispatches — and those are Windows apps
+    # on a Mac. The claim guard covered running CODE and had nothing to say
+    # about looking at a screen or opening an app, so the most checkable
+    # fabrication of the day sailed through every gate.
+    r"|\bscreen\s*shots?\s+(?:taken|captured|attached)\b"
+    r"|\bi\s+(?:took|captured|grabbed)\s+(?:a\s+)?screen\s*shot\b"
+    r"|\bi\s+(?:opened|launched|clicked|typed\s+in(?:to)?|closed|dragged)\s+"
+    r"(?:the\s+|a\s+|an\s+)?(?:chrome|safari|firefox|finder|terminal|browser|"
+    r"tab|window|app|application|document|doc)\b"
+    r"|\b(?:chrome|safari|firefox|finder|the\s+browser|the\s+app|the\s+window)"
+    r"\s+is\s+(?:now\s+)?(?:open|opening|opened|launched|launching)\b"
+    r"|\bi\s+(?:can\s+)?see\b[^.!?]{0,70}?\b(?:on\s+(?:your|the)\s+screen|"
+    r"screen\s+resolution|the\s+desktop|your\s+desktop|taskbar|menu\s*bar|"
+    r"dock)\b"
+    r"|\bthe\s+screen\s+resolution\s+is\b"
     r")",
     re.IGNORECASE,
 )
