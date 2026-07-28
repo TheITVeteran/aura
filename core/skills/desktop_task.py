@@ -544,6 +544,19 @@ class DesktopTaskSkill(BaseSkill):
         r"you\s+can\s+copy\s+it\s+into\s+notes)|"
         r"(?:the\s+)?task\s+(?:asked|asks|requested|requests)\s+(?:me\s+)?to\s+(?:type|write|open|create|export)|"
         r"i\s+am\s+(?:typing|writing|pasting)\s+(?:here|this)\s+because\s+(?:the\s+)?task\s+(?:asked|requires)|"
+        # A question back to the user is a conversational turn, never the
+        # product of a task. Read out of Bryan's real Notes app, 2026-07-28,
+        # as note titles: "Could you tell me what kind of text to generate
+        # instead?" and "What kind of content are you looking for in those
+        # notes?" — Notes takes its title from the first line, so a
+        # conversational reply became a note called that.
+        r"(?:what\s+kind\s+of\s+(?:text|content|note)|"
+        r"could\s+you\s+tell\s+me\s+what|"
+        r"would\s+you\s+like\s+me\s+to\s+(?:write|generate|include)|"
+        r"let\s+me\s+know\s+what\s+(?:you|kind))|"
+        # A denial of the machine she is running on.
+        r"i\s+don'?t\s+have\s+a\s+mac|i'?m\s+running\s+on\s+a\s+server|"
+        r"no\s+notes\s+app|"
         r"i'?ll\s+simulate\s+(?:this|the)\s+process|"
         r"step[- ]by[- ]step\s+as\s+if\s+i\s+were|"
         r"pretend\s+(?:the\s+)?app\s+is\s+opening|"

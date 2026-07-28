@@ -35,6 +35,17 @@ REFUSALS = [
     "I can't actually create documents",
 ]
 
+#: Conversational turns read out of Bryan's REAL Notes app as note titles —
+#: Notes takes its title from the first line, so a reply became a note called
+#: "Could you tell me what kind of text to generate instead?".
+CONVERSATIONAL_TURNS = [
+    "But I don't have a Mac. I'm running on a server. No Notes app, no "
+    "screen, none of that. Could you tell me what kind of text to generate "
+    "instead?",
+    "What kind of content are you looking for in those notes?",
+    "Would you like me to write something longer?",
+]
+
 REAL_CONTENT = [
     "Orcas are apex predators that hunt in coordinated pods.",
     "Observed three adult orcas off the coast this morning.",
@@ -51,3 +62,9 @@ def test_a_refusal_is_rejected_as_content(text: str):
 @pytest.mark.parametrize("text", REAL_CONTENT)
 def test_real_content_is_written(text: str):
     assert not DesktopTaskSkill._looks_like_dispatch_narration(text)
+
+
+@pytest.mark.parametrize("text", CONVERSATIONAL_TURNS)
+def test_a_conversational_turn_is_not_document_content(text: str):
+    """A question back to the user is never the product of a task."""
+    assert DesktopTaskSkill._looks_like_dispatch_narration(text)
