@@ -251,7 +251,13 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _extract_search_query(objective: str) -> str:
-        text = str(objective or "").strip()
+        # Manner phrases say WHERE to look, not WHAT to look for, and they are
+        # removed before the topic patterns run — otherwise "on the internet"
+        # becomes the topic and "orcas online" searches for a wireless ISP.
+        text = DesktopTaskSkill._SEARCH_MANNER_ANYWHERE_RE.sub(
+            " ", str(objective or "")
+        )
+        text = " ".join(text.split()).strip()
         count_word = r"(?:\d+|one|two|three|four|five)"
         patterns = (
             rf"\bfind\s+(?:me\s+)?(?:{count_word}\s+)?(?:different\s+)?(?:articles?|sources?|stories?|news)\s+(?:on|about|for)\s+([^.;\n,]+)",
@@ -281,10 +287,43 @@ class DesktopTaskSkill(BaseSkill):
                             if candidate.lower() not in {"it", "them", "this", "that", "her", "him", "me", "us", "something", "anything"}:
                                     return candidate[:240]
                     else:
-                        return query[:240]
+                        return DesktopTaskSkill._strip_search_manner(query)[:240]
         if "news" in text.lower():
-            return text[:240]
+            return DesktopTaskSkill._strip_search_manner(text)[:240]
         return ""
+
+    #: Words that say WHERE to look, not WHAT to look for. "find 3 recent
+    #: articles about orcas online" is a request about orcas, searched online —
+    #: not a request about "orcas online", which is a wireless ISP on Orcas
+    #: Island. Measured live: the PDF she wrote was a competent summary of that
+    #: ISP's vacation-hold policy and password expiry.
+    #: The same manner phrases, matched anywhere rather than only at the end.
+    _SEARCH_MANNER_ANYWHERE_RE = re.compile(
+        r"(?i)\s+\b("
+        # "online" only where it modifies the SEARCH — at a clause boundary.
+        # In "the online safety act" it is part of the name, not a manner.
+        r"online(?=\s*[,.;:]|\s+(?:and|then|read|so|to)\b|$)"
+        r"|on\s+the\s+(?:internet|web|net)|on\s+google|via\s+google"
+        r"|from\s+the\s+(?:internet|web)"
+        r")\b"
+    )
+
+    _SEARCH_MANNER_RE = re.compile(
+        r"(?i)[\s,]*\b("
+        r"online|on\s+the\s+(?:internet|web)|on\s+google|via\s+google|"
+        r"from\s+the\s+(?:internet|web)|on\s+the\s+net"
+        r")\b\s*$"
+    )
+
+    @staticmethod
+    def _strip_search_manner(query: str) -> str:
+        """Remove a trailing manner phrase so the topic is what she searches."""
+        text = " ".join(str(query or "").split())
+        previous = None
+        while text and text != previous:
+            previous = text
+            text = DesktopTaskSkill._SEARCH_MANNER_RE.sub("", text).strip(" ,")
+        return text
 
     @staticmethod
     def _requested_visible_source_count(objective: str) -> int:
