@@ -7186,3 +7186,107 @@ body.theme-light .panel-section::before {
 body.theme-light .skill-card::before {
     background: rgba(26, 16, 40, 0.12);
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   TYPOGRAPHY PASS — v15.4
+   The panel read as one grey wall, and the measurements said why:
+   every line in it — channel label, timestamp, and her actual
+   sentences — rendered at ~11.5px, weight 400, in the same face.
+   With no size, weight or colour separating three different kinds
+   of information, there is no hierarchy to look at, only texture.
+
+   Worse, that face was 'IBM Plex Mono', referenced seventeen times
+   and never loaded: the stylesheet asks for it, the font link only
+   fetches Space Grotesk, Inter, JetBrains Mono, Syne and Rajdhani.
+   So every thought she had was set in whatever generic terminal
+   font the OS happened to offer.
+
+   The rule this pass introduces: a reading face for sentences, a
+   machine face for tokens. Her lay summary is prose and gets prose
+   treatment; the technical drawer underneath it is payloads, ids
+   and hashes, and that is what monospace is actually for.
+   ══════════════════════════════════════════════════════════ */
+:root {
+    /* Inter at a text size is quieter and far more legible than a
+       display face; Space Grotesk stays for headings, where its
+       character is an asset rather than a distraction. */
+    --font-read: 'Inter', 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    /* Point the machine face at a font that is actually fetched. */
+    --font-stream: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace;
+}
+
+/* Her sentences. The one thing in the panel a person actually reads,
+   so it gets the reading size and the brightest ink. */
+.thought-body,
+.thought-preview {
+    font-family: var(--font-read);
+    font-size: calc(0.83rem * var(--neural-text-scale));
+    line-height: 1.62;
+    letter-spacing: 0;
+    font-variant-ligatures: normal;
+    color: var(--text);
+}
+
+/* The drawer under it is machine output — ids, payloads, hashes —
+   where column alignment carries meaning. Kept smaller and dimmer
+   so it reads as evidence supporting the sentence, not competing. */
+.thought-full,
+.thought-detail-val {
+    font-family: var(--font-stream);
+    font-size: calc(0.74rem * var(--neural-text-scale));
+    line-height: 1.55;
+    font-variant-ligatures: none;
+    color: var(--text-dim);
+}
+
+/* Level two: the channel tag. Small, tracked and weighted so it
+   reads as a label rather than as more prose. */
+.thought-tag-btn {
+    font-family: var(--font-read);
+    font-size: calc(0.62rem * var(--neural-meta-scale, 1));
+    font-weight: 600;
+    letter-spacing: 0.07em;
+}
+
+/* Level three: metadata. Dimmest, and tabular so a ticking clock
+   does not shift the text beside it every second. */
+.thought-ts,
+.thought-detail-key {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
+/* Any digit that updates in place gets the same treatment — a
+   telemetry readout that jitters as it counts looks broken. */
+.gauge-val,
+.metric-val,
+.stat-value,
+.con-val {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Channel colour, turned up until it carries information again.
+   Measured on the live feed: the hues are distinct and vivid — mint
+   for Body, sky for Dialogue, cyan for Awareness — but the chip
+   rendered them at 7% over a near-black surface, which is below the
+   point where a colour tells you anything. The sigil was already at
+   full strength; this brings the chip it sits in up far enough to
+   sort the feed at a glance, without turning it into a rainbow. */
+.thought-tag-btn {
+    background: color-mix(in srgb, var(--tc) 13%, transparent);
+    border-color: color-mix(in srgb, var(--tc) 34%, transparent);
+}
+
+.thought-tag-btn:hover,
+.thought-tag-btn:focus-visible {
+    background: color-mix(in srgb, var(--tc) 20%, transparent);
+    border-color: color-mix(in srgb, var(--tc) 58%, transparent);
+}
+
+/* The channel rail is the card's other identifier and was a 2px
+   hairline at the far left, too thin to register as anything. */
+.thought-card::before {
+    width: 3px;
+    left: 6px;
+}
