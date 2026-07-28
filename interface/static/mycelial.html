@@ -381,13 +381,49 @@
             return Number(clamp(1.85 + degreeNorm * 7.6 + centralityNorm * 2.1 + confidence * 1.3 + typeBoost, 1.9, maxRadius).toFixed(2));
         }
 
+        // The soul map is a VIEW of the mycelium, not a dump of it. Rendering
+        // every node the API returns meant 2,677 nodes and 9,384 edges in a
+        // force-directed 3D scene: the browser measured under 3 FPS (90 frames
+        // could not complete in 30 seconds) and the picture was an unreadable
+        // blue hairball. Both problems have the same cause and the same fix —
+        // show the most connected structure, which is also the part worth
+        // looking at.
+        const SOUL_MAP_MAX_NODES = 320;
+        const SOUL_MAP_MAX_LINKS = 900;
+
         function normalizeGraphPayload(payload) {
-            const nodes = Array.isArray(payload.nodes) ? payload.nodes.map(node => ({ ...node })) : [];
-            const links = (payload.links || payload.edges || []).map(link => ({
+            let nodes = Array.isArray(payload.nodes) ? payload.nodes.map(node => ({ ...node })) : [];
+            let links = (payload.links || payload.edges || []).map(link => ({
                 ...link,
                 source: endpointId(link.source || link.from),
                 target: endpointId(link.target || link.to),
             })).filter(link => link.source && link.target);
+
+            if (nodes.length > SOUL_MAP_MAX_NODES) {
+                // Rank by connectivity, then centrality: keep the hubs and the
+                // structure between them rather than an arbitrary slice.
+                const rawDegree = new Map();
+                for (const link of links) {
+                    rawDegree.set(link.source, (rawDegree.get(link.source) || 0) + 1);
+                    rawDegree.set(link.target, (rawDegree.get(link.target) || 0) + 1);
+                }
+                nodes = nodes
+                    .slice()
+                    .sort((a, b) => {
+                        const byDegree = (rawDegree.get(b.id) || 0) - (rawDegree.get(a.id) || 0);
+                        if (byDegree !== 0) return byDegree;
+                        return Number(b.centrality || 0) - Number(a.centrality || 0);
+                    })
+                    .slice(0, SOUL_MAP_MAX_NODES);
+                const kept = new Set(nodes.map(node => node.id));
+                links = links.filter(link => kept.has(link.source) && kept.has(link.target));
+            }
+            if (links.length > SOUL_MAP_MAX_LINKS) {
+                links = links
+                    .slice()
+                    .sort((a, b) => Number(b.weight || b.strength || 0) - Number(a.weight || a.strength || 0))
+                    .slice(0, SOUL_MAP_MAX_LINKS);
+            }
 
             const degree = new Map();
             for (const link of links) {
@@ -746,8 +782,19 @@
                 }
                 const normalized = normalizeGraphPayload(data);
 
-                document.getElementById('stat-nodes').textContent = normalized.nodes.length;
-                document.getElementById('stat-edges').textContent = normalized.links.length;
+                // Show what she HAS, and mark the view when it is showing a
+                // subset. A capped count printed as the total would understate
+                // the mycelium by an order of magnitude.
+                const totalNodes = Array.isArray(data.nodes) ? data.nodes.length : normalized.nodes.length;
+                const totalLinks = ((data.links || data.edges || []) || []).length || normalized.links.length;
+                document.getElementById('stat-nodes').textContent =
+                    totalNodes > normalized.nodes.length
+                        ? `${normalized.nodes.length} / ${totalNodes}`
+                        : normalized.nodes.length;
+                document.getElementById('stat-edges').textContent =
+                    totalLinks > normalized.links.length
+                        ? `${normalized.links.length} / ${totalLinks}`
+                        : normalized.links.length;
                 document.getElementById('stat-pathways').textContent = data.pathway_count || 0;
                 document.getElementById('stat-cohesion').textContent = (data.system_cohesion || data.cohesion || 0).toFixed(2);
                 document.getElementById('stat-latency').textContent = (Date.now() - start) + 'ms';
