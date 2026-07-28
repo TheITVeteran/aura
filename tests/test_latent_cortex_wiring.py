@@ -4893,3 +4893,65 @@ def test_successful_episode_queues_facet_judgments_for_grading(monkeypatch):
     compare = by_verifier["latent_facet_compare"]
     assert compare["hard_pass"] is False and compare["score"] == 0.0
     assert explain["task_key"] == compare["task_key"] != ""
+
+
+def test_budget_accepts_the_allocators_own_provenance_annotations():
+    """The strict budget check rejected the allocator's own records.
+
+    latent_cortex_service records four provenance fields beside the budget so a
+    deeper-than-usual episode is "traceable to the reason it was deeper". The
+    worker allowed exactly two keys, so on the live desktop path EVERY
+    foreground turn logged
+
+      mlx_worker (warning): ValueError: latent_reason budget contains unknown
+      keys: ['effective_uncertainty', 'effort', 'novelty', 'ontogeny_episode']
+
+    and the Recursive Latent Cortex then declined the turn. The whole latent
+    lane was dark on the user surface behind a warning that read like a caller
+    bug.
+    """
+    from core.brain.llm.latent_cortex.worker_handler import budget_from_job
+
+    # The exact payload the live allocator sends.
+    budget = budget_from_job(
+        {
+            "max_layer_apps": 2_000_000,
+            "wall_clock_s": 30.0,
+            "effective_uncertainty": 0.41,
+            "novelty": 0.2,
+            "effort": "high",
+            "ontogeny_episode": "ep-1",
+        }
+    )
+    assert budget.max_layer_apps == 2_000_000
+    assert budget.wall_clock_s == 30.0
+
+    # Annotations are optional, not required.
+    assert budget_from_job({"max_layer_apps": 5}).max_layer_apps == 5
+
+    # A typo in a REAL limit must still be rejected — that is the whole point of
+    # the strict check, and widening it must not turn into "anything goes".
+    for typo in ({"max_layer_app": 5}, {"wall_clock": 1.0}, {"whatever": 1}):
+        with pytest.raises(ValueError, match="unknown keys"):
+            budget_from_job(typo)
+
+
+def test_the_allocator_and_the_worker_agree_on_every_budget_key():
+    """Pin the contract at both ends so it cannot drift apart again silently."""
+    import inspect
+
+    from core.brain import latent_cortex_service
+    from core.brain.llm.latent_cortex import worker_handler
+
+    accepted = worker_handler._BUDGET_COMPUTE_KEYS | worker_handler._BUDGET_ANNOTATION_KEYS
+    source = inspect.getsource(latent_cortex_service)
+    start = source.index("budget = {")
+    produced = {
+        line.split('"')[1]
+        for line in source[start : source.index("}", start)].splitlines()
+        if line.strip().startswith('"')
+    }
+    assert produced, "could not read the allocator's budget keys"
+    assert produced <= accepted, (
+        f"the allocator produces keys the worker rejects: {sorted(produced - accepted)}"
+    )

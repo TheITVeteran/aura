@@ -233,3 +233,61 @@ def test_the_gpu_claim_is_only_made_when_the_numbers_support_it() -> None:
     assert gpu, "the accelerator must always be accounted for, even as an absence"
     if "bulk of what you are actually holding" in gpu[0]:
         assert "active" in gpu[0]
+
+
+def test_the_instrument_panel_carries_the_cognitive_cycle_count(monkeypatch):
+    """A number she can read must be in front of her, or she invents one.
+
+    Measured live. Asked "read your own runtime and tell me three real numbers —
+    uptime, memory, and how many cognitive cycles you've run — read them, don't
+    estimate", she got uptime and memory right off this panel and then said:
+
+        "Cognitive cycles since last awakening: I can't read this directly,
+         but it's more than a few billion"
+
+    The true figure was 3,502, and it sits in her own health payload. The panel
+    had no cycle line, and the instruction above it tells her not to supplement
+    what is missing — so the absence produced both a false claim about her own
+    self-access and a guess wrong by six orders of magnitude.
+    """
+    from types import SimpleNamespace
+
+    import core.brain.self_state_report as self_state_report
+    from core.runtime import service_registry
+
+    original = service_registry.get_runtime_service
+
+    def _with_orchestrator(name, default=None):
+        if name == "orchestrator":
+            return SimpleNamespace(status=SimpleNamespace(cycle_count=3502))
+        if name == "episodic_memory":
+            return SimpleNamespace(episode_count=1229)
+        return original(name, default=default)
+
+    monkeypatch.setattr(service_registry, "get_runtime_service", _with_orchestrator)
+
+    line = self_state_report._cognition_line()
+    assert "3,502" in line, f"the readable cycle count must be shown: {line!r}"
+    assert "1,229" in line
+
+    report = self_state_report.runtime_self_report()
+    assert "3,502" in report, "the panel must carry the cycle count she was asked for"
+
+
+def test_an_unreadable_cycle_count_says_so_instead_of_going_silent(monkeypatch):
+    """Silence is what she fills in. A stated absence is an answer she can give."""
+    from core.runtime import service_registry
+
+    import core.brain.self_state_report as self_state_report
+
+    monkeypatch.setattr(
+        service_registry, "get_runtime_service", lambda name, default=None: None
+    )
+
+    line = self_state_report._cognition_line()
+    assert line, "an unreadable instrument must still produce a line"
+    lowered = line.lower()
+    assert "not readable" in lowered
+    assert "do not estimate" in lowered, (
+        "the line has to forbid the guess that actually happened"
+    )

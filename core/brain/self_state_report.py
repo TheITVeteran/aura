@@ -244,6 +244,80 @@ def _capability_line() -> str:
     return line
 
 
+def _cognition_line() -> str:
+    """How much thinking has actually happened — cycles and episodes.
+
+    Measured live: asked for "uptime, memory, and how many cognitive cycles
+    you've run — read them, don't estimate", she got uptime and memory right
+    from this panel and then said of the third:
+
+        "Cognitive cycles since last awakening: I can't read this directly,
+         but it's more than a few billion"
+
+    The true figure was 3,502, and it sits in her own health payload. The panel
+    had no cycle line, and the instruction above it says not to supplement what
+    is missing — so the absence produced both a false claim about her own
+    self-access and a guess wrong by six orders of magnitude. A number she can
+    read must be in front of her, or "I can't see it" becomes a licence to
+    invent one.
+    """
+
+    cycles = 0
+    episodes = 0
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        orchestrator = get_runtime_service("orchestrator", default=None)
+        status = getattr(orchestrator, "status", None)
+        for source in (status, orchestrator):
+            if source is None:
+                continue
+            for attribute in ("cycle_count", "cycles", "tick_count"):
+                try:
+                    value = int(getattr(source, attribute, 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    cycles = max(cycles, value)
+    except _RECOVERABLE as exc:
+        record_degradation(
+            "self_state_report",
+            exc,
+            severity="info",
+            action="omitted the cognitive-cycle reading",
+        )
+
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        memory = get_runtime_service("episodic_memory", default=None)
+        for accessor in ("episode_count", "count", "size"):
+            candidate = getattr(memory, accessor, None)
+            try:
+                value = int(candidate() if callable(candidate) else candidate or 0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                episodes = max(episodes, value)
+                break
+    except _RECOVERABLE:
+        episodes = episodes
+
+    parts: list[str] = []
+    if cycles > 0:
+        parts.append(f"{cycles:,} cognitive cycles since this runtime woke")
+    if episodes > 0:
+        parts.append(f"{episodes:,} episodes in memory")
+    if not parts:
+        # Say the channel is missing rather than leaving a silence she will
+        # fill. This is the honest version of "I can't read that".
+        return (
+            "- Cognitive cycle count: not readable from this turn. Say you "
+            "cannot see it; do not estimate a magnitude."
+        )
+    return "- " + "; ".join(parts) + "."
+
+
 def runtime_self_report() -> str:
     """A short, true readout of her machine state right now.
 
@@ -252,6 +326,9 @@ def runtime_self_report() -> str:
     """
     lines = [line for line in (_uptime_line(), _model_line()) if line]
     lines.extend(_memory_lines())
+    cognition = _cognition_line()
+    if cognition:
+        lines.append(cognition)
     capabilities = _capability_line()
     if capabilities:
         lines.append(capabilities)

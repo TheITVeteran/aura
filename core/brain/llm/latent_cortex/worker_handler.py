@@ -321,11 +321,33 @@ def config_from_job(job_config: dict[str, Any] | None) -> CortexConfig:
     return cfg
 
 
+_BUDGET_COMPUTE_KEYS = frozenset({"max_layer_apps", "wall_clock_s"})
+
+# Fields the allocator records ALONGSIDE the budget so a deeper-than-usual
+# episode can be explained after the fact ("traceable to the reason it was
+# deeper, not just observed to have been"). They are provenance, not compute
+# limits, and they are named here rather than waved through: an unrecognised key
+# is still a rejected budget, because a typo in a real limit must never be
+# silently ignored.
+#
+# Reconciling these two intents is not cosmetic. The strict check rejected the
+# allocator's own annotations, so on the live desktop path EVERY foreground turn
+# recorded
+#   mlx_worker (warning): ValueError: latent_reason budget contains unknown
+#   keys: ['effective_uncertainty', 'effort', 'novelty', 'ontogeny_episode']
+# and the Recursive Latent Cortex then declined the turn outright. The whole
+# latent-reasoning lane was dark on the user surface, and the only symptom was a
+# warning that read like a caller bug.
+_BUDGET_ANNOTATION_KEYS = frozenset(
+    {"effective_uncertainty", "novelty", "effort", "ontogeny_episode"}
+)
+
+
 def budget_from_job(job_budget: dict[str, Any] | None) -> ComputeBudget:
     if job_budget is not None and not isinstance(job_budget, dict):
         raise ValueError("latent_reason budget must be a mapping")
     raw = dict(job_budget or {})
-    unknown = sorted(set(raw) - {"max_layer_apps", "wall_clock_s"})
+    unknown = sorted(set(raw) - _BUDGET_COMPUTE_KEYS - _BUDGET_ANNOTATION_KEYS)
     if unknown:
         raise ValueError(f"latent_reason budget contains unknown keys: {unknown}")
     kwargs: dict[str, Any] = {}
