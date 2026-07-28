@@ -1173,6 +1173,12 @@ class AdaptiveImmuneSystem:
             lambda: deque(maxlen=64)
         )
         self._subsystem_event_window_s: float = 900.0
+        # CP126 b694c436: suppression used to be credited the instant it
+        # happened. Whether suppressing was RIGHT is only knowable afterwards,
+        # so each one is parked here and settled against what the subsystem
+        # actually did next.
+        self._pending_suppressions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        self._suppression_verdict_window_s: float = 600.0
         self._recurrence_tracker: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
                 "occurrences": 0,
@@ -1401,6 +1407,48 @@ class AdaptiveImmuneSystem:
             events.popleft()
         return len(events)
 
+    def _settle_suppressions(self, subsystem: str, danger: float) -> None:
+        """Decide whether earlier suppressions of this subsystem were right.
+
+        Called when a new antigen arrives. A subsystem that returns MORE
+        dangerous than when it was silenced is evidence the suppression was
+        wrong; one that stays quiet past the window is evidence it was right.
+        Either way the regulatory cell is scored on the outcome rather than on
+        the act (CP126 b694c436).
+        """
+        now = time.time()
+        for cell_id, pending in list(self._pending_suppressions.items()):
+            if not pending:
+                self._pending_suppressions.pop(cell_id, None)
+                continue
+            cell = self._find_cell(cell_id)
+            remaining: list[dict[str, Any]] = []
+            for record in pending:
+                aged_out = (now - record["at"]) > self._suppression_verdict_window_s
+                recurred = (
+                    record["subsystem"] == subsystem
+                    and danger > record["danger"] + 0.05
+                )
+                if not recurred and not aged_out:
+                    remaining.append(record)
+                    continue
+                if cell is None:
+                    continue
+                if recurred:
+                    # Suppression was wrong: the danger it silenced came back
+                    # worse. No success is counted and fitness drops.
+                    cell.fitness = 0.85 * cell.fitness - 0.15 * min(1.0, danger)
+                else:
+                    # Quiet through the whole window — the suppression held.
+                    cell.successes += 1
+                    cell.fitness = 0.85 * cell.fitness + 0.15 * max(
+                        cell.fitness, record["danger"] * max(record["suppression"], 0.25)
+                    )
+            if remaining:
+                self._pending_suppressions[cell_id] = remaining
+            else:
+                self._pending_suppressions.pop(cell_id, None)
+
     def present_antigen(
         self,
         event: dict[str, Any],
@@ -1530,6 +1578,7 @@ class AdaptiveImmuneSystem:
                 context=dict(state_snapshot or {}),
             )
             antigen.context.setdefault("spatial_receptor_code", annotate_antigen_like(antigen))
+            self._settle_suppressions(subsystem, danger)
             return antigen
 
     def dream_consolidate(self) -> dict[str, Any]:
@@ -1729,9 +1778,24 @@ class AdaptiveImmuneSystem:
                 artifacts.append(artifact)
 
             if dominant_regulatory and antigen.protected:
-                dominant_regulatory.successes += 1
-                dominant_regulatory.fitness = 0.85 * dominant_regulatory.fitness + 0.15 * max(
-                    dominant_regulatory.fitness, antigen.danger * max(regulatory_suppression, 0.25)
+                # CP126 b694c436: this incremented `successes` and raised
+                # fitness the moment suppression happened — for suppressing at
+                # all, not for suppressing correctly. Silencing a GENUINE
+                # threat that happens to sit on protected tissue scored
+                # exactly like preventing an autoimmune response, so the
+                # regulatory lineage was selected for quietness rather than
+                # for judgement.
+                #
+                # The credit is deferred. What settles it is what the
+                # subsystem does next: staying quiet means the suppression was
+                # right, coming back louder means it was wrong.
+                self._pending_suppressions[dominant_regulatory.cell_id].append(
+                    {
+                        "subsystem": antigen.subsystem,
+                        "danger": float(antigen.danger),
+                        "suppression": float(regulatory_suppression),
+                        "at": time.time(),
+                    }
                 )
 
             selected_artifact = max(
