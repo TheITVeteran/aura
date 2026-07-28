@@ -257,12 +257,43 @@ async def synthesize_answer(
         summaries=summaries,
     )
 
-    result = await brain.generate(
-        prompt,
-        options={"num_predict": 4096, "temperature": 0.3, "num_ctx": 16384}
-    )
+    options = {"num_predict": 4096, "temperature": 0.3, "num_ctx": 16384}
 
+    async def _attempt(foreground: bool) -> Any:
+        if not foreground:
+            return await brain.generate(prompt, options=options)
+        # The synthesis IS the deliverable the person asked for, so it must not
+        # be admitted as background work. Kwargs are offered defensively: not
+        # every brain implementation accepts them, and a TypeError here would
+        # lose the sources for a signature mismatch.
+        try:
+            return await brain.generate(
+                prompt,
+                options=options,
+                foreground_request=True,
+                priority=1.0,
+                origin="deep_research_synthesis",
+            )
+        except TypeError:
+            return await brain.generate(prompt, options=options)
+
+    result = await _attempt(foreground=False)
     text = str((result or {}).get("response") or "").strip()
+    if not text:
+        # Empty here is almost always admission, not the model: the call returns
+        # INSTANTLY because background inference was queued behind foreground
+        # headroom. Retrying as foreground is the difference between a real
+        # synthesis and discarding five fetched sources. Measured live:
+        #   "Deep research gathered 5 source(s) over 1 quer(ies) in 2.9s but
+        #    could not synthesize them (the model returned no text)"
+        logger.info(
+            "Deep research synthesis came back empty; retrying as foreground "
+            "work rather than discarding %d gathered source(s).",
+            len(state.all_sources),
+        )
+        result = await _attempt(foreground=True)
+        text = str((result or {}).get("response") or "").strip()
+
     if not text:
         # Synthesis that produced nothing is not a completed synthesis. On
         # 2026-07-25 the model call returned instantly and empty because

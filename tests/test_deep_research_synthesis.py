@@ -1,0 +1,45 @@
+"""Deep research synthesis must not be discarded for being deprioritised."""
+import asyncio, types, pytest
+from core.skills import deep_research as dr
+
+
+class _Brain:
+    def __init__(self, empty_first=True):
+        self.calls = []
+        self.empty_first = empty_first
+
+    async def generate(self, prompt, options=None, **kwargs):
+        self.calls.append(kwargs)
+        if self.empty_first and len(self.calls) == 1:
+            return {"response": "", "status": "queued_behind_foreground"}
+        return {"response": "A real synthesis across the sources."}
+
+
+def _state():
+    s = types.SimpleNamespace()
+    s.original_question = "orcas"
+    s.all_sources = [{"url": f"https://x{i}.org/a"} for i in range(5)]
+    s.running_summary = "summary"
+    s.search_results = [types.SimpleNamespace(query="orcas", content="Orcas are apex predators.")]
+    s.sources_gathered = s.all_sources
+    s.synthesis_status = ""
+    s.synthesis_detail = ""
+    s.final_answer = ""
+    s.search_queries = ["orcas"]
+    s.loop_count = 1
+    return s
+
+
+def test_empty_background_synthesis_is_retried_as_foreground():
+    brain = _Brain(empty_first=True)
+    out = asyncio.run(dr.synthesize_answer(_state(), brain))
+    assert out.synthesis_status == "ok", "sources were discarded instead of retried"
+    assert len(brain.calls) == 2, "the retry must actually happen"
+    assert brain.calls[1].get("foreground_request") is True
+
+
+def test_a_first_pass_success_does_not_retry():
+    brain = _Brain(empty_first=False)
+    out = asyncio.run(dr.synthesize_answer(_state(), brain))
+    assert out.synthesis_status == "ok"
+    assert len(brain.calls) == 1, "a working synthesis must not pay for a second call"
