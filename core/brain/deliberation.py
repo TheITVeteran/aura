@@ -1,6 +1,7 @@
 # core/brain/deliberation.py
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
+import asyncio
 import re
 import json
 
@@ -38,9 +39,25 @@ Keep answers concise.
         self.llm = llm
         self.trace = trace
 
+    #: Ceiling for one ordinary deliberation call.
+    #:
+    #: CP126 (high): "Ordinary generation has no deadline or typed fallback.
+    #: The model call can hang and exceptions escape without a decision
+    #: receipt; native failures silently drop to the weaker ordinary route."
+    #:
+    #: A deliberation picks among actions the caller is about to take, so a
+    #: hang here stalls the decision AND everything waiting on it, with no
+    #: record that a decision was ever attempted.
+    DELIBERATION_TIMEOUT_S = 45.0
+
     async def deliberate(self, context: str, actions: List[str], temperature: float = 0.2, **opts) -> Decision:
+        native_declined = ""
         if actions and opts.get("use_native_system2", True):
             system2_decision = await self._native_system2_deliberate(context, actions, **opts)
+            if system2_decision is None:
+                # The downgrade to the weaker route was invisible. It is a
+                # real change in decision quality and belongs in the receipt.
+                native_declined = "native_system2_unavailable"
             if system2_decision is not None:
                 if self.trace:
                     self.trace.log({
@@ -59,14 +76,57 @@ Keep answers concise.
         numbered = "\n".join(f"{i+1}. {a}" for i, a in enumerate(actions))
         prompt = self.DEFAULT_PROMPT + "\n\nCONTEXT:\n" + context + "\n\nACTIONS:\n" + numbered + "\n\nAnswer:"
         # Use existing LLM router or the new interface
-        raw = await self.llm.generate(prompt, temperature=temperature, **opts)
+        timeout_s = float(opts.get("deliberation_timeout_s") or self.DELIBERATION_TIMEOUT_S)
+        degraded = ""
+        try:
+            raw = await asyncio.wait_for(
+                self.llm.generate(prompt, temperature=temperature, **opts),
+                timeout=max(1.0, timeout_s),
+            )
+        except asyncio.CancelledError:
+            # The caller's decision, not a failure to absorb.
+            raise
+        except TimeoutError:
+            degraded = f"deliberation_timeout:{timeout_s:.0f}s"
+            raw = ""
+            record_degradation(
+                "deliberation",
+                TimeoutError(degraded),
+                severity="warning",
+                action="returned the first action with a degraded receipt rather than hanging",
+                enforce_failure_policy=False,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            degraded = f"deliberation_failed:{type(exc).__name__}"
+            raw = ""
+            record_degradation(
+                "deliberation",
+                exc,
+                severity="warning",
+                action="returned a typed fallback decision rather than letting the error escape",
+                enforce_failure_policy=False,
+            )
+
         dec = self._parse(raw, actions)
+        # The receipt is the point. A fallback that looks like a considered
+        # choice is worse than no choice: downstream cannot tell that this
+        # action was picked by position rather than by reasoning.
+        if degraded or native_declined:
+            dec.metadata = dict(dec.metadata or {})
+            dec.metadata["degraded"] = degraded or ""
+            dec.metadata["native_system2_declined"] = native_declined or ""
+            dec.metadata["deliberated"] = not degraded
+            if degraded:
+                dec.confidence = 0.0
+                dec.reason = dec.reason or "no deliberation was possible for this turn"
         if self.trace:
             self.trace.log({
                 "type": "deliberation",
                 "context": context[:300],
                 "actions": actions,
                 "raw": raw,
+                "degraded": degraded,
+                "native_system2_declined": native_declined,
                 "decision": {"action": dec.action, "reason": dec.reason, "confidence": dec.confidence}
             })
         return dec
