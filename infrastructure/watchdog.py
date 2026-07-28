@@ -45,7 +45,18 @@ class SystemWatchdog:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._stalled: set[str] = set()
-        
+        # Components seen only via heartbeat(). Their liveness is OBSERVABLE but
+        # not ENFORCED, because nobody declared a cadence for them and this
+        # class must not invent one. `orchestrator` heartbeats per processed
+        # message, not on a timer, so any invented timeout fires on the first
+        # quiet minute — which is worse than silence, because false stall
+        # reports train everyone to ignore real ones. Measured while fixing
+        # this: adopting it at 60s produced "SYSTEM STALL DETECTED: Component
+        # 'orchestrator' has not responded for 60.4s!" on an idle, healthy
+        # runtime. Registering with an explicit timeout is how a component opts
+        # into enforcement.
+        self._unenforced: set[str] = set()
+
     def register_component(
         self, 
         name: str, 
@@ -56,6 +67,9 @@ class SystemWatchdog:
         with self._lock:
             self._heartbeats[name] = time.time()
             self._timeouts[name] = timeout
+            # Registering DECLARES a cadence, which is what opts a component
+            # into stall enforcement — including one previously only observed.
+            self._unenforced.discard(name)
             if on_stall:
                 self._callbacks[name] = on_stall
         logger.info("Watchdog registered component: %s (timeout: %.1fs)", name, timeout)
@@ -82,15 +96,17 @@ class SystemWatchdog:
         adopted = False
         with self._lock:
             if name not in self._heartbeats:
-                self._timeouts.setdefault(name, self._default_timeout)
+                self._unenforced.add(name)
                 adopted = True
             self._heartbeats[name] = time.time()
         if adopted:
             logger.info(
-                "Watchdog adopted an unregistered component on first heartbeat: "
-                "%s (timeout: %.1fs)",
+                "Watchdog is observing %r, which heartbeats without having "
+                "registered a cadence: its liveness is visible in status but no "
+                "stall timeout is enforced. Call register_component(%r, "
+                "timeout=...) to opt into enforcement.",
                 name,
-                self._timeouts.get(name, self._default_timeout),
+                name,
             )
             self.start()
 
@@ -119,6 +135,10 @@ class SystemWatchdog:
             
             with self._lock:
                 for name, last_seen in self._heartbeats.items():
+                    if name in self._unenforced:
+                        # Observed, not enforced: no declared cadence, so a
+                        # quiet period is not evidence of a stall.
+                        continue
                     timeout = self._timeouts.get(name, 60.0)
                     if now - last_seen > timeout:
                         if name not in self._stalled:
@@ -142,17 +162,47 @@ class SystemWatchdog:
                     except _WATCHDOG_RECOVERY_ERRORS as e:
                         logger.error("Recovery callback for %s failed: %s", name, e)
                 
-                # A+ Hardening: Auto-Rollback on persistent stall
-                # If it's a critical component like 'orchestrator' or 'brain'
-                if name in ["orchestrator", "cognitive_engine", "server"]:
-                    logger.critical("🚨 CRITICAL COMPONENT STALL. Attempting state rollback...")
+                # A critical component stalled. This used to claim it was
+                # "Attempting state rollback..." and call
+                # SnapshotManager.rollback() — a method that does not exist and
+                # never has (the real API is freeze()/thaw()). Every invocation
+                # raised AttributeError into the handler below and logged
+                # "Watchdog rollback failed", which reads as a remedy that was
+                # tried and did not work rather than a remedy that was never
+                # there. Observed directly while testing this file.
+                #
+                # It is NOT replaced with an automatic thaw(). Restoring a
+                # snapshot is a consequential, governance-gated action, and a
+                # watchdog tick is the wrong authority to take it on its own —
+                # a stalled component is not evidence that reverting state is
+                # the right repair. So the honest behaviour is to make the
+                # stall count as a real degradation and say plainly that no
+                # automatic rollback is attempted.
+                if name in ("orchestrator", "cognitive_engine", "server"):
+                    logger.critical(
+                        "🚨 CRITICAL COMPONENT STALL: %r. No automatic state "
+                        "rollback is attempted — snapshot restore is a governed "
+                        "action and is not a watchdog's call. Recorded as a "
+                        "degradation for the recovery ladder.",
+                        name,
+                    )
                     try:
-                        from core.resilience.snapshot_manager import SnapshotManager
-                        sm = SnapshotManager()
-                        if sm.rollback():
-                            logger.info("✅ Watchdog-initiated rollback successful. Restarting system might be required.")
+                        from core.observability.degradation import record_degradation
+
+                        record_degradation(
+                            "watchdog",
+                            RuntimeError(
+                                f"critical_component_stall:{name}:"
+                                f"{now - self._heartbeats[name]:.1f}s"
+                            ),
+                            action=(
+                                "reported a critical component stall without "
+                                "attempting an ungoverned state rollback"
+                            ),
+                            severity="critical",
+                        )
                     except _WATCHDOG_RECOVERY_ERRORS as e:
-                        logger.error("Watchdog rollback failed: %s", e)
+                        logger.error("Watchdog could not record the critical stall: %s", e)
             self._stop_event.wait(self._check_interval)
 
 _global_watchdog: SystemWatchdog | None = None

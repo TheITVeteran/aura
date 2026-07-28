@@ -40,37 +40,46 @@ def test_registering_a_component_starts_the_monitor():
         watchdog.stop()
 
 
-def test_an_unregistered_heartbeat_is_adopted_not_dropped():
+def test_an_unregistered_heartbeat_is_recorded_not_dropped():
+    """The heartbeat itself must survive, so liveness is at least observable.
+
+    `orchestrator` — heartbeating on every tick — used to hit an "unknown
+    component" branch that logged a warning and DISCARDED the heartbeat, so the
+    component was invisible and the one signal saying so looked like log noise.
+    """
     watchdog = SystemWatchdog(check_interval=0.05)
     try:
         watchdog.heartbeat("orchestrator")
         assert "orchestrator" in watchdog._heartbeats, (
-            "the orchestrator's heartbeat was dropped, so a wedged orchestrator "
-            "could never be detected"
+            "the orchestrator's heartbeat was dropped, so its liveness was invisible"
         )
-        assert watchdog._timeouts.get("orchestrator") == watchdog._default_timeout
+        # Observable, but no cadence was declared, so nothing is enforced.
+        assert "orchestrator" in watchdog._unenforced
+        assert "orchestrator" not in watchdog._timeouts
         assert watchdog._thread is not None and watchdog._thread.is_alive()
     finally:
         watchdog.stop()
 
 
-def test_an_adopted_component_is_really_monitored_and_stalls_are_detected():
+def test_a_registered_component_is_really_monitored_and_stalls_are_detected():
+    """The half that was actually missing: enforcement that runs."""
     stalls: list[str] = []
-    watchdog = SystemWatchdog(check_interval=0.05, default_timeout=0.2)
+    watchdog = SystemWatchdog(check_interval=0.05)
     try:
-        watchdog.heartbeat("orchestrator")
-        watchdog._callbacks["orchestrator"] = lambda: stalls.append("orchestrator")
-
-        assert _wait_until(lambda: "orchestrator" in watchdog._stalled), (
-            "an adopted component that stops heartbeating must be reported stalled"
+        watchdog.register_component(
+            "mind_tick", timeout=0.15, on_stall=lambda: stalls.append("mind_tick")
         )
-        assert _wait_until(lambda: stalls == ["orchestrator"]), (
+
+        assert _wait_until(lambda: "mind_tick" in watchdog._stalled), (
+            "a registered component that stops heartbeating must be reported stalled"
+        )
+        assert _wait_until(lambda: stalls == ["mind_tick"]), (
             "the stall callback must fire, not just the internal flag"
         )
 
         # Recovery: a fresh heartbeat clears the stall rather than latching it.
-        watchdog.heartbeat("orchestrator")
-        assert _wait_until(lambda: "orchestrator" not in watchdog._stalled), (
+        watchdog.heartbeat("mind_tick")
+        assert _wait_until(lambda: "mind_tick" not in watchdog._stalled), (
             "a component that resumes heartbeating must stop being reported stalled"
         )
     finally:
@@ -88,3 +97,67 @@ def test_start_is_idempotent_so_repeat_heartbeats_do_not_spawn_threads():
         assert watchdog._thread is first, "the monitor thread must not be respawned"
     finally:
         watchdog.stop()
+
+
+def test_an_event_driven_component_is_observed_but_not_falsely_stalled():
+    """A heartbeat without a declared cadence must not get an invented one.
+
+    `orchestrator` heartbeats per processed message, not on a timer. Adopting it
+    at a default 60s timeout produced "SYSTEM STALL DETECTED: Component
+    'orchestrator' has not responded for 60.4s!" on an idle, healthy runtime —
+    and false stall reports are worse than silence, because they train everyone
+    to ignore the real ones. It is observable in status; enforcement is what
+    register_component() opts into.
+    """
+    watchdog = SystemWatchdog(check_interval=0.05)
+    try:
+        watchdog.heartbeat("orchestrator")
+        assert "orchestrator" in watchdog._heartbeats, "liveness must stay observable"
+        assert "orchestrator" in watchdog._unenforced
+
+        # Quiet for many multiples of any plausible invented timeout.
+        time.sleep(0.6)
+        assert "orchestrator" not in watchdog._stalled, (
+            "a component with no declared cadence must not be reported stalled"
+        )
+
+        # Declaring a cadence opts it in, and enforcement then works.
+        watchdog.register_component("orchestrator", timeout=0.1)
+        assert "orchestrator" not in watchdog._unenforced
+        assert _wait_until(lambda: "orchestrator" in watchdog._stalled), (
+            "once a cadence is declared, a missed heartbeat must be reported"
+        )
+    finally:
+        watchdog.stop()
+
+
+def test_the_critical_stall_path_does_not_call_a_method_that_never_existed():
+    """The remedy was a phantom: SnapshotManager has no `rollback`.
+
+    Every critical stall called it, raised AttributeError into the handler, and
+    logged "Watchdog rollback failed" — which reads as a remedy that was tried
+    and failed rather than one that was never there. It is not replaced with an
+    automatic thaw(): restoring a snapshot is a governed, consequential action
+    and a watchdog tick is the wrong authority for it.
+    """
+    import inspect
+
+    from core.resilience.snapshot_manager import SnapshotManager
+
+    assert not hasattr(SnapshotManager, "rollback"), (
+        "if a real rollback() is ever added, revisit the watchdog remedy deliberately"
+    )
+    assert hasattr(SnapshotManager, "freeze") and hasattr(SnapshotManager, "thaw")
+
+    import infrastructure.watchdog as watchdog_module
+
+    source = inspect.getsource(watchdog_module)
+    executable = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    assert "sm.rollback(" not in executable and "SnapshotManager()" not in executable, (
+        "the critical-stall path must not call a phantom recovery API"
+    )
+    assert "record_degradation" in executable, (
+        "a critical stall must be recorded, not silently swallowed"
+    )

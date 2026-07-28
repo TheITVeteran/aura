@@ -79,6 +79,27 @@ _ACTION_VERB_RE = re.compile(
 
 _PERMISSION_RE = re.compile("|".join(_PERMISSION_PHRASES), re.IGNORECASE)
 
+_MESSAGE_INITIAL_IMPERATIVE_RE = re.compile(
+    r"^(please\s+)?(open|run|click|type|write|execute|launch|search|show|visit|"
+    r"navigate|download|save|create|make|build|send|copy|paste|move|delete)\b",
+    re.IGNORECASE,
+)
+
+# Clause boundaries a real message uses before getting to the ask: sentence
+# enders, colons, semicolons, dashes, newlines, and "then"/"and then".
+_CLAUSE_SPLIT_RE = re.compile(
+    r"(?:[.!?;:\n]+|\s+—\s+|\s+-\s+|\s*\band then\b\s*|\s*\bthen\b\s*)",
+    re.IGNORECASE,
+)
+
+# Narrower than the message-initial set on purpose: no "show"/"make", so a
+# conversational "…, show me your reasoning" is not an execution request.
+_CLAUSE_INITIAL_IMPERATIVE_RE = re.compile(
+    r"^(please\s+)?(open|run|execute|launch|click|type|paste|write|save|export|"
+    r"download|navigate|visit|search|send|build|install|compile)\b",
+    re.IGNORECASE,
+)
+
 
 def detect_action_intent(text: str) -> ActionIntent:
     raw = str(text or "").strip()
@@ -97,7 +118,32 @@ def detect_action_intent(text: str) -> ActionIntent:
     # as permission. "Open Notes and type X" is already the user asking
     # for the action; we should not require them to ALSO say "I trust you".
     if has_action and not has_permission:
-        imperative = bool(re.match(r"^(please\s+)?(open|run|click|type|write|execute|launch|search|show|visit|navigate|download|save|create|make|build|send|copy|paste|move|delete)\b", lowered))
+        imperative = bool(_MESSAGE_INITIAL_IMPERATIVE_RE.match(lowered))
+        # ...and an imperative after a preamble is still an imperative. The
+        # message-initial anchor above meant ANY preamble defeated it, which is
+        # exactly how people actually write. Measured live:
+        #
+        #   "Hey Aura, it's Bryan. Hold onto the codeword LANTERN for later.
+        #    First real task: run a Python snippet ... and give me the two
+        #    actual numbers it returned."
+        #
+        # `run_code`, `code_repl` and `internal_sandbox` were all READY, and
+        # nothing dispatched: no permission was detected, so should_execute
+        # stayed False and the turn never reached an executor. The codebase had
+        # already learned this lesson once for the search-query extractor —
+        # "every pattern below is anchored with .match(), so a preamble defeats
+        # all of them".
+        #
+        # The clause-level verb set is deliberately narrower than the
+        # message-initial one: it excludes conversational verbs like "show" and
+        # "make" so "…, show me your reasoning" does not read as an execution
+        # request just because it follows a comma.
+        if not imperative:
+            imperative = any(
+                _CLAUSE_INITIAL_IMPERATIVE_RE.match(clause.strip())
+                for clause in _CLAUSE_SPLIT_RE.split(lowered)
+                if clause and clause.strip()
+            )
         if imperative:
             has_permission = True
 

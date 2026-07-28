@@ -4894,8 +4894,30 @@ function blockerIsConversationReadiness(blocker) {
         || value.startsWith('conversation_reason:');
 }
 
+// Does this payload actually CARRY conversation readiness, or is it simply a
+// thinner message that does not speak to it?
+//
+// The websocket heartbeat is a lighter payload than /api/health and often omits
+// the lane entirely. Treating that silence as "not ready" appended the blocker
+// `conversation_ready` and flipped the header badge from ONLINE to the literal
+// string CONVERSATION_READY on a runtime whose /api/health reported
+// conversation_ready true, lane state ready, and zero blockers. Absence of a
+// reading is not a failed reading — the same mistake the runtime-revision badge
+// was making.
+function payloadCarriesConversationReadiness(payload) {
+    if (!payload || typeof payload !== 'object') return false;
+    if (Object.prototype.hasOwnProperty.call(payload, 'conversation_ready')) return true;
+    if (payload.conversation_lane && typeof payload.conversation_lane === 'object') return true;
+    return Boolean(payload.conversation && typeof payload.conversation === 'object'
+        && payload.conversation.lane && typeof payload.conversation.lane === 'object');
+}
+
 function conversationPayloadReady(payload, blockers = []) {
     if (!payload || typeof payload !== 'object') return false;
+    if (!payloadCarriesConversationReadiness(payload)) {
+        // Fall back to the last reading that DID speak to it.
+        return state.conversationReady === true;
+    }
     const lane = payload.conversation_lane && typeof payload.conversation_lane === 'object'
         ? payload.conversation_lane
         : {};
