@@ -1187,6 +1187,9 @@ class AdaptiveImmuneSystem:
         # so each one is parked here and settled against what the subsystem
         # actually did next.
         self._pending_suppressions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # Guards the expansion engine alone, so a PCA does not serialize every
+        # other immune observation (CP126 ad18eba6).
+        self._expansion_lock = threading.RLock()
         self._suppression_verdict_window_s: float = 600.0
         self._recurrence_tracker: dict[str, dict[str, Any]] = defaultdict(
             lambda: {
@@ -1588,12 +1591,18 @@ class AdaptiveImmuneSystem:
             base_vector[14] = max(temporal_pressure, recurrence_pressure)
             base_vector[15] = stack_complexity
 
-            # Dynamic expansion monitors residual unmodeled variance in raw telemetry
+        # CP126 ad18eba6: dimensional expansion can EIGENDECOMPOSE, and it ran
+        # while holding the process-wide immune RLock — so every other
+        # observation queued behind one PCA. The heavy call is done outside
+        # that lock, under its own, so expansions still serialize with each
+        # other but no longer serialize the whole immune system.
+        with self._expansion_lock:
             vector, new_events = self.expansion_engine.evaluate_expansion(event, base_vector)
+            target_dim = self.expansion_engine.current_dim
 
+        with self._lock:
             # Resize receptors of all cells dynamically if new dimensions are born
             if new_events:
-                target_dim = self.expansion_engine.current_dim
                 for cell in self._cells:
                     cell.resize_receptor(target_dim, self._rng)
 

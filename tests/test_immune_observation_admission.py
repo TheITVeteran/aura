@@ -103,3 +103,58 @@ def test_both_observers_share_one_body():
     for name in ("observe_error", "observe_signature"):
         source = inspect.getsource(getattr(mod.AdaptiveImmuneSystem, name))
         assert "self._observe_event(" in source
+
+
+# --- ad18eba6: a PCA must not serialize the whole immune system ----------
+
+
+def test_expansion_runs_outside_the_main_immune_lock():
+    import inspect
+
+    source = inspect.getsource(mod.AdaptiveImmuneSystem.present_antigen)
+    expansion_at = source.index("evaluate_expansion")
+    guard_at = source.index("with self._expansion_lock:")
+    assert guard_at < expansion_at
+    # And the main lock is re-taken afterwards for the cell resize.
+    assert source.index("with self._lock:", expansion_at) > expansion_at
+
+
+def test_the_expansion_lock_is_its_own(immune):
+    assert immune._expansion_lock is not immune._lock
+
+
+def test_observations_still_produce_coherent_antigens(immune):
+    """Splitting the critical section must not corrupt the result."""
+    first = immune.present_antigen({"subsystem": "memory", "error_rate": 0.4})
+    second = immune.present_antigen({"subsystem": "memory", "error_rate": 0.4})
+
+    assert first.vector.shape == second.vector.shape
+    assert first.subsystem == second.subsystem == "memory"
+
+
+def test_concurrent_observations_do_not_deadlock_or_corrupt(immune):
+    import threading
+
+    results = []
+    errors = []
+
+    def _observe(index):
+        try:
+            results.append(
+                immune.present_antigen(
+                    {"subsystem": f"sub{index % 3}", "error_rate": 0.3}
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - the test IS the assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_observe, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert len(results) == 8
+    dims = {antigen.vector.shape[0] for antigen in results}
+    assert len(dims) == 1        # one coherent dimensionality
