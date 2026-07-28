@@ -331,3 +331,69 @@ def test_artifact_profile_hot_path_does_no_filesystem_work(tmp_path):
         before = counter["stats"]
         profile_mod.get_model_artifact_profile(str(artifact))
         assert counter["stats"] > before, "a reset cache must re-measure"
+
+
+def test_artifact_profile_revalidation_branch_does_not_self_deadlock(tmp_path):
+    """`_PROFILE_CACHE_LOCK` is a plain Lock, so it is not reentrant.
+
+    A helper that re-acquired it from inside the mtime-revalidation branch
+    self-deadlocked — and because that branch runs on the event-loop thread via
+    get_lane_status, it wedged the whole runtime during boot. The faulthandler
+    dump showed get_model_artifact_profile -> the helper, blocked on the lock its
+    own caller already held.
+    """
+    import threading
+
+    from core.brain.llm import model_artifact_profile as profile_mod
+
+    artifact = tmp_path / "Aura-32B-deadlock"
+    artifact.mkdir()
+    (artifact / "config.json").write_text('{"hidden_size": 8}', encoding="utf-8")
+    path = str(artifact)
+
+    profile_mod.reset_model_artifact_profile_cache()
+    profile_mod.get_model_artifact_profile(path)
+
+    # Expire only the fast cache so the next call MUST take the branch that
+    # revalidates against the durable cache — the one that deadlocked.
+    with profile_mod._PROFILE_CACHE_LOCK:
+        profile_mod._PROFILE_FAST_CACHE.clear()
+
+    finished = threading.Event()
+    failure: list[BaseException] = []
+
+    def revalidate() -> None:
+        try:
+            profile_mod.get_model_artifact_profile(path)
+        except BaseException as exc:  # noqa: BLE001 - recorded and re-raised below
+            failure.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=revalidate, daemon=True)
+    worker.start()
+    assert finished.wait(10.0), (
+        "the revalidation branch deadlocked; it must never re-acquire "
+        "_PROFILE_CACHE_LOCK while already holding it"
+    )
+    assert not failure, f"revalidation raised: {failure[0]!r}"
+
+    # And it must survive concurrent contention, which is how the live path runs.
+    errors: list[BaseException] = []
+
+    def hammer() -> None:
+        try:
+            for _ in range(200):
+                profile_mod.get_model_artifact_profile(path)
+                with profile_mod._PROFILE_CACHE_LOCK:
+                    profile_mod._PROFILE_FAST_CACHE.pop(path, None)
+        except BaseException as exc:  # noqa: BLE001 - recorded for the assert
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer, daemon=True) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30.0)
+    assert all(not thread.is_alive() for thread in threads), "contended lookups hung"
+    assert not errors, f"contended lookups raised: {errors[0]!r}"

@@ -208,7 +208,14 @@ def get_model_artifact_profile(model_path: str) -> ModelArtifactProfile:
     with _PROFILE_CACHE_LOCK:
         cached = _PROFILE_CACHE.get(cache_id)
         if cached is not None and cached[0] == stamp:
-            _remember_fresh_profile(raw_key, now, cached[1])
+            # Inline, NOT via a helper: `_PROFILE_CACHE_LOCK` is a plain
+            # threading.Lock and therefore not reentrant, so any helper that
+            # re-acquires it from inside this block self-deadlocks. That is not
+            # hypothetical — it wedged the live runtime on the event-loop thread
+            # during boot, with the faulthandler dump showing
+            # get_model_artifact_profile -> _remember_fresh_profile blocked on
+            # the lock its own caller already held.
+            _store_fast_locked(raw_key, now, cached[1])
             return cached[1]
 
     profile = _build_profile(resolved, root, config_path, index_path)
@@ -216,21 +223,22 @@ def get_model_artifact_profile(model_path: str) -> ModelArtifactProfile:
         if len(_PROFILE_CACHE) >= _PROFILE_CACHE_MAX:
             _PROFILE_CACHE.pop(next(iter(_PROFILE_CACHE)), None)
         _PROFILE_CACHE[cache_id] = (stamp, profile)
-        _PROFILE_FAST_CACHE[raw_key] = (now, profile)
-        while len(_PROFILE_FAST_CACHE) > _PROFILE_CACHE_MAX:
-            _PROFILE_FAST_CACHE.pop(next(iter(_PROFILE_FAST_CACHE)), None)
+        _store_fast_locked(raw_key, now, profile)
     return profile
 
 
-def _remember_fresh_profile(
+def _store_fast_locked(
     raw_key: str, at: float, profile: ModelArtifactProfile
 ) -> None:
-    """Record a revalidated profile under the zero-syscall fast key."""
+    """Record a profile under the zero-syscall fast key.
 
-    with _PROFILE_CACHE_LOCK:
-        _PROFILE_FAST_CACHE[raw_key] = (at, profile)
-        while len(_PROFILE_FAST_CACHE) > _PROFILE_CACHE_MAX:
-            _PROFILE_FAST_CACHE.pop(next(iter(_PROFILE_FAST_CACHE)), None)
+    CALLER MUST ALREADY HOLD ``_PROFILE_CACHE_LOCK``. It is never taken here,
+    which is the whole point: the lock is not reentrant.
+    """
+
+    _PROFILE_FAST_CACHE[raw_key] = (at, profile)
+    while len(_PROFILE_FAST_CACHE) > _PROFILE_CACHE_MAX:
+        _PROFILE_FAST_CACHE.pop(next(iter(_PROFILE_FAST_CACHE)), None)
 
 
 def reset_model_artifact_profile_cache() -> None:
