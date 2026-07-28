@@ -100,6 +100,20 @@ _EXPLANATORY_DESKTOP_QUESTION_RE = re.compile(
 # they carry no action+surface verb pair, so the generic classifier missed
 # them and "what's on my screen" silently did nothing. Treat them as desktop
 # objectives directly. Kept in sync with desktop_task's observation markers.
+# Talking ABOUT a past observation is not asking for a new one.
+#
+# Live 2026-07-27: a message that began "Earlier you described what was on
+# his screen and I decided you had made it up" was routed to the governed
+# desktop lane and refused, because "described ... screen" reads exactly like
+# "describe my screen". Recounting what already happened, or discussing the
+# faculty itself, is conversation.
+_PAST_SCREEN_NARRATION_RE = re.compile(
+    r"\b(?:earlier|previously|before|a\s+moment\s+ago|last\s+time|"
+    r"you\s+(?:described|said|told|reported|showed|mentioned|claimed|were)|"
+    r"i\s+(?:decided|thought|assumed|concluded|said))\b",
+    re.IGNORECASE,
+)
+
 _SCREEN_OBSERVATION_RE = re.compile(
     r"\b(?:read|look\s+at|inspect|describe|check|examine|capture|view)\b"
     r"[^.?!]{0,40}\bscreen\b"
@@ -191,7 +205,9 @@ def looks_like_desktop_objective(user_message: str) -> bool:
         return False
     # Screen observation ("read my screen", "what's on my screen") needs the
     # desktop body even though it carries no action+surface verb pair.
-    if _SCREEN_OBSERVATION_RE.search(sanitized_text):
+    if _SCREEN_OBSERVATION_RE.search(sanitized_text) and not (
+        _PAST_SCREEN_NARRATION_RE.search(sanitized_text)
+    ):
         return True
     if _EXPLANATORY_DESKTOP_QUESTION_RE.search(text):
         return False

@@ -132,13 +132,22 @@ _RISK_RULES: List[Tuple[str, RiskLevel, str]] = [
 ]
 
 _MODALITY_PATTERNS: dict[str, tuple[str, ...]] = {
+    # The camera is a device, not a faculty. "vision" is a word Aura uses
+    # constantly about herself — "my continuous vision feed", "computer
+    # vision" — and matching it here demanded CAMERA permission for messages
+    # that never mentioned a camera. Live 2026-07-27: an apology containing
+    # the phrase "you have a continuous vision feed" was routed to the
+    # desktop lane and refused with "Permission denied: Modality 'camera' is
+    # disabled", which is both wrong and unanswerable, since the turn wanted
+    # no camera at all. Screen capture has its own modality below.
     "camera": (
         r"\bcamera\b",
         r"\bcameras\b",
+        r"\bwebcam\b",
         r"\bphoto\b",
         r"\bphotos\b",
-        r"\bvision\b",
         r"\bvisual\s+capture\b",
+        r"\bcomputer\s+vision\b",
     ),
     "microphone": (
         r"\bmic\b",
