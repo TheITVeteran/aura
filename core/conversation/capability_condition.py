@@ -29,6 +29,7 @@ the canned reply it exists to replace.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable
@@ -112,9 +113,34 @@ def needed_capabilities(user_message: Any) -> tuple[str, ...]:
     if not text:
         return ()
     found: list[str] = []
+
+    # A cue is a WORD, not a substring. "Orca Research" contains "search",
+    # so a folder name was pulling web_search evidence into a turn that never
+    # mentioned the web. Measured 2026-07-28.
     for name, cues in _CAPABILITY_CUES:
-        if any(cue in text for cue in cues) and name not in found:
-            found.append(name)
+        for cue in cues:
+            if re.search(rf"(?<!\w){re.escape(cue)}(?!\w)", text):
+                if name not in found:
+                    found.append(name)
+                break
+
+    # One definition of "this turn needs the desktop".
+    #
+    # The cue list missed "Open the Notes app and write a new note", so that
+    # turn carried NO capability evidence at all — and she answered "I can't
+    # actually open apps or write notes", denying a capability she has and
+    # was about to use. The router that decides a turn is a desktop objective
+    # already knows better; reusing it means these two can never disagree.
+    try:
+        from core.runtime.desktop_objective_intent import looks_like_desktop_objective
+
+        if looks_like_desktop_objective(user_message):
+            for name in ("desktop_task", "computer_use"):
+                if name not in found:
+                    found.append(name)
+    except (ImportError, RuntimeError, AttributeError) as exc:
+        logger.debug("Desktop-objective cue unavailable: %s", exc)
+
     return tuple(found)
 
 

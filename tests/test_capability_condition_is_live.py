@@ -115,3 +115,26 @@ class TestItReachesTheModel:
         assert 'context.get("live_capability_condition")' in (
             inspect.getsource(cognitive_engine)
         )
+
+
+class TestTheCuesAreWordsAndTheRouterIsReused:
+    def test_a_substring_is_not_a_cue(self):
+        """"Orca Research" contains "search" and asks nothing of the web."""
+        assert "web_search" not in needed_capabilities(
+            "create a folder called Orca Research on my desktop"
+        )
+
+    def test_a_desktop_objective_carries_desktop_evidence(self):
+        """The cue list missed "Open the Notes app and write a new note", so
+        that turn carried no evidence and she denied a capability she has.
+        The desktop router already knew; reusing it means they cannot
+        disagree."""
+        found = needed_capabilities(
+            "Open the Notes app and write a new note titled Orca Field Notes "
+            "with a couple of sentences about orcas in it."
+        )
+        assert "desktop_task" in found
+        assert "computer_use" in found
+
+    def test_conversation_still_needs_nothing(self):
+        assert needed_capabilities("what do you think about entropy?") == ()
