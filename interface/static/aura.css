@@ -7407,3 +7407,109 @@ body.theme-light .skill-card::before {
     padding-left: 2px;
     padding-right: 2px;
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   STREAM PASS — v15.6
+   The quiet pass went too far the other way: stripping the boxes left
+   a flat list in a neutral face, which reads as a .txt file rather
+   than an instrument. Quiet is not the same as characterless.
+
+   The brief, and what each part means here:
+     "stylized, matches the theme"  -> Space Grotesk, not Inter. Inter is
+        engineered to be invisible, which is exactly why it read as plain;
+        Space Grotesk is geometric with real character in its 'g', 'a' and
+        'y' and belongs to the same family as the rest of the UI.
+     "smaller but readable"         -> 0.75rem, up from a 0.795 that was
+        loud, held legible by weight and line-height instead of size.
+     "thicker but not blocky"       -> weight 500. Not 600, which goes
+        heavy and starts to fill in the counters at this size.
+     "not squashed or overly tall"  -> no condensed face anywhere near the
+        feed; Space Grotesk is close to a square proportion.
+     "each panel outlined"          -> a real card again: hairline ring,
+        radius, its own surface. Separated objects, not a run of text.
+     "colour coded to denote severity" -> below.
+   ══════════════════════════════════════════════════════════ */
+
+/* Severity is the accent. Channel hue still names the lane, but when a
+   card is reporting a fault or a completion, THAT is the thing the eye
+   should catch first, so severity takes the accent slot and the channel
+   keeps the sigil. */
+.thought-card {
+    --sev: var(--tc);
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.006)),
+        linear-gradient(180deg, rgba(13, 9, 25, 0.55), rgba(9, 6, 18, 0.62));
+    border: 1px solid rgba(255, 255, 255, 0.062);
+    border-left: 1px solid color-mix(in srgb, var(--sev) 42%, transparent);
+    border-radius: 10px;
+    padding: 11px 12px 12px 13px;
+    margin-bottom: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+}
+
+.thought-card:hover {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.01)),
+        linear-gradient(180deg, rgba(15, 10, 29, 0.7), rgba(10, 7, 20, 0.72));
+    border-color: rgba(255, 255, 255, 0.1);
+    border-left-color: color-mix(in srgb, var(--sev) 70%, transparent);
+}
+
+.thought-card.success  { --sev: #3ddc97; }
+.thought-card.warning  { --sev: #e8b04b; }
+.thought-card.error    { --sev: #ff6b6b; }
+
+/* The rail becomes the left border above, so the pseudo-element rail is
+   retired rather than drawn twice. */
+.thought-card::before { display: none; }
+
+/* Her sentences: the reason the panel exists. */
+.thought-body,
+.thought-preview {
+    font-family: var(--font-main);
+    font-size: calc(0.75rem * var(--neural-text-scale));
+    font-weight: 500;
+    line-height: 1.58;
+    letter-spacing: 0.006em;
+    color: color-mix(in srgb, var(--text) 95%, transparent);
+    margin-top: 6px;
+}
+
+/* The tag names the class of thing. Weighted and tracked so it reads as
+   a label, tinted by severity so a fault is visible before it is read. */
+.thought-tag-btn {
+    color: color-mix(in srgb, var(--sev) 82%, var(--text));
+}
+
+.thought-tag-btn:hover,
+.thought-tag-btn:focus-visible { color: var(--sev); }
+
+.thought-chan {
+    font-family: var(--font-main);
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.085em;
+}
+
+.thought-sigil { color: color-mix(in srgb, var(--sev) 88%, transparent); }
+
+/* A severity worth noticing gets a dot, so it is legible without relying
+   on colour alone. */
+.thought-card.success .thought-chan::after,
+.thought-card.warning .thought-chan::after,
+.thought-card.error .thought-chan::after {
+    content: '';
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    margin-left: 7px;
+    border-radius: 50%;
+    background: var(--sev);
+    vertical-align: middle;
+}
+
+.thought-ts {
+    font-size: 0.58rem;
+    color: color-mix(in srgb, var(--text-dim) 78%, transparent);
+}

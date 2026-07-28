@@ -3239,6 +3239,11 @@ function addThoughtCard(data) {
     let cls = 'thought-card';
     if (level === 'error' || level === 'critical') cls += ' error';
     else if (level === 'warning') cls += ' warning';
+    // Severity is a class of thing, not a decoration: a card that reports
+    // something completing should not look identical to one reporting a
+    // fault. 'success' had no mapping at all, so good news rendered as
+    // routine chatter.
+    else if (level === 'success' || level === 'ok' || level === 'done') cls += ' success';
     else if (level === 'impulse' || level === 'info') cls += ' impulse';
 
     const ts = formatEventTimestamp(data.timestamp);
