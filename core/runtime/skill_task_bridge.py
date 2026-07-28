@@ -125,6 +125,27 @@ _REPORTBACK_VERB_RE = re.compile(
 )
 
 _FIRST_PERSON_REPORT_RE = re.compile(r"\b(?:i|we)\b", re.IGNORECASE)
+# An execution directive does not have to open the sentence.
+#
+# The prefix form only sees a command at position zero, so "Do this for
+# real now: open Chrome, take a screenshot..." read as an inventory
+# question, the desktop router bailed on that basis, the turn fell through
+# to chat, and she narrated a screen she never looked at — inventing
+# Notepad++ and File Explorer on a Mac. Measured live 2026-07-27.
+#
+# A clause boundary is enough of an anchor to stay conservative: this must
+# still not fire on "what tools can you use to open apps", where the verb
+# is the object of the question rather than an instruction.
+_DIRECT_EXECUTION_CLAUSE_RE = re.compile(
+    r"(?:^|[.!?;:\n]|\b(?:now|then|first|also|and)\b)\s*"
+    r"(?:please\s+|go\s+ahead\s+and\s+|go\s+)?"
+    r"(?:open|launch|run|execute|click|tap|press|type|write|download|save|\
+create|build|set\s+up|automate|organize)\s+"
+    r"(?:the\s+|a\s+|an\s+|up\s+|my\s+|your\s+)?"
+    r"(?:chrome|safari|firefox|finder|terminal|browser|tab|window|app|"
+    r"application|document|doc|file|folder|note|screenshot|screen\s*shot)\b",
+    re.IGNORECASE,
+)
 _DIRECT_EXECUTION_PREFIX_RE = re.compile(
     r"^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|i need you to\s+|"
     r"help me\s+|go\s+)?(?:open|launch|run|execute|click|tap|press|type|"
@@ -236,7 +257,10 @@ def looks_like_capability_inventory_dialogue_request(text: str) -> bool:
     if len(normalized.split()) > 80:
         return False
     sanitized = strip_negated_action_spans(normalized).lower()
-    direct_execution = bool(_DIRECT_EXECUTION_PREFIX_RE.search(sanitized))
+    direct_execution = bool(
+        _DIRECT_EXECUTION_PREFIX_RE.search(sanitized)
+        or _DIRECT_EXECUTION_CLAUSE_RE.search(sanitized)
+    )
     return bool(_CAPABILITY_INVENTORY_RE.search(normalized)) and not direct_execution
 
 
