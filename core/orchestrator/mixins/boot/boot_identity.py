@@ -6,6 +6,7 @@ from typing import Any
 from core.config import config
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.service_names import ServiceNames
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,27 @@ class BootIdentityMixin:
                 integrate_complete_moral_and_sensory_systems = None
 
             self.soul = Soul(self)
+            # LIVE DEFECT, 2026-07-27. The Soul was constructed here and never
+            # published to the service spine, so ServiceContainer.get("soul")
+            # answered None for the whole life of the process.
+            #
+            # Two things went wrong downstream. The turn-engagement tracker
+            # reported "soul absent for 12 consecutive turns: identity
+            # continuity across turns and restarts" as a CRITICAL fault on
+            # every conversation — correctly, and permanently, because no
+            # amount of waiting was going to register it.
+            #
+            # Worse, get_panzer_soul() looks the service up and silently
+            # substitutes a PanzerSoulProxy carrying `logic = None` when it is
+            # missing. PersonalityEngine has therefore been holding a metadata
+            # shell rather than the real drive system — an absence presented
+            # as a presence, which is the bug class this codebase keeps
+            # finding.
+            #
+            # It is constructed; publishing it is the whole fix.
+            ServiceContainer.register_instance(
+                ServiceNames.SOUL, self.soul, required=False,
+            )
             if integrate_complete_moral_and_sensory_systems:
                 integrate_complete_moral_and_sensory_systems(self)
 

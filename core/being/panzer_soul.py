@@ -31,17 +31,40 @@ def get_panzer_soul():
     # Try to get from container first
     soul = get_runtime_service("soul", default=None)
     if not soul:
-        # Create a proxy if not registered
-        # Note: PersonalityEngine expects an object with certain attributes
-        # but the main Soul class handles the logic. This module adds the metadata.
+        # The proxy carries the metadata and none of the drive system —
+        # `logic = None` is the whole of it. Handing this to
+        # PersonalityEngine and saying nothing is an absence presented as a
+        # presence, and it hid a real wiring gap for the life of the
+        # process: the orchestrator constructed a Soul at boot and never
+        # published it to the service spine, so this branch was taken on
+        # every single call while the real object sat one attribute away.
+        #
+        # The fallback stays — a personality engine that raises because an
+        # optional organ is warming is worse than one that runs flat — but
+        # it is no longer silent.
+        from core.runtime.errors import record_degradation
+
+        record_degradation(
+            "panzer_soul",
+            RuntimeError("soul service unavailable; personality is running on a metadata proxy"),
+            severity="warning",
+            action="returned a proxy with no drive logic so the personality engine could continue",
+            enforce_failure_policy=False,
+        )
+
         class PanzerSoulProxy:
+            """Metadata only. Carries no drives and decides nothing."""
+
+            is_proxy = True
+
             def __init__(self):
                 self.version = version
                 self.intensities = intensities
                 self.protocols = protocols
-                # Link to the real logic if possible
-                self.logic = None 
-        
+                # No drive system behind this. Callers that need the real
+                # thing should check `is_proxy` rather than duck-typing.
+                self.logic = None
+
         soul = PanzerSoulProxy()
     
     # Inject metadata into whatever we have
