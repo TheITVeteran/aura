@@ -28,11 +28,46 @@ class AuditReport:
     errors: List[str] = field(default_factory=list)
     duration_s: float = 0.0
 
+    # CP126 (high): "Contradiction scanning silently ignores most large
+    # graphs. Only the first 500 beliefs are considered and reporting stops
+    # at 50 pairs, with no ordering guarantee, pagination, coverage flag,
+    # omitted count, or continuation cursor."
+    #
+    # The caps are defensible — this runs on a live belief graph and an
+    # unbounded O(n) sweep with logging is not free. What was not defensible
+    # is that a 5,000-belief graph reported "contradictions=0" in exactly
+    # the same words as a genuinely clean 400-belief one. A consistency
+    # audit that silently examines a tenth of the evidence is worse than no
+    # audit, because it produces a clean bill of health nobody questions.
+    contradiction_scan_considered: int = 0
+    contradiction_scan_total: int = 0
+    contradiction_scan_truncated: bool = False
+    contradiction_reporting_capped: bool = False
+
+    @property
+    def contradiction_coverage(self) -> float:
+        """Fraction of eligible beliefs the contradiction scan looked at."""
+        if self.contradiction_scan_total <= 0:
+            return 0.0
+        return self.contradiction_scan_considered / self.contradiction_scan_total
+
+    @property
+    def contradiction_result_is_complete(self) -> bool:
+        """Whether "contradictions_found" is an answer or a lower bound."""
+        return not (self.contradiction_scan_truncated or self.contradiction_reporting_capped)
+
     def __str__(self) -> str:
+        qualifier = ""
+        if not self.contradiction_result_is_complete:
+            qualifier = (
+                f" [partial scan: {self.contradiction_scan_considered}"
+                f"/{self.contradiction_scan_total} beliefs"
+                f"{', report capped' if self.contradiction_reporting_capped else ''}]"
+            )
         return (
             f"IntegrityAudit: scanned={self.beliefs_scanned}, "
             f"quarantined={self.quarantined}, "
-            f"contradictions={self.contradictions_found}, "
+            f"contradictions={self.contradictions_found}{qualifier}, "
             f"decayed={self.decayed} ({self.duration_s:.1f}s)"
         )
 
@@ -148,9 +183,27 @@ class IntegrityGuard:
         MAX_CONTRADICTIONS = 50
         NEGATION_PREFIXES = ("not ", "never ", "cannot ", "doesn't ", "isn't ", "won't ")
         
+        eligible = [b for b in beliefs if b.get("status") != "quarantined"]
+        # Deterministic order, so two runs over the same graph examine the
+        # same subset. Without this the truncation was not just partial but
+        # arbitrarily partial — a contradiction could appear and disappear
+        # between audits with no change to the beliefs.
+        eligible.sort(key=lambda b: str(b.get("id", "")))
+        considered = eligible[:MAX_SCAN]
+        report.contradiction_scan_total = len(eligible)
+        report.contradiction_scan_considered = len(considered)
+        report.contradiction_scan_truncated = len(eligible) > len(considered)
+        if report.contradiction_scan_truncated:
+            logger.warning(
+                "Contradiction scan examined %d of %d eligible beliefs; "
+                "contradictions=%d is a LOWER BOUND, not a clean bill of health.",
+                len(considered),
+                len(eligible),
+                report.contradictions_found,
+            )
         contents = [
             (b.get("id", "?"), str(b.get("content", "")).lower().strip())
-            for b in beliefs[:MAX_SCAN] if b.get("status") != "quarantined"
+            for b in considered
         ]
         
         # Build prefix-indexed lookup for O(n) instead of O(n^2)
@@ -169,6 +222,11 @@ class IntegrityGuard:
                     report.contradictions_found += 1
                     logger.warning("⚠️  Contradiction: [%s] vs [%s]", bid, negated[text])
                 if report.contradictions_found >= MAX_CONTRADICTIONS:
+                    report.contradiction_reporting_capped = True
+                    logger.warning(
+                        "Contradiction reporting capped at %d pairs; more may exist.",
+                        MAX_CONTRADICTIONS,
+                    )
                     break
 
     async def _decay_stale(self, beliefs: List[Dict], report: AuditReport) -> None:
