@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from core.self.inner_language import say_focus
 from core.brain.live_mind_contract import (
     append_text_mutation,
     merge_text_mutations,
@@ -11478,6 +11479,12 @@ def _sanitize_attention_focus(raw: str, user_message: str = "") -> str:
     except (ImportError, AttributeError, RuntimeError):
         pass
     if _INTERNAL_STATE_PATTERNS.search(raw) or _looks_symbolic_scene_leak(raw):
+        return ""
+    # An internal channel name is correct in a log and wrong in a sentence.
+    # say_focus translates the ones we know and returns "" for the ones we
+    # don't, so callers drop the clause instead of reading a field name aloud.
+    raw = say_focus(raw, max_len=180)
+    if not raw:
         return ""
     focus_norm = _normalize_user_message(raw)
     user_norm = _normalize_user_message(user_message)
