@@ -3215,6 +3215,67 @@ function stripSourceEchoPrefix(text, name) {
     return hit ? text.slice(m[0].length) : text;
 }
 
+
+// ── Plain English ─────────────────────────────────────────────────────────
+//
+// The feed spoke in internal shorthand: "UnifiedField saturation rescue #900
+// (mean|F|=0.907, spectral_entropy=0.464)", "Intention deferred [c5d85b7]: 0
+// belief updates". Every one of those is a real event with a plain meaning,
+// and the panel is the one place a person reads them.
+//
+// Two rules, both load-bearing. Only recognised shapes are rewritten — an
+// unmatched message passes through untouched, because a wrong plain sentence
+// is worse than a technical true one. And the original is never destroyed:
+// it stays in the detail drawer, which is what the caret opens.
+const PLAIN_ENGLISH_RULES = [
+    [/^UnifiedField saturation rescue #(\d+).*/i,
+     (m) => `Rebalanced her attention field — it was saturating (pass ${m[1]}).`],
+    [/^session owner override applied.*/i,
+     () => `Confirmed you are the owner of this session.`],
+    [/^MIST:\s*System idle \((\d+)s\)\.\s*Initiating background synthesis cycle #?(\d+).*/i,
+     (m) => `Idle for ${Math.round(m[1] / 60)} min — starting a background synthesis pass (#${m[2]}).`],
+    [/^motion throttle (ON|OFF).*?streak=(\d+).*/i,
+     (m) => `Motion throttling ${m[1].toLowerCase()}${m[2] === '0' ? '' : ` after ${m[2]} in a row`}.`],
+    [/^Intention deferred \[([0-9a-f]+)\]:\s*(\d+) belief updates?,\s*(\d+) self-model updates?.*/i,
+     (m) => m[2] === '0' && m[3] === '0'
+         ? `Held off on an intention — nothing changed in what she believes.`
+         : `Held off on an intention (${m[2]} belief, ${m[3]} self-model updates).`],
+    [/^cycle examined=(\d+) proven=(\d+) supported=(\d+) refuted=(\d+) committed=(\d+).*/i,
+     (m) => `Frontier scan: looked at ${m[1]} ideas, ruled out ${m[4]}, kept ${m[5]}.`],
+    [/^Scan stalled:\s*(.+)$/i,
+     (m) => `A scan stopped early — ${m[1]}.`],
+    [/^Signal Routed:\s*([\w.]+)\s*->\s*([\w.]+).*/i,
+     (m) => `Passed a signal from ${m[1].replace(/_/g, ' ')} to ${m[2].replace(/_/g, ' ')}.`],
+    [/^Winner:\s*([\w.]+)\s*\|\s*Content:\s*(.+)$/i,
+     (m) => `${m[1].replace(/_/g, ' ')} won her attention — ${m[2]}`],
+    [/^WS:\s*Client connected\.\s*Total:\s*(\d+).*/i,
+     (m) => `A window connected (${m[1]} open).`],
+    [/^\[?websocket_heartbeat\]?\s*(.*)$/i,
+     () => `Connection heartbeat — everything responding.`],
+    [/^\[?health_poll\]?\s*(.*)$/i,
+     () => `Health check — everything responding.`],
+    [/^UNIFIED HEALTH PULSE$/i,
+     () => `Routine health pulse across her systems.`],
+];
+
+function toPlainEnglish(text) {
+    const body = String(text == null ? '' : text).trim();
+    if (!body) return body;
+    for (const [pattern, render] of PLAIN_ENGLISH_RULES) {
+        const match = body.match(pattern);
+        if (match) {
+            try {
+                const out = render(match);
+                if (out && String(out).trim()) return String(out).trim();
+            } catch (err) {
+                // A broken rule must not cost the message.
+                return body;
+            }
+        }
+    }
+    return body;
+}
+
 function cleanThoughtText(raw, ts, name) {
     const stripped = stripSourceEchoPrefix(
         stripNeuralPictographs(
@@ -3252,7 +3313,8 @@ function addThoughtCard(data) {
     const chan = NEURAL_CHANNELS[chanKey] || NEURAL_CHANNELS.system;
     const rawMsg = data.message || data.content || JSON.stringify(data);
     const rawFull = data.fullMessage || data.full_message || rawMsg;
-    const msg = cleanThoughtText(rawMsg, ts, name);
+    const technical = cleanThoughtText(rawMsg, ts, name);
+    const msg = toPlainEnglish(technical);
     const fullMsg = cleanThoughtText(rawFull, ts, name);
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
     const fullLines = fullMsg.split(/\r?\n/).length;
