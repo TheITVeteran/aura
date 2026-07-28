@@ -31357,3 +31357,29 @@ approximately 74.8%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
 is 2-4 checkpoints to a sealed resident-32B training launch, 6-10 to a
 defensible preliminary gain verdict, and 11-20 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S1 independent policy-transition replay kernel
+
+CP420S now has its independently testable arithmetic core. The new replay
+kernel restores exact adapter and Adam pre-state into an independently
+constructed model, recomputes the supplied objective, requires exact producer
+receipt equality, inventories every gradient tensor, reconstructs canonical
+Adam, applies one update, and requires exact adapter and optimizer post-state.
+It rejects objective-side mutation and strictly reconstructs its positive
+receipt, including topology and every success assertion.
+
+The adversarial and downstream matrix passes 47/47. Ruff, formatting,
+compilation, and diff checks pass. Evidence:
+`artifacts/current/cp420s1_policy_state_replay_kernel_evidence.json`.
+
+The campaign claim remains false. CP420S2 must bind model/spec/objective,
+gradient, and state custody into evidence, and CP420S3 must run the kernel in
+the pinned external verifier with resident-scale timeout and recovery. No
+resident 32B was loaded or trained; SPARK-060/061/062 and every reasoning,
+frontier, promotion, and `WOW Signal` claim remain open.
+
+CP420S1 is total checkpoint 689. The 689-920 completion envelope is
+approximately 74.9%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
+is 1-3 checkpoints to a sealed resident-32B training launch, 5-9 to a
+defensible preliminary gain verdict, and 10-19 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

@@ -5387,3 +5387,39 @@ approximately 74.8%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
 is 2-4 checkpoints to a sealed resident-32B training launch, 6-10 to a
 defensible preliminary gain verdict, and 11-20 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S1: independent policy-transition replay kernel
+
+The external-state proof now has a strict arithmetic kernel rather than a
+campaign-level boolean awaiting implementation. Given an independently
+constructed model, CP420S1 restores exact sealed adapter and Adam pre-state,
+recomputes an independently supplied objective, requires exact equality with
+the producer objective receipt, inventories every gradient tensor by sorted
+name, shape, dtype, and evaluated-value digest, reconstructs the frozen Adam
+configuration, applies exactly one update, and requires exact adapter and
+optimizer post-state equality. The objective is also forbidden from mutating
+policy state before the optimizer step.
+
+The positive receipt is itself strictly reconstructed. Missing, duplicate, or
+reordered tensors; adapter/gradient topology mismatch; optimizer substitution;
+objective drift; gradient drift; adapter or optimizer value/dtype/key drift;
+and resealed false success flags all fail closed. The direct and downstream
+matrix passes 47/47, including existing pre-measurement, transaction,
+exact-adjoint intervention, and optimizer-construction paths. Ruff, formatting,
+bytecode compilation, and diff hygiene pass. Evidence:
+`artifacts/current/cp420s1_policy_state_replay_kernel_evidence.json`.
+
+This is CP420S's independently testable arithmetic core, not yet its external
+campaign proof. CP420S2 must bind the frozen model, execution spec, exact
+objective inputs, gradients, and state custody into the campaign manifest;
+CP420S3 must execute this kernel inside the pinned externally custodied verifier
+under a resident-scale durable lifecycle. Until both pass,
+`external_policy_state_replayed` remains false at campaign level. No resident
+32B was loaded or trained, and no reasoning, frontier, promotion, or
+`WOW Signal` claim follows.
+
+CP420S1 is total checkpoint 689. The 689-920 completion envelope is
+approximately 74.9%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
+is 1-3 checkpoints to a sealed resident-32B training launch, 5-9 to a
+defensible preliminary gain verdict, and 10-19 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

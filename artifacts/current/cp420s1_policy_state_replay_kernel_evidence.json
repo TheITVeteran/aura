@@ -1,0 +1,43 @@
+{
+  "schema": "aura.spark.checkpoint_evidence.v1",
+  "checkpoint": "CP420S1",
+  "total_checkpoint": 689,
+  "parent_commit": "5042d2230c04c5bbda64c4a5bd13b694237fc6db",
+  "scope": "independent exact objective-gradient-Adam policy transition replay kernel",
+  "implementation": [
+    "core/learning/verified_transition_policy_state_replay.py",
+    "tests/test_verified_transition_policy_state_replay.py"
+  ],
+  "claims": {
+    "sealed_pre_state_restored_exactly": true,
+    "objective_receipt_recomputed_and_compared": true,
+    "every_gradient_tensor_inventoried": true,
+    "canonical_adam_reconstructed": true,
+    "single_update_post_adapter_exact": true,
+    "single_update_post_optimizer_exact": true,
+    "strict_positive_receipt_reconstruction": true,
+    "campaign_external_policy_state_replayed": false,
+    "resident_32b_loaded": false,
+    "reasoning_gain_proven": false,
+    "frontier_gain_proven": false,
+    "wow_signal_eligible": false
+  },
+  "validation": {
+    "focused_and_downstream_tests": {
+      "passed": 47,
+      "failed": 0,
+      "duration_seconds": 2.60,
+      "command": "pytest -q tests/test_verified_transition_policy_state_replay.py tests/test_verified_transition_measurement_chain.py tests/test_verified_transition_transaction.py tests/test_recurrent_grpo.py::test_proof_campaign_optimizer_constructor_is_explicit_and_reconstructable tests/test_recurrent_grpo.py::test_sampled_verifier_update_improves_preference_without_base_drift tests/test_recurrent_grpo.py::test_verified_intervention_composite_is_quality_weighted_and_replayable"
+    },
+    "ruff": "pass",
+    "format": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "remaining_cp420s": [
+    "bind the frozen model, execution spec, objective inputs, gradients, and state custody into campaign evidence",
+    "execute reconstruction and replay inside the pinned externally custodied verifier",
+    "add resident-scale timeout, durable lifecycle, and crash recovery",
+    "accept campaign-level external_policy_state_replayed only from the external replay root"
+  ]
+}
