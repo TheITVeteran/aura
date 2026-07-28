@@ -15,6 +15,7 @@ from core.governance_context import (
     governance_runtime_active,
     require_governance,
 )
+from core.runtime.authorization_receipt import read_verdict
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.NetworkGateway")
@@ -78,14 +79,39 @@ class NetworkGateway:
                 data_length=len(request_data or b""),
                 source=source,
             )
-            if not defensive_receipt.get("allowed", True):
+            # CP126 (fail-open class). This was
+            # `defensive_receipt.get("allowed", True)`, so a receipt that
+            # stated no verdict — a partial dict, an early return, a
+            # validator that did not understand the question — was read as
+            # permission to make the request. Absence of a check reported as
+            # a passed check, on the outbound network boundary.
+            verdict = read_verdict(defensive_receipt)
+            if not verdict.allows:
+                if not verdict.is_stated:
+                    # Refusing is right; saying WHY matters, because an
+                    # unstated verdict is a broken validator and looks
+                    # nothing like a policy decision from the outside.
+                    record_degradation(
+                        "network_gateway.defensive_runtime",
+                        RuntimeError(
+                            f"outbound preflight stated no verdict: {verdict.reason}"
+                        ),
+                        severity="warning",
+                        action="refused the request rather than reading an absent verdict as permission",
+                        enforce_failure_policy=False,
+                    )
                 return {
                     "status_code": 0,
                     "headers": {},
                     "content": b"",
                     "ok": False,
-                    "error": str(defensive_receipt.get("reason") or "blocked_by_defensive_runtime"),
+                    "error": str(
+                        defensive_receipt.get("reason")
+                        or verdict.reason
+                        or "blocked_by_defensive_runtime"
+                    ),
                     "defensive_runtime": defensive_receipt,
+                    "defensive_verdict": verdict.to_dict(),
                 }
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
