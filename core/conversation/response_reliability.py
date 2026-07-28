@@ -5226,14 +5226,33 @@ def _has_unfounded_tool_execution_claim(
 
 
 #: Words a sentence cannot end on: the model was mid-clause when it ran out.
+# Words that cannot end a sentence, so their presence at the tail means the
+# generator was cut off mid-clause.
+#
+# LIVE DEFECT, 2026-07-27. Bryan's reply ended "...That matters in substrate
+# terms. Whether" and the repair produced "...substrate terms. Whether." —
+# "whether" was absent from this list, so nothing was trimmed and a period
+# was stapled onto a fragment. That is worse than the truncation it was
+# fixing: a visibly cut-off sentence became a confidently complete-looking
+# one, and the reader has no way to tell an answer stopped early.
 _DANGLING_TAIL_WORDS = frozenset(
     {
-        "a", "an", "and", "as", "at", "because", "before", "but", "by",
-        "called", "create", "for", "from", "if", "in", "into", "is", "it",
-        "make", "of", "on", "or", "our", "since", "so", "than", "that",
-        "the", "their", "then", "there", "they", "this", "to", "was", "we",
-        "were", "when", "which", "while", "who", "with", "would", "you",
-        "your",
+        "a", "about", "after", "although", "an", "and", "another", "any",
+        "are", "as", "at", "be", "because", "been", "before", "being",
+        "both", "but", "by",
+        "called", "can", "could", "create", "despite", "did", "do", "does",
+        "during", "each", "either", "every", "for", "from", "had", "has",
+        "have", "he", "her", "here", "his", "how", "however", "i", "if",
+        "in", "into", "is", "it", "its", "just", "make", "may", "might",
+        "more", "most", "much", "must", "my", "neither", "no", "nor", "not",
+        "of", "on", "once", "one", "only", "or", "other", "our", "over",
+        "per", "she", "should", "since", "so", "some", "such", "than",
+        "that", "the", "their", "them", "then", "there", "these", "they",
+        "this", "those", "though", "through", "to", "toward", "under",
+        "unless", "until", "up", "upon", "very", "was", "we", "were",
+        "what", "whatever", "when", "whenever", "where", "whereas",
+        "whether", "which", "while", "who", "whom", "whose", "why", "will",
+        "with", "within", "without", "would", "yet", "you", "your",
     }
 )
 
@@ -5271,9 +5290,22 @@ def complete_truncated_tail(text: Any) -> str:
 
     if len(repaired) < 24:
         return original
-    if not repaired.endswith((".", "!", "?", '"', "'", "\u201d", "\u2019", ")", "]")):
-        repaired = f"{repaired}."
-    return repaired
+    if repaired.endswith((".", "!", "?", '"', "'", "\u201d", "\u2019", ")", "]")):
+        return repaired
+
+    # Nothing here ends a sentence, so the reply is still mid-clause. Adding
+    # a period would only disguise that. Fall back to the last real sentence
+    # boundary — losing the fragment is better than shipping it dressed as a
+    # finished thought.
+    boundary = max(
+        repaired.rfind(". "), repaired.rfind("! "), repaired.rfind("? "),
+        repaired.rfind(".\n"), repaired.rfind("!\n"), repaired.rfind("?\n"),
+    )
+    if boundary >= 24:
+        return repaired[: boundary + 1].rstrip()
+    # No boundary worth keeping. A trailing period is the least-bad option
+    # for a single unterminated sentence, which is what this now is.
+    return f"{repaired}."
 
 
 def _has_context_object_support(
