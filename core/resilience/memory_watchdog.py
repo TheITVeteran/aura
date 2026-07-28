@@ -96,6 +96,9 @@ class MemorySample:
     system_percent: float
     total_ram_gb: float
     sampled_at: float
+    #: What is left in the swap file. This, not ``swap_used_gb``, is the live
+    #: signal — see ``_swap_is_exhausted``.
+    swap_free_gb: float = 0.0
     observation_source: str = "unavailable"
     observation_scenario_id: str = ""
 
@@ -241,18 +244,46 @@ def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample
         except _WATCHDOG_RECOVERABLE_ERRORS:
             child_rss = max(0.0, managed_rss - core_rss)
     swap_used_gb = float(memory.swap_used_bytes) / float(1024**3)
+    swap_free_gb = float(getattr(memory, "swap_free_bytes", 0) or 0) / float(1024**3)
     system_percent = float(memory.percent) if memory.available else 100.0
     total_ram_gb = float(memory.total_bytes) / float(1024**3)
     return MemorySample(
         core_rss_mb=core_rss,
         child_rss_mb=child_rss,
         swap_used_gb=swap_used_gb,
+        swap_free_gb=swap_free_gb,
         system_percent=system_percent,
         total_ram_gb=total_ram_gb,
         sampled_at=time.time(),
         observation_source=provenance.source.value,
         observation_scenario_id=provenance.scenario_id,
     )
+
+
+def _swap_is_exhausted(sample: MemorySample, thresholds: _Thresholds) -> bool:
+    """Is the host swapping *now*, or did it swap once an hour ago?
+
+    ``swap used`` is a high-water mark on macOS: pages written to the swap file
+    stay accounted there long after the pressure that caused them has gone, and
+    the figure does not fall when memory frees up. Testing ``swap_used >= 8GB``
+    therefore latches — measured live 2026-07-28, the host sat at 17.9 GB used
+    with 24.8 GB of RAM available and 64% utilisation, and every check with the
+    model resident declared "swap exhaustion" on a number describing the past.
+
+    Each of those declarations was a fail-closed CRITICAL, which is what pinned
+    deg_threat and, through it, blocked her builds.
+
+    What actually indicates present danger is headroom: the swap file being
+    nearly full means the next allocation has nowhere to go, and that is when
+    the event loop stalls. Free space falls when pressure is real and recovers
+    when it passes, which is the property the old test lacked.
+    """
+    free_floor_gb = max(1.0, thresholds.swap_hard_gb * 0.25)
+    if sample.swap_free_gb > 0.0:
+        return sample.swap_free_gb <= free_floor_gb
+    # No free-space reading available: fall back to the old high-water test
+    # rather than silently never firing. Better a stale signal than none.
+    return sample.swap_used_gb >= thresholds.swap_hard_gb
 
 
 def _shed_registered_organs() -> tuple[int, int]:
@@ -499,9 +530,7 @@ class MemoryWatchdog(threading.Thread):
         managed = sample.managed_rss_mb
         t = self.thresholds
 
-        swap_escalation = (
-            sample.swap_used_gb >= t.swap_hard_gb and managed >= t.soft_mb
-        )
+        swap_escalation = _swap_is_exhausted(sample, t) and managed >= t.soft_mb
 
         if managed >= t.lethal_mb:
             return self._handle_lethal(sample, now)
