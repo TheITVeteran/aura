@@ -1873,6 +1873,27 @@ class WebInterlocutorSession:
                     result.diagnostics["composition_debug"] = list(
                         ctx.get("_web_interlocutor_composition_debug", [])
                     )
+                    # LIVE DEFECT, 2026-07-27. This returned straight past
+                    # summarize and persist, so a run that failed its PROOF
+                    # also lost everything it had actually seen.
+                    #
+                    # Bryan watched Aura hold a long exchange with ChatGPT,
+                    # then got "sent_message_not_visible_after_dom_submit ...
+                    # Observed 6/8 turns; memory=none." Six real turns were
+                    # read off the page and discarded. Asked afterwards
+                    # whether she remembered the conversation, she said yes
+                    # and described a different one — with nothing retained,
+                    # the only material left to answer from was the wrong
+                    # conversation.
+                    #
+                    # Refusing to CLAIM a completed proof is correct and
+                    # unchanged. Refusing to REMEMBER what was observed is a
+                    # separate decision, and it was never the right one:
+                    # observation and proof are different things, and losing
+                    # the evidence because the proof failed is backwards.
+                    await self._persist_observed_transcript(
+                        result, ctx, persist_memory, proven=False,
+                    )
                     result.completed_at = time.time()
                     return result
                 if index < max_turns:
@@ -2206,10 +2227,52 @@ class WebInterlocutorSession:
             return cleaned[:2500]
         return _deterministic_learning_summary(objective, turns)
 
+    async def _persist_observed_transcript(
+        self,
+        result: WebInterlocutorResult,
+        context: dict[str, Any],
+        persist_memory: bool,
+        *,
+        proven: bool,
+    ) -> None:
+        """Keep what was actually observed, whether or not the proof closed.
+
+        Marked ``proof_complete`` so nothing downstream can mistake a
+        partial observation for a completed, verified exchange — the memory
+        carries its own provenance instead of relying on the caller to
+        remember which kind it was.
+        """
+        if not persist_memory:
+            return
+        observed = [
+            turn for turn in result.turns if str(getattr(turn, "observed_reply", "") or "").strip()
+        ]
+        if not observed:
+            return
+        if not result.learned_summary:
+            result.learned_summary = _deterministic_learning_summary(
+                result.objective, observed,
+            )
+        try:
+            record_id, receipt_id = await self._persist_learning(
+                result, context, proof_complete=proven,
+            )
+            result.memory_record_id = record_id
+            result.memory_receipt_id = receipt_id
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "web_interlocutor.persist_observed_transcript",
+                exc,
+                severity="warning",
+                action="kept the interlocutor result after the observed transcript could not be stored",
+            )
+
     async def _persist_learning(
         self,
         result: WebInterlocutorResult,
         context: dict[str, Any],
+        *,
+        proof_complete: bool = True,
     ) -> tuple[str, str]:
         gateway = self.memory_gateway
         if gateway is None:
@@ -2227,8 +2290,17 @@ class WebInterlocutorSession:
                 "turn_count": len(result.turns),
                 "explicit_observational_memory_write": True,
                 "receipt_surface": "visible_browser_dialogue",
+                # What this memory is allowed to be used as. A partial
+                # observation is real material and is NOT evidence of a
+                # completed exchange; the record says which it is.
+                "proof_complete": bool(proof_complete),
+                "status": result.status,
             },
-            cause="web_interlocutor.learned_summary",
+            cause=(
+                "web_interlocutor.learned_summary"
+                if proof_complete
+                else "web_interlocutor.observed_transcript_unproven"
+            ),
         )
         receipt = await gateway.write(request)
         return str(getattr(receipt, "record_id", "") or ""), str(getattr(receipt, "receipt_id", "") or "")
