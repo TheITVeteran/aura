@@ -5091,11 +5091,19 @@ _TOOL_EXECUTION_CLAIM_RE = re.compile(
     # Presenting a result as obtained.
     r"|\boutput:\s*\S"
     r"|\bstdout:\s*\S"
-    r"|\bresult:\s*\S"
     r"|\bhere(?:'s|\s+is)\s+what\s+i\s+(?:got|got back|received)\b"
     r"|\bhere(?:'s|\s+is)\s+the\s+(?:actual\s+)?(?:output|result)\b"
     r"|\bit\s+printed\b"
-    r"|\bthe\s+(?:output|result)\s+(?:was|is)\s*[:\-]?\s*\S"
+    # "the result is X" is how anyone states a conclusion — "the result is
+    # 19/66" ends an ordinary probability derivation. Bare, it made this an
+    # execution claim, and unfounded_tool_execution_claim DESTROYS a reply, so
+    # correct arithmetic was annihilated for phrasing its answer normally.
+    # Same class as the "proceeding" sanitizer bug. It only counts when it is
+    # attributed to something that ran.
+    r"|\bthe\s+(?:output|result)\s+(?:of|from)\s+(?:running|executing|the\s+"
+    r"(?:code|script|command|program|query))\b"
+    r"|\bthe\s+(?:output|result)\s+(?:was|is)\s*[:\-]?\s*\S(?=[^.!?]{0,80}?"
+    r"\b(?:ran|run|executed|script|sandbox|interpreter|repl|command)\b)"
     # A concrete value attributed to a call: "returned 23756", "returned '4'".
     r"|\breturned\s+(?:[-+]?\d|['\"])"
     # Attributing numbers or output to an executor.

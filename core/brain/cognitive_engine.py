@@ -2958,6 +2958,12 @@ class CognitiveEngine:
                 "and uncertainty boundary. Host resource telemetry may only support, never "
                 "replace, the answer."
             )
+        live_capability_condition = str(
+            context.get("live_capability_condition") or ""
+        ).strip()
+        if live_capability_condition:
+            # Facts, not a script. She says it however she says things.
+            grounding_blocks.append(live_capability_condition)
         grounded_runtime_status = str(
             context.get("grounded_runtime_status_context") or ""
         ).strip()

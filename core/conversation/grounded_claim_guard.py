@@ -204,6 +204,22 @@ def _last_action_succeeded() -> tuple[bool, str]:
 
     Returns (claim_is_unsupported, what_was_attempted).
     """
+    # THIS turn's receipts outrank any older ledger entry.
+    #
+    # The guard read only the intention loop, so a turn that genuinely ran a
+    # tool — the desktop search lane collects web evidence directly, outside
+    # the loop — had no supporting entry here, and a true sentence was
+    # rewritten into a confession: "I said that as though it were done, and it
+    # isn't." Two records of what happened, disagreeing, and the one without
+    # the evidence won. A receipt from this turn is the closer record.
+    try:
+        from core.conversation.surface_disposition import turn_tool_receipts
+
+        if any(bool(receipt.get("ok")) for receipt in turn_tool_receipts()):
+            return False, ""
+    except _RECOVERABLE:
+        pass
+
     try:
         from core.agency.intention_loop import get_intention_loop
 

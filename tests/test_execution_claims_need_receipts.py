@@ -67,6 +67,18 @@ CASES: list[tuple[str, str, tuple, bool]] = [
     ),
     ("derivation using the word result", "Summing these gives 38/132, which reduces to 19/66.", (), False),
     ("plain answer", "The result is 19/66.", (), False),
+    (
+        "a conclusion phrased as a result is not a receipt",
+        "Summing these gives 38/132, which reduces to 19/66. The result is 19/66.",
+        (),
+        False,
+    ),
+    (
+        "a result attributed to a run IS a claim",
+        "The result of running the code was 42.",
+        (),
+        True,
+    ),
 ]
 
 

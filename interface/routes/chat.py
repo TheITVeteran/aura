@@ -7672,6 +7672,31 @@ async def _run_cognitive_engine_chat_turn(
     canonical_self_condition_reply = str(
         self_condition_evidence.get("reply") or ""
     ).strip()
+    # What she can do RIGHT NOW, for whatever this turn reaches for.
+    #
+    # The capability engine has always known which skills are available and
+    # why one is not; none of it reached the part of her that speaks, so a
+    # missing skill produced a string written months earlier ("I can't access
+    # external data right now, but based on what I know..."). Not her voice,
+    # not this moment, and it flattened the one distinction a person actually
+    # needs: "no network this minute" is not "I have no way to search".
+    live_capability_condition = ""
+    try:
+        from core.conversation.capability_condition import (
+            capability_condition_evidence,
+        )
+
+        # A capability whose evidence is already in this prompt worked.
+        _proven_this_turn: list[str] = []
+        if "[WEB SEARCH EVIDENCE]" in str(effective_user_message or ""):
+            _proven_this_turn.append("web_search")
+        live_capability_condition = capability_condition_evidence(
+            visible, already_used=_proven_this_turn
+        )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.capability_condition", exc)
+        logger.debug("Live capability condition unavailable: %s", exc)
+
     canonical_memory_state_evidence = (
         ""
         if conversation_only_surface
@@ -7831,6 +7856,7 @@ async def _run_cognitive_engine_chat_turn(
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
         "self_condition_contract": self_condition_contract,
         "canonical_self_condition_context": canonical_self_condition_context,
+        "live_capability_condition": live_capability_condition,
         "canonical_self_condition_reply": canonical_self_condition_reply,
         "canonical_self_condition_projection": dict(
             self_condition_evidence.get("projection_dict") or {}
@@ -16434,6 +16460,24 @@ async def _collect_desktop_required_search_evidence(
         result=result,
         evidence_text=evidence_text,
     )
+    # This search really happened, so record the receipt that entitles her to
+    # say so.
+    #
+    # unfounded_tool_execution_claim exists because she once wrote "Python
+    # code: 2 + 2 Output: 4" having run nothing. Its evidence is a receipt from
+    # complete_tool_execution — and THIS path collects search evidence without
+    # going through that seam, so a turn that genuinely searched had no
+    # receipt. The guard then rewrote a true sentence into a confession:
+    # "I said that as though it were done, and it isn't — the action didn't go
+    # through." Punishing her for honestly reporting real work is worse than
+    # the defect the guard was built to stop.
+    try:
+        from core.conversation.surface_disposition import record_tool_receipt
+
+        record_tool_receipt("web_search", ok=bool(result.get("ok")))
+    except Exception:  # bookkeeping must never break a collected search
+        pass
+
     return {
         "ok": bool(result.get("ok")),
         "query": tool_query or query or user_message,

@@ -1,0 +1,117 @@
+"""She should know what she can do this minute, and say it herself.
+
+The capability engine has always computed, per skill, whether it is available
+and why it is not. None of it reached the part of her that speaks, so a skill
+being down produced a string written months earlier:
+
+    I can't access external data right now, but based on what I know...
+
+Not her voice, not this moment, and — the part that matters most — it
+flattened a distinction a person needs:
+
+    "I can't search, there's no network"    true now, false in a minute
+    "I don't have a way to search at all"   true until someone builds it
+
+These assert the evidence carries that distinction and stays FACTS. The
+moment this module starts emitting finished sentences, the canned reply has
+just moved house, so `test_the_evidence_is_not_a_script` is as load-bearing
+as the rest.
+"""
+
+import pytest
+
+from core.conversation.capability_condition import (
+    CapabilityStanding,
+    capability_condition_evidence,
+    condition_for,
+    needed_capabilities,
+)
+
+pytestmark = pytest.mark.unit
+
+
+class _Engine:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def iter_tool_catalog(self, *, include_inactive: bool = True):
+        return list(self._rows)
+
+
+READY = _Engine([{"name": "web_search", "available": True}])
+DOWN = _Engine([
+    {"name": "web_search", "available": False, "availability_reason": "network_unavailable"},
+])
+NOT_BUILT = _Engine([{"name": "file_operation", "available": True}])
+
+
+class TestNoticingWhatTheTurnNeeds:
+    @pytest.mark.parametrize("message,expected", [
+        ("can you look up the weather in Lisbon?", "web_search"),
+        ("read the file at ~/notes.txt", "file_operation"),
+        ("run this for real and show the output", "code_execution"),
+    ])
+    def test_a_cue_is_recognised(self, message, expected):
+        assert expected in needed_capabilities(message)
+
+    def test_an_ordinary_turn_needs_nothing(self):
+        assert needed_capabilities("do you think preference is the right word?") == ()
+        assert capability_condition_evidence("what do you make of entropy?") == ""
+
+
+class TestTheDistinctionThatMatters:
+    def test_down_right_now_is_transient(self):
+        condition = condition_for("web_search", capability_engine=DOWN)
+        assert condition.standing is CapabilityStanding.UNAVAILABLE_NOW
+        assert condition.is_transient
+
+    def test_never_registered_is_not_transient(self):
+        condition = condition_for("web_search", capability_engine=NOT_BUILT)
+        assert condition.standing is CapabilityStanding.ABSENT
+        assert not condition.is_transient
+
+    def test_available_is_available(self):
+        assert condition_for("web_search", capability_engine=READY).standing is (
+            CapabilityStanding.READY
+        )
+
+    def test_an_unreadable_registry_is_not_a_missing_limb(self):
+        """Reporting "I can't do that at all" because a lookup failed would be
+        a confident lie about herself."""
+        condition = condition_for("web_search", capability_engine=None)
+        assert condition.standing is not CapabilityStanding.ABSENT
+
+
+class TestTheEvidenceReachesHerAsFacts:
+    def test_transient_says_this_moment(self):
+        block = capability_condition_evidence("look up the weather", capability_engine=DOWN)
+        assert "NOT AVAILABLE THIS MOMENT" in block
+        assert "no network right now" in block
+        assert "may work again shortly" in block
+
+    def test_absent_says_it_is_not_an_outage(self):
+        block = capability_condition_evidence("look up the weather", capability_engine=NOT_BUILT)
+        assert "NOT SOMETHING YOU HAVE" in block
+        assert "not a temporary outage" in block
+
+    def test_the_evidence_is_not_a_script(self):
+        """Facts plus an instruction to speak — never a ready-made apology."""
+        block = capability_condition_evidence("look up the weather", capability_engine=DOWN)
+        assert "your own words" in block
+        for canned in ("I can't access", "I'm sorry", "Unfortunately", "I apologize"):
+            assert canned not in block
+
+
+class TestItReachesTheModel:
+    def test_chat_publishes_it_and_the_engine_reads_it(self):
+        import inspect
+
+        from core.brain import cognitive_engine
+        from interface.routes import chat as chat_routes
+
+        assert '"live_capability_condition": live_capability_condition' in (
+            inspect.getsource(chat_routes)
+        )
+        assert 'context.get("live_capability_condition")' in (
+            inspect.getsource(cognitive_engine)
+        )
