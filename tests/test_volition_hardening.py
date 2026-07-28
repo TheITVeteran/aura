@@ -42,8 +42,13 @@ def test_lowercase_competence_drive_generates_self_diagnosis_goal():
     goal = engine._check_soul_drives()
 
     assert goal is not None
-    assert goal["origin"] == "intrinsic_competence"
-    assert "self-diagnosis" in goal["objective"]
+    # The drive now prefers a faculty-grounded target and keeps the generic
+    # self-diagnosis sweep as the honest fallback when nothing is measurable.
+    assert goal["origin"].startswith("intrinsic_competence")
+    if goal["origin"] == "intrinsic_competence":
+        assert "self-diagnosis" in goal["objective"]
+    else:
+        assert goal.get("faculty")
 
 
 def test_lowercase_curiosity_drive_generates_curiosity_goal():

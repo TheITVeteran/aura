@@ -294,12 +294,20 @@ def test_generate_curiosity_goal_fun(monkeypatch, engine):
     assert "origami" in goal["objective"]
 
 def test_check_soul_drives_competence(engine):
+    """The competence drive still fires; what it WANTS is now grounded.
+
+    It used to emit one fixed self-diagnosis sentence every time. It now
+    consults the faculty model first, so the origin is whichever grounded
+    target it found — falling back to the generic sweep only when the
+    self-model has nothing measurable to want.
+    """
     engine.orchestrator.soul.drive.name = "Competence"
     engine.orchestrator.soul.drive.urgency = 0.6
-    
+
     goal = engine._check_soul_drives()
     assert goal is not None
-    assert goal["origin"] == "intrinsic_competence"
+    assert goal["origin"].startswith("intrinsic_competence")
+    assert goal["objective"]
 
 def test_check_soul_drives_curiosity(engine):
     engine.orchestrator.soul.drive.name = "Curiosity"
