@@ -177,6 +177,41 @@ class AdaptiveImmuneConfig:
     tissue_diffusion: float = 0.16
     tissue_decay: float = 0.06
 
+#: Domains an antigen may legitimately claim. CP126 e2f39609: an arbitrary
+#: string was accepted, and source_domain gates whether substrate repair is
+#: allowed to act on a failure.
+_ANTIGEN_SOURCE_DOMAINS = frozenset({"substrate", "environment"})
+_MAX_ANTIGEN_TEXT = 4096
+_MAX_ANTIGEN_CONTEXT_KEYS = 64
+
+
+def _finite_timestamp(value: Any) -> float:
+    """A finite timestamp, or now. A NaN here corrupts every age computation."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return time.time()
+    return number if math.isfinite(number) and number > 0 else time.time()
+
+
+def _unit_scalar(value: Any, *, default: float = 0.0) -> float:
+    """A finite 0..1 pressure, or the default.
+
+    CP126 e2f39609: persisted antigens were rebuilt with bare ``float(...)``,
+    so a NaN or out-of-range score entered live immune state. NaN then
+    propagates silently through every comparison that decides whether to act
+    — ``nan > threshold`` is False, so a poisoned antigen reads as calm rather
+    than as unreadable.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return max(0.0, min(1.0, number))
+
+
 
 @dataclass
 class Antigen:
@@ -235,28 +270,49 @@ class Antigen:
             resized[:copy_len] = vector[:copy_len]
             vector = resized
 
+        # CP126 e2f39609: a NaN in the vector survives np.clip, and NaN reads
+        # as calm in every comparison that decides whether to act.
+        vector = np.nan_to_num(vector, nan=0.0, posinf=1.0, neginf=0.0)
+
+        raw_domain = str(data.get("source_domain", "substrate"))
+        if raw_domain not in _ANTIGEN_SOURCE_DOMAINS:
+            logger.warning(
+                "Persisted antigen declared unknown source_domain %r; "
+                "treating it as environment (the domain substrate repair may "
+                "NOT act on)",
+                raw_domain[:64],
+            )
+            # Fail toward the more restrictive domain: an antigen whose origin
+            # cannot be trusted must not unlock substrate repair.
+            raw_domain = "environment"
+
+        raw_context = data.get("context", {})
+        context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        if len(context) > _MAX_ANTIGEN_CONTEXT_KEYS:
+            context = dict(list(context.items())[:_MAX_ANTIGEN_CONTEXT_KEYS])
+
         return cls(
-            antigen_id=str(data.get("antigen_id", "")),
-            subsystem=str(data.get("subsystem", "unknown")),
+            antigen_id=str(data.get("antigen_id", ""))[:_MAX_ANTIGEN_TEXT],
+            subsystem=str(data.get("subsystem", "unknown"))[:_MAX_ANTIGEN_TEXT],
             vector=np.clip(vector, 0.0, 1.0),
-            danger=float(data.get("danger", 0.0)),
-            subsystem_need=float(data.get("subsystem_need", 0.0)),
-            threat_probability=float(data.get("threat_probability", 0.0)),
-            resource_pressure=float(data.get("resource_pressure", 0.0)),
-            error_load=float(data.get("error_load", 0.0)),
-            health_pressure=float(data.get("health_pressure", 0.0)),
-            temporal_pressure=float(data.get("temporal_pressure", 0.0)),
-            recurrence_pressure=float(data.get("recurrence_pressure", 0.0)),
+            danger=_unit_scalar(data.get("danger")),
+            subsystem_need=_unit_scalar(data.get("subsystem_need")),
+            threat_probability=_unit_scalar(data.get("threat_probability")),
+            resource_pressure=_unit_scalar(data.get("resource_pressure")),
+            error_load=_unit_scalar(data.get("error_load")),
+            health_pressure=_unit_scalar(data.get("health_pressure")),
+            temporal_pressure=_unit_scalar(data.get("temporal_pressure")),
+            recurrence_pressure=_unit_scalar(data.get("recurrence_pressure")),
             protected=bool(data.get("protected", False)),
             # Restore the origin domain — dropping it reclassified every
             # persisted environmental antigen as substrate, letting
             # environment-caused failures qualify for substrate repair.
-            source_domain=str(data.get("source_domain", "substrate")),
-            source=str(data.get("source", "unknown")),
-            error_signature=str(data.get("error_signature", "")),
-            stack_trace=str(data.get("stack_trace", "")),
-            timestamp=float(data.get("timestamp", time.time())),
-            context=dict(data.get("context", {})),
+            source_domain=raw_domain,
+            source=str(data.get("source", "unknown"))[:_MAX_ANTIGEN_TEXT],
+            error_signature=str(data.get("error_signature", ""))[:_MAX_ANTIGEN_TEXT],
+            stack_trace=str(data.get("stack_trace", ""))[:_MAX_ANTIGEN_TEXT],
+            timestamp=_finite_timestamp(data.get("timestamp")),
+            context=context,
         )
 
 
