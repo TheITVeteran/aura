@@ -2792,7 +2792,19 @@ class CognitiveEngine:
                     # "what time is it?" answered "my clock says 06:15 and the
                     # ambient light sensors report low illumination" at 01:40,
                     # from a runtime with no light sensor.
-                    system_prompt = f"{present}\n\n{system_prompt}"
+                    # NOT prepended any more. inference_gate now delivers this
+                    # same block as its own system message positioned just
+                    # BEFORE the final user turn — added after compaction, so
+                    # it cannot be trimmed away, which was the original reason
+                    # for prepending here.
+                    #
+                    # Prepending it a second time put per-turn volatile text
+                    # (a clock, "2 min ago" receipts) at token ~125 of the
+                    # system prompt, which invalidated the KV prefix for
+                    # everything behind it. Measured live: 1,648 of 1,834
+                    # tokens re-prefilled every turn (10% reuse) and a simple
+                    # reply taking 13-16s, almost all of it prefill.
+                    pass
                     # Grounding that cannot be seen cannot be verified. Two
                     # prompt builders and one of them ungrounded cost an hour
                     # of reasoning about why a fix "did not work" when it had
@@ -2815,7 +2827,9 @@ class CognitiveEngine:
 
                 actions = recent_actions_block()
                 if actions:
-                    system_prompt = f"{actions}\n\n{system_prompt}"
+                    # Same: the gate places the receipts block before the final
+                    # user turn. This copy only cost the cache prefix.
+                    pass
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
                 record_degradation(
                     "cognitive_engine",
@@ -2831,7 +2845,8 @@ class CognitiveEngine:
 
                     instruments = runtime_self_report()
                     if instruments:
-                        system_prompt = f"{instruments}\n\n{system_prompt}"
+                        # Same: delivered by the gate.
+                        pass
             except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
                 record_degradation(
                     "cognitive_engine",

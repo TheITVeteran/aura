@@ -65,6 +65,28 @@ def _fit_ends(text: str, limit: int) -> str:
     remaining = limit - len(_OMISSION_MARKER)
     head = max(1, remaining * 2 // 3)
     tail = max(1, remaining - head)
+
+    # The HEAD boundary must be stable across turns, or nothing behind it is
+    # cacheable.
+    #
+    # `limit` moves with the surrounding budget, so head moved with it and the
+    # cut landed on a different character every turn — mid-word, as " obser"
+    # then "se". Everything after the omission marker therefore looked like new
+    # text to the KV prefix trie. Measured live on the user surface: reuse stuck
+    # at 16% (286 of 1802 tokens) with divergence beginning exactly at the
+    # omission marker, so ~1500 tokens were re-prefilled on every single turn.
+    #
+    # Quantising the head to a coarse step, then snapping back to a whitespace
+    # boundary, makes the same input produce the same cut: small drifts in the
+    # budget no longer move it, and the prefix in front of the marker stays
+    # byte-identical from one turn to the next.
+    quantum = 256
+    if head > quantum:
+        head = (head // quantum) * quantum
+    boundary = text.rfind(" ", 0, head)
+    if boundary > quantum // 2:
+        head = boundary
+    tail = max(1, remaining - head)
     return f"{text[:head]}{_OMISSION_MARKER}{text[-tail:]}"
 
 
