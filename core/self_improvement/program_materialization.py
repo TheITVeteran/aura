@@ -561,7 +561,12 @@ async def _materialize(
         objective=spec.objective or f"clean-room reconstruction of {spec.name}",
         sandbox_profile="general",
         max_repair_attempts=max_repair_attempts,
-        max_tokens=2200,
+        # 2,200 was measured to truncate. The live 2048 synthesis ran out of
+        # tokens mid-block — the fence never closed — and while the extractor
+        # now recovers from that, recovering half an implementation is not the
+        # goal. A reference implementation of these rules is ~1,100 tokens;
+        # the model writes more prose around it than that leaves room for.
+        max_tokens=3400,
     )
     _say(3, "checking the rules against the held-out positions",
          f"{int(outcome.get('held_out_passed') or 0)}/{len(held_out)} reproduced"

@@ -68,6 +68,8 @@ _CODE_GEN_SYSTEM_PROMPT = (
 
 
 _FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(?P<code>.*?)```", re.IGNORECASE | re.DOTALL)
+#: Just the opening marker, for output that never got to close it.
+_OPENING_FENCE_RE = re.compile(r"```(?:python|py)?[ \t]*\r?\n?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -115,6 +117,19 @@ def extract_python_code(text: str) -> str:
         candidates = [candidate.strip() for candidate in fenced if candidate.strip()]
         if candidates:
             return max(candidates, key=len).strip()
+
+    # An opening fence with no closing one. The pattern requires both, so a
+    # generation that ran out of tokens mid-block matched nothing and the raw
+    # text — fence marker and all — went to the parser, which reported
+    # "invalid syntax" on line 1 and lost an otherwise usable implementation.
+    # Truncation is ordinary; throwing the whole answer away for it is not.
+    opening = _OPENING_FENCE_RE.search(raw)
+    if opening:
+        tail = raw[opening.end():]
+        closing = tail.find("```")
+        body = (tail[:closing] if closing >= 0 else tail).strip()
+        if body:
+            return body
 
     lines = raw.splitlines()
     start = _first_pythonish_line(raw)
@@ -320,9 +335,15 @@ class LLMCodeGenerator:
                 # A bare "invalid syntax" is the other undiagnosable ending: an
                 # apology or a prose answer reaches here intact, and what the
                 # model actually said is the entire diagnosis.
+                # Keep the line structure. Collapsing it to one line was how
+                # this failure first read as "`pythonimport randomdef move(...)"
+                # — unreadable, and indistinguishable from a model that had
+                # genuinely emitted no newlines. The shape IS the diagnosis
+                # when the complaint is a syntax error.
+                preview = "\n".join(str(code).splitlines()[:8])[:400]
                 raise RuntimeError(
-                    f"LLM returned no valid Python source ({exc.msg}); "
-                    f"model said: {' '.join(code.split())[:200]!r}"
+                    f"LLM returned no valid Python source "
+                    f"({exc.msg} at line {exc.lineno}); model said:\n{preview}"
                 ) from exc
             logger.info(
                 "Generated reconstruction candidate for %s (%d chars)",
