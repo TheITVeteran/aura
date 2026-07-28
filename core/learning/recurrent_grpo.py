@@ -423,6 +423,145 @@ def recurrent_policy_tensor_map_sha256(
     return digest.hexdigest()
 
 
+def attach_recurrent_policy_adapters(
+    model: Any,
+    spec: RLCExecutionSpec,
+    *,
+    lora_rank: int,
+    lora_layers: int,
+    lora_targets: Sequence[str],
+    initialization_seed: int,
+) -> tuple[str, ...]:
+    """Attach the exact proof-campaign adapter topology to a frozen model.
+
+    Training and independent state replay call this same source-bound
+    constructor. The complete topology is preflighted before the first module
+    mutation so a missing, ambiguous, or already-wrapped projection cannot
+    leave behind a partial policy.
+    """
+
+    from core.brain.llm.latent_cortex.recurrence_adapter import (
+        ScopedLoRALinear,
+    )
+
+    if (
+        type(lora_rank) is not int
+        or lora_rank < 1
+        or type(lora_layers) is not int
+        or lora_layers < 1
+        or type(initialization_seed) is not int
+        or not 0 <= initialization_seed <= 0xFFFFFFFF
+        or not isinstance(lora_targets, Sequence)
+        or isinstance(lora_targets, (str, bytes, bytearray))
+    ):
+        raise ValueError("recurrent policy adapter configuration is invalid")
+    targets = tuple(lora_targets)
+    if (
+        not targets
+        or len(targets) != len(set(targets))
+        or any(
+            not isinstance(target, str)
+            or not target
+            or target != target.strip()
+            for target in targets
+        )
+    ):
+        raise ValueError("recurrent policy adapter targets are invalid")
+    layers = getattr(getattr(model, "model", None), "layers", None)
+    if not isinstance(layers, (list, tuple)) or not layers:
+        raise ValueError("model exposes no decoder layer inventory")
+    prelude_end = max(1, int(len(layers) * spec.prelude_frac))
+    coda_start = min(
+        len(layers) - 1,
+        len(layers) - max(1, int(len(layers) * spec.coda_frac)),
+    )
+    available_layers = coda_start - prelude_end
+    if available_layers < 1 or lora_layers > available_layers:
+        raise ValueError(
+            "requested recurrent policy adapter layers exceed the recurrent window"
+        )
+    adapted_indices = range(coda_start - lora_layers, coda_start)
+    planned: list[tuple[Any, str, Any, int, str]] = []
+    for layer_index in adapted_indices:
+        layer = layers[layer_index]
+        for target in targets:
+            matches: list[tuple[str, Any, Any]] = []
+            for parent_name in ("self_attn", "mlp"):
+                parent = getattr(layer, parent_name, None)
+                if parent is None:
+                    continue
+                projection = getattr(parent, target, None)
+                if projection is not None:
+                    matches.append((parent_name, parent, projection))
+            if len(matches) != 1:
+                raise ValueError(
+                    "recurrent policy adapter target must resolve exactly once: "
+                    f"layer={layer_index} target={target} matches={len(matches)}"
+                )
+            parent_name, parent, projection = matches[0]
+            if isinstance(projection, ScopedLoRALinear):
+                raise ValueError(
+                    "recurrent policy adapter target is already wrapped: "
+                    f"layer={layer_index} target={target}"
+                )
+            site = f"model.layers.{layer_index}.{parent_name}.{target}"
+            planned.append((parent, target, projection, layer_index, site))
+
+    import mlx.core as mx
+
+    model.freeze()
+    mx.random.seed(initialization_seed)
+    for parent, target, projection, layer_index, site in planned:
+        setattr(
+            parent,
+            target,
+            ScopedLoRALinear.from_base(
+                projection,
+                r=lora_rank,
+                block_index=layer_index,
+                site=site,
+            ),
+        )
+    return tuple(site for _parent, _target, _projection, _index, site in planned)
+
+
+def recurrent_policy_optimizer_config(
+    learning_rate: float,
+) -> dict[str, Any]:
+    """Return the explicit optimizer contract shared by trainer and replayer."""
+
+    if (
+        isinstance(learning_rate, bool)
+        or not isinstance(learning_rate, (int, float))
+        or not math.isfinite(float(learning_rate))
+        or not 0.0 < float(learning_rate) <= 1.0
+    ):
+        raise ValueError("recurrent policy learning rate is invalid")
+    return {
+        "class_name": "mlx.optimizers.Adam",
+        "learning_rate_hex": float(learning_rate).hex(),
+        "betas_hex": [(0.9).hex(), (0.999).hex()],
+        "eps_hex": (1e-8).hex(),
+        "bias_correction": False,
+    }
+
+
+def build_recurrent_policy_optimizer(learning_rate: float) -> Any:
+    """Build the exact optimizer committed by the proof campaign."""
+
+    import mlx.optimizers as optim
+
+    config = recurrent_policy_optimizer_config(learning_rate)
+    return optim.Adam(
+        learning_rate=float.fromhex(config["learning_rate_hex"]),
+        betas=[
+            float.fromhex(value) for value in config["betas_hex"]
+        ],
+        eps=float.fromhex(config["eps_hex"]),
+        bias_correction=config["bias_correction"],
+    )
+
+
 def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
     """Hash the exact trainable tensor tree plus its recurrent graph."""
 
@@ -3222,7 +3361,9 @@ __all__ = [
     "RecurrentSamplingConfig",
     "RecurrentSamplingParityError",
     "VerifiedTrajectoryGroupConfig",
+    "attach_recurrent_policy_adapters",
     "branch_token_logprobs",
+    "build_recurrent_policy_optimizer",
     "build_verified_trajectory_group_source_binding",
     "clipped_recurrent_grpo_objective",
     "cortex_config_from_execution_spec",
@@ -3233,6 +3374,7 @@ __all__ = [
     "recurrent_policy_tensor_map_sha256",
     "recurrent_policy_sample_from_causal_pair",
     "recurrent_policy_sample_from_receipt",
+    "recurrent_policy_optimizer_config",
     "recurrent_sampling_rng_root_sha256",
     "recurrent_completion_token_logprobs",
     "sample_final_recurrent_transition_completion",

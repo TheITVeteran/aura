@@ -614,6 +614,26 @@ def _publish_adapter_snapshot(path: Path, tensors: Mapping[str, Any]) -> None:
         scratch.unlink(missing_ok=True)
 
 
+def _publish_immutable_tensor_snapshot(
+    path: Path,
+    tensors: Mapping[str, Any],
+    *,
+    role: str,
+) -> None:
+    import mlx.core as mx
+
+    scratch = path.parent / f".{path.stem}.{time.time_ns()}.tmp.safetensors"
+    try:
+        mx.save_safetensors(str(scratch), dict(tensors))
+        _publish_immutable_bytes(
+            path,
+            scratch.read_bytes(),
+            role=role,
+        )
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
 def _publish_immutable_bytes(path: Path, payload: bytes, *, role: str) -> None:
     if path.is_symlink():
         raise GRPOCheckpointError(f"{role} symlink is forbidden")
@@ -1676,7 +1696,6 @@ def main(
 
     import mlx.core as mx
     import mlx.nn as nn
-    import mlx.optimizers as optim
 
     global _COT_PREAMBLE
     _COT_PREAMBLE = (
@@ -1926,61 +1945,107 @@ def main(
             ScopedLoRALinear,
             recurrence_adapter_scope,
         )
+        from core.learning.recurrent_grpo import (
+            attach_recurrent_policy_adapters,
+            build_recurrent_policy_optimizer,
+            recurrent_policy_optimizer_config,
+        )
 
-        total_layers = len(model.model.layers)
         targets = tuple(t.strip() for t in args.lora_targets.split(","))
-        attached = 0
         if execution_spec is None:
+            total_layers = len(model.model.layers)
             adapted_indices = range(max(0, total_layers - args.lora_layers), total_layers)
+            attached = 0
+            mx.random.seed(_stable_seed(args.seed, "lora-init", args.adapter_id))
+            for index in adapted_indices:
+                layer = model.model.layers[index]
+                for parent_name in ("self_attn", "mlp"):
+                    parent = getattr(layer, parent_name, None)
+                    if parent is None:
+                        continue
+                    for target in targets:
+                        projection = getattr(parent, target, None)
+                        if projection is not None and not isinstance(
+                            projection,
+                            ScopedLoRALinear,
+                        ):
+                            site = (
+                                f"model.layers.{index}.{parent_name}.{target}"
+                            )
+                            setattr(
+                                parent,
+                                target,
+                                ScopedLoRALinear.from_base(
+                                    projection,
+                                    r=args.lora_rank,
+                                    block_index=index,
+                                    site=site,
+                                ),
+                            )
+                            attached += 1
         else:
-            prelude_end = max(1, int(total_layers * execution_spec.prelude_frac))
-            coda_start = min(
-                total_layers - 1,
-                total_layers - max(1, int(total_layers * execution_spec.coda_frac)),
+            attached_sites = attach_recurrent_policy_adapters(
+                model,
+                execution_spec,
+                lora_rank=args.lora_rank,
+                lora_layers=args.lora_layers,
+                lora_targets=targets,
+                initialization_seed=_stable_seed(
+                    args.seed,
+                    "lora-init",
+                    args.adapter_id,
+                ),
             )
-            adapted_indices = range(
-                max(prelude_end, coda_start - args.lora_layers),
-                coda_start,
-            )
-        # The initial recurrent policy digest includes both LoRA factors even
-        # though the B factor starts at zero. Seed attachment explicitly so a
-        # signed initial-policy commitment survives process restart exactly.
-        mx.random.seed(_stable_seed(args.seed, "lora-init", args.adapter_id))
-        for index in adapted_indices:
-            layer = model.model.layers[index]
-            for parent_name in ("self_attn", "mlp"):
-                parent = getattr(layer, parent_name, None)
-                if parent is None:
-                    continue
-                for target in targets:
-                    projection = getattr(parent, target, None)
-                    if projection is not None and not isinstance(projection, ScopedLoRALinear):
-                        site = f"model.layers.{index}.{parent_name}.{target}"
-                        setattr(
-                            parent,
-                            target,
-                            ScopedLoRALinear.from_base(
-                                projection,
-                                r=args.lora_rank,
-                                block_index=index,
-                                site=site,
-                            ),
-                        )
-                        attached += 1
+            attached = len(attached_sites)
         if not attached:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
 
         if args.initial_policy_probe:
+            from mlx.utils import tree_flatten
+
             from core.learning.recurrent_grpo import recurrent_policy_sha256
             from core.learning.verified_transition_policy_probe import (
                 build_initial_recurrent_policy_probe,
+                inspect_initial_adapter_snapshot,
+                inspect_initial_optimizer_snapshot,
                 validate_initial_recurrent_policy_probe_identity,
             )
 
             assert execution_spec is not None
             assert token_trace_adapter is not None
             probe_path = out_dir / "initial_policy_probe.json"
+            snapshot_path = out_dir / "initial_adapter.safetensors"
+            optimizer_snapshot_path = (
+                out_dir / "initial_optimizer.safetensors"
+            )
+            initial_tensors = dict(
+                tree_flatten(model.trainable_parameters())
+            )
+            probe_optimizer = build_recurrent_policy_optimizer(
+                args.learning_rate
+            )
+            probe_optimizer.init(model.trainable_parameters())
+            initial_optimizer_tensors = dict(
+                tree_flatten(probe_optimizer.state)
+            )
+            _publish_immutable_tensor_snapshot(
+                snapshot_path,
+                initial_tensors,
+                role="initial recurrent adapter snapshot",
+            )
+            _publish_immutable_tensor_snapshot(
+                optimizer_snapshot_path,
+                initial_optimizer_tensors,
+                role="initial recurrent optimizer snapshot",
+            )
+            initial_adapter_artifact = inspect_initial_adapter_snapshot(
+                snapshot_path,
+                execution_spec_sha256=execution_spec.sha256,
+            )
+            initial_optimizer_artifact = inspect_initial_optimizer_snapshot(
+                optimizer_snapshot_path
+            )
             probe_identity = {
                 "campaign_id": args.adapter_id,
                 "initial_policy_sha256": recurrent_policy_sha256(model, execution_spec),
@@ -1996,6 +2061,15 @@ def main(
                     "targets": list(targets),
                 },
                 "source_bindings": sources,
+                "initial_adapter_artifact": initial_adapter_artifact,
+                "optimizer_initialization": (
+                    recurrent_policy_optimizer_config(
+                        args.learning_rate
+                    )
+                ),
+                "initial_optimizer_artifact": (
+                    initial_optimizer_artifact
+                ),
             }
             with interprocess_file_lock(out_dir / ".initial-policy-probe.lock"):
                 if probe_path.exists() or probe_path.is_symlink():
@@ -2119,7 +2193,7 @@ def main(
             warm_start_pass_rates,
         )
 
-        optimizer = optim.Adam(learning_rate=args.learning_rate)
+        optimizer = build_recurrent_policy_optimizer(args.learning_rate)
         optimizer.init(model.trainable_parameters())
         if verified_group_provider_factory is not None:
             assert execution_spec is not None

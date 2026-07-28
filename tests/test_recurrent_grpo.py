@@ -24,6 +24,9 @@ import core.learning.recurrent_grpo as recurrent_grpo_runtime  # noqa: E402
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
+from core.brain.llm.latent_cortex.recurrence_adapter import (  # noqa: E402
+    ScopedLoRALinear,
+)
 from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     ExactAdjointInterventionConfig,
@@ -37,12 +40,15 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     RecurrentGRPOConfig,
     RecurrentSamplingConfig,
     VerifiedTrajectoryGroupConfig,
+    attach_recurrent_policy_adapters,
     branch_token_logprobs,
+    build_recurrent_policy_optimizer,
     clipped_recurrent_grpo_objective,
     cortex_config_from_execution_spec,
     exact_adjoint_sampled_group_value_and_grad,
     exact_adjoint_verifier_group_value_and_grad,
     recurrent_completion_token_logprobs,
+    recurrent_policy_optimizer_config,
     recurrent_policy_sample_from_causal_pair,
     recurrent_policy_sample_from_receipt,
     recurrent_policy_sha256,
@@ -147,6 +153,91 @@ def _spec(
         prelude_frac=0.25,
         coda_frac=0.25,
     )
+
+
+def test_proof_campaign_adapter_topology_is_exact_and_reconstructable():
+    spec = _spec()
+    first = _model(seed=401)
+    second = _model(seed=401)
+
+    first_sites = attach_recurrent_policy_adapters(
+        first,
+        spec,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("q_proj", "o_proj"),
+        initialization_seed=17,
+    )
+    second_sites = attach_recurrent_policy_adapters(
+        second,
+        spec,
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("q_proj", "o_proj"),
+        initialization_seed=17,
+    )
+
+    assert first_sites == (
+        "model.layers.2.self_attn.q_proj",
+        "model.layers.2.self_attn.o_proj",
+    )
+    assert second_sites == first_sites
+    assert recurrent_policy_sha256(first, spec) == recurrent_policy_sha256(
+        second,
+        spec,
+    )
+
+
+def test_proof_campaign_adapter_topology_preflight_prevents_partial_mutation():
+    model = _model(seed=403)
+
+    with pytest.raises(ValueError, match="resolve exactly once"):
+        attach_recurrent_policy_adapters(
+            model,
+            _spec(),
+            lora_rank=2,
+            lora_layers=1,
+            lora_targets=("q_proj", "missing_projection"),
+            initialization_seed=19,
+        )
+
+    layer = model.model.layers[2]
+    assert not isinstance(layer.self_attn.q_proj, ScopedLoRALinear)
+    assert not isinstance(layer.self_attn.o_proj, ScopedLoRALinear)
+
+
+def test_proof_campaign_optimizer_constructor_is_explicit_and_reconstructable():
+    config = recurrent_policy_optimizer_config(1e-5)
+    model = _model(seed=407)
+    attach_recurrent_policy_adapters(
+        model,
+        _spec(),
+        lora_rank=2,
+        lora_layers=1,
+        lora_targets=("q_proj", "o_proj"),
+        initialization_seed=23,
+    )
+    first = build_recurrent_policy_optimizer(1e-5)
+    second = build_recurrent_policy_optimizer(1e-5)
+    first.init(model.trainable_parameters())
+    second.init(model.trainable_parameters())
+    first_state = dict(tree_flatten(first.state))
+    second_state = dict(tree_flatten(second.state))
+
+    assert config == {
+        "class_name": "mlx.optimizers.Adam",
+        "learning_rate_hex": (1e-5).hex(),
+        "betas_hex": [(0.9).hex(), (0.999).hex()],
+        "eps_hex": (1e-8).hex(),
+        "bias_correction": False,
+    }
+    assert set(first_state) == set(second_state)
+    comparisons = [
+        mx.array_equal(first_state[key], second_state[key])
+        for key in first_state
+    ]
+    mx.eval(*comparisons)
+    assert all(bool(value) for value in comparisons)
 
 
 def test_branch_logprobs_are_bound_to_exact_tokens_and_branch():

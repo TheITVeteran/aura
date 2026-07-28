@@ -1,0 +1,40 @@
+{
+  "schema": "aura.spark.cp420q_initial_policy_state_custody_evidence.v1",
+  "checkpoint": "CP420Q",
+  "claim_boundary": "exact_initial_adapter_and_optimizer_state_custody_only_external_measurement_replay_not_yet_proven",
+  "implementation": {
+    "shared_adapter_topology_constructor": true,
+    "shared_explicit_adam_constructor": true,
+    "initial_adapter_snapshot_custodied": true,
+    "initial_optimizer_snapshot_custodied": true,
+    "exact_tensor_inventory_bound": true,
+    "intervention_launch_requires_v2_custody": true,
+    "materializer_reopen_verifies_state": true,
+    "per_update_pre_measurement_bound": false,
+    "external_objective_recomputed": false,
+    "external_gradient_recomputed": false,
+    "external_optimizer_step_replayed": false
+  },
+  "verification": {
+    "focused_tests": {
+      "passed": 87,
+      "failed": 0
+    },
+    "downstream_transaction_tests": {
+      "passed": 137,
+      "failed": 0
+    },
+    "launch_and_external_contract_tests": {
+      "passed": 84,
+      "failed": 0
+    },
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "resident_32b_loaded": false,
+  "resident_32b_trained": false,
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}

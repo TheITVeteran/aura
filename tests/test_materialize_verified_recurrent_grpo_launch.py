@@ -486,6 +486,113 @@ def test_materializer_rejects_noncanonical_external_configuration(
         materializer._load_signer(path)
 
 
+def test_intervention_campaign_requires_external_initial_state_custody() -> None:
+    assert (
+        materializer._intervention_state_replay_required(
+            {
+                "training": {
+                    "verified_trajectory_config_artifact": {
+                        "config": {
+                            "intervention_config": {
+                                "schema": "fixture.intervention.v1"
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        is True
+    )
+    assert (
+        materializer._intervention_state_replay_required(
+            {
+                "training": {
+                    "verified_trajectory_config_artifact": {
+                        "config": {"intervention_config": None}
+                    }
+                }
+            }
+        )
+        is False
+    )
+
+
+def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
+    tmp_path: Path,
+) -> None:
+    mx = pytest.importorskip("mlx.core")
+    adapter_path = (tmp_path / "initial_adapter.safetensors").resolve()
+    optimizer_path = (
+        tmp_path / "initial_optimizer.safetensors"
+    ).resolve()
+    mx.save_safetensors(
+        str(adapter_path),
+        {
+            "layer.lora_a": mx.array([[1.0, 2.0]]),
+            "layer.lora_b": mx.array([[3.0], [4.0]]),
+        },
+    )
+    mx.save_safetensors(
+        str(optimizer_path),
+        {
+            "step": mx.array(0, dtype=mx.uint64),
+            "learning_rate": mx.array(1e-5),
+            "layer.lora_a.m": mx.zeros((1, 2)),
+            "layer.lora_a.v": mx.zeros((1, 2)),
+            "layer.lora_b.m": mx.zeros((2, 1)),
+            "layer.lora_b.v": mx.zeros((2, 1)),
+        },
+    )
+    adapter_path.chmod(0o600)
+    optimizer_path.chmod(0o600)
+    execution_spec_sha256 = _sha("execution-spec")
+    adapter_artifact = materializer.inspect_initial_adapter_snapshot(
+        adapter_path,
+        execution_spec_sha256=execution_spec_sha256,
+    )
+    optimizer_artifact = (
+        materializer.inspect_initial_optimizer_snapshot(optimizer_path)
+    )
+    optimizer_config = {
+        "class_name": "mlx.optimizers.Adam",
+        "learning_rate_hex": (1e-5).hex(),
+        "betas_hex": [(0.9).hex(), (0.999).hex()],
+        "eps_hex": (1e-8).hex(),
+        "bias_correction": False,
+    }
+    probe = {
+        "schema": materializer.INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+        "receipt_sha256": _sha("probe"),
+        "initial_policy_sha256": adapter_artifact["policy_sha256"],
+        "execution_spec_sha256": execution_spec_sha256,
+        "adapter_initialization": {
+            "seed": 17,
+            "rank": 8,
+            "layers": 8,
+            "targets": ["q_proj"],
+        },
+        "optimizer_initialization": optimizer_config,
+        "initial_adapter_artifact": adapter_artifact,
+        "initial_optimizer_artifact": optimizer_artifact,
+    }
+    custody = materializer.build_initial_policy_state_custody(
+        initial_policy_probe_sha256=probe["receipt_sha256"],
+        initial_policy_sha256=probe["initial_policy_sha256"],
+        execution_spec_sha256=execution_spec_sha256,
+        adapter_initialization=probe["adapter_initialization"],
+        optimizer_initialization=optimizer_config,
+        initial_adapter_artifact=adapter_artifact,
+        initial_optimizer_artifact=optimizer_artifact,
+        initial_adapter_path=adapter_path,
+        initial_optimizer_path=optimizer_path,
+    )
+
+    assert materializer._validate_materialized_initial_state(
+        probe=probe,
+        provider_config={"initial_policy_state_custody": custody},
+    ) == custody
+
+
 def test_materializer_rejects_distinct_signers_with_shared_custody(
     tmp_path: Path,
 ) -> None:

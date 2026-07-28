@@ -60,6 +60,11 @@ from core.learning.verified_transition_launch_bundle import (
     validate_verified_transition_launch_archive,
 )
 from core.learning.verified_transition_policy_probe import (
+    INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2,
+    build_initial_policy_state_custody,
+    inspect_initial_adapter_snapshot,
+    inspect_initial_optimizer_snapshot,
+    validate_initial_policy_state_custody,
     validate_initial_recurrent_policy_probe,
 )
 from core.learning.verified_transition_production_factory import (
@@ -369,6 +374,58 @@ def _validate_preregistration_envelope(
         _fail("preregistration_contract_digest_mismatch")
 
 
+def _intervention_state_replay_required(
+    contract: Mapping[str, Any],
+) -> bool:
+    training = contract.get("training")
+    artifact = (
+        training.get("verified_trajectory_config_artifact")
+        if isinstance(training, Mapping)
+        else None
+    )
+    config = artifact.get("config") if isinstance(artifact, Mapping) else None
+    return (
+        isinstance(config, Mapping)
+        and isinstance(config.get("intervention_config"), Mapping)
+    )
+
+
+def _validate_materialized_initial_state(
+    *,
+    probe: Mapping[str, Any],
+    provider_config: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    custody_value = provider_config.get("initial_policy_state_custody")
+    if probe.get("schema") != INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2:
+        if custody_value is not None:
+            _fail("initial_policy_state_custody_unexpected")
+        return None
+    custody = validate_initial_policy_state_custody(custody_value)
+    artifact = inspect_initial_adapter_snapshot(
+        custody["initial_adapter_path"],
+        execution_spec_sha256=str(probe["execution_spec_sha256"]),
+    )
+    optimizer_artifact = inspect_initial_optimizer_snapshot(
+        custody["initial_optimizer_path"]
+    )
+    if (
+        custody["initial_policy_probe_sha256"] != probe["receipt_sha256"]
+        or custody["initial_policy_sha256"] != probe["initial_policy_sha256"]
+        or custody["execution_spec_sha256"]
+        != probe["execution_spec_sha256"]
+        or custody["adapter_initialization"]
+        != probe["adapter_initialization"]
+        or custody["optimizer_initialization"]
+        != probe["optimizer_initialization"]
+        or custody["initial_adapter_artifact"] != artifact
+        or custody["initial_optimizer_artifact"] != optimizer_artifact
+        or probe["initial_adapter_artifact"] != artifact
+        or probe["initial_optimizer_artifact"] != optimizer_artifact
+    ):
+        _fail("initial_policy_state_custody_mismatch")
+    return custody
+
+
 def _recover_completed_launch(
     *,
     contract: Mapping[str, Any],
@@ -487,6 +544,12 @@ def _recover_completed_launch(
             _fail(f"{role}_archived_signer_config_mismatch")
 
     provider_contract = archive.provider_contract
+    custody = _validate_materialized_initial_state(
+        probe=probe,
+        provider_config=archive.provider_config,
+    )
+    if _intervention_state_replay_required(contract) and custody is None:
+        _fail("intervention_initial_policy_state_custody_required")
     if (
         receipt.get("campaign_id") != contract["campaign_id"]
         or receipt.get("preregistration_contract_sha256")
@@ -665,6 +728,12 @@ def materialize_launch(
             completion_path=completion_path,
         )
 
+    if (
+        _intervention_state_replay_required(contract)
+        and probe["schema"] != INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2
+    ):
+        _fail("intervention_initial_policy_state_custody_required")
+
     prereg.validate_contract(contract, verify_model=True)
     observed_second = (
         time.time_ns() if now_unix_ns is None else now_unix_ns
@@ -705,6 +774,77 @@ def materialize_launch(
         _fail("initial_policy_probe_tokenizer_mismatch")
 
     ensure_private_directory(launch_root)
+    initial_policy_state_custody = None
+    if probe["schema"] == INITIAL_RECURRENT_POLICY_PROBE_SCHEMA_V2:
+        source_artifact = probe["initial_adapter_artifact"]
+        source_optimizer_artifact = probe["initial_optimizer_artifact"]
+        try:
+            source_snapshot = (
+                _probe_path.parent / source_artifact["path"]
+            ).resolve(strict=True)
+            source_optimizer_snapshot = (
+                _probe_path.parent / source_optimizer_artifact["path"]
+            ).resolve(strict=True)
+        except OSError as exc:
+            raise LaunchMaterializationError(
+                "initial_policy_probe_adapter_artifact_unavailable"
+            ) from exc
+        observed_source_artifact = inspect_initial_adapter_snapshot(
+            source_snapshot,
+            execution_spec_sha256=str(probe["execution_spec_sha256"]),
+        )
+        if observed_source_artifact != source_artifact:
+            _fail("initial_policy_probe_adapter_artifact_mismatch")
+        observed_source_optimizer_artifact = (
+            inspect_initial_optimizer_snapshot(source_optimizer_snapshot)
+        )
+        if (
+            observed_source_optimizer_artifact
+            != source_optimizer_artifact
+        ):
+            _fail("initial_policy_probe_optimizer_artifact_mismatch")
+        copied_snapshot = launch_root / source_artifact["path"]
+        copied_optimizer_snapshot = (
+            launch_root / source_optimizer_artifact["path"]
+        )
+        _publish(
+            copied_snapshot,
+            read_stable_bytes(
+                source_snapshot,
+                max_bytes=int(source_artifact["size_bytes"]),
+            ),
+            role="initial_adapter_snapshot",
+        )
+        _publish(
+            copied_optimizer_snapshot,
+            read_stable_bytes(
+                source_optimizer_snapshot,
+                max_bytes=int(source_optimizer_artifact["size_bytes"]),
+            ),
+            role="initial_optimizer_snapshot",
+        )
+        copied_artifact = inspect_initial_adapter_snapshot(
+            copied_snapshot,
+            execution_spec_sha256=str(probe["execution_spec_sha256"]),
+        )
+        if copied_artifact != source_artifact:
+            _fail("materialized_initial_adapter_artifact_mismatch")
+        copied_optimizer_artifact = inspect_initial_optimizer_snapshot(
+            copied_optimizer_snapshot
+        )
+        if copied_optimizer_artifact != source_optimizer_artifact:
+            _fail("materialized_initial_optimizer_artifact_mismatch")
+        initial_policy_state_custody = build_initial_policy_state_custody(
+            initial_policy_probe_sha256=str(probe["receipt_sha256"]),
+            initial_policy_sha256=str(probe["initial_policy_sha256"]),
+            execution_spec_sha256=str(probe["execution_spec_sha256"]),
+            adapter_initialization=probe["adapter_initialization"],
+            optimizer_initialization=probe["optimizer_initialization"],
+            initial_adapter_artifact=copied_artifact,
+            initial_optimizer_artifact=copied_optimizer_artifact,
+            initial_adapter_path=copied_snapshot,
+            initial_optimizer_path=copied_optimizer_snapshot,
+        )
     requested_ns = time.time_ns() if now_unix_ns is None else now_unix_ns
     requested_ns = (requested_ns // 1_000_000_000) * 1_000_000_000
     intent_path = launch_root / "materialization-intent.json"
@@ -845,7 +985,20 @@ def materialize_launch(
             "trainer_output_root": str(output_root.resolve(strict=False)),
             "transaction_root": str(transaction_root.resolve(strict=False)),
         },
+        **(
+            {
+                "initial_policy_state_custody": (
+                    initial_policy_state_custody
+                )
+            }
+            if initial_policy_state_custody is not None
+            else {}
+        ),
     }
+    _validate_materialized_initial_state(
+        probe=probe,
+        provider_config=provider_config,
+    )
     components = verified_recurrent_runtime_components()
     provider_contract = build_verified_transition_provider_contract(
         provider_config=provider_config,

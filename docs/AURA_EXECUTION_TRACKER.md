@@ -31286,3 +31286,39 @@ dishonest forecast reduction: the evidence-adjusted range remains 3-6
 checkpoints to a sealed resident-32B training launch, 7-12 to a defensible
 preliminary gain verdict, and 12-22 to the powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420Q exact initial policy-state custody
+
+The recurrent trainer and future external replayer now use the same
+source-bound adapter-topology constructor and the same explicit Adam
+constructor. The topology is fully preflighted before mutation, and the
+optimizer contract freezes canonical hexadecimal hyperparameters rather than
+depending on library defaults.
+
+Initial-policy probe v2 immutably binds exact initial adapter and optimizer
+snapshots, including private stable file identity, byte and inventory digests,
+complete LoRA factor pairs, adapter-policy identity, and every Adam moment.
+Intervention launch materialization refuses v1 hash-only probes, copies and
+reopens both snapshots under the launch root, cross-binds them to the policy
+probe and execution spec, and revalidates them during completed-launch
+recovery.
+
+This is the initial node of an `updates + 1` state chain, not an independent
+measurement replay result. CP420R must durably bind each admitted update to its
+pre-measurement state before objective evaluation; CP420S must reconstruct the
+model, objective, gradients, and Adam transition independently and require an
+identical post-state. Until those pass,
+`external_policy_state_replayed` remains false.
+
+The final source-state focused matrix passes 87/87, the disjoint downstream
+transaction matrix passes 137/137, and the launch/external/provider matrix
+passes 84/84. Ruff, bytecode compilation, and diff checks pass. Evidence:
+`artifacts/current/cp420q_initial_policy_state_custody_evidence.json`.
+
+No resident 32B was loaded or trained. SPARK-060/061/062 remain open, and no
+reasoning, frontier, promotion, or `WOW Signal` claim follows. CP420Q is total
+checkpoint 687. The 687-920 completion envelope is approximately
+74.7%-100.0%, with an 87.3% midpoint. The evidence-adjusted range is 3-5
+checkpoints to a sealed resident-32B launch, 7-11 to a defensible preliminary
+gain verdict, and 12-21 to the powered conditional `WOW Signal` decision.
+Final multi-hour soaks remain deferred.

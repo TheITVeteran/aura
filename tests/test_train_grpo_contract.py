@@ -34,6 +34,7 @@ from tools.train_grpo import (
     _point_estimate_delta,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
+    _publish_immutable_tensor_snapshot,
     _record_recurrent_step_failure,
     _render,
     _scheduled_verified_training_task,
@@ -615,6 +616,58 @@ def test_adapter_snapshot_is_atomically_published_as_real_safetensors(tmp_path):
     assert set(loaded) == {"layer.lora_a"}
     assert bool(mx.array_equal(loaded["layer.lora_a"], mx.array([1.0, 2.0])))
     assert not list(tmp_path.glob(".*.tmp.safetensors"))
+
+
+def test_initial_adapter_snapshot_is_immutable_and_inspectable(tmp_path):
+    mx = pytest.importorskip("mlx.core")
+    from core.learning.verified_transition_policy_probe import (
+        inspect_initial_adapter_snapshot,
+        inspect_initial_optimizer_snapshot,
+    )
+
+    target = tmp_path / "initial_adapter.safetensors"
+    tensors = {
+        "layer.lora_a": mx.array([[1.0, 2.0]]),
+        "layer.lora_b": mx.array([[3.0], [4.0]]),
+    }
+    _publish_immutable_tensor_snapshot(
+        target,
+        tensors,
+        role="initial recurrent adapter snapshot",
+    )
+    first_bytes = target.read_bytes()
+    _publish_immutable_tensor_snapshot(
+        target,
+        tensors,
+        role="initial recurrent adapter snapshot",
+    )
+
+    binding = inspect_initial_adapter_snapshot(
+        target,
+        execution_spec_sha256="a" * 64,
+    )
+
+    assert target.read_bytes() == first_bytes
+    assert binding["path"] == target.name
+    assert binding["tensor_count"] == 2
+    assert binding["size_bytes"] == len(first_bytes)
+    assert binding["policy_sha256"]
+
+    optimizer_target = tmp_path / "initial_optimizer.safetensors"
+    _publish_immutable_tensor_snapshot(
+        optimizer_target,
+        {
+            "step": mx.array(0, dtype=mx.uint64),
+            "layer.lora_a.m": mx.zeros((1, 2)),
+            "layer.lora_a.v": mx.zeros((1, 2)),
+        },
+        role="initial recurrent optimizer snapshot",
+    )
+    optimizer_binding = inspect_initial_optimizer_snapshot(
+        optimizer_target
+    )
+    assert optimizer_binding["path"] == optimizer_target.name
+    assert optimizer_binding["tensor_count"] == 3
 
 
 def test_run_metadata_is_immutable_and_idempotent(tmp_path):

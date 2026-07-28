@@ -5289,3 +5289,51 @@ The final independent adversarial re-review approved the repaired boundary and
 preregistration contracts with no remaining findings in scope.
 SPARK-060/061/062 remain open; no resident model was loaded or trained, and no
 reasoning, frontier, promotion, or `WOW Signal` result follows.
+
+### 2026-07-28 - CP420Q: exact initial policy state enters durable custody
+
+Training and future independent replay now share one source-bound recurrent
+adapter constructor. It preflights the complete decoder-layer and projection
+inventory before mutating the model, then seeds and attaches the exact LoRA
+topology used by the proof campaign. Missing, ambiguous, out-of-window, or
+already wrapped sites fail before a partial policy can exist. The Adam
+constructor is shared as well, with canonical hexadecimal encodings for the
+learning rate, betas, and epsilon and an explicit bias-correction setting.
+
+The initial-policy probe advances to v2 without invalidating historical v1
+evidence. A v2 probe permanently binds both `initial_adapter.safetensors` and
+`initial_optimizer.safetensors`: stable private file identity, byte digest,
+byte count, exact sorted tensor inventory, inventory digest, complete LoRA
+factor pairs, adapter policy digest, and the exact Adam moment topology. The
+trainer writes each snapshot immutably and reopens it through the same
+independent inspector used by launch materialization.
+
+Intervention launch materialization now refuses a hash-only v1 probe. It copies
+both state artifacts into the private launch root, reopens and verifies the
+copied bytes, and embeds a cross-bound custody contract in the frozen provider
+configuration. Completed-launch recovery repeats that verification instead of
+trusting the archived JSON. This establishes the first state in an
+`updates + 1` policy-state chain without duplicating the same pre-state for
+every update: the initial state is stored once, and each successful
+transaction's post-state can become the next update's pre-state.
+
+The proof boundary remains explicit. CP420Q proves exact initial adapter and
+optimizer custody and deterministic reconstruction prerequisites. It does not
+yet append a pre-measurement record for each admitted update, independently
+recompute the trajectory/lesion/stopping objective or gradients, or replay the
+Adam transition to byte-identical post-state. Those are CP420R and CP420S; no
+`external_policy_state_replayed=true` claim is permitted before they pass.
+
+The final source-state focused matrix passes 87/87. The disjoint transaction,
+episode, trainer, and adapter-identity matrix passes 137/137, and the launch,
+external-replay, campaign, runner, production-factory, and provider matrix
+passes 84/84. Ruff, bytecode compilation, and diff hygiene pass. Evidence:
+`artifacts/current/cp420q_initial_policy_state_custody_evidence.json`.
+
+SPARK-060/061/062 remain open. No resident model was loaded or trained, and no
+reasoning, frontier, promotion, or `WOW Signal` claim follows. CP420Q is total
+checkpoint 687. The 687-920 completion envelope is approximately
+74.7%-100.0%, with an 87.3% midpoint. The evidence-adjusted range is 3-5
+checkpoints to a sealed resident-32B training launch, 7-11 to a defensible
+preliminary gain verdict, and 12-21 to the powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.
