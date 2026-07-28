@@ -71,3 +71,44 @@ def test_navigation_furniture_is_stripped_from_the_article_text():
 def test_stripping_never_empties_real_prose():
     prose = "Researchers reported a measurable gain on held-out tasks this quarter."
     assert DesktopTaskSkill._strip_page_chrome(prose) == prose
+
+
+def test_a_research_document_opens_with_the_synthesis_not_template_filler():
+    """Two bodies were written, the empty one first.
+
+    `_document_body` never consulted the research synthesis, so a research
+    objective fell through to the generic composer and the document opened with:
+
+        "Notes on the requested subject: The requested subject is the focus of
+         this note. The important part is to describe the subject clearly..."
+
+    ...followed by the actual three-source synthesis.
+    """
+    objective = (
+        "Open a Google tab and find 3 recent articles about AI, read them and form "
+        "your own opinion. Then open Google Docs and write a synthesis of the three "
+        "articles plus your opinion."
+    )
+    context = {
+        "desktop_task_research_query": "AI",
+        "desktop_task_research_synthesis": (
+            "I read three pieces on AI this morning. In my view the useful "
+            "through-line is that capability gains are now reported alongside "
+            "evaluation caveats, which was not true a year ago."
+        ),
+        "desktop_task_research_sources": [
+            {
+                "title": "AI fundamentals",
+                "url": "https://openai.com/academy/what-is-ai/",
+                "snippet": "Artificial intelligence systems learn patterns from data.",
+            }
+        ],
+    }
+
+    body = DesktopTaskSkill._document_body(objective, context)
+    assert not body.startswith("Notes on"), "template filler still leads the document"
+    assert "is the focus of this note" not in body
+    assert body.lstrip().startswith("I read three pieces"), (
+        "her synthesis must be the document, not a preamble to it"
+    )
+    assert "openai.com/academy" in body, "sources must still be recorded"

@@ -1182,6 +1182,17 @@ class DesktopTaskSkill(BaseSkill):
             # The user's exact operand outranks a model paraphrase or a
             # fallback composer. This is transcription, not generation.
             return literal_body
+        # When research ran, the synthesis IS the requested writing.
+        #
+        # This resolver never consulted it, so a research objective fell through
+        # to the generic composer and the document opened with template filler
+        # before the real content: "Notes on the requested subject: The requested
+        # subject is the focus of this note. The important part is to describe
+        # the subject clearly..." — followed by the actual three-source synthesis.
+        # Two bodies, the empty one first.
+        research_body = cls._research_section_from_context(context)
+        if research_body and not cls._objective_requests_self_summary(objective):
+            return research_body[:9000]
         if cls._objective_requests_self_summary(objective):
             # Prefer an accepted full-mind draft. The old unconditional static
             # template made visible self-description demos look successful
