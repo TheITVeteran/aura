@@ -69,3 +69,32 @@ def test_the_delivery_boundary_delivers_text_instead_of_erasing_it():
     )
     # A genuinely unusable return still fails closed.
     assert "chat_response_format_rejected" in guard
+
+
+def test_speaking_unprompted_does_not_raise_a_name_error():
+    """The initiative path crashed the moment she used it.
+
+    `_record_output_delivery` read `content` as a free name inside the
+    visible-presence branch — a NameError on exactly the path the method exists
+    to record. Both call sites already had the text in scope and never passed
+    it, so every unprompted visible message would have died recording itself.
+    """
+    from core.autonomy.proactive_presence import _INITIATIVE_LOG, ProactivePresence
+
+    presence = ProactivePresence.__new__(ProactivePresence)
+    presence._last_output_time = 0.0
+    presence.orchestrator = None
+    presence._outputs_this_hour = 0
+    presence._consecutive_unprompted = 0
+    presence._last_visible_output_time = 0.0
+
+    before = int(_INITIATIVE_LOG.get("count", 0))
+    presence._record_output_delivery(
+        visible_presence=True, content="I was thinking about orcas."
+    )
+    assert int(_INITIATIVE_LOG.get("count", 0)) == before + 1
+    assert _INITIATIVE_LOG.get("last_text") == "I was thinking about orcas."
+    assert presence._consecutive_unprompted == 1
+
+    # The non-visible path must stay callable too.
+    presence._record_output_delivery(visible_presence=False, content="quiet thought")

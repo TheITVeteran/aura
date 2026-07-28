@@ -928,7 +928,16 @@ class ProactivePresence:
         if self.orchestrator:
             self.orchestrator._last_thought_time = now
 
-    def _record_output_delivery(self, *, visible_presence: bool) -> None:
+    def _record_output_delivery(
+        self,
+        *,
+        visible_presence: bool,
+        content: str = "",
+    ) -> None:
+        # `content` is a PARAMETER. It used to be read as a free name here,
+        # which is a NameError the moment she speaks unprompted — the exact
+        # path this method exists to record. Both call sites already had the
+        # text in scope and simply never passed it.
         self._record_output_attempt()
         self._outputs_this_hour += 1
         if visible_presence:
@@ -1026,7 +1035,10 @@ class ProactivePresence:
                 if isinstance(decision, dict) and decision.get("action") == "released" and decision.get("target") == "primary":
                     if source.endswith(":checkin"):
                         self._last_checkin_time = time.time()
-                    self._record_output_delivery(visible_presence=True)
+                    self._record_output_delivery(
+                        visible_presence=True,
+                        content=content,
+                    )
                     logger.info(
                         "✨ [ProactivePresence] Visible spontaneous expression (#%d): %s",
                         self._consecutive_unprompted,
@@ -1073,7 +1085,7 @@ class ProactivePresence:
                 level="info",
                 category="ProactivePresence",
             )
-            self._record_output_delivery(visible_presence=False)
+            self._record_output_delivery(visible_presence=False, content=content)
             logger.info(
                 "🧠 [ProactivePresence] Fallback thought → neural feed (#%d): %s",
                 self._consecutive_unprompted, content[:80],
