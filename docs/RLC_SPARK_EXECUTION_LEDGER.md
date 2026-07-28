@@ -5337,3 +5337,53 @@ checkpoint 687. The 687-920 completion envelope is approximately
 checkpoints to a sealed resident-32B training launch, 7-11 to a defensible
 preliminary gain verdict, and 12-21 to the powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420R: pre-objective state lineage closes the measurement gap
+
+Every admitted intervention update now enters a single immutable state chain
+before objective evaluation. The scoped reservation binds campaign sequence,
+execution spec, group manifest, and the requirement for a pre-measurement. The
+new intent then binds that reservation to the exact adapter and Adam state,
+the CP420Q origin or latest complete transaction post-state, campaign and
+schedule roots, trainer static inputs, trajectory source, exact recurrent GRPO
+configuration, and empty intervention bridge-token channel. Adapter and
+optimizer equality is exact over keyset, shape, dtype, and value.
+
+The intent is not an isolated receipt. Pending transaction v4 binds both its
+digest and the reservation digest, and the transaction store reopens the
+immutable intent before accepting staged post-state tensors. Objective record
+v2, reservation v2, update commit, causal campaign manifest v4, and external
+replay preserve the same scope. Initial and staged safetensors are hashed and
+MLX-loaded through the same stable owner-private no-follow descriptor, closing
+the path-swap interval between byte verification and tensor loading. Historical
+non-intervention reservation/objective/transaction/manifest schemas remain
+replayable.
+
+Crash behavior is fail-honest and progress-safe. A reservation-only,
+intent-only, or objective-before-stage interruption is reconciled only after
+the durable trainer checkpoint has restored the exact adapter and optimizer
+state. The admission is permanently burned, an immutable recovery-halt receipt
+is published, and the trainer requires a fresh campaign. Changed policy,
+optimizer drift, dtype-only drift, conflicting scope, missing intent, and
+artifact substitution all fail closed. Rejected groups neither publish intents
+nor advance the successful-update ordinal.
+
+The direct measurement-chain, transaction, episode, trainer, launch, campaign,
+external-replay, and trainer-contract matrix passes 222/222 in 97.09 seconds.
+The disjoint runner, policy-probe, provider, and rejection-transaction matrix
+passes 49/49. Ruff, bytecode compilation, and diff hygiene pass. Evidence:
+`artifacts/current/cp420r_pre_measurement_state_chain_evidence.json`.
+
+This proves pre-objective policy-state lineage, not independent arithmetic.
+CP420S still must reconstruct the recurrent model from the sealed pre-state,
+recompute every trajectory, lesion, stopping, and structural objective atom and
+gradient tensor, replay the frozen Adam transition, and require identical
+post-state tensors. `external_policy_state_replayed` therefore remains false.
+SPARK-060/061/062 remain open; no resident model was loaded or trained and no
+reasoning, frontier, promotion, or `WOW Signal` claim follows.
+
+CP420R is total checkpoint 688. The 688-920 completion envelope is
+approximately 74.8%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
+is 2-4 checkpoints to a sealed resident-32B training launch, 6-10 to a
+defensible preliminary gain verdict, and 11-20 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

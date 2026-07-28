@@ -388,6 +388,18 @@ def test_stage_is_idempotent_only_for_the_exact_same_tensors(tmp_path):
             pending_trainer_step=pending,
         )
 
+    adapters, optimizer = _tensor_maps()
+    optimizer["state.step"] = mx.array(1, dtype=mx.int64)
+    with pytest.raises(
+        VerifiedTransitionTransactionError,
+        match="optimizer_identity_conflict",
+    ):
+        store.stage(
+            adapter_tensors=adapters,
+            optimizer_tensors=optimizer,
+            pending_trainer_step=pending,
+        )
+
 
 def test_nested_optimizer_state_must_be_flattened_before_stage(tmp_path):
     store = VerifiedTransitionTransactionStore.open(tmp_path / "transactions")

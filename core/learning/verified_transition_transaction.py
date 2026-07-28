@@ -47,6 +47,9 @@ from core.runtime.file_read_gateway import (
 )
 
 PENDING_TRAINER_STEP_SCHEMA = "aura.verified_transition.pending_trainer_step.v3"
+PENDING_TRAINER_STEP_SCHEMA_V4 = (
+    "aura.verified_transition.pending_trainer_step.v4"
+)
 TRAINER_STEP_STATIC_SCHEMA = "aura.verified_transition.trainer_step_static.v1"
 TRANSACTION_STAGE_SCHEMA = "aura.verified_transition.transaction_stage.v1"
 TRANSACTION_EVENT_SCHEMA = "aura.verified_transition.transaction_event.v1"
@@ -125,7 +128,7 @@ _CAUSAL_CAMPAIGN_TERMINAL_KEYS = frozenset(
         "receipt_sha256",
     }
 )
-_PENDING_KEYS = frozenset(
+_PENDING_KEYS_V3 = frozenset(
     {
         "schema",
         "sequence",
@@ -145,6 +148,10 @@ _PENDING_KEYS = frozenset(
         "receipt_sha256",
     }
 )
+_PENDING_KEYS_V4 = _PENDING_KEYS_V3 | {
+    "pre_measurement_sha256",
+    "reservation_sha256",
+}
 _TRAINER_STEP_STATIC_KEYS = frozenset(
     {
         "schema",
@@ -276,6 +283,12 @@ def _tensor_maps_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> boo
     try:
         import mlx.core as mx
 
+        for key in sorted(left):
+            if (
+                tuple(left[key].shape) != tuple(right[key].shape)
+                or str(left[key].dtype) != str(right[key].dtype)
+            ):
+                return False
         comparisons = [mx.array_equal(left[key], right[key]) for key in left]
         mx.eval(*comparisons)
         return all(bool(value) for value in comparisons)
@@ -492,6 +505,8 @@ def build_pending_trainer_step(
     policy_before_sha256: str,
     policy_after_sha256: str,
     trainer_step_static: Mapping[str, Any],
+    pre_measurement_sha256: str | None = None,
+    reservation_sha256: str | None = None,
     created_at_unix_ns: int | None = None,
 ) -> dict[str, Any]:
     """Seal all facts knowable before any update evidence is published."""
@@ -509,10 +524,15 @@ def build_pending_trainer_step(
     after = _sha256(policy_after_sha256, role="pending_policy_after")
     if before == after:
         _fail("pending_policy_unchanged")
+    if (pre_measurement_sha256 is None) is not (reservation_sha256 is None):
+        _fail("pending_pre_measurement_scope_incomplete")
     created = time.time_ns() if created_at_unix_ns is None else created_at_unix_ns
-    return _seal(
-        {
-            "schema": PENDING_TRAINER_STEP_SCHEMA,
+    material = {
+            "schema": (
+                PENDING_TRAINER_STEP_SCHEMA_V4
+                if pre_measurement_sha256 is not None
+                else PENDING_TRAINER_STEP_SCHEMA
+            ),
             "sequence": sequence,
             "trainer_step": trainer_step,
             "task_id": task_id,
@@ -545,14 +565,31 @@ def build_pending_trainer_step(
                 created, role="pending_created_at", minimum=1
             ),
         }
-    )
+    if pre_measurement_sha256 is not None:
+        material["pre_measurement_sha256"] = _sha256(
+            pre_measurement_sha256,
+            role="pending_pre_measurement",
+        )
+        material["reservation_sha256"] = _sha256(
+            reservation_sha256,
+            role="pending_reservation",
+        )
+    return _seal(material)
 
 
 def validate_pending_trainer_step(value: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != _PENDING_KEYS:
+    if not isinstance(value, Mapping):
         _fail("pending_trainer_step_schema_invalid")
     pending = dict(value)
-    if pending.get("schema") != PENDING_TRAINER_STEP_SCHEMA:
+    schema = pending.get("schema")
+    expected_keys = (
+        _PENDING_KEYS_V3
+        if schema == PENDING_TRAINER_STEP_SCHEMA
+        else _PENDING_KEYS_V4
+        if schema == PENDING_TRAINER_STEP_SCHEMA_V4
+        else None
+    )
+    if expected_keys is None or set(pending) != expected_keys:
         _fail("pending_trainer_step_version_invalid")
     _validate_seal(pending, role="pending_trainer_step")
     sequence = _integer(pending.get("sequence"), role="pending_sequence")
@@ -579,6 +616,15 @@ def validate_pending_trainer_step(value: Mapping[str, Any]) -> dict[str, Any]:
         "policy_after_sha256",
     ):
         _sha256(pending.get(field), role=f"pending_{field}")
+    if schema == PENDING_TRAINER_STEP_SCHEMA_V4:
+        _sha256(
+            pending.get("pre_measurement_sha256"),
+            role="pending_pre_measurement",
+        )
+        _sha256(
+            pending.get("reservation_sha256"),
+            role="pending_reservation",
+        )
     if pending["policy_before_sha256"] == pending["policy_after_sha256"]:
         _fail("pending_policy_unchanged")
     validate_trainer_step_static(pending.get("trainer_step_static"))
@@ -943,38 +989,50 @@ class VerifiedTransitionTransactionStore:
         size = _integer(binding.get("size_bytes"), role=f"{role}_size", minimum=1)
         if metadata.st_size != size:
             _fail(f"{role}_size_mismatch")
-        digest, observed_size, identity_before_load = _digest_file(
-            path, max_bytes=size
-        )
-        if observed_size != size or digest != _sha256(
+        expected_digest = _sha256(
             binding.get("sha256"), role=f"{role}_sha256"
-        ):
-            _fail(f"{role}_digest_mismatch")
+        )
         count = _integer(binding.get("tensor_count"), role=f"{role}_count", minimum=1)
         keys_digest = _sha256(
             binding.get("tensor_keys_sha256"), role=f"{role}_keys"
         )
         if not load_tensors:
+            digest, observed_size, _identity = _digest_file(
+                path, max_bytes=size
+            )
+            if observed_size != size or digest != expected_digest:
+                _fail(f"{role}_digest_mismatch")
             return None
         try:
             import mlx.core as mx
 
-            tensors = mx.load(str(path))
+            digest = hashlib.sha256()
+            observed_size = 0
+            with open_stable_readonly_binary(
+                path,
+                max_bytes=size,
+            ) as (handle, identity):
+                while chunk := handle.read(1024 * 1024):
+                    digest.update(chunk)
+                    observed_size += len(chunk)
+                if (
+                    observed_size != size
+                    or observed_size != identity.size
+                    or digest.hexdigest() != expected_digest
+                ):
+                    _fail(f"{role}_digest_mismatch")
+                handle.seek(0)
+                tensors = mx.load(handle, format="safetensors")
+                if isinstance(tensors, Mapping):
+                    mx.eval(*tensors.values())
         except Exception as exc:
+            if isinstance(exc, VerifiedTransitionTransactionError):
+                raise
             raise VerifiedTransitionTransactionError(
                 f"{role}_safetensors_load_failed"
             ) from exc
         if not isinstance(tensors, dict):
             _fail(f"{role}_safetensors_container_invalid")
-        digest_after_load, size_after_load, identity_after_load = _digest_file(
-            path, max_bytes=size
-        )
-        if (
-            identity_after_load != identity_before_load
-            or digest_after_load != digest
-            or size_after_load != size
-        ):
-            _fail(f"{role}_changed_during_tensor_load")
         keys = _flat_tensor_keys(tensors, role=role)
         if len(keys) != count or _tensor_key_digest(keys) != keys_digest:
             _fail(f"{role}_tensor_inventory_mismatch")
@@ -1039,6 +1097,48 @@ class VerifiedTransitionTransactionStore:
             != pending.get("group_admission_sha256")
         ):
             _fail("stage_pending_step_binding_mismatch")
+        if pending.get("schema") == PENDING_TRAINER_STEP_SCHEMA_V4:
+            from core.learning.verified_transition_measurement_chain import (
+                VerifiedTransitionMeasurementChainError,
+                load_pre_measurement_for_transaction,
+            )
+
+            try:
+                intent = load_pre_measurement_for_transaction(
+                    self.root,
+                    sequence=int(pending["sequence"]),
+                    admission_sha256=str(
+                        pending["group_admission_sha256"]
+                    ),
+                    expected_receipt_sha256=str(
+                        pending["pre_measurement_sha256"]
+                    ),
+                )
+            except VerifiedTransitionMeasurementChainError as exc:
+                raise VerifiedTransitionTransactionError(
+                    "stage_pre_measurement_unavailable"
+                ) from exc
+            if (
+                intent["policy_before_sha256"]
+                != pending["policy_before_sha256"]
+                or intent["execution_spec_sha256"]
+                != pending["execution_spec_sha256"]
+                or intent["campaign_manifest_sha256"]
+                != pending["campaign_manifest_sha256"]
+                or intent["campaign_schedule_root_sha256"]
+                != pending["campaign_schedule_root_sha256"]
+                or intent["group_manifest_sha256"]
+                != pending["group_manifest_sha256"]
+                or intent["trainer_step_static_sha256"]
+                != _digest_bytes(
+                    _canonical_json_bytes(
+                        pending["trainer_step_static"]
+                    )
+                )
+                or intent["reservation_sha256"]
+                != pending["reservation_sha256"]
+            ):
+                _fail("stage_pre_measurement_binding_mismatch")
         adapter = self._validate_tensor_binding(
             generation_dir, generation.get("adapter"), role="adapter", load_tensors=load_tensors
         )
@@ -1705,7 +1805,57 @@ class VerifiedTransitionTransactionCoordinator:
     trainer_step_static: Mapping[str, Any]
     adapter_tensors: Callable[[], Mapping[str, Any]]
     optimizer_tensors: Callable[[], Mapping[str, Any]]
+    measurement_chain: Any | None = None
     _admission_sha256: str | None = None
+    _pre_measurement_sha256: str | None = None
+    _reservation_sha256: str | None = None
+
+    def record_pre_measurement(
+        self,
+        *,
+        group_admission_sha256: str,
+        reservation_sha256: str,
+        policy_before_sha256: str,
+        trajectory_source_binding: Mapping[str, Any],
+        recurrent_grpo_config: Any,
+        bridge_tokens: tuple[int, ...],
+        recorded_at_unix_ns: int,
+    ) -> dict[str, Any]:
+        if self.measurement_chain is None:
+            _fail("transaction_pre_measurement_chain_missing")
+        admission = _sha256(
+            group_admission_sha256,
+            role="coordinator_group_admission",
+        )
+        intent = self.measurement_chain.begin(
+            sequence=self.sequence,
+            trainer_step=self.trainer_step,
+            group_admission_sha256=admission,
+            reservation_sha256=reservation_sha256,
+            policy_before_sha256=policy_before_sha256,
+            campaign_manifest_sha256=self.campaign_manifest_sha256,
+            campaign_schedule_root_sha256=(
+                self.campaign_schedule_root_sha256
+            ),
+            group_manifest_sha256=self.group_manifest_sha256,
+            execution_spec_sha256=self.execution_spec_sha256,
+            trainer_step_static=self.trainer_step_static,
+            trajectory_source_binding=trajectory_source_binding,
+            recurrent_grpo_config=recurrent_grpo_config,
+            bridge_tokens=bridge_tokens,
+            live_adapter_tensors=self.adapter_tensors(),
+            live_optimizer_tensors=self.optimizer_tensors(),
+            recorded_at_unix_ns=recorded_at_unix_ns,
+        )
+        self._admission_sha256 = admission
+        self._pre_measurement_sha256 = str(
+            intent["receipt_sha256"]
+        )
+        self._reservation_sha256 = _sha256(
+            reservation_sha256,
+            role="coordinator_reservation",
+        )
+        return intent
 
     def stage_post_update(
         self,
@@ -1717,6 +1867,15 @@ class VerifiedTransitionTransactionCoordinator:
         admission = _sha256(
             group_admission_sha256, role="coordinator_group_admission"
         )
+        if (
+            self.measurement_chain is not None
+            and (
+                self._pre_measurement_sha256 is None
+                or self._reservation_sha256 is None
+                or self._admission_sha256 != admission
+            )
+        ):
+            _fail("transaction_pre_measurement_not_recorded")
         pending = build_pending_trainer_step(
             sequence=self.sequence,
             trainer_step=self.trainer_step,
@@ -1731,6 +1890,8 @@ class VerifiedTransitionTransactionCoordinator:
             policy_before_sha256=policy_before_sha256,
             policy_after_sha256=policy_after_sha256,
             trainer_step_static=self.trainer_step_static,
+            pre_measurement_sha256=self._pre_measurement_sha256,
+            reservation_sha256=self._reservation_sha256,
         )
         loaded = self.store.stage(
             adapter_tensors=self.adapter_tensors(),
@@ -1777,6 +1938,7 @@ __all__ = [
     "CAUSAL_CAMPAIGN_TERMINAL_SCHEMA",
     "CAMPAIGN_TERMINAL_SCHEMA",
     "PENDING_TRAINER_STEP_SCHEMA",
+    "PENDING_TRAINER_STEP_SCHEMA_V4",
     "TRAINER_CHECKPOINT_SCHEMA",
     "TRANSACTION_EVENT_SCHEMA",
     "TRANSACTION_RECONCILIATION_SCHEMA",

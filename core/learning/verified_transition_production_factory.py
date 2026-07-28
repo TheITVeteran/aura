@@ -53,6 +53,11 @@ from core.learning.verified_transition_group_admission import (
     sampling_config_document_sha256,
     validate_transition_group_manifest,
 )
+from core.learning.verified_transition_policy_probe import (
+    inspect_initial_adapter_snapshot,
+    inspect_initial_optimizer_snapshot,
+    validate_initial_policy_state_custody,
+)
 from core.learning.verified_transition_provider import (
     ProductionVerifiedTransitionGroupProvider,
     VerifiedTransitionProviderError,
@@ -987,6 +992,51 @@ class ProductionVerifiedTransitionProviderFactory:
         config = cast(dict[str, Any], _clone(provider_config, role="provider_config"))
         if frozen["provider"]["config"] != config:
             _fail("production_factory_provider_config_mismatch")
+        custody_value = config.get("initial_policy_state_custody")
+        initial_policy_state_custody: dict[str, Any] | None = None
+        if custody_value is not None:
+            try:
+                initial_policy_state_custody = (
+                    validate_initial_policy_state_custody(custody_value)
+                )
+                adapter_artifact = inspect_initial_adapter_snapshot(
+                    initial_policy_state_custody[
+                        "initial_adapter_path"
+                    ],
+                    execution_spec_sha256=(
+                        initial_policy_state_custody[
+                            "execution_spec_sha256"
+                        ]
+                    ),
+                )
+                optimizer_artifact = inspect_initial_optimizer_snapshot(
+                    initial_policy_state_custody[
+                        "initial_optimizer_path"
+                    ]
+                )
+            except Exception as exc:
+                raise VerifiedTransitionProductionFactoryError(
+                    "production_factory_initial_state_custody_unavailable"
+                ) from exc
+            if (
+                initial_policy_state_custody["initial_policy_sha256"]
+                != frozen["initial_policy_sha256"]
+                or initial_policy_state_custody[
+                    "execution_spec_sha256"
+                ]
+                != frozen["task_schedule"][0][
+                    "recurrent_execution_spec_sha256"
+                ]
+                or adapter_artifact
+                != initial_policy_state_custody[
+                    "initial_adapter_artifact"
+                ]
+                or optimizer_artifact
+                != initial_policy_state_custody[
+                    "initial_optimizer_artifact"
+                ]
+            ):
+                _fail("production_factory_initial_state_custody_mismatch")
         training_argv = config.get("training_argv")
         if (
             not isinstance(training_argv, list)
@@ -1135,6 +1185,9 @@ class ProductionVerifiedTransitionProviderFactory:
         self._evidence_verifier_broker = evidence_verifier_signer_broker
         self._commitments = commitments
         self._answer_nonces = nonces
+        self._initial_policy_state_custody = (
+            initial_policy_state_custody
+        )
         self._created = False
         self._lock = threading.RLock()
 
@@ -1143,10 +1196,38 @@ class ProductionVerifiedTransitionProviderFactory:
         return cast(str, self._contract["contract_sha256"])
 
     @property
+    def ledger_roots(self) -> dict[str, str]:
+        """Return the frozen absolute proof roots used for recovery."""
+
+        return cast(
+            dict[str, str],
+            _clone(
+                self._contract["ledger_roots"],
+                role="production_factory_ledger_roots",
+            ),
+        )
+
+    @property
     def training_argv(self) -> tuple[str, ...]:
         """Return the exact externally frozen trainer invocation."""
 
         return self._training_argv
+
+    @property
+    def initial_policy_state_custody(
+        self,
+    ) -> dict[str, Any] | None:
+        """Return the reopened CP420Q state contract for trainer custody."""
+
+        if self._initial_policy_state_custody is None:
+            return None
+        return cast(
+            dict[str, Any],
+            _clone(
+                self._initial_policy_state_custody,
+                role="initial_policy_state_custody",
+            ),
+        )
 
     def bind_training_tasks(self, tasks: Sequence[Any]) -> Sequence[Any]:
         bound = []
@@ -1218,6 +1299,38 @@ class ProductionVerifiedTransitionProviderFactory:
             )
             if initial_policy != self._contract["initial_policy_sha256"]:
                 _fail("production_factory_initial_policy_mismatch")
+            if self._initial_policy_state_custody is not None:
+                try:
+                    adapter_artifact = inspect_initial_adapter_snapshot(
+                        self._initial_policy_state_custody[
+                            "initial_adapter_path"
+                        ],
+                        execution_spec_sha256=runtime.execution_spec.sha256,
+                    )
+                    optimizer_artifact = (
+                        inspect_initial_optimizer_snapshot(
+                            self._initial_policy_state_custody[
+                                "initial_optimizer_path"
+                            ]
+                        )
+                    )
+                except Exception as exc:
+                    raise VerifiedTransitionProductionFactoryError(
+                        "production_factory_initial_state_custody_unavailable"
+                    ) from exc
+                if (
+                    adapter_artifact
+                    != self._initial_policy_state_custody[
+                        "initial_adapter_artifact"
+                    ]
+                    or optimizer_artifact
+                    != self._initial_policy_state_custody[
+                        "initial_optimizer_artifact"
+                    ]
+                ):
+                    _fail(
+                        "production_factory_initial_state_custody_mismatch"
+                    )
             provider = ProductionVerifiedTransitionGroupProvider(
                 contract=self._contract,
                 provider_config=self._config,

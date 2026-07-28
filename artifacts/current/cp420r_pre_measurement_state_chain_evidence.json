@@ -1,0 +1,87 @@
+{
+  "schema": "aura.spark.cp420r_pre_measurement_state_chain_evidence.v1",
+  "checkpoint": "CP420R",
+  "total_checkpoint": 688,
+  "generated_at_utc": "2026-07-28T20:24:49Z",
+  "base_commit": "6d028127705fd168f8fdc473e746a7be15b4226e",
+  "claim": "every admitted intervention update is durably bound to its exact pre-objective adapter and optimizer state",
+  "implemented": {
+    "state_chain": "the CP420Q initial adapter and optimizer snapshots are state one; every complete successful transaction post-state is the only eligible source for the next admitted update",
+    "pre_objective_order": "a scoped reservation and immutable pre-measurement intent are published before exact-adjoint objective evaluation",
+    "intent_scope": "campaign, schedule, group, execution spec, static trainer step, exact recurrent GRPO configuration, trajectory source, bridge-token binding, reservation, policy, and state source are digest-bound",
+    "transaction_scope": "pending transaction v4 binds both reservation_sha256 and pre_measurement_sha256 and reopens the immutable intent before accepting staged post-state tensors",
+    "journal_scope": "reservation v2, objective v2, update commit, final update receipt, and external replay preserve the same pre-measurement and intervention scope",
+    "recovery": "reservation-only, intent-only, and objective-before-stage crashes burn the admission only after exact checkpoint adapter and optimizer restoration; training halts and requires a fresh campaign",
+    "tensor_identity": "adapter and optimizer comparisons require exact keyset, shape, dtype, and value equality",
+    "stable_artifact_load": "initial and staged safetensor bytes are hashed and MLX-loaded through the same owner-private no-follow descriptor to close path-swap races",
+    "rejected_groups": "rejected groups do not publish pre-measurement intents and do not advance the successful-update state chain",
+    "manifest": "causal campaign evidence manifest v4 binds each updated row to its pre-measurement receipt while retaining v3 replay compatibility"
+  },
+  "adversarial_proofs": {
+    "optimizer_value_drift": "rejected",
+    "optimizer_dtype_only_drift": "rejected",
+    "adapter_or_optimizer_key_shape_drift": "rejected",
+    "initial_state_artifact_substitution_after_factory_open": "rejected",
+    "transaction_state_artifact_path_swap": "rejected",
+    "missing_or_wrong_reservation_scope": "rejected",
+    "wrong_pre_measurement_digest": "rejected",
+    "wrong_campaign_execution_or_group_scope": "rejected",
+    "transaction_without_reopenable_intent": "rejected",
+    "policy_changed_without_durable_stage": "requires_exact_checkpoint_recovery_and_refuses_abandonment",
+    "reservation_only_crash": "burned_after_exact_restore",
+    "intent_only_crash": "immutably_reconciled_and_burned_after_exact_restore",
+    "resume_recovery_before_checkpoint_restore": "prevented_by_trainer_main_order_contract",
+    "legacy_non_intervention_v1_evidence": "retained"
+  },
+  "validation": {
+    "ruff_lint": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "direct_measurement_transaction_trainer_and_external_matrix": {
+      "passed": 222,
+      "failed": 0,
+      "duration_seconds": 97.09
+    },
+    "disjoint_runner_policy_provider_and_rejection_matrix": {
+      "passed": 49,
+      "failed": 0,
+      "duration_seconds": 3.39
+    },
+    "total_non_overlapping_tests": {
+      "passed": 271,
+      "failed": 0
+    },
+    "independent_adversarial_review": "not_claimed"
+  },
+  "claim_boundary": {
+    "initial_policy_state_custodied": true,
+    "per_update_pre_measurement_bound": true,
+    "pre_measurement_reopened_by_transaction": true,
+    "external_manifest_binds_pre_measurement": true,
+    "external_model_reconstructed": false,
+    "external_objective_recomputed": false,
+    "external_gradient_recomputed": false,
+    "external_adam_transition_replayed": false,
+    "external_post_state_byte_identical": false,
+    "resident_32b_loaded": false,
+    "resident_32b_trained": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false,
+    "spark_060_closed": false,
+    "spark_061_closed": false,
+    "spark_062_closed": false
+  },
+  "remaining_blockers": [
+    "independently reconstruct the recurrent model and exact pre-state from the sealed chain",
+    "independently recompute the complete trajectory, lesion, stopping, and structural objective and every gradient tensor",
+    "replay the frozen Adam transition and require exact post-state tensor identity with the producer transaction",
+    "calibrate admitted intervention objectives and per-term gradient liveness on the resident 32B operating point",
+    "run the sealed resident campaign and powered evaluator-disjoint frontier falsification program"
+  ],
+  "next": [
+    "Implement CP420S independent objective, gradient, optimizer, and post-state replay.",
+    "Keep resident training and capability claims blocked until CP420S and launch calibration pass.",
+    "Reserve WOW Signal for an accepted powered frontier result."
+  ]
+}

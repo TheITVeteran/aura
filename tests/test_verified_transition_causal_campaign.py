@@ -29,12 +29,14 @@ from core.learning.verified_recurrent_transition_repository import (
 )
 from core.learning.verified_transition_causal_campaign import (
     CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
     CAUSAL_CAMPAIGN_MANIFEST_SCHEMA,
     EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
     CausalCampaignScheduleEntry,
     VerifiedTransitionCausalCampaignError,
     VerifiedTransitionCausalCampaignLedger,
     build_causal_campaign_manifest,
+    validate_causal_campaign_evidence_manifest,
     validate_causal_campaign_manifest,
     validate_external_evidence_verification_receipt,
 )
@@ -54,6 +56,8 @@ def _sha(label: str) -> str:
 def _evidence_manifest(
     material: dict[str, Any],
     statuses: list[str],
+    *,
+    pre_measurements: bool = False,
 ) -> dict[str, Any]:
     rows = [
         {
@@ -85,8 +89,19 @@ def _evidence_manifest(
         }
         for sequence, status in enumerate(statuses)
     ]
+    if pre_measurements:
+        for row in rows:
+            row["pre_measurement_sha256"] = (
+                _sha(f"pre-measurement-{row['sequence']}")
+                if row["status"] == "updated"
+                else None
+            )
     body = {
-        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "schema": (
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            if pre_measurements
+            else CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA
+        ),
         "contract_sha256": _sha("provider-contract"),
         "campaign_schedule_root_sha256": material["schedule_root"],
         "trust_policy_sha256": material["policy"].policy_sha256,
@@ -122,8 +137,9 @@ def _verification_receipt(
     verifier_identity: str = "fixture-evidence-verifier",
     verified_at_unix: int = BASE_SECOND + 181,
 ) -> dict[str, Any]:
-    observations = [
-        {
+    observations = []
+    for package in evidence_manifest["group_packages"]:
+        observation = {
             "sequence": package["sequence"],
             "package_artifact": package["package_artifact"],
             "package_receipt_sha256": package["package_receipt_sha256"],
@@ -140,8 +156,14 @@ def _verification_receipt(
                 "trainer_step_receipt_sha256"
             ],
         }
-        for package in evidence_manifest["group_packages"]
-    ]
+        if (
+            evidence_manifest["schema"]
+            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+        ):
+            observation["pre_measurement_sha256"] = package[
+                "pre_measurement_sha256"
+            ]
+        observations.append(observation)
     body = {
         "schema": EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
         "evidence_manifest_sha256": evidence_manifest["manifest_sha256"],
@@ -152,7 +174,12 @@ def _verification_receipt(
                 {"artifact_observations": observations}
             )
         ).hexdigest(),
-        "validation_profile": "recurrent_transition_causal_replay.v2",
+        "validation_profile": (
+            "recurrent_transition_causal_replay.v3"
+            if evidence_manifest["schema"]
+            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            else "recurrent_transition_causal_replay.v2"
+        ),
         "verified_at_unix": verified_at_unix,
     }
     return {
@@ -174,6 +201,38 @@ def test_external_verifier_receipt_stays_compact_at_288_groups(
     )
     assert validated["verified_package_count"] == 288
     assert len(canonical_json_bytes(validated)) < 1_024
+
+
+def test_v4_manifest_requires_pre_measurement_only_for_updated_rows(
+    material: dict[str, Any],
+) -> None:
+    evidence = _evidence_manifest(
+        material,
+        ["updated", "rejected"],
+        pre_measurements=True,
+    )
+    assert validate_causal_campaign_evidence_manifest(evidence) == evidence
+    receipt = _verification_receipt(evidence)
+    assert (
+        validate_external_evidence_verification_receipt(
+            receipt,
+            evidence_manifest=evidence,
+        )["validation_profile"]
+        == "recurrent_transition_causal_replay.v3"
+    )
+
+    tampered = copy.deepcopy(evidence)
+    tampered["group_packages"][0]["pre_measurement_sha256"] = None
+    unsigned = dict(tampered)
+    unsigned.pop("manifest_sha256")
+    tampered["manifest_sha256"] = hashlib.sha256(
+        canonical_json_bytes(unsigned)
+    ).hexdigest()
+    with pytest.raises(
+        VerifiedTransitionCausalCampaignError,
+        match="causal_campaign_evidence_pre_measurement_status_invalid",
+    ):
+        validate_causal_campaign_evidence_manifest(tampered)
 
 
 def _public_raw(key: Ed25519PrivateKey) -> bytes:
@@ -760,6 +819,15 @@ def test_production_finalizer_closes_unstarted_tail_with_external_verifier(
             "sha256": _sha("package-bytes-0"),
             "size_bytes": 128,
         },
+    )
+    monkeypatch.setattr(
+        "core.learning.verified_recurrent_transition_repository."
+        "VerifiedTransitionTransactionStore.open",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            load=lambda **_load_kwargs: SimpleNamespace(
+                pending_step={}
+            )
+        ),
     )
     replay_group = SimpleNamespace(
         sequence=0,

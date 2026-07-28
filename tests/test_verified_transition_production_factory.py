@@ -1279,6 +1279,7 @@ def test_root_bound_launch_bundle_constructs_only_pinned_factory(
     )
 
     assert factory.contract_sha256 == material["contract"]["contract_sha256"]
+    assert factory.ledger_roots == material["contract"]["ledger_roots"]
     original_ledger_manifest = material["ledger"].campaign_manifest()
     for field in (
         "campaign_id",

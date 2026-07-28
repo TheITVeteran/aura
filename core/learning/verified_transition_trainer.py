@@ -266,6 +266,14 @@ class VerifiedTransitionGroupProviderFactory(Protocol):
     @property
     def contract_sha256(self) -> str: ...
 
+    @property
+    def ledger_roots(self) -> Mapping[str, str]: ...
+
+    @property
+    def initial_policy_state_custody(
+        self,
+    ) -> Mapping[str, Any] | None: ...
+
     def bind_training_tasks(self, tasks: Sequence[Any]) -> Sequence[Any]: ...
 
     def create(

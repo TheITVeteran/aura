@@ -31322,3 +31322,38 @@ checkpoint 687. The 687-920 completion envelope is approximately
 checkpoints to a sealed resident-32B launch, 7-11 to a defensible preliminary
 gain verdict, and 12-21 to the powered conditional `WOW Signal` decision.
 Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420R exact pre-measurement state chain
+
+Admitted intervention updates now publish a scoped reservation and immutable
+pre-measurement intent before objective evaluation. The intent binds the exact
+adapter and Adam tensors to the CP420Q origin or latest complete transaction
+post-state, plus the campaign, schedule, group, execution spec, trainer static
+inputs, trajectory source, exact GRPO configuration, and reservation. Tensor
+identity includes keyset, shape, dtype, and value.
+
+Pending transaction v4, objective record v2, update commit, causal campaign
+manifest v4, and external replay preserve that lineage. The transaction store
+reopens the intent before accepting post-state tensors. Safetensor bytes and
+MLX tensors are read through the same stable owner-private no-follow descriptor
+to prevent path substitution between verification and loading. Legacy
+non-intervention evidence remains replayable.
+
+Pre-stage crash recovery runs only after exact checkpoint restoration. It burns
+the interrupted admission, publishes an immutable recovery-halt receipt, and
+requires a fresh campaign. The direct matrix passes 222/222 and the disjoint
+runner/policy/provider/rejection matrix passes 49/49. Ruff, compilation, and
+diff checks pass. Evidence:
+`artifacts/current/cp420r_pre_measurement_state_chain_evidence.json`.
+
+CP420S remains required to independently reconstruct the model, recompute the
+full objective and gradients, replay Adam, and prove identical post-state
+tensors. `external_policy_state_replayed` remains false. No resident 32B was
+loaded or trained; SPARK-060/061/062 and every reasoning, frontier, promotion,
+and `WOW Signal` claim remain open.
+
+CP420R is total checkpoint 688. The 688-920 completion envelope is
+approximately 74.8%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
+is 2-4 checkpoints to a sealed resident-32B training launch, 6-10 to a
+defensible preliminary gain verdict, and 11-20 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

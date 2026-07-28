@@ -84,6 +84,9 @@ from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
 )
+from core.learning.verified_transition_measurement_chain import (  # noqa: E402
+    VerifiedTransitionMeasurementChainStore,
+)
 from core.learning.verified_transition_rejection_transaction import (  # noqa: E402
     VerifiedTransitionRejectionTransactionCoordinator,
     VerifiedTransitionRejectionTransactionStore,
@@ -109,6 +112,9 @@ from core.learning.verified_transition_transaction import (  # noqa: E402
     VerifiedTransitionTransactionStore,
     build_transaction_trainer_step,
     load_trainer_checkpoint_evidence,
+)
+from core.learning.verified_transition_update import (  # noqa: E402
+    VerifiedTransitionUpdateJournal,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
@@ -1812,6 +1818,10 @@ def main(
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),
+                "transition_measurement_chain": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_measurement_chain.py"
+                ),
                 "transition_rejection_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_rejection_transaction.py"
                 ),
@@ -2225,6 +2235,7 @@ def main(
         last_step_kind = "initial"
         prior_elapsed_s = 0.0
         invocation_count = 1
+        pre_stage_recovery_halt = None
 
         by_cell: dict[tuple[str, int], list[Any]] = {}
         tasks_by_id: dict[str, Any] = {}
@@ -2247,6 +2258,55 @@ def main(
             if execution_spec is not None
             else None
         )
+        measurement_chain_store = None
+        measurement_update_journal = None
+        if (
+            execution_spec is not None
+            and trajectory_group_config is not None
+            and trajectory_group_config.intervention_config is not None
+        ):
+            if verified_group_provider_factory is None:
+                raise RuntimeError(
+                    "intervention training requires a verified provider factory"
+                )
+            initial_state_custody = getattr(
+                verified_group_provider_factory,
+                "initial_policy_state_custody",
+                None,
+            )
+            if not isinstance(initial_state_custody, Mapping):
+                raise RuntimeError(
+                    "intervention training requires materialized initial "
+                    "adapter and optimizer custody"
+                )
+            assert transaction_store is not None
+            assert provider_contract_sha256 is not None
+            ledger_roots = getattr(
+                verified_group_provider_factory,
+                "ledger_roots",
+                None,
+            )
+            if (
+                not isinstance(ledger_roots, Mapping)
+                or not isinstance(ledger_roots.get("updates"), str)
+            ):
+                raise RuntimeError(
+                    "intervention training requires the frozen update journal root"
+                )
+            measurement_update_journal = (
+                VerifiedTransitionUpdateJournal.open(
+                    ledger_roots["updates"]
+                )
+            )
+            measurement_chain_store = (
+                VerifiedTransitionMeasurementChainStore.open(
+                    out_dir / "verified-transition-transactions",
+                    transaction_store=transaction_store,
+                    initial_policy_state_custody=initial_state_custody,
+                    provider_contract_sha256=provider_contract_sha256,
+                    training_protocol_sha256=protocol_sha256,
+                )
+            )
         rejection_transaction_store = (
             VerifiedTransitionRejectionTransactionStore.open(
                 out_dir / "verified-transition-transactions"
@@ -2425,6 +2485,58 @@ def main(
 
             update_transactions = transaction_store.inventory(load_tensors=False)
             rejection_transactions = rejection_transaction_store.inventory()
+            if measurement_chain_store is not None:
+                if measurement_update_journal is None:
+                    raise GRPOCheckpointError(
+                        "pre-measurement recovery journal is missing"
+                    )
+                recovered_pre_stage = (
+                    measurement_chain_store.reconcile_interrupted_admissions(
+                        update_journal=measurement_update_journal,
+                        live_adapter_tensors=adapter_tensors(),
+                        live_optimizer_tensors=dict(
+                            tree_flatten(optimizer.state)
+                        ),
+                        observed_policy_sha256=recurrent_policy_sha256(
+                            model,
+                            execution_spec,
+                        ),
+                        reconciled_at_unix_ns=time.time_ns(),
+                    )
+                )
+                if recovered_pre_stage:
+                    if (
+                        resumed is None
+                        or len(recovered_pre_stage) != 1
+                        or recovered_pre_stage[0]["sequence"] != step
+                    ):
+                        raise GRPOCheckpointError(
+                            "pre-stage recovery does not match the exact "
+                            "durable trainer checkpoint"
+                        )
+                    recovery_body = {
+                        "schema": (
+                            "aura.grpo.pre_stage_recovery_halt.v1"
+                        ),
+                        "protocol_sha256": protocol_sha256,
+                        "dataset_sha256": dataset_sha256,
+                        "execution_spec_sha256": execution_spec.sha256,
+                        "last_durable_step": step,
+                        "recoveries": list(recovered_pre_stage),
+                        "requires_fresh_campaign": True,
+                    }
+                    recovery_receipt = {
+                        **recovery_body,
+                        "receipt_sha256": sha256_bytes(
+                            canonical_json_bytes(recovery_body)
+                        ),
+                    }
+                    _publish_immutable_bytes(
+                        out_dir / "pre_stage_recovery_halt.json",
+                        canonical_json_bytes(recovery_receipt),
+                        role="pre-stage recovery halt",
+                    )
+                    pre_stage_recovery_halt = recovery_receipt
             update_sequences = {
                 int(transaction.pending_step["sequence"]) for transaction in update_transactions
             }
@@ -2692,6 +2804,8 @@ def main(
 
         # Default-open: only an explicit refusal below closes it.
         training_allowed = True
+        if pre_stage_recovery_halt is not None:
+            training_allowed = False
         if resumed is None:
             if execution_spec is None:
                 baseline_eval = evaluate_heldout(
@@ -2885,6 +2999,9 @@ def main(
             signal.signal(signum, request_stop)
 
         halt_reason = (
+            "pre_stage_admission_burned"
+            if pre_stage_recovery_halt is not None
+            else
             "calibration_not_admitted"
             if calibration and not bool(calibration.get("admission", {}).get("training_admitted"))
             else "no_reachable_frontier"
@@ -3053,6 +3170,7 @@ def main(
                         trainer_step_static=trainer_step_static,
                         adapter_tensors=adapter_tensors,
                         optimizer_tensors=lambda: dict(tree_flatten(optimizer.state)),
+                        measurement_chain=measurement_chain_store,
                     )
                     rejection_transaction_coordinator = (
                         VerifiedTransitionRejectionTransactionCoordinator(

@@ -39,6 +39,7 @@ from core.learning.verified_token_trace import (
 from core.learning.verified_training_task import validate_public_training_task
 from core.learning.verified_transition_causal_campaign import (
     CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+    CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
     EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA,
     VerifiedTransitionCausalCampaignLedger,
     validate_causal_campaign_evidence_manifest,
@@ -484,6 +485,10 @@ def verify_recurrent_evidence_manifest_artifacts(
     """Revalidate every bound causal receipt and accepted update externally."""
 
     evidence = validate_causal_campaign_evidence_manifest(evidence_manifest)
+    manifest_has_pre_measurements = (
+        evidence["schema"]
+        == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+    )
     if (
         not isinstance(campaign_trust_policy, VerifiedCampaignTrustPolicy)
         or evidence["trust_policy_sha256"]
@@ -677,10 +682,6 @@ def verify_recurrent_evidence_manifest_artifacts(
                     update_journal,
                     admission_sha256,
                 )
-                validate_verified_transition_update_receipt(
-                    update_journal,
-                    update,
-                )
                 if update["receipt_sha256"] != row["update_receipt_sha256"]:
                     _fail("external_recurrent_update_binding_mismatch")
                 if transaction_store is None:
@@ -710,6 +711,33 @@ def verify_recurrent_evidence_manifest_artifacts(
                 ):
                     _fail("external_recurrent_transaction_chain_mismatch")
                 pending = transaction.pending_step
+                expected_pre_measurement_sha256 = (
+                    row["pre_measurement_sha256"]
+                    if manifest_has_pre_measurements
+                    else None
+                )
+                validate_verified_transition_update_receipt(
+                    update_journal,
+                    update,
+                    expected_pre_measurement_sha256=(
+                        expected_pre_measurement_sha256
+                    ),
+                    expected_campaign_sequence=(
+                        row["sequence"]
+                        if manifest_has_pre_measurements
+                        else None
+                    ),
+                    expected_execution_spec_sha256=(
+                        pending["execution_spec_sha256"]
+                        if manifest_has_pre_measurements
+                        else None
+                    ),
+                    expected_group_manifest_sha256=(
+                        row["group_manifest_sha256"]
+                        if manifest_has_pre_measurements
+                        else None
+                    ),
+                )
                 group_policy = package["group_manifest"]["entries"][0][
                     "policy_sha256"
                 ]
@@ -736,6 +764,13 @@ def verify_recurrent_evidence_manifest_artifacts(
                     != update["policy_before_sha256"]
                     or pending["policy_after_sha256"]
                     != update["policy_after_sha256"]
+                    or (
+                        manifest_has_pre_measurements
+                        and pending.get("reservation_sha256")
+                        != update["reservation_sha256"]
+                    )
+                    or pending.get("pre_measurement_sha256")
+                    != expected_pre_measurement_sha256
                     or terminal.get("policy_before_sha256")
                     != update["policy_before_sha256"]
                     or terminal.get("policy_after_sha256")
@@ -839,8 +874,7 @@ def verify_recurrent_evidence_manifest_artifacts(
                 ):
                     _fail("external_recurrent_rejection_causality_mismatch")
 
-            observations.append(
-                {
+            observation = {
                     "sequence": row["sequence"],
                     "package_artifact": binding,
                     "package_receipt_sha256": row[
@@ -865,7 +899,11 @@ def verify_recurrent_evidence_manifest_artifacts(
                         "trainer_step_receipt_sha256"
                     ],
                 }
-            )
+            if manifest_has_pre_measurements:
+                observation["pre_measurement_sha256"] = row[
+                    "pre_measurement_sha256"
+                ]
+            observations.append(observation)
     finally:
         transition_store.close()
     body = {
@@ -877,7 +915,9 @@ def verify_recurrent_evidence_manifest_artifacts(
             {"artifact_observations": observations}
         ),
         "validation_profile": (
-            "recurrent_transition_causal_replay.v2"
+            "recurrent_transition_causal_replay.v3"
+            if manifest_has_pre_measurements
+            else "recurrent_transition_causal_replay.v2"
         ),
         "verified_at_unix": verified_at_unix,
     }
@@ -1294,6 +1334,8 @@ def finalize_verified_recurrent_transition_campaign(
         group.sequence: group for group in request.replay_groups
     }
     package_rows: list[dict[str, Any]] = []
+    updated_pre_measurements: list[str | None] = []
+    transaction_store: VerifiedTransitionTransactionStore | None = None
     latest_terminal = 0
     for sequence, (step, package) in enumerate(
         zip(request.step_receipts, packages, strict=True)
@@ -1353,6 +1395,29 @@ def finalize_verified_recurrent_transition_campaign(
                 != update_sha256
             ):
                 _fail("recurrent_campaign_updated_replay_mismatch")
+            if transaction_store is None:
+                transaction_store = VerifiedTransitionTransactionStore.open(
+                    request.transaction_root
+                )
+            transaction = transaction_store.load(
+                sequence=sequence,
+                admission_sha256=cast(
+                    str,
+                    package["group_admission_sha256"],
+                ),
+                load_tensors=False,
+            )
+            if transaction is None:
+                _fail("recurrent_campaign_update_transaction_missing")
+            pre_measurement_sha256 = transaction.pending_step.get(
+                "pre_measurement_sha256"
+            )
+            if pre_measurement_sha256 is not None:
+                _sha256(
+                    pre_measurement_sha256,
+                    role="recurrent_campaign_pre_measurement",
+                )
+            updated_pre_measurements.append(pre_measurement_sha256)
         elif replay_group is not None or update_sha256 is not None:
             _fail("recurrent_campaign_rejected_replay_mismatch")
         package_rows.append(
@@ -1373,6 +1438,11 @@ def finalize_verified_recurrent_transition_campaign(
                     "group_admission_sha256"
                 ],
                 "update_receipt_sha256": update_sha256,
+                "pre_measurement_sha256": (
+                    pre_measurement_sha256
+                    if status == "updated"
+                    else None
+                ),
                 "trainer_step_receipt_sha256": step["receipt_sha256"],
                 "sample_receipt_sha256s": package[
                     "sample_receipt_sha256s"
@@ -1382,6 +1452,19 @@ def finalize_verified_recurrent_transition_campaign(
                 ],
             }
         )
+    if any(value is not None for value in updated_pre_measurements) and any(
+        value is None for value in updated_pre_measurements
+    ):
+        _fail("recurrent_campaign_mixed_pre_measurement_versions")
+    evidence_schema = (
+        CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+        if updated_pre_measurements
+        and all(value is not None for value in updated_pre_measurements)
+        else CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA
+    )
+    if evidence_schema == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA:
+        for row in package_rows:
+            row.pop("pre_measurement_sha256")
     updated_sequences = [
         row["sequence"] for row in package_rows if row["status"] == "updated"
     ]
@@ -1401,7 +1484,7 @@ def finalize_verified_recurrent_transition_campaign(
             _fail("recurrent_campaign_existing_close_invalid")
         existing_created_at = existing_evidence.get("created_at_unix_ns")
         replay_body = {
-            "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+            "schema": evidence_schema,
             "contract_sha256": request.contract_sha256,
             "campaign_schedule_root_sha256": (
                 request.campaign_schedule_root_sha256
@@ -1433,7 +1516,7 @@ def finalize_verified_recurrent_transition_campaign(
         )
     completed_at = max(time.time_ns(), latest_terminal)
     evidence_body = {
-        "schema": CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+        "schema": evidence_schema,
         "contract_sha256": request.contract_sha256,
         "campaign_schedule_root_sha256": (
             request.campaign_schedule_root_sha256

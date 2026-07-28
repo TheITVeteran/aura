@@ -104,6 +104,8 @@ from core.learning.verified_transition_training_evidence import (
     validate_verified_transition_training_evidence,
 )
 from core.learning.verified_transition_update import (
+    VERIFIED_TRANSITION_RESERVATION_SCHEMA,
+    VERIFIED_TRANSITION_RESERVATION_SCHEMA_V2,
     VerifiedTransitionUpdateError,
     VerifiedTransitionUpdateJournal,
     apply_verified_transition_group_update,
@@ -2748,6 +2750,7 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
             campaign_ledger=replay_campaign,
             campaign_sequence=0,
             now_unix_ns=lambda: 1_800_000_227_000_000_000,
+            transaction_coordinator=transaction,
         )
     assert optimizer.update_count == 1
 
@@ -2786,6 +2789,11 @@ def test_trajectory_objective_survives_journal_commit_and_rejects_cross_admissio
 
     other = "0" * 64
     other_journal = VerifiedTransitionUpdateJournal.open(tmp_path / "trajectory-cross-admission")
+    other_journal.reserve(
+        admission_sha256=other,
+        policy_before_sha256=before,
+        reserved_at_unix_ns=1_800_000_227_000_000_000,
+    )
     with pytest.raises(
         VerifiedTransitionUpdateError,
         match="verified_transition_trajectory_binding_invalid",
@@ -2803,18 +2811,24 @@ def test_intervention_objective_survives_journal_commit_and_replay(
     admission = "d" * 64
     before = "1" * 64
     after = "f" * 64
+    objective = _intervention_trajectory_objective_receipt(admission)
+    source = _trajectory_source_binding(objective)
     journal = VerifiedTransitionUpdateJournal.open(tmp_path / "intervention-updates")
     journal.reserve(
         admission_sha256=admission,
         policy_before_sha256=before,
         reserved_at_unix_ns=1_800_000_225_000_000_000,
+        campaign_sequence=0,
+        execution_spec_sha256=source["execution_spec_sha256"],
+        group_manifest_sha256=_sha("intervention-group-manifest"),
+        pre_measurement_required=True,
     )
-    objective = _intervention_trajectory_objective_receipt(admission)
-    source = _trajectory_source_binding(objective)
+    pre_measurement_sha256 = _sha("intervention-pre-measurement")
     record = journal.record_objective(
         admission_sha256=admission,
         objective_receipt=objective,
         trajectory_source_binding=source,
+        pre_measurement_sha256=pre_measurement_sha256,
     )
 
     receipt = commit_staged_verified_transition_update(
@@ -2835,9 +2849,50 @@ def test_intervention_objective_survives_journal_commit_and_replay(
             journal,
             receipt,
             expected_trajectory_source_binding=source,
+            expected_pre_measurement_sha256=pre_measurement_sha256,
+            expected_campaign_sequence=0,
+            expected_execution_spec_sha256=source[
+                "execution_spec_sha256"
+            ],
+            expected_group_manifest_sha256=_sha(
+                "intervention-group-manifest"
+            ),
         )
         == receipt
     )
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_reservation_scope_mismatch",
+    ):
+        validate_verified_transition_update_receipt(
+            journal,
+            receipt,
+            expected_pre_measurement_sha256=pre_measurement_sha256,
+            expected_campaign_sequence=0,
+            expected_execution_spec_sha256=source[
+                "execution_spec_sha256"
+            ],
+            expected_group_manifest_sha256=_sha("wrong-group-manifest"),
+        )
+
+    legacy = VerifiedTransitionUpdateJournal.open(
+        tmp_path / "legacy-intervention-updates"
+    )
+    legacy.reserve(
+        admission_sha256=admission,
+        policy_before_sha256=before,
+        reserved_at_unix_ns=1_800_000_225_000_000_001,
+    )
+    with pytest.raises(
+        VerifiedTransitionUpdateError,
+        match="verified_transition_pre_measurement_reservation_required",
+    ):
+        legacy.record_objective(
+            admission_sha256=admission,
+            objective_receipt=objective,
+            trajectory_source_binding=source,
+            pre_measurement_sha256=pre_measurement_sha256,
+        )
 
 
 @pytest.mark.parametrize("intervention_enabled", [False, True])
@@ -2920,20 +2975,36 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
         def __init__(self) -> None:
             self.events: list[str] = []
 
+        def record_pre_measurement(self, **_kwargs: Any) -> dict[str, Any]:
+            assert intervention_enabled is True
+            self.events.append("pre_measurement")
+            return {"receipt_sha256": _sha("trajectory-pre-measurement")}
+
         def stage_post_update(self, **kwargs: Any) -> None:
             assert kwargs == {
                 "policy_before_sha256": policy_before,
                 "policy_after_sha256": policy_after,
                 "group_admission_sha256": material["admission"]["receipt_sha256"],
             }
+            assert self.events == (
+                ["pre_measurement"] if intervention_enabled else []
+            )
             self.events.append("stage")
 
         def record_update_commit(self, _receipt: Any) -> None:
-            assert self.events == ["stage"]
+            assert self.events == (
+                ["pre_measurement", "stage"]
+                if intervention_enabled
+                else ["stage"]
+            )
             self.events.append("update")
 
         def record_campaign_terminal(self, _receipt: Any) -> None:
-            assert self.events == ["stage", "update"]
+            assert self.events == (
+                ["pre_measurement", "stage", "update"]
+                if intervention_enabled
+                else ["stage", "update"]
+            )
             self.events.append("terminal")
 
     model = Model()
@@ -2944,10 +3015,19 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
         "recurrent_policy_sha256",
         lambda observed, _spec: policy_before if observed.version == 0 else policy_after,
     )
+    def _objective_after_measurement(
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> Objective:
+        assert transaction.events == (
+            ["pre_measurement"] if intervention_enabled else []
+        )
+        return Objective()
+
     monkeypatch.setattr(
         update_runtime,
         "exact_adjoint_verified_transition_group_value_and_grad",
-        lambda *_args, **_kwargs: Objective(),
+        _objective_after_measurement,
     )
     times = iter((1_800_000_225_000_000_000, 1_800_000_226_000_000_000))
     journal = VerifiedTransitionUpdateJournal.open(tmp_path / "trajectory-updates")
@@ -2984,6 +3064,10 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
         material["admission"]["receipt_sha256"],
         "objective",
     )
+    reservation_record = journal.read(
+        material["admission"]["receipt_sha256"],
+        "reserved",
+    )
     expected_source_schema = (
         recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
         if intervention_enabled
@@ -2992,10 +3076,20 @@ def test_admitted_trajectory_group_updates_once_and_replays_from_real_sources(
     assert source_binding["schema"] == expected_source_schema
     assert objective_record["trajectory_source_binding"] == source_binding
     assert objective_record["objective_receipt"] == objective_receipt
+    assert reservation_record["schema"] == (
+        VERIFIED_TRANSITION_RESERVATION_SCHEMA_V2
+        if intervention_enabled
+        else VERIFIED_TRANSITION_RESERVATION_SCHEMA
+    )
+    assert len(journal.inventory()) == 1
     assert validate_verified_transition_update_receipt(journal, receipt) == receipt
     assert optimizer.update_count == 1
     assert model.version == 1
-    assert transaction.events == ["stage", "update", "terminal"]
+    assert transaction.events == (
+        ["pre_measurement", "stage", "update", "terminal"]
+        if intervention_enabled
+        else ["stage", "update", "terminal"]
+    )
 
     close_payload = campaign_ledger.close_payload(
         completed_at_unix_ns=1_800_000_227_000_000_000,
@@ -3324,6 +3418,7 @@ def test_policy_drift_after_gradient_blocks_optimizer_and_burns_admission(
             campaign_ledger=campaign_ledger,
             campaign_sequence=0,
             now_unix_ns=lambda: 1_800_000_225_000_000_000,
+            transaction_coordinator=object(),
         )
     assert optimizer.update_count == 0
     admission_sha256 = material["admission"]["receipt_sha256"]

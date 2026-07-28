@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 import types
@@ -48,6 +49,9 @@ from tools.train_grpo import (
     evaluate_recurrent_heldout,
     sample_recurrent_group,
 )
+from tools.train_grpo import (
+    main as train_grpo_main,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,22 @@ class _Task:
 def test_stable_seed_has_a_fixed_process_independent_value():
     assert _stable_seed(7, "cell", 4) == 3478236081
     assert _stable_seed(7, "cell", 4) != _stable_seed(7, "cell", 5)
+
+
+def test_pre_stage_recovery_runs_after_exact_restore_and_before_training_loop():
+    source = inspect.getsource(train_grpo_main)
+    restore = source.index("resumed = load_grpo_checkpoint(")
+    reconcile = source.index("measurement_chain_store.reconcile_interrupted_admissions(")
+    recovery_gate = source.index(
+        "if pre_stage_recovery_halt is not None:\n            training_allowed = False",
+        reconcile,
+    )
+    mutation_loop = source.index(
+        "while training_allowed and step < args.max_steps:",
+        recovery_gate,
+    )
+
+    assert restore < reconcile < recovery_gate < mutation_loop
 
 
 def test_dataset_identity_binds_split_order_and_task_bytes():

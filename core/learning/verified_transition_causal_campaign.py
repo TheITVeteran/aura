@@ -49,6 +49,9 @@ CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA = (
 CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA = (
     "aura.verified_transition.campaign_evidence_manifest.v3"
 )
+CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4 = (
+    "aura.verified_transition.campaign_evidence_manifest.v4"
+)
 EXTERNAL_EVIDENCE_VERIFICATION_RECEIPT_SCHEMA = (
     "aura.verified_transition.external_evidence_verification_receipt.v2"
 )
@@ -177,7 +180,7 @@ _EVIDENCE_MANIFEST_KEYS = frozenset(
         "manifest_sha256",
     }
 )
-_EVIDENCE_PACKAGE_KEYS = frozenset(
+_EVIDENCE_PACKAGE_KEYS_V3 = frozenset(
     {
         "sequence",
         "status",
@@ -192,6 +195,9 @@ _EVIDENCE_PACKAGE_KEYS = frozenset(
         "evidence_receipt_sha256s",
     }
 )
+_EVIDENCE_PACKAGE_KEYS_V4 = _EVIDENCE_PACKAGE_KEYS_V3 | {
+    "pre_measurement_sha256"
+}
 _EVIDENCE_ARTIFACT_KEYS = frozenset({"path", "sha256", "size_bytes"})
 _EXTERNAL_VERIFICATION_RECEIPT_KEYS = frozenset(
     {
@@ -264,7 +270,11 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
     updated = document.get("updated_replay_sequences")
     completed = document.get("completed_groups")
     if (
-        document.get("schema") != CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA
+        document.get("schema")
+        not in {
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA,
+            CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4,
+        }
         or observed != hashlib.sha256(_json_bytes(unsigned)).hexdigest()
         or type(completed) is not int
         or completed < 0
@@ -301,10 +311,16 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
         ):
             _fail(f"causal_campaign_evidence_{role}_invalid")
     _identifier(document.get("halt_reason"), role="causal_campaign_halt_reason")
+    package_keys = (
+        _EVIDENCE_PACKAGE_KEYS_V4
+        if document["schema"]
+        == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+        else _EVIDENCE_PACKAGE_KEYS_V3
+    )
     for sequence, package in enumerate(packages):
         if (
             not isinstance(package, Mapping)
-            or set(package) != _EVIDENCE_PACKAGE_KEYS
+            or set(package) != package_keys
             or package.get("sequence") != sequence
             or package.get("status") not in {"updated", "rejected"}
             or not isinstance(package.get("sample_receipt_sha256s"), list)
@@ -346,6 +362,16 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
                 _sha256(
                     digest, role=f"causal_campaign_evidence_{role}"
                 )
+        if (
+            document["schema"]
+            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+        ):
+            pre_measurement = package.get("pre_measurement_sha256")
+            if pre_measurement is not None:
+                _sha256(
+                    pre_measurement,
+                    role="causal_campaign_evidence_pre_measurement",
+                )
         for digest in (
             package["sample_receipt_sha256s"]
             + package["evidence_receipt_sha256s"]
@@ -361,6 +387,17 @@ def validate_causal_campaign_evidence_manifest(value: Any) -> dict[str, Any]:
             )
         ):
             _fail("causal_campaign_evidence_package_status_invalid")
+        if (
+            document["schema"]
+            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            and (
+                (package["status"] == "updated")
+                is not (package["pre_measurement_sha256"] is not None)
+            )
+        ):
+            _fail(
+                "causal_campaign_evidence_pre_measurement_status_invalid"
+            )
     if updated != [
         package["sequence"]
         for package in packages
@@ -574,6 +611,16 @@ def validate_external_evidence_verification_receipt(
             "trainer_step_receipt_sha256": package[
                 "trainer_step_receipt_sha256"
             ],
+            **(
+                {
+                    "pre_measurement_sha256": package[
+                        "pre_measurement_sha256"
+                    ]
+                }
+                if evidence["schema"]
+                == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+                else {}
+            ),
         }
         for package in evidence["group_packages"]
     ]
@@ -586,7 +633,12 @@ def validate_external_evidence_verification_receipt(
         or not isinstance(document.get("verifier_identity"), str)
         or not document["verifier_identity"]
         or document.get("validation_profile")
-        != "recurrent_transition_causal_replay.v2"
+        != (
+            "recurrent_transition_causal_replay.v3"
+            if evidence["schema"]
+            == CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4
+            else "recurrent_transition_causal_replay.v2"
+        )
         or document.get("verified_package_count")
         != len(expected_observations)
         or document.get("artifact_observation_root_sha256")
@@ -1706,6 +1758,7 @@ class VerifiedTransitionCausalCampaignLedger:
 __all__ = [
     "CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA",
     "CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA",
+    "CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4",
     "CAUSAL_CAMPAIGN_MANIFEST_SCHEMA",
     "CAUSAL_CAMPAIGN_OPEN_SCHEMA",
     "CAUSAL_CAMPAIGN_RECEIPT_SCHEMA",
