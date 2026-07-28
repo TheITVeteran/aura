@@ -1316,7 +1316,44 @@ class ResponseGenerationPhase(BasePhase):
                         )
                     else:
                         messages.insert(0, {"role": "system", "content": repair_block})
-                if bool(runtime_context.get("desktop_execution_contract")):
+                # Derived, not merely read. The flag has to survive chat route ->
+                # CognitiveEngine -> phase context to arrive here, and when it
+                # does not, this block never renders: she is then asked to do a
+                # desktop task with no instruction that she can, and answers
+                # from her identity text instead. Measured live, verbatim:
+                #   "I can't interact with your device or open apps. But here's
+                #    a note for you: 'Orcas, also known as killer whales...'"
+                # — a false capability denial plus the note's content typed into
+                # chat, while Notes stayed untouched. The objective itself is
+                # sufficient evidence, and the same detector already governs the
+                # route's own decision.
+                _desktop_objective = bool(runtime_context.get("desktop_execution_contract"))
+                if not _desktop_objective:
+                    # The ROUTER already decided this. It writes its matched
+                    # skills onto the state — "Routing: multi-step skill-backed
+                    # task detected → TASK via ['desktop_task']" — and nothing
+                    # downstream ever read them, so the one component that knew
+                    # could not tell the one component that had to act. Reading
+                    # the decision beats re-deriving it: there is a single
+                    # source of truth and it cannot disagree with itself.
+                    _matched = state.response_modifiers.get("matched_skills")
+                    if isinstance(_matched, (list, tuple, set)):
+                        _desktop_objective = any(
+                            "desktop" in str(skill).lower() or "computer_use" in str(skill).lower()
+                            for skill in _matched
+                        )
+                if not _desktop_objective:
+                    # Last resort: the objective itself. Kept so a lane that
+                    # never reached the router still plans rather than denying.
+                    try:
+                        from core.runtime.desktop_objective_intent import (
+                            looks_like_desktop_objective,
+                        )
+
+                        _desktop_objective = bool(looks_like_desktop_objective(objective))
+                    except (ImportError, AttributeError, TypeError, ValueError):
+                        _desktop_objective = False
+                if _desktop_objective:
                     desktop_block = (
                         "## LIVE DESKTOP EXECUTION PLANNING CONTRACT\n"
                         "The user's request is a live desktop/computer objective. Produce a compact "
