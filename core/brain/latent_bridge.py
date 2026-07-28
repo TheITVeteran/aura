@@ -39,6 +39,7 @@ the sampling-parameter modulation continues to work.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -88,7 +89,186 @@ def _safe_get(eng: Any, attr: str, default: float) -> float:
         return default
 
 
-def _read_substrate() -> dict[str, float]:
+@dataclass(frozen=True)
+class SubstrateReading:
+    """Substrate values, and how much of the substrate actually answered.
+
+    CP126 (high): "Partial and total substrate failures collapse to healthy
+    defaults. Missing services and many errors return biologically plausible
+    defaults... the output carries no degraded flag, missing-channel list,
+    uncertainty, freshness, or receipt."
+
+    The defaults are plausible on purpose — a caller needs a number to sample
+    with. The problem was that a dead substrate produced the same dict as a
+    calm one, so "she is settled" and "nothing is reporting" were the same
+    reading, and inference parameters were derived from the difference.
+    """
+
+    values: dict[str, float]
+    sourced: frozenset[str]
+    read_at: float
+
+    @property
+    def defaulted(self) -> tuple[str, ...]:
+        return tuple(sorted(set(DEFAULT_SUBSTRATE_STATE) - self.sourced))
+
+    @property
+    def coverage(self) -> float:
+        total = len(DEFAULT_SUBSTRATE_STATE)
+        return (len(self.sourced & set(DEFAULT_SUBSTRATE_STATE)) / total) if total else 0.0
+
+    @property
+    def degraded(self) -> bool:
+        """True when most of the substrate did not answer.
+
+        Half is the line because the mapping rules below read from several
+        channels at once; below that the parameters are mostly derived from
+        constants, which is a different claim from "measured and calm".
+        """
+        return self.coverage < 0.5
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "aura.substrate_reading.v1",
+            "coverage": round(self.coverage, 3),
+            "degraded": self.degraded,
+            "sourced": sorted(self.sourced),
+            "defaulted": list(self.defaulted),
+            "read_at": self.read_at,
+        }
+
+
+def _read_substrate_detailed() -> SubstrateReading:
+    """Read every channel independently, recording which ones answered.
+
+    Each channel gets its own guard. The previous single try/except around
+    the whole body meant the FIRST failing service silently skipped every
+    read after it — one unavailable homeostasis engine blanked phi, free
+    energy, neurochemistry, affect, active inference and the causal vector,
+    and the result was still returned as a normal substrate state.
+    """
+    out: dict[str, float] = dict(DEFAULT_SUBSTRATE_STATE)
+    sourced: set[str] = set()
+
+    def _channel(keys: tuple[str, ...], reader: Any) -> None:
+        try:
+            if reader():
+                sourced.update(keys)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+            record_degradation(
+                "latent_bridge",
+                exc,
+                severity="info",
+                action=f"defaulted substrate channel(s) {','.join(keys)} after read failed",
+                enforce_failure_policy=False,
+            )
+
+    try:
+        from core.container import ServiceContainer
+    except ImportError as exc:
+        record_degradation(
+            "latent_bridge",
+            exc,
+            severity="warning",
+            action="returned a fully defaulted substrate reading; no channel was measured",
+        )
+        return SubstrateReading(out, frozenset(), time.time())
+
+    def _homeo() -> bool:
+        homeo = ServiceContainer.get("homeostasis_engine", default=None) or ServiceContainer.get("homeostatic_engine", default=None)
+        if homeo is None:
+            return False
+        out["vitality"] = _safe_get(homeo, "vitality", out["vitality"])
+        return True
+
+    def _phi() -> bool:
+        phi_engine = ServiceContainer.get("phi_core", default=None)
+        if phi_engine is None:
+            return False
+        out["phi"] = _safe_get(phi_engine, "phi_s", out["phi"])
+        return True
+
+    def _free_energy() -> bool:
+        fe_engine = ServiceContainer.get("free_energy_engine", default=None)
+        if fe_engine is None or getattr(fe_engine, "current", None) is None:
+            return False
+        cur = fe_engine.current
+        out["free_energy"] = float(getattr(cur, "free_energy", out["free_energy"]) or out["free_energy"])
+        out["valence"] = float(getattr(cur, "valence", 0.0) or 0.0)
+        out["arousal"] = float(getattr(cur, "arousal", 0.5) or 0.5)
+        return True
+
+    def _neuro() -> bool:
+        nc = ServiceContainer.get("neurochemical_regulator", default=None)
+        if nc is None or not hasattr(nc, "snapshot"):
+            return False
+        d = nc.snapshot() or {}
+        seen = False
+        for k in ("acetylcholine", "serotonin", "norepinephrine", "cortisol"):
+            if k in d:
+                out[k] = float(d[k])
+                seen = True
+        return seen
+
+    def _affect() -> bool:
+        affect = ServiceContainer.get("affect_engine", default=None)
+        if affect is None or not hasattr(affect, "snapshot"):
+            return False
+        d = affect.snapshot() or {}
+        seen = False
+        for k in ("frustration", "curiosity"):
+            if k in d:
+                out[k] = float(d[k])
+                seen = True
+        return seen
+
+    def _active() -> bool:
+        advisor = ServiceContainer.get("spiking_active_inference", default=None)
+        if advisor is None or not hasattr(advisor, "snapshot"):
+            return False
+        active = advisor.snapshot() or {}
+        routing = active.get("routing_bias") or {}
+        features = active.get("features") or {}
+        if isinstance(routing, dict):
+            out["active_reduce_load"] = 1.0 if routing.get("reduce_load") else 0.0
+            out["active_seek_information"] = 1.0 if routing.get("seek_information") else 0.0
+        if isinstance(features, dict):
+            out["active_tool_pressure"] = float(features.get("tool_pressure", 0.0) or 0.0)
+            out["active_error_pressure"] = float(features.get("error_pressure", 0.0) or 0.0)
+        out["active_uncertainty"] = float(active.get("uncertainty", 0.0) or 0.0)
+        return True
+
+    def _causal() -> bool:
+        being_runtime = ServiceContainer.get("being_runtime", default=None)
+        causal_vector = getattr(being_runtime, "_last_causal_self_vector", None)
+        if causal_vector is None or not hasattr(causal_vector, "value"):
+            return False
+        out["organismal_coherence"] = float(causal_vector.value("organismal_coherence", out["organismal_coherence"]))
+        out["causal_verification_need"] = float(causal_vector.value("verification_need", out["causal_verification_need"]))
+        out["causal_governance_pressure"] = float(causal_vector.value("governance_pressure", out["causal_governance_pressure"]))
+        out["causal_metabolic_budget"] = float(causal_vector.value("metabolic_budget", out["causal_metabolic_budget"]))
+        out["sentience_candidate_strength"] = float(causal_vector.value("sentience_candidate_strength", out["sentience_candidate_strength"]))
+        return True
+
+    _channel(("vitality",), _homeo)
+    _channel(("phi",), _phi)
+    _channel(("free_energy", "valence", "arousal"), _free_energy)
+    _channel(("acetylcholine", "serotonin", "norepinephrine", "cortisol"), _neuro)
+    _channel(("frustration", "curiosity"), _affect)
+    _channel(
+        ("active_reduce_load", "active_seek_information", "active_tool_pressure",
+         "active_error_pressure", "active_uncertainty"),
+        _active,
+    )
+    _channel(
+        ("organismal_coherence", "causal_verification_need", "causal_governance_pressure",
+         "causal_metabolic_budget", "sentience_candidate_strength"),
+        _causal,
+    )
+    return SubstrateReading(out, frozenset(sourced), time.time())
+
+
+def _read_substrate_legacy() -> dict[str, float]:
     out: dict[str, float] = dict(DEFAULT_SUBSTRATE_STATE)
     try:
         from core.container import ServiceContainer
@@ -150,6 +330,15 @@ def _read_substrate() -> dict[str, float]:
         record_degradation('latent_bridge', exc)
         logger.debug("latent_bridge substrate read failed: %s", exc)
     return out
+
+
+def _read_substrate() -> dict[str, float]:
+    """The substrate values, for callers that only want numbers.
+
+    Provenance is available through _read_substrate_detailed(); this keeps
+    the historical signature so every existing caller is unaffected.
+    """
+    return _read_substrate_detailed().values
 
 
 # ---------------------------------------------------------------------------
