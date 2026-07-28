@@ -1888,6 +1888,17 @@ class ResponseGenerationPhase(BasePhase):
                         cognitive_engine_required=bool(
                             runtime_context.get("cognitive_engine_required", False)
                         ),
+                        # Forwarded, or the gate cannot know this turn has to
+                        # emit a PLAN. ResponseGeneration already injects the
+                        # desktop planning contract into the messages from this
+                        # same flag, but never passed the flag itself, so the
+                        # gate applied the origin's conversational default of
+                        # 288 tokens — too small for a multi-step JSON plan.
+                        # The model then emitted prose, the draft was judged
+                        # truncated, and nothing executed.
+                        desktop_execution_contract=bool(
+                            runtime_context.get("desktop_execution_contract", False)
+                        ),
                         desktop_cognitive_engine_required=bool(
                             runtime_context.get("desktop_cognitive_engine_required", False)
                             or runtime_context.get("cognitive_engine_required", False)

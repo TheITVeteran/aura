@@ -9708,6 +9708,9 @@ class InferenceGate:
             "operator_evidence_contract",
             "web_interlocutor_contract",
             "cognitive_engine_required",
+            # Without this the gate cannot know the turn must emit a PLAN, and
+            # applies the origin's conversational token default.
+            "desktop_execution_contract",
             "desktop_cognitive_engine_required",
             "live_runtime_payload_required",
             "visible_user_message",
