@@ -86,6 +86,8 @@ from core.learning.verified_transition_trainer import (  # noqa: E402
     VERIFIED_TRANSITION_STEP_SCHEMA,
     VerifiedTransitionCampaignClosure,
     VerifiedTransitionGroupProvider,
+    VerifiedTransitionGroupProviderFactory,
+    VerifiedTransitionProviderRuntime,
     VerifiedTransitionTelemetry,
     apply_prepared_verified_transition_group,
     build_verified_transition_step_receipt,
@@ -1018,6 +1020,25 @@ def _task_prompt_tokens(tokenizer, task) -> list[int]:
     return tokens
 
 
+def _scheduled_verified_training_task(
+    provider: VerifiedTransitionGroupProvider,
+    tasks_by_id: Mapping[str, Any],
+    *,
+    campaign_sequence: int,
+) -> tuple[Any, int]:
+    """Resolve one task only from the provider's frozen signed schedule."""
+
+    scheduled = provider.training_schedule_entry(sequence=campaign_sequence)
+    if scheduled.campaign_sequence != campaign_sequence:
+        raise RuntimeError("verified provider returned a different schedule sequence")
+    task = tasks_by_id.get(scheduled.task_id)
+    if task is None:
+        raise RuntimeError(
+            "verified provider scheduled a task outside the frozen dataset"
+        )
+    return task, scheduled.trainer_sample_seed
+
+
 def _grade_reason(verdict: Mapping[str, Any]) -> str:
     if isinstance(verdict.get("reason"), str) and verdict["reason"]:
         return str(verdict["reason"])
@@ -1052,6 +1073,7 @@ def sample_recurrent_group(
     )
 
     prompt_tokens = _task_prompt_tokens(tokenizer, task)
+    requested_sampling = sampling_config
     sampling = sampling_config or RecurrentSamplingConfig(max_tokens=max_tokens)
     if not isinstance(sampling, RecurrentSamplingConfig):
         raise TypeError("sampling_config must be a RecurrentSamplingConfig")
@@ -1069,6 +1091,23 @@ def sample_recurrent_group(
             prompt_tokens=prompt_tokens,
             policy_sha256=policy_sha256,
         )
+        if not isinstance(plan.sampling_config, Mapping) or not plan.sampling_config:
+            raise RuntimeError(
+                "verified sampling plan omitted its frozen sampling configuration"
+            )
+        planned_sampling = RecurrentSamplingConfig(**dict(plan.sampling_config))
+        if planned_sampling.max_tokens != max_tokens:
+            raise RuntimeError(
+                "verified sampling plan token budget differs from trainer request"
+            )
+        if (
+            requested_sampling is not None
+            and requested_sampling.to_dict() != planned_sampling.to_dict()
+        ):
+            raise RuntimeError(
+                "caller sampling configuration differs from verified plan"
+            )
+        sampling = planned_sampling
         entries = tuple(plan.entries)
         if (
             plan.campaign_sequence != campaign_sequence
@@ -1440,7 +1479,8 @@ def evaluate_recurrent_heldout(
 
 def main(
     *,
-    verified_group_provider: VerifiedTransitionGroupProvider | None = None,
+    verified_group_provider_factory: VerifiedTransitionGroupProviderFactory
+    | None = None,
 ) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
@@ -1568,17 +1608,18 @@ def main(
         parser.error(str(exc))
     if args.execution_mode == "recurrent" and args.temperature != 1.0:
         parser.error("recurrent mode requires --temperature 1")
-    if args.execution_mode == "recurrent" and verified_group_provider is None:
+    if args.execution_mode == "recurrent" and verified_group_provider_factory is None:
         parser.error(
-            "recurrent mode requires an in-process VerifiedTransitionGroupProvider; "
-            "raw caller-authored scalar rewards are not an authorized mutation path"
+            "recurrent mode requires a post-load verified transition provider "
+            "factory; preconstructed providers and raw caller-authored scalar "
+            "rewards are not authorized mutation paths"
         )
-    if args.execution_mode == "standard" and verified_group_provider is not None:
+    if args.execution_mode == "standard" and verified_group_provider_factory is not None:
         parser.error("a verified transition provider only applies to recurrent mode")
     provider_contract_sha256 = None
-    if verified_group_provider is not None:
+    if verified_group_provider_factory is not None:
         provider_contract_sha256 = getattr(
-            verified_group_provider, "contract_sha256", None
+            verified_group_provider_factory, "contract_sha256", None
         )
         if not isinstance(provider_contract_sha256, str) or not re.fullmatch(
             r"[0-9a-f]{64}", provider_contract_sha256
@@ -1631,6 +1672,10 @@ def main(
         holdout_per_cell=args.holdout_per_cell,
         seed=args.seed,
     )
+    if verified_group_provider_factory is not None:
+        train_tasks = list(
+            verified_group_provider_factory.bind_training_tasks(train_tasks)
+        )
     print(
         f"[tasks] {len(train_tasks)} train / {len(holdout)} held-out "
         f"from {args.task_source} (disjoint prompts and identities verified)",
@@ -1711,6 +1756,10 @@ def main(
                 "transition_provider": (
                     REPO_ROOT / "core/learning/verified_transition_provider.py"
                 ),
+                "transition_provider_factory": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_production_factory.py"
+                ),
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),
@@ -1766,6 +1815,9 @@ def main(
             "lora_rank": args.lora_rank,
             "lora_targets": args.lora_targets,
             "lora_layers": args.lora_layers,
+            "lora_initialization_seed": _stable_seed(
+                args.seed, "lora-init", args.adapter_id
+            ),
             "learning_rate": args.learning_rate,
             "max_steps": args.max_steps,
             "eval_every": args.eval_every,
@@ -1824,6 +1876,7 @@ def main(
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         model.freeze()
+        verified_group_provider: VerifiedTransitionGroupProvider | None = None
 
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             ScopedLoRALinear,
@@ -1850,6 +1903,10 @@ def main(
                 max(prelude_end, coda_start - args.lora_layers),
                 coda_start,
             )
+        # The initial recurrent policy digest includes both LoRA factors even
+        # though the B factor starts at zero. Seed attachment explicitly so a
+        # signed initial-policy commitment survives process restart exactly.
+        mx.random.seed(_stable_seed(args.seed, "lora-init", args.adapter_id))
         for index in adapted_indices:
             layer = model.model.layers[index]
             for parent_name in ("self_attn", "mlp"):
@@ -1887,6 +1944,23 @@ def main(
 
         optimizer = optim.Adam(learning_rate=args.learning_rate)
         optimizer.init(model.trainable_parameters())
+        if verified_group_provider_factory is not None:
+            assert execution_spec is not None
+            verified_group_provider = verified_group_provider_factory.create(
+                VerifiedTransitionProviderRuntime(
+                    model=model,
+                    tokenizer=tokenizer,
+                    execution_spec=execution_spec,
+                    training_tasks=tuple(train_tasks),
+                    output_directory=out_dir,
+                    transaction_root=(
+                        out_dir / "verified-transition-transactions"
+                    ),
+                    dataset_sha256=dataset_sha256,
+                    group_size=args.group_size,
+                    sampling_max_tokens=args.max_tokens,
+                )
+            )
         telemetry: GRPOTelemetry | VerifiedTransitionTelemetry = (
             VerifiedTransitionTelemetry()
             if execution_spec is not None
@@ -2480,14 +2554,26 @@ def main(
 
                 step_number = step + 1
                 active_transaction_coordinator = None
-                decision_rng = random.Random(
-                    _stable_seed(args.seed, "curriculum", step_number)
-                )
-                cell = curriculum.sample(decision_rng)
-                pool = by_cell.get(cell) or train_tasks
-                task_rng = random.Random(_stable_seed(args.seed, "task", step_number))
-                task = pool[task_rng.randrange(len(pool))]
-                sample_seed = _stable_seed(args.seed, "group", step_number, task.task_id)
+                if execution_spec is None:
+                    decision_rng = random.Random(
+                        _stable_seed(args.seed, "curriculum", step_number)
+                    )
+                    cell = curriculum.sample(decision_rng)
+                    pool = by_cell.get(cell) or train_tasks
+                    task_rng = random.Random(
+                        _stable_seed(args.seed, "task", step_number)
+                    )
+                    task = pool[task_rng.randrange(len(pool))]
+                    sample_seed = _stable_seed(
+                        args.seed, "group", step_number, task.task_id
+                    )
+                else:
+                    assert verified_group_provider is not None
+                    task, sample_seed = _scheduled_verified_training_task(
+                        verified_group_provider,
+                        tasks_by_id,
+                        campaign_sequence=step_number - 1,
+                    )
                 recurrent_samples = None
                 if execution_spec is not None:
                     active_recurrent_step = {

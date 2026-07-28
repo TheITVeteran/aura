@@ -56,6 +56,7 @@ from core.learning.verified_transition_trainer import (
     VerifiedTransitionCampaignClosure,
     VerifiedTransitionSamplingEntry,
     VerifiedTransitionSamplingPlan,
+    VerifiedTransitionTrainingScheduleEntry,
     validate_verified_transition_step_receipt,
 )
 from core.learning.verified_transition_training_evidence import (
@@ -676,6 +677,55 @@ class ProductionVerifiedTransitionGroupProvider:
             return cast(str, self._accepted_steps[-1]["policy_after_sha256"])
         return cast(str, self._contract["initial_policy_sha256"])
 
+    @property
+    def campaign_id(self) -> str:
+        return cast(str, self._contract["campaign_id"])
+
+    @property
+    def campaign_schedule_root_sha256(self) -> str:
+        return cast(str, self._contract["campaign_schedule_root_sha256"])
+
+    def task_commitment(self, *, sequence: int) -> Mapping[str, Any]:
+        """Return the immutable public schedule row for runtime binding."""
+
+        with self._lock:
+            return cast(
+                dict[str, Any],
+                _clone(self._commitment(sequence), role="task_commitment"),
+            )
+
+    def training_schedule_entry(
+        self, *, sequence: int
+    ) -> VerifiedTransitionTrainingScheduleEntry:
+        """Expose the provider-owned task and trainer seed before selection."""
+
+        with self._lock:
+            commitment = self._commitment(sequence)
+            return VerifiedTransitionTrainingScheduleEntry(
+                campaign_sequence=sequence,
+                task_id=cast(str, commitment["task_id"]),
+                trainer_sample_seed=cast(int, commitment["trainer_sample_seed"]),
+            )
+
+    def lineage_plan_for_manifest(
+        self,
+        *,
+        sequence: int,
+        policy_before_sha256: str,
+        group_manifest: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Build the exact unsigned lineage payload an external issuer signs."""
+
+        with self._lock:
+            manifest = validate_transition_group_manifest(group_manifest)
+            return self._lineage_plan(
+                sequence=sequence,
+                policy_before_sha256=_sha256(
+                    policy_before_sha256, role="provider_lineage_policy"
+                ),
+                group_manifest=manifest,
+            )
+
     def _commitment(self, sequence: int) -> dict[str, Any]:
         if not 0 <= sequence < len(self._contract["task_schedule"]):
             _fail("provider_sequence_outside_contract")
@@ -931,6 +981,7 @@ class ProductionVerifiedTransitionGroupProvider:
                     str, commitment["recurrent_execution_spec_sha256"]
                 ),
                 entries=entries,
+                sampling_config={},
             )
 
     def _validate_prepared(

@@ -512,6 +512,19 @@ def test_contract_binds_only_initial_policy_and_immutable_schedule(
     assert all("group_manifest_sha256" not in row for row in contract["task_schedule"])
 
 
+def test_provider_owns_exact_training_task_and_group_seed(
+    material: dict[str, Any],
+) -> None:
+    provider = material["make_provider"]()
+
+    scheduled = provider.training_schedule_entry(sequence=1)
+
+    assert scheduled.campaign_sequence == 1
+    assert scheduled.task_id == "task-1"
+    assert scheduled.trainer_sample_seed == material["trainer_seeds"][1]
+    assert provider.task_commitment(sequence=1) == material["schedule"][1]
+
+
 def test_contract_tampering_fails_closed(material: dict[str, Any]) -> None:
     tampered = copy.deepcopy(material["contract"])
     tampered["task_schedule"][1]["sample_seeds"][0] += 1

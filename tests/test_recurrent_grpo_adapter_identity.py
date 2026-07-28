@@ -74,6 +74,12 @@ SOURCE_ROLES = {
     "transition_update",
     "transition_training_evidence",
     "campaign_trust",
+    "transition_provider",
+    "transition_provider_factory",
+    "transition_transaction",
+    "transition_causal_campaign",
+    "verified_training_task",
+    "verified_token_trace",
 }
 
 
@@ -176,6 +182,7 @@ def _fixture(
         "execution_mode": "recurrent",
         "execution_spec": spec.to_dict(),
         "execution_spec_sha256": spec.sha256,
+        "verified_transition_provider_contract_sha256": "f" * 64,
         "domains": ["logic"],
         "depths": [2],
         "train_per_cell": 1,
@@ -190,6 +197,7 @@ def _fixture(
         "lora_rank": 2,
         "lora_targets": "o_proj",
         "lora_layers": 1,
+        "lora_initialization_seed": 71,
         "learning_rate": 1e-5,
         "max_steps": 1,
         "eval_every": 1,

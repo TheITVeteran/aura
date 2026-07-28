@@ -489,6 +489,7 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
                 prompt_tokens_sha256=prompt_sha256,
                 execution_spec_sha256=spec.sha256,
                 entries=tuple(entries),
+                sampling_config=sampling.to_dict(),
             )
 
     provider = Provider()

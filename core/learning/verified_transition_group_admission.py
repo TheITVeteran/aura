@@ -109,6 +109,27 @@ def _sampling_config_document(sample: Any) -> dict[str, Any]:
     return document
 
 
+def sampling_config_document_sha256(config: Any) -> str:
+    """Hash one sampling configuration without requiring a generated sample."""
+
+    if hasattr(config, "to_dict"):
+        config = config.to_dict()
+    if not isinstance(config, Mapping) or not config:
+        _fail("group_sample_sampling_config_invalid")
+    try:
+        payload = json.dumps(
+            dict(config),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise VerifiedTransitionGroupError(
+            "group_sample_sampling_config_invalid"
+        ) from exc
+    return hashlib.sha256(payload).hexdigest()
+
+
 def sampling_config_sha256(sample: Any) -> str:
     payload = json.dumps(
         _sampling_config_document(sample),
@@ -554,6 +575,7 @@ __all__ = [
     "VerifiedTransitionGroupError",
     "build_transition_group_manifest",
     "build_verified_transition_group_admission",
+    "sampling_config_document_sha256",
     "sampling_config_sha256",
     "validate_transition_group_manifest",
     "validate_verified_transition_group_admission",

@@ -7,6 +7,7 @@ import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from core.brain.llm.latent_cortex.campaign_trust import VerifiedCampaignTrustPolicy
@@ -133,6 +134,31 @@ class VerifiedTransitionSamplingPlan:
     prompt_tokens_sha256: str
     execution_spec_sha256: str
     entries: tuple[VerifiedTransitionSamplingEntry, ...]
+    sampling_config: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedTransitionTrainingScheduleEntry:
+    """Provider-owned task and group RNG identity for one trainer step."""
+
+    campaign_sequence: int
+    task_id: str
+    trainer_sample_seed: int
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedTransitionProviderRuntime:
+    """Live objects available only after recurrent adapters are attached."""
+
+    model: Any
+    tokenizer: Any
+    execution_spec: RLCExecutionSpec
+    training_tasks: tuple[Any, ...]
+    output_directory: Path
+    transaction_root: Path
+    dataset_sha256: str
+    group_size: int
+    sampling_max_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +190,13 @@ class VerifiedTransitionCampaignClosure:
 
 class VerifiedTransitionGroupProvider(Protocol):
     """Trusted campaign producer interface; it never receives the optimizer."""
+
+    @property
+    def contract_sha256(self) -> str: ...
+
+    def training_schedule_entry(
+        self, *, sequence: int
+    ) -> VerifiedTransitionTrainingScheduleEntry: ...
 
     def sampling_plan(
         self,
@@ -215,6 +248,19 @@ class VerifiedTransitionGroupProvider(Protocol):
         halt_reason: str,
         replay_groups: Sequence[VerifiedTransitionReplayGroup],
     ) -> VerifiedTransitionCampaignClosure: ...
+
+
+class VerifiedTransitionGroupProviderFactory(Protocol):
+    """Construct the provider only after the live recurrent policy exists."""
+
+    @property
+    def contract_sha256(self) -> str: ...
+
+    def bind_training_tasks(self, tasks: Sequence[Any]) -> Sequence[Any]: ...
+
+    def create(
+        self, runtime: VerifiedTransitionProviderRuntime
+    ) -> VerifiedTransitionGroupProvider: ...
 
 
 @dataclass(slots=True)
@@ -664,6 +710,9 @@ __all__ = [
     "VerifiedTransitionMutationResult",
     "VerifiedTransitionSamplingEntry",
     "VerifiedTransitionSamplingPlan",
+    "VerifiedTransitionTrainingScheduleEntry",
+    "VerifiedTransitionProviderRuntime",
+    "VerifiedTransitionGroupProviderFactory",
     "VerifiedTransitionTelemetry",
     "apply_prepared_verified_transition_group",
     "build_verified_transition_step_receipt",

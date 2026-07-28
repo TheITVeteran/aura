@@ -30816,3 +30816,48 @@ approximately 73.7%-100.0% with an 86.8% midpoint. The evidence-adjusted range
 is 3-7 checkpoints to resident-32B training launch, 7-13 to a defensible
 preliminary gain verdict, and 13-23 to the powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420I externally rooted post-load provider factory
+
+Proof-grade recurrent training no longer accepts a preconstructed duck-typed
+provider. The only recurrent entry is a factory invoked after the resident
+checkpoint is loaded, every LoRA site is attached, its deterministic
+initialization is evaluated, and the live recurrent policy digest can be
+compared with the frozen campaign contract. Construction also binds the exact
+dataset digest, branch/group size, sampling budget, trainer output directory,
+and transaction root before any campaign group can execute.
+
+The provider owns the exact scheduled task and trainer seed. Each executable
+curriculum task is reconstructed through the verified-training-task registry
+and answer nonce; its complete public commitment, scorer identity, prompt,
+domain, depth, generator coordinates, and sealed-answer commitment must equal
+the scheduled document. A same-ID object with changed task or grading behavior
+fails before provider construction.
+
+JIT manifest and lineage plans are signed through a shell-free absolute
+external command, durably create-once published before provider admission or
+model sampling, and reused exactly after process death. Production rejects an
+arbitrary in-process broker. The root policy pins the executable bytes, release
+manifest, and custody evidence, and all three are checked around each signing
+call. The recurrent adapter verifier now requires all six added
+mutation-authorizing source snapshots and semantically validates the provider
+contract digest and deterministic LoRA initialization seed.
+
+The integrated factory, provider, transaction, causal-campaign, recurrent
+sampler, trainer, resident preregistration, post-training, and adapter-identity
+matrix passes 245/245 in 138.66 seconds. The focused factory/identity matrix
+passes 39/39 in 6.96 seconds. Ruff, bytecode compilation, and diff hygiene
+pass. Evidence is
+`artifacts/current/cp420i_post_load_provider_factory_evidence.json`.
+
+This closes the preconstructed-provider and self-attested-signer bypasses, not
+CP420 or SPARK-060. The resident launcher still needs one root-verified bundle
+loader that supplies the production factory, rejected outcomes still need a
+crash-consistent terminal/checkpoint transaction, and replay-complete sample
+storage remains open. No model was loaded or trained and no reasoning,
+frontier, resident-32B, promotion, or `WOW Signal` claim follows. CP420I is
+total checkpoint 679. The 679-920 completion envelope is approximately
+73.8%-100.0% with an 86.9% midpoint. The evidence-adjusted range is 3-6
+checkpoints to resident-32B training launch, 7-12 to a defensible preliminary
+gain verdict, and 12-22 to the powered conditional `WOW Signal` decision.
+Final multi-hour soaks remain deferred.

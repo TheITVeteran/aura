@@ -8,7 +8,7 @@ from typing import Any, Final, Never
 
 from core.learning.grpo import GRPO_SCHEMA, group_advantages
 
-PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v4"
+PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v5"
 TRAINING_RECEIPT_SCHEMA: Final = "aura.grpo_training.v5"
 STEP_RECEIPT_SCHEMA: Final = "aura.recurrent_grpo_step.v1"
 
@@ -17,6 +17,7 @@ PROTOCOL_TRAINING_KEYS: Final = frozenset(
         "execution_mode",
         "execution_spec",
         "execution_spec_sha256",
+        "verified_transition_provider_contract_sha256",
         "domains",
         "depths",
         "train_per_cell",
@@ -31,6 +32,7 @@ PROTOCOL_TRAINING_KEYS: Final = frozenset(
         "lora_rank",
         "lora_targets",
         "lora_layers",
+        "lora_initialization_seed",
         "learning_rate",
         "max_steps",
         "eval_every",

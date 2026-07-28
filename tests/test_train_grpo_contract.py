@@ -17,6 +17,9 @@ from core.learning.grpo_training_state import (
     canonical_json_bytes,
     sha256_bytes,
 )
+from core.learning.verified_transition_trainer import (
+    VerifiedTransitionTrainingScheduleEntry,
+)
 from tools.train_grpo import (
     GRPO_DATASET_SCHEMA,
     _advantage_report_with_verifier_rate,
@@ -33,6 +36,7 @@ from tools.train_grpo import (
     _publish_immutable_bytes,
     _record_recurrent_step_failure,
     _render,
+    _scheduled_verified_training_task,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
     _signal_admission_report,
@@ -72,6 +76,57 @@ def test_dataset_identity_binds_split_order_and_task_bytes():
     swapped = _dataset_payload([second], [first], seed=11)
     assert sha256_bytes(canonical_json_bytes(swapped)) != digest
     assert _dataset_payload([first], [second], seed=11) == payload
+
+
+def test_verified_training_task_and_seed_come_only_from_provider_schedule():
+    class Provider:
+        @staticmethod
+        def training_schedule_entry(*, sequence: int):
+            return VerifiedTransitionTrainingScheduleEntry(
+                campaign_sequence=sequence,
+                task_id="second",
+                trainer_sample_seed=991,
+            )
+
+    first = _Task("first")
+    second = _Task("second")
+    task, seed = _scheduled_verified_training_task(
+        Provider(),
+        {first.task_id: first, second.task_id: second},
+        campaign_sequence=3,
+    )
+
+    assert task is second
+    assert seed == 991
+
+
+def test_verified_training_rejects_schedule_sequence_or_task_substitution():
+    class WrongSequence:
+        @staticmethod
+        def training_schedule_entry(*, sequence: int):
+            return VerifiedTransitionTrainingScheduleEntry(
+                campaign_sequence=sequence + 1,
+                task_id="task",
+                trainer_sample_seed=1,
+            )
+
+    class UnknownTask:
+        @staticmethod
+        def training_schedule_entry(*, sequence: int):
+            return VerifiedTransitionTrainingScheduleEntry(
+                campaign_sequence=sequence,
+                task_id="foreign",
+                trainer_sample_seed=1,
+            )
+
+    with pytest.raises(RuntimeError, match="different schedule sequence"):
+        _scheduled_verified_training_task(
+            WrongSequence(), {"task": _Task("task")}, campaign_sequence=0
+        )
+    with pytest.raises(RuntimeError, match="outside the frozen dataset"):
+        _scheduled_verified_training_task(
+            UnknownTask(), {"task": _Task("task")}, campaign_sequence=0
+        )
 
 
 def test_grpo_can_bind_the_broad_recurrence_training_registry():

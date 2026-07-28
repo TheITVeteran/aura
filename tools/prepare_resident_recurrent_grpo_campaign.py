@@ -133,6 +133,9 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
 SOURCE_ROLES: Mapping[str, str] = {
     "campaign_contract": "tools/prepare_resident_recurrent_grpo_campaign.py",
     "trainer": "tools/train_grpo.py",
+    "transition_provider_factory": (
+        "core/learning/verified_transition_production_factory.py"
+    ),
     "grpo": "core/learning/grpo.py",
     "adaptive_curriculum": "core/learning/adaptive_curriculum.py",
     "training_curriculum": "core/learning/recurrence_curriculum.py",

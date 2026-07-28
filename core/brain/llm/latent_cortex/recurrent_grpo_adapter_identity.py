@@ -81,6 +81,12 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_update",
         "transition_training_evidence",
         "campaign_trust",
+        "transition_provider",
+        "transition_provider_factory",
+        "transition_transaction",
+        "transition_causal_campaign",
+        "verified_training_task",
+        "verified_token_trace",
     }
 )
 MAX_JSON_BYTES = 256 * 1024 * 1024
@@ -722,6 +728,10 @@ def validate_recurrent_grpo_adapter_identity(
     trajectory_credit_enabled = training.get("trajectory_credit")
     trajectory_shaping_weight = training.get("trajectory_shaping_weight")
     min_signal_groups = training.get("min_signal_groups")
+    provider_contract_sha256 = training.get(
+        "verified_transition_provider_contract_sha256"
+    )
+    lora_initialization_seed = training.get("lora_initialization_seed")
     if (
         protocol.get("schema") != TRAINING_PROTOCOL_SCHEMA
         or protocol.get("adapter_id") != adapter_id
@@ -734,6 +744,10 @@ def validate_recurrent_grpo_adapter_identity(
         or training.get("rng_strategy") != "stateless_sha256_step_seeded_v1"
         or training.get("execution_spec") != spec.to_dict()
         or training.get("execution_spec_sha256") != spec.sha256
+        or not isinstance(provider_contract_sha256, str)
+        or _SHA256_RE.fullmatch(provider_contract_sha256) is None
+        or type(lora_initialization_seed) is not int
+        or not 0 <= lora_initialization_seed <= (1 << 32) - 1
         or type(trajectory_credit_enabled) is not bool
         or isinstance(trajectory_shaping_weight, bool)
         or not isinstance(trajectory_shaping_weight, (int, float))

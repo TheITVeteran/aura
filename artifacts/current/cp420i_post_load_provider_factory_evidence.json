@@ -1,0 +1,64 @@
+{
+  "schema": "aura.spark.cp420i.post_load_provider_factory_evidence.v1",
+  "checkpoint": "CP420I",
+  "recorded_date": "2026-07-27",
+  "scope": "post-load recurrent provider construction and externally rooted JIT plan custody",
+  "claims": {
+    "preconstructed_provider_bypass_removed": true,
+    "provider_constructed_only_after_live_recurrent_policy_exists": true,
+    "live_initial_policy_must_equal_frozen_contract": true,
+    "live_dataset_output_transaction_group_and_sampling_contract_bound": true,
+    "provider_owned_task_and_trainer_seed_schedule_enforced": true,
+    "scheduled_task_behavior_reconstructed_from_verified_public_commitment": true,
+    "jit_plan_persisted_before_provider_admission_and_model_sampling": true,
+    "jit_plan_reused_without_resigning_after_process_restart": true,
+    "in_process_self_attested_production_signer_rejected": true,
+    "signer_executable_release_and_custody_artifacts_root_pinned": true,
+    "recurrent_adapter_identity_requires_all_mutation_authorizing_sources": true,
+    "resident_factory_bundle_loader_complete": false,
+    "rejected_group_lifecycle_transaction_complete": false,
+    "durable_replay_repository_complete": false,
+    "model_loaded_or_trained": false,
+    "reasoning_gain_claimed": false,
+    "frontier_gain_claimed": false,
+    "wow_signal_claimed": false
+  },
+  "verification": [
+    {
+      "name": "verified_recurrent_training_factory_and_identity_matrix",
+      "result": "245 passed",
+      "duration_seconds": 138.66
+    },
+    {
+      "name": "focused_factory_and_adapter_identity_matrix",
+      "result": "39 passed",
+      "duration_seconds": 6.96
+    },
+    {
+      "name": "ruff",
+      "result": "pass"
+    },
+    {
+      "name": "python_bytecode_compilation",
+      "result": "pass"
+    },
+    {
+      "name": "git_diff_check",
+      "result": "pass"
+    }
+  ],
+  "adversarial_regressions": [
+    "in-process signer with a private Ed25519 key is rejected by the production factory",
+    "same task ID with substituted answer or grading behavior is rejected",
+    "dataset digest, group size, trainer output root, and transaction root drift are rejected",
+    "signer executable, release manifest, and custody evidence drift are rejected",
+    "prompt, policy, and sampling configuration drift against a durable JIT plan are rejected"
+  ],
+  "remaining_release_blockers": [
+    "construct the factory from one root-verified resident campaign launch bundle",
+    "make rejected groups crash-consistent across campaign terminal and trainer checkpoint",
+    "persist and independently reload replay-complete samples and evidence",
+    "run a composed production-provider campaign before any model training credit",
+    "complete the sealed small-checkpoint causal campaign before resident-32B launch"
+  ]
+}
