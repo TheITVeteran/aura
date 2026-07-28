@@ -185,6 +185,15 @@ _MAX_ANTIGEN_TEXT = 4096
 _MAX_ANTIGEN_CONTEXT_KEYS = 64
 
 
+def _on_event_loop() -> bool:
+    """Whether the caller is running on an asyncio event loop thread."""
+    try:
+        asyncio.get_running_loop()
+        return True
+    except RuntimeError:
+        return False
+
+
 def _optional_unit(value: Any) -> float | None:
     """A finite 0..1 reading, or None when the field is absent/unusable.
 
@@ -1323,23 +1332,35 @@ class AdaptiveImmuneSystem:
 
         return response
 
-    def observe_error(
-        self,
-        error: Exception,
-        context: dict[str, Any] | None = None,
+    def _observe_event(
+        self, event: dict[str, Any], context: dict[str, Any]
     ) -> ImmuneResponse:
-        context = context or {}
-        event = {
-            "type": "exception",
-            "text": f"{type(error).__name__}: {error}",
-            "source": "exception",
-            "subsystem": context.get("component") or context.get("stage") or "unknown",
-            "resource_pressure": float(context.get("resource_pressure", 0.0)),
-            "error_count": 1,
-            "timestamp": time.time(),
-            "stack_trace": context.get("stack_trace", ""),
-            "exception_type": type(error).__name__,
-        }
+        """The heavy observation path: PCA, clustering, and durable writes.
+
+        CP126 93ff2643: observe_error and observe_signature call this
+        synchronously, and asynchronous runtime code calls THEM — so
+        dimensional expansion (which can eigendecompose) and the durable
+        response write ran on the owner loop. This is the same class as the
+        five-second embedding load that hung the app on launch.
+
+        It cannot simply decline on the loop the way a retrieval can: the
+        caller needs the response, and dropping an immune observation to
+        protect latency would trade a visible stall for an invisible blind
+        spot. So the work still happens, and an on-loop call is RECORDED —
+        which makes the remaining offenders findable instead of silent.
+        Async callers should use :meth:`observe_error_async` /
+        :meth:`observe_signature_async`, which do the same work off-loop.
+        """
+        if _on_event_loop():
+            _record_adaptive_immunity_degradation(
+                RuntimeError("immune observation ran on the event loop"),
+                action=(
+                    "completed a heavy immune observation inline; use "
+                    "observe_error_async/observe_signature_async from async code"
+                ),
+                severity="warning",
+                extra={"subsystem": str(event.get("subsystem", "unknown"))},
+            )
         antigen = self.present_antigen(event, anomaly_score=None, state_snapshot=context)
         response, _top_cell = self._observe_core(antigen)
         response.coverage_report = self._assess_coverage(
@@ -1358,6 +1379,48 @@ class AdaptiveImmuneSystem:
         self._reinforce_without_execution(antigen, response)
         self._record_response_summary(response)
         return response
+
+    async def observe_error_async(
+        self, error: Exception, context: dict[str, Any] | None = None
+    ) -> ImmuneResponse:
+        """observe_error without occupying the event loop (CP126 93ff2643)."""
+        return await asyncio.to_thread(self.observe_error, error, context)
+
+    async def observe_signature_async(
+        self,
+        component: str,
+        exception_type: str,
+        *,
+        error_count: int = 1,
+        context: dict[str, Any] | None = None,
+    ) -> ImmuneResponse:
+        """observe_signature without occupying the event loop."""
+        return await asyncio.to_thread(
+            self.observe_signature,
+            component,
+            exception_type,
+            error_count=error_count,
+            context=context,
+        )
+
+    def observe_error(
+        self,
+        error: Exception,
+        context: dict[str, Any] | None = None,
+    ) -> ImmuneResponse:
+        context = context or {}
+        event = {
+            "type": "exception",
+            "text": f"{type(error).__name__}: {error}",
+            "source": "exception",
+            "subsystem": context.get("component") or context.get("stage") or "unknown",
+            "resource_pressure": float(context.get("resource_pressure", 0.0)),
+            "error_count": 1,
+            "timestamp": time.time(),
+            "stack_trace": context.get("stack_trace", ""),
+            "exception_type": type(error).__name__,
+        }
+        return self._observe_event(event, context)
 
     def observe_signature(
         self,
@@ -1378,24 +1441,7 @@ class AdaptiveImmuneSystem:
             "timestamp": time.time(),
             "exception_type": exception_type,
         }
-        antigen = self.present_antigen(event, anomaly_score=None, state_snapshot=context)
-        response, _top_cell = self._observe_core(antigen)
-        response.coverage_report = self._assess_coverage(
-            event, antigen, anomaly_score=None, state_snapshot=context
-        )
-        response.verification_report = self._default_verification_report(
-            status="not_executed",
-            coverage_ratio=response.coverage_report["coverage_ratio"],
-        )
-        response.diagnostic_verdict = self._build_diagnostic_verdict(
-            antigen,
-            response,
-            coverage_report=response.coverage_report,
-            verification_report=response.verification_report,
-        )
-        self._reinforce_without_execution(antigen, response)
-        self._record_response_summary(response)
-        return response
+        return self._observe_event(event, context)
 
     def _recent_subsystem_count(self, subsystem: str) -> int:
         """Count subsystem events inside the recency window, pruning old ones."""
