@@ -25,19 +25,32 @@ faithful, and a program that fails the battery is not written to disk at all.
 Two things are verified, because "faithful" and "playable" are different claims:
 
 * the rules, differentially, against held-out positions;
-* the program, by importing what was written and playing it headlessly.
+* the program, by importing what was written and playing it headlessly;
+* the surface, against the published one, in
+  ``core.self_improvement.presentation_contract`` — because "it works" and
+  "it is the software" are different claims too, and the first reconstruction
+  that passed everything here came back "Pieces didnt move. Nothing was
+  polished. Looked/felt horrible."
 """
 from __future__ import annotations
 
 import ast
 import copy
+import json
 import random
+import textwrap
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.self_improvement.presentation_contract import (
+    FAKE_TOOLKIT_SOURCE,
+    SUBSTITUTED_MODULES,
+    PresentationContract,
+    grade_presentation,
+)
 
 _RECOVERABLE = (RuntimeError, AttributeError, TypeError, ValueError, OSError, ImportError, KeyError)
 
@@ -127,6 +140,10 @@ class ProgramSpec:
     held_out_case_count: int = 14
     playable_module_hint: str = ""
     play_check: Callable[[Any], tuple[bool, str]] | None = None
+    #: The observable surface, graded like the rules. ``None`` means the
+    #: program has no interface worth reconstructing — rare, and a decision
+    #: rather than a default.
+    presentation: Any = None
     default_filename: str = "program.py"
     authorization: str = "public_observation"
     objective: str = ""
@@ -231,6 +248,25 @@ def _coerce_board(value: Any) -> Board | None:
     return board
 
 
+# 2048's surface is published: anyone can read the tile colours off a
+# screenshot, and the arrow keys are the whole input model. None of it needs
+# the original source, which is what makes it clean-room material — and all of
+# it is what "a faithful 2048" means to the person who asked for one.
+_TWENTY_FORTY_EIGHT_PRESENTATION = PresentationContract(
+    app_factory="main",
+    title_contains=("2048",),
+    required_bindings=("<Up>", "<Down>", "<Left>", "<Right>"),
+    palette={
+        "2": "#eee4da", "4": "#ede0c8", "8": "#f2b179", "16": "#f59563",
+        "32": "#f67c5f", "64": "#f65e3b", "128": "#edcf72", "256": "#edcc61",
+        "512": "#edc850", "1024": "#edc53f", "2048": "#edc22e",
+    },
+    min_drawn_cells=16,
+    required_text=("score",),
+    requires_motion=True,
+    drive_events=("<Left>", "<Up>", "<Right>", "<Down>"),
+)
+
 TWENTY_FORTY_EIGHT = ProgramSpec(
     name="2048",
     aliases=("2048", "the game 2048", "2048 game", "game 2048"),
@@ -263,10 +299,27 @@ TWENTY_FORTY_EIGHT = ProgramSpec(
     default_filename="game_2048.py",
     objective="clean-room reconstruction of the game 2048 from its published rules",
     playable_module_hint=(
-        "a playable command-line game using your verified move(), spawn_tile() "
-        "and is_game_over(): print the grid, read w/a/s/d from input(), keep "
-        "score, and stop on win or game over"
+        "a complete graphical game in tkinter using your verified move(), "
+        "spawn_tile() and is_game_over(). It must look like 2048, not like a "
+        "program that implements 2048:\n"
+        "  - a window titled '2048' holding a tk.Canvas with the 4x4 board "
+        "drawn as sixteen rounded-looking rectangles on the #bbada0 board "
+        "background, empty cells #cdc1b4\n"
+        "  - the published tile palette, exactly: 2 #eee4da, 4 #ede0c8, "
+        "8 #f2b179, 16 #f59563, 32 #f67c5f, 64 #f65e3b, 128 #edcf72, "
+        "256 #edcc61, 512 #edc850, 1024 #edc53f, 2048 #edc22e; dark text "
+        "(#776e65) on the two palest tiles and white on the rest\n"
+        "  - arrow keys bound as <Up>, <Down>, <Left>, <Right> on the root "
+        "window, driving your move()\n"
+        "  - a visible score that updates, and a game-over state that says so "
+        "on screen\n"
+        "  - motion: schedule the tile spawn and redraw with root.after(...) "
+        "rather than doing everything in one blocking step, so the board "
+        "settles visibly instead of snapping\n"
+        "  - a main() that builds and RETURNS the game object without calling "
+        "mainloop(); only the __main__ block calls mainloop()"
     ),
+    presentation=_TWENTY_FORTY_EIGHT_PRESENTATION,
 )
 
 KNOWN_PROGRAM_SPECS: tuple[ProgramSpec, ...] = (TWENTY_FORTY_EIGHT,)
@@ -388,6 +441,7 @@ async def materialize_program(
         "status": "conjecture",
         "playable": False,
         "play_evidence": "",
+        "polished": False,
         "reason": "",
     }
 
@@ -427,6 +481,23 @@ async def materialize_program(
     if not playable:
         report["reason"] = f"the written program did not play: {evidence}"
         return report
+
+    # "Pieces didnt move. Nothing was polished. Looked/felt horrible." — the
+    # verdict on a reconstruction that passed every gate above this line. Rules
+    # and playability say the program is correct; neither asks whether it is
+    # the software. For anything with a published surface, that question is not
+    # optional, and a program that fails it is not written to disk.
+    if spec.presentation is not None:
+        polish = grade_presentation(module_source, spec.presentation)
+        report["presentation_evidence"] = list(polish.evidence)
+        report["polished"] = bool(polish.passed)
+        if not polish.passed:
+            report["presentation_failures"] = [str(item) for item in polish.findings]
+            report["reason"] = (
+                "the program works but is not the software: "
+                + "; ".join(str(item) for item in polish.findings[:3])
+            )
+            return report
 
     try:
         from core.runtime.file_write_gateway import get_file_write_gateway
@@ -485,24 +556,90 @@ async def _write_playable_module(engine: Any, spec: ProgramSpec, core_code: str)
         return ""
 
 
+_PLAY_VERDICT_MARKER = "__AURA_PLAY_VERDICT__"
+
+
+def _play_harness(spec: ProgramSpec) -> str:
+    """The play check, as source, to run beside the candidate in the child."""
+    import inspect
+
+    check_source = textwrap.dedent(inspect.getsource(spec.play_check))
+    helper_source = textwrap.dedent(inspect.getsource(_coerce_board))
+    name = spec.play_check.__name__
+    return f"""
+import json as _json
+import random
+
+# The play check and its helper are lifted verbatim from this module, so they
+# carry its annotations with them. Naming them is cheaper and less fragile than
+# stripping them, and keeps the check running as the same code it is here.
+from typing import Any  # noqa: F401
+Board = list
+
+{helper_source}
+
+{check_source}
+
+_module = type("ReconstructedModule", (), dict(globals()))
+try:
+    _ok, _evidence = {name}(_module)
+except BaseException as _exc:
+    _ok, _evidence = False, "playing the written module raised %s: %s" % (
+        type(_exc).__name__, _exc
+    )
+print("{_PLAY_VERDICT_MARKER}" + _json.dumps({{"ok": bool(_ok), "evidence": str(_evidence)}}))
+"""
+
+
 def _verify_playable(spec: ProgramSpec, module_source: str) -> tuple[bool, str]:
-    """Import the module and play it. Never trust source that was never run."""
+    """Play the module for real, in another process, with no display.
+
+    Two things forced this out of the parent process. Executing model-written
+    source in Aura's own interpreter is the wrong place to find out what it
+    does — the grading path already learned that. And a reconstruction with a
+    real interface imports a GUI toolkit, which is not importable at all on a
+    headless build: the faithful 2048 failed here with ``No module named
+    '_tkinter'`` while being a perfectly good game. Substituting the toolkit
+    solves both, and a play check that needs a screen was never a play check.
+    """
     if spec.play_check is None:
         return True, "no playability check declared for this target"
     try:
         ast.parse(module_source)
     except SyntaxError as exc:
         return False, f"the written module does not parse: {exc}"
-    namespace: dict[str, Any] = {"__name__": "reconstructed_program"}
+
     try:
-        exec(compile(module_source, "<reconstructed>", "exec"), namespace)  # noqa: S102
-    except _RECOVERABLE as exc:
-        return False, f"importing the written module raised {type(exc).__name__}: {exc}"
-    module = type("ReconstructedModule", (), namespace)
+        from core.discovery.reconstruction_sandbox import (
+            ReconstructionASTViolation,
+            audit_general_ast,
+        )
+        from core.self_modification.mutation_safety import SafeMutationEvaluator
+    except ImportError as exc:  # pragma: no cover - both are hard deps
+        return False, f"the sandbox is unavailable, so nothing was played: {exc}"
+
     try:
-        return spec.play_check(module)
+        audit_general_ast(module_source, substituted_modules=SUBSTITUTED_MODULES)
+    except ReconstructionASTViolation as exc:
+        return False, f"the module reaches for ambient authority: {exc}"
+
+    try:
+        diagnostics = SafeMutationEvaluator(timeout_seconds=30.0, memory_mb=512).evaluate(
+            FAKE_TOOLKIT_SOURCE + "\n" + module_source + "\n" + _play_harness(spec)
+        )
     except _RECOVERABLE as exc:
-        return False, f"playing the written module raised {type(exc).__name__}: {exc}"
+        return False, f"the module could not be played in a sandbox: {exc}"
+
+    for line in reversed(str(getattr(diagnostics, "stdout", "")).splitlines()):
+        if line.startswith(_PLAY_VERDICT_MARKER):
+            try:
+                verdict = json.loads(line[len(_PLAY_VERDICT_MARKER) :])
+            except json.JSONDecodeError:
+                break
+            return bool(verdict.get("ok")), str(verdict.get("evidence") or "")
+    detail = (getattr(diagnostics, "traceback_text", "") or "").strip()[-300:]
+    outcome = getattr(getattr(diagnostics, "outcome", None), "value", "unknown failure")
+    return False, f"the written module did not survive being played: {detail or outcome}"
 
 
 __all__ = [

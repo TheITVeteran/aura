@@ -87,17 +87,18 @@ def _module_root(name: str) -> str:
     return str(name or "").split(".")[0]
 
 
-def _check_import(node: ast.AST) -> None:
+def _check_import(node: ast.AST, extra: frozenset[str] = frozenset()) -> None:
+    allowed = SAFE_IMPORT_ALLOWLIST | extra
     if isinstance(node, ast.Import):
         for alias in node.names:
             root = _module_root(alias.name)
-            if root not in SAFE_IMPORT_ALLOWLIST:
+            if root not in allowed:
                 raise ReconstructionASTViolation(f"import not allowed: {alias.name}")
             if root == "urllib" and alias.name.split(".")[-1] in _URLLIB_BLOCKED_SUBMODULES:
                 raise ReconstructionASTViolation(f"import not allowed: {alias.name}")
     elif isinstance(node, ast.ImportFrom):
         root = _module_root(node.module or "")
-        if root not in SAFE_IMPORT_ALLOWLIST:
+        if root not in allowed:
             raise ReconstructionASTViolation(f"import not allowed: from {node.module}")
         if root == "urllib":
             submodule = (node.module or "").split(".")[-1]
@@ -106,12 +107,27 @@ def _check_import(node: ast.AST) -> None:
                 raise ReconstructionASTViolation(f"import not allowed: from {node.module}")
 
 
-def audit_general_ast(code: str) -> None:
-    """Curated-safe audit: allow real code, block ambient authority + gadgets."""
+def audit_general_ast(code: str, *, substituted_modules: frozenset[str] = frozenset()) -> None:
+    """Curated-safe audit: allow real code, block ambient authority + gadgets.
+
+    ``substituted_modules`` names imports the CALLER has already replaced with
+    a stand-in of its own before the candidate runs. This exists because a
+    reconstruction of a graphical program has to import a toolkit, and the
+    toolkit is exactly the kind of module the allowlist refuses — ``tkinter``
+    can open windows and its ``filedialog`` reaches the filesystem.
+
+    The allowance is safe only under the condition it is named for: the caller
+    must have installed the substitute in ``sys.modules`` in the child process
+    before the candidate's first line executes, so the import resolves to the
+    stand-in and the real module is never reachable. Nothing here verifies
+    that; a caller that passes a name it has not actually substituted has
+    widened the sandbox, which is why the parameter is explicit and keyword-
+    only rather than a quietly growing allowlist.
+    """
     tree = ast.parse(code)
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            _check_import(node)
+            _check_import(node, substituted_modules)
         elif isinstance(node, ast.Attribute):
             if node.attr in DANGEROUS_ATTRS:
                 raise ReconstructionASTViolation(f"attribute not allowed: {node.attr}")
