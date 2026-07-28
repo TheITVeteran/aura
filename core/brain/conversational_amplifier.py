@@ -45,13 +45,41 @@ def is_conversationally_amplifiable(objective: str, origin: str) -> bool:
     q = str(objective or "").strip()
     if len(q.split()) < 3:
         return False
+    # CP126 (high): "Classifier import failure admits actions and verifiable
+    # tasks. If the action/reasoning classifier cannot import, the function
+    # falls through to True for any substantive user-origin text."
+    #
+    # It was `except ImportError: pass` followed by `return True`, so the
+    # one component that knows which turns are EXCLUDED could vanish and the
+    # answer became "amplify everything" — creative rewrites applied to
+    # imperatives and to verifiable reasoning the module says it excludes.
+    #
+    # Amplification is an enhancement. Declining it costs a plainer reply;
+    # applying it to an action request rewrites an instruction. Without the
+    # classifier there is no way to know which this is, so it declines.
     try:
         from core.brain.reasoning_amplifier_v2 import is_action_request, is_amplifiable
-
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        record_degradation(
+            "conversational_amplifier",
+            exc,
+            severity="warning",
+            action="declined to amplify because the exclusion classifier was unavailable",
+            enforce_failure_policy=False,
+        )
+        return False
+    try:
         if is_action_request(q) or is_amplifiable(q) is not None:
             return False
-    except ImportError:
-        pass
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "conversational_amplifier",
+            exc,
+            severity="warning",
+            action="declined to amplify because the exclusion classifier raised",
+            enforce_failure_policy=False,
+        )
+        return False
     return True
 
 
@@ -101,7 +129,68 @@ async def amplify_conversation(
     time_budget_s: float = 20.0,
     revise: bool = True,
 ) -> ConversationResult:
-    """Generate alternatives, taste-select the best, optionally self-revise. Fail-open."""
+    """Generate alternatives, taste-select the best, optionally self-revise.
+
+    Fail-open, structurally. CP126 (high): "Fail-open claim excludes several
+    unhandled failure points. Numeric coercion, select_best, feature
+    extraction, and result serialization are outside protected blocks, while
+    model handlers omit I/O, timeout, connection, overflow, and custom
+    provider failures. These errors abort the caller instead of returning
+    the draft."
+
+    The docstring said fail-open and the body implemented it in patches —
+    every model call was wrapped, and `int(n)`, `float(time_budget_s)`,
+    select_best and extract_features were not. A caller that passed a bad
+    budget, or a taste model that raised, lost the whole turn rather than
+    getting the plain draft back.
+
+    Scattering more try/except would leave the same gap one refactor later.
+    The guarantee belongs at the boundary: this wrapper always returns a
+    ConversationResult, and the worst case is the draft the caller already
+    had. Enhancement failures may cost the enhancement and never the answer.
+    """
+    safe_draft = str(draft or "").strip()
+    try:
+        return await _amplify_conversation_inner(
+            safe_draft,
+            generate=generate,
+            objective=objective,
+            user_message=user_message,
+            grounding_tokens=grounding_tokens,
+            word_budget=word_budget,
+            n=n,
+            time_budget_s=time_budget_s,
+            revise=revise,
+        )
+    except asyncio.CancelledError:
+        # Cancellation is the caller's decision, not a failure to absorb.
+        raise
+    except Exception as exc:  # noqa: BLE001 - the boundary IS the contract
+        record_degradation(
+            "conversational_amplifier",
+            exc,
+            severity="warning",
+            action="returned the unamplified draft so the turn survived",
+            enforce_failure_policy=False,
+        )
+        return ConversationResult(
+            answer=safe_draft, n_candidates=1 if safe_draft else 0,
+        )
+
+
+async def _amplify_conversation_inner(
+    draft: str,
+    *,
+    generate: GenerateFn,
+    objective: str = "",
+    user_message: str = "",
+    grounding_tokens: set[str] | None = None,
+    word_budget: int = 0,
+    n: int = 3,
+    time_budget_s: float = 20.0,
+    revise: bool = True,
+) -> ConversationResult:
+    """The amplification itself. Anything it raises becomes the draft."""
     draft = str(draft or "").strip()
     um = user_message or objective
     feats_kw = {"user_message": um, "grounding_tokens": grounding_tokens or set(), "word_budget": word_budget}
