@@ -20,6 +20,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     EVIDENCE_VERIFIER,
     TASK_ISSUER,
 )
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
     REQUIRED_SOURCE_ROLES,
 )
@@ -82,9 +83,7 @@ def _policy_material(
     shared_custody: bool = False,
 ) -> tuple[Path, Path, Path, Path]:
     root_key = Ed25519PrivateKey.generate()
-    role_keys = {
-        role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES
-    }
+    role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
     signer_material = {}
     for signer_role in (TASK_ISSUER, EVIDENCE_VERIFIER):
         signer_raw = role_keys[signer_role].private_bytes(
@@ -128,15 +127,9 @@ def _policy_material(
             "signer": signer,
             "release": release,
             "custody": custody,
-            "implementation_sha256": hashlib.sha256(
-                signer.read_bytes()
-            ).hexdigest(),
-            "release_sha256": hashlib.sha256(
-                release.read_bytes()
-            ).hexdigest(),
-            "custody_sha256": hashlib.sha256(
-                custody.read_bytes()
-            ).hexdigest(),
+            "implementation_sha256": hashlib.sha256(signer.read_bytes()).hexdigest(),
+            "release_sha256": hashlib.sha256(release.read_bytes()).hexdigest(),
+            "custody_sha256": hashlib.sha256(custody.read_bytes()).hexdigest(),
         }
     roles = {}
     for role, key in role_keys.items():
@@ -153,15 +146,11 @@ def _policy_material(
                 else _sha(f"{role}-implementation")
             ),
             "release_sha256": (
-                signer_pin["release_sha256"]
-                if signer_pin
-                else _sha(f"{role}-release")
+                signer_pin["release_sha256"] if signer_pin else _sha(f"{role}-release")
             ),
             "custody_class": "external_service",
             "custody_evidence_sha256": (
-                signer_pin["custody_sha256"]
-                if signer_pin
-                else _sha(f"{role}-custody")
+                signer_pin["custody_sha256"] if signer_pin else _sha(f"{role}-custody")
             ),
         }
     body = {
@@ -188,9 +177,7 @@ def _policy_material(
         "root_signature": {
             "algorithm": "Ed25519",
             "key_id": hashlib.sha256(root_raw).hexdigest(),
-            "signature_b64": base64.b64encode(root_key.sign(signed)).decode(
-                "ascii"
-            ),
+            "signature_b64": base64.b64encode(root_key.sign(signed)).decode("ascii"),
             "signed_payload_sha256": hashlib.sha256(signed).hexdigest(),
         },
     }
@@ -260,9 +247,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
             "behavior_bundle": {"bundle_sha256": _sha("behavior")},
         },
         "execution_spec": {"semantic_sha256": spec_sha},
-        "sources": {
-            role: source_binding for role in REQUIRED_SOURCE_ROLES
-        },
+        "sources": {role: source_binding for role in REQUIRED_SOURCE_ROLES},
         "paths": {
             "verified_launch_bundle": "artifacts/launch/launch-bundle.json",
             "training_output": "artifacts/training",
@@ -292,9 +277,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     }
     contract = {
         **contract_body,
-        "contract_sha256": hashlib.sha256(
-            canonical_json_bytes(contract_body)
-        ).hexdigest(),
+        "contract_sha256": hashlib.sha256(canonical_json_bytes(contract_body)).hexdigest(),
     }
     contract_path = _write(
         tmp_path / "preregistration.json",
@@ -302,9 +285,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     )
     bundle_identity = build_tokenizer_bundle_identity(
         tokenizer_class="fixture.Tokenizer",
-        tokenizer_files=tokenizer_file_bindings_from_bytes(
-            {"tokenizer.json": b"fixture"}
-        ),
+        tokenizer_files=tokenizer_file_bindings_from_bytes({"tokenizer.json": b"fixture"}),
         chat_template=None,
         special_token_map={},
         encode_options={},
@@ -325,9 +306,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
             "layers": 8,
             "targets": ["q_proj"],
         },
-        source_bindings={
-            role: source_binding for role in REQUIRED_SOURCE_ROLES
-        },
+        source_bindings={role: source_binding for role in REQUIRED_SOURCE_ROLES},
         created_at_unix_ns=NOW * 1_000_000_000,
     )
     probe_path = _write(
@@ -352,9 +331,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
         "sequence": 0,
         "task_id": task.task_id,
         "trainer_sample_seed": 11,
-        "immutable_task_sha256": hashlib.sha256(
-            canonical_json_bytes(public.to_dict())
-        ).hexdigest(),
+        "immutable_task_sha256": hashlib.sha256(canonical_json_bytes(public.to_dict())).hexdigest(),
         "prompt_tokens_sha256": _sha("prompt"),
         "recurrent_execution_spec_sha256": spec_sha,
         "sample_seeds": [21, 22],
@@ -369,9 +346,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     monkeypatch.setattr(
         materializer,
         "build_resident_tokenizer_trace_adapter",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            bundle_identity=bundle_identity
-        ),
+        lambda *_args, **_kwargs: SimpleNamespace(bundle_identity=bundle_identity),
     )
     monkeypatch.setattr(
         materializer,
@@ -389,9 +364,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
         result = original_publish(path, payload, role=role)
         if role == crash_role and not injected["raised"]:
             injected["raised"] = True
-            raise materializer.LaunchMaterializationError(
-                "injected_materialization_crash"
-            )
+            raise materializer.LaunchMaterializationError("injected_materialization_crash")
         return result
 
     monkeypatch.setattr(materializer, "_publish", fail_once)
@@ -428,14 +401,9 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     assert receipt["claim_boundary"].startswith("launch_custody_only")
     bundle_path = Path(receipt["bundle_path"])
     assert bundle_path.is_file()
+    assert hashlib.sha256(bundle_path.read_bytes()).hexdigest() == receipt["bundle_sha256"]
     assert (
-        hashlib.sha256(bundle_path.read_bytes()).hexdigest()
-        == receipt["bundle_sha256"]
-    )
-    assert (
-        bundle_path.with_name("launch-bundle.sha256")
-        .read_text(encoding="ascii")
-        .strip()
+        bundle_path.with_name("launch-bundle.sha256").read_text(encoding="ascii").strip()
         == receipt["bundle_sha256"]
     )
     for config_path in (task_signer_path, verifier_signer_path):
@@ -455,9 +423,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
 
     verifier_config = json.loads(verifier_signer_path.read_bytes())
     verifier_config["timeout_millis"] += 1
-    verifier_signer_path.write_bytes(
-        canonical_json_bytes(verifier_config) + b"\n"
-    )
+    verifier_signer_path.write_bytes(canonical_json_bytes(verifier_config) + b"\n")
     with pytest.raises(
         materializer.LaunchMaterializationError,
         match="materialization_intent_mismatch",
@@ -492,11 +458,7 @@ def test_intervention_campaign_requires_external_initial_state_custody() -> None
             {
                 "training": {
                     "verified_trajectory_config_artifact": {
-                        "config": {
-                            "intervention_config": {
-                                "schema": "fixture.intervention.v1"
-                            }
-                        }
+                        "config": {"intervention_config": {"schema": "fixture.intervention.v1"}}
                     }
                 }
             }
@@ -507,9 +469,7 @@ def test_intervention_campaign_requires_external_initial_state_custody() -> None
         materializer._intervention_state_replay_required(
             {
                 "training": {
-                    "verified_trajectory_config_artifact": {
-                        "config": {"intervention_config": None}
-                    }
+                    "verified_trajectory_config_artifact": {"config": {"intervention_config": None}}
                 }
             }
         )
@@ -517,14 +477,99 @@ def test_intervention_campaign_requires_external_initial_state_custody() -> None
     )
 
 
+def test_materializer_derives_replay_contract_from_frozen_campaign_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = RLCExecutionSpec(recurrent_steps=4)
+    spec_path = _write(
+        tmp_path / "execution-spec.json",
+        json.dumps(
+            spec.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii"),
+    )
+    source = _write(tmp_path / "replay-source.py", b"REPLAY = 1\n")
+    model = tmp_path / "model"
+    model.mkdir(mode=0o700)
+    source_binding = {
+        "path": source.name,
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "size_bytes": source.stat().st_size,
+    }
+    contract = {
+        "contract_sha256": _sha("preregistration"),
+        "model": {
+            "path": model.name,
+            "base_checkpoint": {"fingerprint": _sha("model")},
+            "behavior_bundle": {"bundle_sha256": _sha("behavior")},
+        },
+        "execution_spec": {
+            "path": spec_path.name,
+            "sha256": hashlib.sha256(spec_path.read_bytes()).hexdigest(),
+            "size_bytes": spec_path.stat().st_size,
+            "semantic_sha256": spec.sha256,
+        },
+        "sources": {"policy_state_replay": source_binding},
+        "training": {
+            "parameters": {"group_size": 2, "kl_coefficient": 0.02},
+            "verified_trajectory_config_artifact": {
+                "config": {
+                    "schema": "fixture.intervention-group.v1",
+                    "intervention_config": {"schema": "fixture.intervention.v1"},
+                }
+            },
+            "resource_envelope": {"detached_timeout_s": 21_600},
+        },
+    }
+    probe = {"initial_policy_sha256": _sha("initial-policy")}
+    custody = {"custody_sha256": _sha("initial-state-custody")}
+    observed: dict[str, object] = {}
+    expected = {
+        "execution_spec": {"semantic_sha256": spec.sha256},
+        "initial_policy_state_custody_sha256": custody["custody_sha256"],
+    }
+
+    def capture(**kwargs: object) -> dict[str, object]:
+        observed.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(materializer.prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(materializer, "build_policy_state_replay_contract", capture)
+
+    assert (
+        materializer._expected_policy_state_replay_contract(
+            contract=contract,
+            probe=probe,
+            custody=custody,
+        )
+        == expected
+    )
+    assert observed["model_path"] == model.resolve(strict=True)
+    assert observed["execution_spec_path"] == spec_path.resolve(strict=True)
+    assert observed["initial_policy_state_custody"] is custody
+    assert observed["external_verifier_max_seconds"] == 21_600
+    assert observed["source_bindings"] == {
+        "policy_state_replay": {
+            **source_binding,
+            "path": str(source.resolve(strict=True)),
+        }
+    }
+    recurrent = observed["recurrent_grpo_config"]
+    assert isinstance(recurrent, dict)
+    assert recurrent["kl_coefficient_hex"] == (0.02).hex()
+    assert recurrent["advantage_clip_hex"] == (4.0).hex()
+
+
 def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
     tmp_path: Path,
 ) -> None:
     mx = pytest.importorskip("mlx.core")
     adapter_path = (tmp_path / "initial_adapter.safetensors").resolve()
-    optimizer_path = (
-        tmp_path / "initial_optimizer.safetensors"
-    ).resolve()
+    optimizer_path = (tmp_path / "initial_optimizer.safetensors").resolve()
     mx.save_safetensors(
         str(adapter_path),
         {
@@ -550,9 +595,7 @@ def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
         adapter_path,
         execution_spec_sha256=execution_spec_sha256,
     )
-    optimizer_artifact = (
-        materializer.inspect_initial_optimizer_snapshot(optimizer_path)
-    )
+    optimizer_artifact = materializer.inspect_initial_optimizer_snapshot(optimizer_path)
     optimizer_config = {
         "class_name": "mlx.optimizers.Adam",
         "learning_rate_hex": (1e-5).hex(),
@@ -587,10 +630,13 @@ def test_materialized_initial_state_reopens_adapter_and_optimizer_bytes(
         initial_optimizer_path=optimizer_path,
     )
 
-    assert materializer._validate_materialized_initial_state(
-        probe=probe,
-        provider_config={"initial_policy_state_custody": custody},
-    ) == custody
+    assert (
+        materializer._validate_materialized_initial_state(
+            probe=probe,
+            provider_config={"initial_policy_state_custody": custody},
+        )
+        == custody
+    )
 
 
 def test_materializer_rejects_distinct_signers_with_shared_custody(
@@ -607,12 +653,8 @@ def test_materializer_rejects_distinct_signers_with_shared_custody(
         protocol_sha256=_sha("shared-custody-protocol"),
         shared_custody=True,
     )
-    _task_document, task_broker = materializer._load_signer(
-        task_signer_path
-    )
-    _verifier_document, verifier_broker = materializer._load_signer(
-        verifier_signer_path
-    )
+    _task_document, task_broker = materializer._load_signer(task_signer_path)
+    _verifier_document, verifier_broker = materializer._load_signer(verifier_signer_path)
 
     assert task_broker.identity != verifier_broker.identity
     with pytest.raises(
@@ -660,9 +702,7 @@ def test_bound_tokenizer_rejects_invalid_resident_eos_contract(
     tmp_path: Path,
     invalid_eos: object,
 ) -> None:
-    model = tmp_path / hashlib.sha256(
-        repr(invalid_eos).encode("utf-8")
-    ).hexdigest()
+    model = tmp_path / hashlib.sha256(repr(invalid_eos).encode("utf-8")).hexdigest()
     model.mkdir(mode=0o700)
     _write(
         model / "config.json",

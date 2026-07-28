@@ -52,6 +52,45 @@ def _contract():
     )
 
 
+def test_repo_path_resolves_artifact_stored_only_in_main_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    main = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    gitdir = main / ".git" / "worktrees" / "spark"
+    gitdir.mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="ascii")
+    relative = Path("training/fused-model/resident")
+    resident = main / relative
+    resident.mkdir(parents=True)
+    monkeypatch.setattr(prereg, "REPO_ROOT", worktree)
+
+    assert prereg._repo_path(relative.as_posix(), role="model") == resident
+
+
+def test_repo_path_rejects_main_checkout_symlink_outside_repository(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    main = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    gitdir = main / ".git" / "worktrees" / "spark"
+    gitdir.mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="ascii")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = main / "training" / "fused-model" / "resident"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(prereg, "REPO_ROOT", worktree)
+
+    with pytest.raises(prereg.PreregistrationError, match="model_path_invalid"):
+        prereg._repo_path("training/fused-model/resident", role="model")
+
+
 def test_preregistration_binds_broad_training_and_powered_evaluation():
     contract = _contract()
     receipt = prereg.validate_contract(contract, verify_model=False)
@@ -61,8 +100,13 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert contract["training"]["dataset"]["holdout_tasks"] == 36
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
     assert contract["training"]["parameters"]["trajectory_credit"] is False
-    assert "verified_trajectory_config_artifact" not in contract["training"]
+    artifact = contract["training"]["verified_trajectory_config_artifact"]
+    assert contract["training"]["parameters"]["group_size"] == 2
+    assert artifact["config"]["intervention_config"]["lesion_steps"] == [1, 2, 4]
+    assert artifact["config"]["intervention_config"]["stopping_steps"] == [1, 2, 4]
+    assert artifact["sha256"] == artifact["semantic_sha256"]
     assert "--trajectory-credit" not in contract["training"]["argv"]
+    assert "--verified-trajectory-config" in contract["training"]["argv"]
     assert contract["training"]["argv"][
         contract["training"]["argv"].index("--min-signal-groups") + 1
     ] == str(prereg.TRAINING_PARAMETERS["min_signal_groups"])
@@ -165,6 +209,7 @@ def test_preregistration_rejects_trajectory_group_branch_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ):
     parameters = dict(prereg.TRAINING_PARAMETERS)
+    parameters["group_size"] = 4
     parameters["verified_trajectory_config"] = (
         "tests/fixtures/verified_trajectory_group_config.json"
     )

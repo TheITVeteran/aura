@@ -5423,3 +5423,53 @@ approximately 74.9%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
 is 1-3 checkpoints to a sealed resident-32B training launch, 5-9 to a
 defensible preliminary gain verdict, and 10-19 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S2: resident replay inputs enter one exact custody contract
+
+The independent replay kernel now receives a single cross-bound contract for
+the complete computation it is expected to reproduce. The contract binds the
+fresh resident-32B preregistration, full checkpoint fingerprint, behavior
+bundle, raw and semantic execution-spec identities, every executable source
+binding, exact initial adapter and optimizer custody, frozen Adam
+configuration, recurrent-GRPO configuration, verified trajectory and
+intervention configuration, and resident-scale verifier budget. Verification
+can reopen all files and recompute the full model and behavior identities
+instead of trusting archived hashes.
+
+The production preregistration now activates the two-branch composite-v2
+trajectory, lesion, and stopping objective rather than leaving the verified
+intervention path as a test fixture. Its group topology exactly matches the
+execution-spec branch topology. Launch materialization reconstructs the replay
+contract from the preregistration and copied custody artifacts, embeds it in
+the immutable provider configuration, reopens it on recovery, and propagates
+the exact contract to finalization. Provider-compatible custody documents keep
+finite scientific parameters as canonical JSON strings, preserving their
+values while keeping signed provider receipts free of ambiguous JSON floats.
+
+A worktree-specific production blocker was also closed. Safe repository
+relative artifacts can now resolve against either the active worktree or its
+authenticated main checkout, allowing one resident model copy without
+weakening traversal or symlink confinement. The regenerated CP420S2
+preregistration recomputed and verified the real 32B model, binds 47 source
+roles, 288 training tasks, and 2,877 powered confirmatory tasks, and remains
+correctly ineligible for claims.
+
+The expanded replay, provider, production-factory, measurement-chain,
+transaction, causal-campaign, launch-bundle, training-runner, and external
+replay matrix passes 147/147. Ruff, formatting, bytecode compilation, and diff
+hygiene pass. Evidence:
+`artifacts/current/cp420s2_policy_state_replay_custody_evidence.json`.
+
+This is sealed input custody, not external execution evidence. The resident
+model has not been loaded or trained, the campaign-specific v2 initial-policy
+probe does not yet exist, and no external verifier has replayed a transition.
+CP420S3 must run the CP420S1 kernel under a pinned, durable, independently
+custodied verifier lifecycle with crash recovery and an immutable result
+receipt. `external_policy_state_replayed`, reasoning gain, frontier gain,
+promotion, and `WOW Signal` therefore remain false.
+
+CP420S2 is total checkpoint 690. The 690-920 completion envelope is
+approximately 75.0%-100.0%, with an 87.5% midpoint. The evidence-adjusted range
+is one checkpoint to the final guarded resident-32B launch boundary, 4-8 to a
+defensible preliminary gain verdict, and 9-18 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

@@ -59,6 +59,10 @@ from core.learning.verified_transition_group_admission import (
     validate_transition_group_manifest,
     validate_verified_transition_group_admission,
 )
+from core.learning.verified_transition_policy_state_replay import (
+    VerifiedTransitionPolicyStateReplayError,
+    validate_policy_state_replay_contract,
+)
 from core.learning.verified_transition_reward import (
     validate_verified_transition_reward_batch,
 )
@@ -143,9 +147,7 @@ _TASK_KEYS = frozenset(
         "sample_seeds",
     }
 )
-_ROOT_KEYS = frozenset(
-    {"campaign", "transition_artifacts", "updates", "replay_artifacts"}
-)
+_ROOT_KEYS = frozenset({"campaign", "transition_artifacts", "updates", "replay_artifacts"})
 _RECOVERY_KEYS = frozenset(
     {
         "schema",
@@ -200,12 +202,7 @@ def _sha256(value: Any, *, role: str) -> str:
 
 
 def _identifier(value: Any, *, role: str) -> str:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or len(value) > 256
-    ):
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 256:
         _fail(f"{role}_invalid")
     return value
 
@@ -238,11 +235,7 @@ def _transaction_root_from_provider_config(
     config: Mapping[str, Any],
 ) -> str:
     jit_plan = config.get("jit_plan")
-    nested = (
-        jit_plan.get("transaction_root")
-        if isinstance(jit_plan, Mapping)
-        else None
-    )
+    nested = jit_plan.get("transaction_root") if isinstance(jit_plan, Mapping) else None
     direct = config.get("transaction_root")
     if nested is not None and direct is not None and nested != direct:
         _fail("provider_transaction_root_ambiguous")
@@ -270,9 +263,7 @@ def callable_source_sha256(value: Callable[..., Any]) -> str:
         raw_path = inspect.getsourcefile(target)
         code = target.__code__
     except (OSError, TypeError, AttributeError) as exc:
-        raise VerifiedTransitionProviderError(
-            "provider_callable_source_unavailable"
-        ) from exc
+        raise VerifiedTransitionProviderError("provider_callable_source_unavailable") from exc
     if not raw_path:
         _fail("provider_callable_source_unavailable")
     path = Path(raw_path).resolve(strict=True)
@@ -364,7 +355,11 @@ def validate_verified_transition_provider_contract(value: Any) -> dict[str, Any]
     ):
         _identifier(provider.get(field), role=f"provider_contract_{field}")
     config = provider.get("config")
-    if not isinstance(config, Mapping) or not config or provider["config_sha256"] != _digest(config):
+    if (
+        not isinstance(config, Mapping)
+        or not config
+        or provider["config_sha256"] != _digest(config)
+    ):
         _fail("provider_contract_config_invalid")
 
     trust = _sha256(contract.get("trust_policy_sha256"), role="provider_trust")
@@ -388,16 +383,13 @@ def validate_verified_transition_provider_contract(value: Any) -> dict[str, Any]
     _identifier(codec.get("identity"), role="provider_codec_identity")
     _sha256(codec.get("encoder_source_sha256"), role="provider_encoder")
     _sha256(codec.get("decoder_source_sha256"), role="provider_decoder")
-    tokenizer_bundle = validate_tokenizer_bundle_identity(
-        contract.get("tokenizer_bundle")
-    )
+    tokenizer_bundle = validate_tokenizer_bundle_identity(contract.get("tokenizer_bundle"))
 
     schedule = contract.get("task_schedule")
     if not isinstance(schedule, list) or not schedule:
         _fail("provider_contract_task_schedule_invalid")
     normalized_schedule = [
-        _validate_task_commitment(item, sequence=index)
-        for index, item in enumerate(schedule)
+        _validate_task_commitment(item, sequence=index) for index, item in enumerate(schedule)
     ]
     schedule_sha = _digest(normalized_schedule)
     if contract.get("task_schedule_sha256") != schedule_sha:
@@ -415,8 +407,7 @@ def validate_verified_transition_provider_contract(value: Any) -> dict[str, Any]
     if not isinstance(roots, Mapping) or set(roots) != _ROOT_KEYS:
         _fail("provider_contract_ledger_roots_invalid")
     normalized_roots = {
-        key: _absolute_root(roots[key], role=f"provider_{key}_root")
-        for key in sorted(_ROOT_KEYS)
+        key: _absolute_root(roots[key], role=f"provider_{key}_root") for key in sorted(_ROOT_KEYS)
     }
     if len(set(normalized_roots.values())) != len(normalized_roots):
         _fail("provider_contract_ledger_roots_overlap")
@@ -531,13 +522,9 @@ class CausalCampaignLedger(Protocol):
 
     def group_start(self, *, sequence: int) -> Mapping[str, Any]: ...
 
-    def group_start_if_exists(
-        self, *, sequence: int
-    ) -> Mapping[str, Any] | None: ...
+    def group_start_if_exists(self, *, sequence: int) -> Mapping[str, Any] | None: ...
 
-    def group_terminal_if_exists(
-        self, *, sequence: int
-    ) -> Mapping[str, Any] | None: ...
+    def group_terminal_if_exists(self, *, sequence: int) -> Mapping[str, Any] | None: ...
 
     def group_records(
         self, *, sequence: int, policy: Any
@@ -599,6 +586,7 @@ class VerifiedTransitionFinalizeRequest:
     campaign_ledger: CausalCampaignLedger
     campaign_trust_policy: VerifiedCampaignTrustPolicy
     evidence_verifier_signer: Any
+    policy_state_replay_contract: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -649,8 +637,7 @@ class ProductionVerifiedTransitionGroupProvider:
         codec = cast(Mapping[str, Any], frozen["token_codec"])
         config = _clone(provider_config, role="provider_config")
         if (
-            provider["implementation_source_sha256"]
-            != provider_implementation_source_sha256()
+            provider["implementation_source_sha256"] != provider_implementation_source_sha256()
             or provider["config"] != config
             or provider["config_sha256"] != _digest(config)
         ):
@@ -678,7 +665,10 @@ class ProductionVerifiedTransitionGroupProvider:
                 "campaign_finalizer",
             ),
         ):
-            if identity != expected_identity or callable_source_sha256(callable_value) != expected_source:
+            if (
+                identity != expected_identity
+                or callable_source_sha256(callable_value) != expected_source
+            ):
                 _fail(f"provider_runtime_{role}_mismatch")
         if scorer["identity"] != scorer_identity or scorer[
             "source_sha256"
@@ -691,9 +681,7 @@ class ProductionVerifiedTransitionGroupProvider:
         ):
             _fail("provider_runtime_token_codec_mismatch")
         if (
-            validate_tokenizer_bundle_identity(
-                tokenizer_trace_adapter.bundle_identity
-            )
+            validate_tokenizer_bundle_identity(tokenizer_trace_adapter.bundle_identity)
             != frozen["tokenizer_bundle"]
         ):
             _fail("provider_runtime_tokenizer_bundle_mismatch")
@@ -719,9 +707,27 @@ class ProductionVerifiedTransitionGroupProvider:
 
         self._contract = frozen
         self._provider_config = cast(dict[str, Any], _clone(config, role="provider_config"))
-        self._transaction_root = _transaction_root_from_provider_config(
-            self._provider_config
-        )
+        replay_contract_value = self._provider_config.get("policy_state_replay_contract")
+        try:
+            self._policy_state_replay_contract = (
+                validate_policy_state_replay_contract(
+                    replay_contract_value,
+                    verify_files=True,
+                )
+                if replay_contract_value is not None
+                else None
+            )
+        except VerifiedTransitionPolicyStateReplayError as exc:
+            raise VerifiedTransitionProviderError(
+                f"provider_policy_state_replay_contract_invalid:{exc.code}"
+            ) from exc
+        if (
+            self._policy_state_replay_contract is not None
+            and self._policy_state_replay_contract["initial_policy_sha256"]
+            != frozen["initial_policy_sha256"]
+        ):
+            _fail("provider_policy_state_replay_initial_policy_mismatch")
+        self._transaction_root = _transaction_root_from_provider_config(self._provider_config)
         if self._transaction_root in frozen["ledger_roots"].values():
             _fail("provider_transaction_root_overlap")
         self._ledger = campaign_ledger
@@ -738,10 +744,7 @@ class ProductionVerifiedTransitionGroupProvider:
             for task in training_tasks
             if isinstance(getattr(task, "task_id", None), str)
         }
-        if any(
-            row["task_id"] not in self._training_tasks
-            for row in frozen["task_schedule"]
-        ):
+        if any(row["task_id"] not in self._training_tasks for row in frozen["task_schedule"]):
             _fail("provider_runtime_task_registry_incomplete")
         if not callable(getattr(evidence_verifier_signer, "attest", None)):
             _fail("provider_evidence_verifier_signer_missing")
@@ -780,9 +783,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 _clone(self._commitment(sequence), role="task_commitment"),
             )
 
-    def training_schedule_entry(
-        self, *, sequence: int
-    ) -> VerifiedTransitionTrainingScheduleEntry:
+    def training_schedule_entry(self, *, sequence: int) -> VerifiedTransitionTrainingScheduleEntry:
         """Expose the provider-owned task and trainer seed before selection."""
 
         with self._lock:
@@ -806,9 +807,7 @@ class ProductionVerifiedTransitionGroupProvider:
             manifest = validate_transition_group_manifest(group_manifest)
             return self._lineage_plan(
                 sequence=sequence,
-                policy_before_sha256=_sha256(
-                    policy_before_sha256, role="provider_lineage_policy"
-                ),
+                policy_before_sha256=_sha256(policy_before_sha256, role="provider_lineage_policy"),
                 group_manifest=manifest,
             )
 
@@ -839,9 +838,7 @@ class ProductionVerifiedTransitionGroupProvider:
             "schema": LINEAGE_PLAN_SCHEMA,
             "contract_sha256": self.contract_sha256,
             "campaign_id": self._contract["campaign_id"],
-            "campaign_schedule_root_sha256": self._contract[
-                "campaign_schedule_root_sha256"
-            ],
+            "campaign_schedule_root_sha256": self._contract["campaign_schedule_root_sha256"],
             "sequence": sequence,
             "task_commitment_sha256": _digest(commitment),
             "policy_before_sha256": policy_before_sha256,
@@ -875,8 +872,7 @@ class ProductionVerifiedTransitionGroupProvider:
             if (
                 manifest["task_id"] != commitment["task_id"]
                 or manifest["group_size"] != len(commitment["sample_seeds"])
-                or [entry["sample_seed"] for entry in entries]
-                != commitment["sample_seeds"]
+                or [entry["sample_seed"] for entry in entries] != commitment["sample_seeds"]
                 or any(entry["policy_sha256"] != expected_policy for entry in entries)
                 or any(
                     entry["recurrent_execution_spec_sha256"]
@@ -885,9 +881,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 )
             ):
                 _fail("provider_plan_manifest_schedule_mismatch")
-            admitted_at = _integer(
-                admitted_at_unix_ns, role="provider_plan_admitted_at", minimum=1
-            )
+            admitted_at = _integer(admitted_at_unix_ns, role="provider_plan_admitted_at", minimum=1)
             if manifest["planned_at_unix_ns"] >= admitted_at:
                 _fail("provider_plan_not_pre_sampling")
             verify_role_attestation(
@@ -914,9 +908,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 start = self._ledger.admit_group_plan(
                     sequence=sequence,
                     campaign_id=self._contract["campaign_id"],
-                    campaign_schedule_root_sha256=self._contract[
-                        "campaign_schedule_root_sha256"
-                    ],
+                    campaign_schedule_root_sha256=self._contract["campaign_schedule_root_sha256"],
                     policy_before_sha256=expected_policy,
                     group_manifest=manifest,
                     group_manifest_attestation=dict(group_manifest_attestation),
@@ -933,14 +925,11 @@ class ProductionVerifiedTransitionGroupProvider:
                 )
                 if (
                     persisted_manifest != manifest
-                    or start.get("group_manifest_attestation")
-                    != dict(group_manifest_attestation)
+                    or start.get("group_manifest_attestation") != dict(group_manifest_attestation)
                     or start.get("lineage_plan") != lineage_plan
-                    or start.get("lineage_attestation")
-                    != dict(lineage_attestation)
+                    or start.get("lineage_attestation") != dict(lineage_attestation)
                     or start.get("admitted_at_unix_ns") != admitted_at
-                    or self._ledger.group_terminal_if_exists(sequence=sequence)
-                    is not None
+                    or self._ledger.group_terminal_if_exists(sequence=sequence) is not None
                 ):
                     _fail("provider_plan_rehydration_mismatch")
             if not isinstance(start, Mapping):
@@ -994,8 +983,7 @@ class ProductionVerifiedTransitionGroupProvider:
             or len(completions) != len(samples)
             or any(not isinstance(text, str) for text in completions)
             or not isinstance(prompt_text, str)
-            or list(self._tokenizer_trace_adapter.encode_prompt(prompt_text))
-            != list(prompt_tokens)
+            or list(self._tokenizer_trace_adapter.encode_prompt(prompt_text)) != list(prompt_tokens)
         ):
             _fail("provider_runtime_task_or_sample_count_mismatch")
         observed_seeds: list[int] = []
@@ -1007,8 +995,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 != commitment["recurrent_execution_spec_sha256"]
                 or getattr(sample, "prompt_tokens_sha256", None)
                 != commitment["prompt_tokens_sha256"]
-                or self._tokenizer_trace_adapter.decode_output(sample.tokens)
-                != completion
+                or self._tokenizer_trace_adapter.decode_output(sample.tokens) != completion
             ):
                 _fail("provider_runtime_sample_commitment_mismatch")
         if observed_seeds != commitment["sample_seeds"]:
@@ -1030,19 +1017,15 @@ class ProductionVerifiedTransitionGroupProvider:
             if sequence != len(self._accepted_steps) or sequence not in self._plans:
                 _fail("provider_sampling_plan_missing")
             expected_policy = self.expected_policy_sha256
-            if _sha256(
-                policy_sha256, role="provider_sampling_plan_policy"
-            ) != expected_policy:
+            if _sha256(policy_sha256, role="provider_sampling_plan_policy") != expected_policy:
                 _fail("provider_sampling_plan_policy_mismatch")
             commitment = self._commitment(sequence)
             plan = self._plans[sequence]
             manifest = validate_transition_group_manifest(plan.group_manifest)
             if (
                 getattr(task, "task_id", None) != commitment["task_id"]
-                or _digest(self._task_document(task))
-                != commitment["immutable_task_sha256"]
-                or _digest(list(prompt_tokens))
-                != commitment["prompt_tokens_sha256"]
+                or _digest(self._task_document(task)) != commitment["immutable_task_sha256"]
+                or _digest(list(prompt_tokens)) != commitment["prompt_tokens_sha256"]
                 or manifest["task_id"] != commitment["task_id"]
                 or plan.policy_before_sha256 != expected_policy
             ):
@@ -1051,13 +1034,9 @@ class ProductionVerifiedTransitionGroupProvider:
                 VerifiedTransitionSamplingEntry(
                     episode_id=cast(str, entry["episode_id"]),
                     rng_root_sha256=cast(str, entry["rng_root_sha256"]),
-                    producing_branch_index=cast(
-                        int, entry["producing_branch_index"]
-                    ),
+                    producing_branch_index=cast(int, entry["producing_branch_index"]),
                     sample_seed=cast(int, entry["sample_seed"]),
-                    sampling_config_sha256=cast(
-                        str, entry["sampling_config_sha256"]
-                    ),
+                    sampling_config_sha256=cast(str, entry["sampling_config_sha256"]),
                 )
                 for entry in manifest["entries"]
             )
@@ -1066,12 +1045,8 @@ class ProductionVerifiedTransitionGroupProvider:
                 group_manifest_sha256=cast(str, manifest["manifest_sha256"]),
                 task_id=cast(str, commitment["task_id"]),
                 policy_sha256=expected_policy,
-                prompt_tokens_sha256=cast(
-                    str, commitment["prompt_tokens_sha256"]
-                ),
-                execution_spec_sha256=cast(
-                    str, commitment["recurrent_execution_spec_sha256"]
-                ),
+                prompt_tokens_sha256=cast(str, commitment["prompt_tokens_sha256"]),
+                execution_spec_sha256=cast(str, commitment["recurrent_execution_spec_sha256"]),
                 entries=entries,
                 sampling_config={},
             )
@@ -1097,19 +1072,19 @@ class ProductionVerifiedTransitionGroupProvider:
         ):
             _fail("provider_evidence_runtime_binding_substitution")
         roots = self._contract["ledger_roots"]
-        if _root_of(prepared.transition_store, role="transition_store") != roots[
-            "transition_artifacts"
-        ]:
+        if (
+            _root_of(prepared.transition_store, role="transition_store")
+            != roots["transition_artifacts"]
+        ):
             _fail("provider_evidence_artifact_root_substitution")
-        if prepared.update_journal is not None and _root_of(
-            prepared.update_journal, role="update_journal"
-        ) != roots["updates"]:
+        if (
+            prepared.update_journal is not None
+            and _root_of(prepared.update_journal, role="update_journal") != roots["updates"]
+        ):
             _fail("provider_evidence_update_root_substitution")
         manifest = validate_transition_group_manifest(prepared.group_manifest)
-        if (
-            manifest != plan.group_manifest
-            or dict(prepared.group_manifest_attestation)
-            != dict(plan.group_manifest_attestation)
+        if manifest != plan.group_manifest or dict(prepared.group_manifest_attestation) != dict(
+            plan.group_manifest_attestation
         ):
             _fail("provider_evidence_group_plan_substitution")
         actual = []
@@ -1161,9 +1136,7 @@ class ProductionVerifiedTransitionGroupProvider:
             )
         elif prepared.group_admission_receipt is not None or prepared.update_journal is not None:
             _fail("provider_rejected_group_has_update_material")
-        self._ledger.validate_started_group(
-            sequence=plan.sequence, group_manifest=manifest
-        )
+        self._ledger.validate_started_group(sequence=plan.sequence, group_manifest=manifest)
         return PreparedVerifiedTransitionGroup(
             campaign_sequence=plan.sequence,
             transition_store=prepared.transition_store,
@@ -1224,43 +1197,30 @@ class ProductionVerifiedTransitionGroupProvider:
                 validate_recurrent_policy_sample_receipt,
             )
 
-            for expected, sample in zip(
-                plan.group_manifest["entries"], samples, strict=True
-            ):
-                sample_receipt = validate_recurrent_policy_sample_receipt(
-                    sample.receipt()
-                )
+            for expected, sample in zip(plan.group_manifest["entries"], samples, strict=True):
+                sample_receipt = validate_recurrent_policy_sample_receipt(sample.receipt())
                 if (
                     sample_receipt["episode_id"] != expected["episode_id"]
-                    or sample_receipt["rng_root_sha256"]
-                    != expected["rng_root_sha256"]
-                    or sample_receipt["branch_index"]
-                    != expected["producing_branch_index"]
+                    or sample_receipt["rng_root_sha256"] != expected["rng_root_sha256"]
+                    or sample_receipt["branch_index"] != expected["producing_branch_index"]
                     or sample_receipt["seed"] != expected["sample_seed"]
-                    or sampling_config_sha256(sample)
-                    != expected["sampling_config_sha256"]
+                    or sampling_config_sha256(sample) != expected["sampling_config_sha256"]
                 ):
                     _fail("provider_runtime_sample_plan_mismatch")
             request = VerifiedTransitionProductionRequest(
                 schema=PRODUCTION_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,
-                campaign_schedule_root_sha256=self._contract[
-                    "campaign_schedule_root_sha256"
-                ],
+                campaign_schedule_root_sha256=self._contract["campaign_schedule_root_sha256"],
                 sequence=sequence,
                 task=task,
                 prompt_text=prompt_text,
                 prompt_tokens=tuple(prompt_tokens),
                 samples=tuple(samples),
                 completions=tuple(completions),
-                task_commitment=cast(
-                    dict[str, Any], _clone(commitment, role="task_commitment")
-                ),
+                task_commitment=cast(dict[str, Any], _clone(commitment, role="task_commitment")),
                 lineage_plan=dict(plan.lineage_plan),
                 group_manifest=dict(plan.group_manifest),
-                group_manifest_attestation=dict(
-                    plan.group_manifest_attestation
-                ),
+                group_manifest_attestation=dict(plan.group_manifest_attestation),
                 provider_config=cast(
                     dict[str, Any], _clone(self._provider_config, role="provider_config")
                 ),
@@ -1299,9 +1259,7 @@ class ProductionVerifiedTransitionGroupProvider:
             cast(dict[str, Any], _clone(terminal, role="campaign_terminal")),
         )
 
-    def _validate_step(
-        self, *, sequence: int, receipt: Mapping[str, Any]
-    ) -> dict[str, Any]:
+    def _validate_step(self, *, sequence: int, receipt: Mapping[str, Any]) -> dict[str, Any]:
         commitment = self._commitment(sequence)
         step = validate_verified_transition_step_receipt(
             receipt,
@@ -1332,8 +1290,7 @@ class ProductionVerifiedTransitionGroupProvider:
             != self._contract["campaign_schedule_root_sha256"]
             or start.get("policy_before_sha256") != expected_before
             or terminal != step["terminal"]
-            or terminal.get("campaign_manifest_sha256")
-            != start.get("campaign_manifest_sha256")
+            or terminal.get("campaign_manifest_sha256") != start.get("campaign_manifest_sha256")
             or terminal.get("campaign_schedule_root_sha256")
             != self._contract["campaign_schedule_root_sha256"]
         ):
@@ -1371,11 +1328,8 @@ class ProductionVerifiedTransitionGroupProvider:
             or start.get("policy_before_sha256") != expected_policy_sha256
             or start.get("lineage_plan") != expected_plan
             or manifest["task_id"] != commitment["task_id"]
-            or [entry["sample_seed"] for entry in entries]
-            != commitment["sample_seeds"]
-            or any(
-                entry["policy_sha256"] != expected_policy_sha256 for entry in entries
-            )
+            or [entry["sample_seed"] for entry in entries] != commitment["sample_seeds"]
+            or any(entry["policy_sha256"] != expected_policy_sha256 for entry in entries)
             or any(
                 entry["recurrent_execution_spec_sha256"]
                 != commitment["recurrent_execution_spec_sha256"]
@@ -1453,16 +1407,12 @@ class ProductionVerifiedTransitionGroupProvider:
                 pending["sequence"] != sequence
                 or pending["trainer_step"] != sequence + 1
                 or pending["task_id"] != commitment["task_id"]
-                or pending["trainer_sample_seed"]
-                != commitment["trainer_sample_seed"]
-                or pending["execution_spec_sha256"]
-                != commitment["recurrent_execution_spec_sha256"]
-                or pending["campaign_manifest_sha256"]
-                != start.get("campaign_manifest_sha256")
+                or pending["trainer_sample_seed"] != commitment["trainer_sample_seed"]
+                or pending["execution_spec_sha256"] != commitment["recurrent_execution_spec_sha256"]
+                or pending["campaign_manifest_sha256"] != start.get("campaign_manifest_sha256")
                 or pending["campaign_schedule_root_sha256"]
                 != self._contract["campaign_schedule_root_sha256"]
-                or pending["group_manifest_sha256"]
-                != manifest["manifest_sha256"]
+                or pending["group_manifest_sha256"] != manifest["manifest_sha256"]
                 or pending["group_admission_sha256"] != admission_sha256
                 or pending["policy_before_sha256"] != expected_policy
             ):
@@ -1502,14 +1452,10 @@ class ProductionVerifiedTransitionGroupProvider:
                     terminal = self._ledger.finish_group(
                         sequence=sequence,
                         status="updated",
-                        reward_receipt_sha256=pending[
-                            "reward_receipt_sha256"
-                        ],
+                        reward_receipt_sha256=pending["reward_receipt_sha256"],
                         group_admission_sha256=admission_sha256,
                         update_receipt_sha256=update["receipt_sha256"],
-                        terminal_reason=(
-                            "optimizer_update_recovered_from_staged_transaction"
-                        ),
+                        terminal_reason=("optimizer_update_recovered_from_staged_transaction"),
                         finished_at_unix_ns=max(
                             int(update["committed_at_unix_ns"]), time.time_ns()
                         ),
@@ -1571,18 +1517,13 @@ class ProductionVerifiedTransitionGroupProvider:
                 intent["sequence"] != sequence
                 or intent["trainer_step"] != sequence + 1
                 or intent["task_id"] != commitment["task_id"]
-                or intent["trainer_sample_seed"]
-                != commitment["trainer_sample_seed"]
-                or intent["execution_spec_sha256"]
-                != commitment["recurrent_execution_spec_sha256"]
-                or intent["campaign_manifest_sha256"]
-                != start.get("campaign_manifest_sha256")
+                or intent["trainer_sample_seed"] != commitment["trainer_sample_seed"]
+                or intent["execution_spec_sha256"] != commitment["recurrent_execution_spec_sha256"]
+                or intent["campaign_manifest_sha256"] != start.get("campaign_manifest_sha256")
                 or intent["campaign_schedule_root_sha256"]
                 != self._contract["campaign_schedule_root_sha256"]
-                or intent["group_manifest_sha256"]
-                != manifest["manifest_sha256"]
-                or intent["reward_receipt_sha256"]
-                != reward_receipt_sha256
+                or intent["group_manifest_sha256"] != manifest["manifest_sha256"]
+                or intent["reward_receipt_sha256"] != reward_receipt_sha256
                 or intent["policy_sha256"] != expected_policy
                 or _sha256(
                     validate_live_policy(),
@@ -1600,9 +1541,7 @@ class ProductionVerifiedTransitionGroupProvider:
                         reward_receipt_sha256=reward_receipt_sha256,
                         group_admission_sha256=None,
                         update_receipt_sha256=None,
-                        terminal_reason=intent["trainer_step_static"][
-                            "optimizer_admission_reason"
-                        ],
+                        terminal_reason=intent["trainer_step_static"]["optimizer_admission_reason"],
                         finished_at_unix_ns=time.time_ns(),
                         policy_after_sha256=expected_policy,
                     )
@@ -1633,27 +1572,19 @@ class ProductionVerifiedTransitionGroupProvider:
             request = VerifiedTransitionRestoreRequest(
                 schema=RESTORE_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,
-                campaign_schedule_root_sha256=self._contract[
-                    "campaign_schedule_root_sha256"
-                ],
+                campaign_schedule_root_sha256=self._contract["campaign_schedule_root_sha256"],
                 committed_steps=len(self._accepted_steps),
                 step_receipts=tuple(self._accepted_steps),
-                replay_artifact_root=self._contract["ledger_roots"][
-                    "replay_artifacts"
-                ],
+                replay_artifact_root=self._contract["ledger_roots"]["replay_artifacts"],
             )
             loaded = tuple(self._loader(request))
             if len(loaded) != len(self._accepted_steps):
                 _fail("provider_recovered_package_set_mismatch")
             replay_groups = []
-            for package, accepted in zip(
-                loaded, self._accepted_steps, strict=True
-            ):
+            for package, accepted in zip(loaded, self._accepted_steps, strict=True):
                 if not isinstance(package, Mapping):
                     _fail("provider_recovered_package_type_invalid")
-                group = self._reconstruct_replay_package(
-                    package, step=accepted
-                )
+                group = self._reconstruct_replay_package(package, step=accepted)
                 if group is not None:
                     replay_groups.append(group)
             expected = [
@@ -1675,8 +1606,7 @@ class ProductionVerifiedTransitionGroupProvider:
             or group.sequence != sequence
             or _root_of(group.transition_store, role="replay_store")
             != roots["transition_artifacts"]
-            or _root_of(group.update_journal, role="replay_update_journal")
-            != roots["updates"]
+            or _root_of(group.update_journal, role="replay_update_journal") != roots["updates"]
             or group.independent_scorer is not self._scorer
             or group.token_encoder is not self._encoder
             or group.token_decoder is not self._decoder
@@ -1701,8 +1631,7 @@ class ProductionVerifiedTransitionGroupProvider:
         )
         if (
             manifest["manifest_sha256"] != step["group_manifest_sha256"]
-            or group.reward_receipt.get("receipt_sha256")
-            != step["reward_receipt_sha256"]
+            or group.reward_receipt.get("receipt_sha256") != step["reward_receipt_sha256"]
             or admission.get("receipt_sha256") != step["group_admission_sha256"]
             or update.get("receipt_sha256") != step["update_receipt_sha256"]
             or update.get("policy_before_sha256") != step["policy_before_sha256"]
@@ -1732,12 +1661,9 @@ class ProductionVerifiedTransitionGroupProvider:
             or document["task_id"] != step["task_id"]
             or document["tokenizer_bundle_sha256"]
             != self._contract["tokenizer_bundle"]["bundle_sha256"]
-            or document["group_manifest"]["manifest_sha256"]
-            != step["group_manifest_sha256"]
-            or document["reward_receipt_sha256"]
-            != step["reward_receipt_sha256"]
-            or document["group_admission_sha256"]
-            != step["group_admission_sha256"]
+            or document["group_manifest"]["manifest_sha256"] != step["group_manifest_sha256"]
+            or document["reward_receipt_sha256"] != step["reward_receipt_sha256"]
+            or document["group_admission_sha256"] != step["group_admission_sha256"]
         ):
             _fail("provider_replay_package_binding_mismatch")
         store = TransitionArtifactStore(roots["transition_artifacts"])
@@ -1751,9 +1677,7 @@ class ProductionVerifiedTransitionGroupProvider:
         )
         if [sample.receipt() for sample in samples] != step["samples"]:
             _fail("provider_replay_sample_step_mismatch")
-        reward = store.read_json(
-            document["reward_artifact"], role="recurrent_replay_reward"
-        )
+        reward = store.read_json(document["reward_artifact"], role="recurrent_replay_reward")
         reward = validate_verified_transition_reward_batch(
             store,
             reward,
@@ -1825,9 +1749,7 @@ class ProductionVerifiedTransitionGroupProvider:
             request = VerifiedTransitionRestoreRequest(
                 schema=RESTORE_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,
-                campaign_schedule_root_sha256=self._contract[
-                    "campaign_schedule_root_sha256"
-                ],
+                campaign_schedule_root_sha256=self._contract["campaign_schedule_root_sha256"],
                 committed_steps=committed_steps,
                 step_receipts=tuple(steps),
                 replay_artifact_root=self._contract["ledger_roots"]["replay_artifacts"],
@@ -1873,36 +1795,35 @@ class ProductionVerifiedTransitionGroupProvider:
                 _fail("provider_finalize_replay_group_set_mismatch")
             validated_replay_groups = tuple(
                 self._validate_replay_group(group, step=step)
-                for group, step in zip(
-                    replay_groups, updated_steps, strict=True
-                )
+                for group, step in zip(replay_groups, updated_steps, strict=True)
             )
             request = VerifiedTransitionFinalizeRequest(
                 schema=FINALIZE_REQUEST_SCHEMA,
                 contract_sha256=self.contract_sha256,
-                campaign_schedule_root_sha256=self._contract[
-                    "campaign_schedule_root_sha256"
-                ],
+                campaign_schedule_root_sha256=self._contract["campaign_schedule_root_sha256"],
                 completed_groups=completed_groups,
                 halt_reason=halt_reason,
                 replay_groups=validated_replay_groups,
                 step_receipts=tuple(self._accepted_steps),
-                replay_artifact_root=self._contract["ledger_roots"][
-                    "replay_artifacts"
-                ],
-                campaign_ledger_root=self._contract["ledger_roots"][
-                    "campaign"
-                ],
-                transition_artifact_root=self._contract["ledger_roots"][
-                    "transition_artifacts"
-                ],
-                update_journal_root=self._contract["ledger_roots"][
-                    "updates"
-                ],
+                replay_artifact_root=self._contract["ledger_roots"]["replay_artifacts"],
+                campaign_ledger_root=self._contract["ledger_roots"]["campaign"],
+                transition_artifact_root=self._contract["ledger_roots"]["transition_artifacts"],
+                update_journal_root=self._contract["ledger_roots"]["updates"],
                 transaction_root=self._transaction_root,
                 campaign_ledger=self._ledger,
                 campaign_trust_policy=self._policy,
                 evidence_verifier_signer=self._evidence_verifier_signer,
+                policy_state_replay_contract=(
+                    cast(
+                        Mapping[str, Any],
+                        _clone(
+                            self._policy_state_replay_contract,
+                            role="policy_state_replay_contract",
+                        ),
+                    )
+                    if self._policy_state_replay_contract is not None
+                    else None
+                ),
             )
             closure = self._finalizer(request)
             if not isinstance(closure, VerifiedTransitionCampaignClosure):
@@ -1925,8 +1846,13 @@ class ProductionVerifiedTransitionGroupProvider:
                 != self._contract["campaign_schedule_root_sha256"]
                 or not isinstance(statuses, list)
                 or len(statuses) != len(self._contract["task_schedule"])
-                or any(status not in {"updated", "rejected"} for status in statuses[:completed_groups])
-                or any(status not in {"aborted", "indeterminate"} for status in statuses[completed_groups:])
+                or any(
+                    status not in {"updated", "rejected"} for status in statuses[:completed_groups]
+                )
+                or any(
+                    status not in {"aborted", "indeterminate"}
+                    for status in statuses[completed_groups:]
+                )
             ):
                 _fail("provider_finalize_campaign_status_mismatch")
             expected_updated = [
@@ -1934,9 +1860,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 for sequence, status in enumerate(statuses[:completed_groups])
                 if status == "updated"
             ]
-            if [
-                group.sequence for group in validated_replay_groups
-            ] != expected_updated:
+            if [group.sequence for group in validated_replay_groups] != expected_updated:
                 _fail("provider_finalize_replay_group_set_mismatch")
             self._finalized = True
             return closure

@@ -100,7 +100,7 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "depths": [2, 4, 8],
     "train_per_cell": 8,
     "holdout_per_cell": 1,
-    "group_size": 4,
+    "group_size": 2,
     "temperature": 1.0,
     "max_tokens": 320,
     "kl_coefficient": 0.02,
@@ -125,6 +125,9 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "max_minutes": 1440.0,
     "memory_fraction": 0.42,
     "seed": TRAINING_SEED,
+    "verified_trajectory_config": (
+        "config/latent_cortex/resident_32b_verified_intervention_group_config.json"
+    ),
 }
 SOURCE_ROLES: Mapping[str, str] = {
     "campaign_contract": "tools/prepare_resident_recurrent_grpo_campaign.py",
@@ -138,6 +141,8 @@ SOURCE_ROLES: Mapping[str, str] = {
         "core/learning/verified_recurrent_transition_repository.py"
     ),
     "transition_policy_probe": ("core/learning/verified_transition_policy_probe.py"),
+    "transition_measurement_chain": ("core/learning/verified_transition_measurement_chain.py"),
+    "transition_policy_state_replay": ("core/learning/verified_transition_policy_state_replay.py"),
     "recurrent_training_prompt": ("core/learning/recurrent_training_prompt.py"),
     "atomic_writer": "core/runtime/atomic_writer.py",
     "file_read_gateway": "core/runtime/file_read_gateway.py",
@@ -247,12 +252,12 @@ def _repo_path(value: str, *, role: str, must_exist: bool = True) -> Path:
     pure = PurePosixPath(value)
     if pure.is_absolute() or str(pure) != value or ".." in pure.parts:
         _fail(f"{role}_path_invalid")
-    candidate = REPO_ROOT / pure
-    try:
-        resolved = candidate.resolve(strict=must_exist)
-    except OSError as exc:
-        raise PreregistrationError(f"{role}_path_invalid") from exc
     for root in _repository_roots(REPO_ROOT):
+        candidate = root / pure
+        try:
+            resolved = candidate.resolve(strict=must_exist)
+        except OSError:
+            continue
         try:
             resolved.relative_to(root)
         except ValueError:

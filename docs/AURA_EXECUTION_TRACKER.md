@@ -31383,3 +31383,40 @@ approximately 74.9%-100.0%, with an 87.4% midpoint. The evidence-adjusted range
 is 1-3 checkpoints to a sealed resident-32B training launch, 5-9 to a
 defensible preliminary gain verdict, and 10-19 to the powered conditional
 `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420S2 exact resident replay-input custody
+
+The CP420S replay kernel now has a single validated contract binding the
+resident preregistration, full model and behavior identities, raw and semantic
+execution spec, 47 executable source bindings, exact initial adapter and Adam
+state custody, optimizer and recurrent training configuration, composite-v2
+trajectory/intervention configuration, and resident-scale verifier budget.
+Launch materialization reconstructs this contract rather than accepting a
+caller assertion, stores it in the immutable provider configuration, verifies
+it again during recovery, and forwards the exact value to finalization.
+
+The production preregistration now uses the real two-branch verified
+trajectory, lesion, and stopping objective with topology equal to the execution
+spec. The fresh CP420S2 contract recomputed and verified the resident 32B
+checkpoint and behavior bundle, binds 288 training tasks and 2,877 powered
+confirmatory tasks, and remains claim-ineligible. A confined multi-root
+resolver permits the active worktree to authenticate the single model copy in
+the main checkout while continuing to reject traversal and outside-root
+symlink targets.
+
+The expanded replay/campaign matrix passes 147/147; Ruff, formatting, bytecode
+compilation, and diff hygiene pass. Evidence:
+`artifacts/current/cp420s2_policy_state_replay_custody_evidence.json`.
+
+The boundary is unchanged by prose: no resident model was loaded or trained,
+no campaign-specific v2 initial-policy probe exists yet, and no external
+process replayed a transition. CP420S3 must provide the pinned durable external
+verifier lifecycle, recovery, and immutable positive receipt before
+`external_policy_state_replayed` can become true. Reasoning gain, frontier
+gain, promotion, and `WOW Signal` remain false.
+
+CP420S2 is total checkpoint 690. The 690-920 completion envelope is
+approximately 75.0%-100.0%, with an 87.5% midpoint. The evidence-adjusted range
+is one checkpoint to the final guarded resident-32B launch boundary, 4-8 to a
+defensible preliminary gain verdict, and 9-18 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

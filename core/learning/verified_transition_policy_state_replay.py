@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, Never, cast
 
 from core.learning.recurrent_grpo import (
@@ -22,7 +25,49 @@ from core.learning.recurrent_grpo import (
 )
 
 POLICY_STATE_REPLAY_RECEIPT_SCHEMA = "aura.verified_transition.policy_state_replay_receipt.v1"
+POLICY_STATE_REPLAY_CONTRACT_SCHEMA = "aura.verified_transition.policy_state_replay_contract.v1"
 TENSOR_MAP_IDENTITY_SCHEMA = "aura.tensor_map_identity.v1"
+
+_REPLAY_CONTRACT_KEYS = frozenset(
+    {
+        "schema",
+        "preregistration_contract_sha256",
+        "initial_policy_sha256",
+        "model",
+        "execution_spec",
+        "source_bindings",
+        "source_bindings_sha256",
+        "initial_policy_state_custody",
+        "initial_policy_state_custody_sha256",
+        "optimizer_config",
+        "optimizer_config_sha256",
+        "recurrent_grpo_config",
+        "recurrent_grpo_config_sha256",
+        "verified_trajectory_config_json",
+        "verified_trajectory_config_sha256",
+        "external_verifier_max_seconds",
+        "contract_sha256",
+    }
+)
+_MODEL_CONTRACT_KEYS = frozenset(
+    {
+        "path",
+        "base_checkpoint",
+        "base_checkpoint_sha256",
+        "behavior_bundle",
+        "behavior_bundle_sha256",
+    }
+)
+_EXECUTION_SPEC_CONTRACT_KEYS = frozenset(
+    {
+        "path",
+        "sha256",
+        "size_bytes",
+        "semantic_sha256",
+        "document_json",
+    }
+)
+_SOURCE_BINDING_KEYS = frozenset({"path", "sha256", "size_bytes"})
 
 _TENSOR_IDENTITY_KEYS = frozenset(
     {
@@ -107,6 +152,19 @@ def _sha256(value: Any, *, role: str) -> str:
     return value
 
 
+def _identifier(value: Any, *, role: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 256
+        or not value[0].isalnum()
+        or any(not (character.isalnum() or character in "._:/;=+-") for character in value)
+    ):
+        _fail(f"policy_state_replay_{role}_invalid")
+    return value
+
+
 def _clone(value: Any, *, role: str) -> Any:
     try:
         return json.loads(_canonical_json_bytes(value))
@@ -118,6 +176,465 @@ def _clone(value: Any, *, role: str) -> Any:
         RecursionError,
     ):
         _fail(f"policy_state_replay_{role}_not_canonical")
+
+
+def _canonical_path(
+    value: Any,
+    *,
+    role: str,
+    directory: bool,
+    verify_files: bool,
+) -> Path:
+    if not isinstance(value, str) or not value:
+        _fail(f"policy_state_replay_{role}_path_invalid")
+    path = Path(value)
+    if not path.is_absolute() or path.resolve(strict=False) != path:
+        _fail(f"policy_state_replay_{role}_path_invalid")
+    if path.is_symlink():
+        _fail(f"policy_state_replay_{role}_symlink_rejected")
+    if verify_files:
+        try:
+            metadata = path.stat()
+        except OSError as exc:
+            raise VerifiedTransitionPolicyStateReplayError(
+                f"policy_state_replay_{role}_unavailable"
+            ) from exc
+        expected = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected(metadata.st_mode):
+            _fail(f"policy_state_replay_{role}_type_invalid")
+    return path
+
+
+def _stable_file_bytes(path: Path, *, maximum: int, role: str) -> bytes:
+    from core.runtime.file_read_gateway import read_stable_bytes
+
+    try:
+        return read_stable_bytes(path, max_bytes=maximum)
+    except OSError as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            f"policy_state_replay_{role}_unreadable"
+        ) from exc
+
+
+def _validate_file_binding(
+    value: Any,
+    *,
+    role: str,
+    verify_files: bool,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != _SOURCE_BINDING_KEYS:
+        _fail(f"policy_state_replay_{role}_binding_schema_invalid")
+    binding = cast(dict[str, Any], _clone(value, role=f"{role}_binding"))
+    path = _canonical_path(
+        binding.get("path"),
+        role=role,
+        directory=False,
+        verify_files=verify_files,
+    )
+    digest = _sha256(binding.get("sha256"), role=f"{role}_binding")
+    size = binding.get("size_bytes")
+    if type(size) is not int or size <= 0 or size > (1 << 40):
+        _fail(f"policy_state_replay_{role}_binding_size_invalid")
+    if verify_files:
+        try:
+            if path.stat().st_size != size:
+                _fail(f"policy_state_replay_{role}_binding_mismatch")
+        except OSError as exc:
+            raise VerifiedTransitionPolicyStateReplayError(
+                f"policy_state_replay_{role}_unreadable"
+            ) from exc
+        payload = _stable_file_bytes(path, maximum=size, role=role)
+        if len(payload) != size or hashlib.sha256(payload).hexdigest() != digest:
+            _fail(f"policy_state_replay_{role}_binding_mismatch")
+    return binding
+
+
+def _validate_checkpoint_identity(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "fingerprint",
+        "method",
+        "files",
+    }:
+        _fail("policy_state_replay_model_base_checkpoint_invalid")
+    identity = cast(dict[str, Any], _clone(value, role="base_checkpoint"))
+    _sha256(identity.get("fingerprint"), role="base_checkpoint")
+    if (
+        identity.get("method") != "sha256"
+        or type(identity.get("files")) is not int
+        or not 1 <= identity["files"] <= 100_000
+    ):
+        _fail("policy_state_replay_model_base_checkpoint_invalid")
+    return identity
+
+
+def _validate_behavior_bundle_identity(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "bundle_sha256",
+        "file_count",
+        "files",
+    }:
+        _fail("policy_state_replay_model_behavior_bundle_invalid")
+    identity = cast(dict[str, Any], _clone(value, role="behavior_bundle"))
+    files = identity.get("files")
+    if (
+        not isinstance(files, list)
+        or type(identity.get("file_count")) is not int
+        or identity["file_count"] != len(files)
+        or identity["file_count"] < 3
+    ):
+        _fail("policy_state_replay_model_behavior_bundle_invalid")
+    normalized = []
+    for record in files:
+        if (
+            not isinstance(record, Mapping)
+            or set(record) != {"path", "sha256", "size_bytes"}
+            or not isinstance(record.get("path"), str)
+            or not record["path"]
+            or Path(record["path"]).name != record["path"]
+            or type(record.get("size_bytes")) is not int
+            or record["size_bytes"] < 0
+        ):
+            _fail("policy_state_replay_model_behavior_bundle_invalid")
+        _sha256(record.get("sha256"), role="behavior_bundle_file")
+        normalized.append(dict(record))
+    if (
+        normalized != sorted(normalized, key=lambda item: item["path"])
+        or len({item["path"] for item in normalized}) != len(normalized)
+        or not {"config.json", "tokenizer.json", "tokenizer_config.json"}.issubset(
+            item["path"] for item in normalized
+        )
+        or _sha256(identity.get("bundle_sha256"), role="behavior_bundle") != _digest(normalized)
+    ):
+        _fail("policy_state_replay_model_behavior_bundle_invalid")
+    return identity
+
+
+def _verify_private_custody_artifact(
+    *,
+    path: Any,
+    artifact: Any,
+    role: str,
+) -> None:
+    if not isinstance(artifact, Mapping):
+        _fail(f"policy_state_replay_{role}_artifact_invalid")
+    resolved = _canonical_path(
+        path,
+        role=role,
+        directory=False,
+        verify_files=True,
+    )
+    try:
+        metadata = resolved.stat()
+    except OSError as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            f"policy_state_replay_{role}_unavailable"
+        ) from exc
+    if (
+        metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+        or metadata.st_nlink != 1
+        or resolved.name != artifact.get("path")
+        or type(artifact.get("size_bytes")) is not int
+        or artifact["size_bytes"] <= 0
+    ):
+        _fail(f"policy_state_replay_{role}_custody_invalid")
+    if metadata.st_size != artifact["size_bytes"]:
+        _fail(f"policy_state_replay_{role}_artifact_mismatch")
+    payload = _stable_file_bytes(
+        resolved,
+        maximum=artifact["size_bytes"],
+        role=role,
+    )
+    if len(payload) != artifact["size_bytes"] or hashlib.sha256(payload).hexdigest() != _sha256(
+        artifact.get("sha256"), role=f"{role}_artifact"
+    ):
+        _fail(f"policy_state_replay_{role}_artifact_mismatch")
+
+
+def validate_policy_state_replay_contract(
+    value: Any,
+    *,
+    verify_files: bool = False,
+    verify_model: bool = False,
+) -> dict[str, Any]:
+    """Validate the complete source and state contract used by external replay."""
+
+    if not isinstance(value, Mapping) or set(value) != _REPLAY_CONTRACT_KEYS:
+        _fail("policy_state_replay_contract_schema_invalid")
+    contract = cast(dict[str, Any], _clone(value, role="contract"))
+    if contract.get("schema") != POLICY_STATE_REPLAY_CONTRACT_SCHEMA:
+        _fail("policy_state_replay_contract_schema_invalid")
+    if verify_model and not verify_files:
+        _fail("policy_state_replay_model_verification_requires_files")
+    unsigned = dict(contract)
+    observed = _sha256(
+        unsigned.pop("contract_sha256"),
+        role="contract",
+    )
+    if observed != _digest(unsigned):
+        _fail("policy_state_replay_contract_digest_mismatch")
+    _sha256(
+        contract.get("preregistration_contract_sha256"),
+        role="preregistration_contract",
+    )
+    initial_policy = _sha256(
+        contract.get("initial_policy_sha256"),
+        role="initial_policy",
+    )
+
+    model = contract.get("model")
+    if not isinstance(model, Mapping) or set(model) != _MODEL_CONTRACT_KEYS:
+        _fail("policy_state_replay_model_schema_invalid")
+    model_path = _canonical_path(
+        model.get("path"),
+        role="model",
+        directory=True,
+        verify_files=verify_files,
+    )
+    identities = {
+        "base_checkpoint": _validate_checkpoint_identity(model.get("base_checkpoint")),
+        "behavior_bundle": _validate_behavior_bundle_identity(model.get("behavior_bundle")),
+    }
+    for field, identity in identities.items():
+        expected_digest = _sha256(
+            model.get(f"{field}_sha256"),
+            role=f"model_{field}",
+        )
+        if expected_digest != _digest(identity):
+            _fail(f"policy_state_replay_model_{field}_digest_mismatch")
+    if verify_model:
+        from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (
+            full_weight_checkpoint_identity,
+            model_behavior_bundle_identity,
+        )
+
+        if (
+            full_weight_checkpoint_identity(model_path) != identities["base_checkpoint"]
+            or model_behavior_bundle_identity(model_path) != identities["behavior_bundle"]
+        ):
+            _fail("policy_state_replay_model_identity_mismatch")
+
+    execution = contract.get("execution_spec")
+    if not isinstance(execution, Mapping) or set(execution) != _EXECUTION_SPEC_CONTRACT_KEYS:
+        _fail("policy_state_replay_execution_spec_schema_invalid")
+    execution_binding = _validate_file_binding(
+        {
+            "path": execution.get("path"),
+            "sha256": execution.get("sha256"),
+            "size_bytes": execution.get("size_bytes"),
+        },
+        role="execution_spec",
+        verify_files=verify_files,
+    )
+    execution_semantic = _sha256(
+        execution.get("semantic_sha256"),
+        role="execution_spec_semantic",
+    )
+    execution_document_json = execution.get("document_json")
+    if not isinstance(execution_document_json, str) or not execution_document_json:
+        _fail("policy_state_replay_execution_spec_document_invalid")
+    try:
+        from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+
+        execution_document = json.loads(execution_document_json)
+        if (
+            not isinstance(execution_document, Mapping)
+            or _canonical_json_bytes(execution_document).decode("ascii") != execution_document_json
+        ):
+            _fail("policy_state_replay_execution_spec_document_invalid")
+        reconstructed_spec = RLCExecutionSpec.from_dict(execution_document)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            "policy_state_replay_execution_spec_document_invalid"
+        ) from exc
+    if reconstructed_spec.sha256 != execution_semantic:
+        _fail("policy_state_replay_execution_spec_semantic_mismatch")
+    if verify_files:
+        payload = _stable_file_bytes(
+            Path(execution_binding["path"]),
+            maximum=int(execution_binding["size_bytes"]),
+            role="execution_spec",
+        )
+        try:
+            parsed = json.loads(payload)
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise VerifiedTransitionPolicyStateReplayError(
+                "policy_state_replay_execution_spec_json_invalid"
+            ) from exc
+        if parsed != execution_document:
+            _fail("policy_state_replay_execution_spec_document_mismatch")
+
+    sources = contract.get("source_bindings")
+    if not isinstance(sources, Mapping) or not sources:
+        _fail("policy_state_replay_source_bindings_invalid")
+    normalized_sources = {}
+    for role in sorted(sources):
+        normalized_role = _identifier(role, role="source_role")
+        normalized_sources[normalized_role] = _validate_file_binding(
+            sources[role],
+            role=f"source_{normalized_role}",
+            verify_files=verify_files,
+        )
+    if list(sources) != sorted(sources) or contract.get("source_bindings_sha256") != _digest(
+        normalized_sources
+    ):
+        _fail("policy_state_replay_source_bindings_digest_mismatch")
+
+    try:
+        from core.learning.verified_transition_measurement_chain import (
+            validate_recurrent_grpo_config_contract,
+        )
+        from core.learning.verified_transition_policy_probe import (
+            validate_initial_policy_state_custody,
+        )
+
+        custody = validate_initial_policy_state_custody(
+            contract.get("initial_policy_state_custody")
+        )
+        recurrent_config = validate_recurrent_grpo_config_contract(
+            contract.get("recurrent_grpo_config")
+        )
+    except Exception as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            "policy_state_replay_state_or_objective_contract_invalid"
+        ) from exc
+    if (
+        contract.get("initial_policy_state_custody_sha256") != custody["custody_sha256"]
+        or custody["initial_policy_sha256"] != initial_policy
+        or custody["execution_spec_sha256"] != execution_semantic
+        or contract.get("recurrent_grpo_config_sha256") != _digest(recurrent_config)
+    ):
+        _fail("policy_state_replay_state_or_objective_contract_mismatch")
+    if verify_files:
+        _verify_private_custody_artifact(
+            path=custody["initial_adapter_path"],
+            artifact=custody["initial_adapter_artifact"],
+            role="initial_adapter",
+        )
+        _verify_private_custody_artifact(
+            path=custody["initial_optimizer_path"],
+            artifact=custody["initial_optimizer_artifact"],
+            role="initial_optimizer",
+        )
+    optimizer_config = contract.get("optimizer_config")
+    if not isinstance(optimizer_config, Mapping):
+        _fail("policy_state_replay_optimizer_config_invalid")
+    _optimizer_learning_rate(optimizer_config)
+    if dict(optimizer_config) != custody["optimizer_initialization"] or contract.get(
+        "optimizer_config_sha256"
+    ) != _digest(dict(optimizer_config)):
+        _fail("policy_state_replay_optimizer_config_digest_mismatch")
+
+    trajectory_json = contract.get("verified_trajectory_config_json")
+    if not isinstance(trajectory_json, str) or not trajectory_json:
+        _fail("policy_state_replay_trajectory_config_invalid")
+    try:
+        from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
+
+        trajectory_config = json.loads(trajectory_json)
+        if (
+            not isinstance(trajectory_config, Mapping)
+            or _canonical_json_bytes(trajectory_config).decode("ascii") != trajectory_json
+        ):
+            _fail("policy_state_replay_trajectory_config_invalid")
+        reconstructed_trajectory = VerifiedTrajectoryGroupConfig.from_dict(trajectory_config)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            "policy_state_replay_trajectory_config_invalid"
+        ) from exc
+    canonical_trajectory = reconstructed_trajectory.to_dict()
+    if (
+        reconstructed_trajectory.intervention_config is None
+        or canonical_trajectory != dict(trajectory_config)
+        or contract.get("verified_trajectory_config_sha256") != _digest(canonical_trajectory)
+    ):
+        _fail("policy_state_replay_trajectory_config_mismatch")
+    timeout = contract.get("external_verifier_max_seconds")
+    if type(timeout) is not int or not 300 <= timeout <= 93_600:
+        _fail("policy_state_replay_external_verifier_budget_invalid")
+    return contract
+
+
+def build_policy_state_replay_contract(
+    *,
+    preregistration_contract_sha256: str,
+    initial_policy_sha256: str,
+    model_path: str | Path,
+    base_checkpoint: Mapping[str, Any],
+    behavior_bundle: Mapping[str, Any],
+    execution_spec_path: str | Path,
+    execution_spec_document: Mapping[str, Any],
+    source_bindings: Mapping[str, Mapping[str, Any]],
+    initial_policy_state_custody: Mapping[str, Any],
+    recurrent_grpo_config: Mapping[str, Any],
+    verified_trajectory_config: Mapping[str, Any],
+    external_verifier_max_seconds: int,
+) -> dict[str, Any]:
+    """Seal every input an external process needs to reconstruct one update."""
+
+    resolved_model = Path(model_path).expanduser().resolve(strict=True)
+    resolved_spec = Path(execution_spec_path).expanduser().resolve(strict=True)
+    spec_payload = _stable_file_bytes(
+        resolved_spec,
+        maximum=16 * 1024 * 1024,
+        role="execution_spec",
+    )
+    try:
+        parsed_spec = json.loads(spec_payload)
+        from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+
+        spec = RLCExecutionSpec.from_dict(parsed_spec)
+    except (UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise VerifiedTransitionPolicyStateReplayError(
+            "policy_state_replay_execution_spec_document_invalid"
+        ) from exc
+    if dict(execution_spec_document) != parsed_spec:
+        _fail("policy_state_replay_execution_spec_document_mismatch")
+    normalized_sources = {
+        role: _validate_file_binding(binding, role=f"source_{role}", verify_files=True)
+        for role, binding in sorted(source_bindings.items())
+    }
+    custody = cast(
+        dict[str, Any],
+        _clone(initial_policy_state_custody, role="initial_state_custody"),
+    )
+    optimizer_config = custody.get("optimizer_initialization")
+    body = {
+        "schema": POLICY_STATE_REPLAY_CONTRACT_SCHEMA,
+        "preregistration_contract_sha256": preregistration_contract_sha256,
+        "initial_policy_sha256": initial_policy_sha256,
+        "model": {
+            "path": str(resolved_model),
+            "base_checkpoint": dict(base_checkpoint),
+            "base_checkpoint_sha256": _digest(base_checkpoint),
+            "behavior_bundle": dict(behavior_bundle),
+            "behavior_bundle_sha256": _digest(behavior_bundle),
+        },
+        "execution_spec": {
+            "path": str(resolved_spec),
+            "sha256": hashlib.sha256(spec_payload).hexdigest(),
+            "size_bytes": len(spec_payload),
+            "semantic_sha256": spec.sha256,
+            "document_json": _canonical_json_bytes(parsed_spec).decode("ascii"),
+        },
+        "source_bindings": normalized_sources,
+        "source_bindings_sha256": _digest(normalized_sources),
+        "initial_policy_state_custody": custody,
+        "initial_policy_state_custody_sha256": custody.get("custody_sha256"),
+        "optimizer_config": optimizer_config,
+        "optimizer_config_sha256": _digest(optimizer_config),
+        "recurrent_grpo_config": dict(recurrent_grpo_config),
+        "recurrent_grpo_config_sha256": _digest(recurrent_grpo_config),
+        "verified_trajectory_config_json": _canonical_json_bytes(verified_trajectory_config).decode(
+            "ascii"
+        ),
+        "verified_trajectory_config_sha256": _digest(verified_trajectory_config),
+        "external_verifier_max_seconds": external_verifier_max_seconds,
+    }
+    return validate_policy_state_replay_contract(
+        {**body, "contract_sha256": _digest(body)},
+        verify_files=True,
+    )
 
 
 def _flat_tensor_map(value: Any, *, role: str) -> dict[str, Any]:
@@ -530,10 +1047,13 @@ def replay_verified_policy_transition(
 
 
 __all__ = [
+    "POLICY_STATE_REPLAY_CONTRACT_SCHEMA",
     "POLICY_STATE_REPLAY_RECEIPT_SCHEMA",
     "TENSOR_MAP_IDENTITY_SCHEMA",
     "VerifiedTransitionPolicyStateReplayError",
+    "build_policy_state_replay_contract",
     "replay_verified_policy_transition",
     "tensor_map_identity",
+    "validate_policy_state_replay_contract",
     "validate_policy_state_replay_receipt",
 ]

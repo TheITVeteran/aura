@@ -97,9 +97,7 @@ class _TokenizerAdapter:
     @classmethod
     def stream_decode_deltas(cls, tokens: Any) -> tuple[str, ...]:
         values = tuple(tokens)
-        rendered = [
-            cls.decode_output(values[: index + 1]) for index in range(len(values))
-        ]
+        rendered = [cls.decode_output(values[: index + 1]) for index in range(len(values))]
         return tuple(
             value if index == 0 else value[len(rendered[index - 1]) :]
             for index, value in enumerate(rendered)
@@ -197,15 +195,11 @@ class _CausalLedger:
         start = {
             "schema": "aura.verified_transition.causal_group_start.v1",
             "campaign_manifest_sha256": _sha("campaign-manifest"),
-            "campaign_schedule_root_sha256": kwargs[
-                "campaign_schedule_root_sha256"
-            ],
+            "campaign_schedule_root_sha256": kwargs["campaign_schedule_root_sha256"],
             "sequence": sequence,
             "policy_before_sha256": kwargs["policy_before_sha256"],
             "group_manifest": copy.deepcopy(kwargs["group_manifest"]),
-            "group_manifest_attestation": copy.deepcopy(
-                kwargs["group_manifest_attestation"]
-            ),
+            "group_manifest_attestation": copy.deepcopy(kwargs["group_manifest_attestation"]),
             "lineage_plan": copy.deepcopy(kwargs["lineage_plan"]),
             "lineage_attestation": copy.deepcopy(kwargs["lineage_attestation"]),
             "admitted_at_unix_ns": kwargs["admitted_at_unix_ns"],
@@ -222,12 +216,8 @@ class _CausalLedger:
     def finish_group(self, **_kwargs: Any) -> dict[str, Any]:
         raise AssertionError("trainer mutation is outside this provider unit test")
 
-    def group_records_unclosed(
-        self, *, sequence: int
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        return copy.deepcopy(self.starts[sequence]), copy.deepcopy(
-            self.terminals[sequence]
-        )
+    def group_records_unclosed(self, *, sequence: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        return copy.deepcopy(self.starts[sequence]), copy.deepcopy(self.terminals[sequence])
 
     def group_start(self, *, sequence: int) -> dict[str, Any]:
         return copy.deepcopy(self.starts[sequence])
@@ -240,9 +230,7 @@ class _CausalLedger:
         terminal = self.terminals.get(sequence)
         return copy.deepcopy(terminal) if terminal is not None else None
 
-    def group_records(
-        self, *, sequence: int, policy: Any
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    def group_records(self, *, sequence: int, policy: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         assert policy.policy_sha256
         return self.group_records_unclosed(sequence=sequence)
 
@@ -305,9 +293,7 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             "sequence": sequence,
             "task_id": task.task_id,
             "trainer_sample_seed": trainer_seeds[sequence],
-            "immutable_task_sha256": _digest(
-                task.verified_transition_task_commitment()
-            ),
+            "immutable_task_sha256": _digest(task.verified_transition_task_commitment()),
             "prompt_tokens_sha256": _digest(list(prompts[sequence])),
             "recurrent_execution_spec_sha256": execution,
             "sample_seeds": list(sample_seeds[sequence]),
@@ -400,9 +386,7 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             "token_codec_identity": "byte-codec:v1",
             "tokenizer_trace_adapter": _TokenizerAdapter(),
             "training_tasks": tasks,
-            "evidence_verifier_signer": SimpleNamespace(
-                attest=lambda *_args, **_kwargs: {}
-            ),
+            "evidence_verifier_signer": SimpleNamespace(attest=lambda *_args, **_kwargs: {}),
         }
         arguments.update(overrides)
         return ProductionVerifiedTransitionGroupProvider(**arguments)
@@ -424,6 +408,7 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "loader": loader,
         "finalizer": finalizer,
         "contract": contract,
+        "config": config,
         "reward": reward,
         "admission": admission,
         "make_provider": make_provider,
@@ -538,9 +523,7 @@ def _step(
     terminal = {
         "schema": "aura.verified_transition.causal_group_terminal.v1",
         "campaign_manifest_sha256": _sha("campaign-manifest"),
-        "campaign_schedule_root_sha256": material["contract"][
-            "campaign_schedule_root_sha256"
-        ],
+        "campaign_schedule_root_sha256": material["contract"]["campaign_schedule_root_sha256"],
         "sequence": sequence,
         "status": "updated",
         "group_manifest_sha256": group["manifest"]["manifest_sha256"],
@@ -566,7 +549,7 @@ def _step(
 
 
 def test_contract_binds_only_initial_policy_and_immutable_schedule(
-    material: dict[str, Any]
+    material: dict[str, Any],
 ) -> None:
     contract = material["contract"]
     assert validate_verified_transition_provider_contract(contract) == contract
@@ -614,9 +597,7 @@ def test_admitted_sampling_plan_exposes_exact_signed_membership(
     material: dict[str, Any],
 ) -> None:
     provider = material["make_provider"]()
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
 
     plan = provider.sampling_plan(
@@ -639,9 +620,7 @@ def test_admitted_sampling_plan_exposes_exact_signed_membership(
 def test_restart_rehydrates_exact_open_plan_without_duplicate_start(
     material: dict[str, Any],
 ) -> None:
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     first = material["make_provider"]()
     _admit(first, group, sequence=0, policy_sha256=material["initial_policy"])
 
@@ -668,9 +647,7 @@ def test_recovery_never_publishes_before_staged_state_validation(
     )
 
     provider = material["make_provider"]()
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
     start = material["ledger"].starts[0]
     static = build_trainer_step_static(
@@ -689,9 +666,7 @@ def test_recovery_never_publishes_before_staged_state_validation(
         trainer_sample_seed=material["trainer_seeds"][0],
         execution_spec_sha256=material["execution"],
         campaign_manifest_sha256=start["campaign_manifest_sha256"],
-        campaign_schedule_root_sha256=material["contract"][
-            "campaign_schedule_root_sha256"
-        ],
+        campaign_schedule_root_sha256=material["contract"]["campaign_schedule_root_sha256"],
         group_manifest_sha256=group["manifest"]["manifest_sha256"],
         group_admission_sha256=admission,
         reward_receipt_sha256=material["reward"]["receipt_sha256"],
@@ -729,9 +704,7 @@ def test_recovery_never_publishes_before_staged_state_validation(
             validate_staged_state=validate_staged,
         )
 
-    loaded = transactions.load(
-        sequence=0, admission_sha256=admission, load_tensors=False
-    )
+    loaded = transactions.load(sequence=0, admission_sha256=admission, load_tensors=False)
     assert loaded is not None and loaded.events == ()
     assert material["ledger"].terminals == {}
 
@@ -740,9 +713,7 @@ def test_rejection_recovery_finishes_terminal_only_after_live_policy_validation(
     material: dict[str, Any], tmp_path: Path
 ) -> None:
     provider = material["make_provider"]()
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
     start = material["ledger"].starts[0]
     static = build_trainer_step_static(
@@ -753,9 +724,7 @@ def test_rejection_recovery_finishes_terminal_only_after_live_policy_validation(
         advantage_report=group_advantages([-1.0, -0.5]),
     )
     reward_sha256 = material["reward"]["receipt_sha256"]
-    store = VerifiedTransitionRejectionTransactionStore.open(
-        tmp_path / "rejection-transactions"
-    )
+    store = VerifiedTransitionRejectionTransactionStore.open(tmp_path / "rejection-transactions")
     store.stage(
         build_rejection_intent(
             sequence=0,
@@ -764,9 +733,7 @@ def test_rejection_recovery_finishes_terminal_only_after_live_policy_validation(
             trainer_sample_seed=material["trainer_seeds"][0],
             execution_spec_sha256=material["execution"],
             campaign_manifest_sha256=start["campaign_manifest_sha256"],
-            campaign_schedule_root_sha256=material["contract"][
-                "campaign_schedule_root_sha256"
-            ],
+            campaign_schedule_root_sha256=material["contract"]["campaign_schedule_root_sha256"],
             group_manifest_sha256=group["manifest"]["manifest_sha256"],
             reward_receipt_sha256=reward_sha256,
             policy_sha256=material["initial_policy"],
@@ -781,9 +748,7 @@ def test_rejection_recovery_finishes_terminal_only_after_live_policy_validation(
         body = {
             "schema": "aura.verified_transition.causal_group_terminal.v1",
             "campaign_manifest_sha256": start["campaign_manifest_sha256"],
-            "campaign_schedule_root_sha256": material["contract"][
-                "campaign_schedule_root_sha256"
-            ],
+            "campaign_schedule_root_sha256": material["contract"]["campaign_schedule_root_sha256"],
             "sequence": 0,
             "group_id": group["manifest"]["group_id"],
             "group_manifest_sha256": group["manifest"]["manifest_sha256"],
@@ -818,9 +783,7 @@ def test_rejection_recovery_wrong_live_policy_leaves_ledger_untouched(
     material: dict[str, Any], tmp_path: Path
 ) -> None:
     provider = material["make_provider"]()
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
     start = material["ledger"].starts[0]
     static = build_trainer_step_static(
@@ -831,9 +794,7 @@ def test_rejection_recovery_wrong_live_policy_leaves_ledger_untouched(
         advantage_report=group_advantages([-1.0, -0.5]),
     )
     reward_sha256 = material["reward"]["receipt_sha256"]
-    store = VerifiedTransitionRejectionTransactionStore.open(
-        tmp_path / "rejection-transactions"
-    )
+    store = VerifiedTransitionRejectionTransactionStore.open(tmp_path / "rejection-transactions")
     store.stage(
         build_rejection_intent(
             sequence=0,
@@ -842,9 +803,7 @@ def test_rejection_recovery_wrong_live_policy_leaves_ledger_untouched(
             trainer_sample_seed=material["trainer_seeds"][0],
             execution_spec_sha256=material["execution"],
             campaign_manifest_sha256=start["campaign_manifest_sha256"],
-            campaign_schedule_root_sha256=material["contract"][
-                "campaign_schedule_root_sha256"
-            ],
+            campaign_schedule_root_sha256=material["contract"]["campaign_schedule_root_sha256"],
             group_manifest_sha256=group["manifest"]["manifest_sha256"],
             reward_receipt_sha256=reward_sha256,
             policy_sha256=material["initial_policy"],
@@ -886,9 +845,7 @@ def test_two_step_campaign_uses_actual_prior_policy_after_without_preregistering
         lambda receipt, **_kwargs: copy.deepcopy(receipt),
     )
     provider = material["make_provider"]()
-    group_0 = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group_0 = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(
         provider,
         group_0,
@@ -906,14 +863,10 @@ def test_two_step_campaign_uses_actual_prior_policy_after_without_preregistering
     )
     provider.accept_step_receipt(step_0)
 
-    assert actual_policy_after not in canonical_json_bytes(material["contract"]).decode(
-        "ascii"
-    )
+    assert actual_policy_after not in canonical_json_bytes(material["contract"]).decode("ascii")
     assert provider.expected_policy_sha256 == actual_policy_after
 
-    group_1 = _group_material(
-        material, sequence=1, policy_sha256=actual_policy_after
-    )
+    group_1 = _group_material(material, sequence=1, policy_sha256=actual_policy_after)
     _admit(
         provider,
         group_1,
@@ -925,9 +878,10 @@ def test_two_step_campaign_uses_actual_prior_policy_after_without_preregistering
     request = material["producer"].requests[-1]
     assert request.sequence == 1
     assert request.lineage_plan["policy_before_sha256"] == actual_policy_after
-    assert request.lineage_plan["campaign_schedule_root_sha256"] == material[
-        "contract"
-    ]["campaign_schedule_root_sha256"]
+    assert (
+        request.lineage_plan["campaign_schedule_root_sha256"]
+        == material["contract"]["campaign_schedule_root_sha256"]
+    )
 
 
 def test_second_plan_rejects_policy_not_produced_by_first_step(
@@ -938,9 +892,7 @@ def test_second_plan_rejects_policy_not_produced_by_first_step(
         lambda receipt, **_kwargs: copy.deepcopy(receipt),
     )
     provider = material["make_provider"]()
-    group_0 = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group_0 = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(
         provider,
         group_0,
@@ -1005,9 +957,7 @@ def test_acceptance_reconstructs_persisted_lineage_plan(
         policy_before=material["initial_policy"],
         policy_after=_sha("after"),
     )
-    material["ledger"].starts[0]["lineage_plan"]["policy_before_sha256"] = _sha(
-        "forged-lineage"
-    )
+    material["ledger"].starts[0]["lineage_plan"]["policy_before_sha256"] = _sha("forged-lineage")
     with pytest.raises(
         VerifiedTransitionProviderError,
         match="start_record_reconstruction_mismatch",
@@ -1023,9 +973,7 @@ def test_recovered_step_reconstructs_mapping_package(
         lambda receipt, **_kwargs: copy.deepcopy(receipt),
     )
     provider = material["make_provider"]()
-    group = _group_material(
-        material, sequence=0, policy_sha256=material["initial_policy"]
-    )
+    group = _group_material(material, sequence=0, policy_sha256=material["initial_policy"])
     _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
     step = _step(
         material,
@@ -1062,9 +1010,7 @@ def test_finalize_requires_same_causal_schedule_root(material: dict[str, Any]) -
     provider = material["make_provider"]()
     material["ledger"].closed = {
         "close_payload": {
-            "campaign_schedule_root_sha256": material["contract"][
-                "campaign_schedule_root_sha256"
-            ],
+            "campaign_schedule_root_sha256": material["contract"]["campaign_schedule_root_sha256"],
             "group_statuses": ["aborted", "aborted"],
         }
     }
@@ -1076,6 +1022,50 @@ def test_finalize_requires_same_causal_schedule_root(material: dict[str, Any]) -
         completed_groups=0, halt_reason="preflight_failed", replay_groups=()
     )
     assert closure.campaign_ledger is material["ledger"]
+    assert material["finalizer"].requests[-1].policy_state_replay_contract is None
+
+
+def test_finalize_carries_frozen_policy_state_replay_contract(
+    material: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    replay_contract = {
+        "contract_sha256": _sha("policy-state-replay-contract"),
+        "initial_policy_sha256": material["initial_policy"],
+    }
+    monkeypatch.setattr(
+        "core.learning.verified_transition_provider.validate_policy_state_replay_contract",
+        lambda value, **_kwargs: copy.deepcopy(value),
+    )
+    config = {**material["config"], "policy_state_replay_contract": replay_contract}
+    contract = copy.deepcopy(material["contract"])
+    contract["provider"]["config"] = copy.deepcopy(config)
+    contract["provider"]["config_sha256"] = _digest(config)
+    unsigned = {key: value for key, value in contract.items() if key != "contract_sha256"}
+    contract["contract_sha256"] = _digest(unsigned)
+    provider = material["make_provider"](
+        contract=contract,
+        provider_config=config,
+    )
+    material["ledger"].closed = {
+        "close_payload": {
+            "campaign_schedule_root_sha256": contract["campaign_schedule_root_sha256"],
+            "group_statuses": ["aborted", "aborted"],
+        }
+    }
+    material["finalizer"].closure = VerifiedTransitionCampaignClosure(
+        campaign_ledger=material["ledger"],
+        campaign_trust_policy=material["policy"],
+    )
+
+    provider.finalize(
+        completed_groups=0,
+        halt_reason="preflight_failed",
+        replay_groups=(),
+    )
+
+    observed = material["finalizer"].requests[-1].policy_state_replay_contract
+    assert observed == replay_contract
+    assert observed is not replay_contract
 
 
 def test_runtime_scorer_substitution_is_rejected(material: dict[str, Any]) -> None:

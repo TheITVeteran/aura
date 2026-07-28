@@ -1,0 +1,42 @@
+{
+  "schema": "aura.spark.cp420s2_policy_state_replay_custody_evidence.v1",
+  "checkpoint": "CP420S2",
+  "claim_boundary": "exact_resident_model_spec_source_config_and_initial_state_replay_contract_only_external_process_replay_not_yet_proven",
+  "implementation": {
+    "policy_state_replay_contract_schema": "aura.verified_transition.policy_state_replay_contract.v1",
+    "preregistration_contract_sha256": "5c9db8c52e932407fe01568b3d6c83f9bfe39a27c30b0345280fd6c7a93cafee",
+    "resident_checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "resident_behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674",
+    "execution_spec_sha256": "9428a4ecdb76de0459e06c9ef2ed930e6a2f7645edac6921bac39d975f5f10ed",
+    "verified_trajectory_config_sha256": "9feda21bb76a37ffc5ac7701bee64a63a549f166f12c3ea167e9b2db211f544f",
+    "source_bindings": 47,
+    "verified_intervention_group_size": 2,
+    "verified_intervention_branch_topology_exact": true,
+    "model_identity_recomputed": true,
+    "behavior_bundle_identity_recomputed": true,
+    "execution_spec_raw_and_semantic_identity_bound": true,
+    "source_file_bytes_bound": true,
+    "initial_adapter_and_optimizer_custody_bound": true,
+    "optimizer_and_recurrent_config_bound": true,
+    "provider_to_finalizer_contract_propagation": true,
+    "worktree_main_checkout_model_resolution_confined": true,
+    "float_bearing_preregistration_boundary_repaired": true,
+    "external_policy_state_replayed": false
+  },
+  "verification": {
+    "expanded_replay_and_campaign_matrix": {
+      "passed": 147,
+      "failed": 0
+    },
+    "resident_preregistration_model_verified": true,
+    "ruff": "pass",
+    "format": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "resident_32b_loaded": false,
+  "resident_32b_trained": false,
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}
