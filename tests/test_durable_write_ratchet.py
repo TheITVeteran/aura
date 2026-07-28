@@ -164,3 +164,29 @@ class TestBaselineKeysAreStable:
         first = DirectWrite("core/a.py", 10, "write_text", "Cls.save")
         second = DirectWrite("core/a.py", 10, "write_text", "Cls.other")
         assert first.key() != second.key()
+
+
+class TestTheScanWorksInsideAWorktree:
+    """The skip list must be matched against the RELATIVE path.
+
+    A worktree lives under `.claude/worktrees/`, which is a skipped part. If
+    the absolute path is tested, every file in a worktree is skipped, the
+    scan finds nothing, and the ratchet reads that as "everything is clean" —
+    a gate that silently disables itself exactly where most work happens.
+    """
+
+    def test_a_root_under_a_skipped_directory_is_still_scanned(self, tmp_path):
+        root = tmp_path / ".claude" / "worktrees" / "wt"
+        (root / "core").mkdir(parents=True)
+        (root / "core" / "bad.py").write_text(
+            "def save(p, payload):\n    p.write_text(payload)\n", encoding="utf-8",
+        )
+        found = scan_direct_writes(roots=("core",), repo_root=root).writes
+        assert len(found) == 1, "the scan silently skipped a worktree"
+
+    def test_skipped_directories_inside_the_root_are_still_skipped(self, tmp_path):
+        (tmp_path / "core" / "artifacts").mkdir(parents=True)
+        (tmp_path / "core" / "artifacts" / "gen.py").write_text(
+            "def save(p, payload):\n    p.write_text(payload)\n", encoding="utf-8",
+        )
+        assert scan_direct_writes(roots=("core",), repo_root=tmp_path).writes == []

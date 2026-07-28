@@ -228,13 +228,19 @@ def scan_direct_writes(
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.py")):
-            if _SKIP_PARTS.intersection(path.parts):
+            rel = path.relative_to(root)
+            # Match the skip list against the path RELATIVE to the root. The
+            # absolute path is the wrong thing to test: a worktree lives under
+            # ``.claude/worktrees/`` — a skipped part — so every file in it
+            # would be skipped, the scan would find nothing, and a ratchet
+            # built on it would read that as "everything was fixed".
+            if _SKIP_PARTS.intersection(rel.parts):
                 continue
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (OSError, SyntaxError, UnicodeDecodeError):
                 continue
-            visitor = _WriteVisitor(str(path.relative_to(root)))
+            visitor = _WriteVisitor(str(rel))
             visitor.visit(tree)
             found.extend(visitor.found)
     return DurableWriteReport(sorted(found, key=lambda w: (w.path, w.line)))
