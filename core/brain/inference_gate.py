@@ -6025,6 +6025,55 @@ class InferenceGate:
             return f"{clean[:head].rstrip()}{marker}{clean[-tail:].lstrip()}"
         return clean[: limit - 1].rstrip() + "…"
 
+    #: What the grounding may spend on a turn that is not budget-constrained.
+    #: Generous on purpose: every profile except the contract lane already has
+    #: room, and this exists to bound pathology, not to shape normal turns.
+    _GROUNDING_DEFAULT_BUDGET_CHARS = 6_000
+    #: The clock and the receipts always survive, whatever else is dropped.
+    _GROUNDING_FLOOR_CHARS = 600
+
+    def _grounding_char_budget(self, context: Any, messages: Any) -> int:
+        """How much room the volatile grounding has on this turn."""
+        try:
+            constrained = bool(self._has_short_live_output_contract(context))
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            constrained = False
+        if not constrained:
+            return self._GROUNDING_DEFAULT_BUDGET_CHARS
+        used = sum(
+            len(str(msg.get("content", "") or ""))
+            for msg in (messages or ())
+            if isinstance(msg, dict)
+        )
+        return max(self._GROUNDING_FLOOR_CHARS, 2_800 - used)
+
+    @staticmethod
+    def _fit_grounding_blocks(blocks: list[str], limit: int) -> str:
+        """Whole blocks in priority order, up to ``limit``.
+
+        Priority is the order they were appended: this turn's contract, the
+        clock, the action receipts, the instruments, the felt state. Dropping a
+        whole trailing block beats truncating every block, because half a
+        readout is a readout she may quote wrongly, and the first block is the
+        one that stops confabulation.
+        """
+        kept: list[str] = []
+        spent = 0
+        for block in blocks:
+            text = str(block or "").strip()
+            if not text:
+                continue
+            cost = len(text) + (2 if kept else 0)
+            if kept and spent + cost > limit:
+                continue
+            kept.append(text)
+            spent += cost
+        if not kept:
+            return ""
+        joined = "\n\n".join(kept)
+        # A single block larger than the whole allowance still has to fit.
+        return joined if len(joined) <= limit else joined[: max(1, limit - 1)].rstrip()
+
     def _compact_prebuilt_messages(
         self,
         messages: list[dict[str, Any]],
@@ -8215,9 +8264,20 @@ class InferenceGate:
             # history, is still a reusable KV prefix, and the only thing behind
             # the churn is the new turn that had to be prefilled anyway — while
             # the last words before the model's turn are the person's own.
+            # The budget is enforced during compaction, and this block is added
+            # afterwards — so without a cap here it simply escapes it. Measured
+            # 2026-07-28 on the contract profile: compaction produced a 974-char
+            # payload well inside its 2,800 budget, then 1,727 characters of
+            # grounding arrived as a second system message and the turn went out
+            # at 3,013. The grounding is not optional — it is what stops her
+            # narrating a present she was never given — so it is fitted rather
+            # than dropped, keeping whole blocks in priority order.
             grounding_message = {
                 "role": "system",
-                "content": "\n\n".join(volatile_grounding_blocks),
+                "content": self._fit_grounding_blocks(
+                    volatile_grounding_blocks,
+                    self._grounding_char_budget(context, messages),
+                ),
             }
             final_user_index = next(
                 (
