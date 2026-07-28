@@ -52,6 +52,11 @@ class CapabilityStanding(str, Enum):
     UNAVAILABLE_NOW = "unavailable_now"
     #: Nothing in the runtime provides this. Not a bad minute — a missing limb.
     ABSENT = "absent"
+    #: She HAS the faculty and the world is not currently supplying what it
+    #: needs. A person who knows how to search does not forget how when the
+    #: wifi drops; they say "there's no internet". This is that state, and it
+    #: is derived — capability AND preconditions — never asserted.
+    BLOCKED_BY_PRECONDITION = "blocked_by_precondition"
 
 
 @dataclass(frozen=True)
@@ -61,9 +66,20 @@ class CapabilityCondition:
     reason: str = ""
     detail: str = ""
 
+    #: What the world is failing to supply, when that is the reason.
+    missing_preconditions: tuple[str, ...] = ()
+
     @property
     def is_transient(self) -> bool:
-        return self.standing is CapabilityStanding.UNAVAILABLE_NOW
+        return self.standing in (
+            CapabilityStanding.UNAVAILABLE_NOW,
+            CapabilityStanding.BLOCKED_BY_PRECONDITION,
+        )
+
+    @property
+    def faculty_intact(self) -> bool:
+        """She has this capability, whatever the world is doing."""
+        return self.standing is not CapabilityStanding.ABSENT
 
 
 #: Which capability a turn is reaching for. Intentionally small: this is used
@@ -148,6 +164,18 @@ def condition_for(name: str, *, capability_engine: Any = None) -> CapabilityCond
             "capability_registry_unreadable",
         )
 
+    # The world's side, computed first: a capability whose preconditions are
+    # missing cannot work no matter how healthy the registry says it is.
+    # Composed here rather than described in a prompt, so unplugging the
+    # network changes the conclusion by itself.
+    try:
+        from core.conversation.capability_preconditions import failing_preconditions
+
+        blocked_by = failing_preconditions(wanted)
+    except (ImportError, RuntimeError, AttributeError) as exc:
+        logger.debug("Precondition probe unavailable for %s: %s", wanted, exc)
+        blocked_by = ()
+
     seen_any = False
     for row in _catalog_rows(capability_engine):
         if not isinstance(row, dict):
@@ -157,6 +185,13 @@ def condition_for(name: str, *, capability_engine: Any = None) -> CapabilityCond
         if row_name.casefold() != wanted.casefold():
             continue
         if bool(row.get("available")):
+            if blocked_by:
+                return CapabilityCondition(
+                    wanted,
+                    CapabilityStanding.BLOCKED_BY_PRECONDITION,
+                    "; ".join(state.fact for state in blocked_by),
+                    missing_preconditions=tuple(state.name for state in blocked_by),
+                )
             return CapabilityCondition(wanted, CapabilityStanding.READY)
         return CapabilityCondition(
             wanted,
@@ -229,6 +264,13 @@ def capability_condition_evidence(
         condition = condition_for(name, capability_engine=capability_engine)
         if condition.standing is CapabilityStanding.READY:
             lines.append(f"- {name}: available right now")
+        elif condition.standing is CapabilityStanding.BLOCKED_BY_PRECONDITION:
+            lines.append(
+                f"- {name}: YOU HAVE THIS, BUT IT CANNOT WORK RIGHT NOW — "
+                f"{condition.reason}. The capability is intact; what it needs "
+                f"is missing. Reason from that: it will work again when that "
+                f"comes back."
+            )
         elif condition.standing is CapabilityStanding.ABSENT:
             lines.append(
                 f"- {name}: NOT SOMETHING YOU HAVE — {_fact_for(condition)}. "
