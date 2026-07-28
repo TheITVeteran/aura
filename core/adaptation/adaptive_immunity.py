@@ -185,6 +185,33 @@ _MAX_ANTIGEN_TEXT = 4096
 _MAX_ANTIGEN_CONTEXT_KEYS = 64
 
 
+def _optional_unit(value: Any) -> float | None:
+    """A finite 0..1 reading, or None when the field is absent/unusable.
+
+    Distinct from :func:`_unit_scalar` because "not supplied" and "supplied
+    as garbage" must both fall through to the computed default rather than
+    silently becoming 0.0, which would read as no pressure at all.
+    """
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return max(0.0, min(1.0, number))
+
+
+def _first_unit(*values: Any, default: float) -> float:
+    """The first usable 0..1 reading among ``values``, else ``default``."""
+    for value in values:
+        unit = _optional_unit(value)
+        if unit is not None:
+            return unit
+    return _unit_scalar(default)
+
+
 def _finite_timestamp(value: Any) -> float:
     """A finite timestamp, or now. A NaN here corrupts every age computation."""
     try:
@@ -1381,18 +1408,25 @@ class AdaptiveImmuneSystem:
             self._ensure_graph_links(subsystem)
 
             base_vec = self._extractor.extract(event)
-            resource_pressure = float(
-                event.get("resource_pressure")
-                or max(
+            # CP126 8bd58283: these were `float(event.get(...)) or ...` with
+            # min/max clipping. NaN is TRUTHY, so `or` passed it straight
+            # through, and min/max propagate NaN rather than clipping it — a
+            # single malformed telemetry field then flowed into danger and
+            # activation, where every threshold comparison against NaN is
+            # False and the antigen reads as calm. Negative counts and huge
+            # values were likewise accepted.
+            declared_pressure = _optional_unit(event.get("resource_pressure"))
+            if declared_pressure is None:
+                resource_pressure = max(
                     0.0,
-                    min(1.0, float(event.get("cpu", 0.0)) / 100.0),
-                    min(1.0, float(event.get("ram", 0.0)) / 100.0),
+                    _unit_scalar(_unit_free_float(event.get("cpu", 0.0)) / 100.0),
+                    _unit_scalar(_unit_free_float(event.get("ram", 0.0)) / 100.0),
                 )
-            )
-            error_load = min(
-                1.0,
-                float(event.get("error_rate", 0.0))
-                + float(event.get("error_count", 0) or 0) / 10.0,
+            else:
+                resource_pressure = declared_pressure
+            error_load = _unit_scalar(
+                max(0.0, _unit_free_float(event.get("error_rate", 0.0)))
+                + max(0.0, _unit_free_float(event.get("error_count", 0))) / 10.0
             )
             error_signature = str(
                 event.get("exception_type")
@@ -1400,11 +1434,11 @@ class AdaptiveImmuneSystem:
                 or event.get("type")
                 or ""
             )
-            threat_probability = float(
-                getattr(anomaly_score, "threat_probability", None)
-                or event.get("threat_probability")
-                or event.get("danger")
-                or max(resource_pressure, error_load * 0.7)
+            threat_probability = _first_unit(
+                getattr(anomaly_score, "threat_probability", None),
+                event.get("threat_probability"),
+                event.get("danger"),
+                default=max(resource_pressure, error_load * 0.7),
             )
             stack_trace = str(event.get("stack_trace", "") or "")
             stack_complexity = min(1.0, len(stack_trace) / 1200.0)

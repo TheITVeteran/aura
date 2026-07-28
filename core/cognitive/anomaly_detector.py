@@ -90,6 +90,20 @@ MIN_OBSERVATIONS_FOR_COVARIANCE: int = 2 * FEATURE_DIM
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+def _feature_float(value: Any, *, default: float = 0.0) -> float:
+    """A finite feature value, or the default. Never raises.
+
+    Telemetry reaches this extractor from many producers; one of them sending
+    a string, None, or NaN must not take down anomaly detection or silently
+    seed a NaN into the feature vector.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    return number if math.isfinite(number) else default
+
+
 
 @dataclass
 class AnomalyScore:
@@ -213,10 +227,15 @@ class FeatureExtractor:
         self._last_event_time = now
 
         # [4] Error rate — passed directly from the caller.
-        vec[4] = float(event.get("error_rate", 0.0))
+        # CP126 8bd58283 (same class, found upstream): bare float() RAISED on a
+        # non-numeric field and passed NaN/inf through on a malformed one. This
+        # is a feature extractor on the live telemetry path, so a single bad
+        # field either killed the caller or poisoned the vector that anomaly
+        # scoring and immune activation are computed from.
+        vec[4] = _feature_float(event.get("error_rate", 0.0))
 
         # [5] Resource pressure — CPU/memory load signal.
-        vec[5] = float(event.get("resource_pressure", 0.0))
+        vec[5] = _feature_float(event.get("resource_pressure", 0.0))
 
         # [6] Sentiment polarity — simple bag-of-words balance, mapped to
         #     [-1, 1] then shifted to [0, 1] for the feature vector.
