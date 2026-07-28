@@ -149,6 +149,11 @@ class PhantomBrowser:
         self.is_active = False
         self._homeostasis = None
         self._resource_lock = None
+        # Whether background work was actually told to stand down, and the
+        # last admission verdict. Both are reported, because "running" and
+        # "running with coordination" are different states.
+        self._resource_coordinated = False
+        self._last_admission: dict[str, Any] = {}
         self._startup_error = ""
         self._startup_failure_count = 0
         self._last_launch_attempts: list[str] = []
@@ -162,6 +167,42 @@ class PhantomBrowser:
             await self._start_browser()
         return self.is_active
 
+    #: Below this the host cannot afford a browser's several hundred MB and
+    #: handful of processes. Deliberately generous — refusing a user-visible
+    #: browse is a real cost, so this protects the machine from a launch that
+    #: would push it into swap rather than being frugal for its own sake.
+    MIN_AVAILABLE_GB_FOR_BROWSER = 2.0
+
+    def _browser_admission(self) -> dict[str, Any]:
+        """Can this host afford to start a browser right now?
+
+        Answers unknown-as-admit on purpose: if memory cannot be measured,
+        refusing every browse would break the capability wholesale on any
+        platform without the monitor. The check exists to catch a MEASURED
+        shortage, which is the case that actually hurt.
+        """
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            available_gb = float(snapshot.available_gb)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "phantom_browser",
+                exc,
+                severity="info",
+                action="admitted the browser because memory pressure could not be measured",
+                enforce_failure_policy=False,
+            )
+            return {"can_admit": True, "reason": "pressure_unmeasured", "available_gb": None}
+        if available_gb < self.MIN_AVAILABLE_GB_FOR_BROWSER:
+            return {
+                "can_admit": False,
+                "reason": f"insufficient_memory:{available_gb:.1f}GB_available",
+                "available_gb": available_gb,
+            }
+        return {"can_admit": True, "reason": "", "available_gb": available_gb}
+
     def get_status(self) -> dict[str, Any]:
         return {
             "active": self.is_active,
@@ -170,6 +211,11 @@ class PhantomBrowser:
             "startup_failure_count": self._startup_failure_count,
             "startup_error": self._startup_error[:240],
             "last_launch_attempts": list(self._last_launch_attempts),
+            # A browser running WITHOUT resource coordination is a different
+            # state from one running with it; reporting only "active" made
+            # them look identical.
+            "resource_coordinated": bool(self._resource_coordinated),
+            "last_admission": dict(self._last_admission),
         }
 
     async def _start_browser(self) -> bool:
@@ -191,12 +237,42 @@ class PhantomBrowser:
                 )
                 return False
 
-            # HARDENING: Signal resource lock — heavy background tasks will pause
+            # CP126 (medium): "Resource-lock failure is explicitly fail-open.
+            # Browser startup continues after homeostatic resource
+            # coordination cannot be acquired. There is no admission
+            # decision, resource budget, or later reconciliation, so memory-
+            # or latency-sensitive runtime periods can still start a full
+            # browser while status presents normal readiness."
+            #
+            # The missing piece was the admission decision, not the lock. A
+            # browser is hundreds of megabytes and several processes, and it
+            # was launched without anyone asking whether the machine could
+            # afford one — on a host already holding a ~20GB resident model.
+            admission = self._browser_admission()
+            self._last_admission = admission
+            if not admission["can_admit"]:
+                self._startup_error = f"admission_refused:{admission['reason']}"
+                _record_browser_degradation(
+                    RuntimeError(f"browser admission refused: {admission['reason']}"),
+                    stage="admission",
+                    action="refused to start a browser while the host could not afford one",
+                    severity="warning",
+                    extra={"available_gb": admission.get("available_gb")},
+                )
+                return False
+
+            # Signal resource lock — heavy background tasks will pause.
             try:
                 from core.utils.resource_lock import get_resource_lock
                 self._resource_lock = get_resource_lock()
                 self._resource_lock.begin_browser_session()
+                self._resource_coordinated = True
             except (ImportError, AttributeError, RuntimeError) as lock_exc:
+                # Continuing is right — the lock is a courtesy signal to
+                # background work, and refusing to browse because a
+                # coordination helper is missing would be over-strict. What
+                # was wrong is that status then claimed normal readiness, so
+                # the uncoordinated state is now reported.
                 _record_browser_degradation(
                     lock_exc,
                     stage="resource_lock",
@@ -204,6 +280,7 @@ class PhantomBrowser:
                     severity="warning",
                 )
                 self._resource_lock = None
+                self._resource_coordinated = False
 
             self.playwright = await async_playwright().start()
 
