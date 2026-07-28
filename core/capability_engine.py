@@ -648,24 +648,117 @@ class SkillMetadata(BaseModel):
             return {"raw_params": params_raw, "_error": str(e)}
 
 
+# Arguments that turn an allowlisted binary into an arbitrary-code
+# primitive. Comparing argv[0] alone says "python is allowed" and misses
+# that `python -c "..."` is every command at once. Same for `bash -c`,
+# `find -exec`, `awk 'BEGIN{system(...)}'`, `ssh host cmd`.
+#
+# CP126 named this precisely: "a populated list compares only argv[0].
+# Arguments, subcommands, interpreter payloads, paths, environment effects,
+# and shell-equivalent behavior are outside this policy boundary."
+_INTERPRETER_ESCAPE_ARGS = frozenset({
+    "-c", "-e", "--eval", "--exec", "-exec", "-execdir", "--command",
+    "-mpython", "--python", "-i", "--interactive",
+})
+
+# Binaries whose entire purpose is to run something else. Allowlisting one
+# of these allowlists everything it can reach, so they are refused unless
+# the caller opts in by name.
+_INDIRECT_EXECUTION_BINARIES = frozenset({
+    "awk", "bash", "csh", "dash", "env", "eval", "fish", "gawk", "ksh",
+    "nice", "nohup", "perl", "php", "python", "python2", "python3", "ruby",
+    "sh", "ssh", "sudo", "tclsh", "time", "timeout", "xargs", "zsh",
+})
+
+
 class Shell:
-    def __init__(self, cwd: str, allowed_commands: list[str] | None = None, timeout: int = 30):
+    """Bounded shell execution.
+
+    CP126 (high): "Shell policy defaults to allow all commands." An empty
+    allowlist returned True for every executable — a policy object whose
+    unconfigured state was total permission. Constructing a Shell without
+    saying what it may run now permits nothing, which is the only safe
+    reading of "no policy has been set".
+    """
+
+    def __init__(
+        self,
+        cwd: str,
+        allowed_commands: list[str] | None = None,
+        timeout: int = 30,
+        *,
+        allow_indirect_execution: bool = False,
+    ):
         self.cwd = cwd
-        self.allowed_commands = allowed_commands or []
+        self.allowed_commands = list(allowed_commands or [])
         self.timeout = timeout
+        # Opt-in, because allowing an interpreter is allowing everything it
+        # can run. A caller that genuinely needs `python -c` must say so.
+        self.allow_indirect_execution = bool(allow_indirect_execution)
+
+    @staticmethod
+    def _binary_name(argv0: str) -> str:
+        """The executable's own name, independent of how it was reached."""
+        return os.path.basename(str(argv0 or "").strip()) or ""
+
+    def _resolves_to_allowed(self, base_cmd: str, binary: str) -> bool:
+        """Is this argv[0] genuinely one of the approved executables?
+
+        Identity, not spelling. The old rule was
+        `base_cmd == allowed or base_cmd.endswith("/" + allowed)`, which
+        accepted /tmp/attacker/git for an allowlisted "git": the suffix
+        matched and the binary was not the one anyone approved. Matching on
+        basename alone has exactly the same hole, so an absolute path must
+        BE the resolved system binary, not merely share its name.
+        """
+        import shutil
+
+        resolved = os.path.realpath(base_cmd) if os.path.isabs(base_cmd) else ""
+        for allowed in self.allowed_commands:
+            entry = str(allowed or "").strip()
+            if not entry:
+                continue
+            if os.path.isabs(entry):
+                if resolved and resolved == os.path.realpath(entry):
+                    return True
+                continue
+            if self._binary_name(entry) != binary:
+                continue
+            if not os.path.isabs(base_cmd):
+                return True
+            system_path = shutil.which(entry)
+            if system_path and resolved == os.path.realpath(system_path):
+                return True
+        return False
 
     def _is_allowed(self, cmd: list[str]) -> bool:
+        if not isinstance(cmd, (list, tuple)) or not cmd:
+            return False
+        # No allowlist means no permission. This used to mean total
+        # permission, which inverted the meaning of an unconfigured policy.
         if not self.allowed_commands:
+            return False
+
+        base_cmd = str(cmd[0] or "")
+        binary = self._binary_name(base_cmd)
+        if not binary or not self._resolves_to_allowed(base_cmd, binary):
+            return False
+
+        if self.allow_indirect_execution:
             return True
-        base_cmd = cmd[0]
-        return any(
-            base_cmd == allowed or base_cmd.endswith("/" + allowed)
-            for allowed in self.allowed_commands
-        )
+        if binary in _INDIRECT_EXECUTION_BINARIES:
+            return False
+        for argument in cmd[1:]:
+            if str(argument or "").strip().lower() in _INTERPRETER_ESCAPE_ARGS:
+                return False
+        return True
 
     async def run(self, cmd: list[str]) -> tuple[bool, str]:
         if not self._is_allowed(cmd):
-            return False, f"Command {cmd[0]} not in allowlist"
+            attempted = cmd[0] if isinstance(cmd, (list, tuple)) and cmd else "<empty>"
+            if not self.allowed_commands:
+                return False, "Shell has no command allowlist; refusing to execute"
+            return False, f"Command {attempted} not permitted by shell policy"
         auth = None
         try:
             from core.executive.authority_gateway import get_authority_gateway
