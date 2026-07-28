@@ -6,6 +6,7 @@ worker application or quality success that the worker did not report.
 """
 
 from __future__ import annotations
+from core.runtime.errors import record_degradation
 
 import hashlib
 import re
@@ -95,27 +96,63 @@ def normalize_text_mutations(value: Any) -> list[dict[str, Any]]:
 def merge_text_mutations(*values: Any) -> list[dict[str, Any]]:
     """Merge ordered mutation ledgers while removing copied receipt duplicates."""
 
+    def _content_identity(entry: dict[str, Any]) -> tuple[Any, ...]:
+        """What this mutation actually IS, independent of its label."""
+        return (
+            entry["stage"],
+            entry["method"],
+            tuple(entry["reasons"]),
+            entry["deterministic"],
+            entry["before_chars"],
+            entry["after_chars"],
+            entry["before_sha256"],
+            entry["after_sha256"],
+        )
+
     merged: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
+    # event_id -> the content it was first seen carrying.
+    #
+    # CP126 (high): "Merge identity is only the presence and text of
+    # event_id. Reusing another event's ID causes a different mutation to be
+    # silently dropped, with no comparison of its hashes or metadata."
+    #
+    # This ledger is the audit trail for what was done to a user-facing
+    # answer, and an id is caller-supplied. Any caller — a retry, a buggy
+    # copy, a replayed receipt — that reuses an id erased a genuinely
+    # different mutation from the record, leaving a history that reads as
+    # complete.
+    #
+    # A duplicate id with IDENTICAL content is the case this dedupe exists
+    # for and is still dropped. A duplicate id with DIFFERENT content is a
+    # collision: the entry is kept under its content identity and the
+    # collision is recorded, because losing a real mutation from an audit
+    # ledger is worse than carrying a redundant one.
+    seen_events: dict[str, tuple[Any, ...]] = {}
     for value in values:
         for entry in normalize_text_mutations(value):
             event_id = str(entry.get("event_id") or "")
-            identity = (
-                ("event", event_id)
-                if event_id
-                else (
-                    "legacy",
-                    entry["sequence"],
-                    entry["stage"],
-                    entry["method"],
-                    tuple(entry["reasons"]),
-                    entry["deterministic"],
-                    entry["before_chars"],
-                    entry["after_chars"],
-                    entry["before_sha256"],
-                    entry["after_sha256"],
-                )
-            )
+            content = _content_identity(entry)
+            if event_id:
+                previous = seen_events.get(event_id)
+                if previous is None:
+                    seen_events[event_id] = content
+                    identity: tuple[Any, ...] = ("event", event_id)
+                elif previous == content:
+                    identity = ("event", event_id)
+                else:
+                    record_degradation(
+                        "live_mind_contract",
+                        ValueError(
+                            f"text mutation event_id collision with differing content: {event_id[:32]}"
+                        ),
+                        severity="warning",
+                        action="kept both mutations rather than dropping one from the audit ledger",
+                        enforce_failure_policy=False,
+                    )
+                    identity = ("content", *content)
+            else:
+                identity = ("legacy", *content)
             if identity in seen:
                 continue
             seen.add(identity)
