@@ -81,7 +81,43 @@ class SensorRegistry:
             PhysicalSensor("system_cpu_usage", "System Core CPU Load Percentage", "percent"),
             log=False,
         )
+        self._initialize_runtime_sensors()
         logger.debug("Initialized %d default sensors.", len(self.sensors))
+
+    def _initialize_runtime_sensors(self) -> None:
+        """Sensors describing AURA, not a shipping network.
+
+        CP126 fae09510: the immune system's behavioural rules are generated
+        over whatever sensors exist, and the only ones that existed described
+        ports, vessels and a warehouse. So every B cell Aura evolved was an
+        opinion about maritime logistics, and the adaptive population began
+        with no code, service, queue, model, network, memory or UI repair
+        grammar — the vocabulary was the ceiling on what it could ever learn
+        to repair.
+
+        These name the subsystems that actually fail. A sensor with no
+        recorded reading simply has none; declaring it is what lets a repair
+        rule be ABOUT it, and what makes the absence of a reading visible
+        rather than the subsystem being invisible.
+        """
+        runtime_sensors = (
+            ("runtime_memory_pressure", "Process resident memory against its budget", "ratio"),
+            ("runtime_event_loop_lag", "Event-loop scheduling delay", "seconds"),
+            ("runtime_task_queue_depth", "Pending tracked runtime tasks", "tasks"),
+            ("runtime_degradation_rate", "Recorded degradations per minute", "per_minute"),
+            ("model_inference_latency", "Model generation latency", "seconds"),
+            ("model_context_utilisation", "Prompt tokens against the context window", "ratio"),
+            ("model_worker_restarts", "Inference worker restarts", "count"),
+            ("memory_recall_hit_rate", "Recall attempts returning a usable result", "ratio"),
+            ("memory_store_latency", "Memory write latency", "seconds"),
+            ("storage_write_failures", "Failed durable writes", "count"),
+            ("network_request_failure_rate", "Outbound request failures", "ratio"),
+            ("service_unavailable_count", "Service-container lookups returning nothing", "count"),
+            ("interface_response_latency", "User-facing response latency", "seconds"),
+            ("interface_error_rate", "Errors surfaced to the interface", "ratio"),
+        )
+        for sensor_id, description, unit in runtime_sensors:
+            self.register(PhysicalSensor(sensor_id, description, unit), log=False)
 
     def register(self, sensor: PhysicalSensor, *, log: bool = True) -> None:
         self.sensors[sensor.sensor_id] = sensor
