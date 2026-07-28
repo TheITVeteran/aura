@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import shutil
 import time
 import uuid
@@ -39,6 +40,19 @@ _REQUIRED_STATE_KEYS = {
     "last_step_kind",
     "last_step_committed",
 }
+_VERIFIED_TRANSITION_STATE_KEYS = {
+    "execution_mode",
+    "execution_spec_sha256",
+    "step_receipts",
+}
+_CHECKPOINT_DOCUMENT_KEYS = {
+    "schema",
+    "checkpoint_id",
+    "created_unix",
+    "adapter",
+    "optimizer",
+}
+_CHECKPOINT_ID_RE = re.compile(r"^step-[0-9]{8}-[0-9a-f]{32}$")
 
 
 class GRPOCheckpointError(RuntimeError):
@@ -125,17 +139,109 @@ def _validate_state(state: Mapping[str, Any]) -> None:
     if state.get("rng_strategy") != "stateless_sha256_step_seeded_v1":
         raise GRPOCheckpointError("checkpoint rng strategy differs")
     last_step_kind = state.get("last_step_kind")
-    allowed_step_kinds = {"initial", "optimizer_update", "degenerate_group"}
+    allowed_step_kinds = {
+        "initial",
+        "optimizer_update",
+        "degenerate_group",
+        "verified_optimizer_update",
+        "verified_rejected_group",
+    }
     if last_step_kind not in allowed_step_kinds:
         raise GRPOCheckpointError("checkpoint last step kind is invalid")
     if step == 0 and last_step_kind != "initial":
         raise GRPOCheckpointError("initial checkpoint has a non-initial step kind")
     if step > 0 and last_step_kind == "initial":
         raise GRPOCheckpointError("advanced checkpoint has an initial step kind")
+    if last_step_kind == "verified_optimizer_update" and optimizer_updates < 1:
+        raise GRPOCheckpointError(
+            "verified optimizer checkpoint has no optimizer update"
+        )
     if type(state.get("last_step_committed")) is not bool:
         raise GRPOCheckpointError("checkpoint step commit flag is invalid")
     if step > 0 and state.get("last_step_committed") is not True:
         raise GRPOCheckpointError("checkpoint claims an incomplete training step")
+
+
+def validate_grpo_checkpoint_state(
+    state: Mapping[str, Any],
+    *,
+    require_verified_transition: bool = False,
+    complete_document: bool = False,
+) -> None:
+    """Validate exact resume state, optionally enforcing the verified lane.
+
+    The ordinary checkpoint reader accepts forward-compatible metadata. The
+    mutation transaction is stricter: it accepts only the complete document
+    shape emitted by the verified recurrent trainer, because that document is
+    later used as proof that an irreversible update reached durable custody.
+    """
+
+    if not isinstance(state, Mapping):
+        raise GRPOCheckpointError("checkpoint state must be a mapping")
+    _validate_state(state)
+    if not require_verified_transition:
+        return
+
+    expected_keys = _REQUIRED_STATE_KEYS | _VERIFIED_TRANSITION_STATE_KEYS
+    if complete_document:
+        expected_keys |= _CHECKPOINT_DOCUMENT_KEYS
+    if set(state) != expected_keys:
+        raise GRPOCheckpointError("verified checkpoint state schema differs")
+    if state.get("execution_mode") != "recurrent" or not _valid_sha256(
+        state.get("execution_spec_sha256")
+    ):
+        raise GRPOCheckpointError("verified checkpoint execution identity is invalid")
+
+    step = int(state["step"])
+    receipts = state.get("step_receipts")
+    if not isinstance(receipts, list) or len(receipts) != step:
+        raise GRPOCheckpointError("verified checkpoint receipt count differs")
+    updated = 0
+    for sequence, receipt in enumerate(receipts):
+        if (
+            not isinstance(receipt, Mapping)
+            or receipt.get("schema") != "aura.verified_transition.trainer_step.v1"
+            or receipt.get("step") != sequence + 1
+            or receipt.get("campaign_sequence") != sequence
+            or receipt.get("execution_spec_sha256")
+            != state["execution_spec_sha256"]
+            or receipt.get("step_kind")
+            not in {"verified_optimizer_update", "verified_rejected_group"}
+        ):
+            raise GRPOCheckpointError("verified checkpoint receipt sequence differs")
+        updated += receipt.get("step_kind") == "verified_optimizer_update"
+    if updated != state.get("optimizer_updates"):
+        raise GRPOCheckpointError("verified checkpoint optimizer count differs")
+    if step and receipts[-1].get("step_kind") != state.get("last_step_kind"):
+        raise GRPOCheckpointError("verified checkpoint last step kind differs")
+
+    if not complete_document:
+        return
+    if state.get("schema") != GRPO_CHECKPOINT_SCHEMA or not _CHECKPOINT_ID_RE.fullmatch(
+        str(state.get("checkpoint_id") or "")
+    ):
+        raise GRPOCheckpointError("verified checkpoint generation identity is invalid")
+    created = state.get("created_unix")
+    if (
+        isinstance(created, bool)
+        or not isinstance(created, (int, float))
+        or not math.isfinite(float(created))
+        or float(created) <= 0.0
+    ):
+        raise GRPOCheckpointError("verified checkpoint creation time is invalid")
+    for role in ("adapter", "optimizer"):
+        binding = state.get(role)
+        if (
+            not isinstance(binding, Mapping)
+            or set(binding) != {"path", "sha256", "size_bytes"}
+            or binding.get("path") != f"{role}.safetensors"
+            or not _valid_sha256(binding.get("sha256"))
+            or type(binding.get("size_bytes")) is not int
+            or binding["size_bytes"] < 1
+        ):
+            raise GRPOCheckpointError(
+                f"verified checkpoint {role} binding is invalid"
+            )
 
 
 def _write_safetensors(path: Path, tensors: Mapping[str, Any]) -> bytes:
@@ -340,4 +446,5 @@ __all__ = [
     "load_grpo_checkpoint",
     "save_grpo_checkpoint",
     "sha256_bytes",
+    "validate_grpo_checkpoint_state",
 ]

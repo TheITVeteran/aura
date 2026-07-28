@@ -16,8 +16,11 @@ positions. Tiny-Qwen parity tests compare it directly with the live cache path.
 """
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 import math
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -38,6 +41,7 @@ from core.brain.llm.latent_cortex.types import WorkspaceConfig
 from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position_rms
 
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
+RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
 
 
 @dataclass
@@ -109,6 +113,50 @@ class _PreparedLivePath:
     prompt_count: int
     bridge_count: int
     answer_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedFinalRecurrentTransition:
+    """Frozen parent and child ensembles around the final recurrent update.
+
+    The object carries tensors for immediate decode and a tensor-free receipt
+    for durable custody.  ``child_states`` are computed from ``parent_states``
+    by exactly one invocation of the live transition operator; neither state
+    is reconstructed from text or from a second independent episode.
+    """
+
+    prompt_embeddings: Any
+    seeds: tuple[Any, ...]
+    parent_states: tuple[Any, ...]
+    child_states: tuple[Any, ...]
+    prelude_end: int
+    coda_start: int
+    transition_index: int
+    execution_spec_sha256: str
+    prompt_tokens_sha256: str
+    parent_branch_sha256s: tuple[str, ...]
+    child_branch_sha256s: tuple[str, ...]
+    parent_ensemble_sha256: str
+    child_ensemble_sha256: str
+    transition_source_sha256: str
+    receipt_sha256: str
+
+    def receipt(self) -> dict[str, Any]:
+        return {
+            "schema": RECURRENT_TRANSITION_STATE_SCHEMA,
+            "execution_spec_sha256": self.execution_spec_sha256,
+            "prompt_tokens_sha256": self.prompt_tokens_sha256,
+            "transition_index": self.transition_index,
+            "parent_depth": self.transition_index,
+            "child_depth": self.transition_index + 1,
+            "branch_count": len(self.parent_states),
+            "parent_branch_sha256s": list(self.parent_branch_sha256s),
+            "child_branch_sha256s": list(self.child_branch_sha256s),
+            "parent_ensemble_sha256": self.parent_ensemble_sha256,
+            "child_ensemble_sha256": self.child_ensemble_sha256,
+            "transition_source_sha256": self.transition_source_sha256,
+            "receipt_sha256": self.receipt_sha256,
+        }
 
 
 def _boundaries(model: Any, spec: RLCExecutionSpec) -> tuple[int, int, int]:
@@ -529,37 +577,75 @@ def _persist_and_score(
     return all_logits[:, prediction_start : prediction_start + answer_count, :]
 
 
-def _prepare_live_path(
+def _token_sequence_sha256(tokens: Sequence[int]) -> str:
+    encoded = json.dumps(
+        list(tokens), separators=(",", ":"), allow_nan=False
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _tensor_sha256(value: Any) -> str:
+    import mlx.core as mx
+    import numpy as np
+
+    mx.eval(value)
+    try:
+        array = np.asarray(value)
+    except RuntimeError:
+        array = np.asarray(value.astype(mx.float32))
+    digest = hashlib.sha256()
+    for part in (
+        str(value.dtype).encode("ascii"),
+        json.dumps(list(value.shape), separators=(",", ":")).encode("ascii"),
+        array.tobytes(order="C"),
+    ):
+        digest.update(len(part).to_bytes(8, "big"))
+        digest.update(part)
+    return digest.hexdigest()
+
+
+def _ensemble_sha256(branch_sha256s: Sequence[str]) -> str:
+    encoded = json.dumps(
+        list(branch_sha256s), separators=(",", ":"), allow_nan=False
+    ).encode("ascii")
+    return hashlib.sha256(b"aura.recurrent_ensemble.v1\0" + encoded).hexdigest()
+
+
+def _seal_transition_receipt(body: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _prepare_recurrent_prefix(
     model: Any,
     prompt_tokens: Sequence[int],
-    answer_tokens: Sequence[int],
     *,
     spec: RLCExecutionSpec,
-    bridge_tokens: Sequence[int],
-) -> _PreparedLivePath:
+) -> tuple[
+    Any,
+    tuple[Any, ...],
+    tuple[Any, ...],
+    tuple[Any, ...],
+    tuple[Any, ...],
+    int,
+    int,
+]:
     import mlx.core as mx
 
     problems = spec.validate()
     if problems:
         raise ValueError(f"invalid execution spec: {problems}")
     prompt = list(prompt_tokens)
-    answer = list(answer_tokens)
-    bridge = list(bridge_tokens)
     if not prompt or any(type(token) is not int or token < 0 for token in prompt):
         raise ValueError("prompt_tokens must contain non-negative integers")
-    if not answer or any(type(token) is not int or token < 0 for token in answer):
-        raise ValueError("answer_tokens must contain non-negative integers")
-    if any(type(token) is not int or token < 0 for token in bridge):
-        raise ValueError("bridge_tokens must contain non-negative integers")
-    if spec.decode_bridge_policy == "none" and bridge:
-        raise ValueError("bridge tokens supplied while decode bridge is disabled")
-    if spec.decode_bridge_policy != "none" and not bridge:
-        raise ValueError("execution spec requires decode bridge tokens")
-
     _n_layers, prelude_end, coda_start = _boundaries(model, spec)
-    inner = model.model
-    prompt_embeddings = inner.embed_tokens(mx.array([prompt]))
-    tail_embeddings = inner.embed_tokens(mx.array([bridge + answer]))
+    prompt_embeddings = model.model.embed_tokens(mx.array([prompt]))
     seeds: list[Any] = []
     prompts_at_window: list[Any] = []
     states: list[Any] = []
@@ -576,19 +662,212 @@ def _prepare_live_path(
         prompts_at_window.append(prompt_at_window)
         states.append(state)
         anchors.append(state)
+    return (
+        prompt_embeddings,
+        tuple(seeds),
+        tuple(prompts_at_window),
+        tuple(states),
+        tuple(anchors),
+        prelude_end,
+        coda_start,
+    )
+
+
+def _prepare_live_path(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    bridge_tokens: Sequence[int],
+) -> _PreparedLivePath:
+    import mlx.core as mx
+
+    prompt = list(prompt_tokens)
+    answer = list(answer_tokens)
+    bridge = list(bridge_tokens)
+    if not answer or any(type(token) is not int or token < 0 for token in answer):
+        raise ValueError("answer_tokens must contain non-negative integers")
+    if any(type(token) is not int or token < 0 for token in bridge):
+        raise ValueError("bridge_tokens must contain non-negative integers")
+    if spec.decode_bridge_policy == "none" and bridge:
+        raise ValueError("bridge tokens supplied while decode bridge is disabled")
+    if spec.decode_bridge_policy != "none" and not bridge:
+        raise ValueError("execution spec requires decode bridge tokens")
+
+    (
+        prompt_embeddings,
+        seeds,
+        prompts_at_window,
+        states,
+        anchors,
+        prelude_end,
+        coda_start,
+    ) = _prepare_recurrent_prefix(model, prompt, spec=spec)
+    tail_embeddings = model.model.embed_tokens(mx.array([bridge + answer]))
     return _PreparedLivePath(
         prompt_embeddings=prompt_embeddings,
         tail_embeddings=tail_embeddings,
-        seeds=tuple(seeds),
-        prompts_at_window=tuple(prompts_at_window),
-        states=tuple(states),
-        anchors=tuple(anchors),
+        seeds=seeds,
+        prompts_at_window=prompts_at_window,
+        states=states,
+        anchors=anchors,
         prelude_end=prelude_end,
         coda_start=coda_start,
         prompt_count=len(prompt),
         bridge_count=len(bridge),
         answer_count=len(answer),
     )
+
+
+def prepare_final_recurrent_transition(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+) -> PreparedFinalRecurrentTransition:
+    """Freeze ``S[k]`` and ``S[k+1]`` around the final configured update."""
+
+    import mlx.core as mx
+
+    (
+        prompt_embeddings,
+        seeds,
+        prompts_at_window,
+        initial_states,
+        anchors,
+        prelude_end,
+        coda_start,
+    ) = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
+    states = list(initial_states)
+    transition_index = spec.recurrent_steps - 1
+    for step in range(transition_index):
+        states = _checkpointed_recurrent_transition(
+            model,
+            prompts_at_window,
+            states,
+            anchors,
+            spec,
+            step,
+            prelude_end,
+            coda_start,
+        )
+    parent_states = tuple(mx.stop_gradient(state) for state in states)
+    mx.eval(parent_states)
+    child = _checkpointed_recurrent_transition(
+        model,
+        prompts_at_window,
+        parent_states,
+        anchors,
+        spec,
+        transition_index,
+        prelude_end,
+        coda_start,
+    )
+    child_states = tuple(mx.stop_gradient(state) for state in child)
+    mx.eval(child_states)
+    parent_branch_sha256s = tuple(_tensor_sha256(state) for state in parent_states)
+    child_branch_sha256s = tuple(_tensor_sha256(state) for state in child_states)
+    transition_source_sha256 = hashlib.sha256(
+        inspect.getsource(_advance_recurrent_states).encode("utf-8")
+    ).hexdigest()
+    body = {
+        "schema": RECURRENT_TRANSITION_STATE_SCHEMA,
+        "execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": _token_sequence_sha256(prompt_tokens),
+        "transition_index": transition_index,
+        "parent_depth": transition_index,
+        "child_depth": transition_index + 1,
+        "branch_count": len(parent_states),
+        "parent_branch_sha256s": list(parent_branch_sha256s),
+        "child_branch_sha256s": list(child_branch_sha256s),
+        "parent_ensemble_sha256": _ensemble_sha256(parent_branch_sha256s),
+        "child_ensemble_sha256": _ensemble_sha256(child_branch_sha256s),
+        "transition_source_sha256": transition_source_sha256,
+    }
+    receipt_sha256 = _seal_transition_receipt(body)
+    return PreparedFinalRecurrentTransition(
+        prompt_embeddings=mx.stop_gradient(prompt_embeddings),
+        seeds=tuple(mx.stop_gradient(seed) for seed in seeds),
+        parent_states=parent_states,
+        child_states=child_states,
+        prelude_end=prelude_end,
+        coda_start=coda_start,
+        transition_index=transition_index,
+        execution_spec_sha256=spec.sha256,
+        prompt_tokens_sha256=body["prompt_tokens_sha256"],
+        parent_branch_sha256s=parent_branch_sha256s,
+        child_branch_sha256s=child_branch_sha256s,
+        parent_ensemble_sha256=body["parent_ensemble_sha256"],
+        child_ensemble_sha256=body["child_ensemble_sha256"],
+        transition_source_sha256=transition_source_sha256,
+        receipt_sha256=receipt_sha256,
+    )
+
+
+def validate_final_recurrent_transition_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the durable, tensor-free edge certificate."""
+
+    required = {
+        "schema",
+        "execution_spec_sha256",
+        "prompt_tokens_sha256",
+        "transition_index",
+        "parent_depth",
+        "child_depth",
+        "branch_count",
+        "parent_branch_sha256s",
+        "child_branch_sha256s",
+        "parent_ensemble_sha256",
+        "child_ensemble_sha256",
+        "transition_source_sha256",
+        "receipt_sha256",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        raise ValueError("recurrent_transition_receipt_schema_invalid")
+    normalized = dict(receipt)
+    if normalized.get("schema") != RECURRENT_TRANSITION_STATE_SCHEMA:
+        raise ValueError("recurrent_transition_receipt_version_invalid")
+    branch_count = normalized.get("branch_count")
+    transition_index = normalized.get("transition_index")
+    parent = normalized.get("parent_branch_sha256s")
+    child = normalized.get("child_branch_sha256s")
+    digests = (
+        normalized.get("execution_spec_sha256"),
+        normalized.get("prompt_tokens_sha256"),
+        normalized.get("parent_ensemble_sha256"),
+        normalized.get("child_ensemble_sha256"),
+        normalized.get("transition_source_sha256"),
+        normalized.get("receipt_sha256"),
+    )
+    if (
+        type(branch_count) is not int
+        or branch_count < 1
+        or type(transition_index) is not int
+        or transition_index < 0
+        or normalized.get("parent_depth") != transition_index
+        or normalized.get("child_depth") != transition_index + 1
+        or not isinstance(parent, list)
+        or not isinstance(child, list)
+        or len(parent) != branch_count
+        or len(child) != branch_count
+        or any(
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+            for value in (*digests, *parent, *child)
+        )
+        or normalized["parent_ensemble_sha256"] != _ensemble_sha256(parent)
+        or normalized["child_ensemble_sha256"] != _ensemble_sha256(child)
+    ):
+        raise ValueError("recurrent_transition_receipt_identity_invalid")
+    unsigned = dict(normalized)
+    observed = unsigned.pop("receipt_sha256")
+    if _seal_transition_receipt(unsigned) != observed:
+        raise ValueError("recurrent_transition_receipt_digest_mismatch")
+    return normalized
 
 
 def live_path_forward(
@@ -1063,7 +1342,9 @@ def depth_curriculum_loss_v2(
 
 __all__ = [
     "LivePathForward",
+    "PreparedFinalRecurrentTransition",
     "RECURRENCE_NATIVE_SCHEMA_V2",
+    "RECURRENT_TRANSITION_STATE_SCHEMA",
     "branch_mean_answer_loss",
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
@@ -1071,4 +1352,6 @@ __all__ = [
     "live_path_branch_answer_ce_trail",
     "live_path_forward",
     "live_path_loss",
+    "prepare_final_recurrent_transition",
+    "validate_final_recurrent_transition_receipt",
 ]

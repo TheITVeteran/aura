@@ -400,7 +400,9 @@ def apply_verified_transition_group_update(
     bridge_tokens: Sequence[int] = (),
     config: RecurrentGRPOConfig | None = None,
     now_unix_ns: Callable[[], int] = time.time_ns,
-) -> dict[str, Any]:
+    return_terminal_receipt: bool = False,
+    transaction_coordinator: Any | None = None,
+) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
     """Validate, reserve, rehash, update exactly once, and receipt the result."""
 
     campaign_ledger.validate_started_group(
@@ -475,6 +477,13 @@ def apply_verified_transition_group_update(
     policy_after = recurrent_policy_sha256(model, spec)
     if policy_after == policy_before:
         _fail("verified_transition_optimizer_did_not_change_policy")
+    if transaction_coordinator is None:
+        _fail("verified_transition_transaction_coordinator_missing")
+    transaction_coordinator.stage_post_update(
+        policy_before_sha256=policy_before,
+        policy_after_sha256=policy_after,
+        group_admission_sha256=cast_sha256(admission["receipt_sha256"]),
+    )
     committed_at = _require_time(now_unix_ns(), role="update_committed_at")
     if committed_at < reserved_at:
         _fail("verified_transition_update_time_reversed")
@@ -502,14 +511,20 @@ def apply_verified_transition_group_update(
             "committed_at_unix_ns": committed_at,
         }
     )
-    campaign_ledger.finish_group(
+    transaction_coordinator.record_update_commit(receipt)
+    terminal = campaign_ledger.finish_group(
         sequence=campaign_sequence,
         status="updated",
+        reward_receipt_sha256=cast_sha256(reward_receipt["receipt_sha256"]),
         group_admission_sha256=cast_sha256(admission["receipt_sha256"]),
         update_receipt_sha256=cast_sha256(receipt["receipt_sha256"]),
         terminal_reason="optimizer_update_committed",
         finished_at_unix_ns=committed_at,
+        policy_after_sha256=policy_after,
     )
+    transaction_coordinator.record_campaign_terminal(terminal)
+    if return_terminal_receipt:
+        return receipt, terminal
     return receipt
 
 
@@ -630,12 +645,77 @@ def recover_committed_verified_transition_update(
     return validate_verified_transition_update_receipt(journal, receipt)
 
 
+def commit_staged_verified_transition_update(
+    journal: VerifiedTransitionUpdateJournal,
+    *,
+    admission_sha256: str,
+    policy_before_sha256: str,
+    policy_after_sha256: str,
+    committed_at_unix_ns: int | None = None,
+) -> dict[str, Any]:
+    """Roll a durably staged post-update policy through the journal commit.
+
+    This is only valid after an independent transaction store has preserved
+    the exact post-update model and optimizer tensors. The reservation and
+    objective must already exist, and an existing commit is reconstructed
+    rather than written a second time.
+    """
+
+    admission = cast_sha256(admission_sha256)
+    before = cast_sha256(policy_before_sha256)
+    after = cast_sha256(policy_after_sha256)
+    if before == after:
+        _fail("verified_transition_staged_policy_unchanged")
+    reservation = journal.read(admission, "reserved")
+    objective = journal.read(admission, "objective")
+    if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
+        _fail("verified_transition_reservation_schema_invalid")
+    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
+        _fail("verified_transition_objective_schema_invalid")
+    _validate_seal(reservation, role="verified_transition_reservation")
+    _validate_objective_seal(objective)
+    if (
+        reservation.get("admission_sha256") != admission
+        or reservation.get("policy_before_sha256") != before
+        or objective.get("admission_sha256") != admission
+    ):
+        _fail("verified_transition_staged_journal_binding_mismatch")
+    if journal.exists(admission, "committed"):
+        recovered = recover_committed_verified_transition_update(journal, admission)
+        if (
+            recovered["policy_before_sha256"] != before
+            or recovered["policy_after_sha256"] != after
+        ):
+            _fail("verified_transition_staged_commit_policy_mismatch")
+        return recovered
+    committed_at = (
+        time.time_ns()
+        if committed_at_unix_ns is None
+        else _require_time(committed_at_unix_ns, role="staged_commit_time")
+    )
+    if committed_at < cast(int, reservation["reserved_at_unix_ns"]):
+        _fail("verified_transition_staged_commit_time_reversed")
+    journal.commit(
+        admission_sha256=admission,
+        reservation_sha256=cast_sha256(reservation["receipt_sha256"]),
+        policy_before_sha256=before,
+        policy_after_sha256=after,
+        objective_record_sha256=cast_sha256(objective["receipt_sha256"]),
+        objective_receipt_sha256=cast_sha256(
+            objective["objective_receipt_sha256"]
+        ),
+        committed_at_unix_ns=committed_at,
+    )
+    return recover_committed_verified_transition_update(journal, admission)
+
+
 def recover_committed_campaign_group(
     journal: VerifiedTransitionUpdateJournal,
     campaign_ledger: VerifiedTransitionCampaignLedger,
     *,
     campaign_sequence: int,
     admission_sha256: str,
+    reward_receipt_sha256: str,
 ) -> dict[str, Any]:
     """Finish campaign custody from a durable update commit after process death."""
 
@@ -643,6 +723,7 @@ def recover_committed_campaign_group(
     campaign_ledger.finish_group(
         sequence=campaign_sequence,
         status="updated",
+        reward_receipt_sha256=cast_sha256(reward_receipt_sha256),
         group_admission_sha256=cast_sha256(admission_sha256),
         update_receipt_sha256=cast_sha256(receipt["receipt_sha256"]),
         terminal_reason="optimizer_update_recovered_from_commit",
@@ -753,6 +834,7 @@ __all__ = [
     "VerifiedTransitionUpdateError",
     "VerifiedTransitionUpdateJournal",
     "apply_verified_transition_group_update",
+    "commit_staged_verified_transition_update",
     "recover_committed_campaign_group",
     "recover_committed_verified_transition_update",
     "reconcile_interrupted_verified_transition_update",

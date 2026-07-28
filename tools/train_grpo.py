@@ -82,6 +82,25 @@ from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
 )
+from core.learning.verified_transition_trainer import (  # noqa: E402
+    VERIFIED_TRANSITION_STEP_SCHEMA,
+    VerifiedTransitionCampaignClosure,
+    VerifiedTransitionGroupProvider,
+    VerifiedTransitionTelemetry,
+    apply_prepared_verified_transition_group,
+    build_verified_transition_step_receipt,
+    build_verified_transition_step_static,
+    validate_verified_transition_step_receipt,
+)
+from core.learning.verified_transition_training_evidence import (  # noqa: E402
+    VerifiedTransitionReplayGroup,
+)
+from core.learning.verified_transition_transaction import (  # noqa: E402
+    VerifiedTransitionTransactionCoordinator,
+    VerifiedTransitionTransactionStore,
+    build_transaction_trainer_step,
+    load_trainer_checkpoint_evidence,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_bytes_if_absent,
@@ -163,6 +182,31 @@ def _assert_exact_adapter_keys(
         "checkpoint adapter keyset differs "
         f"(missing={missing[:5]}, unexpected={unexpected[:5]})"
     )
+
+
+def _assert_exact_tensor_layout(
+    expected: Mapping[str, Any], loaded: Mapping[str, Any], *, role: str
+) -> None:
+    expected_keys = set(expected)
+    loaded_keys = set(loaded)
+    if loaded_keys != expected_keys:
+        missing = sorted(expected_keys - loaded_keys)
+        unexpected = sorted(loaded_keys - expected_keys)
+        raise GRPOCheckpointError(
+            f"staged {role} keyset differs "
+            f"(missing={missing[:5]}, unexpected={unexpected[:5]})"
+        )
+    for key in sorted(expected_keys):
+        expected_value = expected[key]
+        loaded_value = loaded[key]
+        expected_shape = tuple(int(size) for size in expected_value.shape)
+        loaded_shape = tuple(int(size) for size in loaded_value.shape)
+        if expected_shape != loaded_shape or str(expected_value.dtype) != str(
+            loaded_value.dtype
+        ):
+            raise GRPOCheckpointError(
+                f"staged {role} tensor layout differs at {key}"
+            )
 
 
 def _point_estimate_delta(
@@ -633,6 +677,8 @@ def _validate_published_recurrent_bundle(
     behavior_identity: Mapping[str, Any],
     personality_identity: Mapping[str, Any],
     runtime_identity: Mapping[str, Any],
+    transition_closure: VerifiedTransitionCampaignClosure | None = None,
+    transition_groups: Sequence[VerifiedTransitionReplayGroup] = (),
 ) -> dict[str, Any]:
     from core.brain.llm.latent_cortex.adapter_identity import (
         inspect_mlx_tensor_metadata,
@@ -641,20 +687,33 @@ def _validate_published_recurrent_bundle(
         MANIFEST_FILE,
         strict_json_loads,
         validate_recurrent_grpo_adapter_identity,
+        validate_recurrent_grpo_adapter_identity_with_verified_transitions,
     )
 
     manifest_bytes = (out_dir / MANIFEST_FILE).read_bytes()
     manifest = strict_json_loads(manifest_bytes, role="published_manifest")
     adapter_path = out_dir / manifest["adapter"]["path"]
-    return validate_recurrent_grpo_adapter_identity(
+    kwargs = {
+        "adapter_id": adapter_id,
+        "actual_base_checkpoint": base_identity,
+        "actual_model_behavior_bundle": behavior_identity,
+        "actual_personality_adapter": personality_identity,
+        "actual_runtime_environment": runtime_identity,
+        "artifacts": _read_recurrent_bundle_artifacts(out_dir, manifest),
+        "tensor_metadata": inspect_mlx_tensor_metadata(adapter_path),
+    }
+    if transition_closure is None:
+        if transition_groups:
+            raise GRPOCheckpointError(
+                "transition replay groups require a verified campaign closure"
+            )
+        return validate_recurrent_grpo_adapter_identity(manifest_bytes, **kwargs)
+    return validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         manifest_bytes,
-        adapter_id=adapter_id,
-        actual_base_checkpoint=base_identity,
-        actual_model_behavior_bundle=behavior_identity,
-        actual_personality_adapter=personality_identity,
-        actual_runtime_environment=runtime_identity,
-        artifacts=_read_recurrent_bundle_artifacts(out_dir, manifest),
-        tensor_metadata=inspect_mlx_tensor_metadata(adapter_path),
+        **kwargs,
+        transition_campaign_ledger=transition_closure.campaign_ledger,
+        transition_policy=transition_closure.campaign_trust_policy,
+        transition_groups=transition_groups,
     )
 
 
@@ -669,6 +728,8 @@ def _publish_recurrent_adapter_bundle(
     receipt_bytes: bytes,
     execution_spec: Any,
     source_roles: Mapping[str, Path],
+    transition_closure: VerifiedTransitionCampaignClosure | None = None,
+    transition_groups: Sequence[VerifiedTransitionReplayGroup] = (),
 ) -> dict[str, Any]:
     """Publish and immediately revalidate a campaign-loadable GRPO identity."""
 
@@ -684,6 +745,7 @@ def _publish_recurrent_adapter_bundle(
         TRAINING_METHOD,
         declared_bindings,
         validate_recurrent_grpo_adapter_identity,
+        validate_recurrent_grpo_adapter_identity_with_verified_transitions,
     )
 
     completion_path = out_dir / "training_completion.json"
@@ -695,6 +757,8 @@ def _publish_recurrent_adapter_bundle(
             behavior_identity=protocol["model_behavior"],
             personality_identity=protocol["personality_adapter"],
             runtime_identity=protocol["runtime"],
+            transition_closure=transition_closure,
+            transition_groups=transition_groups,
         )
     if set(source_roles) != REQUIRED_SOURCE_ROLES:
         raise GRPOCheckpointError("recurrent GRPO source inventory is incomplete")
@@ -850,16 +914,33 @@ def _publish_recurrent_adapter_bundle(
     for _role, binding in declared_bindings(manifest):
         preflight_artifacts[binding["path"]] = (out_dir / binding["path"]).read_bytes()
     preflight_artifacts["training_completion.json"] = completion_bytes
-    preflight_identity = validate_recurrent_grpo_adapter_identity(
-        manifest_bytes,
-        adapter_id=adapter_id,
-        actual_base_checkpoint=protocol["base_checkpoint"],
-        actual_model_behavior_bundle=protocol["model_behavior"],
-        actual_personality_adapter=protocol["personality_adapter"],
-        actual_runtime_environment=protocol["runtime"],
-        artifacts=preflight_artifacts,
-        tensor_metadata=tensor_metadata,
-    )
+    identity_kwargs = {
+        "adapter_id": adapter_id,
+        "actual_base_checkpoint": protocol["base_checkpoint"],
+        "actual_model_behavior_bundle": protocol["model_behavior"],
+        "actual_personality_adapter": protocol["personality_adapter"],
+        "actual_runtime_environment": protocol["runtime"],
+        "artifacts": preflight_artifacts,
+        "tensor_metadata": tensor_metadata,
+    }
+    if transition_closure is None:
+        if transition_groups:
+            raise GRPOCheckpointError(
+                "transition replay groups require a verified campaign closure"
+            )
+        preflight_identity = validate_recurrent_grpo_adapter_identity(
+            manifest_bytes, **identity_kwargs
+        )
+    else:
+        preflight_identity = (
+            validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+                manifest_bytes,
+                **identity_kwargs,
+                transition_campaign_ledger=transition_closure.campaign_ledger,
+                transition_policy=transition_closure.campaign_trust_policy,
+                transition_groups=transition_groups,
+            )
+        )
     _publish_immutable_bytes(
         completion_path,
         completion_bytes,
@@ -872,6 +953,8 @@ def _publish_recurrent_adapter_bundle(
         behavior_identity=protocol["model_behavior"],
         personality_identity=protocol["personality_adapter"],
         runtime_identity=protocol["runtime"],
+        transition_closure=transition_closure,
+        transition_groups=transition_groups,
     )
     if published_identity != preflight_identity:
         raise GRPOCheckpointError("published recurrent identity differs from preflight")
@@ -950,6 +1033,7 @@ def sample_recurrent_group(
     size: int,
     max_tokens: int,
     seed: int,
+    sampling_config: Any | None = None,
 ):
     """Bounded behavior-policy completions from the fixed recurrent graph."""
 
@@ -960,7 +1044,11 @@ def sample_recurrent_group(
     )
 
     prompt_tokens = _task_prompt_tokens(tokenizer, task)
-    sampling = RecurrentSamplingConfig(max_tokens=max_tokens)
+    sampling = sampling_config or RecurrentSamplingConfig(max_tokens=max_tokens)
+    if not isinstance(sampling, RecurrentSamplingConfig):
+        raise TypeError("sampling_config must be a RecurrentSamplingConfig")
+    if sampling.max_tokens != max_tokens:
+        raise ValueError("sampling_config max_tokens must match max_tokens")
     samples = []
     completions: list[str] = []
     rejected_receipts: list[dict[str, Any]] = []
@@ -1293,7 +1381,10 @@ def evaluate_recurrent_heldout(
     return report
 
 
-def main() -> int:
+def main(
+    *,
+    verified_group_provider: VerifiedTransitionGroupProvider | None = None,
+) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -1420,6 +1511,34 @@ def main() -> int:
         parser.error(str(exc))
     if args.execution_mode == "recurrent" and args.temperature != 1.0:
         parser.error("recurrent mode requires --temperature 1")
+    if args.execution_mode == "recurrent" and verified_group_provider is None:
+        parser.error(
+            "recurrent mode requires an in-process VerifiedTransitionGroupProvider; "
+            "raw caller-authored scalar rewards are not an authorized mutation path"
+        )
+    if args.execution_mode == "standard" and verified_group_provider is not None:
+        parser.error("a verified transition provider only applies to recurrent mode")
+    provider_contract_sha256 = None
+    if verified_group_provider is not None:
+        provider_contract_sha256 = getattr(
+            verified_group_provider, "contract_sha256", None
+        )
+        if not isinstance(provider_contract_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", provider_contract_sha256
+        ):
+            parser.error(
+                "the verified transition provider must expose its frozen contract digest"
+            )
+    if args.execution_mode == "recurrent" and args.trajectory_credit:
+        parser.error(
+            "--trajectory-credit is not authorized for proof-grade recurrent mode; "
+            "transition deltas and auxiliary terms require independently replayable receipts"
+        )
+    if args.execution_mode == "recurrent" and args.checkpoint_every != 1:
+        parser.error(
+            "proof-grade recurrent mode requires --checkpoint-every 1 so no "
+            "committed transition is followed by another group before it is durable"
+        )
 
     import mlx.core as mx
     import mlx.nn as nn
@@ -1505,6 +1624,49 @@ def main() -> int:
                 "recurrence": (
                     REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"
                 ),
+                "verified_trainer": (
+                    REPO_ROOT / "core/learning/verified_transition_trainer.py"
+                ),
+                "transition_campaign": (
+                    REPO_ROOT / "core/learning/verified_transition_campaign.py"
+                ),
+                "transition_episode": (
+                    REPO_ROOT / "core/learning/verified_transition_episode.py"
+                ),
+                "transition_reward": (
+                    REPO_ROOT / "core/learning/verified_transition_reward.py"
+                ),
+                "transition_admission": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_group_admission.py"
+                ),
+                "transition_update": (
+                    REPO_ROOT / "core/learning/verified_transition_update.py"
+                ),
+                "transition_training_evidence": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_training_evidence.py"
+                ),
+                "campaign_trust": (
+                    REPO_ROOT
+                    / "core/brain/llm/latent_cortex/campaign_trust.py"
+                ),
+                "transition_provider": (
+                    REPO_ROOT / "core/learning/verified_transition_provider.py"
+                ),
+                "transition_transaction": (
+                    REPO_ROOT / "core/learning/verified_transition_transaction.py"
+                ),
+                "transition_causal_campaign": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_causal_campaign.py"
+                ),
+                "verified_training_task": (
+                    REPO_ROOT / "core/learning/verified_training_task.py"
+                ),
+                "verified_token_trace": (
+                    REPO_ROOT / "core/learning/verified_token_trace.py"
+                ),
             }
         )
     sources = {role: _source_binding(path) for role, path in source_files.items()}
@@ -1529,6 +1691,9 @@ def main() -> int:
             ),
             "execution_spec_sha256": (
                 execution_spec.sha256 if execution_spec is not None else None
+            ),
+            "verified_transition_provider_contract_sha256": (
+                provider_contract_sha256
             ),
             "domains": domains,
             "depths": depths,
@@ -1648,7 +1813,7 @@ def main() -> int:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
 
-        from mlx.utils import tree_flatten
+        from mlx.utils import tree_flatten, tree_unflatten
 
         from core.learning.adaptive_curriculum import (
             AdaptiveCurriculum,
@@ -1657,9 +1822,15 @@ def main() -> int:
 
         optimizer = optim.Adam(learning_rate=args.learning_rate)
         optimizer.init(model.trainable_parameters())
-        telemetry = GRPOTelemetry()
+        telemetry: GRPOTelemetry | VerifiedTransitionTelemetry = (
+            VerifiedTransitionTelemetry()
+            if execution_spec is not None
+            else GRPOTelemetry()
+        )
         history: list[dict[str, Any]] = []
         step_receipts: list[dict[str, Any]] = []
+        transition_replay_groups: list[VerifiedTransitionReplayGroup] = []
+        transition_closure: VerifiedTransitionCampaignClosure | None = None
         baseline_eval: dict[str, Any] | None = None
         calibration: dict[str, Any] | None = None
         step = 0
@@ -1669,7 +1840,11 @@ def main() -> int:
         invocation_count = 1
 
         by_cell: dict[tuple[str, int], list[Any]] = {}
+        tasks_by_id: dict[str, Any] = {}
         for task in train_tasks:
+            if task.task_id in tasks_by_id:
+                raise RuntimeError(f"duplicate training task id: {task.task_id}")
+            tasks_by_id[task.task_id] = task
             by_cell.setdefault((task.domain, task.depth), []).append(task)
         curriculum = AdaptiveCurriculum.over(
             sorted({domain for domain, _depth in by_cell}),
@@ -1680,6 +1855,13 @@ def main() -> int:
         if not expected_adapters or any("lora" not in key for key in expected_adapters):
             raise RuntimeError("trainable tree contains non-LoRA parameters")
 
+        transaction_store = (
+            VerifiedTransitionTransactionStore.open(
+                out_dir / "verified-transition-transactions"
+            )
+            if execution_spec is not None
+            else None
+        )
         resumed = None
         if (out_dir / "latest.json").exists():
             resumed = load_grpo_checkpoint(
@@ -1696,7 +1878,11 @@ def main() -> int:
             optimizer_updates = int(state["optimizer_updates"])
             last_step_kind = str(state["last_step_kind"])
             curriculum = AdaptiveCurriculum.from_state(state["curriculum"])
-            telemetry = GRPOTelemetry.from_state(state["telemetry"])
+            telemetry = (
+                VerifiedTransitionTelemetry.from_state(state["telemetry"])
+                if execution_spec is not None
+                else GRPOTelemetry.from_state(state["telemetry"])
+            )
             history = list(state["history"])
             raw_step_receipts = state.get("step_receipts", [])
             if not isinstance(raw_step_receipts, list) or any(
@@ -1718,6 +1904,74 @@ def main() -> int:
                 raise GRPOCheckpointError(
                     "standard checkpoint contains recurrent step receipts"
                 )
+            if execution_spec is not None:
+                assert verified_group_provider is not None
+                from core.learning.recurrent_grpo import recurrent_policy_sha256
+
+                try:
+                    step_receipts = [
+                        validate_verified_transition_step_receipt(
+                            receipt,
+                            group_size=config.group_size,
+                            execution_spec_sha256=execution_spec.sha256,
+                        )
+                        for receipt in step_receipts
+                        if receipt.get("schema") == VERIFIED_TRANSITION_STEP_SCHEMA
+                    ]
+                except ValueError as exc:
+                    raise GRPOCheckpointError(
+                        "recurrent checkpoint has an invalid verified step receipt"
+                    ) from exc
+                if len(step_receipts) != step:
+                    raise GRPOCheckpointError(
+                        "proof-grade recurrent resume rejects legacy or mixed step receipts"
+                    )
+
+                if step_receipts:
+                    expected_policy = step_receipts[-1].get(
+                        "policy_after_sha256"
+                    )
+                    if (
+                        not isinstance(expected_policy, str)
+                        or recurrent_policy_sha256(model, execution_spec)
+                        != expected_policy
+                    ):
+                        raise GRPOCheckpointError(
+                            "recurrent checkpoint tensors differ from the last "
+                            "committed verified transition receipt"
+                        )
+                restored = tuple(
+                    verified_group_provider.restore_groups(
+                        committed_steps=step,
+                        step_receipts=step_receipts,
+                    )
+                )
+                if len(restored) != optimizer_updates:
+                    raise GRPOCheckpointError(
+                        "verified transition replay group count differs from "
+                        "committed optimizer updates"
+                    )
+                updated_step_receipts = [
+                    receipt
+                    for receipt in step_receipts
+                    if receipt.get("step_kind") == "verified_optimizer_update"
+                ]
+                for receipt, replay_group in zip(
+                    updated_step_receipts, restored, strict=True
+                ):
+                    update = receipt.get("update")
+                    if (
+                        replay_group.sequence != int(receipt["step"]) - 1
+                        or not isinstance(update, Mapping)
+                        or dict(replay_group.update_receipt) != dict(update)
+                        or replay_group.reward_receipt.get("receipt_sha256")
+                        != receipt.get("reward_receipt_sha256")
+                    ):
+                        raise GRPOCheckpointError(
+                            "restored transition source evidence differs from "
+                            "the durable trainer step receipt"
+                        )
+                transition_replay_groups = list(restored)
             baseline_eval = state["baseline_eval"]
             calibration = state["calibration"]
             prior_elapsed_s = float(state["elapsed_training_s"])
@@ -1742,7 +1996,6 @@ def main() -> int:
             return tensors
 
         last_durable_step = step
-
         def checkpoint_now() -> Path:
             nonlocal last_durable_step
             optimizer_tensors = dict(tree_flatten(optimizer.state))
@@ -1779,6 +2032,168 @@ def main() -> int:
             )
             last_durable_step = step
             return path
+
+        if execution_spec is not None:
+            assert transaction_store is not None
+            assert verified_group_provider is not None
+            from core.learning.recurrent_grpo import recurrent_policy_sha256
+
+            pending_recovery = None
+            for transaction in transaction_store.inventory(load_tensors=False):
+                pending = transaction.pending_step
+                sequence = int(pending["sequence"])
+                admission = str(pending["group_admission_sha256"])
+                if sequence < step:
+                    if len(transaction.events) < 3:
+                        if (
+                            resumed is None
+                            or sequence != step - 1
+                            or int(pending["trainer_step"]) != step
+                        ):
+                            raise GRPOCheckpointError(
+                                "historical verified transaction is not fully sealed"
+                            )
+                        durable_step = step_receipts[sequence]
+                        if durable_step.get("group_admission_sha256") != admission:
+                            raise GRPOCheckpointError(
+                                "historical transaction admission differs from checkpoint"
+                            )
+                        if len(transaction.events) == 0:
+                            transaction_store.record_update_commit(
+                                sequence=sequence,
+                                admission_sha256=admission,
+                                update_receipt=durable_step["update"],
+                            )
+                        current = transaction_store.load(
+                            sequence=sequence,
+                            admission_sha256=admission,
+                            load_tensors=False,
+                        )
+                        assert current is not None
+                        if len(current.events) == 1:
+                            transaction_store.record_campaign_terminal(
+                                sequence=sequence,
+                                admission_sha256=admission,
+                                terminal_receipt=durable_step["terminal"],
+                            )
+                        current = transaction_store.load(
+                            sequence=sequence,
+                            admission_sha256=admission,
+                            load_tensors=False,
+                        )
+                        assert current is not None
+                        if len(current.events) == 2:
+                            transaction_store.record_trainer_checkpoint(
+                                sequence=sequence,
+                                admission_sha256=admission,
+                                checkpoint=load_trainer_checkpoint_evidence(
+                                    resumed.checkpoint_dir
+                                ),
+                            )
+                    sealed = transaction_store.load(
+                        sequence=sequence,
+                        admission_sha256=admission,
+                        load_tensors=False,
+                    )
+                    if sealed is None or len(sealed.events) != 3:
+                        raise GRPOCheckpointError(
+                            "historical verified transaction seal is incomplete"
+                        )
+                    continue
+                if sequence > step or pending_recovery is not None:
+                    raise GRPOCheckpointError(
+                        "verified transaction sequence is ahead of trainer state"
+                    )
+                pending_recovery = (sequence, admission)
+
+            if pending_recovery is not None:
+                sequence, admission = pending_recovery
+                expected_optimizer_layout = dict(tree_flatten(optimizer.state))
+
+                def restore_and_validate_staged_state(
+                    staged: Any,
+                ) -> str:
+                    if (
+                        staged.adapter_tensors is None
+                        or staged.optimizer_tensors is None
+                    ):
+                        raise GRPOCheckpointError(
+                            "verified transaction recovery tensors are missing"
+                        )
+                    _assert_exact_tensor_layout(
+                        expected_adapters,
+                        staged.adapter_tensors,
+                        role="adapter",
+                    )
+                    _assert_exact_tensor_layout(
+                        expected_optimizer_layout,
+                        staged.optimizer_tensors,
+                        role="optimizer",
+                    )
+                    model.load_weights(
+                        list(staged.adapter_tensors.items()), strict=False
+                    )
+                    optimizer_state = tree_unflatten(staged.optimizer_tensors)
+                    if not isinstance(optimizer_state, dict):
+                        raise GRPOCheckpointError(
+                            "verified transaction optimizer tree is invalid"
+                        )
+                    optimizer.state = optimizer_state
+                    optimizer.init(model.trainable_parameters())
+                    mx.eval(model.parameters(), optimizer.state)
+                    observed_policy = recurrent_policy_sha256(model, execution_spec)
+                    if observed_policy != staged.pending_step["policy_after_sha256"]:
+                        raise GRPOCheckpointError(
+                            "staged transaction tensors differ from policy_after"
+                        )
+                    return observed_policy
+
+                recovered = verified_group_provider.recover_transaction_publications(
+                    transaction_store=transaction_store,
+                    sequence=sequence,
+                    admission_sha256=admission,
+                    validate_staged_state=restore_and_validate_staged_state,
+                )
+                pending = recovered.pending_step
+                recovered_step = validate_verified_transition_step_receipt(
+                    build_transaction_trainer_step(recovered),
+                    group_size=config.group_size,
+                    execution_spec_sha256=execution_spec.sha256,
+                )
+                transition_replay_groups = list(
+                    verified_group_provider.accept_recovered_step_receipt(
+                        recovered_step
+                    )
+                )
+                step_receipts.append(recovered_step)
+                advantage_report = recovered_step["advantage_report"]
+                assert isinstance(telemetry, VerifiedTransitionTelemetry)
+                telemetry.observe(advantage_report, optimizer_updated=True)
+                recovered_task = tasks_by_id.get(recovered_step["task_id"])
+                if recovered_task is None:
+                    raise GRPOCheckpointError(
+                        "recovered transaction task is outside the frozen dataset"
+                    )
+                answer_channel = recovered_step["answer_channel"]
+                curriculum.observe(
+                    recovered_task.domain,
+                    recovered_task.depth,
+                    float(answer_channel["correct_fraction"]),
+                    degenerate=bool(advantage_report["degenerate"]),
+                )
+                step = int(recovered_step["step"])
+                optimizer_updates += 1
+                last_step_kind = "verified_optimizer_update"
+                checkpoint_path = checkpoint_now()
+                transaction_store.record_trainer_checkpoint(
+                    sequence=sequence,
+                    admission_sha256=admission,
+                    checkpoint=load_trainer_checkpoint_evidence(checkpoint_path),
+                )
+                print(
+                    f"[recovery] completed staged verified transition step={step}",
+                    flush=True,
+                )
 
         # Default-open: only an explicit refusal below closes it.
         training_allowed = True
@@ -1999,6 +2414,7 @@ def main() -> int:
                     break
 
                 step_number = step + 1
+                active_transaction_coordinator = None
                 decision_rng = random.Random(
                     _stable_seed(args.seed, "curriculum", step_number)
                 )
@@ -2042,63 +2458,24 @@ def main() -> int:
                     active_recurrent_step["samples"] = tuple(recurrent_samples)
                     active_recurrent_step["phase"] = "grading"
                 grade_verdicts = [task.grade(text) for text in completions]
-                rewards = [
-                    reward_from_verdict(verdict, format_credit=args.format_credit)
-                    for verdict in grade_verdicts
-                ]
                 answer_channel = _answer_channel_report_from_verdicts(
                     grade_verdicts
                 )
-                verifier_advantage_report = group_advantages(
-                    rewards, clip=config.advantage_clip
-                )
-                effective_rewards = list(rewards)
-                trajectory_credit_receipt: dict[str, Any] | None = None
-                advantage_report = verifier_advantage_report
-                if (
-                    args.trajectory_credit
-                    and execution_spec is not None
-                    and recurrent_samples is not None
-                    and verifier_advantage_report["degenerate"]
-                ):
-                    from core.learning.recurrence_native_objective_v2 import (
-                        live_path_branch_answer_ce_trail,
-                    )
-
-                    active_recurrent_step["phase"] = "trajectory_credit"
-                    answer_tokens = _tokenize_gold_answer(tokenizer, task)
-                    ce_trails = [
-                        live_path_branch_answer_ce_trail(
-                            model,
-                            prompt,
-                            answer_tokens,
-                            spec=execution_spec,
-                            branch_index=sample.branch_index,
-                        )
-                        for sample in recurrent_samples
-                    ]
-                    trajectory_credit_receipt = _shape_recurrent_rewards_from_ce_trails(
-                        rewards,
-                        ce_trails,
-                        shaping_weight=args.trajectory_shaping_weight,
-                    )
-                    effective_rewards = [
-                        float(value)
-                        for value in trajectory_credit_receipt["shaped_rewards"]
-                    ]
-                    shaped_advantage_report = group_advantages(
-                        effective_rewards, clip=config.advantage_clip
-                    )
-                    advantage_report = _advantage_report_with_verifier_rate(
-                        shaped_advantage_report,
-                        verifier_advantage_report,
-                    )
                 loss_value: float | None = None
                 step_kind = "degenerate_group"
-                update_receipt: dict[str, Any] | None = None
-
-                if not advantage_report["degenerate"]:
-                    if execution_spec is None:
+                if execution_spec is None:
+                    rewards = [
+                        reward_from_verdict(
+                            verdict, format_credit=args.format_credit
+                        )
+                        for verdict in grade_verdicts
+                    ]
+                    verifier_advantage_report = group_advantages(
+                        rewards, clip=config.advantage_clip
+                    )
+                    effective_rewards = list(rewards)
+                    advantage_report = verifier_advantage_report
+                    if not advantage_report["degenerate"]:
                         reference = [
                             mx.stop_gradient(
                                 completion_logprob(
@@ -2140,79 +2517,125 @@ def main() -> int:
 
                         loss, grads = nn.value_and_grad(model, loss_fn)(model)
                         loss_value = float(loss)
-                    else:
-                        from core.learning.recurrent_grpo import (
-                            exact_adjoint_sampled_group_value_and_grad,
-                        )
-
-                        if recurrent_samples is None or recurrent_config is None:
-                            raise RuntimeError("recurrent training state is missing")
-                        active_recurrent_step["phase"] = "exact_adjoint"
-                        recurrent_result = (
-                            exact_adjoint_sampled_group_value_and_grad(
-                                model,
-                                prompt,
-                                recurrent_samples,
-                                effective_rewards,
-                                spec=execution_spec,
-                                config=recurrent_config,
-                            )
-                        )
-                        if recurrent_result.gradients is None:
-                            raise RuntimeError(
-                                "non-degenerate recurrent group has no gradient"
-                            )
-                        grads = recurrent_result.gradients
-                        loss_value = float(
-                            recurrent_result.gradient_surrogate_value
-                        )
-                        update_receipt = recurrent_result.receipt()
-                        active_recurrent_step["phase"] = "optimizer_update"
-                    optimizer.update(model, grads)
-                    mx.eval(model.parameters(), optimizer.state)
-                    optimizer_updates += 1
-                    step_kind = "optimizer_update"
-                    del grads
-                    envelope.reclaim(force=True)
-
-                if recurrent_samples is not None:
-                    from core.learning.recurrent_grpo import (
-                        recurrent_policy_sha256,
+                        optimizer.update(model, grads)
+                        mx.eval(model.parameters(), optimizer.state)
+                        optimizer_updates += 1
+                        step_kind = "optimizer_update"
+                        del grads
+                        envelope.reclaim(force=True)
+                else:
+                    if recurrent_samples is None or recurrent_config is None:
+                        raise RuntimeError("recurrent training state is missing")
+                    assert verified_group_provider is not None
+                    active_recurrent_step["phase"] = "verified_evidence"
+                    prepared = verified_group_provider.prepare_group(
+                        sequence=step_number - 1,
+                        task=task,
+                        prompt_tokens=prompt,
+                        samples=recurrent_samples,
+                        completions=completions,
                     )
-
-                    step_receipt = _build_recurrent_step_receipt(
+                    if prepared.campaign_sequence != step_number - 1:
+                        raise RuntimeError(
+                            "verified transition provider returned a different sequence"
+                        )
+                    assert transaction_store is not None
+                    transaction_coordinator = VerifiedTransitionTransactionCoordinator(
+                        store=transaction_store,
+                        sequence=step_number - 1,
+                        trainer_step=step_number,
+                        task_id=task.task_id,
+                        trainer_sample_seed=sample_seed,
+                        execution_spec_sha256=execution_spec.sha256,
+                        campaign_manifest_sha256=(
+                            prepared.campaign_manifest_sha256
+                        ),
+                        campaign_schedule_root_sha256=(
+                            prepared.campaign_schedule_root_sha256
+                        ),
+                        group_manifest_sha256=str(
+                            prepared.group_manifest["manifest_sha256"]
+                        ),
+                        reward_receipt_sha256=str(
+                            prepared.reward_receipt["receipt_sha256"]
+                        ),
+                        trainer_step_static=build_verified_transition_step_static(
+                            samples=recurrent_samples,
+                            reward_receipt=prepared.reward_receipt,
+                            answer_channel=answer_channel,
+                        ),
+                        adapter_tensors=adapter_tensors,
+                        optimizer_tensors=lambda: dict(
+                            tree_flatten(optimizer.state)
+                        ),
+                    )
+                    active_recurrent_step["phase"] = "verified_update"
+                    mutation = apply_prepared_verified_transition_group(
+                        model,
+                        optimizer,
+                        prompt,
+                        recurrent_samples,
+                        prepared,
+                        spec=execution_spec,
+                        config=recurrent_config,
+                        transaction_coordinator=transaction_coordinator,
+                    )
+                    effective_rewards = list(mutation.structured_rewards)
+                    advantage_report = group_advantages(
+                        effective_rewards, clip=config.advantage_clip
+                    )
+                    if mutation.optimizer_updated:
+                        if mutation.replay_group is None:
+                            raise RuntimeError(
+                                "verified update omitted its source replay group"
+                            )
+                        transition_replay_groups.append(mutation.replay_group)
+                        optimizer_updates += 1
+                        step_kind = "verified_optimizer_update"
+                        envelope.reclaim(force=True)
+                    else:
+                        if mutation.replay_group is not None:
+                            raise RuntimeError(
+                                "rejected transition exposed an update replay group"
+                            )
+                        step_kind = "verified_rejected_group"
+                    verified_step_receipt = build_verified_transition_step_receipt(
                         step_number=step_number,
                         task_id=task.task_id,
                         sample_seed=sample_seed,
                         execution_spec_sha256=execution_spec.sha256,
-                        samples=[
-                            sample.receipt() for sample in recurrent_samples
-                        ],
-                        effective_rewards=effective_rewards,
-                        verifier_rewards=rewards,
+                        samples=recurrent_samples,
                         answer_channel=answer_channel,
-                        verifier_advantage_report=verifier_advantage_report,
-                        trajectory_credit=trajectory_credit_receipt,
-                        advantage_report=advantage_report,
-                        step_kind=step_kind,
-                        update=update_receipt,
-                        policy_after_sha256=recurrent_policy_sha256(
-                            model, execution_spec
-                        ),
-                        trajectory_credit_enabled=args.trajectory_credit,
-                        trajectory_shaping_weight=args.trajectory_shaping_weight,
-                        advantage_clip=config.advantage_clip,
+                        mutation=mutation,
                     )
-                    step_receipts.append(step_receipt)
+                    verified_group_provider.accept_step_receipt(
+                        verified_step_receipt
+                    )
+                    step_receipts.append(verified_step_receipt)
+                    active_transaction_coordinator = (
+                        transaction_coordinator
+                        if mutation.optimizer_updated
+                        else None
+                    )
 
                 # State mutates only after a complete optimizer update or a
                 # fully graded degenerate group. The durable step is therefore
                 # always replay-safe.
-                telemetry.observe(advantage_report)
+                if isinstance(telemetry, VerifiedTransitionTelemetry):
+                    telemetry.observe(
+                        advantage_report,
+                        optimizer_updated=step_kind == "verified_optimizer_update",
+                    )
+                else:
+                    telemetry.observe(advantage_report)
                 curriculum.observe(
                     task.domain,
                     task.depth,
-                    advantage_report["mean_reward"],
+                    (
+                        float(answer_channel["correct_fraction"])
+                        if execution_spec is not None
+                        else float(advantage_report["mean_reward"])
+                    ),
                     degenerate=advantage_report["degenerate"],
                 )
                 step = step_number
@@ -2223,6 +2646,24 @@ def main() -> int:
                     min_groups=args.min_signal_groups,
                     step_receipts=step_receipts,
                 )
+                if active_recurrent_step is not None:
+                    active_recurrent_step["phase"] = "durable_checkpoint"
+
+                # A completed mutation is durable before any held-out work.
+                # Evaluation may be expensive or externally interrupted; it
+                # must never obscure a policy update that already committed.
+                if (
+                    active_transaction_coordinator is not None
+                    or step % args.checkpoint_every == 0
+                ):
+                    checkpoint_path = checkpoint_now()
+                    if (
+                        execution_spec is not None
+                        and active_transaction_coordinator is not None
+                    ):
+                        active_transaction_coordinator.record_trainer_checkpoint(
+                            checkpoint_path
+                        )
                 if active_recurrent_step is not None:
                     active_recurrent_step["phase"] = "post_update_evaluation"
 
@@ -2273,8 +2714,6 @@ def main() -> int:
                         f"by_depth={report['accuracy_by_depth']}",
                         flush=True,
                     )
-                if step % args.checkpoint_every == 0:
-                    checkpoint_path = checkpoint_now()
                 if no_signal is not None:
                     training_allowed = False
                     halt_reason = "no_learning_signal"
@@ -2356,6 +2795,20 @@ def main() -> int:
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
 
+        if execution_spec is not None:
+            assert verified_group_provider is not None
+            transition_closure = verified_group_provider.finalize(
+                completed_groups=step,
+                halt_reason=halt_reason,
+                replay_groups=tuple(transition_replay_groups),
+            )
+            if not isinstance(
+                transition_closure, VerifiedTransitionCampaignClosure
+            ):
+                raise RuntimeError(
+                    "verified transition provider returned an invalid campaign closure"
+                )
+
         adapters = adapter_tensors()
         _publish_adapter_snapshot(out_dir / "grpo_adapters.safetensors", adapters)
         curriculum_report = curriculum.report()
@@ -2427,6 +2880,8 @@ def main() -> int:
     receipt_bytes = canonical_json_bytes(receipt)
     atomic_write_bytes(out_dir / "grpo_receipt.json", receipt_bytes, mode=0o600)
     if execution_spec is not None and halt_reason == "max_steps":
+        if transition_closure is None:
+            raise RuntimeError("verified transition campaign closure is missing")
         identity = _publish_recurrent_adapter_bundle(
             out_dir,
             adapter_id=args.adapter_id,
@@ -2437,6 +2892,8 @@ def main() -> int:
             receipt_bytes=receipt_bytes,
             execution_spec=execution_spec,
             source_roles=source_files,
+            transition_closure=transition_closure,
+            transition_groups=tuple(transition_replay_groups),
         )
         print(
             "[campaign-adapter] "

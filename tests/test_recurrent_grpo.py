@@ -32,7 +32,9 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     exact_adjoint_sampled_group_value_and_grad,
     exact_adjoint_verifier_group_value_and_grad,
     recurrent_completion_token_logprobs,
+    sample_final_recurrent_transition_pair,
     sample_recurrent_completion,
+    validate_causal_recurrent_transition_pair_receipt,
     verifier_group_objective,
 )
 from tools.recurrence_native_train_v2 import _wrap_window_layers  # noqa: E402
@@ -217,6 +219,51 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert receipt["cached_recurrence_adapter"]["active"] is True
 
 
+def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
+    model = _prepared(seed=927)
+    _set_adapter_delta(model, 0.02)
+    spec = _spec(
+        depth=3,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+
+    pair = sample_final_recurrent_transition_pair(
+        model,
+        [5, 9, 17],
+        spec=spec,
+        branch_index=1,
+        seed=117,
+        sampling=RecurrentSamplingConfig(max_tokens=3),
+    )
+    receipt = validate_causal_recurrent_transition_pair_receipt(pair.receipt())
+
+    assert pair.transition.transition_index == 2
+    assert pair.parent.depth == 2
+    assert pair.child.depth == 3
+    assert pair.parent.seed == pair.child.seed == 117
+    assert len(pair.parent.tokens) == len(pair.child.tokens) == 3
+    assert pair.parent.state_sha256 == pair.transition.parent_branch_sha256s[1]
+    assert pair.child.state_sha256 == pair.transition.child_branch_sha256s[1]
+    assert pair.child_behavior_admitted is True
+    assert receipt["fixed_token_budget"] == 3
+
+
+def test_causal_pair_rejects_branch_state_substitution():
+    pair = sample_final_recurrent_transition_pair(
+        _prepared(seed=929),
+        [5, 9, 17],
+        spec=_spec(depth=2),
+        branch_index=0,
+        seed=41,
+        sampling=RecurrentSamplingConfig(max_tokens=2),
+    )
+    attacked = pair.receipt()
+    attacked["child"]["state_sha256"] = attacked["parent"]["state_sha256"]
+
+    with pytest.raises(ValueError, match="child"):
+        validate_causal_recurrent_transition_pair_receipt(attacked)
+
+
 def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
     model = _prepared(seed=941)
 
@@ -252,6 +299,14 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
         size=2,
         max_tokens=2,
         seed=51,
+        sampling_config=RecurrentSamplingConfig(
+            max_tokens=2,
+            max_abs_logprob_drift=100.0,
+            max_mean_abs_logprob_drift=100.0,
+            clip_epsilon=1.0,
+            max_clipped_token_fraction=1.0,
+            max_old_policy_approx_kl=100.0,
+        ),
     )
 
     assert prompt == [5, 9, 17]

@@ -35,9 +35,12 @@ from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
     detached_monotonicity_penalty,
     live_path_forward,
     live_path_loss,
+    prepare_final_recurrent_transition,
+    validate_final_recurrent_transition_receipt,
 )
 from core.learning.recurrent_grpo import (  # noqa: E402
     cortex_config_from_execution_spec,
+    recurrent_policy_sha256,
 )
 
 PROMPT = [5, 9, 17, 3, 42]
@@ -169,6 +172,51 @@ def test_functional_executor_matches_live_cache_slots_and_logits():
     # KV-cache and full causal-sequence attention use different kernels, so the
     # logits are numerically close rather than bit-identical on MLX.
     assert float(mx.max(mx.abs(functional_logits - cached_logits))) < 0.01
+
+
+def test_final_transition_freezes_one_real_parent_child_edge() -> None:
+    model = _model()
+    spec = _spec(
+        recurrent_steps=3,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    policy_before = recurrent_policy_sha256(model, spec)
+
+    transition = prepare_final_recurrent_transition(model, PROMPT, spec=spec)
+    parent = live_path_forward(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec.with_depth(2),
+    )
+    child = live_path_forward(model, PROMPT, ANSWER, spec=spec)
+
+    assert transition.transition_index == 2
+    assert transition.parent_branch_sha256s != transition.child_branch_sha256s
+    assert len(transition.parent_states) == len(transition.child_states) == 2
+    for observed, expected in zip(
+        transition.parent_states, parent.branch_states, strict=True
+    ):
+        assert bool(mx.array_equal(observed, expected))
+    for observed, expected in zip(
+        transition.child_states, child.branch_states, strict=True
+    ):
+        assert bool(mx.array_equal(observed, expected))
+    assert recurrent_policy_sha256(model, spec) == policy_before
+    assert validate_final_recurrent_transition_receipt(
+        transition.receipt()
+    ) == transition.receipt()
+
+
+def test_transition_receipt_rejects_resealed_noncausal_state_substitution() -> None:
+    transition = prepare_final_recurrent_transition(
+        _model(), PROMPT, spec=_spec(recurrent_steps=2)
+    )
+    attacked = transition.receipt()
+    attacked["child_branch_sha256s"] = list(attacked["parent_branch_sha256s"])
+
+    with pytest.raises(ValueError, match="identity|digest"):
+        validate_final_recurrent_transition_receipt(attacked)
 
 
 @pytest.mark.parametrize(

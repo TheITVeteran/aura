@@ -101,6 +101,7 @@ from core.learning.verified_transition_update import (
     VerifiedTransitionUpdateError,
     VerifiedTransitionUpdateJournal,
     apply_verified_transition_group_update,
+    commit_staged_verified_transition_update,
     reconcile_interrupted_verified_transition_update,
     recover_committed_campaign_group,
     validate_verified_transition_reconciliation_receipt,
@@ -1938,6 +1939,7 @@ def test_campaign_ledger_requires_every_predeclared_group_and_external_close(
     ledger.finish_group(
         sequence=0,
         status="updated",
+        reward_receipt_sha256=_sha("campaign-group-reward"),
         group_admission_sha256=_sha("campaign-group-admission"),
         update_receipt_sha256=_sha("campaign-group-update"),
         terminal_reason="optimizer_update_committed",
@@ -1962,6 +1964,7 @@ def test_campaign_ledger_requires_every_predeclared_group_and_external_close(
     ledger.finish_group(
         sequence=1,
         status="rejected",
+        reward_receipt_sha256=_sha("campaign-group-rejected-reward"),
         group_admission_sha256=None,
         update_receipt_sha256=None,
         terminal_reason="right_to_wrong_regression",
@@ -2084,6 +2087,24 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     campaign_ledger = _open_transition_campaign(material, tmp_path / "campaign")
     spec = SimpleNamespace(sha256=material["admission"]["recurrent_execution_spec_sha256"])
 
+    class TransactionCoordinator:
+        events: list[str] = []
+
+        def stage_post_update(self, **kwargs):
+            assert kwargs["policy_before_sha256"] == policy_before
+            assert kwargs["policy_after_sha256"] == policy_after
+            self.events.append("stage")
+
+        def record_update_commit(self, _receipt):
+            assert self.events == ["stage"]
+            self.events.append("update")
+
+        def record_campaign_terminal(self, _receipt):
+            assert self.events == ["stage", "update"]
+            self.events.append("terminal")
+
+    transaction = TransactionCoordinator()
+
     receipt = apply_verified_transition_group_update(
         model,
         optimizer,
@@ -2103,6 +2124,7 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
         campaign_ledger=campaign_ledger,
         campaign_sequence=0,
         now_unix_ns=lambda: next(times),
+        transaction_coordinator=transaction,
     )
 
     assert optimizer.update_count == 1
@@ -2110,6 +2132,7 @@ def test_verified_transition_update_is_exactly_once_and_durably_receipted(
     assert receipt["optimizer_update_count"] == 1
     assert receipt["policy_before_sha256"] == policy_before
     assert receipt["policy_after_sha256"] == policy_after
+    assert transaction.events == ["stage", "update", "terminal"]
     assert validate_verified_transition_update_receipt(journal, receipt) == receipt
     admission_sha256 = material["admission"]["receipt_sha256"]
     assert (tmp_path / "updates" / f"{admission_sha256}.reserved.json").is_file()
@@ -2430,6 +2453,7 @@ def test_durable_commit_recovers_update_receipt_and_campaign_terminal(
         campaign,
         campaign_sequence=0,
         admission_sha256=admission_sha256,
+        reward_receipt_sha256=material["batch"]["receipt_sha256"],
     )
 
     assert recovered["policy_before_sha256"] == policy_before
@@ -2442,6 +2466,47 @@ def test_durable_commit_recovers_update_receipt_and_campaign_terminal(
     assert terminal["status"] == "updated"
     assert terminal["update_receipt_sha256"] == recovered["receipt_sha256"]
     assert terminal["terminal_reason"] == "optimizer_update_recovered_from_commit"
+
+
+def test_staged_post_update_policy_can_complete_missing_journal_commit(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    tmp_path: Path,
+) -> None:
+    material = _positive_admission_material(transition_outcome_episodes)
+    admission = material["admission"]["receipt_sha256"]
+    before = material["admission"]["policy_sha256"]
+    after = _sha("staged-policy-after")
+    journal = VerifiedTransitionUpdateJournal.open(tmp_path / "staged-updates")
+    journal.reserve(
+        admission_sha256=admission,
+        policy_before_sha256=before,
+        reserved_at_unix_ns=1_800_000_225_000_000_000,
+    )
+    journal.record_objective(
+        admission_sha256=admission,
+        objective_receipt=_exact_objective_receipt(),
+    )
+
+    receipt = commit_staged_verified_transition_update(
+        journal,
+        admission_sha256=admission,
+        policy_before_sha256=before,
+        policy_after_sha256=after,
+        committed_at_unix_ns=1_800_000_226_000_000_000,
+    )
+
+    assert receipt["policy_before_sha256"] == before
+    assert receipt["policy_after_sha256"] == after
+    assert validate_verified_transition_update_receipt(journal, receipt) == receipt
+    assert (
+        commit_staged_verified_transition_update(
+            journal,
+            admission_sha256=admission,
+            policy_before_sha256=before,
+            policy_after_sha256=after,
+        )
+        == receipt
+    )
 
 
 @pytest.mark.parametrize(

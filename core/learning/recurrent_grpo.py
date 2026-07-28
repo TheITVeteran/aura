@@ -30,11 +30,16 @@ from core.brain.llm.latent_cortex.recurrence_adapter import (
 from core.learning.grpo import group_advantages
 from core.learning.recurrence_native_objective_v2 import (
     LivePathForward,
+    PreparedFinalRecurrentTransition,
     live_path_forward,
+    prepare_final_recurrent_transition,
+    validate_final_recurrent_transition_receipt,
 )
 
 RECURRENT_GRPO_SCHEMA = "aura.recurrent_grpo.v1"
 RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v3"
+CAUSAL_RECURRENT_DECODE_SCHEMA = "aura.causal_recurrent_decode.v1"
+CAUSAL_RECURRENT_PAIR_SCHEMA = "aura.causal_recurrent_transition_pair.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +192,73 @@ class RecurrentPolicySample:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenRecurrentStateDecode:
+    tokens: tuple[int, ...]
+    behavior_logprobs: tuple[float, ...]
+    branch_index: int
+    depth: int
+    state_sha256: str
+    ensemble_sha256: str
+    seed: int
+    token_budget: int
+    receipt_sha256: str
+
+    def receipt(self) -> dict[str, Any]:
+        return {
+            "schema": CAUSAL_RECURRENT_DECODE_SCHEMA,
+            "branch_index": self.branch_index,
+            "depth": self.depth,
+            "state_sha256": self.state_sha256,
+            "ensemble_sha256": self.ensemble_sha256,
+            "seed": self.seed,
+            "token_budget": self.token_budget,
+            "token_count": len(self.tokens),
+            "tokens": list(self.tokens),
+            "tokens_sha256": _tokens_sha256(self.tokens),
+            "behavior_logprobs": list(self.behavior_logprobs),
+            "behavior_logprobs_sha256": _float_sequence_sha256(
+                self.behavior_logprobs
+            ),
+            "termination": "fixed_token_budget",
+            "receipt_sha256": self.receipt_sha256,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CausalRecurrentTransitionPair:
+    transition: PreparedFinalRecurrentTransition
+    parent: FrozenRecurrentStateDecode
+    child: FrozenRecurrentStateDecode
+    child_differentiable_logprobs: tuple[float, ...]
+    max_abs_child_logprob_drift: float
+    mean_abs_child_logprob_drift: float
+    child_behavior_admitted: bool
+    policy_sha256: str
+    receipt_sha256: str
+
+    def receipt(self) -> dict[str, Any]:
+        return {
+            "schema": CAUSAL_RECURRENT_PAIR_SCHEMA,
+            "policy_sha256": self.policy_sha256,
+            "transition": self.transition.receipt(),
+            "parent": self.parent.receipt(),
+            "child": self.child.receipt(),
+            "common_random_seed": self.parent.seed,
+            "fixed_token_budget": self.parent.token_budget,
+            "child_differentiable_logprobs": list(
+                self.child_differentiable_logprobs
+            ),
+            "child_differentiable_logprobs_sha256": _float_sequence_sha256(
+                self.child_differentiable_logprobs
+            ),
+            "max_abs_child_logprob_drift": self.max_abs_child_logprob_drift,
+            "mean_abs_child_logprob_drift": self.mean_abs_child_logprob_drift,
+            "child_behavior_admitted": self.child_behavior_admitted,
+            "receipt_sha256": self.receipt_sha256,
+        }
+
+
 class RecurrentSamplingAdmissionError(RuntimeError):
     """Raised when cached behavior is outside the bounded PPO contract."""
 
@@ -232,6 +304,34 @@ def _tokens_sha256(tokens: Sequence[int]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _float_sequence_sha256(values: Sequence[float]) -> str:
+    encoded = json.dumps(
+        [float(value) for value in values],
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _seal_receipt(body: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        dict(body),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
     """Hash the exact trainable tensor tree plus its recurrent graph."""
 
@@ -264,6 +364,350 @@ def recurrent_policy_sha256(model: Any, spec: RLCExecutionSpec) -> str:
             digest.update(len(part).to_bytes(8, "big"))
             digest.update(part)
     return digest.hexdigest()
+
+
+def _decode_frozen_recurrent_state(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    transition: PreparedFinalRecurrentTransition,
+    *,
+    state: Any,
+    state_sha256: str,
+    ensemble_sha256: str,
+    branch_index: int,
+    depth: int,
+    seed: int,
+    token_budget: int,
+) -> FrozenRecurrentStateDecode:
+    """Decode one frozen state with a live KV cache and fixed random stream."""
+
+    import mlx.core as mx
+    import numpy as np
+    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.cache import KVCache
+
+    from core.brain.llm.latent_cortex.recurrence import WindowRunner
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+
+    if (
+        type(branch_index) is not int
+        or not 0 <= branch_index < len(transition.seeds)
+    ):
+        raise ValueError("branch_index is outside the frozen transition")
+    if type(seed) is not int or not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("seed must be inside [0, 2^32-1]")
+    if type(token_budget) is not int or not 1 <= token_budget <= 8192:
+        raise ValueError("token_budget must be inside [1, 8192]")
+    if type(depth) is not int or depth < 0:
+        raise ValueError("decode depth must be non-negative")
+
+    inner = model.model
+    layers = tuple(inner.layers)
+    cache = [KVCache() for _ in layers]
+    prompt = tuple(prompt_tokens)
+    hidden = inner.embed_tokens(mx.array([list(prompt)]))
+    mask = create_attention_mask(hidden, cache)
+    for index, layer in enumerate(layers):
+        hidden = layer(hidden, mask, cache[index])
+
+    budget = ComputeBudget(
+        max_layer_apps=max(
+            1,
+            (len(prompt) + 3 * int(transition.seeds[branch_index].shape[1]) + token_budget)
+            * len(layers),
+        ),
+        wall_clock_s=600.0,
+    )
+    runner = WindowRunner(inner, budget)
+    seed_slots = transition.seeds[branch_index]
+    runner.run(
+        seed_slots,
+        cache,
+        0,
+        transition.prelude_end,
+        persist=True,
+    )
+    persisted = runner.run(
+        state,
+        cache,
+        transition.prelude_end,
+        transition.coda_start,
+        persist=True,
+    )
+    output = runner.run(
+        persisted,
+        cache,
+        transition.coda_start,
+        len(layers),
+        persist=True,
+    )
+
+    def logits_for(value: Any) -> Any:
+        normalized = inner.norm(value)
+        head = getattr(model, "lm_head", None)
+        if head is not None and not isinstance(head, type(inner.embed_tokens)):
+            return head(normalized)
+        return inner.embed_tokens.as_linear(normalized)
+
+    logits = logits_for(output)[0, -1]
+    tokens: list[int] = []
+    logprobs: list[float] = []
+    for draw in range(token_budget):
+        key = mx.random.key(
+            (seed + draw * 0x9E3779B1) & 0x7FFFFFFF
+        )
+        token = int(mx.random.categorical(logits, key=key))
+        logprob = logits[token].astype(mx.float32) - mx.logsumexp(
+            logits.astype(mx.float32)
+        )
+        mx.eval(logprob)
+        tokens.append(token)
+        logprobs.append(float(logprob))
+        if draw + 1 == token_budget:
+            break
+        hidden = inner.embed_tokens(mx.array([[token]]))
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(layers):
+            hidden = layer(hidden, mask, cache[index])
+        logits = logits_for(hidden)[0, -1]
+
+    # The durable state digest is recomputed at the decode boundary.  This
+    # catches caller substitution between transition preparation and decode.
+    try:
+        array = np.asarray(state)
+    except RuntimeError:
+        array = np.asarray(state.astype(mx.float32))
+    digest = hashlib.sha256()
+    for part in (
+        str(state.dtype).encode("ascii"),
+        json.dumps(list(state.shape), separators=(",", ":")).encode("ascii"),
+        array.tobytes(order="C"),
+    ):
+        digest.update(len(part).to_bytes(8, "big"))
+        digest.update(part)
+    if digest.hexdigest() != state_sha256:
+        raise RuntimeError("frozen recurrent state changed before decode")
+    body = {
+        "schema": CAUSAL_RECURRENT_DECODE_SCHEMA,
+        "branch_index": branch_index,
+        "depth": depth,
+        "state_sha256": state_sha256,
+        "ensemble_sha256": ensemble_sha256,
+        "seed": seed,
+        "token_budget": token_budget,
+        "token_count": len(tokens),
+        "tokens": tokens,
+        "tokens_sha256": _tokens_sha256(tokens),
+        "behavior_logprobs": logprobs,
+        "behavior_logprobs_sha256": _float_sequence_sha256(logprobs),
+        "termination": "fixed_token_budget",
+    }
+    return FrozenRecurrentStateDecode(
+        tokens=tuple(tokens),
+        behavior_logprobs=tuple(logprobs),
+        branch_index=branch_index,
+        depth=depth,
+        state_sha256=state_sha256,
+        ensemble_sha256=ensemble_sha256,
+        seed=seed,
+        token_budget=token_budget,
+        receipt_sha256=_seal_receipt(body),
+    )
+
+
+def sample_final_recurrent_transition_pair(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    seed: int,
+    sampling: RecurrentSamplingConfig | None = None,
+    require_admission: bool = True,
+) -> CausalRecurrentTransitionPair:
+    """Decode the two ends of one real recurrent edge under matched noise."""
+
+    import mlx.core as mx
+
+    resolved = sampling or RecurrentSamplingConfig()
+    policy_sha256 = recurrent_policy_sha256(model, spec)
+    transition = prepare_final_recurrent_transition(
+        model,
+        prompt_tokens,
+        spec=spec,
+    )
+    parent = _decode_frozen_recurrent_state(
+        model,
+        prompt_tokens,
+        transition,
+        state=transition.parent_states[branch_index],
+        state_sha256=transition.parent_branch_sha256s[branch_index],
+        ensemble_sha256=transition.parent_ensemble_sha256,
+        branch_index=branch_index,
+        depth=transition.transition_index,
+        seed=seed,
+        token_budget=resolved.max_tokens,
+    )
+    child = _decode_frozen_recurrent_state(
+        model,
+        prompt_tokens,
+        transition,
+        state=transition.child_states[branch_index],
+        state_sha256=transition.child_branch_sha256s[branch_index],
+        ensemble_sha256=transition.child_ensemble_sha256,
+        branch_index=branch_index,
+        depth=transition.transition_index + 1,
+        seed=seed,
+        token_budget=resolved.max_tokens,
+    )
+    differentiable = recurrent_completion_token_logprobs(
+        model,
+        prompt_tokens,
+        child.tokens,
+        spec=spec,
+        branch_index=branch_index,
+    )
+    mx.eval(differentiable)
+    differentiable_values = tuple(float(value) for value in differentiable)
+    differences = tuple(
+        abs(behavior - target)
+        for behavior, target in zip(
+            child.behavior_logprobs,
+            differentiable_values,
+            strict=True,
+        )
+    )
+    maximum = max(differences)
+    mean = sum(differences) / len(differences)
+    admitted = (
+        maximum <= float(resolved.max_abs_logprob_drift)
+        and mean <= float(resolved.max_mean_abs_logprob_drift)
+    )
+    if recurrent_policy_sha256(model, spec) != policy_sha256:
+        raise RuntimeError("recurrent policy changed during causal pair sampling")
+    body = {
+        "schema": CAUSAL_RECURRENT_PAIR_SCHEMA,
+        "policy_sha256": policy_sha256,
+        "transition": transition.receipt(),
+        "parent": parent.receipt(),
+        "child": child.receipt(),
+        "common_random_seed": seed,
+        "fixed_token_budget": resolved.max_tokens,
+        "child_differentiable_logprobs": list(differentiable_values),
+        "child_differentiable_logprobs_sha256": _float_sequence_sha256(
+            differentiable_values
+        ),
+        "max_abs_child_logprob_drift": maximum,
+        "mean_abs_child_logprob_drift": mean,
+        "child_behavior_admitted": admitted,
+    }
+    result = CausalRecurrentTransitionPair(
+        transition=transition,
+        parent=parent,
+        child=child,
+        child_differentiable_logprobs=differentiable_values,
+        max_abs_child_logprob_drift=maximum,
+        mean_abs_child_logprob_drift=mean,
+        child_behavior_admitted=admitted,
+        policy_sha256=policy_sha256,
+        receipt_sha256=_seal_receipt(body),
+    )
+    if require_admission and not admitted:
+        raise RuntimeError(
+            "causal recurrent child decode failed differentiable-policy admission: "
+            f"max={maximum:.6f} mean={mean:.6f}"
+        )
+    return result
+
+
+def validate_causal_recurrent_transition_pair_receipt(
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    required = {
+        "schema",
+        "policy_sha256",
+        "transition",
+        "parent",
+        "child",
+        "common_random_seed",
+        "fixed_token_budget",
+        "child_differentiable_logprobs",
+        "child_differentiable_logprobs_sha256",
+        "max_abs_child_logprob_drift",
+        "mean_abs_child_logprob_drift",
+        "child_behavior_admitted",
+        "receipt_sha256",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        raise ValueError("causal_recurrent_pair_schema_invalid")
+    normalized = dict(receipt)
+    if normalized.get("schema") != CAUSAL_RECURRENT_PAIR_SCHEMA:
+        raise ValueError("causal_recurrent_pair_version_invalid")
+    transition = validate_final_recurrent_transition_receipt(
+        normalized.get("transition")
+    )
+    parent = normalized.get("parent")
+    child = normalized.get("child")
+    if not isinstance(parent, Mapping) or not isinstance(child, Mapping):
+        raise ValueError("causal_recurrent_pair_decode_missing")
+    for decode, side, expected_depth, expected_state, expected_ensemble in (
+        (
+            parent,
+            "parent",
+            transition["parent_depth"],
+            transition["parent_branch_sha256s"],
+            transition["parent_ensemble_sha256"],
+        ),
+        (
+            child,
+            "child",
+            transition["child_depth"],
+            transition["child_branch_sha256s"],
+            transition["child_ensemble_sha256"],
+        ),
+    ):
+        branch_index = decode.get("branch_index")
+        unsigned_decode = dict(decode)
+        observed_decode = unsigned_decode.pop("receipt_sha256", None)
+        if (
+            decode.get("schema") != CAUSAL_RECURRENT_DECODE_SCHEMA
+            or type(branch_index) is not int
+            or not 0 <= branch_index < transition["branch_count"]
+            or decode.get("depth") != expected_depth
+            or decode.get("state_sha256") != expected_state[branch_index]
+            or decode.get("ensemble_sha256") != expected_ensemble
+            or decode.get("seed") != normalized.get("common_random_seed")
+            or decode.get("token_budget") != normalized.get("fixed_token_budget")
+            or decode.get("token_count") != len(decode.get("tokens", []))
+            or decode.get("token_count") != decode.get("token_budget")
+            or decode.get("tokens_sha256")
+            != _tokens_sha256(decode.get("tokens", []))
+            or decode.get("behavior_logprobs_sha256")
+            != _float_sequence_sha256(decode.get("behavior_logprobs", []))
+            or decode.get("termination") != "fixed_token_budget"
+            or _seal_receipt(unsigned_decode) != observed_decode
+        ):
+            raise ValueError(f"causal_recurrent_pair_{side}_invalid")
+    values = normalized.get("child_differentiable_logprobs")
+    unsigned = dict(normalized)
+    observed = unsigned.pop("receipt_sha256", None)
+    if (
+        not _valid_sha256(normalized.get("policy_sha256"))
+        or not isinstance(values, list)
+        or len(values) != child.get("token_count")
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            for value in values
+        )
+        or normalized.get("child_differentiable_logprobs_sha256")
+        != _float_sequence_sha256(values)
+        or type(normalized.get("child_behavior_admitted")) is not bool
+        or _seal_receipt(unsigned) != observed
+    ):
+        raise ValueError("causal_recurrent_pair_identity_invalid")
+    return normalized
 
 
 def cortex_config_from_execution_spec(
@@ -1143,6 +1587,10 @@ def exact_adjoint_verified_transition_group_value_and_grad(
 
 
 __all__ = [
+    "CAUSAL_RECURRENT_DECODE_SCHEMA",
+    "CAUSAL_RECURRENT_PAIR_SCHEMA",
+    "CausalRecurrentTransitionPair",
+    "FrozenRecurrentStateDecode",
     "RECURRENT_GRPO_SCHEMA",
     "RECURRENT_SAMPLING_SCHEMA",
     "ExactAdjointRecurrentGRPOResult",
@@ -1162,5 +1610,7 @@ __all__ = [
     "recurrent_policy_sha256",
     "recurrent_completion_token_logprobs",
     "sample_recurrent_completion",
+    "sample_final_recurrent_transition_pair",
+    "validate_causal_recurrent_transition_pair_receipt",
     "verifier_group_objective",
 ]

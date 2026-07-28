@@ -131,6 +131,46 @@ def test_checkpoint_distinguishes_degenerate_step_from_optimizer_update(tmp_path
     assert loaded.state["last_step_kind"] == "degenerate_group"
 
 
+@pytest.mark.parametrize(
+    ("step_kind", "optimizer_updates"),
+    (("verified_optimizer_update", 1), ("verified_rejected_group", 0)),
+)
+def test_verified_recurrent_step_kinds_are_checkpointable(
+    tmp_path, step_kind, optimizer_updates
+):
+    state = _state(step=1)
+    state["last_step_kind"] = step_kind
+    state["optimizer_updates"] = optimizer_updates
+
+    save_grpo_checkpoint(
+        tmp_path,
+        adapter_tensors={"layer.lora_a": mx.array([1.0])},
+        optimizer_tensors={"state.mean": mx.array([0.0])},
+        state=state,
+    )
+    loaded = load_grpo_checkpoint(
+        tmp_path,
+        expected_protocol_sha256=PROTOCOL,
+        expected_dataset_sha256=DATASET,
+    )
+
+    assert loaded.state["last_step_kind"] == step_kind
+
+
+def test_verified_optimizer_step_without_update_is_rejected(tmp_path):
+    state = _state(step=1)
+    state["last_step_kind"] = "verified_optimizer_update"
+    state["optimizer_updates"] = 0
+
+    with pytest.raises(GRPOCheckpointError, match="no optimizer update"):
+        save_grpo_checkpoint(
+            tmp_path,
+            adapter_tensors={"layer.lora_a": mx.array([1.0])},
+            optimizer_tensors={"state.mean": mx.array([0.0])},
+            state=state,
+        )
+
+
 def test_checkpoint_refuses_more_optimizer_updates_than_steps(tmp_path):
     state = _state(step=2)
     state["optimizer_updates"] = 3

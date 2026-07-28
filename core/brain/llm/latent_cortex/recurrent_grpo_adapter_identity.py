@@ -33,13 +33,15 @@ from core.learning.recurrent_grpo_artifact_schema import (
 from core.learning.recurrent_grpo_artifact_schema import (
     TRAINING_RECEIPT_SCHEMA as SHARED_TRAINING_RECEIPT_SCHEMA,
 )
+from core.learning.verified_transition_trainer import (
+    VERIFIED_TRANSITION_STEP_SCHEMA,
+    validate_verified_transition_step_receipt,
+)
 
 MANIFEST_FILE = "recurrence_adapter_manifest.json"
 MANIFEST_SCHEMA = "aura.recurrent_grpo_adapter_manifest.v1"
 IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_adapter_identity_receipt.v1"
-VERIFIED_IDENTITY_RECEIPT_SCHEMA = (
-    "aura.recurrent_grpo_verified_adapter_identity_receipt.v1"
-)
+VERIFIED_IDENTITY_RECEIPT_SCHEMA = "aura.recurrent_grpo_verified_adapter_identity_receipt.v1"
 COMPLETION_SCHEMA = "aura.recurrent_grpo_training_completion.v1"
 TRAINING_PROTOCOL_SCHEMA = PROTOCOL_SCHEMA
 TRAINING_RECEIPT_SCHEMA = SHARED_TRAINING_RECEIPT_SCHEMA
@@ -71,6 +73,14 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "execution_spec",
         "latent_engine",
         "recurrence",
+        "verified_trainer",
+        "transition_campaign",
+        "transition_episode",
+        "transition_reward",
+        "transition_admission",
+        "transition_update",
+        "transition_training_evidence",
+        "campaign_trust",
     }
 )
 MAX_JSON_BYTES = 256 * 1024 * 1024
@@ -78,9 +88,7 @@ MAX_ARTIFACT_BYTES = 1 << 50
 MAX_TENSORS = 1_000_000
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
-_PROJECTION_RE = re.compile(
-    r"model\.layers\.(?:0|[1-9][0-9]*)(?:\.[A-Za-z][A-Za-z0-9_]*)+\Z"
-)
+_PROJECTION_RE = re.compile(r"model\.layers\.(?:0|[1-9][0-9]*)(?:\.[A-Za-z][A-Za-z0-9_]*)+\Z")
 
 
 class RecurrentGRPOAdapterIdentityError(ValueError):
@@ -126,7 +134,10 @@ def _safetensors_tensors(
     metadata = header.pop("__metadata__", None)
     if metadata is not None and (
         not isinstance(metadata, Mapping)
-        or any(not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items())
+        or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in metadata.items()
+        )
     ):
         _fail("adapter_safetensors_metadata_invalid")
     if not header:
@@ -330,10 +341,7 @@ def declared_bindings(manifest: Mapping[str, Any]) -> list[tuple[str, dict[str, 
 
     if manifest.get("schema") != MANIFEST_SCHEMA:
         _fail("manifest_schema_unsupported")
-    bindings = [
-        (role, artifact_binding(manifest.get(role), role=role))
-        for role in BINDING_ROLES
-    ]
+    bindings = [(role, artifact_binding(manifest.get(role), role=role)) for role in BINDING_ROLES]
     sources = manifest.get("sources")
     if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
         _fail("sources_schema_invalid")
@@ -471,36 +479,56 @@ def _validate_step_receipts(
     previous_policy_after: str | None = None
     final_policy_after: str | None = None
     for index, raw_step in enumerate(value, start=1):
-        step = _exact(
-            raw_step,
-            set(STEP_RECEIPT_KEYS),
-            role="step_receipt",
+        verified_transition = (
+            isinstance(raw_step, Mapping)
+            and raw_step.get("schema") == VERIFIED_TRANSITION_STEP_SCHEMA
         )
+        if verified_transition:
+            try:
+                step = validate_verified_transition_step_receipt(
+                    raw_step,
+                    group_size=group_size,
+                    execution_spec_sha256=execution_spec_sha256,
+                )
+            except ValueError as exc:
+                _fail(str(exc))
+            if trajectory_credit_enabled:
+                _fail("verified_transition_trajectory_credit_forbidden")
+        else:
+            step = _exact(
+                raw_step,
+                set(STEP_RECEIPT_KEYS),
+                role="step_receipt",
+            )
         if (
             step.get("step") != index
             or not isinstance(step.get("task_id"), str)
             or not step["task_id"]
             or type(step.get("sample_seed")) is not int
             or step.get("execution_spec_sha256") != execution_spec_sha256
-            or step.get("step_kind") not in {"optimizer_update", "degenerate_group"}
+            or step.get("step_kind")
+            not in {
+                "optimizer_update",
+                "degenerate_group",
+                "verified_optimizer_update",
+                "verified_rejected_group",
+            }
         ):
             _fail("step_receipt_identity_invalid")
         samples = step.get("samples")
-        if (
-            not isinstance(samples, list)
-            or len(samples) != group_size
-        ):
+        if not isinstance(samples, list) or len(samples) != group_size:
             _fail("step_receipt_group_invalid")
-        try:
-            validate_step_reward_channels(
-                step,
-                group_size=group_size,
-                trajectory_credit_enabled=trajectory_credit_enabled,
-                shaping_weight=trajectory_shaping_weight,
-                advantage_clip=advantage_clip,
-            )
-        except RecurrentGRPOArtifactSchemaError as exc:
-            _fail(exc.code)
+        if not verified_transition:
+            try:
+                validate_step_reward_channels(
+                    step,
+                    group_size=group_size,
+                    trajectory_credit_enabled=trajectory_credit_enabled,
+                    shaping_weight=trajectory_shaping_weight,
+                    advantage_clip=advantage_clip,
+                )
+            except RecurrentGRPOArtifactSchemaError as exc:
+                _fail(exc.code)
         policy_at_sampling: str | None = None
         for sample in samples:
             if not isinstance(sample, Mapping):
@@ -514,9 +542,7 @@ def _validate_step_receipts(
                 measured_runtime_safe = runtime_integrity_safe(
                     sample.get("cached_runtime_integrity"),
                     require_worker=False,
-                    expected_input_tokens_sha256=str(
-                        sample.get("prompt_tokens_sha256") or ""
-                    ),
+                    expected_input_tokens_sha256=str(sample.get("prompt_tokens_sha256") or ""),
                 )
             except ImportError:
                 measured_runtime_safe = False
@@ -527,10 +553,8 @@ def _validate_step_receipts(
                 or sample.get("behavior_admitted") is not True
                 or sample.get("execution_spec_sha256") != execution_spec_sha256
                 or measured_runtime_safe is not True
-                or sample.get("cached_nonparametric_memory_status")
-                != "disabled_by_policy"
-                or activation.get("schema")
-                != "aura.recurrence_adapter_activation.v1"
+                or sample.get("cached_nonparametric_memory_status") != "disabled_by_policy"
+                or activation.get("schema") != "aura.recurrence_adapter_activation.v1"
                 or activation.get("active") is not True
                 or activation.get("scope") != "latent_slots_only"
                 or type(activation.get("calls")) is not int
@@ -546,6 +570,8 @@ def _validate_step_receipts(
                 policy_at_sampling = sample_policy
             elif sample_policy != policy_at_sampling:
                 _fail("sample_policy_group_mismatch")
+        if verified_transition and policy_at_sampling != step.get("policy_before_sha256"):
+            _fail("verified_step_sampling_policy_mismatch")
         if previous_policy_after is not None and policy_at_sampling != previous_policy_after:
             _fail("step_policy_chain_mismatch")
         policy_after = _sha(step.get("policy_after_sha256"), role="policy_after")
@@ -557,6 +583,14 @@ def _validate_step_receipts(
                 or update.get("has_gradient") is not True
             ):
                 _fail("optimizer_update_receipt_invalid")
+            update_count += 1
+        elif step["step_kind"] == "verified_optimizer_update":
+            if (
+                not isinstance(update, Mapping)
+                or update.get("schema") != "aura.verified_transition.update_receipt.v1"
+                or update.get("optimizer_update_count") != 1
+            ):
+                _fail("verified_optimizer_update_receipt_invalid")
             update_count += 1
         elif update is not None:
             _fail("degenerate_step_has_update")
@@ -585,9 +619,7 @@ def validate_recurrent_grpo_adapter_identity(
     """Validate one complete recurrent-GRPO training bundle model-free."""
 
     manifest_bytes = (
-        manifest
-        if isinstance(manifest, bytes)
-        else canonical_json_bytes(dict(manifest)) + b"\n"
+        manifest if isinstance(manifest, bytes) else canonical_json_bytes(dict(manifest)) + b"\n"
     )
     parsed = strict_json_loads(manifest_bytes, role="manifest")
     parsed = dict(
@@ -646,8 +678,7 @@ def validate_recurrent_grpo_adapter_identity(
     binding_items = declared_bindings(parsed)
     bindings = {role: binding for role, binding in binding_items}
     payloads = {
-        role: _verify_artifact(binding, artifacts, role=role)
-        for role, binding in binding_items
+        role: _verify_artifact(binding, artifacts, role=role) for role, binding in binding_items
     }
     if payloads["adapter"] != payloads["adapter_alias"]:
         _fail("adapter_alias_mismatch")
@@ -735,16 +766,12 @@ def validate_recurrent_grpo_adapter_identity(
         or not domains
         or not isinstance(depths, list)
         or not depths
-        or len(train_tasks)
-        != len(domains) * len(depths) * training.get("train_per_cell", 0)
-        or len(holdout_tasks)
-        != len(domains) * len(depths) * training.get("holdout_per_cell", 0)
+        or len(train_tasks) != len(domains) * len(depths) * training.get("train_per_cell", 0)
+        or len(holdout_tasks) != len(domains) * len(depths) * training.get("holdout_per_cell", 0)
     ):
         _fail("dataset_protocol_mismatch")
     train_ids = {task.get("task_id") for task in train_tasks if isinstance(task, Mapping)}
-    holdout_ids = {
-        task.get("task_id") for task in holdout_tasks if isinstance(task, Mapping)
-    }
+    holdout_ids = {task.get("task_id") for task in holdout_tasks if isinstance(task, Mapping)}
     if (
         len(train_ids) != len(train_tasks)
         or len(holdout_ids) != len(holdout_tasks)
@@ -798,9 +825,7 @@ def validate_recurrent_grpo_adapter_identity(
         },
         role="receipt_config",
     )
-    group_size = _integer(
-        training.get("group_size"), role="group_size", minimum=2, maximum=4096
-    )
+    group_size = _integer(training.get("group_size"), role="group_size", minimum=2, maximum=4096)
     advantage_clip = config.get("advantage_clip")
     kl_coefficient = config.get("kl_coefficient")
     max_degenerate_fraction = config.get("max_degenerate_fraction")
@@ -821,7 +846,9 @@ def validate_recurrent_grpo_adapter_identity(
         or not 0.0 <= float(max_degenerate_fraction) <= 1.0
     ):
         _fail("receipt_config_cross_binding_mismatch")
-    model = _exact(receipt.get("model"), {"path", "base_checkpoint", "behavior"}, role="receipt_model")
+    model = _exact(
+        receipt.get("model"), {"path", "base_checkpoint", "behavior"}, role="receipt_model"
+    )
     termination = _exact(
         receipt.get("termination"),
         {"reason", "completed_budget", "signal"},
@@ -839,7 +866,9 @@ def validate_recurrent_grpo_adapter_identity(
         role="verdict",
     )
     steps = _integer(receipt.get("steps"), role="training_steps", minimum=1, maximum=100_000_000)
-    max_steps = _integer(training.get("max_steps"), role="training_max_steps", minimum=1, maximum=100_000_000)
+    max_steps = _integer(
+        training.get("max_steps"), role="training_max_steps", minimum=1, maximum=100_000_000
+    )
     optimizer_updates = _integer(
         receipt.get("optimizer_updates"),
         role="optimizer_updates",
@@ -954,9 +983,7 @@ def validate_recurrent_grpo_adapter_identity(
     )
     if supplied_tensor_metadata != frozen_tensor_metadata:
         _fail("adapter_tensor_metadata_source_mismatch")
-    tensors = _validate_tensors(
-        parsed["tensors"], frozen_tensor_metadata, lora=lora
-    )
+    tensors = _validate_tensors(parsed["tensors"], frozen_tensor_metadata, lora=lora)
     frozen_policy_sha256 = recurrent_policy_sha256_from_safetensors(
         payloads["adapter"],
         execution_spec_sha256=spec.sha256,
@@ -1074,10 +1101,11 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         validate_verified_transition_training_evidence,
     )
 
+    groups = tuple(transition_groups)
     evidence = validate_verified_transition_training_evidence(
         transition_campaign_ledger,
         policy=transition_policy,
-        groups=tuple(transition_groups),
+        groups=groups,
     )
     if (
         evidence.get("source_artifacts_replayed") is not True
@@ -1086,6 +1114,114 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         or identity.get("final_policy_sha256") != evidence.get("final_policy_sha256")
     ):
         _fail("verified_transition_identity_cross_binding_mismatch")
+
+    parsed_manifest = (
+        strict_json_loads(manifest, role="verified_identity_manifest")
+        if isinstance(manifest, bytes)
+        else dict(manifest)
+    )
+    bindings = dict(declared_bindings(parsed_manifest))
+    training_receipt = strict_json_loads(
+        _verify_artifact(
+            bindings["training_receipt"],
+            artifacts,
+            role="verified_identity_training_receipt",
+        ),
+        role="verified_identity_training_receipt",
+    )
+    raw_steps = training_receipt.get("step_receipts")
+    if not isinstance(raw_steps, list) or not raw_steps:
+        _fail("verified_transition_step_chain_missing")
+    campaign = transition_campaign_ledger.validate_closed(policy=transition_policy)
+    close_payload = campaign.get("close_payload")
+    if (
+        not isinstance(close_payload, Mapping)
+        or close_payload.get("group_count") != len(raw_steps)
+        or close_payload.get("group_count") != identity.get("steps")
+    ):
+        _fail("verified_transition_campaign_step_count_mismatch")
+    replay_by_sequence = {group.sequence: group for group in groups}
+    if len(replay_by_sequence) != len(groups):
+        _fail("verified_transition_replay_sequence_duplicated")
+    updated_sequences: list[int] = []
+    rejected_count = 0
+    previous_policy: str | None = None
+    chain_rows: list[dict[str, Any]] = []
+    group_size = int(training_receipt["config"]["group_size"])
+    execution_spec_sha256 = str(training_receipt["execution_spec_sha256"])
+    for sequence, raw_step in enumerate(raw_steps):
+        if (
+            not isinstance(raw_step, Mapping)
+            or raw_step.get("schema") != VERIFIED_TRANSITION_STEP_SCHEMA
+        ):
+            _fail("verified_transition_identity_legacy_step_forbidden")
+        try:
+            step = validate_verified_transition_step_receipt(
+                raw_step,
+                group_size=group_size,
+                execution_spec_sha256=execution_spec_sha256,
+            )
+        except ValueError as exc:
+            _fail(str(exc))
+        start, terminal = transition_campaign_ledger.group_records(
+            sequence=sequence,
+            policy=transition_policy,
+        )
+        start_manifest = start.get("group_manifest")
+        if (
+            step.get("campaign_sequence") != sequence
+            or step.get("step") != sequence + 1
+            or not isinstance(start_manifest, Mapping)
+            or step.get("task_id") != start_manifest.get("task_id")
+            or step.get("group_manifest_sha256") != start_manifest.get("manifest_sha256")
+            or step.get("terminal") != terminal
+            or step.get("reward_receipt_sha256") != terminal.get("reward_receipt_sha256")
+            or (previous_policy is not None and step.get("policy_before_sha256") != previous_policy)
+        ):
+            _fail("verified_transition_ordered_step_binding_mismatch")
+        previous_policy = str(step["policy_after_sha256"])
+        if step["step_kind"] == "verified_optimizer_update":
+            replay = replay_by_sequence.get(sequence)
+            if replay is None:
+                _fail("verified_transition_updated_replay_missing")
+            if (
+                replay.reward_receipt.get("receipt_sha256") != step.get("reward_receipt_sha256")
+                or replay.group_manifest.get("manifest_sha256") != step.get("group_manifest_sha256")
+                or replay.group_admission_receipt.get("receipt_sha256")
+                != step.get("group_admission_sha256")
+                or replay.update_receipt.get("receipt_sha256") != step.get("update_receipt_sha256")
+                or dict(replay.update_receipt) != step.get("update")
+                or [sample.receipt() for sample in replay.samples] != step.get("samples")
+            ):
+                _fail("verified_transition_updated_source_binding_mismatch")
+            updated_sequences.append(sequence)
+        elif step["step_kind"] == "verified_rejected_group":
+            if sequence in replay_by_sequence or terminal.get("status") != "rejected":
+                _fail("verified_transition_rejected_source_binding_mismatch")
+            rejected_count += 1
+        else:
+            _fail("verified_transition_identity_step_kind_invalid")
+        chain_rows.append(
+            {
+                "sequence": sequence,
+                "step_receipt_sha256": step["receipt_sha256"],
+                "group_start_sha256": start["receipt_sha256"],
+                "group_terminal_sha256": terminal["receipt_sha256"],
+                "reward_receipt_sha256": step["reward_receipt_sha256"],
+                "group_admission_sha256": step["group_admission_sha256"],
+                "update_receipt_sha256": step["update_receipt_sha256"],
+                "policy_before_sha256": step["policy_before_sha256"],
+                "policy_after_sha256": step["policy_after_sha256"],
+            }
+        )
+    if (
+        updated_sequences != evidence.get("updated_sequences")
+        or set(replay_by_sequence) != set(updated_sequences)
+        or chain_rows[0]["policy_before_sha256"] != evidence.get("initial_policy_sha256")
+        or previous_policy != identity.get("final_policy_sha256")
+    ):
+        _fail("verified_transition_ordered_campaign_mismatch")
+    verified_step_chain_sha256 = sha256_bytes(canonical_json_bytes(chain_rows))
     base_identity_sha256 = sha256_bytes(canonical_json_bytes(identity))
     evidence_sha256 = _sha(evidence.get("receipt_sha256"), role="verified_evidence")
     material = {
@@ -1095,6 +1231,10 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         "base_identity_sha256": base_identity_sha256,
         "verified_transition_evidence": evidence,
         "verified_transition_evidence_sha256": evidence_sha256,
+        "verified_step_chain": chain_rows,
+        "verified_step_chain_sha256": verified_step_chain_sha256,
+        "verified_group_count": len(chain_rows),
+        "rejected_group_count": rejected_count,
         "adapter_sha256": identity["adapter_sha256"],
         "execution_spec_sha256": identity["execution_spec_sha256"],
         "optimizer_updates": evidence["optimizer_update_count"],
@@ -1125,6 +1265,10 @@ def validate_verified_recurrent_grpo_adapter_identity_receipt(
         "base_identity_sha256",
         "verified_transition_evidence",
         "verified_transition_evidence_sha256",
+        "verified_step_chain",
+        "verified_step_chain_sha256",
+        "verified_group_count",
+        "rejected_group_count",
         "adapter_sha256",
         "execution_spec_sha256",
         "optimizer_updates",
@@ -1215,11 +1359,75 @@ def validate_verified_recurrent_grpo_adapter_identity_receipt(
     )
     base_sha256 = sha256_bytes(canonical_json_bytes(base))
     evidence_sha256 = _sha(evidence.get("receipt_sha256"), role="verified_evidence")
+    step_chain_sha256 = _sha(receipt.get("verified_step_chain_sha256"), role="verified_step_chain")
+    step_chain = receipt.get("verified_step_chain")
+    if not isinstance(step_chain, list) or not step_chain:
+        _fail("verified_step_chain_invalid")
+    expected_step_keys = {
+        "sequence",
+        "step_receipt_sha256",
+        "group_start_sha256",
+        "group_terminal_sha256",
+        "reward_receipt_sha256",
+        "group_admission_sha256",
+        "update_receipt_sha256",
+        "policy_before_sha256",
+        "policy_after_sha256",
+    }
+    updated_rows: list[Mapping[str, Any]] = []
+    previous_after: str | None = None
+    for sequence, raw_row in enumerate(step_chain):
+        row = _exact(raw_row, expected_step_keys, role="verified_step_chain_row")
+        for field in (
+            "step_receipt_sha256",
+            "group_start_sha256",
+            "group_terminal_sha256",
+            "reward_receipt_sha256",
+            "policy_before_sha256",
+            "policy_after_sha256",
+        ):
+            _sha(row.get(field), role=f"verified_step_chain_{field}")
+        admission = row.get("group_admission_sha256")
+        update = row.get("update_receipt_sha256")
+        if (admission is None) != (update is None):
+            _fail("verified_step_chain_update_pair_invalid")
+        if admission is not None:
+            _sha(admission, role="verified_step_chain_admission")
+            _sha(update, role="verified_step_chain_update")
+            updated_rows.append(row)
+        if (
+            row.get("sequence") != sequence
+            or (previous_after is not None and row.get("policy_before_sha256") != previous_after)
+            or (
+                admission is None
+                and row.get("policy_before_sha256") != row.get("policy_after_sha256")
+            )
+        ):
+            _fail("verified_step_chain_continuity_invalid")
+        previous_after = str(row["policy_after_sha256"])
+    if step_chain_sha256 != sha256_bytes(canonical_json_bytes(step_chain)):
+        _fail("verified_step_chain_digest_mismatch")
+    updated_sequences = [int(row["sequence"]) for row in updated_rows]
+    updated_rewards = [row["reward_receipt_sha256"] for row in updated_rows]
+    updated_admissions = [row["group_admission_sha256"] for row in updated_rows]
+    updated_receipts = [row["update_receipt_sha256"] for row in updated_rows]
     material = {key: receipt[key] for key in required - {"composite_identity_sha256"}}
     if (
         receipt.get("schema") != VERIFIED_IDENTITY_RECEIPT_SCHEMA
         or receipt.get("base_identity_sha256") != base_sha256
         or receipt.get("verified_transition_evidence_sha256") != evidence_sha256
+        or type(receipt.get("verified_group_count")) is not int
+        or receipt["verified_group_count"] != base["steps"]
+        or receipt["verified_group_count"] != len(step_chain)
+        or type(receipt.get("rejected_group_count")) is not int
+        or receipt["rejected_group_count"] < 0
+        or receipt["rejected_group_count"] != base["steps"] - evidence["optimizer_update_count"]
+        or updated_sequences != evidence["updated_sequences"]
+        or updated_rewards != evidence["reward_receipt_sha256s"]
+        or updated_admissions != evidence["group_admission_sha256s"]
+        or updated_receipts != evidence["update_receipt_sha256s"]
+        or step_chain[0]["policy_before_sha256"] != evidence["initial_policy_sha256"]
+        or previous_after != evidence["final_policy_sha256"]
         or receipt.get("adapter_sha256") != base["adapter_sha256"]
         or receipt.get("execution_spec_sha256") != base["execution_spec_sha256"]
         or receipt.get("optimizer_updates") != base["optimizer_updates"]
@@ -1231,8 +1439,7 @@ def validate_verified_recurrent_grpo_adapter_identity_receipt(
         or receipt.get("legacy_scalar_reward_path_used") is not False
         or receipt.get("causal_gain_proven") is not False
         or receipt.get("complete") is not True
-        or receipt.get("composite_identity_sha256")
-        != sha256_bytes(canonical_json_bytes(material))
+        or receipt.get("composite_identity_sha256") != sha256_bytes(canonical_json_bytes(material))
     ):
         _fail("verified_identity_receipt_reconstruction_mismatch")
     return receipt

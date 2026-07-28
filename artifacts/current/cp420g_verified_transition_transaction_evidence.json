@@ -1,0 +1,56 @@
+{
+  "schema": "aura.spark.cp420g.transaction_evidence.v1",
+  "checkpoint": "CP420G",
+  "recorded_date": "2026-07-27",
+  "scope": "verified recurrent optimizer-update transaction custody",
+  "claims": {
+    "post_update_tensors_staged_before_external_publication": true,
+    "staged_tensor_layout_and_policy_validated_before_recovery_publication": true,
+    "abandoned_generation_zero_cleanup_is_lock_serialized": true,
+    "open_causal_plan_rehydration_is_idempotent": true,
+    "trainer_checkpoint_uses_strict_resume_state_validation": true,
+    "provider_contract_and_mutation_sources_bound_to_training_protocol": true,
+    "production_provider_factory_complete": false,
+    "rejected_group_lifecycle_transaction_complete": false,
+    "model_loaded_or_trained": false,
+    "reasoning_gain_claimed": false,
+    "wow_signal_claimed": false
+  },
+  "verification": [
+    {
+      "name": "integrated_verified_training_proof_stack",
+      "result": "267 passed",
+      "duration_seconds": 121.75
+    },
+    {
+      "name": "focused_transaction_provider_campaign_checkpoint_stack",
+      "result": "65 passed",
+      "duration_seconds": 7.81
+    },
+    {
+      "name": "recurrent_sampler_random_order_regression",
+      "result": "39 passed",
+      "randomly_seeds": [1, 5, 551145092]
+    },
+    {
+      "name": "ruff",
+      "result": "pass"
+    },
+    {
+      "name": "python_bytecode_compilation",
+      "result": "pass"
+    },
+    {
+      "name": "git_diff_check",
+      "result": "pass"
+    }
+  ],
+  "remaining_release_blockers": [
+    "construct the provider only after the resident model, tokenizer, and adapters exist",
+    "move exact signed group admission ahead of sampling",
+    "persist replay-complete sample and evidence artifacts",
+    "make rejected and pre-update group outcomes crash-recoverable",
+    "run a composed production-provider campaign before any model training credit",
+    "complete the small-checkpoint causal campaign before resident-32B launch"
+  ]
+}

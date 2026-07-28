@@ -61,8 +61,8 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert contract["training"]["dataset"]["train_tasks"] == 288
     assert contract["training"]["dataset"]["holdout_tasks"] == 36
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
-    assert contract["training"]["parameters"]["trajectory_credit"] is True
-    assert "--trajectory-credit" in contract["training"]["argv"]
+    assert contract["training"]["parameters"]["trajectory_credit"] is False
+    assert "--trajectory-credit" not in contract["training"]["argv"]
     assert contract["training"]["argv"][
         contract["training"]["argv"].index("--min-signal-groups") + 1
     ] == str(prereg.TRAINING_PARAMETERS["min_signal_groups"])

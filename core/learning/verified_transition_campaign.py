@@ -25,10 +25,39 @@ from core.runtime.file_write_gateway import FileWriteGateway
 CAMPAIGN_MANIFEST_SCHEMA = "aura.verified_transition.campaign_manifest.v1"
 CAMPAIGN_OPEN_SCHEMA = "aura.verified_transition.campaign_open.v1"
 CAMPAIGN_GROUP_START_SCHEMA = "aura.verified_transition.campaign_group_start.v1"
-CAMPAIGN_GROUP_TERMINAL_SCHEMA = "aura.verified_transition.campaign_group_terminal.v1"
+CAMPAIGN_GROUP_TERMINAL_SCHEMA = "aura.verified_transition.campaign_group_terminal.v2"
 CAMPAIGN_CLOSE_PAYLOAD_SCHEMA = "aura.verified_transition.campaign_close_payload.v1"
 CAMPAIGN_RECEIPT_SCHEMA = "aura.verified_transition.campaign_receipt.v1"
 _MAX_GROUPS = 100_000
+_GROUP_START_KEYS = frozenset(
+    {
+        "schema",
+        "campaign_manifest_sha256",
+        "sequence",
+        "group_id",
+        "group_manifest",
+        "group_manifest_attestation",
+        "started_at_unix_ns",
+        "receipt_sha256",
+    }
+)
+_GROUP_TERMINAL_KEYS = frozenset(
+    {
+        "schema",
+        "campaign_manifest_sha256",
+        "sequence",
+        "group_id",
+        "group_manifest_sha256",
+        "group_start_sha256",
+        "status",
+        "reward_receipt_sha256",
+        "group_admission_sha256",
+        "update_receipt_sha256",
+        "terminal_reason",
+        "finished_at_unix_ns",
+        "receipt_sha256",
+    }
+)
 
 
 class VerifiedTransitionCampaignError(RuntimeError):
@@ -402,10 +431,12 @@ class VerifiedTransitionCampaignLedger:
         *,
         sequence: int,
         status: str,
+        reward_receipt_sha256: str | None,
         group_admission_sha256: str | None,
         update_receipt_sha256: str | None,
         terminal_reason: str,
         finished_at_unix_ns: int,
+        policy_after_sha256: str | None = None,
     ) -> dict[str, Any]:
         campaign = self._manifest()
         sequence = _integer(sequence, role="campaign_finish_sequence")
@@ -425,10 +456,19 @@ class VerifiedTransitionCampaignLedger:
             if update_receipt_sha256 is not None
             else None
         )
+        reward = (
+            _sha256(reward_receipt_sha256, role="campaign_group_reward")
+            if reward_receipt_sha256 is not None
+            else None
+        )
         if status == "updated" and (admission is None or update is None):
             _fail("campaign_group_updated_evidence_missing")
+        if status in {"updated", "rejected"} and reward is None:
+            _fail("campaign_group_reward_evidence_missing")
         if status != "updated" and update is not None:
             _fail("campaign_group_nonupdated_has_update")
+        if policy_after_sha256 is not None:
+            _sha256(policy_after_sha256, role="campaign_group_policy_after")
         finished_at = _integer(
             finished_at_unix_ns, role="campaign_group_finished_at", minimum=1
         )
@@ -440,8 +480,10 @@ class VerifiedTransitionCampaignLedger:
                 "campaign_manifest_sha256": campaign["manifest_sha256"],
                 "sequence": sequence,
                 "group_id": start["group_id"],
+                "group_manifest_sha256": start["group_manifest"]["manifest_sha256"],
                 "group_start_sha256": start["receipt_sha256"],
                 "status": status,
+                "reward_receipt_sha256": reward,
                 "group_admission_sha256": admission,
                 "update_receipt_sha256": update,
                 "terminal_reason": _identifier(
@@ -535,7 +577,9 @@ class VerifiedTransitionCampaignLedger:
                 Mapping[str, Any], start.get("group_manifest_attestation")
             )
             if (
-                start.get("schema") != CAMPAIGN_GROUP_START_SCHEMA
+                set(start) != _GROUP_START_KEYS
+                or set(terminal) != _GROUP_TERMINAL_KEYS
+                or start.get("schema") != CAMPAIGN_GROUP_START_SCHEMA
                 or terminal.get("schema") != CAMPAIGN_GROUP_TERMINAL_SCHEMA
                 or start.get("sequence") != sequence
                 or terminal.get("sequence") != sequence
@@ -545,6 +589,8 @@ class VerifiedTransitionCampaignLedger:
                 != campaign["manifest_sha256"]
                 or start.get("group_id") != plan["group_id"]
                 or terminal.get("group_id") != plan["group_id"]
+                or terminal.get("group_manifest_sha256")
+                != plan["group_manifest_sha256"]
                 or start_manifest["manifest_sha256"]
                 != plan["group_manifest_sha256"]
                 or _attestation_sha256(start_attestation)
@@ -569,10 +615,16 @@ class VerifiedTransitionCampaignLedger:
             status = terminal.get("status")
             admission = terminal.get("group_admission_sha256")
             update = terminal.get("update_receipt_sha256")
+            reward = terminal.get("reward_receipt_sha256")
             if (
                 status not in {"updated", "rejected", "aborted", "indeterminate"}
                 or (status == "updated" and (admission is None or update is None))
+                or (status in {"updated", "rejected"} and reward is None)
                 or (status != "updated" and update is not None)
+                or (
+                    reward is not None
+                    and _sha256(reward, role="campaign_terminal_reward") != reward
+                )
                 or (
                     admission is not None
                     and _sha256(admission, role="campaign_terminal_admission")

@@ -30722,3 +30722,52 @@ claimed. Counting CP420F makes 671 total checkpoints. The recalibrated planning
 range is 3-8 checkpoints to resident-32B training launch, 7-14 to a defensible
 preliminary live gain verdict, and 13-24 to a powered conditional `WOW Signal`
 decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420G crash-consistent verified update transaction
+
+The proof-grade recurrent optimizer path now stages the exact post-update LoRA
+and optimizer tensors plus every static trainer-step field before either the
+update journal or causal campaign terminal may advance. Recovery loads the
+actual safetensors, requires exact adapter and optimizer key, shape, and dtype
+topology, restores them into the live training objects, evaluates the complete
+state, and reconstructs the expected recurrent policy digest before publishing
+any irreversible record. A corrupt or incomplete recovery target therefore
+leaves both external ledgers untouched.
+
+Generation-zero publication now shares a collection lock with inventory.
+Abandoned temporary generations from abrupt exits are strictly named, never
+follow symlinks, are removed under that lock, and cannot poison every future
+startup. Exact already-published causal starts can be rehydrated after process
+death without creating a duplicate start or accepting changed manifest,
+attestation, lineage, policy, or admission time. Trainer checkpoint evidence is
+no longer a partial lookalike: it must pass the ordinary GRPO exact-state
+validator plus a strict verified recurrent document shape, contiguous receipt
+sequence, execution identity, optimizer count, last-step kind, generation ID,
+creation time, and tensor bindings.
+
+The frozen recurrent protocol now includes the production provider contract
+digest and snapshots every mutation-authorizing provider, transaction, causal
+campaign, verified task, and token-trace source. The wrapper-only recurrent
+sampling test also stopped coupling itself to a tiny random model's production
+PPO threshold; production retains the strict default while the tokenizer/seed
+test injects its own explicit envelope, and dedicated drift tests retain
+threshold ownership.
+
+The integrated verified training/proof matrix passes 267/267 in 121.75 seconds;
+the focused transaction/provider/campaign/checkpoint matrix passes 65/65; three
+randomized recurrent module orders pass 39/39. Ruff, bytecode compilation, and
+diff hygiene pass. Evidence is
+`artifacts/current/cp420g_verified_transition_transaction_evidence.json`.
+
+This is a bounded custody checkpoint, not CP420 or SPARK-060 closure. A real
+resident launcher still cannot construct the production provider, the trainer
+still samples before signed JIT admission, replay artifacts are not yet fully
+serializable, and rejected/pre-update group outcomes still need their own
+durable lifecycle transaction. No model was loaded or trained and no reasoning,
+frontier, resident-32B, promotion, or `WOW Signal` claim follows. Counting the
+concurrent published checkpoints already reconciled in this pass, CP420G is
+total checkpoint 677. The 677-920 completion envelope is approximately
+73.6%-100.0% with an 86.8% midpoint. The current evidence-adjusted range is 4-9
+checkpoints to resident-32B training launch, 8-15 to a defensible preliminary
+gain verdict, and 14-25 to the powered conditional `WOW Signal` decision. Final
+multi-hour soaks remain deferred.

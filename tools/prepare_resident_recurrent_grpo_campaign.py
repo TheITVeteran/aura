@@ -109,7 +109,7 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "max_tokens": 320,
     "kl_coefficient": 0.02,
     "format_credit": 0.0,
-    "trajectory_credit": True,
+    "trajectory_credit": False,
     "trajectory_shaping_weight": 0.25,
     "lora_rank": 8,
     "lora_targets": "o_proj,v_proj,q_proj",
