@@ -6730,7 +6730,19 @@ def assess_user_facing_reply(
         "unfounded_voice_intrusion",
         "unsupported_context_continuation_claim",
         "ungrounded_person_narrative",
-        "ungrounded_person_address",
+        # NOT ungrounded_person_address. A vocative is one word. Even when the
+        # name is genuinely wrong the honest remedy is to drop the vocative and
+        # deliver the answer — destroying the whole reply over how it addressed
+        # someone throws away the human part to protect a detail.
+        #
+        # Measured live: the owner introduced himself in turn 1, and turn 2 came
+        # back "Bryan, let's reset. You asked about the prompt cache... And yeah,
+        # drop the 'great question' bit. Talk like we're peers figuring something
+        # out together" — natural, correctly addressed, exactly the register he
+        # had just asked for. The entire draft was destroyed as a HARD failure
+        # because the name was not in any grounding source the check consulted.
+        # (The owner's own name is a grounding source now; this keeps the class
+        # of failure from recurring with any other name.)
         "unrequested_pop_culture_intrusion",
         "unexpected_cjk_intrusion",
         "surface_nonsense_drift",

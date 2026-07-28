@@ -850,6 +850,14 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
         # about reliability.
         "reliability_diagnostic_too_thin",
         "too_thin_for_reliability_turn",
+        # How a reply ADDRESSES someone is a one-word detail, never a reason to
+        # discard the reply. Measured live: a natural, correctly-addressed turn
+        # ("Bryan, let's reset... Talk like we're peers figuring something out
+        # together") was destroyed because the name was not in any grounding
+        # source the check consulted. Delivering it with the residual recorded
+        # keeps the human part; annihilating it protects a detail by throwing
+        # away the answer.
+        "ungrounded_person_address",
         "low_signal_acknowledgement_placeholder",
         "generic_assistant_language",
     }

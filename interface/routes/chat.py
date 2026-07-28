@@ -3023,6 +3023,12 @@ _TOPIC_STOPWORDS = frozenset(
         "most",
         "my",
         "not",
+        # Temporal and discourse fillers carry no topic. "now" was the SINGLE
+        # overlapping token between "run a real calculation in your Python
+        # sandbox and show me the result" and a 53-token reply about felt state —
+        # and any single overlap exonerated the reply, so a completely off-topic
+        # answer was logged off_topic=False.
+        "now",
         "of",
         "on",
         "or",
@@ -3069,14 +3075,24 @@ _TOPIC_STOPWORDS = frozenset(
         "your",
     }
 )
+# A "topical bridge" is text that ties the reply back to the person's turn, so
+# a reply sharing no topic words with the question is still answering it. The
+# list used to include bare "it", "this", "that", "there" and "because", matched
+# as SUBSTRINGS of the whole reply — and every English sentence of any length
+# contains those, "it" even inside words like "priority" and "intact". The guard
+# was therefore unconditionally true and `foreign_topic_burst` could never fire.
+#
+# Measured live: asked to run a real sandbox calculation and report the result,
+# the reply was 48 tokens of felt state sharing ZERO topic words with the
+# question, and it was logged off_topic=False. Two markers matched: "it" and
+# "this".
+#
+# Second person is a real bridge — a reply engaging with what the person said
+# tends to say "you". The multi-word phrases are real bridges. Bare
+# demonstratives carry no information about whether anything was answered.
 _TOPICAL_BRIDGE_MARKERS = (
     "you",
     "your",
-    "that",
-    "there",
-    "it",
-    "this",
-    "because",
     "feels like",
     "standing in for",
     "underneath that",
@@ -3084,6 +3100,23 @@ _TOPICAL_BRIDGE_MARKERS = (
     "when you",
     "if you",
 )
+#: Markers are matched on WORD boundaries; substring matching is what made the
+#: single-word entries above match every reply ever written.
+_TOPICAL_BRIDGE_MARKER_RE = re.compile(
+    r"(?:" + "|".join(re.escape(marker) for marker in _TOPICAL_BRIDGE_MARKERS) + r")",
+    re.IGNORECASE,
+)
+
+
+def _has_topical_bridge(lowered_reply: str) -> bool:
+    """True when the reply ties back to the person's turn on a word boundary."""
+    for marker in _TOPICAL_BRIDGE_MARKERS:
+        if " " in marker:
+            if marker in lowered_reply:
+                return True
+        elif re.search(rf"\b{re.escape(marker)}\b", lowered_reply):
+            return True
+    return False
 _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "what does that have to do",
     "what does this have to do",
@@ -9608,7 +9641,7 @@ def _evaluate_reply_topicality(
     if len(concrete_reply_tokens) < 12:
         return False, ""
 
-    if any(marker in lowered_reply for marker in _TOPICAL_BRIDGE_MARKERS):
+    if _has_topical_bridge(lowered_reply):
         return False, ""
 
     return True, "foreign_topic_burst"
