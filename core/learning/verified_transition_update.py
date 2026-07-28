@@ -15,8 +15,12 @@ from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.recurrent_grpo import (
     RECURRENT_GRPO_SCHEMA,
     RecurrentGRPOConfig,
+    VerifiedTrajectoryGroupConfig,
+    build_verified_trajectory_group_source_binding,
     exact_adjoint_verified_transition_group_value_and_grad,
     recurrent_policy_sha256,
+    validate_verified_trajectory_group_receipt,
+    validate_verified_trajectory_group_source_binding,
 )
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
@@ -36,9 +40,7 @@ VERIFIED_TRANSITION_UPDATE_SCHEMA = "aura.verified_transition.update_receipt.v1"
 VERIFIED_TRANSITION_RESERVATION_SCHEMA = "aura.verified_transition.update_reservation.v1"
 VERIFIED_TRANSITION_COMMIT_SCHEMA = "aura.verified_transition.update_commit.v1"
 VERIFIED_TRANSITION_OBJECTIVE_SCHEMA = "aura.verified_transition.objective_record.v1"
-VERIFIED_TRANSITION_RECONCILIATION_SCHEMA = (
-    "aura.verified_transition.update_reconciliation.v1"
-)
+VERIFIED_TRANSITION_RECONCILIATION_SCHEMA = "aura.verified_transition.update_reconciliation.v1"
 
 
 class VerifiedTransitionUpdateError(RuntimeError):
@@ -67,9 +69,7 @@ def _require_time(value: Any, *, role: str) -> int:
 
 def _seal(document: Mapping[str, Any]) -> dict[str, Any]:
     sealed = dict(document)
-    sealed["receipt_sha256"] = hashlib.sha256(
-        canonical_json_bytes(sealed)
-    ).hexdigest()
+    sealed["receipt_sha256"] = hashlib.sha256(canonical_json_bytes(sealed)).hexdigest()
     return sealed
 
 
@@ -106,8 +106,13 @@ def _validate_objective_seal(document: Mapping[str, Any]) -> None:
         _fail("verified_transition_objective_digest_mismatch")
 
 
-def _validate_objective_receipt(value: Any) -> dict[str, Any]:
-    required = {
+def _validate_objective_receipt(
+    value: Any,
+    *,
+    expected_admission_sha256: str | None = None,
+    expected_trajectory_source_binding: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    base_required = {
         "schema",
         "mode",
         "advantage_report",
@@ -122,12 +127,32 @@ def _validate_objective_receipt(value: Any) -> dict[str, Any]:
         "branch_indices",
         "has_gradient",
     }
-    if not isinstance(value, Mapping) or set(value) != required:
+    if not isinstance(value, Mapping):
         _fail("verified_transition_objective_receipt_schema_invalid")
     receipt = dict(value)
+    mode = receipt.get("mode")
+    required = (
+        base_required
+        if mode == "exact_adjoint_single_update"
+        else base_required
+        | {
+            "trajectory_objective_value",
+            "composite_objective_at_sampling",
+            "composite_gradient_surrogate_value",
+            "trajectory_receipt",
+        }
+        if mode == "exact_adjoint_trajectory_composite_single_update"
+        else set()
+    )
+    if set(receipt) != required:
+        _fail("verified_transition_objective_receipt_schema_invalid")
     if (
         receipt.get("schema") != RECURRENT_GRPO_SCHEMA
-        or receipt.get("mode") != "exact_adjoint_single_update"
+        or mode
+        not in {
+            "exact_adjoint_single_update",
+            "exact_adjoint_trajectory_composite_single_update",
+        }
         or not isinstance(receipt.get("advantage_report"), Mapping)
         or receipt.get("has_gradient") is not True
         or type(receipt.get("completion_count")) is not int
@@ -150,7 +175,124 @@ def _validate_objective_receipt(value: Any) -> dict[str, Any]:
         observed = receipt.get(field)
         if type(observed) not in {int, float} or not math.isfinite(float(observed)):
             _fail("verified_transition_objective_receipt_invalid")
+    if mode == "exact_adjoint_trajectory_composite_single_update":
+        for field in (
+            "trajectory_objective_value",
+            "composite_objective_at_sampling",
+            "composite_gradient_surrogate_value",
+        ):
+            observed = receipt.get(field)
+            if type(observed) not in {int, float} or not math.isfinite(float(observed)):
+                _fail("verified_transition_objective_receipt_invalid")
+        trajectory_value = float(receipt["trajectory_objective_value"])
+        if not math.isclose(
+            float(receipt["composite_objective_at_sampling"]),
+            float(receipt["objective_at_sampling"]) + trajectory_value,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ) or not math.isclose(
+            float(receipt["composite_gradient_surrogate_value"]),
+            float(receipt["gradient_surrogate_value"]) + trajectory_value,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        ):
+            _fail("verified_transition_objective_composite_arithmetic_invalid")
+        try:
+            trajectory_receipt = validate_verified_trajectory_group_receipt(
+                receipt["trajectory_receipt"],
+                advantage_report=receipt["advantage_report"],
+                expected_source_binding=expected_trajectory_source_binding,
+            )
+        except (TypeError, ValueError) as exc:
+            raise VerifiedTransitionUpdateError(
+                "verified_transition_trajectory_receipt_invalid"
+            ) from exc
+        if (
+            not math.isclose(
+                float(trajectory_receipt["trajectory_objective_value"]),
+                trajectory_value,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            or trajectory_receipt["sample_branch_indices"] != receipt["branch_indices"]
+            or (
+                expected_admission_sha256 is not None
+                and trajectory_receipt["group_admission_sha256"] != expected_admission_sha256
+            )
+        ):
+            _fail("verified_transition_trajectory_binding_invalid")
+    elif expected_trajectory_source_binding is not None:
+        _fail("verified_transition_unexpected_trajectory_source_binding")
     return receipt
+
+
+def _validate_objective_record(
+    document: Mapping[str, Any],
+    *,
+    expected_admission_sha256: str,
+    expected_policy_sha256: str | None = None,
+    expected_trajectory_source_binding: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Replay a durable objective record before any commit is published."""
+
+    if not isinstance(document, Mapping):
+        _fail("verified_transition_objective_record_invalid")
+    record = dict(document)
+    objective_value = record.get("objective_receipt")
+    mode = objective_value.get("mode") if isinstance(objective_value, Mapping) else None
+    required = {
+        "schema",
+        "admission_sha256",
+        "objective_receipt",
+        "objective_receipt_sha256",
+        "receipt_sha256",
+    }
+    if mode == "exact_adjoint_trajectory_composite_single_update":
+        required.add("trajectory_source_binding")
+    if set(record) != required or record.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
+        _fail("verified_transition_objective_schema_invalid")
+    _validate_objective_seal(record)
+    source_binding: dict[str, Any] | None = None
+    expected_source: dict[str, Any] | None = None
+    if expected_trajectory_source_binding is not None:
+        try:
+            expected_source = validate_verified_trajectory_group_source_binding(
+                expected_trajectory_source_binding
+            )
+        except (TypeError, ValueError) as exc:
+            raise VerifiedTransitionUpdateError(
+                "verified_transition_expected_trajectory_source_invalid"
+            ) from exc
+    if mode == "exact_adjoint_trajectory_composite_single_update":
+        try:
+            source_binding = validate_verified_trajectory_group_source_binding(
+                record["trajectory_source_binding"]
+            )
+        except (TypeError, ValueError) as exc:
+            raise VerifiedTransitionUpdateError(
+                "verified_transition_trajectory_source_binding_invalid"
+            ) from exc
+        if source_binding["group_admission_sha256"] != expected_admission_sha256 or (
+            expected_policy_sha256 is not None
+            and source_binding["policy_sha256"] != expected_policy_sha256
+        ):
+            _fail("verified_transition_trajectory_source_admission_mismatch")
+        if expected_source is not None and source_binding != expected_source:
+            _fail("verified_transition_trajectory_source_reconstruction_mismatch")
+    elif expected_source is not None:
+        _fail("verified_transition_expected_trajectory_objective_missing")
+    objective = _validate_objective_receipt(
+        objective_value,
+        expected_admission_sha256=expected_admission_sha256,
+        expected_trajectory_source_binding=expected_source or source_binding,
+    )
+    objective_sha256 = hashlib.sha256(_json_bytes(objective)).hexdigest()
+    if (
+        record.get("admission_sha256") != expected_admission_sha256
+        or record.get("objective_receipt_sha256") != objective_sha256
+    ):
+        _fail("verified_transition_objective_record_binding_mismatch")
+    return record, objective
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +332,11 @@ class VerifiedTransitionUpdateJournal:
         reservation = _seal(
             {
                 "schema": VERIFIED_TRANSITION_RESERVATION_SCHEMA,
-                "admission_sha256": _require_sha256(
-                    admission_sha256, role="reservation_admission"
-                ),
+                "admission_sha256": _require_sha256(admission_sha256, role="reservation_admission"),
                 "policy_before_sha256": _require_sha256(
                     policy_before_sha256, role="reservation_policy_before"
                 ),
-                "reserved_at_unix_ns": _require_time(
-                    reserved_at_unix_ns, role="reservation_time"
-                ),
+                "reserved_at_unix_ns": _require_time(reserved_at_unix_ns, role="reservation_time"),
             }
         )
         created = self.gateway.write_bytes_if_absent(
@@ -225,22 +363,21 @@ class VerifiedTransitionUpdateJournal:
         if not self.exists(admission_sha256, "objective"):
             _fail("verified_transition_objective_missing")
         objective = self.read(admission_sha256, "objective")
-        if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
-            _fail("verified_transition_objective_schema_invalid")
-        _validate_objective_seal(objective)
+        objective, _replayed_objective = _validate_objective_record(
+            objective,
+            expected_admission_sha256=admission_sha256,
+            expected_policy_sha256=policy_before_sha256,
+        )
         if (
             objective.get("admission_sha256") != admission_sha256
             or objective.get("receipt_sha256") != objective_record_sha256
-            or objective.get("objective_receipt_sha256")
-            != objective_receipt_sha256
+            or objective.get("objective_receipt_sha256") != objective_receipt_sha256
         ):
             _fail("verified_transition_objective_commit_binding_mismatch")
         commit = _seal(
             {
                 "schema": VERIFIED_TRANSITION_COMMIT_SCHEMA,
-                "admission_sha256": _require_sha256(
-                    admission_sha256, role="commit_admission"
-                ),
+                "admission_sha256": _require_sha256(admission_sha256, role="commit_admission"),
                 "reservation_sha256": _require_sha256(
                     reservation_sha256, role="commit_reservation"
                 ),
@@ -256,9 +393,7 @@ class VerifiedTransitionUpdateJournal:
                 "objective_receipt_sha256": _require_sha256(
                     objective_receipt_sha256, role="commit_objective"
                 ),
-                "committed_at_unix_ns": _require_time(
-                    committed_at_unix_ns, role="commit_time"
-                ),
+                "committed_at_unix_ns": _require_time(committed_at_unix_ns, role="commit_time"),
             }
         )
         created = self.gateway.write_bytes_if_absent(
@@ -276,20 +411,41 @@ class VerifiedTransitionUpdateJournal:
         *,
         admission_sha256: str,
         objective_receipt: Mapping[str, Any],
+        trajectory_source_binding: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        objective = _validate_objective_receipt(objective_receipt)
-        record = _seal_objective(
-            {
-                "schema": VERIFIED_TRANSITION_OBJECTIVE_SCHEMA,
-                "admission_sha256": _require_sha256(
-                    admission_sha256, role="objective_admission"
-                ),
-                "objective_receipt": objective,
-                "objective_receipt_sha256": hashlib.sha256(
-                    _json_bytes(objective)
-                ).hexdigest(),
-            }
+        admission = _require_sha256(
+            admission_sha256,
+            role="objective_admission",
         )
+        source_binding: dict[str, Any] | None = None
+        if trajectory_source_binding is not None:
+            try:
+                source_binding = validate_verified_trajectory_group_source_binding(
+                    trajectory_source_binding
+                )
+            except (TypeError, ValueError) as exc:
+                raise VerifiedTransitionUpdateError(
+                    "verified_transition_trajectory_source_binding_invalid"
+                ) from exc
+        objective = _validate_objective_receipt(
+            objective_receipt,
+            expected_admission_sha256=admission,
+            expected_trajectory_source_binding=source_binding,
+        )
+        is_trajectory = objective["mode"] == "exact_adjoint_trajectory_composite_single_update"
+        if (is_trajectory and source_binding is None) or (
+            not is_trajectory and source_binding is not None
+        ):
+            _fail("verified_transition_trajectory_source_binding_required")
+        material = {
+            "schema": VERIFIED_TRANSITION_OBJECTIVE_SCHEMA,
+            "admission_sha256": admission,
+            "objective_receipt": objective,
+            "objective_receipt_sha256": hashlib.sha256(_json_bytes(objective)).hexdigest(),
+        }
+        if source_binding is not None:
+            material["trajectory_source_binding"] = source_binding
+        record = _seal_objective(material)
         if not self.gateway.write_bytes_if_absent(
             self._path(admission_sha256, "objective"),
             _json_bytes(record),
@@ -309,9 +465,7 @@ class VerifiedTransitionUpdateJournal:
         try:
             document = json.loads(payload)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise VerifiedTransitionUpdateError(
-                "verified_transition_journal_json_invalid"
-            ) from exc
+            raise VerifiedTransitionUpdateError("verified_transition_journal_json_invalid") from exc
         if not isinstance(document, dict) or _json_bytes(document) != payload:
             _fail("verified_transition_journal_noncanonical")
         return document
@@ -399,11 +553,27 @@ def apply_verified_transition_group_update(
     campaign_sequence: int,
     bridge_tokens: Sequence[int] = (),
     config: RecurrentGRPOConfig | None = None,
+    trajectory_group_config: VerifiedTrajectoryGroupConfig | None = None,
     now_unix_ns: Callable[[], int] = time.time_ns,
     return_terminal_receipt: bool = False,
     transaction_coordinator: Any | None = None,
 ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
     """Validate, reserve, rehash, update exactly once, and receipt the result."""
+
+    if trajectory_group_config is not None:
+        if not isinstance(
+            trajectory_group_config,
+            VerifiedTrajectoryGroupConfig,
+        ):
+            _fail("verified_transition_trajectory_config_invalid")
+        trajectory = trajectory_group_config.trajectory_config
+        if trajectory is not None:
+            try:
+                trajectory.validate_depth(spec.recurrent_steps)
+            except (TypeError, ValueError) as exc:
+                raise VerifiedTransitionUpdateError(
+                    "verified_transition_trajectory_config_invalid"
+                ) from exc
 
     campaign_ledger.validate_started_group(
         sequence=campaign_sequence,
@@ -453,6 +623,7 @@ def apply_verified_transition_group_update(
         spec=spec,
         bridge_tokens=bridge_tokens,
         config=config,
+        trajectory_group_config=trajectory_group_config,
     )
     if objective.gradients is None:
         _fail("verified_transition_gradient_missing")
@@ -461,9 +632,34 @@ def apply_verified_transition_group_update(
         _fail("verified_transition_policy_changed_before_update")
 
     objective_receipt = objective.receipt()
+    trajectory_source_binding: dict[str, Any] | None = None
+    if trajectory_group_config is None:
+        if objective_receipt.get("mode") != "exact_adjoint_single_update":
+            _fail("verified_transition_unrequested_trajectory_objective")
+    elif (
+        objective_receipt.get("mode") != "exact_adjoint_trajectory_composite_single_update"
+        or not isinstance(
+            objective_receipt.get("trajectory_receipt"),
+            Mapping,
+        )
+        or objective_receipt["trajectory_receipt"].get("config")
+        != trajectory_group_config.to_dict()
+    ):
+        _fail("verified_transition_trajectory_objective_missing")
+    else:
+        trajectory_source_binding = build_verified_trajectory_group_source_binding(
+            admission,
+            reward_receipt,
+            samples,
+            prompt_tokens,
+            spec=spec,
+            trajectory_group_config=trajectory_group_config,
+            advantage_clip=(config or RecurrentGRPOConfig()).advantage_clip,
+        )
     objective_record = journal.record_objective(
         admission_sha256=cast_sha256(admission["receipt_sha256"]),
         objective_receipt=objective_receipt,
+        trajectory_source_binding=trajectory_source_binding,
     )
     objective_sha256 = cast_sha256(objective_record["objective_receipt_sha256"])
 
@@ -531,6 +727,8 @@ def apply_verified_transition_group_update(
 def validate_verified_transition_update_receipt(
     journal: VerifiedTransitionUpdateJournal,
     receipt: Mapping[str, Any],
+    *,
+    expected_trajectory_source_binding: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Replay durable reservation and commit bytes against the final receipt."""
 
@@ -560,17 +758,15 @@ def validate_verified_transition_update_receipt(
         _fail("verified_transition_reservation_schema_invalid")
     if commit.get("schema") != VERIFIED_TRANSITION_COMMIT_SCHEMA:
         _fail("verified_transition_commit_schema_invalid")
-    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
-        _fail("verified_transition_objective_schema_invalid")
     _validate_seal(reservation, role="verified_transition_reservation")
-    _validate_objective_seal(objective)
     _validate_seal(commit, role="verified_transition_commit")
-    replayed_objective = _validate_objective_receipt(
-        objective.get("objective_receipt")
+    objective, replayed_objective = _validate_objective_record(
+        objective,
+        expected_admission_sha256=admission_sha256,
+        expected_policy_sha256=cast(str, receipt.get("policy_before_sha256")),
+        expected_trajectory_source_binding=expected_trajectory_source_binding,
     )
-    replayed_objective_sha256 = hashlib.sha256(
-        _json_bytes(replayed_objective)
-    ).hexdigest()
+    replayed_objective_sha256 = hashlib.sha256(_json_bytes(replayed_objective)).hexdigest()
     if (
         reservation.get("receipt_sha256") != receipt.get("reservation_sha256")
         or commit.get("receipt_sha256") != receipt.get("commit_sha256")
@@ -578,32 +774,22 @@ def validate_verified_transition_update_receipt(
         or commit.get("admission_sha256") != admission_sha256
         or commit.get("reservation_sha256") != reservation.get("receipt_sha256")
         or objective.get("admission_sha256") != admission_sha256
-        or objective.get("receipt_sha256")
-        != receipt.get("objective_record_sha256")
-        or commit.get("objective_record_sha256")
-        != objective.get("receipt_sha256")
-        or objective.get("objective_receipt_sha256")
-        != replayed_objective_sha256
-        or objective.get("objective_receipt_sha256")
-        != receipt.get("objective_receipt_sha256")
-        or reservation.get("policy_before_sha256")
-        != receipt.get("policy_before_sha256")
+        or objective.get("receipt_sha256") != receipt.get("objective_record_sha256")
+        or commit.get("objective_record_sha256") != objective.get("receipt_sha256")
+        or objective.get("objective_receipt_sha256") != replayed_objective_sha256
+        or objective.get("objective_receipt_sha256") != receipt.get("objective_receipt_sha256")
+        or reservation.get("policy_before_sha256") != receipt.get("policy_before_sha256")
         or commit.get("policy_before_sha256") != receipt.get("policy_before_sha256")
         or commit.get("policy_after_sha256") != receipt.get("policy_after_sha256")
-        or commit.get("objective_receipt_sha256")
-        != receipt.get("objective_receipt_sha256")
-        or reservation.get("reserved_at_unix_ns")
-        != receipt.get("reserved_at_unix_ns")
-        or commit.get("committed_at_unix_ns")
-        != receipt.get("committed_at_unix_ns")
+        or commit.get("objective_receipt_sha256") != receipt.get("objective_receipt_sha256")
+        or reservation.get("reserved_at_unix_ns") != receipt.get("reserved_at_unix_ns")
+        or commit.get("committed_at_unix_ns") != receipt.get("committed_at_unix_ns")
         or receipt.get("optimizer_update_count") != 1
     ):
         _fail("verified_transition_update_reconstruction_mismatch")
     if receipt.get("policy_before_sha256") == receipt.get("policy_after_sha256"):
         _fail("verified_transition_update_policy_unchanged")
-    if cast(int, receipt["committed_at_unix_ns"]) < cast(
-        int, receipt["reserved_at_unix_ns"]
-    ):
+    if cast(int, receipt["committed_at_unix_ns"]) < cast(int, receipt["reserved_at_unix_ns"]):
         _fail("verified_transition_update_time_reversed")
     return dict(receipt)
 
@@ -623,9 +809,11 @@ def recover_committed_verified_transition_update(
     if commit.get("schema") != VERIFIED_TRANSITION_COMMIT_SCHEMA:
         _fail("verified_transition_commit_schema_invalid")
     _validate_seal(reservation, role="verified_transition_reservation")
-    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
-        _fail("verified_transition_objective_schema_invalid")
-    _validate_objective_seal(objective)
+    objective, _replayed_objective = _validate_objective_record(
+        objective,
+        expected_admission_sha256=admission,
+        expected_policy_sha256=cast(str, commit.get("policy_before_sha256")),
+    )
     _validate_seal(commit, role="verified_transition_commit")
     receipt = _seal(
         {
@@ -670,10 +858,12 @@ def commit_staged_verified_transition_update(
     objective = journal.read(admission, "objective")
     if reservation.get("schema") != VERIFIED_TRANSITION_RESERVATION_SCHEMA:
         _fail("verified_transition_reservation_schema_invalid")
-    if objective.get("schema") != VERIFIED_TRANSITION_OBJECTIVE_SCHEMA:
-        _fail("verified_transition_objective_schema_invalid")
     _validate_seal(reservation, role="verified_transition_reservation")
-    _validate_objective_seal(objective)
+    objective, _replayed_objective = _validate_objective_record(
+        objective,
+        expected_admission_sha256=admission,
+        expected_policy_sha256=before,
+    )
     if (
         reservation.get("admission_sha256") != admission
         or reservation.get("policy_before_sha256") != before
@@ -682,10 +872,7 @@ def commit_staged_verified_transition_update(
         _fail("verified_transition_staged_journal_binding_mismatch")
     if journal.exists(admission, "committed"):
         recovered = recover_committed_verified_transition_update(journal, admission)
-        if (
-            recovered["policy_before_sha256"] != before
-            or recovered["policy_after_sha256"] != after
-        ):
+        if recovered["policy_before_sha256"] != before or recovered["policy_after_sha256"] != after:
             _fail("verified_transition_staged_commit_policy_mismatch")
         return recovered
     committed_at = (
@@ -701,9 +888,7 @@ def commit_staged_verified_transition_update(
         policy_before_sha256=before,
         policy_after_sha256=after,
         objective_record_sha256=cast_sha256(objective["receipt_sha256"]),
-        objective_receipt_sha256=cast_sha256(
-            objective["objective_receipt_sha256"]
-        ),
+        objective_receipt_sha256=cast_sha256(objective["objective_receipt_sha256"]),
         committed_at_unix_ns=committed_at,
     )
     return recover_committed_verified_transition_update(journal, admission)
@@ -759,9 +944,7 @@ def reconcile_interrupted_verified_transition_update(
     observed = recurrent_policy_sha256(model, spec)
     before = cast_sha256(reservation.get("policy_before_sha256"))
     classification = (
-        "reserved_no_policy_change"
-        if observed == before
-        else "policy_changed_without_commit"
+        "reserved_no_policy_change" if observed == before else "policy_changed_without_commit"
     )
     return journal.reconcile(
         admission_sha256=admission,
@@ -769,9 +952,7 @@ def reconcile_interrupted_verified_transition_update(
         policy_before_sha256=before,
         observed_policy_sha256=observed,
         classification=classification,
-        reconciled_at_unix_ns=_require_time(
-            now_unix_ns(), role="reconciliation_observed_at"
-        ),
+        reconciled_at_unix_ns=_require_time(now_unix_ns(), role="reconciliation_observed_at"),
     )
 
 
@@ -799,9 +980,7 @@ def validate_verified_transition_reconciliation_receipt(
     admission = cast_sha256(receipt.get("admission_sha256"))
     reservation = journal.read(admission, "reserved")
     durable = journal.read(admission, "reconciled")
-    changed = receipt.get("policy_before_sha256") != receipt.get(
-        "observed_policy_sha256"
-    )
+    changed = receipt.get("policy_before_sha256") != receipt.get("observed_policy_sha256")
     expected_classification = (
         "policy_changed_without_commit" if changed else "reserved_no_policy_change"
     )
@@ -809,8 +988,7 @@ def validate_verified_transition_reconciliation_receipt(
         durable != dict(receipt)
         or reservation.get("receipt_sha256") != receipt.get("reservation_sha256")
         or reservation.get("admission_sha256") != admission
-        or reservation.get("policy_before_sha256")
-        != receipt.get("policy_before_sha256")
+        or reservation.get("policy_before_sha256") != receipt.get("policy_before_sha256")
         or receipt.get("classification") != expected_classification
         or receipt.get("admission_reusable") is not False
         or receipt.get("requires_fresh_admission") is not True

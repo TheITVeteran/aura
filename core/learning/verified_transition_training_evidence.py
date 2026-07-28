@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from typing import Any, Never, cast
 
 from core.brain.llm.latent_cortex.campaign_trust import VerifiedCampaignTrustPolicy
+from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
+from core.learning.recurrent_grpo import (
+    VerifiedTrajectoryGroupConfig,
+    build_verified_trajectory_group_source_binding,
+)
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
 )
@@ -20,6 +25,7 @@ from core.learning.verified_transition_group_admission import (
 )
 from core.learning.verified_transition_reward import VerifiedTransitionEvidence
 from core.learning.verified_transition_update import (
+    VerifiedTransitionUpdateError,
     VerifiedTransitionUpdateJournal,
     validate_verified_transition_update_receipt,
 )
@@ -146,6 +152,9 @@ def validate_verified_transition_training_evidence(
     *,
     policy: VerifiedCampaignTrustPolicy,
     groups: Sequence[VerifiedTransitionReplayGroup],
+    execution_spec: RLCExecutionSpec | None = None,
+    trajectory_group_config: VerifiedTrajectoryGroupConfig | None = None,
+    advantage_clip: float | None = None,
 ) -> dict[str, Any]:
     """Replay every source artifact behind every committed optimizer update."""
 
@@ -184,10 +193,50 @@ def validate_verified_transition_training_evidence(
             token_encoder=group.token_encoder,
             token_decoder=group.token_decoder,
         )
-        update = validate_verified_transition_update_receipt(
-            group.update_journal,
-            group.update_receipt,
+        objective_record = group.update_journal.read(
+            cast(str, admission["receipt_sha256"]),
+            "objective",
         )
+        objective_receipt = objective_record.get("objective_receipt")
+        trajectory_mode = bool(
+            isinstance(objective_receipt, Mapping)
+            and objective_receipt.get("mode") == "exact_adjoint_trajectory_composite_single_update"
+        )
+        expected_trajectory_source: dict[str, Any] | None = None
+        if trajectory_mode:
+            if (
+                execution_spec is None
+                or trajectory_group_config is None
+                or isinstance(advantage_clip, bool)
+                or not isinstance(advantage_clip, (int, float))
+            ):
+                _fail("verified_training_trajectory_reconstruction_inputs_missing")
+            try:
+                expected_trajectory_source = build_verified_trajectory_group_source_binding(
+                    admission,
+                    group.reward_receipt,
+                    group.samples,
+                    group.prompt_tokens,
+                    spec=execution_spec,
+                    trajectory_group_config=trajectory_group_config,
+                    advantage_clip=float(advantage_clip),
+                )
+            except (TypeError, ValueError) as exc:
+                raise VerifiedTransitionTrainingEvidenceError(
+                    "verified_training_trajectory_source_reconstruction_failed"
+                ) from exc
+        elif trajectory_group_config is not None:
+            _fail("verified_training_enabled_trajectory_objective_missing")
+        try:
+            update = validate_verified_transition_update_receipt(
+                group.update_journal,
+                group.update_receipt,
+                expected_trajectory_source_binding=expected_trajectory_source,
+            )
+        except VerifiedTransitionUpdateError as exc:
+            raise VerifiedTransitionTrainingEvidenceError(
+                "verified_training_update_replay_failed"
+            ) from exc
         if (
             start.get("group_manifest") != dict(group.group_manifest)
             or terminal.get("group_admission_sha256") != admission.get("receipt_sha256")

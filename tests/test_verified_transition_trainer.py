@@ -13,6 +13,10 @@ import pytest
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo import GRPOConfig
 from core.learning.grpo_training_state import canonical_json_bytes
+from core.learning.recurrence_native_objective_v2 import (
+    ExactAdjointTrajectoryConfig,
+)
+from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
 from core.learning.verified_transition_trainer import (
     PreparedVerifiedTransitionGroup,
     VerifiedTransitionMutationResult,
@@ -133,9 +137,7 @@ def test_verified_step_receipt_rejects_reward_and_policy_forgery() -> None:
     policy_forgery["update"]["policy_after_sha256"] = _sha("e")
     unsigned = dict(policy_forgery)
     unsigned.pop("receipt_sha256")
-    policy_forgery["receipt_sha256"] = hashlib.sha256(
-        canonical_json_bytes(unsigned)
-    ).hexdigest()
+    policy_forgery["receipt_sha256"] = hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()
     with pytest.raises(ValueError, match="update_invalid"):
         validate_verified_transition_step_receipt(
             policy_forgery,
@@ -224,9 +226,7 @@ def test_rejected_verified_group_cannot_mutate(monkeypatch) -> None:
             assert receipt is ledger.terminal
             lifecycle.append("transaction_terminal")
 
-    with pytest.raises(
-        ValueError, match="rejection_transaction_required"
-    ):
+    with pytest.raises(ValueError, match="rejection_transaction_required"):
         apply_prepared_verified_transition_group(
             object(),
             Optimizer(),
@@ -302,3 +302,37 @@ def test_recurrent_main_has_no_raw_exact_adjoint_mutation_path() -> None:
 
     assert "exact_adjoint_sampled_group_value_and_grad" not in source
     assert "apply_prepared_verified_transition_group" in source
+
+
+def test_verified_trajectory_config_loader_requires_canonical_policy(
+    tmp_path,
+) -> None:
+    config = VerifiedTrajectoryGroupConfig(
+        trajectory_config=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=0.5,
+            displacement_weight=0.25,
+            oscillation_weight=0.1,
+        ),
+        diversity_weight=0.2,
+    )
+    path = tmp_path / "trajectory.json"
+    path.write_bytes(canonical_json_bytes(config.to_dict()))
+
+    loaded = train_grpo._load_verified_trajectory_group_config(
+        "recurrent",
+        str(path),
+    )
+
+    assert loaded == config
+    path.write_bytes(canonical_json_bytes(config.to_dict()) + b"\n")
+    with pytest.raises(ValueError, match="not canonical"):
+        train_grpo._load_verified_trajectory_group_config(
+            "recurrent",
+            str(path),
+        )
+    with pytest.raises(ValueError, match="only applies"):
+        train_grpo._load_verified_trajectory_group_config(
+            "standard",
+            str(path),
+        )

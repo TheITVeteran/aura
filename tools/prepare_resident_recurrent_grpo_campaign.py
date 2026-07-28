@@ -76,25 +76,21 @@ from core.learning.grpo_training_state import canonical_json_bytes  # noqa: E402
 from core.learning.recurrence_curriculum import (  # noqa: E402
     RECURRENCE_TRAINING_FAMILIES,
 )
+from core.learning.recurrent_grpo import (  # noqa: E402
+    VerifiedTrajectoryGroupConfig,
+)
 from core.runtime.atomic_writer import atomic_write_bytes_if_absent  # noqa: E402
+from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools import run_detached_step  # noqa: E402
 from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
-DEFAULT_MODEL = (
-    "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
-)
-DEFAULT_SPEC = (
-    "config/latent_cortex/resident_32b_recurrent_grpo_execution_spec.json"
-)
-DEFAULT_CONTRACT = (
-    "config/latent_cortex/resident_32b_recurrent_grpo_preregistration.json"
-)
-DEFAULT_ROOT = (
-    "artifacts/closeout/latent_cortex/cp259_resident_32b_recurrent_grpo"
-)
+DEFAULT_MODEL = "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
+DEFAULT_SPEC = "config/latent_cortex/resident_32b_recurrent_grpo_execution_spec.json"
+DEFAULT_CONTRACT = "config/latent_cortex/resident_32b_recurrent_grpo_preregistration.json"
+DEFAULT_ROOT = "artifacts/closeout/latent_cortex/cp259_resident_32b_recurrent_grpo"
 NOT_BEFORE = "2026-07-21T17:00:00-07:00"
 TRAINING_SEED = 2026072102
 CONFIRMATORY_OBSERVATIONS_PER_DOMAIN = 411
@@ -133,28 +129,16 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
 SOURCE_ROLES: Mapping[str, str] = {
     "campaign_contract": "tools/prepare_resident_recurrent_grpo_campaign.py",
     "trainer": "tools/train_grpo.py",
-    "transition_provider_factory": (
-        "core/learning/verified_transition_production_factory.py"
-    ),
-    "transition_launch_bundle": (
-        "core/learning/verified_transition_launch_bundle.py"
-    ),
+    "transition_provider_factory": ("core/learning/verified_transition_production_factory.py"),
+    "transition_launch_bundle": ("core/learning/verified_transition_launch_bundle.py"),
     "transition_launch_runner": "tools/run_verified_recurrent_grpo_training.py",
-    "transition_launch_materializer": (
-        "tools/materialize_verified_recurrent_grpo_launch.py"
-    ),
-    "transition_recurrent_evidence": (
-        "core/learning/verified_recurrent_transition_evidence.py"
-    ),
+    "transition_launch_materializer": ("tools/materialize_verified_recurrent_grpo_launch.py"),
+    "transition_recurrent_evidence": ("core/learning/verified_recurrent_transition_evidence.py"),
     "transition_recurrent_repository": (
         "core/learning/verified_recurrent_transition_repository.py"
     ),
-    "transition_policy_probe": (
-        "core/learning/verified_transition_policy_probe.py"
-    ),
-    "recurrent_training_prompt": (
-        "core/learning/recurrent_training_prompt.py"
-    ),
+    "transition_policy_probe": ("core/learning/verified_transition_policy_probe.py"),
+    "recurrent_training_prompt": ("core/learning/recurrent_training_prompt.py"),
     "atomic_writer": "core/runtime/atomic_writer.py",
     "file_read_gateway": "core/runtime/file_read_gateway.py",
     "file_write_gateway": "core/runtime/file_write_gateway.py",
@@ -172,32 +156,20 @@ SOURCE_ROLES: Mapping[str, str] = {
     "transition_campaign": "core/learning/verified_transition_campaign.py",
     "transition_episode": "core/learning/verified_transition_episode.py",
     "transition_reward": "core/learning/verified_transition_reward.py",
-    "transition_admission": (
-        "core/learning/verified_transition_group_admission.py"
-    ),
+    "transition_admission": ("core/learning/verified_transition_group_admission.py"),
     "transition_update": "core/learning/verified_transition_update.py",
-    "transition_training_evidence": (
-        "core/learning/verified_transition_training_evidence.py"
-    ),
-    "campaign_trust": (
-        "core/brain/llm/latent_cortex/campaign_trust.py"
-    ),
+    "transition_training_evidence": ("core/learning/verified_transition_training_evidence.py"),
+    "campaign_trust": ("core/brain/llm/latent_cortex/campaign_trust.py"),
     "transition_provider": "core/learning/verified_transition_provider.py",
-    "transition_transaction": (
-        "core/learning/verified_transition_transaction.py"
-    ),
-    "transition_causal_campaign": (
-        "core/learning/verified_transition_causal_campaign.py"
-    ),
+    "transition_transaction": ("core/learning/verified_transition_transaction.py"),
+    "transition_causal_campaign": ("core/learning/verified_transition_causal_campaign.py"),
     "verified_training_task": "core/learning/verified_training_task.py",
     "verified_token_trace": "core/learning/verified_token_trace.py",
     "execution_spec": "core/brain/llm/latent_cortex/execution_spec.py",
     "latent_engine": "core/brain/llm/latent_cortex/engine.py",
     "recurrence": "core/brain/llm/latent_cortex/recurrence.py",
     "adapter": "core/brain/llm/latent_cortex/recurrence_adapter.py",
-    "adapter_identity": (
-        "core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"
-    ),
+    "adapter_identity": ("core/brain/llm/latent_cortex/recurrent_grpo_adapter_identity.py"),
     "campaign_runner": "tools/run_latent_cortex_paired_campaign.py",
     "campaign_freezer": "tools/prepare_latent_cortex_campaign.py",
     "campaign_verifier": "tools/verify_paired_campaign_evidence.py",
@@ -312,9 +284,44 @@ def _load_spec(relative: str) -> tuple[RLCExecutionSpec, dict[str, Any]]:
     return spec, {**binding, "semantic_sha256": spec.sha256}
 
 
-def _training_argv(
-    *, campaign_id: str, model: str, output: str, execution_spec: str
-) -> list[str]:
+def _verified_trajectory_config_commitment(
+    spec: RLCExecutionSpec,
+) -> dict[str, Any] | None:
+    declared = TRAINING_PARAMETERS.get("verified_trajectory_config")
+    if declared is None:
+        return None
+    if not isinstance(declared, str) or not declared:
+        _fail("verified_trajectory_config_path_invalid")
+    lexical_source = REPO_ROOT / PurePosixPath(declared)
+    if lexical_source.is_symlink():
+        _fail("verified_trajectory_config_file_invalid")
+    source = _repo_path(declared, role="verified_trajectory_config")
+    if not source.is_file():
+        _fail("verified_trajectory_config_file_invalid")
+    try:
+        raw = read_stable_bytes(source, max_bytes=65_536)
+        parsed = json.loads(raw.decode("ascii"))
+        config = VerifiedTrajectoryGroupConfig.from_dict(parsed)
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PreregistrationError("verified_trajectory_config_invalid") from exc
+    canonical = canonical_json_bytes(config.to_dict())
+    if raw != canonical:
+        _fail("verified_trajectory_config_noncanonical")
+    if int(TRAINING_PARAMETERS["group_size"]) != len(spec.branch_roles):
+        _fail("verified_trajectory_group_branch_count_mismatch")
+    if config.trajectory_config is not None:
+        try:
+            config.trajectory_config.validate_depth(spec.recurrent_steps)
+        except ValueError as exc:
+            raise PreregistrationError("verified_trajectory_config_depth_invalid") from exc
+    return {
+        **_binding(declared),
+        "config": config.to_dict(),
+        "semantic_sha256": _sha256(canonical),
+    }
+
+
+def _training_argv(*, campaign_id: str, model: str, output: str, execution_spec: str) -> list[str]:
     params = TRAINING_PARAMETERS
     argv = [
         "tools/train_grpo.py",
@@ -367,6 +374,13 @@ def _training_argv(
         argv.append("--calibrate")
     if params["trajectory_credit"]:
         argv.append("--trajectory-credit")
+    if params.get("verified_trajectory_config") is not None:
+        argv.extend(
+            (
+                "--verified-trajectory-config",
+                str(params.get("verified_trajectory_config")),
+            )
+        )
     if params["cot"]:
         argv.append("--cot")
     return argv
@@ -396,9 +410,7 @@ def _dataset_commitment() -> dict[str, Any]:
         "train_holdout_id_overlap": 0,
         "train_holdout_prompt_overlap": 0,
         "excluded_evaluation_registry": CURRENT_REGISTRY_VERSION,
-        "excluded_evaluation_families": list(
-            CURRENT_EXCLUDED_TRAINING_FAMILIES
-        ),
+        "excluded_evaluation_families": list(CURRENT_EXCLUDED_TRAINING_FAMILIES),
     }
 
 
@@ -426,12 +438,8 @@ def build_contract(
         "artifact_root": artifact_root,
         "training_output": f"{artifact_root}/training",
         "initial_policy_probe": f"{artifact_root}/policy-probe",
-        "verified_launch_bundle": (
-            f"{artifact_root}/verified-launch/launch-bundle.json"
-        ),
-        "verified_launch_bundle_sha256": (
-            f"{artifact_root}/verified-launch/launch-bundle.sha256"
-        ),
+        "verified_launch_bundle": (f"{artifact_root}/verified-launch/launch-bundle.json"),
+        "verified_launch_bundle_sha256": (f"{artifact_root}/verified-launch/launch-bundle.sha256"),
         "detached_training": f"{artifact_root}/detached-training",
         "frozen_adapter": f"{artifact_root}/frozen-adapter",
         "directional_campaign": f"{artifact_root}/directional-campaign",
@@ -440,9 +448,7 @@ def build_contract(
     }
     for role, value in paths.items():
         _repo_path(value, role=role, must_exist=False)
-    resolved_model_identity = dict(
-        model_identity or full_weight_checkpoint_identity(model_path)
-    )
+    resolved_model_identity = dict(model_identity or full_weight_checkpoint_identity(model_path))
     resolved_behavior_identity = dict(
         behavior_identity or model_behavior_bundle_identity(model_path)
     )
@@ -453,6 +459,7 @@ def build_contract(
         output=paths["training_output"],
         execution_spec=execution_spec,
     )
+    trajectory_config_commitment = _verified_trajectory_config_commitment(spec)
     arms = [
         "base_vanilla",
         "base_rlc",
@@ -478,18 +485,9 @@ def build_contract(
         ],
         "required_comparisons": [
             "resident_full_stack > recurrent_trained_fixed_depth",
-            (
-                "resident_full_stack > "
-                "resident_full_stack_no_latent_opt"
-            ),
-            (
-                "resident_full_stack > "
-                "resident_full_stack_no_fast_weights"
-            ),
-            (
-                "resident_full_stack > "
-                "resident_full_stack_no_branch_exchange"
-            ),
+            ("resident_full_stack > resident_full_stack_no_latent_opt"),
+            ("resident_full_stack > resident_full_stack_no_fast_weights"),
+            ("resident_full_stack > resident_full_stack_no_branch_exchange"),
             "resident_full_stack > adapter_equal_compute",
         ],
         "acceptance_rules": [
@@ -504,9 +502,7 @@ def build_contract(
             "no_claim_from_profile_without_required_receipts",
         ],
     }
-    confirmatory_tasks = (
-        len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
-    )
+    confirmatory_tasks = len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
     material = {
         "schema": CONTRACT_SCHEMA,
         "campaign_id": campaign_id,
@@ -527,6 +523,11 @@ def build_contract(
             "parameters": dict(TRAINING_PARAMETERS),
             "argv": training_argv,
             "dataset": _dataset_commitment(),
+            **(
+                {"verified_trajectory_config_artifact": (trajectory_config_commitment)}
+                if trajectory_config_commitment is not None
+                else {}
+            ),
             "resume_contract": "exact_identity_bound_checkpoint",
             "completion_required": {
                 "schema": "aura.recurrent_grpo_training_completion.v1",
@@ -576,10 +577,7 @@ def build_contract(
             "mechanism_attribution": mechanism_attribution,
         },
         "hypotheses": {
-            "positive_interaction": (
-                "(adapter_rlc-adapter_vanilla) > "
-                "(base_rlc-base_vanilla)"
-            ),
+            "positive_interaction": ("(adapter_rlc-adapter_vanilla) > (base_rlc-base_vanilla)"),
             "recurrent_execution_dividend": (
                 "adapter_rlc > adapter_vanilla and adapter_equal_compute"
             ),
@@ -625,9 +623,7 @@ def build_contract(
     return {**material, "contract_sha256": _document_sha(material)}
 
 
-def validate_contract(
-    contract: Mapping[str, Any], *, verify_model: bool = True
-) -> dict[str, Any]:
+def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True) -> dict[str, Any]:
     expected_keys = {
         "schema",
         "campaign_id",
@@ -653,9 +649,8 @@ def validate_contract(
     if claimed_sha != _document_sha(material):
         _fail("contract_digest_mismatch")
     campaign_id = contract.get("campaign_id")
-    if (
-        not isinstance(campaign_id, str)
-        or not campaign_id.startswith("resident-32b-recurrent-grpo-cp")
+    if not isinstance(campaign_id, str) or not campaign_id.startswith(
+        "resident-32b-recurrent-grpo-cp"
     ):
         _fail("campaign_identity_mismatch")
     try:
@@ -692,20 +687,26 @@ def validate_contract(
         output=str(paths.get("training_output")),
         execution_spec=DEFAULT_SPEC,
     )
+    expected_trajectory_config = _verified_trajectory_config_commitment(_spec)
     if (
         training.get("execution_mode") != "recurrent"
         or training.get("parameters") != TRAINING_PARAMETERS
         or training.get("argv") != expected_argv
         or training.get("dataset") != _dataset_commitment()
+        or (
+            expected_trajectory_config is None and "verified_trajectory_config_artifact" in training
+        )
+        or (
+            expected_trajectory_config is not None
+            and training.get("verified_trajectory_config_artifact") != expected_trajectory_config
+        )
         or training.get("resume_contract") != "exact_identity_bound_checkpoint"
     ):
         _fail("training_contract_mismatch")
     dataset = training["dataset"]
     if (
-        dataset.get("families")
-        != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
-        or dataset.get("excluded_evaluation_families")
-        != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
+        dataset.get("families") != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
+        or dataset.get("excluded_evaluation_families") != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
         or dataset.get("train_holdout_id_overlap") != 0
         or dataset.get("train_holdout_prompt_overlap") != 0
     ):
@@ -718,14 +719,11 @@ def validate_contract(
         evaluation.get("registry_version") != CURRENT_REGISTRY_VERSION
         or evaluation.get("domains") != list(FRONTIER_DOMAINS)
         or not isinstance(confirmatory, Mapping)
-        or confirmatory.get("observations_per_domain")
-        != CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
+        or confirmatory.get("observations_per_domain") != CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
         or confirmatory.get("task_count")
         != len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
         or confirmatory.get("cell_count")
-        != len(FRONTIER_DOMAINS)
-        * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
-        * 6
+        != len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN * 6
     ):
         _fail("evaluation_power_invalid")
     claim_state = contract.get("claim_state")
@@ -840,8 +838,7 @@ def build_resume_verdict(
         or complete.get("protocol_sha256") != _sha256(protocol_raw)
         or complete.get("dataset_sha256") != _sha256(dataset_raw)
         or complete.get("execution_mode") != "recurrent"
-        or complete.get("execution_spec_sha256")
-        != contract["execution_spec"]["semantic_sha256"]
+        or complete.get("execution_spec_sha256") != contract["execution_spec"]["semantic_sha256"]
     ):
         _fail("resume_checkpoint_state_invalid")
     adapter = _checkpoint_binding(
@@ -949,9 +946,7 @@ def _run_training(
         str(contract["paths"]["verified_launch_bundle_sha256"]),
         role="verified_launch_bundle_sha256",
     )
-    informational_digest = informational_digest_path.read_text(
-        encoding="ascii"
-    ).strip()
+    informational_digest = informational_digest_path.read_text(encoding="ascii").strip()
     if informational_digest != bundle_digest:
         _fail("verified_launch_bundle_external_digest_mismatch")
     result = run_verified_recurrent_grpo_training.main(
@@ -981,6 +976,11 @@ def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:
     argv = list(contract["training"]["argv"])
     output_index = argv.index("--out-dir") + 1
     argv[output_index] = str(contract["paths"]["initial_policy_probe"])
+    if "--verified-trajectory-config" in argv:
+        config_index = argv.index("--verified-trajectory-config")
+        if config_index + 1 >= len(argv):
+            _fail("verified_trajectory_config_argv_invalid")
+        del argv[config_index : config_index + 2]
     argv.append("--initial-policy-probe")
     return argv
 
@@ -1277,9 +1277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.action == "run-training":
                 return _run_training(
                     contract,
-                    expected_launch_bundle_sha256=(
-                        args.expected_launch_bundle_sha256
-                    ),
+                    expected_launch_bundle_sha256=(args.expected_launch_bundle_sha256),
                 )
             if args.action == "run-initial-policy-probe":
                 return _run_initial_policy_probe(contract)
@@ -1293,9 +1291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _launch_training(
                     Path(args.contract),
                     resume=args.resume,
-                    expected_launch_bundle_sha256=(
-                        args.expected_launch_bundle_sha256
-                    ),
+                    expected_launch_bundle_sha256=(args.expected_launch_bundle_sha256),
                 )
             if args.action == "verify-resume":
                 verdict = build_resume_verdict(

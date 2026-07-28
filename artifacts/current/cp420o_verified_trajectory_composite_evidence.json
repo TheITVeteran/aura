@@ -1,0 +1,102 @@
+{
+  "schema": "aura.spark.cp420o_verified_trajectory_composite_evidence.v1",
+  "checkpoint": "CP420O",
+  "total_checkpoint": 685,
+  "generated_at_utc": "2026-07-28T14:26:32Z",
+  "base_commit": "4c6166a7ccbaf3f4e6e580b4ae329d141f69a26d",
+  "claim": "policy_bound_quality_weighted_trajectory_objectives_in_one_verified_optimizer_transaction",
+  "implemented": {
+    "optimizer_composite": [
+      "verifier_weighted_terminal_grpo",
+      "positive_advantage_l1_weighted_monotonic_improvement",
+      "all_branch_displacement_floor",
+      "all_branch_oscillation_pressure",
+      "all_branch_terminal_diversity"
+    ],
+    "credit_assignment": "only positive-advantage completions receive improvement credit; weights are L1 normalized over positive advantage mass",
+    "structural_scope": "displacement, oscillation, and diversity execute once over the complete exchange-coupled branch ensemble using the maximum verified reward and lowest-index tie break",
+    "mutation_semantics": "the composite gradient enters the existing reserved, journaled, exactly-once verified transition transaction and produces one optimizer update",
+    "source_reconstruction": [
+      "group admission receipt",
+      "verified reward receipt",
+      "canonical recurrent samples",
+      "prompt tokens",
+      "frozen execution spec",
+      "frozen trajectory group config",
+      "frozen advantage clip"
+    ],
+    "protocol_binding": "training protocol v6 seals the canonical trajectory config, semantic config digest, and advantage clip; v5 bundles remain verifiable",
+    "configuration_custody": "the config loader requires canonical ASCII JSON, a stable bounded read, a repository-contained regular file, and no final symlink",
+    "adjoint_receipt_v2": [
+      "policy_sha256",
+      "prompt_tokens_sha256_and_count",
+      "answer_tokens_sha256_and_count",
+      "bridge_tokens_sha256_and_count",
+      "nonnegative_token_loss_weights",
+      "execution_spec_and_branch_identity",
+      "trajectory_and_diversity_configuration",
+      "domain_separated_objective_input_sha256",
+      "canonical_receipt_sha256"
+    ],
+    "bridge_boundary": "verified trajectory training rejects nonempty bridge tokens until bridge provenance is admitted into the durable source contract"
+  },
+  "adversarial_proofs": {
+    "resealed_cross_policy_child": "rejected",
+    "resealed_cross_prompt_child": "rejected",
+    "resealed_cross_answer_child": "rejected",
+    "resealed_cross_bridge_child": "rejected",
+    "resealed_nonzero_auxiliary_weight_child": "rejected",
+    "duplicate_missing_or_reordered_branches": "rejected",
+    "cross_admission_objective": "rejected",
+    "staged_resealed_false_objective": "rejected_before_commit_publication",
+    "wrong_frozen_trajectory_config_at_final_replay": "rejected",
+    "policy_probe_with_mutation_only_config": "flag_removed_and_probe_remains_read_only",
+    "config_digest_newline_mismatch": "closed_by_shared_semantic_digest"
+  },
+  "validation": {
+    "ruff_lint": "pass",
+    "ruff_format": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "focused_exact_adjoint": {
+      "passed": 7,
+      "failed": 0,
+      "duration_seconds": 2.6
+    },
+    "real_admitted_transaction_and_replay": {
+      "passed": 3,
+      "failed": 0,
+      "duration_seconds": 22.59
+    },
+    "expanded_final_state_matrix": {
+      "passed": 250,
+      "failed": 0,
+      "duration_seconds": 147.04
+    }
+  },
+  "claim_boundary": {
+    "resident_32b_loaded": false,
+    "resident_32b_trained": false,
+    "trajectory_config_enabled_in_default_campaign": false,
+    "reasoning_gain_proven": false,
+    "frontier_level_proven": false,
+    "wow_signal": false,
+    "spark_060_closed": false,
+    "spark_061_closed": false,
+    "spark_062_closed": false
+  },
+  "remaining_blockers": [
+    "calibrate displacement floors and per-term gradient liveness on the resident 32B operating point",
+    "add verified causal-lesion and learned-stopping objectives",
+    "give process, mistake-location, and accept-discard heads separate admitted optimizers, resident label producers, checkpoint recovery, and runtime artifact binding",
+    "activate the canonical trajectory config in a fresh preregistration whose group size equals the execution branch count",
+    "provision independently authenticated production trust roots and externally custodied issuer and verifier principals",
+    "execute the resident initial-policy probe, materialize and independently reopen the complete launch bundle, then run the powered campaign and falsification stages"
+  ],
+  "next": [
+    "Implement the missing causal-lesion and learned-stopping exact-adjoint lanes with independent arithmetic replay.",
+    "Build separately journaled auxiliary-head training transactions and resident label lineage.",
+    "Run bounded resident-32B objective calibration before enabling the fresh production campaign.",
+    "Keep the powered frontier verdict and WOW Signal commit reserved for accepted external evidence."
+  ]
+}

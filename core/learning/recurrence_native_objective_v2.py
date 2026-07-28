@@ -44,6 +44,58 @@ from core.brain.llm.latent_cortex.workspace import LatentWorkspace, per_position
 RECURRENCE_NATIVE_SCHEMA_V2 = "aura.recurrence_native_objective.v2"
 RECURRENT_TRANSITION_STATE_SCHEMA = "aura.recurrent_transition_state.v1"
 EXACT_ADJOINT_TRAJECTORY_SCHEMA = "aura.exact_adjoint_trajectory_objective.v1"
+EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA = "aura.exact_adjoint_trajectory_objective_receipt.v2"
+_EXACT_ADJOINT_INPUT_DOMAIN = b"aura.exact_adjoint_input.v1\0"
+
+
+def _valid_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _canonical_tokens_sha256(tokens: Sequence[int], *, role: str) -> str:
+    normalized = list(tokens)
+    if not normalized or any(type(token) is not int or token < 0 for token in normalized):
+        raise ValueError(f"{role} must contain non-negative integer tokens")
+    return hashlib.sha256(
+        json.dumps(
+            normalized,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def _canonical_optional_tokens_sha256(tokens: Sequence[int], *, role: str) -> str:
+    normalized = list(tokens)
+    if any(type(token) is not int or token < 0 for token in normalized):
+        raise ValueError(f"{role} must contain non-negative integer tokens")
+    return hashlib.sha256(
+        json.dumps(
+            normalized,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def _exact_adjoint_input_sha256(payload: Mapping[str, Any]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    digest = hashlib.sha256()
+    digest.update(_EXACT_ADJOINT_INPUT_DOMAIN)
+    digest.update(encoded)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,10 +213,20 @@ class ExactAdjointLivePathResult:
     execution_branch_count: int
     diversity_weight: float
     diversity_target_cos: float
+    policy_sha256: str | None
+    prompt_tokens_sha256: str
+    prompt_token_count: int
+    answer_tokens_sha256: str
+    answer_token_count: int
+    bridge_tokens_sha256: str
+    bridge_token_count: int
+    token_loss_weights: tuple[float, ...]
 
     def receipt(self) -> dict[str, Any]:
+        if not _valid_sha256(self.policy_sha256):
+            raise ValueError("proof receipt requires a valid policy_sha256")
         payload = {
-            "schema": EXACT_ADJOINT_TRAJECTORY_SCHEMA,
+            "schema": EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
             "value": float(self.value),
             "terminal_value": float(self.terminal_value),
             "diversity_value": float(self.diversity_value),
@@ -184,10 +246,39 @@ class ExactAdjointLivePathResult:
             "execution_branch_count": self.execution_branch_count,
             "diversity_weight": self.diversity_weight,
             "diversity_target_cos": self.diversity_target_cos,
+            "policy_sha256": self.policy_sha256,
+            "prompt_tokens_sha256": self.prompt_tokens_sha256,
+            "prompt_token_count": self.prompt_token_count,
+            "answer_tokens_sha256": self.answer_tokens_sha256,
+            "answer_token_count": self.answer_token_count,
+            "bridge_tokens_sha256": self.bridge_tokens_sha256,
+            "bridge_token_count": self.bridge_token_count,
+            "token_loss_weights": [float(value) for value in self.token_loss_weights],
             "trajectory_config": (
                 self.trajectory_config.to_dict() if self.trajectory_config is not None else None
             ),
         }
+        input_payload = {
+            key: payload[key]
+            for key in (
+                "policy_sha256",
+                "prompt_tokens_sha256",
+                "prompt_token_count",
+                "answer_tokens_sha256",
+                "answer_token_count",
+                "bridge_tokens_sha256",
+                "bridge_token_count",
+                "token_loss_weights",
+                "execution_spec_sha256",
+                "recurrent_depth",
+                "execution_branch_count",
+                "branch_indices",
+                "diversity_weight",
+                "diversity_target_cos",
+                "trajectory_config",
+            )
+        }
+        payload["objective_input_sha256"] = _exact_adjoint_input_sha256(input_payload)
         encoded = json.dumps(
             payload,
             sort_keys=True,
@@ -217,6 +308,15 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         "execution_branch_count",
         "diversity_weight",
         "diversity_target_cos",
+        "policy_sha256",
+        "prompt_tokens_sha256",
+        "prompt_token_count",
+        "answer_tokens_sha256",
+        "answer_token_count",
+        "bridge_tokens_sha256",
+        "bridge_token_count",
+        "token_loss_weights",
+        "objective_input_sha256",
         "trajectory_config",
         "receipt_sha256",
     }
@@ -233,18 +333,24 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     ).encode("ascii")
     if not isinstance(observed, str) or observed != hashlib.sha256(encoded).hexdigest():
         raise ValueError("exact-adjoint trajectory receipt commitment mismatch")
-    if receipt["schema"] != EXACT_ADJOINT_TRAJECTORY_SCHEMA:
+    if receipt["schema"] != EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA:
         raise ValueError("exact-adjoint trajectory receipt schema is unsupported")
-    digest = receipt["execution_spec_sha256"]
-    if (
-        not isinstance(digest, str)
-        or len(digest) != 64
-        or any(character not in "0123456789abcdef" for character in digest)
+    for role in (
+        "execution_spec_sha256",
+        "policy_sha256",
+        "prompt_tokens_sha256",
+        "answer_tokens_sha256",
+        "bridge_tokens_sha256",
+        "objective_input_sha256",
     ):
-        raise ValueError("exact-adjoint execution spec digest is invalid")
+        if not _valid_sha256(receipt[role]):
+            raise ValueError(f"exact-adjoint {role} is invalid")
     depth = receipt["recurrent_depth"]
     branch_count = receipt["execution_branch_count"]
     branches = receipt["branch_indices"]
+    prompt_count = receipt["prompt_token_count"]
+    answer_count = receipt["answer_token_count"]
+    bridge_count = receipt["bridge_token_count"]
     if (
         type(depth) is not int
         or depth < 1
@@ -255,8 +361,14 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         or any(type(index) is not int or index < 0 for index in branches)
         or any(index >= branch_count for index in branches)
         or len(set(branches)) != len(branches)
+        or type(prompt_count) is not int
+        or prompt_count < 1
+        or type(answer_count) is not int
+        or answer_count < 1
+        or type(bridge_count) is not int
+        or bridge_count < 0
     ):
-        raise ValueError("exact-adjoint depth or branch identity is invalid")
+        raise ValueError("exact-adjoint input cardinality or branch identity is invalid")
 
     def finite_number(item: Any, *, role: str) -> float:
         if (
@@ -273,6 +385,12 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     diversity_target = finite_number(receipt["diversity_target_cos"], role="diversity target")
     if not 0.0 <= diversity_weight <= 10.0 or not 0.0 <= diversity_target <= 1.0:
         raise ValueError("exact-adjoint diversity configuration is invalid")
+    weights = receipt["token_loss_weights"]
+    if not isinstance(weights, list) or len(weights) != answer_count:
+        raise ValueError("exact-adjoint token loss weights do not align")
+    normalized_weights = [finite_number(item, role="token loss weight") for item in weights]
+    if any(item < 0.0 for item in normalized_weights):
+        raise ValueError("exact-adjoint token loss weight is negative")
     total = finite_number(receipt["value"], role="total value")
     terms = receipt["trajectory_values"]
     if not isinstance(terms, Mapping) or set(terms) != {
@@ -294,18 +412,47 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
     )
     if config is not None:
         config.validate_depth(depth)
+    input_payload = {
+        key: receipt[key]
+        for key in (
+            "policy_sha256",
+            "prompt_tokens_sha256",
+            "prompt_token_count",
+            "answer_tokens_sha256",
+            "answer_token_count",
+            "bridge_tokens_sha256",
+            "bridge_token_count",
+            "token_loss_weights",
+            "execution_spec_sha256",
+            "recurrent_depth",
+            "execution_branch_count",
+            "branch_indices",
+            "diversity_weight",
+            "diversity_target_cos",
+            "trajectory_config",
+        )
+    }
+    if receipt["objective_input_sha256"] != _exact_adjoint_input_sha256(input_payload):
+        raise ValueError("exact-adjoint objective input commitment mismatch")
     step_losses = receipt["step_losses"]
     if not isinstance(step_losses, Mapping):
         raise ValueError("exact-adjoint step losses must be a mapping")
     normalized_steps: dict[int, list[Any]] = {}
     for key, losses in step_losses.items():
-        if not isinstance(key, str) or not key.isdigit() or not isinstance(losses, list):
+        if (
+            not isinstance(key, str)
+            or not key.isdigit()
+            or key != str(int(key))
+            or int(key) < 1
+            or not isinstance(losses, list)
+        ):
             raise ValueError("exact-adjoint step-loss row is invalid")
         normalized_steps[int(key)] = losses
         if len(losses) != len(branches):
             raise ValueError("exact-adjoint step-loss branches do not align")
         for loss in losses:
-            finite_number(loss, role="step loss")
+            if finite_number(loss, role="step loss") < 0.0:
+                raise ValueError("exact-adjoint step loss is negative")
     expected_steps = (
         set(config.probe_steps)
         if config is not None and float(config.improvement_weight) > 0.0
@@ -319,7 +466,11 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         if not isinstance(sequence, list):
             raise ValueError(f"exact-adjoint {role} must be a list")
         for item in sequence:
-            finite_number(item, role=role)
+            normalized = finite_number(item, role=role)
+            if role == "displacements" and normalized < 0.0:
+                raise ValueError("exact-adjoint displacement is negative")
+            if role != "displacements" and not -1.000001 <= normalized <= 1.000001:
+                raise ValueError(f"exact-adjoint {role} is outside cosine range")
     expected_diversity_count = branch_count * (branch_count - 1) // 2
     if len(receipt["diversity_cosines"]) != expected_diversity_count:
         raise ValueError("exact-adjoint diversity cardinality is invalid")
@@ -359,6 +510,57 @@ def validate_exact_adjoint_live_path_receipt(value: Any) -> dict[str, Any]:
         raise ValueError("exact-adjoint oscillation cardinality is invalid")
     if config is None and any(abs(number) > 0.0 for number in term_values.values()):
         raise ValueError("exact-adjoint receipt has terms without a trajectory config")
+    replayed_improvement = 0.0
+    replayed_displacement = 0.0
+    replayed_oscillation = 0.0
+    if config is not None:
+        if float(config.improvement_weight) > 0.0:
+            hinges = [
+                max(
+                    float(normalized_steps[current][branch])
+                    - float(normalized_steps[previous][branch])
+                    + float(config.improvement_margin),
+                    0.0,
+                )
+                for previous, current in zip(
+                    config.probe_steps,
+                    config.probe_steps[1:],
+                    strict=False,
+                )
+                for branch in range(len(branches))
+            ]
+            replayed_improvement = float(config.improvement_weight) * sum(hinges) / len(hinges)
+        if float(config.displacement_weight) > 0.0:
+            replayed_displacement = (
+                float(config.displacement_weight)
+                * sum(
+                    max(
+                        float(config.displacement_floor) - float(displacement),
+                        0.0,
+                    )
+                    for displacement in receipt["displacements"]
+                )
+                / len(receipt["displacements"])
+            )
+        if float(config.oscillation_weight) > 0.0:
+            replayed_oscillation = (
+                float(config.oscillation_weight)
+                * sum(max(-float(cosine), 0.0) for cosine in receipt["oscillation_cosines"])
+                / len(receipt["oscillation_cosines"])
+            )
+    for name, replayed in (
+        ("improvement", replayed_improvement),
+        ("displacement", replayed_displacement),
+        ("oscillation", replayed_oscillation),
+    ):
+        if not math.isclose(
+            term_values[name],
+            replayed,
+            rel_tol=0.0,
+            # State-derived atoms cross MLX float32 before Python replay.
+            abs_tol=1e-6,
+        ):
+            raise ValueError(f"exact-adjoint {name} term does not replay")
     return dict(value)
 
 
@@ -1339,6 +1541,8 @@ def _exact_adjoint_live_path_result(
     token_loss_weights: Sequence[float] | None = None,
     branch_index: int | None = None,
     trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    policy_sha256: str | None = None,
+    allow_signed_token_loss_weights: bool = False,
 ) -> ExactAdjointLivePathResult:
     """Compute the exact live-path gradient with bounded graph residency.
 
@@ -1366,11 +1570,25 @@ def _exact_adjoint_live_path_result(
     if token_loss_weights is None:
         normalized_token_weights = (1.0,) * len(answer_tokens)
     else:
+        if any(isinstance(value, bool) for value in token_loss_weights):
+            raise ValueError("token_loss_weights must align and be finite")
         normalized_token_weights = tuple(float(value) for value in token_loss_weights)
         if len(normalized_token_weights) != len(answer_tokens) or any(
             not math.isfinite(value) for value in normalized_token_weights
         ):
             raise ValueError("token_loss_weights must align and be finite")
+        if not allow_signed_token_loss_weights and any(
+            value < 0.0 for value in normalized_token_weights
+        ):
+            raise ValueError("proof receipt token_loss_weights must be non-negative")
+    prompt_tokens_sha256 = _canonical_tokens_sha256(prompt_tokens, role="prompt_tokens")
+    answer_tokens_sha256 = _canonical_tokens_sha256(answer_tokens, role="answer_tokens")
+    bridge_tokens_sha256 = _canonical_optional_tokens_sha256(
+        bridge_tokens,
+        role="bridge_tokens",
+    )
+    if policy_sha256 is not None and not _valid_sha256(policy_sha256):
+        raise ValueError("policy_sha256 must be a lowercase SHA-256 digest")
     parameters = model.trainable_parameters()
     prepared = _prepare_live_path(
         model,
@@ -1779,6 +1997,14 @@ def _exact_adjoint_live_path_result(
         execution_branch_count=len(current),
         diversity_weight=float(diversity_weight),
         diversity_target_cos=float(diversity_target_cos),
+        policy_sha256=policy_sha256,
+        prompt_tokens_sha256=prompt_tokens_sha256,
+        prompt_token_count=len(prompt_tokens),
+        answer_tokens_sha256=answer_tokens_sha256,
+        answer_token_count=len(answer_tokens),
+        bridge_tokens_sha256=bridge_tokens_sha256,
+        bridge_token_count=len(bridge_tokens),
+        token_loss_weights=normalized_token_weights,
     )
 
 
@@ -1806,6 +2032,7 @@ def exact_adjoint_live_path_value_and_grad(
         diversity_target_cos=diversity_target_cos,
         token_loss_weights=token_loss_weights,
         branch_index=branch_index,
+        allow_signed_token_loss_weights=True,
     )
     return (
         result.value,
@@ -1822,6 +2049,7 @@ def exact_adjoint_trajectory_live_path_value_and_grad(
     *,
     spec: RLCExecutionSpec,
     trajectory_config: ExactAdjointTrajectoryConfig,
+    policy_sha256: str,
     bridge_tokens: Sequence[int] = (),
     branch_index: int | None = None,
     diversity_weight: float = 0.0,
@@ -1829,6 +2057,43 @@ def exact_adjoint_trajectory_live_path_value_and_grad(
     token_loss_weights: Sequence[float] | None = None,
 ) -> ExactAdjointLivePathResult:
     """Compute terminal and trajectory gradients with bounded graph residency."""
+
+    return exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        prompt_tokens,
+        answer_tokens,
+        spec=spec,
+        trajectory_config=trajectory_config,
+        policy_sha256=policy_sha256,
+        bridge_tokens=bridge_tokens,
+        branch_index=branch_index,
+        diversity_weight=diversity_weight,
+        diversity_target_cos=diversity_target_cos,
+        token_loss_weights=token_loss_weights,
+    )
+
+
+def exact_adjoint_composite_live_path_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    trajectory_config: ExactAdjointTrajectoryConfig | None = None,
+    policy_sha256: str,
+    bridge_tokens: Sequence[int] = (),
+    branch_index: int | None = None,
+    diversity_weight: float = 0.0,
+    diversity_target_cos: float = 0.98,
+    token_loss_weights: Sequence[float] | None = None,
+) -> ExactAdjointLivePathResult:
+    """Return rich exact-adjoint telemetry for any admitted objective mix.
+
+    ``trajectory_config=None`` is intentionally supported here so a caller can
+    train branch diversity without inventing a fake trajectory term.  The
+    narrower ``exact_adjoint_trajectory_live_path_value_and_grad`` surface
+    continues to require a real trajectory configuration.
+    """
 
     return _exact_adjoint_live_path_result(
         model,
@@ -1841,6 +2106,7 @@ def exact_adjoint_trajectory_live_path_value_and_grad(
         token_loss_weights=token_loss_weights,
         branch_index=branch_index,
         trajectory_config=trajectory_config,
+        policy_sha256=policy_sha256,
     )
 
 
@@ -1916,6 +2182,7 @@ def depth_curriculum_loss_v2(
 
 __all__ = [
     "EXACT_ADJOINT_TRAJECTORY_SCHEMA",
+    "EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA",
     "ExactAdjointLivePathResult",
     "ExactAdjointTrajectoryConfig",
     "LivePathForward",
@@ -1925,6 +2192,7 @@ __all__ = [
     "branch_mean_answer_loss",
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
+    "exact_adjoint_composite_live_path_value_and_grad",
     "exact_adjoint_live_path_value_and_grad",
     "exact_adjoint_trajectory_live_path_value_and_grad",
     "live_path_branch_answer_ce_trail",

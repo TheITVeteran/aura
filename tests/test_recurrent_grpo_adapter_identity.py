@@ -36,6 +36,10 @@ from core.learning import (
 from core.learning.grpo import GRPOConfig, group_advantages
 from core.learning.grpo_training_state import canonical_json_bytes as training_json_bytes
 from core.learning.recurrent_grpo import recurrent_policy_sha256
+from core.learning.recurrent_grpo_artifact_schema import (
+    PROTOCOL_SCHEMA_V5,
+    protocol_semantic_sha256,
+)
 from core.learning.verified_transition_trainer import (
     VerifiedTransitionMutationResult,
     build_verified_transition_step_receipt,
@@ -125,7 +129,9 @@ def _fixture(
     *,
     mutate_receipt=None,
     trajectory_credit: bool = False,
+    trajectory_config: dict | None = None,
     verified_step: bool = False,
+    protocol_schema: str = GRPO_PROTOCOL_SCHEMA,
 ) -> dict:
     mx = pytest.importorskip("mlx.core")
     out = tmp_path / "training"
@@ -202,9 +208,14 @@ def _fixture(
         "temperature": 1.0,
         "max_tokens": 32,
         "kl_coefficient": 0.02,
+        "advantage_clip": 4.0,
         "format_credit": 0.0,
         "trajectory_credit": trajectory_credit,
         "trajectory_shaping_weight": 0.25,
+        "verified_trajectory_config": copy.deepcopy(trajectory_config),
+        "verified_trajectory_config_sha256": (
+            protocol_semantic_sha256(trajectory_config) if trajectory_config is not None else None
+        ),
         "lora_rank": 2,
         "lora_targets": "o_proj",
         "lora_layers": 1,
@@ -224,8 +235,12 @@ def _fixture(
         "memory_fraction": 0.4,
         "rng_strategy": "stateless_sha256_step_seeded_v1",
     }
+    if protocol_schema == PROTOCOL_SCHEMA_V5:
+        training.pop("advantage_clip")
+        training.pop("verified_trajectory_config")
+        training.pop("verified_trajectory_config_sha256")
     protocol = {
-        "schema": GRPO_PROTOCOL_SCHEMA,
+        "schema": protocol_schema,
         "adapter_id": adapter_id,
         "model_path": "/model",
         "base_checkpoint": base,
@@ -535,6 +550,46 @@ def test_recurrent_grpo_bundle_is_complete_distinct_and_idempotent(tmp_path):
     assert identity["optimizer_updates"] == 1
     assert identity["causal_gain_proven"] is False
     assert _validate(fixture) == identity
+
+
+def test_recurrent_grpo_v5_bundle_remains_verifiable_after_v6_migration(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path, protocol_schema=PROTOCOL_SCHEMA_V5)
+
+    identity = _validate(fixture)
+
+    assert identity == fixture["identity"]
+    protocol = json.loads(
+        (fixture["out"] / "campaign_adapter/training_protocol.json").read_text(encoding="ascii")
+    )
+    assert protocol["schema"] == PROTOCOL_SCHEMA_V5
+    assert "verified_trajectory_config" not in protocol["training"]
+
+
+def test_recurrent_grpo_v6_bundle_with_trajectory_config_verifies_end_to_end(
+    tmp_path: Path,
+) -> None:
+    trajectory_config = json.loads(
+        (Path(__file__).parent / "fixtures/verified_trajectory_group_config.json").read_text(
+            encoding="ascii"
+        )
+    )
+    fixture = _fixture(
+        tmp_path,
+        trajectory_config=trajectory_config,
+    )
+
+    identity = _validate(fixture)
+    protocol = json.loads(
+        (fixture["out"] / "campaign_adapter/training_protocol.json").read_text(encoding="ascii")
+    )
+
+    assert identity == fixture["identity"]
+    assert protocol["training"]["verified_trajectory_config"] == trajectory_config
+    assert protocol["training"]["verified_trajectory_config_sha256"] == protocol_semantic_sha256(
+        trajectory_config
+    )
 
 
 def test_recurrent_grpo_identity_accepts_verified_transition_step_format(tmp_path):

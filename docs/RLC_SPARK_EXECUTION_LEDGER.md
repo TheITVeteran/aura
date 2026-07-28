@@ -5217,3 +5217,36 @@ liveness. No resident model was loaded, no training occurred, and no reasoning,
 frontier, promotion, or `WOW Signal` result follows. Evidence:
 `artifacts/current/cp420n_exact_adjoint_trajectory_evidence.json`.
 The expanded affected matrix passes 321/321 in 142.55 seconds.
+
+### 2026-07-28 - CP420O: the verified optimizer consumes the trajectory objective
+
+CP420N's bounded trajectory adjoint now enters the same reserved, journaled,
+exactly-once update as verifier-weighted terminal GRPO. Positive verified
+advantage determines which completion branches receive improvement credit;
+displacement, oscillation, and diversity are evaluated once over the whole
+exchange-coupled ensemble. The durable source binding is reconstructed at final
+evidence validation from admission, reward, sample, prompt, frozen spec,
+canonical config, and advantage clip rather than accepted from the objective
+journal.
+
+Exact-adjoint proof receipts have a distinct v2 schema and commit the exact
+policy, token inputs, token weights, graph, branches, and objective
+configuration. Resealed child transplants across policy, prompt, answer,
+bridge, or weights fail against independently admitted group evidence. The
+unchanged trajectory-config schema remains v1, preserving preregistration and
+historical protocol compatibility. Nonempty bridge tokens fail closed until
+their provenance is included in the admitted replay package.
+
+The SPARK-061 and SPARK-062 checkboxes remain open. The production path can now
+optimize improvement, anti-collapse displacement, oscillation, and diversity,
+but no resident treatment has established monotonic later-state quality or
+useful 32B gradients. Causal-lesion and learned-stopping terms remain absent,
+and the three auxiliary heads still lack separate admitted optimizer
+transactions and resident labels. The canonical config is archived and
+verifiable but is not enabled by the default resident campaign.
+
+Ruff and diff hygiene pass; the final expanded matrix passes 250/250 in 147.04
+seconds. Evidence:
+`artifacts/current/cp420o_verified_trajectory_composite_evidence.json`. No
+resident model was loaded or trained, and no reasoning, frontier, promotion, or
+`WOW Signal` result follows.

@@ -14,7 +14,10 @@ from core.brain.llm.latent_cortex.campaign_trust import VerifiedCampaignTrustPol
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo import GRPOConfig, group_advantages
 from core.learning.grpo_training_state import canonical_json_bytes
-from core.learning.recurrent_grpo import recurrent_policy_sha256
+from core.learning.recurrent_grpo import (
+    VerifiedTrajectoryGroupConfig,
+    recurrent_policy_sha256,
+)
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
 )
@@ -75,9 +78,7 @@ def _sha256(value: Any, *, role: str) -> str:
 
 def _seal(document: Mapping[str, Any]) -> dict[str, Any]:
     sealed = dict(document)
-    sealed["receipt_sha256"] = hashlib.sha256(
-        canonical_json_bytes(sealed)
-    ).hexdigest()
+    sealed["receipt_sha256"] = hashlib.sha256(canonical_json_bytes(sealed)).hexdigest()
     return sealed
 
 
@@ -226,9 +227,7 @@ class VerifiedTransitionGroupProvider(Protocol):
         step_receipts: Sequence[Mapping[str, Any]],
     ) -> Sequence[VerifiedTransitionReplayGroup]: ...
 
-    def accept_step_receipt(
-        self, receipt: Mapping[str, Any]
-    ) -> Mapping[str, Any]: ...
+    def accept_step_receipt(self, receipt: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
     def recover_transaction_publications(
         self,
@@ -329,8 +328,7 @@ class VerifiedTransitionTelemetry:
             isinstance(reward_sum, bool)
             or not isinstance(reward_sum, (int, float))
             or not math.isfinite(float(reward_sum))
-            or integers["admitted_groups"] + integers["rejected_groups"]
-            != integers["groups"]
+            or integers["admitted_groups"] + integers["rejected_groups"] != integers["groups"]
             or integers["degenerate"] > integers["groups"]
         ):
             raise ValueError("verified_transition_telemetry_state_invalid")
@@ -347,8 +345,7 @@ class VerifiedTransitionTelemetry:
         degenerate_fraction = self.degenerate / self.groups
         admitted_fraction = self.admitted_groups / self.groups
         learning_signal = (
-            self.admitted_groups > 0
-            and degenerate_fraction <= config.max_degenerate_fraction
+            self.admitted_groups > 0 and degenerate_fraction <= config.max_degenerate_fraction
         )
         if self.admitted_groups == 0:
             diagnosis = "all_verified_transition_groups_rejected"
@@ -394,9 +391,7 @@ def validate_verified_transition_step_receipt(
     normalized = dict(receipt)
     if normalized.get("schema") != VERIFIED_TRANSITION_STEP_SCHEMA:
         raise ValueError("verified_transition_step_receipt_version_invalid")
-    observed = _sha256(
-        normalized.get("receipt_sha256"), role="verified_transition_step_receipt"
-    )
+    observed = _sha256(normalized.get("receipt_sha256"), role="verified_transition_step_receipt")
     unsigned = dict(normalized)
     unsigned.pop("receipt_sha256")
     if hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest() != observed:
@@ -470,10 +465,8 @@ def validate_verified_transition_step_receipt(
             or not isinstance(terminal, Mapping)
             or terminal.get("status") != "updated"
             or terminal.get("sequence") != normalized["campaign_sequence"]
-            or terminal.get("group_manifest_sha256")
-            != normalized["group_manifest_sha256"]
-            or terminal.get("reward_receipt_sha256")
-            != normalized["reward_receipt_sha256"]
+            or terminal.get("group_manifest_sha256") != normalized["group_manifest_sha256"]
+            or terminal.get("reward_receipt_sha256") != normalized["reward_receipt_sha256"]
             or terminal.get("group_admission_sha256") != admission_sha256
             or terminal.get("update_receipt_sha256") != update_sha256
         ):
@@ -486,10 +479,8 @@ def validate_verified_transition_step_receipt(
             or not isinstance(terminal, Mapping)
             or terminal.get("status") != "rejected"
             or terminal.get("sequence") != normalized["campaign_sequence"]
-            or terminal.get("group_manifest_sha256")
-            != normalized["group_manifest_sha256"]
-            or terminal.get("reward_receipt_sha256")
-            != normalized["reward_receipt_sha256"]
+            or terminal.get("group_manifest_sha256") != normalized["group_manifest_sha256"]
+            or terminal.get("reward_receipt_sha256") != normalized["reward_receipt_sha256"]
             or before != after
         ):
             raise ValueError("verified_transition_step_rejection_invalid")
@@ -531,14 +522,10 @@ def build_verified_transition_step_receipt(
                 else "verified_rejected_group"
             ),
             "update": (
-                dict(mutation.update_receipt)
-                if mutation.update_receipt is not None
-                else None
+                dict(mutation.update_receipt) if mutation.update_receipt is not None else None
             ),
             "terminal": (
-                dict(mutation.terminal_receipt)
-                if mutation.terminal_receipt is not None
-                else None
+                dict(mutation.terminal_receipt) if mutation.terminal_receipt is not None else None
             ),
             "policy_before_sha256": mutation.policy_before_sha256,
             "policy_after_sha256": mutation.policy_after_sha256,
@@ -582,6 +569,7 @@ def apply_prepared_verified_transition_group(
     spec: RLCExecutionSpec,
     bridge_tokens: Sequence[int] = (),
     config: Any | None = None,
+    trajectory_group_config: VerifiedTrajectoryGroupConfig | None = None,
     now_unix_ns: Callable[[], int] = time.time_ns,
     transaction_coordinator: Any | None = None,
     rejection_transaction_coordinator: Any | None = None,
@@ -624,9 +612,7 @@ def apply_prepared_verified_transition_group(
             sequence=prepared.campaign_sequence,
             group_manifest=prepared.group_manifest,
         )
-        rejection_transaction_coordinator.stage_rejection(
-            policy_sha256=policy_before
-        )
+        rejection_transaction_coordinator.stage_rejection(policy_sha256=policy_before)
         terminal = prepared.campaign_ledger.finish_group(
             sequence=prepared.campaign_sequence,
             status="rejected",
@@ -682,6 +668,7 @@ def apply_prepared_verified_transition_group(
         campaign_sequence=prepared.campaign_sequence,
         bridge_tokens=bridge_tokens,
         config=config,
+        trajectory_group_config=trajectory_group_config,
         now_unix_ns=now_unix_ns,
         return_terminal_receipt=True,
         transaction_coordinator=transaction_coordinator,
@@ -712,9 +699,7 @@ def apply_prepared_verified_transition_group(
         structured_rewards=rewards,
         optimizer_admission_reason=reason,
         reward_receipt_sha256=cast(str, reward["receipt_sha256"]),
-        group_admission_sha256=cast(
-            str, prepared.group_admission_receipt["receipt_sha256"]
-        ),
+        group_admission_sha256=cast(str, prepared.group_admission_receipt["receipt_sha256"]),
         update_receipt_sha256=cast(str, update["receipt_sha256"]),
         update_receipt=update,
         terminal_receipt=terminal,

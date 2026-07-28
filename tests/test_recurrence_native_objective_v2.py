@@ -40,11 +40,12 @@ from core.learning.progressive_recurrent_objective import (  # noqa: E402
     progressive_objective_loss,
 )
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
-    EXACT_ADJOINT_TRAJECTORY_SCHEMA,
+    EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
     ExactAdjointTrajectoryConfig,
     _exchange_and_decorrelate,
     depth_curriculum_loss_v2,
     detached_monotonicity_penalty,
+    exact_adjoint_composite_live_path_value_and_grad,
     exact_adjoint_trajectory_live_path_value_and_grad,
     live_path_forward,
     live_path_loss,
@@ -311,13 +312,14 @@ def test_bounded_exact_adjoint_matches_full_unroll_trajectory_gradient():
         ANSWER,
         spec=spec,
         trajectory_config=config,
+        policy_sha256=recurrent_policy_sha256(streamed, spec),
         token_loss_weights=(0.0,) * len(ANSWER),
     )
     mx.eval(full_value, full_gradients, exact.gradients)
     full_flat = dict(tree_flatten(full_gradients))
     exact_flat = dict(tree_flatten(exact.gradients))
 
-    assert exact.receipt()["schema"] == EXACT_ADJOINT_TRAJECTORY_SCHEMA
+    assert exact.receipt()["schema"] == EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA
     assert exact.receipt()["branch_indices"] == [0]
     assert validate_exact_adjoint_live_path_receipt(exact.receipt()) == exact.receipt()
     assert exact.value == pytest.approx(float(full_value), abs=2e-5)
@@ -345,6 +347,7 @@ def test_exact_adjoint_trajectory_selects_one_producing_branch():
         ANSWER,
         spec=spec,
         trajectory_config=config,
+        policy_sha256=recurrent_policy_sha256(model, spec),
         branch_index=1,
         diversity_weight=0.4,
         diversity_target_cos=0.5,
@@ -360,8 +363,99 @@ def test_exact_adjoint_trajectory_selects_one_producing_branch():
     assert validate_exact_adjoint_live_path_receipt(result.receipt()) == result.receipt()
 
 
+def test_exact_adjoint_composite_supports_diversity_without_fake_trajectory():
+    model = _model()
+    spec = _spec(
+        recurrent_steps=2,
+        branch_roles=("constructive_solution", "counterexample_search"),
+    )
+
+    result = exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=None,
+        policy_sha256=recurrent_policy_sha256(model, spec),
+        branch_index=None,
+        diversity_weight=0.4,
+        diversity_target_cos=0.5,
+        token_loss_weights=(0.0,) * len(ANSWER),
+    )
+
+    assert result.branch_indices == (0, 1)
+    assert result.trajectory_config is None
+    assert result.terminal_value == pytest.approx(0.0, abs=1e-12)
+    assert validate_exact_adjoint_live_path_receipt(result.receipt()) == result.receipt()
+
+
+def test_exact_adjoint_receipt_binds_every_proof_input():
+    model = _model()
+    spec = _spec(
+        recurrent_steps=2,
+        branch_roles=("constructive_solution", "counterexample_search"),
+        decode_bridge_policy="assistant_answer",
+    )
+    bridge = (19, 29)
+    policy_sha256 = recurrent_policy_sha256(model, spec)
+    result = exact_adjoint_composite_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=None,
+        policy_sha256=policy_sha256,
+        bridge_tokens=bridge,
+        branch_index=0,
+        token_loss_weights=(0.25, 0.5, 1.0),
+    )
+    receipt = result.receipt()
+
+    def token_sha256(tokens):
+        return hashlib.sha256(
+            json.dumps(list(tokens), separators=(",", ":"), allow_nan=False).encode("ascii")
+        ).hexdigest()
+
+    assert receipt["policy_sha256"] == policy_sha256
+    assert receipt["prompt_tokens_sha256"] == token_sha256(PROMPT)
+    assert receipt["answer_tokens_sha256"] == token_sha256(ANSWER)
+    assert receipt["bridge_tokens_sha256"] == token_sha256(bridge)
+    assert receipt["token_loss_weights"] == [0.25, 0.5, 1.0]
+    assert validate_exact_adjoint_live_path_receipt(receipt) == receipt
+
+    attacked = copy.deepcopy(receipt)
+    attacked["answer_tokens_sha256"] = "0" * 64
+    attacked["receipt_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in attacked.items() if key != "receipt_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    with pytest.raises(ValueError, match="objective input commitment mismatch"):
+        validate_exact_adjoint_live_path_receipt(attacked)
+
+
+def test_exact_adjoint_proof_receipt_rejects_signed_token_weights():
+    model = _model()
+    spec = _spec()
+    with pytest.raises(ValueError, match="must be non-negative"):
+        exact_adjoint_composite_live_path_value_and_grad(
+            model,
+            PROMPT,
+            ANSWER,
+            spec=spec,
+            trajectory_config=None,
+            policy_sha256=recurrent_policy_sha256(model, spec),
+            token_loss_weights=(0.0, -0.1, 0.0),
+        )
+
+
 def test_exact_adjoint_trajectory_receipt_rejects_resealed_false_arithmetic():
     model = _model()
+    spec = _spec()
     config = ExactAdjointTrajectoryConfig(
         probe_steps=(1, 2),
         improvement_weight=1.0,
@@ -372,12 +466,14 @@ def test_exact_adjoint_trajectory_receipt_rejects_resealed_false_arithmetic():
         model,
         PROMPT,
         ANSWER,
-        spec=_spec(),
+        spec=spec,
         trajectory_config=config,
+        policy_sha256=recurrent_policy_sha256(model, spec),
         token_loss_weights=(0.0,) * len(ANSWER),
     ).receipt()
     attacked = copy.deepcopy(receipt)
     attacked["trajectory_values"]["improvement"] += 1.0
+    attacked["value"] += 1.0
     payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
     attacked["receipt_sha256"] = hashlib.sha256(
         json.dumps(
@@ -389,8 +485,67 @@ def test_exact_adjoint_trajectory_receipt_rejects_resealed_false_arithmetic():
         ).encode("ascii")
     ).hexdigest()
 
-    with pytest.raises(ValueError, match="total does not replay"):
+    with pytest.raises(ValueError, match="improvement term does not replay"):
         validate_exact_adjoint_live_path_receipt(attacked)
+
+
+def test_exact_adjoint_trajectory_receipt_rejects_out_of_domain_atoms():
+    model = _model()
+    spec = _spec()
+    receipt = exact_adjoint_trajectory_live_path_value_and_grad(
+        model,
+        PROMPT,
+        ANSWER,
+        spec=spec,
+        trajectory_config=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=1.0,
+            displacement_weight=0.5,
+            displacement_floor=0.99,
+            oscillation_weight=0.5,
+        ),
+        policy_sha256=recurrent_policy_sha256(model, spec),
+        token_loss_weights=(0.0,) * len(ANSWER),
+    ).receipt()
+
+    def reseal(attacked):
+        payload = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+        attacked["receipt_sha256"] = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        return attacked
+
+    mutations = (
+        (
+            lambda attacked: attacked["step_losses"].update(
+                {"01": attacked["step_losses"].pop("1")}
+            ),
+            "step-loss row",
+        ),
+        (
+            lambda attacked: attacked["step_losses"]["1"].__setitem__(0, -0.1),
+            "step loss is negative",
+        ),
+        (
+            lambda attacked: attacked["displacements"].__setitem__(0, -0.1),
+            "displacement is negative",
+        ),
+        (
+            lambda attacked: attacked["oscillation_cosines"].__setitem__(0, 1.1),
+            "outside cosine range",
+        ),
+    )
+    for mutate, error in mutations:
+        attacked = copy.deepcopy(receipt)
+        mutate(attacked)
+        with pytest.raises(ValueError, match=error):
+            validate_exact_adjoint_live_path_receipt(reseal(attacked))
 
 
 def test_two_branch_exchange_and_depth_curriculum_are_live():

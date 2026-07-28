@@ -23,11 +23,15 @@ from core.brain.llm.latent_cortex.adapter_identity import (
 )
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo import GRPO_SCHEMA
+from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
 from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA,
+    PROTOCOL_SCHEMA_V5,
     PROTOCOL_TRAINING_KEYS,
+    PROTOCOL_TRAINING_KEYS_V5,
     STEP_RECEIPT_KEYS,
     RecurrentGRPOArtifactSchemaError,
+    protocol_semantic_sha256,
     validate_step_reward_channels,
 )
 from core.learning.recurrent_grpo_artifact_schema import (
@@ -731,21 +735,51 @@ def validate_recurrent_grpo_adapter_identity(
             role="training_protocol",
         )
     )
+    protocol_schema = protocol.get("schema")
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+        training_keys = set(PROTOCOL_TRAINING_KEYS)
+    elif protocol_schema == PROTOCOL_SCHEMA_V5:
+        training_keys = set(PROTOCOL_TRAINING_KEYS_V5)
+    else:
+        _fail("training_protocol_schema_invalid")
     training = _exact(
         protocol["training"],
-        set(PROTOCOL_TRAINING_KEYS),
+        training_keys,
         role="training_parameters",
     )
     trajectory_credit_enabled = training.get("trajectory_credit")
     trajectory_shaping_weight = training.get("trajectory_shaping_weight")
     min_signal_groups = training.get("min_signal_groups")
-    provider_contract_sha256 = training.get(
-        "verified_transition_provider_contract_sha256"
-    )
+    provider_contract_sha256 = training.get("verified_transition_provider_contract_sha256")
     lora_initialization_seed = training.get("lora_initialization_seed")
+    advantage_clip = training.get("advantage_clip", 4.0)
+    trajectory_group_config = None
+    trajectory_group_config_sha256 = None
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+        trajectory_group_config = training.get("verified_trajectory_config")
+        trajectory_group_config_sha256 = training.get("verified_trajectory_config_sha256")
+        if trajectory_group_config is None:
+            if trajectory_group_config_sha256 is not None:
+                _fail("verified_trajectory_config_binding_invalid")
+        else:
+            try:
+                validated_trajectory_config = VerifiedTrajectoryGroupConfig.from_dict(
+                    trajectory_group_config
+                )
+            except (TypeError, ValueError) as exc:
+                raise RecurrentGRPOAdapterIdentityError(
+                    "verified_trajectory_config_invalid"
+                ) from exc
+            if (
+                validated_trajectory_config.to_dict() != trajectory_group_config
+                or not isinstance(trajectory_group_config_sha256, str)
+                or _SHA256_RE.fullmatch(trajectory_group_config_sha256) is None
+                or protocol_semantic_sha256(trajectory_group_config)
+                != trajectory_group_config_sha256
+            ):
+                _fail("verified_trajectory_config_binding_invalid")
     if (
-        protocol.get("schema") != TRAINING_PROTOCOL_SCHEMA
-        or protocol.get("adapter_id") != adapter_id
+        protocol.get("adapter_id") != adapter_id
         or protocol.get("base_checkpoint") != parsed["base_checkpoint"]
         or protocol.get("model_behavior") != parsed["model_behavior_bundle"]
         or protocol.get("personality_adapter") != parsed["personality_adapter"]
@@ -760,6 +794,10 @@ def validate_recurrent_grpo_adapter_identity(
         or type(lora_initialization_seed) is not int
         or not 0 <= lora_initialization_seed <= (1 << 32) - 1
         or type(trajectory_credit_enabled) is not bool
+        or isinstance(advantage_clip, bool)
+        or not isinstance(advantage_clip, (int, float))
+        or not math.isfinite(float(advantage_clip))
+        or not 0.0 < float(advantage_clip) <= 100.0
         or isinstance(trajectory_shaping_weight, bool)
         or not isinstance(trajectory_shaping_weight, (int, float))
         or not math.isfinite(float(trajectory_shaping_weight))
@@ -1129,11 +1167,44 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
         validate_verified_transition_training_evidence,
     )
 
+    parsed_manifest = (
+        strict_json_loads(manifest, role="verified_identity_manifest")
+        if isinstance(manifest, bytes)
+        else dict(manifest)
+    )
+    bindings = dict(declared_bindings(parsed_manifest))
+    training_protocol = strict_json_loads(
+        _verify_artifact(
+            bindings["training_protocol"],
+            artifacts,
+            role="verified_identity_training_protocol",
+        ),
+        role="verified_identity_training_protocol",
+    )
+    training_parameters = training_protocol.get("training")
+    if not isinstance(training_parameters, Mapping):
+        _fail("verified_identity_training_protocol_invalid")
+    try:
+        execution_spec = RLCExecutionSpec.from_dict(training_parameters["execution_spec"])
+        raw_trajectory_config = training_parameters.get("verified_trajectory_config")
+        trajectory_group_config = (
+            VerifiedTrajectoryGroupConfig.from_dict(raw_trajectory_config)
+            if raw_trajectory_config is not None
+            else None
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RecurrentGRPOAdapterIdentityError(
+            "verified_identity_training_protocol_invalid"
+        ) from exc
+    advantage_clip = training_parameters.get("advantage_clip")
     groups = tuple(transition_groups)
     evidence = validate_verified_transition_training_evidence(
         transition_campaign_ledger,
         policy=transition_policy,
         groups=groups,
+        execution_spec=execution_spec,
+        trajectory_group_config=trajectory_group_config,
+        advantage_clip=advantage_clip,
     )
     if (
         evidence.get("source_artifacts_replayed") is not True
@@ -1143,12 +1214,6 @@ def validate_recurrent_grpo_adapter_identity_with_verified_transitions(
     ):
         _fail("verified_transition_identity_cross_binding_mismatch")
 
-    parsed_manifest = (
-        strict_json_loads(manifest, role="verified_identity_manifest")
-        if isinstance(manifest, bytes)
-        else dict(manifest)
-    )
-    bindings = dict(declared_bindings(parsed_manifest))
     training_receipt = strict_json_loads(
         _verify_artifact(
             bindings["training_receipt"],

@@ -31,6 +31,7 @@ What this run refuses to do:
   credit is capped, because formatting is far easier to learn than
   reasoning and a model that learns it looks like it is improving.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,6 +74,7 @@ from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
 )
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     STEP_RECEIPT_SCHEMA,
+    protocol_semantic_sha256,
     validate_step_reward_channels,
 )
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
@@ -177,9 +179,7 @@ def _dataset_payload(
     }
 
 
-def _assert_exact_adapter_keys(
-    expected: Mapping[str, Any], loaded: Mapping[str, Any]
-) -> None:
+def _assert_exact_adapter_keys(expected: Mapping[str, Any], loaded: Mapping[str, Any]) -> None:
     expected_keys = set(expected)
     loaded_keys = set(loaded)
     if loaded_keys == expected_keys:
@@ -187,8 +187,7 @@ def _assert_exact_adapter_keys(
     missing = sorted(expected_keys - loaded_keys)
     unexpected = sorted(loaded_keys - expected_keys)
     raise GRPOCheckpointError(
-        "checkpoint adapter keyset differs "
-        f"(missing={missing[:5]}, unexpected={unexpected[:5]})"
+        f"checkpoint adapter keyset differs (missing={missing[:5]}, unexpected={unexpected[:5]})"
     )
 
 
@@ -201,20 +200,15 @@ def _assert_exact_tensor_layout(
         missing = sorted(expected_keys - loaded_keys)
         unexpected = sorted(loaded_keys - expected_keys)
         raise GRPOCheckpointError(
-            f"staged {role} keyset differs "
-            f"(missing={missing[:5]}, unexpected={unexpected[:5]})"
+            f"staged {role} keyset differs (missing={missing[:5]}, unexpected={unexpected[:5]})"
         )
     for key in sorted(expected_keys):
         expected_value = expected[key]
         loaded_value = loaded[key]
         expected_shape = tuple(int(size) for size in expected_value.shape)
         loaded_shape = tuple(int(size) for size in loaded_value.shape)
-        if expected_shape != loaded_shape or str(expected_value.dtype) != str(
-            loaded_value.dtype
-        ):
-            raise GRPOCheckpointError(
-                f"staged {role} tensor layout differs at {key}"
-            )
+        if expected_shape != loaded_shape or str(expected_value.dtype) != str(loaded_value.dtype):
+            raise GRPOCheckpointError(f"staged {role} tensor layout differs at {key}")
 
 
 def _point_estimate_delta(
@@ -304,12 +298,8 @@ def _merge_answer_channel_reports(
         "parseable": totals["parseable"],
         "unparseable": totals["unparseable"],
         "correct": totals["correct"],
-        "parseable_fraction": round(totals["parseable"] / completions, 4)
-        if completions
-        else 0.0,
-        "correct_fraction": round(totals["correct"] / completions, 4)
-        if completions
-        else 0.0,
+        "parseable_fraction": round(totals["parseable"] / completions, 4) if completions else 0.0,
+        "correct_fraction": round(totals["correct"] / completions, 4) if completions else 0.0,
         "grade_reasons": dict(sorted(reasons.items())),
         "trajectory_shaped_groups": trajectory_shaped_groups,
         "degenerate_trajectory_shaped_groups": degenerate_trajectory_shaped_groups,
@@ -347,11 +337,9 @@ def _signal_admission_report(
             "repair decode contract/pretraining or run a parseability scaffold "
             "until sampled groups have parseable variance"
         )
-    elif (
-        channel.get("trajectory_shaped_groups")
-        and channel.get("trajectory_shaped_groups")
-        == channel.get("degenerate_trajectory_shaped_groups")
-    ):
+    elif channel.get("trajectory_shaped_groups") and channel.get(
+        "trajectory_shaped_groups"
+    ) == channel.get("degenerate_trajectory_shaped_groups"):
         report["diagnosis"] = (
             "trajectory_credit_constant: recurrent CE shaping was present but "
             "did not distinguish completions, so no preference signal reached "
@@ -406,8 +394,7 @@ def _calibration_admission_report(
     if probes and parseable_fraction < 0.25:
         diagnosis = "answer_channel_blocked"
         next_gate = (
-            "repair recurrent decode contract or pretrain the answer channel "
-            "before resident GRPO"
+            "repair recurrent decode contract or pretrain the answer channel before resident GRPO"
         )
     elif bool(calibration.get("partial")) and unexplored:
         diagnosis = "partial_calibration_without_measured_learnable_cell"
@@ -486,12 +473,8 @@ def _shape_recurrent_rewards_from_ce_trails(
     )
     return {
         **shaped,
-        "ce_trails": [
-            [round(float(value), 6) for value in trail] for trail in ce_trails
-        ],
-        "score_trails": [
-            [round(float(value), 6) for value in trail] for trail in score_trails
-        ],
+        "ce_trails": [[round(float(value), 6) for value in trail] for trail in ce_trails],
+        "score_trails": [[round(float(value), 6) for value in trail] for trail in score_trails],
     }
 
 
@@ -558,9 +541,7 @@ def _build_recurrent_step_receipt(
         "verifier_rewards": [float(value) for value in verifier_rewards],
         "answer_channel": dict(answer_channel),
         "verifier_advantage_report": dict(verifier_advantage_report),
-        "trajectory_credit": (
-            dict(trajectory_credit) if trajectory_credit is not None else None
-        ),
+        "trajectory_credit": (dict(trajectory_credit) if trajectory_credit is not None else None),
         "advantage_report": dict(advantage_report),
         "step_kind": step_kind,
         "update": dict(update) if update is not None else None,
@@ -671,9 +652,7 @@ def _read_recurrent_bundle_artifacts(
         if path.parent != root and root not in path.parents:
             raise GRPOCheckpointError("recurrent adapter artifact escapes run root")
         artifacts[binding["path"]] = path.read_bytes()
-    artifacts["training_completion.json"] = (
-        root / "training_completion.json"
-    ).read_bytes()
+    artifacts["training_completion.json"] = (root / "training_completion.json").read_bytes()
     return artifacts
 
 
@@ -790,9 +769,7 @@ def _publish_recurrent_adapter_bundle(
         "campaign_adapter/grpo_receipt.json": receipt_bytes,
         "campaign_adapter/training_protocol.json": protocol_bytes,
         "campaign_adapter/dataset_manifest.json": dataset_bytes,
-        "campaign_adapter/execution_spec.json": canonical_json_bytes(
-            execution_spec.to_dict()
-        ),
+        "campaign_adapter/execution_spec.json": canonical_json_bytes(execution_spec.to_dict()),
     }
     for relative, payload in documents.items():
         _publish_immutable_bytes(
@@ -801,20 +778,13 @@ def _publish_recurrent_adapter_bundle(
             role=relative.replace("/", " "),
         )
 
-    tensor_metadata = inspect_mlx_tensor_metadata(
-        campaign_dir / "adapters.safetensors"
-    )
+    tensor_metadata = inspect_mlx_tensor_metadata(campaign_dir / "adapters.safetensors")
     tensor_records = [record.to_dict() for record in tensor_metadata]
     projection_paths = sorted(
-        {
-            record["key"].removesuffix(".lora_a").removesuffix(".lora_b")
-            for record in tensor_records
-        }
+        {record["key"].removesuffix(".lora_a").removesuffix(".lora_b") for record in tensor_records}
     )
     targets = [part.strip() for part in protocol["training"]["lora_targets"].split(",")]
-    trainable_params = sum(
-        math.prod(record["shape"]) for record in tensor_records
-    )
+    trainable_params = sum(math.prod(record["shape"]) for record in tensor_records)
     unique_layers = {int(path.split(".")[2]) for path in projection_paths}
     loader_config = {
         "schema": LOADER_CONFIG_SCHEMA,
@@ -864,18 +834,12 @@ def _publish_recurrent_adapter_bundle(
         "model_behavior_bundle": protocol["model_behavior"],
         "personality_adapter": protocol["personality_adapter"],
         "training_runtime": protocol["runtime"],
-        "adapter": _artifact_binding(
-            "campaign_adapter/adapters.safetensors", adapter_bytes
-        ),
+        "adapter": _artifact_binding("campaign_adapter/adapters.safetensors", adapter_bytes),
         "adapter_alias": _artifact_binding(
             "campaign_adapter/adapter_final.safetensors", adapter_bytes
         ),
-        "loader_config": _artifact_binding(
-            "campaign_adapter/adapter_config.json", loader_bytes
-        ),
-        "training_receipt": _artifact_binding(
-            "campaign_adapter/grpo_receipt.json", receipt_bytes
-        ),
+        "loader_config": _artifact_binding("campaign_adapter/adapter_config.json", loader_bytes),
+        "training_receipt": _artifact_binding("campaign_adapter/grpo_receipt.json", receipt_bytes),
         "training_protocol": _artifact_binding(
             "campaign_adapter/training_protocol.json", protocol_bytes
         ),
@@ -940,14 +904,12 @@ def _publish_recurrent_adapter_bundle(
             manifest_bytes, **identity_kwargs
         )
     else:
-        preflight_identity = (
-            validate_recurrent_grpo_adapter_identity_with_verified_transitions(
-                manifest_bytes,
-                **identity_kwargs,
-                transition_campaign_ledger=transition_closure.campaign_ledger,
-                transition_policy=transition_closure.campaign_trust_policy,
-                transition_groups=transition_groups,
-            )
+        preflight_identity = validate_recurrent_grpo_adapter_identity_with_verified_transitions(
+            manifest_bytes,
+            **identity_kwargs,
+            transition_campaign_ledger=transition_closure.campaign_ledger,
+            transition_policy=transition_closure.campaign_trust_policy,
+            transition_groups=transition_groups,
         )
     _publish_immutable_bytes(
         completion_path,
@@ -1010,6 +972,36 @@ def _load_execution_spec(mode: str, path: str | None):
     return RLCExecutionSpec.from_dict(payload)
 
 
+def _load_verified_trajectory_group_config(
+    mode: str,
+    path: str | None,
+):
+    if mode not in EXECUTION_MODES:
+        raise ValueError(f"unsupported execution mode: {mode}")
+    if mode == "standard":
+        if path:
+            raise ValueError("--verified-trajectory-config only applies to recurrent mode")
+        return None
+    if not path:
+        return None
+    from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
+
+    source = Path(path).expanduser()
+    if source.is_symlink():
+        raise ValueError("verified trajectory config cannot be a symlink")
+    config_path = source.resolve(strict=True)
+    if not config_path.is_file():
+        raise ValueError("verified trajectory config must be a regular file")
+    try:
+        encoded = read_stable_bytes(config_path, max_bytes=65_536)
+        payload = json.loads(encoded)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("verified trajectory config is not readable canonical JSON") from exc
+    if canonical_json_bytes(payload) != encoded:
+        raise ValueError("verified trajectory config JSON is not canonical")
+    return VerifiedTrajectoryGroupConfig.from_dict(payload)
+
+
 def _rendered_task_prompt(tokenizer, task) -> tuple[str, list[int]]:
     from core.learning.recurrent_training_prompt import (
         render_recurrent_training_prompt,
@@ -1040,9 +1032,7 @@ def _scheduled_verified_training_task(
         raise RuntimeError("verified provider returned a different schedule sequence")
     task = tasks_by_id.get(scheduled.task_id)
     if task is None:
-        raise RuntimeError(
-            "verified provider scheduled a task outside the frozen dataset"
-        )
+        raise RuntimeError("verified provider scheduled a task outside the frozen dataset")
     return task, scheduled.trainer_sample_seed
 
 
@@ -1080,6 +1070,7 @@ def sample_recurrent_group(
     from core.learning.verified_transition_group_admission import (
         sampling_config_sha256,
     )
+
     _prompt_text, prompt_tokens = _rendered_task_prompt(tokenizer, task)
     requested_sampling = sampling_config
     sampling = sampling_config or RecurrentSamplingConfig(max_tokens=max_tokens)
@@ -1088,9 +1079,7 @@ def sample_recurrent_group(
     if sampling.max_tokens != max_tokens:
         raise ValueError("sampling_config max_tokens must match max_tokens")
     if (verified_group_provider is None) is not (campaign_sequence is None):
-        raise ValueError(
-            "verified_group_provider and campaign_sequence must be supplied together"
-        )
+        raise ValueError("verified_group_provider and campaign_sequence must be supplied together")
     if verified_group_provider is not None:
         if token_trace_adapter is None:
             raise RuntimeError(
@@ -1104,21 +1093,15 @@ def sample_recurrent_group(
             policy_sha256=policy_sha256,
         )
         if not isinstance(plan.sampling_config, Mapping) or not plan.sampling_config:
-            raise RuntimeError(
-                "verified sampling plan omitted its frozen sampling configuration"
-            )
+            raise RuntimeError("verified sampling plan omitted its frozen sampling configuration")
         planned_sampling = RecurrentSamplingConfig(**dict(plan.sampling_config))
         if planned_sampling.max_tokens != max_tokens:
-            raise RuntimeError(
-                "verified sampling plan token budget differs from trainer request"
-            )
+            raise RuntimeError("verified sampling plan token budget differs from trainer request")
         if (
             requested_sampling is not None
             and requested_sampling.to_dict() != planned_sampling.to_dict()
         ):
-            raise RuntimeError(
-                "caller sampling configuration differs from verified plan"
-            )
+            raise RuntimeError("caller sampling configuration differs from verified plan")
         sampling = planned_sampling
         entries = tuple(plan.entries)
         if (
@@ -1148,12 +1131,9 @@ def sample_recurrent_group(
                 or sample.rng_root_sha256 != entry.rng_root_sha256
                 or sample.branch_index != entry.producing_branch_index
                 or sample.seed != entry.sample_seed
-                or sampling_config_sha256(sample)
-                != entry.sampling_config_sha256
+                or sampling_config_sha256(sample) != entry.sampling_config_sha256
             ):
-                raise RuntimeError(
-                    "causal recurrent sample differs from signed group plan"
-                )
+                raise RuntimeError("causal recurrent sample differs from signed group plan")
             validate_recurrent_policy_sample_receipt(sample.receipt())
             samples.append(sample)
             completions.append(token_trace_adapter.decode_output(sample.tokens))
@@ -1225,17 +1205,14 @@ def _record_recurrent_step_failure(
         "execution_spec_sha256": execution_spec_sha256,
         "attempted_step": int(attempted_step),
         "last_durable_step": int(last_durable_step),
-        "volatile_completed_steps": max(
-            0, int(attempted_step) - 1 - int(last_durable_step)
-        ),
+        "volatile_completed_steps": max(0, int(attempted_step) - 1 - int(last_durable_step)),
         "phase": str(phase),
         "task_id": task_id,
         "sample_seed": sample_seed,
         "samples": sample_receipts,
         "rejected_sample": (
             rejected_sample.receipt()
-            if rejected_sample is not None
-            and callable(getattr(rejected_sample, "receipt", None))
+            if rejected_sample is not None and callable(getattr(rejected_sample, "receipt", None))
             else None
         ),
         "error": {
@@ -1274,7 +1251,10 @@ def sample_group(model, tokenizer, task, *, size, max_tokens, temperature, seed)
         mx.random.seed(seed * 1000 + index)
         pieces: list[str] = []
         for response in stream_generate(
-            model, tokenizer, prompt=prompt, max_tokens=max_tokens,
+            model,
+            tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
             sampler=make_sampler(temp=temperature, top_p=0.95),
         ):
             pieces.append(response.text)
@@ -1337,11 +1317,7 @@ def evaluate_heldout(
     )
 
     results = []
-    scope = (
-        recurrence_adapter_scope(start=None, stop=None)
-        if adapters_on
-        else nullcontext()
-    )
+    scope = recurrence_adapter_scope(start=None, stop=None) if adapters_on else nullcontext()
     total = len(tasks)
     correct_so_far = 0
     reasons: Counter[str] = Counter()
@@ -1363,9 +1339,7 @@ def evaluate_heldout(
             if envelope is not None:
                 envelope.reclaim(force=True)
             if progress_label and (
-                index == total
-                or index == 1
-                or index % max(1, progress_every) == 0
+                index == total or index == 1 or index % max(1, progress_every) == 0
             ):
                 print(
                     f"[{progress_label}] {index}/{total} "
@@ -1434,9 +1408,7 @@ def evaluate_recurrent_heldout(
                 decode_sentence_grace_tokens=0,
             )
         if not result.ok:
-            raise RuntimeError(
-                f"recurrent held-out task {task.task_id} failed: {result.reason}"
-            )
+            raise RuntimeError(f"recurrent held-out task {task.task_id} failed: {result.reason}")
         verdict = task.grade(result.text)
         correct = bool(verdict["correct"])
         reason = _grade_reason(verdict)
@@ -1471,9 +1443,7 @@ def evaluate_recurrent_heldout(
             envelope.reclaim(force=True)
         completed = index + 1
         if progress_label and (
-            completed == total
-            or completed == 1
-            or completed % max(1, progress_every) == 0
+            completed == total or completed == 1 or completed % max(1, progress_every) == 0
         ):
             print(
                 f"[{progress_label}] {completed}/{total} "
@@ -1492,8 +1462,7 @@ def evaluate_recurrent_heldout(
 
 def main(
     *,
-    verified_group_provider_factory: VerifiedTransitionGroupProviderFactory
-    | None = None,
+    verified_group_provider_factory: VerifiedTransitionGroupProviderFactory | None = None,
 ) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
@@ -1511,6 +1480,13 @@ def main(
     parser.add_argument(
         "--execution-spec",
         help="strict RLCExecutionSpec JSON required by recurrent mode",
+    )
+    parser.add_argument(
+        "--verified-trajectory-config",
+        help=(
+            "canonical VerifiedTrajectoryGroupConfig JSON; admits replayable "
+            "trajectory terms only through the verified recurrent transaction"
+        ),
     )
     parser.add_argument(
         "--task-source",
@@ -1558,19 +1534,35 @@ def main(
             "training as no_learning_signal"
         ),
     )
-    parser.add_argument("--calibrate", action="store_true",
-                        help="measure pass rates before training to skip dead cells")
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="measure pass rates before training to skip dead cells",
+    )
     parser.add_argument("--calibrate-samples", type=int, default=2)
-    parser.add_argument("--calibrate-group", type=int, default=4,
-                        help="completions per calibration probe (cheaper than the train group)")
-    parser.add_argument("--calibrate-tokens", type=int, default=0,
-                        help="max tokens per calibration probe; 0 = match --max-tokens "
-                             "(reasoning tasks need room to finish, or the probe "
-                             "underestimates pass rate and mislabels learnable cells)")
-    parser.add_argument("--calibrate-minutes", type=float, default=15.0,
-                        help="wall-clock cap on the whole calibration phase")
-    parser.add_argument("--cot", action="store_true",
-                        help="invite step-by-step reasoning before the answer")
+    parser.add_argument(
+        "--calibrate-group",
+        type=int,
+        default=4,
+        help="completions per calibration probe (cheaper than the train group)",
+    )
+    parser.add_argument(
+        "--calibrate-tokens",
+        type=int,
+        default=0,
+        help="max tokens per calibration probe; 0 = match --max-tokens "
+        "(reasoning tasks need room to finish, or the probe "
+        "underestimates pass rate and mislabels learnable cells)",
+    )
+    parser.add_argument(
+        "--calibrate-minutes",
+        type=float,
+        default=15.0,
+        help="wall-clock cap on the whole calibration phase",
+    )
+    parser.add_argument(
+        "--cot", action="store_true", help="invite step-by-step reasoning before the answer"
+    )
     parser.add_argument("--max-minutes", type=float, default=600.0)
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
@@ -1630,8 +1622,10 @@ def main(
     if _ADAPTER_ID_RE.fullmatch(args.adapter_id) is None:
         parser.error("--adapter-id must be a stable identifier")
     try:
-        execution_spec = _load_execution_spec(
-            args.execution_mode, args.execution_spec
+        execution_spec = _load_execution_spec(args.execution_mode, args.execution_spec)
+        trajectory_group_config = _load_verified_trajectory_group_config(
+            args.execution_mode,
+            args.verified_trajectory_config,
         )
     except (OSError, TypeError, ValueError) as exc:
         parser.error(str(exc))
@@ -1650,6 +1644,8 @@ def main(
         )
     if args.execution_mode == "standard" and verified_group_provider_factory is not None:
         parser.error("a verified transition provider only applies to recurrent mode")
+    if trajectory_group_config is not None and verified_group_provider_factory is None:
+        parser.error("--verified-trajectory-config requires a verified transition provider")
     if args.execution_mode == "standard" and (
         args.initial_policy_probe or args.read_only_answer_channel_preflight
     ):
@@ -1659,20 +1655,14 @@ def main(
     if verified_group_provider_factory is not None and (
         args.initial_policy_probe or args.read_only_answer_channel_preflight
     ):
-        parser.error(
-            "read-only recurrent probes cannot be combined with a training provider"
-        )
+        parser.error("read-only recurrent probes cannot be combined with a training provider")
     provider_contract_sha256 = None
     if verified_group_provider_factory is not None:
-        provider_contract_sha256 = getattr(
-            verified_group_provider_factory, "contract_sha256", None
-        )
+        provider_contract_sha256 = getattr(verified_group_provider_factory, "contract_sha256", None)
         if not isinstance(provider_contract_sha256, str) or not re.fullmatch(
             r"[0-9a-f]{64}", provider_contract_sha256
         ):
-            parser.error(
-                "the verified transition provider must expose its frozen contract digest"
-            )
+            parser.error("the verified transition provider must expose its frozen contract digest")
     if args.execution_mode == "recurrent" and args.trajectory_credit:
         parser.error(
             "--trajectory-credit is not authorized for proof-grade recurrent mode; "
@@ -1690,15 +1680,12 @@ def main(
 
     global _COT_PREAMBLE
     _COT_PREAMBLE = (
-        "Work through this step by step, then end with your answer on "
-        "its own line."
+        "Work through this step by step, then end with your answer on its own line."
         if args.cot
         else ""
     )
 
-    config = GRPOConfig(
-        group_size=args.group_size, kl_coefficient=args.kl_coefficient
-    )
+    config = GRPOConfig(group_size=args.group_size, kl_coefficient=args.kl_coefficient)
     recurrent_config = None
     if execution_spec is not None:
         from core.learning.recurrent_grpo import RecurrentGRPOConfig
@@ -1720,9 +1707,7 @@ def main(
         seed=args.seed,
     )
     if verified_group_provider_factory is not None:
-        train_tasks = list(
-            verified_group_provider_factory.bind_training_tasks(train_tasks)
-        )
+        train_tasks = list(verified_group_provider_factory.bind_training_tasks(train_tasks))
     print(
         f"[tasks] {len(train_tasks)} train / {len(holdout)} held-out "
         f"from {args.task_source} (disjoint prompts and identities verified)",
@@ -1748,13 +1733,8 @@ def main(
         "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
         "tasks": task_source_path,
         "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
-        "artifact_schema": (
-            REPO_ROOT / "core/learning/recurrent_grpo_artifact_schema.py"
-        ),
-        "adapter": (
-            REPO_ROOT
-            / "core/brain/llm/latent_cortex/recurrence_adapter.py"
-        ),
+        "artifact_schema": (REPO_ROOT / "core/learning/recurrent_grpo_artifact_schema.py"),
+        "adapter": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"),
     }
     if execution_spec is not None:
         source_files.update(
@@ -1763,103 +1743,64 @@ def main(
                 "recurrent_objective": (
                     REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
                 ),
-                "execution_spec": (
-                    REPO_ROOT
-                    / "core/brain/llm/latent_cortex/execution_spec.py"
-                ),
-                "latent_engine": (
-                    REPO_ROOT / "core/brain/llm/latent_cortex/engine.py"
-                ),
-                "recurrence": (
-                    REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"
-                ),
-                "verified_trainer": (
-                    REPO_ROOT / "core/learning/verified_transition_trainer.py"
-                ),
+                "execution_spec": (REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"),
+                "latent_engine": (REPO_ROOT / "core/brain/llm/latent_cortex/engine.py"),
+                "recurrence": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"),
+                "verified_trainer": (REPO_ROOT / "core/learning/verified_transition_trainer.py"),
                 "transition_campaign": (
                     REPO_ROOT / "core/learning/verified_transition_campaign.py"
                 ),
-                "transition_episode": (
-                    REPO_ROOT / "core/learning/verified_transition_episode.py"
-                ),
-                "transition_reward": (
-                    REPO_ROOT / "core/learning/verified_transition_reward.py"
-                ),
+                "transition_episode": (REPO_ROOT / "core/learning/verified_transition_episode.py"),
+                "transition_reward": (REPO_ROOT / "core/learning/verified_transition_reward.py"),
                 "transition_admission": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_group_admission.py"
+                    REPO_ROOT / "core/learning/verified_transition_group_admission.py"
                 ),
-                "transition_update": (
-                    REPO_ROOT / "core/learning/verified_transition_update.py"
-                ),
+                "transition_update": (REPO_ROOT / "core/learning/verified_transition_update.py"),
                 "transition_training_evidence": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_training_evidence.py"
+                    REPO_ROOT / "core/learning/verified_transition_training_evidence.py"
                 ),
-                "campaign_trust": (
-                    REPO_ROOT
-                    / "core/brain/llm/latent_cortex/campaign_trust.py"
-                ),
+                "campaign_trust": (REPO_ROOT / "core/brain/llm/latent_cortex/campaign_trust.py"),
                 "transition_provider": (
                     REPO_ROOT / "core/learning/verified_transition_provider.py"
                 ),
                 "transition_provider_factory": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_production_factory.py"
+                    REPO_ROOT / "core/learning/verified_transition_production_factory.py"
                 ),
                 "transition_launch_bundle": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_launch_bundle.py"
+                    REPO_ROOT / "core/learning/verified_transition_launch_bundle.py"
                 ),
                 "transition_launch_runner": (
                     REPO_ROOT / "tools/run_verified_recurrent_grpo_training.py"
                 ),
                 "transition_launch_materializer": (
-                    REPO_ROOT
-                    / "tools/materialize_verified_recurrent_grpo_launch.py"
+                    REPO_ROOT / "tools/materialize_verified_recurrent_grpo_launch.py"
                 ),
                 "transition_recurrent_evidence": (
-                    REPO_ROOT
-                    / "core/learning/verified_recurrent_transition_evidence.py"
+                    REPO_ROOT / "core/learning/verified_recurrent_transition_evidence.py"
                 ),
                 "transition_recurrent_repository": (
-                    REPO_ROOT
-                    / "core/learning/verified_recurrent_transition_repository.py"
+                    REPO_ROOT / "core/learning/verified_recurrent_transition_repository.py"
                 ),
                 "transition_policy_probe": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_policy_probe.py"
+                    REPO_ROOT / "core/learning/verified_transition_policy_probe.py"
                 ),
                 "recurrent_training_prompt": (
-                    REPO_ROOT
-                    / "core/learning/recurrent_training_prompt.py"
+                    REPO_ROOT / "core/learning/recurrent_training_prompt.py"
                 ),
-                "atomic_writer": (
-                    REPO_ROOT / "core/runtime/atomic_writer.py"
-                ),
-                "file_read_gateway": (
-                    REPO_ROOT / "core/runtime/file_read_gateway.py"
-                ),
-                "file_write_gateway": (
-                    REPO_ROOT / "core/runtime/file_write_gateway.py"
-                ),
+                "atomic_writer": (REPO_ROOT / "core/runtime/atomic_writer.py"),
+                "file_read_gateway": (REPO_ROOT / "core/runtime/file_read_gateway.py"),
+                "file_write_gateway": (REPO_ROOT / "core/runtime/file_write_gateway.py"),
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),
                 "transition_rejection_transaction": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_rejection_transaction.py"
+                    REPO_ROOT / "core/learning/verified_transition_rejection_transaction.py"
                 ),
                 "transition_causal_campaign": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_causal_campaign.py"
+                    REPO_ROOT / "core/learning/verified_transition_causal_campaign.py"
                 ),
-                "verified_training_task": (
-                    REPO_ROOT / "core/learning/verified_training_task.py"
-                ),
-                "verified_token_trace": (
-                    REPO_ROOT / "core/learning/verified_token_trace.py"
-                ),
+                "verified_training_task": (REPO_ROOT / "core/learning/verified_training_task.py"),
+                "verified_token_trace": (REPO_ROOT / "core/learning/verified_token_trace.py"),
             }
         )
     sources = {role: _source_binding(path) for role, path in source_files.items()}
@@ -1879,15 +1820,11 @@ def main(
         "sources": sources,
         "training": {
             "execution_mode": args.execution_mode,
-            "execution_spec": (
-                execution_spec.to_dict() if execution_spec is not None else None
-            ),
+            "execution_spec": (execution_spec.to_dict() if execution_spec is not None else None),
             "execution_spec_sha256": (
                 execution_spec.sha256 if execution_spec is not None else None
             ),
-            "verified_transition_provider_contract_sha256": (
-                provider_contract_sha256
-            ),
+            "verified_transition_provider_contract_sha256": (provider_contract_sha256),
             "domains": domains,
             "depths": depths,
             "train_per_cell": args.train_per_cell,
@@ -1896,15 +1833,22 @@ def main(
             "temperature": args.temperature,
             "max_tokens": args.max_tokens,
             "kl_coefficient": args.kl_coefficient,
+            "advantage_clip": config.advantage_clip,
             "format_credit": args.format_credit,
             "trajectory_credit": args.trajectory_credit,
             "trajectory_shaping_weight": args.trajectory_shaping_weight,
+            "verified_trajectory_config": (
+                trajectory_group_config.to_dict() if trajectory_group_config is not None else None
+            ),
+            "verified_trajectory_config_sha256": (
+                protocol_semantic_sha256(trajectory_group_config.to_dict())
+                if trajectory_group_config is not None
+                else None
+            ),
             "lora_rank": args.lora_rank,
             "lora_targets": args.lora_targets,
             "lora_layers": args.lora_layers,
-            "lora_initialization_seed": _stable_seed(
-                args.seed, "lora-init", args.adapter_id
-            ),
+            "lora_initialization_seed": _stable_seed(args.seed, "lora-init", args.adapter_id),
             "learning_rate": args.learning_rate,
             "max_steps": args.max_steps,
             "eval_every": args.eval_every,
@@ -1953,13 +1897,16 @@ def main(
 
     from core.runtime.model_lane_control import standalone_model_lane
 
-    with standalone_model_lane(
-        owner_id=f"train-grpo:{Path(args.out_dir).name}",
-        model_path=args.model,
-        purpose="training",
-        preemptible=False,
-        metadata={"tool": "train_grpo", "operator_launched": True},
-    ), mlx_memory_envelope(fraction=args.memory_fraction) as envelope:
+    with (
+        standalone_model_lane(
+            owner_id=f"train-grpo:{Path(args.out_dir).name}",
+            model_path=args.model,
+            purpose="training",
+            preemptible=False,
+            metadata={"tool": "train_grpo", "operator_launched": True},
+        ),
+        mlx_memory_envelope(fraction=args.memory_fraction) as envelope,
+    ):
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(args.model)
         model.freeze()
@@ -1984,17 +1931,12 @@ def main(
         targets = tuple(t.strip() for t in args.lora_targets.split(","))
         attached = 0
         if execution_spec is None:
-            adapted_indices = range(
-                max(0, total_layers - args.lora_layers), total_layers
-            )
+            adapted_indices = range(max(0, total_layers - args.lora_layers), total_layers)
         else:
-            prelude_end = max(
-                1, int(total_layers * execution_spec.prelude_frac)
-            )
+            prelude_end = max(1, int(total_layers * execution_spec.prelude_frac))
             coda_start = min(
                 total_layers - 1,
-                total_layers
-                - max(1, int(total_layers * execution_spec.coda_frac)),
+                total_layers - max(1, int(total_layers * execution_spec.coda_frac)),
             )
             adapted_indices = range(
                 max(prelude_end, coda_start - args.lora_layers),
@@ -2012,14 +1954,11 @@ def main(
                     continue
                 for target in targets:
                     projection = getattr(parent, target, None)
-                    if projection is not None and not isinstance(
-                        projection, ScopedLoRALinear
-                    ):
-                        site = (
-                            f"model.layers.{index}.{parent_name}.{target}"
-                        )
+                    if projection is not None and not isinstance(projection, ScopedLoRALinear):
+                        site = f"model.layers.{index}.{parent_name}.{target}"
                         setattr(
-                            parent, target,
+                            parent,
+                            target,
                             ScopedLoRALinear.from_base(
                                 projection,
                                 r=args.lora_rank,
@@ -2044,27 +1983,21 @@ def main(
             probe_path = out_dir / "initial_policy_probe.json"
             probe_identity = {
                 "campaign_id": args.adapter_id,
-                "initial_policy_sha256": recurrent_policy_sha256(
-                    model, execution_spec
-                ),
+                "initial_policy_sha256": recurrent_policy_sha256(model, execution_spec),
                 "dataset_sha256": dataset_sha256,
                 "execution_spec_sha256": execution_spec.sha256,
                 "base_checkpoint": base_identity,
                 "model_behavior_bundle": behavior_identity,
                 "tokenizer_bundle": token_trace_adapter.bundle_identity,
                 "adapter_initialization": {
-                    "seed": _stable_seed(
-                        args.seed, "lora-init", args.adapter_id
-                    ),
+                    "seed": _stable_seed(args.seed, "lora-init", args.adapter_id),
                     "rank": args.lora_rank,
                     "layers": args.lora_layers,
                     "targets": list(targets),
                 },
                 "source_bindings": sources,
             }
-            with interprocess_file_lock(
-                out_dir / ".initial-policy-probe.lock"
-            ):
+            with interprocess_file_lock(out_dir / ".initial-policy-probe.lock"):
                 if probe_path.exists() or probe_path.is_symlink():
                     if probe_path.is_symlink():
                         raise GRPOCheckpointError(
@@ -2087,14 +2020,10 @@ def main(
                         not isinstance(existing_probe, Mapping)
                         or canonical_json_bytes(existing_probe) != raw_probe
                     ):
-                        raise GRPOCheckpointError(
-                            "initial recurrent policy probe is noncanonical"
-                        )
-                    probe = (
-                        validate_initial_recurrent_policy_probe_identity(
-                            existing_probe,
-                            **probe_identity,
-                        )
+                        raise GRPOCheckpointError("initial recurrent policy probe is noncanonical")
+                    probe = validate_initial_recurrent_policy_probe_identity(
+                        existing_probe,
+                        **probe_identity,
                     )
                 else:
                     probe = build_initial_recurrent_policy_probe(
@@ -2129,9 +2058,7 @@ def main(
             )
             episode_receipts = report.get("episode_receipts")
             if not isinstance(episode_receipts, list) or not episode_receipts:
-                raise RuntimeError(
-                    "answer-channel preflight produced no episode receipts"
-                )
+                raise RuntimeError("answer-channel preflight produced no episode receipts")
             valid_contracts = sum(
                 1
                 for receipt in episode_receipts
@@ -2142,8 +2069,7 @@ def main(
             correct = sum(
                 1
                 for receipt in episode_receipts
-                if isinstance(receipt, Mapping)
-                and receipt.get("correct") is True
+                if isinstance(receipt, Mapping) and receipt.get("correct") is True
             )
             valid_fraction = valid_contracts / len(episode_receipts)
             body = {
@@ -2205,18 +2131,14 @@ def main(
                     execution_spec=execution_spec,
                     training_tasks=tuple(train_tasks),
                     output_directory=out_dir,
-                    transaction_root=(
-                        out_dir / "verified-transition-transactions"
-                    ),
+                    transaction_root=(out_dir / "verified-transition-transactions"),
                     dataset_sha256=dataset_sha256,
                     group_size=args.group_size,
                     sampling_max_tokens=args.max_tokens,
                 )
             )
         telemetry: GRPOTelemetry | VerifiedTransitionTelemetry = (
-            VerifiedTransitionTelemetry()
-            if execution_spec is not None
-            else GRPOTelemetry()
+            VerifiedTransitionTelemetry() if execution_spec is not None else GRPOTelemetry()
         )
         history: list[dict[str, Any]] = []
         step_receipts: list[dict[str, Any]] = []
@@ -2247,9 +2169,7 @@ def main(
             raise RuntimeError("trainable tree contains non-LoRA parameters")
 
         transaction_store = (
-            VerifiedTransitionTransactionStore.open(
-                out_dir / "verified-transition-transactions"
-            )
+            VerifiedTransitionTransactionStore.open(out_dir / "verified-transition-transactions")
             if execution_spec is not None
             else None
         )
@@ -2299,9 +2219,7 @@ def main(
                     "recurrent checkpoint does not receipt every committed step"
                 )
             if execution_spec is None and step_receipts:
-                raise GRPOCheckpointError(
-                    "standard checkpoint contains recurrent step receipts"
-                )
+                raise GRPOCheckpointError("standard checkpoint contains recurrent step receipts")
             if execution_spec is not None:
                 assert verified_group_provider is not None
                 from core.learning.recurrent_grpo import recurrent_policy_sha256
@@ -2326,13 +2244,10 @@ def main(
                     )
 
                 if step_receipts:
-                    expected_policy = step_receipts[-1].get(
-                        "policy_after_sha256"
-                    )
+                    expected_policy = step_receipts[-1].get("policy_after_sha256")
                     if (
                         not isinstance(expected_policy, str)
-                        or recurrent_policy_sha256(model, execution_spec)
-                        != expected_policy
+                        or recurrent_policy_sha256(model, execution_spec) != expected_policy
                     ):
                         raise GRPOCheckpointError(
                             "recurrent checkpoint tensors differ from the last "
@@ -2354,9 +2269,7 @@ def main(
                     for receipt in step_receipts
                     if receipt.get("step_kind") == "verified_optimizer_update"
                 ]
-                for receipt, replay_group in zip(
-                    updated_step_receipts, restored, strict=True
-                ):
+                for receipt, replay_group in zip(updated_step_receipts, restored, strict=True):
                     update = receipt.get("update")
                     if (
                         replay_group.sequence != int(receipt["step"]) - 1
@@ -2394,6 +2307,7 @@ def main(
             return tensors
 
         last_durable_step = step
+
         def checkpoint_now() -> Path:
             nonlocal last_durable_step
             optimizer_tensors = dict(tree_flatten(optimizer.state))
@@ -2421,9 +2335,7 @@ def main(
                     "last_step_committed": True,
                     "execution_mode": args.execution_mode,
                     "execution_spec_sha256": (
-                        execution_spec.sha256
-                        if execution_spec is not None
-                        else None
+                        execution_spec.sha256 if execution_spec is not None else None
                     ),
                 },
                 keep=args.checkpoint_keep,
@@ -2440,12 +2352,10 @@ def main(
             update_transactions = transaction_store.inventory(load_tensors=False)
             rejection_transactions = rejection_transaction_store.inventory()
             update_sequences = {
-                int(transaction.pending_step["sequence"])
-                for transaction in update_transactions
+                int(transaction.pending_step["sequence"]) for transaction in update_transactions
             }
             rejection_sequences = {
-                int(transaction.intent["sequence"])
-                for transaction in rejection_transactions
+                int(transaction.intent["sequence"]) for transaction in rejection_transactions
             }
             if update_sequences & rejection_sequences:
                 raise GRPOCheckpointError(
@@ -2500,9 +2410,7 @@ def main(
                             transaction_store.record_trainer_checkpoint(
                                 sequence=sequence,
                                 admission_sha256=admission,
-                                checkpoint=load_trainer_checkpoint_evidence(
-                                    resumed.checkpoint_dir
-                                ),
+                                checkpoint=load_trainer_checkpoint_evidence(resumed.checkpoint_dir),
                             )
                     sealed = transaction_store.load(
                         sequence=sequence,
@@ -2527,10 +2435,7 @@ def main(
                 def restore_and_validate_staged_state(
                     staged: Any,
                 ) -> str:
-                    if (
-                        staged.adapter_tensors is None
-                        or staged.optimizer_tensors is None
-                    ):
+                    if staged.adapter_tensors is None or staged.optimizer_tensors is None:
                         raise GRPOCheckpointError(
                             "verified transaction recovery tensors are missing"
                         )
@@ -2544,14 +2449,10 @@ def main(
                         staged.optimizer_tensors,
                         role="optimizer",
                     )
-                    model.load_weights(
-                        list(staged.adapter_tensors.items()), strict=False
-                    )
+                    model.load_weights(list(staged.adapter_tensors.items()), strict=False)
                     optimizer_state = tree_unflatten(staged.optimizer_tensors)
                     if not isinstance(optimizer_state, dict):
-                        raise GRPOCheckpointError(
-                            "verified transaction optimizer tree is invalid"
-                        )
+                        raise GRPOCheckpointError("verified transaction optimizer tree is invalid")
                     optimizer.state = optimizer_state
                     optimizer.init(model.trainable_parameters())
                     mx.eval(model.parameters(), optimizer.state)
@@ -2575,9 +2476,7 @@ def main(
                     execution_spec_sha256=execution_spec.sha256,
                 )
                 transition_replay_groups = list(
-                    verified_group_provider.accept_recovered_step_receipt(
-                        recovered_step
-                    )
+                    verified_group_provider.accept_recovered_step_receipt(recovered_step)
                 )
                 step_receipts.append(recovered_step)
                 advantage_report = recovered_step["advantage_report"]
@@ -2626,10 +2525,8 @@ def main(
                             )
                         durable_step = step_receipts[sequence]
                         if (
-                            durable_step.get("step_kind")
-                            != "verified_rejected_group"
-                            or durable_step.get("reward_receipt_sha256")
-                            != reward_sha256
+                            durable_step.get("step_kind") != "verified_rejected_group"
+                            or durable_step.get("reward_receipt_sha256") != reward_sha256
                         ):
                             raise GRPOCheckpointError(
                                 "historical rejection differs from checkpoint"
@@ -2672,27 +2569,19 @@ def main(
 
             if pending_rejection is not None:
                 sequence, reward_sha256 = pending_rejection
-                recovered_rejection = (
-                    verified_group_provider.recover_rejection_publications(
-                        rejection_store=rejection_transaction_store,
-                        sequence=sequence,
-                        reward_receipt_sha256=reward_sha256,
-                        validate_live_policy=lambda: recurrent_policy_sha256(
-                            model, execution_spec
-                        ),
-                    )
+                recovered_rejection = verified_group_provider.recover_rejection_publications(
+                    rejection_store=rejection_transaction_store,
+                    sequence=sequence,
+                    reward_receipt_sha256=reward_sha256,
+                    validate_live_policy=lambda: recurrent_policy_sha256(model, execution_spec),
                 )
                 recovered_step = validate_verified_transition_step_receipt(
-                    build_rejected_transaction_trainer_step(
-                        recovered_rejection
-                    ),
+                    build_rejected_transaction_trainer_step(recovered_rejection),
                     group_size=config.group_size,
                     execution_spec_sha256=execution_spec.sha256,
                 )
                 transition_replay_groups = list(
-                    verified_group_provider.accept_recovered_step_receipt(
-                        recovered_step
-                    )
+                    verified_group_provider.accept_recovered_step_receipt(recovered_step)
                 )
                 if len(transition_replay_groups) != optimizer_updates:
                     raise GRPOCheckpointError(
@@ -2787,7 +2676,9 @@ def main(
                         baseline_eval.get("contract_reasons"),
                     ),
                     adapter_scope=getattr(
-                        execution_spec, "adapter_scope", "",
+                        execution_spec,
+                        "adapter_scope",
+                        "",
                     ),
                 )
                 baseline_eval["scope_reachability"] = _reach.to_dict()
@@ -2802,12 +2693,9 @@ def main(
                     training_allowed = False
                     halt_reason = "scope_unreachable"
 
-
         if args.calibrate and resumed is None:
             cal_group = min(config.group_size, args.calibrate_group)
-            cal_tokens = _calibration_token_budget(
-                args.max_tokens, args.calibrate_tokens
-            )
+            cal_tokens = _calibration_token_budget(args.max_tokens, args.calibrate_tokens)
             cal_deadline = time.monotonic() + args.calibrate_minutes * 60.0
             cells_sorted = sorted(by_cell)
             probe_counts: dict[tuple[str, int], int] = {}
@@ -2850,15 +2738,11 @@ def main(
                         max_tokens=cal_tokens,
                         seed=decision_seed,
                     )
-                grade_verdicts = [
-                    probe.grade(completion) for completion in completions
-                ]
-                answer_channel = _answer_channel_report_from_verdicts(
-                    grade_verdicts
+                grade_verdicts = [probe.grade(completion) for completion in completions]
+                answer_channel = _answer_channel_report_from_verdicts(grade_verdicts)
+                rate = sum(int(bool(verdict["correct"])) for verdict in grade_verdicts) / len(
+                    completions
                 )
-                rate = sum(
-                    int(bool(verdict["correct"])) for verdict in grade_verdicts
-                ) / len(completions)
                 probes.append(
                     {
                         "family": family,
@@ -2921,16 +2805,14 @@ def main(
                 )
 
         previous_handlers = {
-            signum: signal.getsignal(signum)
-            for signum in (signal.SIGINT, signal.SIGTERM)
+            signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)
         }
         for signum in previous_handlers:
             signal.signal(signum, request_stop)
 
         halt_reason = (
             "calibration_not_admitted"
-            if calibration
-            and not bool(calibration.get("admission", {}).get("training_admitted"))
+            if calibration and not bool(calibration.get("admission", {}).get("training_admitted"))
             else "no_reachable_frontier"
             if not training_allowed
             else "max_steps"
@@ -2948,18 +2830,12 @@ def main(
                 step_number = step + 1
                 active_transaction_coordinator = None
                 if execution_spec is None:
-                    decision_rng = random.Random(
-                        _stable_seed(args.seed, "curriculum", step_number)
-                    )
+                    decision_rng = random.Random(_stable_seed(args.seed, "curriculum", step_number))
                     cell = curriculum.sample(decision_rng)
                     pool = by_cell.get(cell) or train_tasks
-                    task_rng = random.Random(
-                        _stable_seed(args.seed, "task", step_number)
-                    )
+                    task_rng = random.Random(_stable_seed(args.seed, "task", step_number))
                     task = pool[task_rng.randrange(len(pool))]
-                    sample_seed = _stable_seed(
-                        args.seed, "group", step_number, task.task_id
-                    )
+                    sample_seed = _stable_seed(args.seed, "group", step_number, task.task_id)
                 else:
                     assert verified_group_provider is not None
                     task, sample_seed = _scheduled_verified_training_task(
@@ -2988,34 +2864,28 @@ def main(
                             seed=sample_seed,
                         )
                 else:
-                    prompt, recurrent_samples, completions = (
-                        sample_recurrent_group(
-                            model,
-                            tokenizer,
-                            task,
-                            spec=execution_spec,
-                            size=config.group_size,
-                            max_tokens=args.max_tokens,
-                            seed=sample_seed,
-                            verified_group_provider=verified_group_provider,
-                            campaign_sequence=step_number - 1,
-                            model_path=args.model,
-                            token_trace_adapter=token_trace_adapter,
-                        )
+                    prompt, recurrent_samples, completions = sample_recurrent_group(
+                        model,
+                        tokenizer,
+                        task,
+                        spec=execution_spec,
+                        size=config.group_size,
+                        max_tokens=args.max_tokens,
+                        seed=sample_seed,
+                        verified_group_provider=verified_group_provider,
+                        campaign_sequence=step_number - 1,
+                        model_path=args.model,
+                        token_trace_adapter=token_trace_adapter,
                     )
                     active_recurrent_step["samples"] = tuple(recurrent_samples)
                     active_recurrent_step["phase"] = "grading"
                 grade_verdicts = [task.grade(text) for text in completions]
-                answer_channel = _answer_channel_report_from_verdicts(
-                    grade_verdicts
-                )
+                answer_channel = _answer_channel_report_from_verdicts(grade_verdicts)
                 loss_value: float | None = None
                 step_kind = "degenerate_group"
                 if execution_spec is None:
                     rewards = [
-                        reward_from_verdict(
-                            verdict, format_credit=args.format_credit
-                        )
+                        reward_from_verdict(verdict, format_credit=args.format_credit)
                         for verdict in grade_verdicts
                     ]
                     verifier_advantage_report = group_advantages(
@@ -3102,23 +2972,13 @@ def main(
                         task_id=task.task_id,
                         trainer_sample_seed=sample_seed,
                         execution_spec_sha256=execution_spec.sha256,
-                        campaign_manifest_sha256=(
-                            prepared.campaign_manifest_sha256
-                        ),
-                        campaign_schedule_root_sha256=(
-                            prepared.campaign_schedule_root_sha256
-                        ),
-                        group_manifest_sha256=str(
-                            prepared.group_manifest["manifest_sha256"]
-                        ),
-                        reward_receipt_sha256=str(
-                            prepared.reward_receipt["receipt_sha256"]
-                        ),
+                        campaign_manifest_sha256=(prepared.campaign_manifest_sha256),
+                        campaign_schedule_root_sha256=(prepared.campaign_schedule_root_sha256),
+                        group_manifest_sha256=str(prepared.group_manifest["manifest_sha256"]),
+                        reward_receipt_sha256=str(prepared.reward_receipt["receipt_sha256"]),
                         trainer_step_static=trainer_step_static,
                         adapter_tensors=adapter_tensors,
-                        optimizer_tensors=lambda: dict(
-                            tree_flatten(optimizer.state)
-                        ),
+                        optimizer_tensors=lambda: dict(tree_flatten(optimizer.state)),
                     )
                     rejection_transaction_coordinator = (
                         VerifiedTransitionRejectionTransactionCoordinator(
@@ -3128,18 +2988,10 @@ def main(
                             task_id=task.task_id,
                             trainer_sample_seed=sample_seed,
                             execution_spec_sha256=execution_spec.sha256,
-                            campaign_manifest_sha256=(
-                                prepared.campaign_manifest_sha256
-                            ),
-                            campaign_schedule_root_sha256=(
-                                prepared.campaign_schedule_root_sha256
-                            ),
-                            group_manifest_sha256=str(
-                                prepared.group_manifest["manifest_sha256"]
-                            ),
-                            reward_receipt_sha256=str(
-                                prepared.reward_receipt["receipt_sha256"]
-                            ),
+                            campaign_manifest_sha256=(prepared.campaign_manifest_sha256),
+                            campaign_schedule_root_sha256=(prepared.campaign_schedule_root_sha256),
+                            group_manifest_sha256=str(prepared.group_manifest["manifest_sha256"]),
+                            reward_receipt_sha256=str(prepared.reward_receipt["receipt_sha256"]),
                             trainer_step_static=trainer_step_static,
                         )
                     )
@@ -3152,10 +3004,9 @@ def main(
                         prepared,
                         spec=execution_spec,
                         config=recurrent_config,
+                        trajectory_group_config=trajectory_group_config,
                         transaction_coordinator=transaction_coordinator,
-                        rejection_transaction_coordinator=(
-                            rejection_transaction_coordinator
-                        ),
+                        rejection_transaction_coordinator=(rejection_transaction_coordinator),
                     )
                     effective_rewards = list(mutation.structured_rewards)
                     advantage_report = group_advantages(
@@ -3163,18 +3014,14 @@ def main(
                     )
                     if mutation.optimizer_updated:
                         if mutation.replay_group is None:
-                            raise RuntimeError(
-                                "verified update omitted its source replay group"
-                            )
+                            raise RuntimeError("verified update omitted its source replay group")
                         transition_replay_groups.append(mutation.replay_group)
                         optimizer_updates += 1
                         step_kind = "verified_optimizer_update"
                         envelope.reclaim(force=True)
                     else:
                         if mutation.replay_group is not None:
-                            raise RuntimeError(
-                                "rejected transition exposed an update replay group"
-                            )
+                            raise RuntimeError("rejected transition exposed an update replay group")
                         step_kind = "verified_rejected_group"
                     verified_step_receipt = build_verified_transition_step_receipt(
                         step_number=step_number,
@@ -3185,9 +3032,7 @@ def main(
                         answer_channel=answer_channel,
                         mutation=mutation,
                     )
-                    verified_group_provider.accept_step_receipt(
-                        verified_step_receipt
-                    )
+                    verified_group_provider.accept_step_receipt(verified_step_receipt)
                     step_receipts.append(verified_step_receipt)
                     active_transaction_coordinator = (
                         transaction_coordinator
@@ -3229,27 +3074,15 @@ def main(
                 # A completed mutation is durable before any held-out work.
                 # Evaluation may be expensive or externally interrupted; it
                 # must never obscure a policy update that already committed.
-                if (
-                    active_transaction_coordinator is not None
-                    or step % args.checkpoint_every == 0
-                ):
+                if active_transaction_coordinator is not None or step % args.checkpoint_every == 0:
                     checkpoint_path = checkpoint_now()
-                    if (
-                        execution_spec is not None
-                        and active_transaction_coordinator is not None
-                    ):
-                        active_transaction_coordinator.record_trainer_checkpoint(
-                            checkpoint_path
-                        )
+                    if execution_spec is not None and active_transaction_coordinator is not None:
+                        active_transaction_coordinator.record_trainer_checkpoint(checkpoint_path)
                 if active_recurrent_step is not None:
                     active_recurrent_step["phase"] = "post_update_evaluation"
 
                 if step % 10 == 0:
-                    detail = (
-                        f"loss={loss_value:.4f}"
-                        if loss_value is not None
-                        else "degenerate"
-                    )
+                    detail = f"loss={loss_value:.4f}" if loss_value is not None else "degenerate"
                     print(
                         f"[step {step}] {detail} "
                         f"mean_r={advantage_report['mean_reward']:.2f} "
@@ -3305,8 +3138,7 @@ def main(
                     training_allowed = False
                     halt_reason = "frontier_exhausted"
                     print(
-                        "[halt] every measured curriculum cell is saturated "
-                        "or hopeless",
+                        "[halt] every measured curriculum cell is saturated or hopeless",
                         flush=True,
                     )
                 active_recurrent_step = None
@@ -3379,9 +3211,7 @@ def main(
                 halt_reason=halt_reason,
                 replay_groups=tuple(transition_replay_groups),
             )
-            if not isinstance(
-                transition_closure, VerifiedTransitionCampaignClosure
-            ):
+            if not isinstance(transition_closure, VerifiedTransitionCampaignClosure):
                 raise RuntimeError(
                     "verified transition provider returned an invalid campaign closure"
                 )
@@ -3410,12 +3240,8 @@ def main(
         },
         "config": config.to_receipt(),
         "execution_mode": args.execution_mode,
-        "execution_spec": (
-            execution_spec.to_dict() if execution_spec is not None else None
-        ),
-        "execution_spec_sha256": (
-            execution_spec.sha256 if execution_spec is not None else None
-        ),
+        "execution_spec": (execution_spec.to_dict() if execution_spec is not None else None),
+        "execution_spec_sha256": (execution_spec.sha256 if execution_spec is not None else None),
         "domains": domains,
         "depths": depths,
         "train_tasks": len(train_tasks),
@@ -3436,12 +3262,8 @@ def main(
         "step_receipts": step_receipts,
         "final": final,
         "adapter_decode_delta": delta,
-        "adapter_standard_decode_delta": (
-            delta if execution_spec is None else None
-        ),
-        "adapter_recurrent_decode_delta": (
-            delta if execution_spec is not None else None
-        ),
+        "adapter_standard_decode_delta": (delta if execution_spec is None else None),
+        "adapter_recurrent_decode_delta": (delta if execution_spec is not None else None),
         "checkpoint": str(checkpoint_path.relative_to(out_dir)),
         "verdict": {
             "had_signal": bool(learning_signal["learning_signal"]),

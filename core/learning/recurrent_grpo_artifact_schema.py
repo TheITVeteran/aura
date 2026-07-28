@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Never
 
 from core.learning.grpo import GRPO_SCHEMA, group_advantages
 
-PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v5"
+PROTOCOL_SCHEMA_V5: Final = "aura.grpo_protocol.v5"
+PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v6"
 TRAINING_RECEIPT_SCHEMA: Final = "aura.grpo_training.v5"
 STEP_RECEIPT_SCHEMA: Final = "aura.recurrent_grpo_step.v1"
 
-PROTOCOL_TRAINING_KEYS: Final = frozenset(
+PROTOCOL_TRAINING_KEYS_V5: Final = frozenset(
     {
         "execution_mode",
         "execution_spec",
@@ -49,6 +52,11 @@ PROTOCOL_TRAINING_KEYS: Final = frozenset(
         "rng_strategy",
     }
 )
+PROTOCOL_TRAINING_KEYS: Final = PROTOCOL_TRAINING_KEYS_V5 | {
+    "advantage_clip",
+    "verified_trajectory_config",
+    "verified_trajectory_config_sha256",
+}
 
 STEP_RECEIPT_KEYS: Final = frozenset(
     {
@@ -115,9 +123,7 @@ _TRAJECTORY_KEYS: Final = frozenset(
         "score_trails",
     }
 )
-_TRAJECTORY_ROW_KEYS: Final = frozenset(
-    {"final_reward", "shaping", "shaped_reward", "steps"}
-)
+_TRAJECTORY_ROW_KEYS: Final = frozenset({"final_reward", "shaping", "shaped_reward", "steps"})
 _FLOAT_TOLERANCE: Final = 1e-9
 _ROUNDED_TOLERANCE: Final = 1.1e-6
 
@@ -132,6 +138,25 @@ class RecurrentGRPOArtifactSchemaError(ValueError):
 
 def _fail(code: str) -> Never:
     raise RecurrentGRPOArtifactSchemaError(code)
+
+
+def protocol_semantic_sha256(value: Any) -> str:
+    """Hash the exact canonical JSON bytes persisted by the trainer."""
+
+    try:
+        payload = (
+            json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            + b"\n"
+        )
+    except (TypeError, ValueError, UnicodeError, OverflowError, RecursionError) as exc:
+        raise RecurrentGRPOArtifactSchemaError("protocol_semantic_json_invalid") from exc
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _finite(value: Any, *, role: str) -> float:
@@ -208,25 +233,19 @@ def _validate_answer_channel(value: Any, *, group_size: int) -> dict[str, Any]:
         _fail("step_answer_channel_count_mismatch")
     expected_parseable = round(counts["parseable"] / group_size, 4)
     expected_correct = round(counts["correct"] / group_size, 4)
-    if (
-        not _close(
-            _finite(value.get("parseable_fraction"), role="step_parseable_fraction"),
-            expected_parseable,
-        )
-        or not _close(
-            _finite(value.get("correct_fraction"), role="step_correct_fraction"),
-            expected_correct,
-        )
+    if not _close(
+        _finite(value.get("parseable_fraction"), role="step_parseable_fraction"),
+        expected_parseable,
+    ) or not _close(
+        _finite(value.get("correct_fraction"), role="step_correct_fraction"),
+        expected_correct,
     ):
         _fail("step_answer_channel_fraction_mismatch")
     reasons = value.get("grade_reasons")
     if (
         not isinstance(reasons, Mapping)
         or any(
-            not isinstance(reason, str)
-            or not reason
-            or type(count) is not int
-            or count <= 0
+            not isinstance(reason, str) or not reason or type(count) is not int or count <= 0
             for reason, count in reasons.items()
         )
         or sum(reasons.values()) != group_size
@@ -290,17 +309,9 @@ def _validate_trajectory_credit(
             or len(score_raw) != len(ce_raw)
         ):
             _fail("step_trajectory_trail_invalid")
-        ce = [
-            _finite(item, role="step_trajectory_ce")
-            for item in ce_raw
-        ]
-        scores = [
-            _finite(item, role="step_trajectory_score")
-            for item in score_raw
-        ]
-        if any(item < 0.0 for item in ce) or any(
-            not 0.0 <= item <= 1.0 for item in scores
-        ):
+        ce = [_finite(item, role="step_trajectory_ce") for item in ce_raw]
+        scores = [_finite(item, role="step_trajectory_score") for item in score_raw]
+        if any(item < 0.0 for item in ce) or any(not 0.0 <= item <= 1.0 for item in scores):
             _fail("step_trajectory_trail_invalid")
         if any(
             not _close(
@@ -333,12 +344,8 @@ def _validate_trajectory_credit(
             or abs(effective - verifier) > shaping_weight + _ROUNDED_TOLERANCE
         ):
             _fail("step_trajectory_row_mismatch")
-    order_by_final = sorted(
-        range(group_size), key=lambda index: (verifier_rewards[index], index)
-    )
-    order_by_shaped = sorted(
-        range(group_size), key=lambda index: (effective_rewards[index], index)
-    )
+    order_by_final = sorted(range(group_size), key=lambda index: (verifier_rewards[index], index))
+    order_by_shaped = sorted(range(group_size), key=lambda index: (effective_rewards[index], index))
     if value["shaping_reordered"] is not (order_by_final != order_by_shaped):
         _fail("step_trajectory_order_mismatch")
     return dict(value)
@@ -421,9 +428,7 @@ def validate_step_reward_channels(
         or dict(advantage) != expected_advantage
     ):
         _fail("step_effective_advantage_replay_mismatch")
-    expected_kind = (
-        "degenerate_group" if expected_advantage["degenerate"] else "optimizer_update"
-    )
+    expected_kind = "degenerate_group" if expected_advantage["degenerate"] else "optimizer_update"
     if step.get("step_kind") != expected_kind:
         _fail("step_kind_reward_mismatch")
     return {
@@ -438,7 +443,9 @@ def validate_step_reward_channels(
 
 __all__ = [
     "PROTOCOL_SCHEMA",
+    "PROTOCOL_SCHEMA_V5",
     "PROTOCOL_TRAINING_KEYS",
+    "PROTOCOL_TRAINING_KEYS_V5",
     "STEP_RECEIPT_KEYS",
     "STEP_RECEIPT_SCHEMA",
     "TRAINING_RECEIPT_SCHEMA",

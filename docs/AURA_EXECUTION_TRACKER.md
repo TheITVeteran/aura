@@ -31151,3 +31151,64 @@ objective, head-transaction, and external-authorization work, the
 evidence-adjusted range is 4-7 checkpoints to a sealed resident-32B training
 launch, 8-13 to a defensible preliminary gain verdict, and 13-23 to the powered
 conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-28 - CP420O policy-bound verified trajectory composite
+
+CP420N's bounded adjoint is now inside the production verified mutation rather
+than adjacent to it. One admitted group computes the existing verifier-weighted
+terminal GRPO gradient, gives monotonic-improvement credit only to completions
+with positive verified advantage using L1-normalized credit, and adds
+displacement, oscillation, and diversity exactly once over the complete
+exchange-coupled branch ensemble. The structural anchor is the completion with
+maximum verified reward, with lowest index as the deterministic tie break.
+The resulting composite enters the reserved, journaled, exactly-once transition
+transaction and can produce only one optimizer update.
+
+The objective is source-bound twice. At mutation time it derives a canonical
+source receipt from the actual group admission, verified reward batch,
+recurrent samples, prompt, execution spec, trajectory config, and advantage
+clip. At final training-evidence replay those inputs are reconstructed again
+from independently validated artifacts and the frozen training protocol; the
+journal's stored source assertion is compared with that reconstruction rather
+than trusted. Cross-admission objectives and changed frozen configs fail.
+
+The exact-adjoint receipt advances independently to v2 while its unchanged
+configuration remains v1-compatible. Each child now seals policy identity,
+prompt/answer/bridge token digests and counts, nonnegative proof-path token
+weights, execution and branch identity, and every trajectory/diversity setting
+under a domain-separated input commitment. The group validator compares those
+fields with admitted policy and sample evidence. Fully resealed cross-policy,
+cross-prompt, cross-answer, cross-bridge, and nonzero auxiliary-weight
+transplants are rejected. The ordinary terminal GRPO compatibility API retains
+signed coefficients because policy advantages require them, but that surface
+does not emit these proof receipts. Verified trajectory training rejects
+nonempty bridge tokens until bridge provenance is part of the durable
+admission contract.
+
+Training protocol v6 records the canonical config, its shared semantic digest,
+and the advantage clip. The config loader refuses noncanonical JSON, unstable
+or oversized reads, paths outside the repository, and final symlinks. The
+read-only resident policy probe strips the mutation-only config argument.
+Historical v5 protocol bundles remain verifiable.
+
+Ruff lint and formatting, bytecode compilation, and diff checks pass. The
+focused exact-adjoint receipt matrix passes 7/7 in 2.60 seconds. Three real
+admitted transaction/replay tests pass in 22.59 seconds. The final expanded
+objective, GRPO, update, identity, preregistration, materializer, campaign
+runner, and post-training matrix passes 250/250 in 147.04 seconds. Evidence is
+`artifacts/current/cp420o_verified_trajectory_composite_evidence.json`.
+
+This closes CP420N's verified-trainer-composite blocker, not SPARK-060/061/062.
+The default resident campaign still does not enable the trajectory config.
+Causal-lesion and learned-stopping objectives are absent; process,
+mistake-location, and accept/discard heads still need separate admitted
+optimizers and resident label lineage; resident-32B term calibration has not
+run; and real external trust principals are not provisioned. No resident 32B
+was loaded or trained and no reasoning, frontier, promotion, or `WOW Signal`
+claim follows.
+
+CP420O is total checkpoint 685. The 685-920 completion envelope is
+approximately 74.5%-100.0%, with an 87.2% midpoint. The evidence-adjusted range
+is 3-6 checkpoints to a sealed resident-32B training launch, 7-12 to a
+defensible preliminary gain verdict, and 12-22 to the powered conditional
+`WOW Signal` decision. Final multi-hour soaks remain deferred.

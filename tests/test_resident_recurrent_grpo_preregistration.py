@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -55,13 +56,12 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     contract = _contract()
     receipt = prereg.validate_contract(contract, verify_model=False)
 
-    assert contract["training"]["parameters"]["domains"] == list(
-        RECURRENCE_TRAINING_FAMILIES
-    )
+    assert contract["training"]["parameters"]["domains"] == list(RECURRENCE_TRAINING_FAMILIES)
     assert contract["training"]["dataset"]["train_tasks"] == 288
     assert contract["training"]["dataset"]["holdout_tasks"] == 36
     assert contract["training"]["dataset"]["train_holdout_id_overlap"] == 0
     assert contract["training"]["parameters"]["trajectory_credit"] is False
+    assert "verified_trajectory_config_artifact" not in contract["training"]
     assert "--trajectory-credit" not in contract["training"]["argv"]
     assert contract["training"]["argv"][
         contract["training"]["argv"].index("--min-signal-groups") + 1
@@ -71,15 +71,94 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert mechanism["claim_eligible"] is False
     assert "resident_full_stack" in mechanism["candidate_profiles"]
     assert "resident_full_stack_no_fast_weights" in mechanism["candidate_profiles"]
-    assert "resident_full_stack > adapter_equal_compute" in mechanism[
-        "required_comparisons"
-    ]
-    assert "fast_weight_erase_and_canary_receipts_required" in mechanism[
-        "acceptance_rules"
-    ]
+    assert "resident_full_stack > adapter_equal_compute" in mechanism["required_comparisons"]
+    assert "fast_weight_erase_and_canary_receipts_required" in mechanism["acceptance_rules"]
     assert contract["evaluation"]["powered_confirmatory"]["task_count"] == 2877
     assert contract["evaluation"]["powered_confirmatory"]["cell_count"] == 17262
     assert receipt["claim_eligible"] is False
+
+
+def test_preregistration_archives_enabled_verified_trajectory_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parameters = dict(prereg.TRAINING_PARAMETERS)
+    parameters["group_size"] = 2
+    parameters["verified_trajectory_config"] = (
+        "tests/fixtures/verified_trajectory_group_config.json"
+    )
+    monkeypatch.setattr(prereg, "TRAINING_PARAMETERS", parameters)
+
+    contract = _contract()
+    receipt = prereg.validate_contract(contract, verify_model=False)
+    artifact = contract["training"]["verified_trajectory_config_artifact"]
+
+    assert artifact["path"] == parameters["verified_trajectory_config"]
+    assert artifact["sha256"] == artifact["semantic_sha256"]
+    assert artifact["config"]["trajectory_config"]["probe_steps"] == [1, 2, 4]
+    assert (
+        contract["training"]["argv"][
+            contract["training"]["argv"].index("--verified-trajectory-config") + 1
+        ]
+        == parameters["verified_trajectory_config"]
+    )
+    probe_argv = prereg._policy_probe_argv(contract)
+    assert "--verified-trajectory-config" not in probe_argv
+    assert probe_argv[-1] == "--initial-policy-probe"
+    assert receipt["claim_eligible"] is False
+
+
+def test_preregistration_rejects_trajectory_group_branch_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    parameters = dict(prereg.TRAINING_PARAMETERS)
+    parameters["verified_trajectory_config"] = (
+        "tests/fixtures/verified_trajectory_group_config.json"
+    )
+    monkeypatch.setattr(prereg, "TRAINING_PARAMETERS", parameters)
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="verified_trajectory_group_branch_count_mismatch",
+    ):
+        _contract()
+
+
+def test_trajectory_config_commitment_rejects_symlink_and_oversized_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    config_bytes = (
+        prereg.REPO_ROOT / "tests/fixtures/verified_trajectory_group_config.json"
+    ).read_bytes()
+    real_config = tmp_path / "real-config.json"
+    real_config.write_bytes(config_bytes)
+    link = tmp_path / "trajectory-config.json"
+    link.symlink_to(real_config.name)
+    parameters = {
+        **prereg.TRAINING_PARAMETERS,
+        "group_size": 2,
+        "verified_trajectory_config": link.name,
+    }
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "TRAINING_PARAMETERS", parameters)
+    spec = SimpleNamespace(
+        branch_roles=("constructive_solution", "critical_verification"),
+        recurrent_steps=4,
+    )
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="verified_trajectory_config_file_invalid",
+    ):
+        prereg._verified_trajectory_config_commitment(spec)
+
+    link.unlink()
+    link.write_bytes(b" " * 65_537)
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="verified_trajectory_config_invalid",
+    ):
+        prereg._verified_trajectory_config_commitment(spec)
 
 
 def test_preregistration_can_bind_new_attempt_campaign_identity():
@@ -197,9 +276,7 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
 
     assert verdict["verdict"] == "safe_to_resume"
     assert verdict["checkpoint_sequence"] == 3
-    assert verdict["evidence"]["adapter"]["sha256"] == hashlib.sha256(
-        adapter
-    ).hexdigest()
+    assert verdict["evidence"]["adapter"]["sha256"] == hashlib.sha256(adapter).hexdigest()
     assert json.loads(evidence.read_text(encoding="ascii")) == verdict["evidence"]
 
 
@@ -286,9 +363,7 @@ def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
     assert "--read-only-answer-channel-preflight" in argv
 
 
-def test_launch_initial_policy_probe_is_detached_and_nonresumable(
-    tmp_path, monkeypatch
-):
+def test_launch_initial_policy_probe_is_detached_and_nonresumable(tmp_path, monkeypatch):
     contract = _contract()
     contract["paths"]["artifact_root"] = "artifacts/probe"
     contract_path = tmp_path / "config" / "probe-contract.json"
@@ -323,9 +398,7 @@ def test_launch_initial_policy_probe_is_detached_and_nonresumable(
     assert command[2:4] == ["run-initial-policy-probe", "--contract"]
 
 
-def test_launch_answer_channel_preflight_is_detached_and_source_bound(
-    tmp_path, monkeypatch
-):
+def test_launch_answer_channel_preflight_is_detached_and_source_bound(tmp_path, monkeypatch):
     contract = _contract()
     contract["paths"]["artifact_root"] = "artifacts/preflight"
     contract_path = tmp_path / "config" / "preflight-contract.json"
@@ -353,9 +426,7 @@ def test_launch_answer_channel_preflight_is_detached_and_source_bound(
     assert argv[argv.index("--run-dir") + 1] == str(
         tmp_path / "artifacts" / "preflight" / "detached-answer-channel-preflight"
     )
-    assert argv[argv.index("--name") + 1].endswith(
-        "-answer-channel-preflight"
-    )
+    assert argv[argv.index("--name") + 1].endswith("-answer-channel-preflight")
     assert argv[argv.index("--cwd") + 1] == str(tmp_path)
     assert argv[argv.index("--timeout") + 1] == "5400"
     resume_index = argv.index("--resume-contract")

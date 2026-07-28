@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -19,11 +20,13 @@ import mlx.optimizers as optim  # noqa: E402
 from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
+import core.learning.recurrent_grpo as recurrent_grpo_runtime  # noqa: E402
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
 from core.learning.recurrence_curriculum import khop_reachability  # noqa: E402
 from core.learning.recurrence_native_objective_v2 import (  # noqa: E402
+    ExactAdjointTrajectoryConfig,
     LivePathForward,
     live_path_branch_answer_ce_trail,
 )
@@ -31,6 +34,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     RecurrentGroupClipAdmissionError,
     RecurrentGRPOConfig,
     RecurrentSamplingConfig,
+    VerifiedTrajectoryGroupConfig,
     branch_token_logprobs,
     clipped_recurrent_grpo_objective,
     cortex_config_from_execution_spec,
@@ -46,6 +50,7 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     sample_recurrent_completion,
     validate_causal_recurrent_transition_pair_receipt,
     validate_recurrent_policy_sample_receipt,
+    validate_verified_trajectory_group_receipt,
     verifier_group_objective,
 )
 from core.learning.verified_recurrent_transition_evidence import (  # noqa: E402
@@ -261,9 +266,7 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert len(receipt["behavior_logprobs_sha256"]) == 64
     assert len(receipt["differentiable_logprobs_sha256"]) == 64
     assert receipt["cached_params_unchanged"] is True
-    assert receipt["cached_nonparametric_memory_status"] == (
-        "disabled_by_policy"
-    )
+    assert receipt["cached_nonparametric_memory_status"] == ("disabled_by_policy")
     assert receipt["cached_recurrence_adapter"]["active"] is True
     assert validated["sample_kind"] == "engine_episode"
     assert validated["episode_id"] == "engine-sample-test-117"
@@ -327,15 +330,11 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
     assert pair.child_behavior_admitted is True
     assert receipt["fixed_token_budget"] == 3
     assert receipt["episode_id"] == "causal-edge-test-117"
-    assert receipt["runtime_integrity"]["verdict"][
-        "engine_measurements_complete"
-    ] is True
+    assert receipt["runtime_integrity"]["verdict"]["engine_measurements_complete"] is True
     assert receipt["recurrence_adapter"]["active"] is True
     assert sample_receipt["sample_kind"] == "causal_final_transition"
     assert sample.tokens == pair.child.tokens
-    assert recurrent_policy_sample_from_receipt(sample_receipt).receipt() == (
-        sample_receipt
-    )
+    assert recurrent_policy_sample_from_receipt(sample_receipt).receipt() == (sample_receipt)
 
 
 def test_causal_sample_receipt_rejects_trace_substitution():
@@ -423,9 +422,7 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
             "parsed": True,
             "correct": bool(response),
             "reason": "deterministic_test_score",
-            "normalized_answer_sha256": hashlib.sha256(
-                response.encode("utf-8")
-            ).hexdigest(),
+            "normalized_answer_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
         }
 
     store = TransitionArtifactStore(tmp_path / "recurrent-evidence")
@@ -464,17 +461,18 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
         token_decoder=lambda tokens: adapter.decode_output(tokens).encode(),
         created_at_unix_ns=1_800_000_000_000_000_100,
     )
-    assert validate_verified_transition_reward_batch(
-        store,
-        reward,
-        (replayed,),
-        independent_scorer=score,
-        token_encoder=lambda value: tuple(value),
-        token_decoder=lambda tokens: adapter.decode_output(tokens).encode(),
-    ) == reward
-    assert reward["transitions"][0]["pass_1_output_token_ids"] == list(
-        pair.child.tokens
+    assert (
+        validate_verified_transition_reward_batch(
+            store,
+            reward,
+            (replayed,),
+            independent_scorer=score,
+            token_encoder=lambda value: tuple(value),
+            token_decoder=lambda tokens: adapter.decode_output(tokens).encode(),
+        )
+        == reward
     )
+    assert reward["transitions"][0]["pass_1_output_token_ids"] == list(pair.child.tokens)
     attacked = dict(replayed.document)
     attacked["child_response_sha256"] = "0" * 64
     with pytest.raises(
@@ -544,10 +542,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
 
         @classmethod
         def stream_decode_deltas(cls, tokens):
-            rendered = [
-                cls.decode_output(tokens[: index + 1])
-                for index in range(len(tokens))
-            ]
+            rendered = [cls.decode_output(tokens[: index + 1]) for index in range(len(tokens))]
             return [
                 value if index == 0 else value[len(rendered[index - 1]) :]
                 for index, value in enumerate(rendered)
@@ -583,9 +578,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
                 task_id=task.task_id,
                 rng_root_sha256=sample.rng_root_sha256,
                 policy_sha256=sample.policy_sha256,
-                recurrent_execution_spec_sha256=(
-                    sample.execution_spec_sha256
-                ),
+                recurrent_execution_spec_sha256=(sample.execution_spec_sha256),
                 producing_branch_index=sample.branch_index,
                 sample_seed=sample.seed,
                 sampling_config_sha256=sampling_config_sha256(sample),
@@ -610,9 +603,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
         provider_config={},
         ledger_roots=roots,
         campaign_ledger=SimpleNamespace(
-            group_start=lambda **_kwargs: {
-                "campaign_manifest_sha256": "9" * 64
-            }
+            group_start=lambda **_kwargs: {"campaign_manifest_sha256": "9" * 64}
         ),
         campaign_trust_policy=policy,
         tokenizer_bundle_sha256=bundle["bundle_sha256"],
@@ -638,9 +629,7 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
     restore_request = SimpleNamespace(
         schema="aura.verified_transition.restore_request.v2",
         contract_sha256=request.contract_sha256,
-        campaign_schedule_root_sha256=(
-            request.campaign_schedule_root_sha256
-        ),
+        campaign_schedule_root_sha256=(request.campaign_schedule_root_sha256),
         committed_steps=1,
         step_receipts=(step,),
         replay_artifact_root=roots["replay_artifacts"],
@@ -656,13 +645,11 @@ def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
         campaign_trust_policy=policy,
     )
     assert samples[0].receipt() == sample.receipt()
-    assert evidence[0].document["receipt_sha256"] == (
-        prepared.transition_evidence[0].document["receipt_sha256"]
+    assert (
+        evidence[0].document["receipt_sha256"]
+        == (prepared.transition_evidence[0].document["receipt_sha256"])
     )
-    package_path = (
-        Path(roots["replay_artifacts"])
-        / "group-00000000.prepared.json"
-    )
+    package_path = Path(roots["replay_artifacts"]) / "group-00000000.prepared.json"
     package_bytes = package_path.read_bytes()
     package_path.write_bytes(package_bytes + b" ")
     with pytest.raises(
@@ -787,9 +774,7 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
     assert len(samples) == len(completions) == 2
     assert samples[0].seed != samples[1].seed
     assert all(sample.behavior_admitted for sample in samples)
-    assert completions == [
-        " ".join(str(token) for token in sample.tokens) for sample in samples
-    ]
+    assert completions == [" ".join(str(token) for token in sample.tokens) for sample in samples]
 
 
 def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
@@ -834,15 +819,11 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
     class Provider:
         calls = 0
 
-        def sampling_plan(
-            self, *, sequence, task, prompt_tokens, policy_sha256
-        ):
+        def sampling_plan(self, *, sequence, task, prompt_tokens, policy_sha256):
             self.calls += 1
             entries = []
             prompt_sha256 = hashlib.sha256(
-                json.dumps(
-                    list(prompt_tokens), separators=(",", ":")
-                ).encode("ascii")
+                json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
             ).hexdigest()
             for branch, seed in ((0, 61), (1, 67)):
                 episode_id = f"signed-causal-{branch}-{seed}"
@@ -996,12 +977,291 @@ def test_sampled_verifier_update_improves_preference_without_base_drift():
     winner = rewards.index(max(rewards))
     loser = 1 - winner
 
-    assert (
-        policy_after[winner] - policy_after[loser]
-        > policy_before[winner] - policy_before[loser]
-    )
+    assert policy_after[winner] - policy_after[loser] > policy_before[winner] - policy_before[loser]
     assert reference_after == pytest.approx(reference_before, abs=1e-7)
     assert bool(mx.array_equal(standard_after, standard_before))
+
+
+def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    model = _prepared(seed=981)
+    _set_adapter_delta(model, 0.02)
+    prompt = [5, 9, 17]
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    sampling = RecurrentSamplingConfig(
+        max_tokens=2,
+        max_abs_logprob_drift=2.0,
+        max_mean_abs_logprob_drift=2.0,
+        max_clipped_token_fraction=1.0,
+        max_old_policy_approx_kl=1.0,
+    )
+    samples = [
+        recurrent_policy_sample_from_causal_pair(
+            sample_final_recurrent_transition_pair(
+                model,
+                prompt,
+                spec=spec,
+                branch_index=branch,
+                seed=seed,
+                sampling=sampling,
+                episode_id=f"trajectory-composite-{branch}-{seed}",
+            ),
+            sampling=sampling,
+        )
+        for branch, seed in ((0, 71), (1, 73))
+    ]
+    rewards = (1.0, 0.0)
+    base = exact_adjoint_sampled_group_value_and_grad(
+        model,
+        prompt,
+        samples,
+        rewards,
+        spec=spec,
+        config=RecurrentGRPOConfig(
+            kl_coefficient=0.0,
+            max_initial_clip_fraction=1.0,
+            max_initial_old_policy_approx_kl=1.0,
+        ),
+    )
+    trajectory_config = VerifiedTrajectoryGroupConfig(
+        trajectory_config=ExactAdjointTrajectoryConfig(
+            probe_steps=(1, 2),
+            improvement_weight=0.7,
+            improvement_margin=2.0,
+            displacement_weight=0.4,
+            displacement_floor=0.99,
+            oscillation_weight=0.3,
+        ),
+        diversity_weight=0.2,
+        diversity_target_cos=0.0,
+    )
+    admission_sha256 = "a" * 64
+    reward_sha256 = "b" * 64
+    sample_receipts = [
+        hashlib.sha256(
+            json.dumps(
+                sample.receipt(),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        for sample in samples
+    ]
+    monkeypatch.setattr(
+        "core.learning.verified_transition_reward.rewards_for_recurrent_samples",
+        lambda _receipt, _samples, _prompt: rewards,
+    )
+    group_admission = {
+        "receipt_sha256": admission_sha256,
+        "reward_receipt_sha256": reward_sha256,
+        "policy_sha256": samples[0].policy_sha256,
+        "recurrent_execution_spec_sha256": spec.sha256,
+        "prompt_tokens_sha256": samples[0].prompt_tokens_sha256,
+        "group_size": 2,
+        "sample_bindings": [
+            {
+                "schema": "aura.verified_transition.sample_binding.v1",
+                "sample_sha256": digest,
+            }
+            for digest in sample_receipts
+        ],
+    }
+    source_binding = recurrent_grpo_runtime.build_verified_trajectory_group_source_binding(
+        group_admission,
+        {"receipt_sha256": reward_sha256},
+        samples,
+        prompt,
+        spec=spec,
+        trajectory_group_config=trajectory_config,
+        advantage_clip=4.0,
+    )
+    result = recurrent_grpo_runtime._with_verified_trajectory_group_objective(
+        model,
+        prompt,
+        samples,
+        rewards,
+        base,
+        group_admission_receipt=group_admission,
+        reward_receipt={"receipt_sha256": reward_sha256},
+        spec=spec,
+        bridge_tokens=(),
+        trajectory_group_config=trajectory_config,
+        advantage_clip=4.0,
+    )
+    objective_receipt = result.receipt()
+    trajectory_receipt = objective_receipt["trajectory_receipt"]
+    validated = validate_verified_trajectory_group_receipt(
+        trajectory_receipt,
+        advantage_report=objective_receipt["advantage_report"],
+        expected_source_binding=source_binding,
+    )
+
+    assert objective_receipt["mode"] == ("exact_adjoint_trajectory_composite_single_update")
+    assert objective_receipt["trajectory_objective_value"] > 0.0
+    assert objective_receipt["composite_objective_at_sampling"] == pytest.approx(
+        objective_receipt["objective_at_sampling"] + objective_receipt["trajectory_objective_value"]
+    )
+    assert validated["group_admission_sha256"] == admission_sha256
+    assert validated["positive_completion_indices"] == [0]
+    assert validated["positive_advantage_weights"] == [1.0]
+    assert len(validated["improvement_receipts"]) == 1
+    assert validated["improvement_receipts"][0]["completion_index"] == 0
+    assert validated["improvement_receipts"][0]["objective_receipt"]["branch_indices"] == [0]
+    assert validated["structural_receipt"]["objective_receipt"]["branch_indices"] == [0, 1]
+    assert validated["structural_receipt"]["anchor_completion_index"] == 0
+    base_flat = dict(tree_flatten(base.gradients))
+    composite_flat = dict(tree_flatten(result.gradients))
+    assert any(
+        float(mx.linalg.norm(mx.reshape(composite_flat[name] - base_flat[name], (-1,)))) > 0.0
+        for name in base_flat
+    )
+
+    def reseal(attacked):
+        unsigned = {key: value for key, value in attacked.items() if key != "receipt_sha256"}
+        attacked["receipt_sha256"] = hashlib.sha256(
+            json.dumps(
+                unsigned,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest()
+        return attacked
+
+    attacked = copy.deepcopy(trajectory_receipt)
+    attacked["positive_advantage_weights"][0] = 0.5
+    with pytest.raises(ValueError, match="advantage weights"):
+        validate_verified_trajectory_group_receipt(
+            reseal(attacked),
+            advantage_report=objective_receipt["advantage_report"],
+        )
+
+    attacked = copy.deepcopy(trajectory_receipt)
+    attacked["advantage_clip"] = 0.5
+    with pytest.raises(ValueError, match="advantages do not replay"):
+        validate_verified_trajectory_group_receipt(reseal(attacked))
+
+    for field, replacement in (
+        ("reward_receipt_sha256", "c" * 64),
+        ("policy_sha256", "d" * 64),
+        ("execution_spec_sha256", "e" * 64),
+        ("prompt_tokens_sha256", "f" * 64),
+        ("sample_receipt_sha256s", ["0" * 64, "1" * 64]),
+        ("completion_tokens_sha256s", ["2" * 64, "3" * 64]),
+        ("verified_rewards", [0.8, 0.0]),
+    ):
+        attacked = copy.deepcopy(trajectory_receipt)
+        attacked[field] = replacement
+        with pytest.raises(ValueError, match=f"{field} differs from admitted source"):
+            validate_verified_trajectory_group_receipt(
+                reseal(attacked),
+                expected_source_binding=source_binding,
+            )
+
+    for branches in ([1, 0], [0, 0], [0]):
+        attacked = copy.deepcopy(trajectory_receipt)
+        attacked["sample_branch_indices"] = branches
+        with pytest.raises(ValueError, match="sample bindings"):
+            validate_verified_trajectory_group_receipt(reseal(attacked))
+
+    def reseal_exact(attacked):
+        input_payload = {
+            key: attacked[key]
+            for key in (
+                "policy_sha256",
+                "prompt_tokens_sha256",
+                "prompt_token_count",
+                "answer_tokens_sha256",
+                "answer_token_count",
+                "bridge_tokens_sha256",
+                "bridge_token_count",
+                "token_loss_weights",
+                "execution_spec_sha256",
+                "recurrent_depth",
+                "execution_branch_count",
+                "branch_indices",
+                "diversity_weight",
+                "diversity_target_cos",
+                "trajectory_config",
+            )
+        }
+        encoded = json.dumps(
+            input_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        attacked["objective_input_sha256"] = hashlib.sha256(
+            b"aura.exact_adjoint_input.v1\0" + encoded
+        ).hexdigest()
+        return reseal(attacked)
+
+    child_attacks = (
+        ("policy_sha256", "9" * 64),
+        ("prompt_tokens_sha256", "8" * 64),
+        ("answer_tokens_sha256", "7" * 64),
+        (
+            "token_loss_weights",
+            [0.5]
+            * trajectory_receipt["improvement_receipts"][0]["objective_receipt"][
+                "answer_token_count"
+            ],
+        ),
+    )
+    for field, replacement in child_attacks:
+        attacked = copy.deepcopy(trajectory_receipt)
+        child = attacked["improvement_receipts"][0]["objective_receipt"]
+        child[field] = replacement
+        attacked["improvement_receipts"][0]["objective_receipt"] = reseal_exact(child)
+        with pytest.raises(ValueError, match="improvement objective differs"):
+            validate_verified_trajectory_group_receipt(
+                reseal(attacked),
+                expected_source_binding=source_binding,
+            )
+
+    attacked = copy.deepcopy(trajectory_receipt)
+    child = attacked["improvement_receipts"][0]["objective_receipt"]
+    child["bridge_tokens_sha256"] = hashlib.sha256(b"[99]").hexdigest()
+    child["bridge_token_count"] = 1
+    attacked["improvement_receipts"][0]["objective_receipt"] = reseal_exact(child)
+    with pytest.raises(ValueError, match="improvement objective differs"):
+        validate_verified_trajectory_group_receipt(
+            reseal(attacked),
+            expected_source_binding=source_binding,
+        )
+
+    attacked = copy.deepcopy(trajectory_receipt)
+    structural = attacked["structural_receipt"]["objective_receipt"]
+    structural["answer_tokens_sha256"] = "6" * 64
+    attacked["structural_receipt"]["objective_receipt"] = reseal_exact(structural)
+    with pytest.raises(ValueError, match="structural objective differs"):
+        validate_verified_trajectory_group_receipt(
+            reseal(attacked),
+            expected_source_binding=source_binding,
+        )
+
+    with pytest.raises(ValueError, match="requires empty bridge_tokens"):
+        recurrent_grpo_runtime._with_verified_trajectory_group_objective(
+            model,
+            prompt,
+            samples,
+            rewards,
+            base,
+            group_admission_receipt=group_admission,
+            reward_receipt={"receipt_sha256": reward_sha256},
+            spec=spec,
+            bridge_tokens=(99,),
+            trajectory_group_config=trajectory_config,
+            advantage_clip=4.0,
+        )
 
 
 def test_sampled_group_rejects_excess_clip_fraction_before_adjoint():
@@ -1024,18 +1284,14 @@ def test_sampled_group_rejects_excess_clip_fraction_before_adjoint():
         behavior[0] -= 0.19
         differences = [
             abs(left - right)
-            for left, right in zip(
-                behavior, sample.differentiable_logprobs, strict=True
-            )
+            for left, right in zip(behavior, sample.differentiable_logprobs, strict=True)
         ]
         changed = replace(
             sample,
             behavior_logprobs=tuple(behavior),
             max_abs_logprob_drift=max(differences),
             mean_abs_logprob_drift=sum(differences) / len(differences),
-            max_abs_logprob_drift_token_index=differences.index(
-                max(differences)
-            ),
+            max_abs_logprob_drift_token_index=differences.index(max(differences)),
             clipped_token_fraction=0.5,
             old_policy_approx_kl=sum(
                 (math.exp(target - cached) - 1.0) - (target - cached)
@@ -1101,9 +1357,7 @@ def test_verifier_advantage_produces_finite_nonzero_recurrent_gradients():
     spec = _spec(depth=2)
     old = [
         mx.stop_gradient(
-            recurrent_completion_token_logprobs(
-                model, prompt, tokens, spec=spec, branch_index=0
-            )
+            recurrent_completion_token_logprobs(model, prompt, tokens, spec=spec, branch_index=0)
         )
         for tokens in completions
     ]
@@ -1215,9 +1469,7 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
         branches,
         rewards,
         spec=spec,
-        behavior_logprobs=[
-            [float(value) for value in values] for values in behavior
-        ],
+        behavior_logprobs=[[float(value) for value in values] for values in behavior],
         config=config,
     )
     mx.eval(monolithic_gradients, streamed_result.gradients)
@@ -1228,7 +1480,5 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
     assert streamed_result.receipt()["has_gradient"] is True
     assert streamed_result.receipt()["clip_fraction"] == pytest.approx(0.25)
     for key in monolithic_flat:
-        difference = float(
-            mx.max(mx.abs(monolithic_flat[key] - streamed_flat[key]))
-        )
+        difference = float(mx.max(mx.abs(monolithic_flat[key] - streamed_flat[key])))
         assert difference < 2e-4, key
