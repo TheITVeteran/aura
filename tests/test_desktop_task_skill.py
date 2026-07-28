@@ -2644,7 +2644,7 @@ def test_research_section_leads_with_first_person_synthesis():
     section = DesktopTaskSkill._research_section_from_context({
         "desktop_task_research_synthesis": "I read three pieces. In my view, the risk is rising.",
         "desktop_task_research_summary": "RAW SEARCH DUMP that should not appear",
-        "desktop_task_research_sources": [{"title": "A", "url": "https://a", "snippet": "x"}],
+        "desktop_task_research_sources": [{"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "x"}],
     })
     assert "In my view" in section
     assert "RAW SEARCH DUMP" not in section
@@ -2664,9 +2664,9 @@ async def test_collect_research_synthesizes_first_person_opinion_without_hidden_
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                    {"title": "A", "url": "https://a", "snippet": "warming"},
-                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
-                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                    {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "warming"},
+                    {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "extremes"},
                 ],
             }
 
@@ -2708,9 +2708,9 @@ async def test_collect_research_model_synthesis_is_explicit_and_memory_guarded(m
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                    {"title": "A", "url": "https://a", "snippet": "warming"},
-                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
-                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                    {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "warming"},
+                    {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "extremes"},
                 ],
             }
 
@@ -2760,9 +2760,9 @@ async def test_collect_research_context_uses_shallow_search_under_memory_pressur
                 "ok": True,
                 "summary": "Climate findings.",
                 "citations": [
-                    {"title": "A", "url": "https://a", "snippet": "warming"},
-                    {"title": "B", "url": "https://b", "snippet": "adaptation"},
-                    {"title": "C", "url": "https://c", "snippet": "extremes"},
+                    {"title": "A", "url": "https://example-a.org/articles/climate-2026", "snippet": "warming"},
+                    {"title": "B", "url": "https://example-b.org/articles/climate-2026", "snippet": "adaptation"},
+                    {"title": "C", "url": "https://example-c.org/articles/climate-2026", "snippet": "extremes"},
                 ],
                 "large_raw_body": "x" * 10000,
             }
