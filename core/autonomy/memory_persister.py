@@ -213,6 +213,7 @@ class MemoryPersister:
             return 0
 
         successful = 0
+        skipped_duplicates = 0
         remaining: List[str] = []
         for line in lines:
             line = line.strip()
@@ -227,13 +228,47 @@ class MemoryPersister:
             title = rec.get("item_title", "")
             payload = rec.get("payload", {})
             ok = False
+            # CP126 (critical): "Replay does not check or mark dedup keys,
+            # and a failed final queue rewrite is silently ignored;
+            # successful records remain on disk and are committed again on
+            # every replay."
+            #
+            # The first commit path consults _is_duplicate before writing;
+            # replay did not, so the same episode, fact or belief was
+            # re-committed on every retry sweep. Combined with the swallowed
+            # rewrite below, one failed rewrite turned a retry queue into an
+            # unbounded duplicate generator against her real memory.
+            try:
+                record = _replay_record(kind, payload)
+                if record is None:
+                    continue
+                # hash_key() must be inside the guard: a queued payload with a
+                # null or wrong-typed field raises AttributeError here, and one
+                # bad record used to abort the ENTIRE sweep — leaving every
+                # later record unreplayed.
+                dedup_key = record.hash_key()
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "memory_persister",
+                    exc,
+                    severity="info",
+                    action="dropped an unparseable queued record",
+                    enforce_failure_policy=False,
+                )
+                continue
+            if self._is_duplicate(dedup_key):
+                # Already committed by an earlier sweep. Draining it is the
+                # correct outcome — leaving it queued is what produced the
+                # repeat in the first place.
+                skipped_duplicates += 1
+                continue
             try:
                 if kind == "episodic":
-                    ok, _, _ = self._commit_episodic(title, EpisodicEvent(**_only_keys(payload, EpisodicEvent)))
+                    ok, _, _ = self._commit_episodic(title, record)
                 elif kind == "fact":
-                    ok, _, _ = self._commit_fact(title, FactRecord(**_only_keys(payload, FactRecord)))
+                    ok, _, _ = self._commit_fact(title, record)
                 elif kind == "belief":
-                    ok, _, _ = self._commit_belief(title, BeliefUpdate(**_only_keys(payload, BeliefUpdate)))
+                    ok, _, _ = self._commit_belief(title, record)
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('memory_persister', e)
                 logger.debug("replay record kind=%s failed: %s", kind, e)
@@ -241,14 +276,39 @@ class MemoryPersister:
 
             if ok:
                 successful += 1
+                self._mark_committed(dedup_key)
             else:
                 remaining.append(line)
+
+        # Persist the dedup marks BEFORE rewriting the queue. If the process
+        # dies between the two, the next sweep sees the marks and skips the
+        # records rather than committing them a second time; the reverse
+        # order loses that protection precisely when it is needed.
+        self._save_dedup()
 
         try:
             self._queue_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._queue_path, "\n".join(remaining) + ("\n" if remaining else ""), encoding="utf-8")
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            pass  # no-op: intentional
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            # Was `pass  # no-op: intentional`. It is not harmless: every
+            # record just committed is still on disk, so the next sweep
+            # replays them. The dedup marks above now absorb that, but a
+            # queue that cannot be rewritten is a real durability fault and
+            # has to be visible.
+            record_degradation(
+                "memory_persister",
+                exc,
+                severity="warning",
+                action=(
+                    "committed records remain queued; dedup marks prevent "
+                    "re-commit but the queue is not draining"
+                ),
+                enforce_failure_policy=False,
+            )
+        if skipped_duplicates:
+            logger.info(
+                "Replay skipped %d already-committed record(s).", skipped_duplicates,
+            )
         return successful
 
     # ── Per-tier commit ───────────────────────────────────────────────────
@@ -438,11 +498,28 @@ class MemoryPersister:
             return {}
 
     def _save_dedup(self) -> None:
+        """Persist the committed-record marks.
+
+        This is the ledger that stops a replay committing the same memory
+        twice, so losing it silently reintroduces exactly the duplication the
+        replay dedup exists to prevent. It also used not to catch OSError at
+        all, so a full or read-only disk propagated out of a maintenance sweep
+        and abandoned every record still queued behind it.
+        """
         try:
             self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             atomic_write_text(self._dedup_path, json.dumps(self._dedup), encoding="utf-8")
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass  # no-op: intentional
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "memory_persister",
+                exc,
+                severity="warning",
+                action=(
+                    "could not persist dedup marks; already-committed records "
+                    "may be committed again on the next replay"
+                ),
+                enforce_failure_policy=False,
+            )
 
     def _is_duplicate(self, key: str) -> bool:
         ts = self._dedup.get(key)
@@ -452,6 +529,23 @@ class MemoryPersister:
 
     def _mark_committed(self, key: str) -> None:
         self._dedup[key] = time.time()
+
+
+def _replay_record(kind: Any, payload: Any) -> Any:
+    """Rebuild a queued record so its dedup key can be computed.
+
+    Returns None for a kind this version does not understand — a forward
+    -compatible queue entry is not a reason to crash the sweep.
+    """
+    mapping = {
+        "episodic": EpisodicEvent,
+        "fact": FactRecord,
+        "belief": BeliefUpdate,
+    }
+    cls = mapping.get(str(kind or ""))
+    if cls is None:
+        return None
+    return cls(**_only_keys(payload or {}, cls))
 
 
 def _dataclass_to_jsonable(obj: Any) -> Dict[str, Any]:
