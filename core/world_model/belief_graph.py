@@ -709,8 +709,37 @@ class BeliefGraph:
 
 
 # Global Instance
-belief_graph = BeliefGraph()
+_BELIEF_GRAPH: "BeliefGraph | None" = None
+_BELIEF_GRAPH_LOCK = threading.Lock()
 
-def get_belief_graph():
-    """Get global belief graph instance"""
-    return belief_graph
+
+def get_belief_graph() -> "BeliefGraph":
+    """Get the global belief graph, constructing it on first use.
+
+    This used to be ``belief_graph = BeliefGraph()`` at module scope, which made
+    IMPORTING this module do real, governance-gated, blocking work:
+    ``__init__`` -> ``_initialize_sovereign_goals`` -> ``update_belief`` ->
+    constitution approval -> authority gateway -> Will.decide ->
+    ``_check_memory_relevance`` -> a SYNCHRONOUS memory search. Measured live via
+    faulthandler: the boot event loop sat in exactly that chain, reached from
+    ``boot_resilience._initialize_self_preservation`` importing this module, and
+    the runtime took ~17 minutes to become ready.
+
+    Import should cost nothing. Constructing a belief graph is the caller's
+    decision, and now it happens once, under a lock, when someone asks.
+    """
+
+    global _BELIEF_GRAPH
+    if _BELIEF_GRAPH is None:
+        with _BELIEF_GRAPH_LOCK:
+            if _BELIEF_GRAPH is None:
+                _BELIEF_GRAPH = BeliefGraph()
+    return _BELIEF_GRAPH
+
+
+def __getattr__(name: str):
+    """Keep ``from ... import belief_graph`` working, lazily (PEP 562)."""
+
+    if name == "belief_graph":
+        return get_belief_graph()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

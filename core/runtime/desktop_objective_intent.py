@@ -109,10 +109,54 @@ _SCREEN_OBSERVATION_RE = re.compile(
 )
 
 
+# Surfaces whose ordinary English meaning is far more common than the app that
+# shares the name. A bare word-boundary match on these turns any sentence
+# containing an everyday noun into a desktop-control request.
+#
+# Measured live: "Aura, it's Bryan. Remember the WORD lantern ... show me the
+# real output. Run a Python snippet that prints the PID and CPU cores." The
+# action term "show me" came from one sentence and the surface term "word" —
+# meaning Microsoft Word — came from another, so a code-execution request was
+# routed into desktop OS automation, which then correctly refused for lack of an
+# observable acceptance contract. The user got a failure for a request the
+# sandbox could have answered.
+#
+# These now require actual app context: a vendor name, an app/document noun, or
+# a preposition/verb that only makes sense against an application.
+_APP_CONTEXT_SURFACE_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        "word",
+        r"(?:\b(?:microsoft|ms)\s+word\b"
+        r"|\bword\s+(?:doc|docs|document|documents|file|files|app)\b"
+        r"|\b(?:open|in|into|to|from|using|with|launch|quit|close|switch\s+to)\s+word\b)",
+    ),
+    (
+        "pages",
+        r"(?:\bapple\s+pages\b"
+        r"|\bpages\s+(?:doc|docs|document|documents|file|files|app)\b"
+        r"|\b(?:open|into|using|launch|quit|close|switch\s+to)\s+pages\b)",
+    ),
+    (
+        "drive",
+        r"(?:\bgoogle\s+drive\b"
+        r"|\bdrive\s+(?:folder|folders|file|files)\b"
+        r"|\b(?:in|into|on|from|to)\s+(?:my\s+|the\s+)?drive\b)",
+    ),
+)
+
+_PLAIN_ENGLISH_APP_NAMES = frozenset(term for term, _ in _APP_CONTEXT_SURFACE_PATTERNS)
+
+
 def _contains_desktop_objective_term(text: str, terms: tuple[str, ...]) -> bool:
     for term in terms:
+        if term in _PLAIN_ENGLISH_APP_NAMES:
+            continue
         escaped = re.escape(term)
         if re.search(rf"\b{escaped}\b", text, flags=re.IGNORECASE):
+            return True
+    requested = set(terms)
+    for term, pattern in _APP_CONTEXT_SURFACE_PATTERNS:
+        if term in requested and re.search(pattern, text, flags=re.IGNORECASE):
             return True
     return False
 
