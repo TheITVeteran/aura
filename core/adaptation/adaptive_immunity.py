@@ -2818,8 +2818,17 @@ class AdaptiveImmuneSystem:
                 # low-confidence evidence. Risky actions under low
                 # observability require at least SOME coverage even at
                 # extreme danger.
+                # A ratio floor alone can be met by any two channels — the
+                # two that MATTER for a risky action are a direct health
+                # probe and a causal trace, and the finding names exactly
+                # those. Without at least one of them, "danger 0.88" is a
+                # number produced from telemetry nobody corroborated, and
+                # restart/restore/revoke/migrate are irreversible enough that
+                # it must not authorize itself.
+                observed = set(coverage_report.get("observed_channels") or [])
+                has_grounding = bool(observed & {"health_probe", "causal_trace"})
                 extreme_danger_with_minimum_visibility = (
-                    antigen.danger >= 0.88 and coverage_ratio >= 0.25
+                    antigen.danger >= 0.88 and coverage_ratio >= 0.25 and has_grounding
                 )
                 if not extreme_danger_with_minimum_visibility:
                     artifact.suppressed = True
@@ -2868,9 +2877,18 @@ class AdaptiveImmuneSystem:
         issue_confirmed = evidence_count >= 2 and antigen.danger >= 0.28
         escalation_recommended = False
 
+        observed_channels = set(coverage_report.get("observed_channels") or [])
         if verified_success:
             status = "verified_recovery"
-            all_clear = coverage_ratio >= 0.7 and antigen.recurrence_pressure < 0.45
+            # A verified recovery already required health samples, so the
+            # probe is implied — asserting it explicitly keeps all_clear
+            # keyed on a DIRECT observation rather than on that implication
+            # surviving future edits (CP126 37f929c1).
+            all_clear = (
+                coverage_ratio >= 0.7
+                and antigen.recurrence_pressure < 0.45
+                and "health_probe" in observed_channels
+            )
         elif verification_status in {"failed", "execution_error"}:
             status = "persistent_issue"
             all_clear = False
@@ -2885,9 +2903,7 @@ class AdaptiveImmuneSystem:
         elif antigen.danger >= 0.48 or antigen.recurrence_pressure >= 0.4:
             status = "suspected_issue"
             all_clear = False
-        elif coverage_ratio >= 0.75 and "health_probe" in set(
-            coverage_report.get("observed_channels") or []
-        ):
+        elif coverage_ratio >= 0.75 and "health_probe" in observed_channels:
             # All-clear requires a DIRECT component probe — channel presence
             # alone (telemetry existing) is not evidence the component is well.
             status = "no_confirmed_issue_under_current_visibility"
