@@ -84,6 +84,7 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_provider",
         "transition_provider_factory",
         "transition_transaction",
+        "transition_rejection_transaction",
         "transition_causal_campaign",
         "verified_training_task",
         "verified_token_trace",

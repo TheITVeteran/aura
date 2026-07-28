@@ -1,0 +1,62 @@
+{
+  "schema": "aura.spark.cp420j.rejected_group_transaction_evidence.v1",
+  "checkpoint": "CP420J",
+  "recorded_date": "2026-07-27",
+  "scope": "crash-consistent rejected-group campaign and trainer custody",
+  "claims": {
+    "rejection_intent_durable_before_campaign_terminal": true,
+    "rejection_terminal_durable_before_trainer_checkpoint": true,
+    "rejection_path_requires_transaction_coordinator": true,
+    "rejected_group_never_claims_optimizer_admission_or_update": true,
+    "unchanged_live_policy_must_match_intent_before_recovery": true,
+    "recovered_trainer_step_reconstructed_from_exact_intent_and_terminal": true,
+    "checkpoint_must_embed_exact_reconstructed_rejection_step": true,
+    "update_and_rejection_transactions_cannot_claim_same_sequence": true,
+    "historical_incomplete_rejection_only_sealed_from_matching_latest_checkpoint": true,
+    "transaction_root_rejects_symlink_components_and_peer_writable_artifacts": true,
+    "resident_factory_bundle_loader_complete": false,
+    "durable_replay_repository_complete": false,
+    "model_loaded_or_trained": false,
+    "reasoning_gain_claimed": false,
+    "frontier_gain_claimed": false,
+    "wow_signal_claimed": false
+  },
+  "verification": [
+    {
+      "name": "verified_recurrent_rejection_and_training_matrix",
+      "result": "261 passed",
+      "duration_seconds": 91.92
+    },
+    {
+      "name": "focused_rejection_store_trainer_provider_matrix",
+      "result": "37 passed",
+      "duration_seconds": 4.02
+    },
+    {
+      "name": "ruff",
+      "result": "pass"
+    },
+    {
+      "name": "python_bytecode_compilation",
+      "result": "pass"
+    },
+    {
+      "name": "git_diff_check",
+      "result": "pass"
+    }
+  ],
+  "adversarial_regressions": [
+    "crash after intent reloads without advancing the campaign terminal",
+    "checkpoint publication before the campaign terminal is rejected",
+    "wrong live policy leaves both campaign and rejection event ledgers untouched",
+    "changed status, policy, admission, update, terminal fields, or static trainer receipt are rejected",
+    "event-chain rebinding, peer-writable files and directories, symlinked roots, and symlinked transactions are rejected",
+    "an empty crash-created transaction directory is safely removed under the inventory lock"
+  ],
+  "remaining_release_blockers": [
+    "construct the production provider factory from one root-verified resident launch bundle",
+    "persist and independently reload replay-complete samples and evidence",
+    "run a composed production-provider campaign before any model training credit",
+    "complete the sealed small-checkpoint causal campaign before resident-32B launch"
+  ]
+}

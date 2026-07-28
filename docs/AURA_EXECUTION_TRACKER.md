@@ -30861,3 +30861,46 @@ total checkpoint 679. The 679-920 completion envelope is approximately
 checkpoints to resident-32B training launch, 7-12 to a defensible preliminary
 gain verdict, and 12-22 to the powered conditional `WOW Signal` decision.
 Final multi-hour soaks remain deferred.
+
+### 2026-07-27 - CP420J crash-consistent rejected-group custody
+
+Rejected verified-transition groups now have the same durable lifecycle
+discipline as accepted optimizer updates. Before a campaign terminal can be
+published, the trainer create-once records a rejection intent that binds the
+scheduled sequence, trainer step, task, seed, execution identity, campaign and
+group manifests, reward receipt, unchanged policy, and exact static trainer
+step. The provider may then publish only the precommitted rejected terminal;
+the transaction reconstructs the exact `verified_rejected_group` receipt and
+seals it only after the trainer checkpoint durably contains that receipt.
+
+Recovery is state-sensitive rather than a retry shortcut. A process restart
+must revalidate the provider state, signed start, scheduled task, intent, and
+live policy before reusing or publishing the terminal. A historical incomplete
+rejection can be sealed only from the immediately matching latest checkpoint.
+The trainer inventories accepted-update and rejection transactions together,
+rejects sequence collisions, keeps rejected groups out of optimizer-update
+counts, and never invents an update while recovering a rejection.
+
+The rejection store is append-only and fail-closed: private ownership and mode,
+canonical JSON, contiguous hash lineage, immutable intent/terminal/checkpoint
+keysets, exact before/after policy equality, terminal reason provenance,
+monotonic time, symlink-component rejection, writable-file rejection, and
+empty crash-directory cleanup are all enforced. Source-role identity now
+includes this new mutation-authorizing transaction surface.
+
+The full verified-transition, recurrent trainer, resident preregistration,
+post-training, and adapter-identity matrix passes 261/261 in 91.92 seconds; the
+focused rejection/provider/trainer matrix passes 37/37. Ruff, bytecode
+compilation, and diff hygiene pass. Evidence is
+`artifacts/current/cp420j_rejected_group_transaction_evidence.json`.
+
+This closes rejected-group crash consistency, not CP420 or SPARK-060. The
+resident launcher still needs a root-verified production-factory bundle,
+replay-complete evidence still needs a durable repository, and a sealed small
+resident checkpoint has not run. No model was loaded or trained and no
+reasoning, frontier, resident-32B, promotion, or `WOW Signal` claim follows.
+CP420J is total checkpoint 680. The 680-920 completion envelope is
+approximately 73.9%-100.0% with an 87.0% midpoint. The evidence-adjusted range
+is 2-5 checkpoints to resident-32B training launch, 6-11 to a defensible
+preliminary gain verdict, and 11-21 to the powered conditional `WOW Signal`
+decision. Final multi-hour soaks remain deferred.

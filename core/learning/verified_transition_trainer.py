@@ -237,6 +237,15 @@ class VerifiedTransitionGroupProvider(Protocol):
         validate_staged_state: Callable[[Any], str],
     ) -> Any: ...
 
+    def recover_rejection_publications(
+        self,
+        *,
+        rejection_store: Any,
+        sequence: int,
+        reward_receipt_sha256: str,
+        validate_live_policy: Callable[[], str],
+    ) -> Any: ...
+
     def accept_recovered_step_receipt(
         self, receipt: Mapping[str, Any]
     ) -> Sequence[VerifiedTransitionReplayGroup]: ...
@@ -573,6 +582,7 @@ def apply_prepared_verified_transition_group(
     config: Any | None = None,
     now_unix_ns: Callable[[], int] = time.time_ns,
     transaction_coordinator: Any | None = None,
+    rejection_transaction_coordinator: Any | None = None,
 ) -> VerifiedTransitionMutationResult:
     """Replay one group and make the verified transaction the only mutator."""
 
@@ -606,9 +616,14 @@ def apply_prepared_verified_transition_group(
     if not admitted:
         if prepared.group_admission_receipt is not None or prepared.update_journal is not None:
             raise ValueError("rejected_verified_transition_has_update_material")
+        if rejection_transaction_coordinator is None:
+            raise ValueError("verified_transition_rejection_transaction_required")
         prepared.campaign_ledger.validate_started_group(
             sequence=prepared.campaign_sequence,
             group_manifest=prepared.group_manifest,
+        )
+        rejection_transaction_coordinator.stage_rejection(
+            policy_sha256=policy_before
         )
         terminal = prepared.campaign_ledger.finish_group(
             sequence=prepared.campaign_sequence,
@@ -618,7 +633,12 @@ def apply_prepared_verified_transition_group(
             update_receipt_sha256=None,
             terminal_reason=reason,
             finished_at_unix_ns=now_unix_ns(),
+            policy_after_sha256=policy_before,
         )
+        policy_after = recurrent_policy_sha256(model, spec)
+        if policy_after != policy_before:
+            raise RuntimeError("rejected_verified_transition_changed_policy")
+        rejection_transaction_coordinator.record_campaign_terminal(terminal)
         return VerifiedTransitionMutationResult(
             campaign_sequence=prepared.campaign_sequence,
             group_manifest_sha256=manifest_sha256,
@@ -631,7 +651,7 @@ def apply_prepared_verified_transition_group(
             update_receipt=None,
             terminal_receipt=terminal,
             policy_before_sha256=policy_before,
-            policy_after_sha256=recurrent_policy_sha256(model, spec),
+            policy_after_sha256=policy_after,
             replay_group=None,
         )
 

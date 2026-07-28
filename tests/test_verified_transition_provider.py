@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from core.learning.grpo import group_advantages
 from core.learning.recurrent_grpo import (
     RecurrentPolicySample,
     RecurrentSamplingConfig,
@@ -29,10 +30,15 @@ from core.learning.verified_transition_provider import (
     callable_source_sha256,
     validate_verified_transition_provider_contract,
 )
+from core.learning.verified_transition_rejection_transaction import (
+    VerifiedTransitionRejectionTransactionStore,
+    build_rejection_intent,
+)
 from core.learning.verified_transition_trainer import (
     PreparedVerifiedTransitionGroup,
     VerifiedTransitionCampaignClosure,
 )
+from core.learning.verified_transition_transaction import build_trainer_step_static
 from tests.fixtures.rlc_runtime_integrity import engine_runtime_integrity
 
 
@@ -671,6 +677,138 @@ def test_recovery_never_publishes_before_staged_state_validation(
     )
     assert loaded is not None and loaded.events == ()
     assert material["ledger"].terminals == {}
+
+
+def test_rejection_recovery_finishes_terminal_only_after_live_policy_validation(
+    material: dict[str, Any], tmp_path: Path
+) -> None:
+    provider = material["make_provider"]()
+    group = _group_material(
+        material, sequence=0, policy_sha256=material["initial_policy"]
+    )
+    _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
+    start = material["ledger"].starts[0]
+    static = build_trainer_step_static(
+        samples=[sample.receipt() for sample in group["samples"]],
+        structured_rewards=[-1.0, -0.5],
+        optimizer_admission_reason="right_to_wrong_present",
+        answer_channel={"correct_fraction": 0.0},
+        advantage_report=group_advantages([-1.0, -0.5]),
+    )
+    reward_sha256 = material["reward"]["receipt_sha256"]
+    store = VerifiedTransitionRejectionTransactionStore.open(
+        tmp_path / "rejection-transactions"
+    )
+    store.stage(
+        build_rejection_intent(
+            sequence=0,
+            trainer_step=1,
+            task_id="task-0",
+            trainer_sample_seed=material["trainer_seeds"][0],
+            execution_spec_sha256=material["execution"],
+            campaign_manifest_sha256=start["campaign_manifest_sha256"],
+            campaign_schedule_root_sha256=material["contract"][
+                "campaign_schedule_root_sha256"
+            ],
+            group_manifest_sha256=group["manifest"]["manifest_sha256"],
+            reward_receipt_sha256=reward_sha256,
+            policy_sha256=material["initial_policy"],
+            trainer_step_static=static,
+            created_at_unix_ns=1,
+        )
+    )
+    finish_calls: list[dict[str, Any]] = []
+
+    def finish_group(**kwargs: Any) -> dict[str, Any]:
+        finish_calls.append(kwargs)
+        body = {
+            "schema": "aura.verified_transition.causal_group_terminal.v1",
+            "campaign_manifest_sha256": start["campaign_manifest_sha256"],
+            "campaign_schedule_root_sha256": material["contract"][
+                "campaign_schedule_root_sha256"
+            ],
+            "sequence": 0,
+            "group_id": group["manifest"]["group_id"],
+            "group_manifest_sha256": group["manifest"]["manifest_sha256"],
+            "group_start_sha256": _sha("group-start"),
+            "status": kwargs["status"],
+            "reward_receipt_sha256": kwargs["reward_receipt_sha256"],
+            "group_admission_sha256": kwargs["group_admission_sha256"],
+            "update_receipt_sha256": kwargs["update_receipt_sha256"],
+            "policy_before_sha256": material["initial_policy"],
+            "policy_after_sha256": kwargs["policy_after_sha256"],
+            "terminal_reason": kwargs["terminal_reason"],
+            "finished_at_unix_ns": kwargs["finished_at_unix_ns"],
+        }
+        terminal = {**body, "receipt_sha256": _digest(body)}
+        material["ledger"].terminals[0] = copy.deepcopy(terminal)
+        return terminal
+
+    material["ledger"].finish_group = finish_group
+    recovered = provider.recover_rejection_publications(
+        rejection_store=store,
+        sequence=0,
+        reward_receipt_sha256=reward_sha256,
+        validate_live_policy=lambda: material["initial_policy"],
+    )
+
+    assert len(finish_calls) == 1
+    assert finish_calls[0]["status"] == "rejected"
+    assert len(recovered.events) == 1
+
+
+def test_rejection_recovery_wrong_live_policy_leaves_ledger_untouched(
+    material: dict[str, Any], tmp_path: Path
+) -> None:
+    provider = material["make_provider"]()
+    group = _group_material(
+        material, sequence=0, policy_sha256=material["initial_policy"]
+    )
+    _admit(provider, group, sequence=0, policy_sha256=material["initial_policy"])
+    start = material["ledger"].starts[0]
+    static = build_trainer_step_static(
+        samples=[sample.receipt() for sample in group["samples"]],
+        structured_rewards=[-1.0, -0.5],
+        optimizer_admission_reason="right_to_wrong_present",
+        answer_channel={"correct_fraction": 0.0},
+        advantage_report=group_advantages([-1.0, -0.5]),
+    )
+    reward_sha256 = material["reward"]["receipt_sha256"]
+    store = VerifiedTransitionRejectionTransactionStore.open(
+        tmp_path / "rejection-transactions"
+    )
+    store.stage(
+        build_rejection_intent(
+            sequence=0,
+            trainer_step=1,
+            task_id="task-0",
+            trainer_sample_seed=material["trainer_seeds"][0],
+            execution_spec_sha256=material["execution"],
+            campaign_manifest_sha256=start["campaign_manifest_sha256"],
+            campaign_schedule_root_sha256=material["contract"][
+                "campaign_schedule_root_sha256"
+            ],
+            group_manifest_sha256=group["manifest"]["manifest_sha256"],
+            reward_receipt_sha256=reward_sha256,
+            policy_sha256=material["initial_policy"],
+            trainer_step_static=static,
+            created_at_unix_ns=1,
+        )
+    )
+
+    with pytest.raises(
+        VerifiedTransitionProviderError,
+        match="rejection_recovery_binding_mismatch",
+    ):
+        provider.recover_rejection_publications(
+            rejection_store=store,
+            sequence=0,
+            reward_receipt_sha256=reward_sha256,
+            validate_live_policy=lambda: _sha("substituted-live-policy"),
+        )
+    assert material["ledger"].terminals == {}
+    loaded = store.load(sequence=0, reward_sha256=reward_sha256)
+    assert loaded is not None and loaded.events == ()
 
 
 def test_first_plan_rejects_noninitial_policy(material: dict[str, Any]) -> None:

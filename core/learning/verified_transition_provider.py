@@ -1417,6 +1417,96 @@ class ProductionVerifiedTransitionGroupProvider:
                 _fail("provider_transaction_recovery_publication_incomplete")
             return recovered
 
+    def recover_rejection_publications(
+        self,
+        *,
+        rejection_store: Any,
+        sequence: int,
+        reward_receipt_sha256: str,
+        validate_live_policy: Callable[[], str],
+    ) -> Any:
+        """Finish one staged rejection without inventing an optimizer update."""
+
+        from core.learning.verified_transition_rejection_transaction import (
+            validate_rejection_intent,
+        )
+
+        with self._lock:
+            if (
+                self._finalized
+                or self._pending_sequence is not None
+                or sequence != len(self._accepted_steps)
+            ):
+                _fail("provider_rejection_recovery_state_invalid")
+            loaded = rejection_store.load(
+                sequence=sequence,
+                reward_sha256=reward_receipt_sha256,
+            )
+            if loaded is None:
+                _fail("provider_rejection_recovery_intent_missing")
+            intent = validate_rejection_intent(loaded.intent)
+            commitment = self._commitment(sequence)
+            expected_policy = self.expected_policy_sha256
+            start = self._ledger.group_start(sequence=sequence)
+            if not isinstance(start, Mapping):
+                _fail("provider_rejection_recovery_start_invalid")
+            manifest = self._validate_start_record(
+                sequence=sequence,
+                expected_policy_sha256=expected_policy,
+                start=start,
+            )
+            if (
+                intent["sequence"] != sequence
+                or intent["trainer_step"] != sequence + 1
+                or intent["task_id"] != commitment["task_id"]
+                or intent["trainer_sample_seed"]
+                != commitment["trainer_sample_seed"]
+                or intent["execution_spec_sha256"]
+                != commitment["recurrent_execution_spec_sha256"]
+                or intent["campaign_manifest_sha256"]
+                != start.get("campaign_manifest_sha256")
+                or intent["campaign_schedule_root_sha256"]
+                != self._contract["campaign_schedule_root_sha256"]
+                or intent["group_manifest_sha256"]
+                != manifest["manifest_sha256"]
+                or intent["reward_receipt_sha256"]
+                != reward_receipt_sha256
+                or intent["policy_sha256"] != expected_policy
+                or _sha256(
+                    validate_live_policy(),
+                    role="provider_rejection_recovery_live_policy",
+                )
+                != expected_policy
+            ):
+                _fail("provider_rejection_recovery_binding_mismatch")
+            if len(loaded.events) == 0:
+                terminal = self._ledger.group_terminal_if_exists(sequence=sequence)
+                if terminal is None:
+                    terminal = self._ledger.finish_group(
+                        sequence=sequence,
+                        status="rejected",
+                        reward_receipt_sha256=reward_receipt_sha256,
+                        group_admission_sha256=None,
+                        update_receipt_sha256=None,
+                        terminal_reason=intent["trainer_step_static"][
+                            "optimizer_admission_reason"
+                        ],
+                        finished_at_unix_ns=time.time_ns(),
+                        policy_after_sha256=expected_policy,
+                    )
+                rejection_store.record_campaign_terminal(
+                    sequence=sequence,
+                    reward_sha256=reward_receipt_sha256,
+                    terminal_receipt=terminal,
+                )
+            recovered = rejection_store.load(
+                sequence=sequence,
+                reward_sha256=reward_receipt_sha256,
+            )
+            if recovered is None or len(recovered.events) < 1:
+                _fail("provider_rejection_recovery_publication_incomplete")
+            return recovered
+
     def accept_recovered_step_receipt(
         self, receipt: Mapping[str, Any]
     ) -> Sequence[VerifiedTransitionReplayGroup]:

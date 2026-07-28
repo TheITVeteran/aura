@@ -160,6 +160,8 @@ def test_verified_telemetry_round_trips_negative_rewards() -> None:
 
 
 def test_rejected_verified_group_cannot_mutate(monkeypatch) -> None:
+    lifecycle: list[str] = []
+
     class Ledger:
         validated = False
         terminal = None
@@ -168,6 +170,7 @@ def test_rejected_verified_group_cannot_mutate(monkeypatch) -> None:
             self.validated = True
 
         def finish_group(self, **kwargs):
+            lifecycle.append("campaign_terminal")
             self.terminal = {
                 "schema": "aura.verified_transition.campaign_group_terminal.v2",
                 "sequence": kwargs["sequence"],
@@ -212,6 +215,29 @@ def test_rejected_verified_group_cannot_mutate(monkeypatch) -> None:
         def update(self, *_args):
             raise AssertionError("rejected group reached optimizer")
 
+    class RejectionCoordinator:
+        def stage_rejection(self, *, policy_sha256):
+            assert policy_sha256 == _sha("a")
+            lifecycle.append("rejection_intent")
+
+        def record_campaign_terminal(self, receipt):
+            assert receipt is ledger.terminal
+            lifecycle.append("transaction_terminal")
+
+    with pytest.raises(
+        ValueError, match="rejection_transaction_required"
+    ):
+        apply_prepared_verified_transition_group(
+            object(),
+            Optimizer(),
+            (1, 2),
+            (_Sample(), _Sample()),
+            prepared,
+            spec=SimpleNamespace(sha256=_sha("d")),
+        )
+    assert ledger.terminal is None
+    assert lifecycle == []
+
     result = apply_prepared_verified_transition_group(
         object(),
         Optimizer(),
@@ -219,12 +245,18 @@ def test_rejected_verified_group_cannot_mutate(monkeypatch) -> None:
         (_Sample(), _Sample()),
         prepared,
         spec=SimpleNamespace(sha256=_sha("d")),
+        rejection_transaction_coordinator=RejectionCoordinator(),
     )
 
     assert result.optimizer_updated is False
     assert result.policy_before_sha256 == result.policy_after_sha256
     assert ledger.validated is True
     assert ledger.terminal["status"] == "rejected"
+    assert lifecycle == [
+        "rejection_intent",
+        "campaign_terminal",
+        "transaction_terminal",
+    ]
 
 
 def test_recurrent_cli_refuses_before_model_load_without_verified_provider(

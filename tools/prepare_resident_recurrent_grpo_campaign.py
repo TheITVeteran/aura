@@ -136,6 +136,9 @@ SOURCE_ROLES: Mapping[str, str] = {
     "transition_provider_factory": (
         "core/learning/verified_transition_production_factory.py"
     ),
+    "transition_rejection_transaction": (
+        "core/learning/verified_transition_rejection_transaction.py"
+    ),
     "grpo": "core/learning/grpo.py",
     "adaptive_curriculum": "core/learning/adaptive_curriculum.py",
     "training_curriculum": "core/learning/recurrence_curriculum.py",

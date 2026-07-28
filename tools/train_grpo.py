@@ -82,6 +82,11 @@ from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
 )
+from core.learning.verified_transition_rejection_transaction import (  # noqa: E402
+    VerifiedTransitionRejectionTransactionCoordinator,
+    VerifiedTransitionRejectionTransactionStore,
+    build_rejected_transaction_trainer_step,
+)
 from core.learning.verified_transition_trainer import (  # noqa: E402
     VERIFIED_TRANSITION_STEP_SCHEMA,
     VerifiedTransitionCampaignClosure,
@@ -1763,6 +1768,10 @@ def main(
                 "transition_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),
+                "transition_rejection_transaction": (
+                    REPO_ROOT
+                    / "core/learning/verified_transition_rejection_transaction.py"
+                ),
                 "transition_causal_campaign": (
                     REPO_ROOT
                     / "core/learning/verified_transition_causal_campaign.py"
@@ -2001,6 +2010,13 @@ def main(
             if execution_spec is not None
             else None
         )
+        rejection_transaction_store = (
+            VerifiedTransitionRejectionTransactionStore.open(
+                out_dir / "verified-transition-transactions"
+            )
+            if execution_spec is not None
+            else None
+        )
         resumed = None
         if (out_dir / "latest.json").exists():
             resumed = load_grpo_checkpoint(
@@ -2174,11 +2190,27 @@ def main(
 
         if execution_spec is not None:
             assert transaction_store is not None
+            assert rejection_transaction_store is not None
             assert verified_group_provider is not None
             from core.learning.recurrent_grpo import recurrent_policy_sha256
 
+            update_transactions = transaction_store.inventory(load_tensors=False)
+            rejection_transactions = rejection_transaction_store.inventory()
+            update_sequences = {
+                int(transaction.pending_step["sequence"])
+                for transaction in update_transactions
+            }
+            rejection_sequences = {
+                int(transaction.intent["sequence"])
+                for transaction in rejection_transactions
+            }
+            if update_sequences & rejection_sequences:
+                raise GRPOCheckpointError(
+                    "one verified sequence has both update and rejection transactions"
+                )
+
             pending_recovery = None
-            for transaction in transaction_store.inventory(load_tensors=False):
+            for transaction in update_transactions:
                 pending = transaction.pending_step
                 sequence = int(pending["sequence"])
                 admission = str(pending["group_admission_sha256"])
@@ -2331,6 +2363,124 @@ def main(
                 )
                 print(
                     f"[recovery] completed staged verified transition step={step}",
+                    flush=True,
+                )
+
+            pending_rejection = None
+            for transaction in rejection_transactions:
+                intent = transaction.intent
+                sequence = int(intent["sequence"])
+                reward_sha256 = str(intent["reward_receipt_sha256"])
+                if sequence < step:
+                    if len(transaction.events) < 2:
+                        if (
+                            resumed is None
+                            or sequence != step - 1
+                            or int(intent["trainer_step"]) != step
+                        ):
+                            raise GRPOCheckpointError(
+                                "historical rejected transaction is not fully sealed"
+                            )
+                        durable_step = step_receipts[sequence]
+                        if (
+                            durable_step.get("step_kind")
+                            != "verified_rejected_group"
+                            or durable_step.get("reward_receipt_sha256")
+                            != reward_sha256
+                        ):
+                            raise GRPOCheckpointError(
+                                "historical rejection differs from checkpoint"
+                            )
+                        if len(transaction.events) == 0:
+                            rejection_transaction_store.record_campaign_terminal(
+                                sequence=sequence,
+                                reward_sha256=reward_sha256,
+                                terminal_receipt=durable_step["terminal"],
+                            )
+                        current_rejection = rejection_transaction_store.load(
+                            sequence=sequence,
+                            reward_sha256=reward_sha256,
+                        )
+                        assert current_rejection is not None
+                        if len(current_rejection.events) == 1:
+                            rejection_transaction_store.record_trainer_checkpoint(
+                                sequence=sequence,
+                                reward_sha256=reward_sha256,
+                                checkpoint_dir=resumed.checkpoint_dir,
+                            )
+                    sealed_rejection = rejection_transaction_store.load(
+                        sequence=sequence,
+                        reward_sha256=reward_sha256,
+                    )
+                    if sealed_rejection is None or len(sealed_rejection.events) != 2:
+                        raise GRPOCheckpointError(
+                            "historical rejected transaction seal is incomplete"
+                        )
+                    continue
+                if sequence > step or pending_rejection is not None:
+                    raise GRPOCheckpointError(
+                        "rejected transaction sequence is ahead of trainer state"
+                    )
+                if pending_recovery is not None:
+                    raise GRPOCheckpointError(
+                        "update and rejection transactions both claim the next step"
+                    )
+                pending_rejection = (sequence, reward_sha256)
+
+            if pending_rejection is not None:
+                sequence, reward_sha256 = pending_rejection
+                recovered_rejection = (
+                    verified_group_provider.recover_rejection_publications(
+                        rejection_store=rejection_transaction_store,
+                        sequence=sequence,
+                        reward_receipt_sha256=reward_sha256,
+                        validate_live_policy=lambda: recurrent_policy_sha256(
+                            model, execution_spec
+                        ),
+                    )
+                )
+                recovered_step = validate_verified_transition_step_receipt(
+                    build_rejected_transaction_trainer_step(
+                        recovered_rejection
+                    ),
+                    group_size=config.group_size,
+                    execution_spec_sha256=execution_spec.sha256,
+                )
+                transition_replay_groups = list(
+                    verified_group_provider.accept_recovered_step_receipt(
+                        recovered_step
+                    )
+                )
+                if len(transition_replay_groups) != optimizer_updates:
+                    raise GRPOCheckpointError(
+                        "rejection recovery changed the update replay group count"
+                    )
+                step_receipts.append(recovered_step)
+                advantage_report = recovered_step["advantage_report"]
+                assert isinstance(telemetry, VerifiedTransitionTelemetry)
+                telemetry.observe(advantage_report, optimizer_updated=False)
+                recovered_task = tasks_by_id.get(recovered_step["task_id"])
+                if recovered_task is None:
+                    raise GRPOCheckpointError(
+                        "recovered rejection task is outside the frozen dataset"
+                    )
+                answer_channel = recovered_step["answer_channel"]
+                curriculum.observe(
+                    recovered_task.domain,
+                    recovered_task.depth,
+                    float(answer_channel["correct_fraction"]),
+                    degenerate=bool(advantage_report["degenerate"]),
+                )
+                step = int(recovered_step["step"])
+                last_step_kind = "verified_rejected_group"
+                checkpoint_path = checkpoint_now()
+                rejection_transaction_store.record_trainer_checkpoint(
+                    sequence=sequence,
+                    reward_sha256=reward_sha256,
+                    checkpoint_dir=checkpoint_path,
+                )
+                print(
+                    f"[recovery] completed staged verified rejection step={step}",
                     flush=True,
                 )
 
@@ -2694,6 +2844,12 @@ def main(
                             "verified transition provider returned a different sequence"
                         )
                     assert transaction_store is not None
+                    assert rejection_transaction_store is not None
+                    trainer_step_static = build_verified_transition_step_static(
+                        samples=recurrent_samples,
+                        reward_receipt=prepared.reward_receipt,
+                        answer_channel=answer_channel,
+                    )
                     transaction_coordinator = VerifiedTransitionTransactionCoordinator(
                         store=transaction_store,
                         sequence=step_number - 1,
@@ -2713,15 +2869,34 @@ def main(
                         reward_receipt_sha256=str(
                             prepared.reward_receipt["receipt_sha256"]
                         ),
-                        trainer_step_static=build_verified_transition_step_static(
-                            samples=recurrent_samples,
-                            reward_receipt=prepared.reward_receipt,
-                            answer_channel=answer_channel,
-                        ),
+                        trainer_step_static=trainer_step_static,
                         adapter_tensors=adapter_tensors,
                         optimizer_tensors=lambda: dict(
                             tree_flatten(optimizer.state)
                         ),
+                    )
+                    rejection_transaction_coordinator = (
+                        VerifiedTransitionRejectionTransactionCoordinator(
+                            store=rejection_transaction_store,
+                            sequence=step_number - 1,
+                            trainer_step=step_number,
+                            task_id=task.task_id,
+                            trainer_sample_seed=sample_seed,
+                            execution_spec_sha256=execution_spec.sha256,
+                            campaign_manifest_sha256=(
+                                prepared.campaign_manifest_sha256
+                            ),
+                            campaign_schedule_root_sha256=(
+                                prepared.campaign_schedule_root_sha256
+                            ),
+                            group_manifest_sha256=str(
+                                prepared.group_manifest["manifest_sha256"]
+                            ),
+                            reward_receipt_sha256=str(
+                                prepared.reward_receipt["receipt_sha256"]
+                            ),
+                            trainer_step_static=trainer_step_static,
+                        )
                     )
                     active_recurrent_step["phase"] = "verified_update"
                     mutation = apply_prepared_verified_transition_group(
@@ -2733,6 +2908,9 @@ def main(
                         spec=execution_spec,
                         config=recurrent_config,
                         transaction_coordinator=transaction_coordinator,
+                        rejection_transaction_coordinator=(
+                            rejection_transaction_coordinator
+                        ),
                     )
                     effective_rewards = list(mutation.structured_rewards)
                     advantage_report = group_advantages(
@@ -2769,7 +2947,7 @@ def main(
                     active_transaction_coordinator = (
                         transaction_coordinator
                         if mutation.optimizer_updated
-                        else None
+                        else rejection_transaction_coordinator
                     )
 
                 # State mutates only after a complete optimizer update or a
