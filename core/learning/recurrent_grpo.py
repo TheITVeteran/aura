@@ -152,7 +152,7 @@ class RecurrentPolicySample:
             allow_nan=False,
         ).encode("ascii")
         episode_receipt = dict(self.episode_receipt)
-        return {
+        receipt = {
             "schema": RECURRENT_SAMPLING_SCHEMA,
             "sample_kind": self.sample_kind,
             "episode_id": self.episode_id,
@@ -208,6 +208,15 @@ class RecurrentPolicySample:
                 self.episode_receipt.get("recurrence_adapter", {})
             ),
         }
+        return json.loads(
+            json.dumps(
+                receipt,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1324,6 +1333,47 @@ def validate_recurrent_policy_sample_receipt(
     return normalized
 
 
+def recurrent_policy_sample_from_receipt(
+    receipt: Mapping[str, Any],
+) -> RecurrentPolicySample:
+    """Reconstruct a numeric policy sample with an exact receipt round trip."""
+
+    normalized = validate_recurrent_policy_sample_receipt(receipt)
+    sample = RecurrentPolicySample(
+        tokens=tuple(normalized["tokens"]),
+        branch_index=normalized["branch_index"],
+        behavior_logprobs=tuple(normalized["behavior_logprobs"]),
+        differentiable_logprobs=tuple(normalized["differentiable_logprobs"]),
+        max_abs_logprob_drift=normalized["max_abs_logprob_drift"],
+        mean_abs_logprob_drift=normalized["mean_abs_logprob_drift"],
+        max_abs_logprob_drift_token_index=normalized[
+            "max_abs_logprob_drift_token_index"
+        ],
+        clipped_token_fraction=normalized["clipped_token_fraction"],
+        old_policy_approx_kl=normalized["old_policy_approx_kl"],
+        behavior_admitted=normalized["behavior_admitted"],
+        execution_spec_sha256=normalized["execution_spec_sha256"],
+        policy_sha256=normalized["policy_sha256"],
+        prompt_tokens_sha256=normalized["prompt_tokens_sha256"],
+        seed=normalized["seed"],
+        sampling_config=RecurrentSamplingConfig(
+            **dict(normalized["sampling_config"])
+        ),
+        episode_receipt=dict(normalized["episode_receipt"]),
+        episode_id=normalized["episode_id"],
+        rng_root_sha256=normalized["rng_root_sha256"],
+        sample_kind=normalized["sample_kind"],
+        causal_transition_pair=(
+            dict(normalized["causal_transition_pair"])
+            if normalized["causal_transition_pair"] is not None
+            else None
+        ),
+    )
+    if sample.receipt() != normalized:
+        raise ValueError("recurrent_policy_sample_round_trip_mismatch")
+    return sample
+
+
 def cortex_config_from_execution_spec(
     spec: RLCExecutionSpec,
     *,
@@ -2253,6 +2303,7 @@ __all__ = [
     "exact_adjoint_verifier_group_value_and_grad",
     "recurrent_policy_sha256",
     "recurrent_policy_sample_from_causal_pair",
+    "recurrent_policy_sample_from_receipt",
     "recurrent_sampling_rng_root_sha256",
     "recurrent_completion_token_logprobs",
     "sample_final_recurrent_transition_completion",

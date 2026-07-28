@@ -17,6 +17,7 @@ from core.learning.verified_token_trace import (
     tokenizer_adapter_source_sha256,
     tokenizer_file_bindings_from_bytes,
     validate_verified_token_trace,
+    validate_verified_token_trace_structure,
 )
 
 
@@ -126,6 +127,26 @@ def test_noncanonical_generated_token_segmentation_does_not_reencode_output() ->
     )
 
     validate_verified_token_trace(trace, adapter=adapter)
+
+
+def test_resealed_forged_text_is_structural_only_and_fails_real_replay() -> None:
+    adapter, trace = _trace()
+    attacked = copy.deepcopy(trace)
+    attacked["generation"]["response_text"] = "FORGED"
+    attacked["generation"]["response_utf8_b64"] = "Rk9SR0VE"
+    attacked["generation"]["streaming_deltas"] = ["FOR", "GED"]
+    attacked["generation"]["streaming_deltas_utf8_b64"] = ["Rk9S", "R0VE"]
+    attacked["generation"]["streaming_deltas_sha256"] = _sha256(
+        canonical_json_bytes(["Rk9S", "R0VE"])
+    )
+    _reseal(attacked)
+
+    validate_verified_token_trace_structure(
+        attacked,
+        expected_tokenizer_bundle_sha256=adapter.bundle_identity["bundle_sha256"],
+    )
+    with pytest.raises(VerifiedTokenTraceError, match="decode_mismatch"):
+        validate_verified_token_trace(attacked, adapter=adapter)
 
 
 @pytest.mark.parametrize("field", ["token_ids", "behavior_logprobs"])

@@ -27,6 +27,10 @@ from core.brain.llm.latent_cortex.campaign_trust import (
 from core.learning import verified_transition_launch_bundle as launch_bundle
 from core.learning.recurrence_curriculum import khop_reachability
 from core.learning.recurrent_grpo import RecurrentSamplingConfig
+from core.learning.verified_token_trace import (
+    build_tokenizer_bundle_identity,
+    tokenizer_file_bindings_from_bytes,
+)
 from core.learning.verified_training_task import build_verified_training_task
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
@@ -55,6 +59,7 @@ from core.learning.verified_transition_provider import (
     build_verified_transition_provider_contract,
     callable_source_sha256,
 )
+from core.learning.verified_transition_reward import TransitionRewardConfig
 from core.learning.verified_transition_trainer import (
     VerifiedTransitionProviderRuntime,
     VerifiedTransitionSamplingEntry,
@@ -63,6 +68,44 @@ from core.learning.verified_transition_trainer import (
 )
 
 BASE_SECOND = 1_800_000_000
+
+_TOKENIZER_BUNDLE = build_tokenizer_bundle_identity(
+    tokenizer_class="test.IntegerTokenizer",
+    tokenizer_files=tokenizer_file_bindings_from_bytes(
+        {
+            "tokenizer.json": b'{"kind":"integer"}',
+            "tokenizer_config.json": b'{"separator":" "}',
+        }
+    ),
+    chat_template=None,
+    special_token_map={},
+    encode_options={},
+    decode_options={},
+    implementation_source_sha256="b" * 64,
+)
+
+
+class _TokenizerAdapter:
+    bundle_identity = _TOKENIZER_BUNDLE
+
+    @staticmethod
+    def encode_prompt(text: str) -> tuple[int, ...]:
+        return tuple(int(value) for value in text.split())
+
+    @staticmethod
+    def decode_output(tokens: Any) -> str:
+        return " ".join(str(token) for token in tokens)
+
+    @classmethod
+    def stream_decode_deltas(cls, tokens: Any) -> tuple[str, ...]:
+        values = tuple(tokens)
+        rendered = [
+            cls.decode_output(values[: index + 1]) for index in range(len(values))
+        ]
+        return tuple(
+            value if index == 0 else value[len(rendered[index - 1]) :]
+            for index, value in enumerate(rendered)
+        )
 
 
 def _sha(label: str) -> str:
@@ -425,7 +468,9 @@ def _factory_material(
         "evidence_timeout_ms": 30_000,
         "jit_plan": {
             "schema": JIT_PROVIDER_CONFIG_SCHEMA,
-            "reward_config_sha256": _sha("reward-config"),
+            "reward_config_sha256": _digest(
+                TransitionRewardConfig().to_dict()
+            ),
             "sampling_config": sampling_config_contract_document(sampling),
             "branch_count": 2,
             "signer_broker_identity": broker.identity,
@@ -472,6 +517,7 @@ def _factory_material(
         token_codec_identity="byte-codec",
         token_encoder_source_sha256=callable_source_sha256(_encode),
         token_decoder_source_sha256=callable_source_sha256(_decode),
+        tokenizer_bundle=_TOKENIZER_BUNDLE,
         dataset_sha256=_sha("dataset"),
         task_schedule=schedule,
         ledger_roots=roots,
@@ -693,6 +739,7 @@ def test_factory_binds_schedule_and_constructs_only_after_live_policy_exists(
         VerifiedTransitionProviderRuntime(
             model=object(),
             tokenizer=object(),
+            tokenizer_trace_adapter=_TokenizerAdapter(),
             execution_spec=SimpleNamespace(
                 sha256=_sha("execution"), branches=2
             ),
@@ -726,6 +773,7 @@ def test_factory_rejects_live_initial_policy_substitution(
             VerifiedTransitionProviderRuntime(
                 model=object(),
                 tokenizer=object(),
+                tokenizer_trace_adapter=_TokenizerAdapter(),
                 execution_spec=SimpleNamespace(
                     sha256=_sha("execution"), branches=2
                 ),
@@ -788,6 +836,7 @@ def test_factory_rejects_live_runtime_contract_drift(
     runtime = VerifiedTransitionProviderRuntime(
         model=object(),
         tokenizer=object(),
+        tokenizer_trace_adapter=_TokenizerAdapter(),
         execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
         training_tasks=bound,
         output_directory=(

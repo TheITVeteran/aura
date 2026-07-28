@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,12 +37,40 @@ from core.learning.recurrent_grpo import (  # noqa: E402
     exact_adjoint_verifier_group_value_and_grad,
     recurrent_completion_token_logprobs,
     recurrent_policy_sample_from_causal_pair,
+    recurrent_policy_sample_from_receipt,
     recurrent_sampling_rng_root_sha256,
     sample_final_recurrent_transition_pair,
     sample_recurrent_completion,
     validate_causal_recurrent_transition_pair_receipt,
     validate_recurrent_policy_sample_receipt,
     verifier_group_objective,
+)
+from core.learning.verified_recurrent_transition_evidence import (  # noqa: E402
+    VerifiedRecurrentTransitionEvidenceError,
+    build_verified_recurrent_transition_evidence,
+    validate_verified_recurrent_transition_evidence,
+)
+from core.learning.verified_recurrent_transition_repository import (  # noqa: E402
+    load_recurrent_replay_packages,
+    produce_verified_recurrent_transition_group,
+    reconstruct_recurrent_package_inputs,
+)
+from core.learning.verified_token_trace import (  # noqa: E402
+    build_tokenizer_bundle_identity,
+    tokenizer_file_bindings_from_bytes,
+)
+from core.learning.verified_transition_episode import (  # noqa: E402
+    TransitionArtifactStore,
+)
+from core.learning.verified_transition_group_admission import (  # noqa: E402
+    TransitionGroupPlanEntry,
+    build_transition_group_manifest,
+    sampling_config_sha256,
+)
+from core.learning.verified_transition_reward import (  # noqa: E402
+    TransitionRewardConfig,
+    build_verified_transition_reward_batch,
+    validate_verified_transition_reward_batch,
 )
 from tools.recurrence_native_train_v2 import _wrap_window_layers  # noqa: E402
 from tools.train_grpo import sample_recurrent_group  # noqa: E402
@@ -274,6 +303,9 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
     assert receipt["recurrence_adapter"]["active"] is True
     assert sample_receipt["sample_kind"] == "causal_final_transition"
     assert sample.tokens == pair.child.tokens
+    assert recurrent_policy_sample_from_receipt(sample_receipt).receipt() == (
+        sample_receipt
+    )
 
 
 def test_causal_sample_receipt_rejects_trace_substitution():
@@ -291,6 +323,316 @@ def test_causal_sample_receipt_rejects_trace_substitution():
 
     with pytest.raises(ValueError, match="trace"):
         validate_recurrent_policy_sample_receipt(receipt)
+
+
+def test_causal_pair_becomes_independently_replayable_transition_evidence(
+    tmp_path: Path,
+):
+    prompt = [5, 9, 17]
+    pair = sample_final_recurrent_transition_pair(
+        _prepared(seed=928),
+        prompt,
+        spec=_spec(depth=2),
+        branch_index=0,
+        seed=43,
+        sampling=RecurrentSamplingConfig(max_tokens=2),
+        episode_id="causal-evidence-43",
+    )
+    sample = recurrent_policy_sample_from_causal_pair(pair)
+
+    class Task:
+        task_id = "causal-evidence-task"
+
+        @staticmethod
+        def verified_transition_task_commitment():
+            return {
+                "schema": "test.task.v1",
+                "task_id": "causal-evidence-task",
+                "prompt": "select the larger token",
+            }
+
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class="test.NumericTokenizer",
+        tokenizer_files=tokenizer_file_bindings_from_bytes(
+            {
+                "tokenizer.json": b'{"kind":"numeric"}',
+                "tokenizer_config.json": b'{"separator":" "}',
+            }
+        ),
+        chat_template=None,
+        special_token_map={},
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="3" * 64,
+    )
+
+    class Adapter:
+        bundle_identity = bundle
+
+        @staticmethod
+        def encode_prompt(text):
+            assert text == "Prompt"
+            return prompt
+
+        @staticmethod
+        def decode_output(tokens):
+            return " ".join(str(token) for token in tokens)
+
+        @classmethod
+        def stream_decode_deltas(cls, tokens):
+            rendered = [cls.decode_output(tokens[: index + 1]) for index in range(len(tokens))]
+            return [
+                value if index == 0 else value[len(rendered[index - 1]) :]
+                for index, value in enumerate(rendered)
+            ]
+
+    adapter = Adapter()
+
+    def score(_task, response):
+        return {
+            "parsed": True,
+            "correct": bool(response),
+            "reason": "deterministic_test_score",
+            "normalized_answer_sha256": hashlib.sha256(
+                response.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    store = TransitionArtifactStore(tmp_path / "recurrent-evidence")
+    policy = SimpleNamespace(policy_sha256="1" * 64, root_key_id="2" * 64)
+    evidence = build_verified_recurrent_transition_evidence(
+        store,
+        task=Task(),
+        prompt_text="Prompt",
+        prompt_tokens=prompt,
+        sample=sample,
+        supplied_completion=adapter.decode_output(sample.tokens),
+        independent_scorer=score,
+        tokenizer_trace_adapter=adapter,
+        expected_tokenizer_bundle_sha256=bundle["bundle_sha256"],
+        campaign_trust_policy=policy,
+        created_at_unix_ns=1_800_000_000_000_000_000,
+    )
+
+    replayed = validate_verified_recurrent_transition_evidence(
+        store,
+        evidence.document,
+        task=Task(),
+        independent_scorer=score,
+        tokenizer_trace_adapter=adapter,
+        expected_tokenizer_bundle_sha256=bundle["bundle_sha256"],
+        campaign_trust_policy=policy,
+    )
+    assert replayed.document["episode_id"] == "causal-evidence-43"
+    stored_sample = json.loads(replayed.document["sample_receipt_json"])
+    assert stored_sample["tokens"] == list(pair.child.tokens)
+    reward = build_verified_transition_reward_batch(
+        store,
+        (replayed,),
+        independent_scorer=score,
+        token_encoder=lambda value: tuple(value),
+        token_decoder=lambda tokens: adapter.decode_output(tokens).encode(),
+        created_at_unix_ns=1_800_000_000_000_000_100,
+    )
+    assert validate_verified_transition_reward_batch(
+        store,
+        reward,
+        (replayed,),
+        independent_scorer=score,
+        token_encoder=lambda value: tuple(value),
+        token_decoder=lambda tokens: adapter.decode_output(tokens).encode(),
+    ) == reward
+    assert reward["transitions"][0]["pass_1_output_token_ids"] == list(
+        pair.child.tokens
+    )
+    attacked = dict(replayed.document)
+    attacked["child_response_sha256"] = "0" * 64
+    with pytest.raises(
+        VerifiedRecurrentTransitionEvidenceError,
+        match="reconstruction_mismatch",
+    ):
+        validate_verified_recurrent_transition_evidence(
+            store,
+            attacked,
+            task=Task(),
+            independent_scorer=score,
+            tokenizer_trace_adapter=adapter,
+            expected_tokenizer_bundle_sha256=bundle["bundle_sha256"],
+            campaign_trust_policy=policy,
+        )
+
+
+def test_recurrent_package_survives_object_free_restart(tmp_path: Path):
+    prompt = [5, 9, 17]
+    pair = sample_final_recurrent_transition_pair(
+        _prepared(seed=929),
+        prompt,
+        spec=_spec(depth=2),
+        branch_index=0,
+        seed=47,
+        sampling=RecurrentSamplingConfig(max_tokens=2),
+        episode_id="replay-package-47",
+    )
+    sample = recurrent_policy_sample_from_causal_pair(pair)
+
+    class Task:
+        task_id = "replay-package-task"
+
+        @staticmethod
+        def verified_transition_task_commitment():
+            return {
+                "schema": "test.task.v1",
+                "task_id": "replay-package-task",
+                "prompt": "replay",
+            }
+
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class="test.NumericTokenizer",
+        tokenizer_files=tokenizer_file_bindings_from_bytes(
+            {
+                "tokenizer.json": b'{"kind":"numeric"}',
+                "tokenizer_config.json": b'{"separator":" "}',
+            }
+        ),
+        chat_template=None,
+        special_token_map={},
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="4" * 64,
+    )
+
+    class Adapter:
+        bundle_identity = bundle
+
+        @staticmethod
+        def encode_prompt(text):
+            assert text == "Prompt"
+            return prompt
+
+        @staticmethod
+        def decode_output(tokens):
+            return " ".join(str(token) for token in tokens)
+
+        @classmethod
+        def stream_decode_deltas(cls, tokens):
+            rendered = [
+                cls.decode_output(tokens[: index + 1])
+                for index in range(len(tokens))
+            ]
+            return [
+                value if index == 0 else value[len(rendered[index - 1]) :]
+                for index, value in enumerate(rendered)
+            ]
+
+    def score(_task, response):
+        return {
+            "parsed": True,
+            "correct": False,
+            "reason": "deterministic_rejected_test_score",
+            "normalized_answer_sha256": hashlib.sha256(
+                response.encode("utf-8")
+            ).hexdigest(),
+        }
+
+    roots = {
+        name: str((tmp_path / name).resolve())
+        for name in (
+            "campaign",
+            "transition_artifacts",
+            "updates",
+            "replay_artifacts",
+        )
+    }
+    for root in roots.values():
+        Path(root).mkdir(mode=0o700)
+    planned = 1_800_000_000_000_000_000
+    reward_sha256 = hashlib.sha256(
+        json.dumps(
+            TransitionRewardConfig().to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+    manifest = build_transition_group_manifest(
+        group_id="replay-package-group",
+        task_id=Task.task_id,
+        entries=(
+            TransitionGroupPlanEntry(
+                episode_id=sample.episode_id,
+                task_id=Task.task_id,
+                rng_root_sha256=sample.rng_root_sha256,
+                policy_sha256=sample.policy_sha256,
+                recurrent_execution_spec_sha256=(
+                    sample.execution_spec_sha256
+                ),
+                producing_branch_index=sample.branch_index,
+                sample_seed=sample.seed,
+                sampling_config_sha256=sampling_config_sha256(sample),
+            ),
+        ),
+        reward_config_sha256=reward_sha256,
+        planned_at_unix_ns=planned,
+    )
+    policy = SimpleNamespace(policy_sha256="5" * 64, root_key_id="6" * 64)
+    request = SimpleNamespace(
+        schema="aura.verified_transition.production_request.v2",
+        contract_sha256="7" * 64,
+        campaign_schedule_root_sha256="8" * 64,
+        sequence=0,
+        task=Task(),
+        prompt_text="Prompt",
+        prompt_tokens=tuple(prompt),
+        samples=(sample,),
+        completions=(Adapter.decode_output(sample.tokens),),
+        group_manifest=manifest,
+        group_manifest_attestation={"test": "attestation"},
+        provider_config={},
+        ledger_roots=roots,
+        campaign_ledger=SimpleNamespace(
+            group_start=lambda **_kwargs: {
+                "campaign_manifest_sha256": "9" * 64
+            }
+        ),
+        campaign_trust_policy=policy,
+        tokenizer_bundle_sha256=bundle["bundle_sha256"],
+        tokenizer_trace_adapter=Adapter(),
+        independent_scorer=score,
+        token_encoder=lambda value: tuple(value),
+        token_decoder=lambda tokens: Adapter.decode_output(tokens).encode(),
+    )
+    prepared = produce_verified_recurrent_transition_group(request)
+    assert prepared.reward_receipt["optimizer_admitted"] is False
+    step = {
+        "task_id": Task.task_id,
+        "reward_receipt_sha256": prepared.reward_receipt["receipt_sha256"],
+        "group_manifest_sha256": manifest["manifest_sha256"],
+        "group_admission_sha256": None,
+    }
+    packages = load_recurrent_replay_packages(
+        SimpleNamespace(
+            schema="aura.verified_transition.restore_request.v2",
+            contract_sha256=request.contract_sha256,
+            campaign_schedule_root_sha256=(
+                request.campaign_schedule_root_sha256
+            ),
+            committed_steps=1,
+            step_receipts=(step,),
+            replay_artifact_root=roots["replay_artifacts"],
+        )
+    )
+    reopened_store = TransitionArtifactStore(roots["transition_artifacts"])
+    samples, evidence = reconstruct_recurrent_package_inputs(
+        packages[0],
+        store=reopened_store,
+        task=Task(),
+        independent_scorer=score,
+        tokenizer_trace_adapter=Adapter(),
+        campaign_trust_policy=policy,
+    )
+    assert samples[0].receipt() == sample.receipt()
+    assert evidence[0].document["receipt_sha256"] == (
+        prepared.transition_evidence[0].document["receipt_sha256"]
+    )
 
 
 def test_causal_samples_enter_the_exact_adjoint_without_identity_loss():
@@ -380,6 +722,8 @@ def test_trainer_group_uses_tokenizer_and_distinct_bound_seeds():
         def decode(tokens):
             return " ".join(str(token) for token in tokens)
 
+        decode_output = decode
+
     class Task:
         task_id = "trainer-group-task"
         prompt = "solve"
@@ -444,6 +788,8 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
         def decode(tokens):
             return " ".join(str(token) for token in tokens)
 
+        decode_output = decode
+
     class Task:
         task_id = "signed-causal-task"
         prompt = "solve"
@@ -504,6 +850,7 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
         sampling_config=sampling,
         verified_group_provider=provider,
         campaign_sequence=0,
+        token_trace_adapter=Tokenizer(),
     )
 
     assert prompt == [5, 9, 17]

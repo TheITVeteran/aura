@@ -12,6 +12,12 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     TASK_ISSUER,
     verify_role_attestation,
 )
+from core.learning.recurrent_grpo import (
+    validate_recurrent_policy_sample_receipt,
+)
+from core.learning.verified_recurrent_transition_evidence import (
+    VerifiedRecurrentTransitionEvidence,
+)
 from core.learning.verified_transition_episode import (
     TransitionArtifactStore,
     canonical_json_bytes,
@@ -294,9 +300,23 @@ def _task_disclosure_signed_at(evidence: VerifiedTransitionEvidence) -> int:
 
 
 def _actual_plan_entry(
-    evidence: VerifiedTransitionEvidence,
+    evidence: VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence,
     sample: Any,
 ) -> TransitionGroupPlanEntry:
+    if isinstance(evidence, VerifiedRecurrentTransitionEvidence):
+        receipt = validate_recurrent_policy_sample_receipt(sample.receipt())
+        return TransitionGroupPlanEntry(
+            episode_id=cast(str, receipt["episode_id"]),
+            task_id=cast(str, evidence.document["task_id"]),
+            rng_root_sha256=cast(str, receipt["rng_root_sha256"]),
+            policy_sha256=cast(str, receipt["policy_sha256"]),
+            recurrent_execution_spec_sha256=cast(
+                str, receipt["execution_spec_sha256"]
+            ),
+            producing_branch_index=cast(int, receipt["branch_index"]),
+            sample_seed=cast(int, receipt["seed"]),
+            sampling_config_sha256=sampling_config_sha256(sample),
+        )
     episode = evidence.episode
     store = evidence.store
     second = store.read_json(
@@ -395,7 +415,9 @@ def _sample_receipt(sample: Any) -> dict[str, Any]:
 def build_verified_transition_group_admission(
     store: TransitionArtifactStore,
     reward_receipt: Mapping[str, Any],
-    evidence: Sequence[VerifiedTransitionEvidence],
+    evidence: Sequence[
+        VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence
+    ],
     samples: Sequence[Any],
     prompt_tokens: Sequence[int],
     *,
@@ -448,11 +470,26 @@ def build_verified_transition_group_admission(
     ):
         _fail("group_manifest_mixed_execution_specs")
 
-    policies = [item.trust_context.verified_policy() for item in evidence]
+    policies = [
+        (
+            item.campaign_trust_policy
+            if isinstance(item, VerifiedRecurrentTransitionEvidence)
+            else item.trust_context.verified_policy()
+        )
+        for item in evidence
+    ]
     policy_sha256 = policies[0].policy_sha256
     if any(policy.policy_sha256 != policy_sha256 for policy in policies):
         _fail("group_manifest_mixed_trust_policies")
-    latest_allowed = min(_task_disclosure_signed_at(item) for item in evidence)
+    if all(isinstance(item, VerifiedRecurrentTransitionEvidence) for item in evidence):
+        latest_allowed = manifest["planned_at_unix_ns"] // 1_000_000_000
+    elif any(isinstance(item, VerifiedRecurrentTransitionEvidence) for item in evidence):
+        _fail("group_manifest_mixed_evidence_types")
+    else:
+        latest_allowed = min(
+            _task_disclosure_signed_at(cast(VerifiedTransitionEvidence, item))
+            for item in evidence
+        )
     signed = verify_role_attestation(
         policies[0],
         group_manifest_attestation,
@@ -473,13 +510,23 @@ def build_verified_transition_group_admission(
     if planned_at // 1_000_000_000 != signed_at_unix:
         _fail("group_manifest_signature_time_mismatch")
     earliest_generation = min(
-        _require_int(
-            item.store.read_json(
-                cast(Mapping[str, Any], item.episode["pass_0_artifact"]),
-                role="reasoning_pass",
-            )["generated_at_unix_ns"],
-            role="group_episode_generated_at",
-            minimum=1,
+        (
+            _require_int(
+                item.document["created_at_unix_ns"],
+                role="group_episode_generated_at",
+                minimum=1,
+                maximum=(1 << 63) - 1,
+            )
+            if isinstance(item, VerifiedRecurrentTransitionEvidence)
+            else _require_int(
+                item.store.read_json(
+                    cast(Mapping[str, Any], item.episode["pass_0_artifact"]),
+                    role="reasoning_pass",
+                )["generated_at_unix_ns"],
+                role="group_episode_generated_at",
+                minimum=1,
+                maximum=(1 << 63) - 1,
+            )
         )
         for item in evidence
     )
@@ -531,7 +578,9 @@ def validate_verified_transition_group_admission(
     store: TransitionArtifactStore,
     receipt: Mapping[str, Any],
     reward_receipt: Mapping[str, Any],
-    evidence: Sequence[VerifiedTransitionEvidence],
+    evidence: Sequence[
+        VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence
+    ],
     samples: Sequence[Any],
     prompt_tokens: Sequence[int],
     *,

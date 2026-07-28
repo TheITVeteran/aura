@@ -17,6 +17,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Never, cast
 
 from core.brain.llm.latent_cortex.frontier_tasks import FrontierTask
+from core.learning.verified_recurrent_transition_evidence import (
+    VerifiedRecurrentTransitionEvidence,
+    validate_verified_recurrent_transition_evidence,
+)
 from core.learning.verified_transition_episode import (
     TransitionArtifactStore,
     TransitionTrustContext,
@@ -259,13 +263,19 @@ def _unsupported_confidence_micros(
 
 
 def _reconstruct_transition(
-    evidence: VerifiedTransitionEvidence,
+    evidence: VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence,
     *,
     independent_scorer: Callable[[Any, Any], Mapping[str, Any]],
     token_encoder: Callable[[bytes], Sequence[int]],
     token_decoder: Callable[[Sequence[int]], bytes],
     config: TransitionRewardConfig,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    if isinstance(evidence, VerifiedRecurrentTransitionEvidence):
+        return _reconstruct_recurrent_transition(
+            evidence,
+            independent_scorer=independent_scorer,
+            config=config,
+        )
     store = evidence.store
     episode = validate_verified_transition_episode(
         store,
@@ -361,6 +371,102 @@ def _reconstruct_transition(
     return record, episode
 
 
+def _reconstruct_recurrent_transition(
+    evidence: VerifiedRecurrentTransitionEvidence,
+    *,
+    independent_scorer: Callable[[Any, Any], Mapping[str, Any]],
+    config: TransitionRewardConfig,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    validated = validate_verified_recurrent_transition_evidence(
+        evidence.store,
+        evidence.document,
+        task=evidence.task,
+        independent_scorer=independent_scorer,
+        tokenizer_trace_adapter=evidence.tokenizer_trace_adapter,
+        expected_tokenizer_bundle_sha256=evidence.document[
+            "tokenizer_bundle_sha256"
+        ],
+        campaign_trust_policy=evidence.campaign_trust_policy,
+    )
+    episode = dict(validated.document)
+    sample = json.loads(cast(str, episode["sample_receipt_json"]))
+    pair = cast(dict[str, Any], sample["causal_transition_pair"])
+    parent = cast(dict[str, Any], pair["parent"])
+    child = cast(dict[str, Any], pair["child"])
+    initial = cast(dict[str, Any], episode["parent_score"])
+    final = cast(dict[str, Any], episode["child_score"])
+    initial_correct = initial["correct"] is True
+    final_correct = final["correct"] is True
+    initial_parsed = initial["parsed"] is True
+    final_parsed = final["parsed"] is True
+    information_gain = _verified_information_gain_micros(
+        initial_parsed=initial_parsed,
+        initial_correct=initial_correct,
+        final_parsed=final_parsed,
+        final_correct=final_correct,
+    )
+    normalized_0 = initial["normalized_answer_sha256"]
+    normalized_1 = final["normalized_answer_sha256"]
+    diversity_gain = int(
+        initial_parsed and final_parsed and normalized_0 != normalized_1
+    ) * MICROS
+    token_budget = child["token_budget"]
+    resource_1 = min(MICROS, child["token_count"] * MICROS // token_budget)
+    unsupported_confidence = _unsupported_confidence_micros(
+        {"behavior_policy_logprobs": child["behavior_logprobs"]},
+        final_correct=final_correct,
+    )
+    components = {
+        "correctness_delta_micros": (
+            (int(final_correct) - int(initial_correct))
+            * config.correctness_delta_weight_micros
+        ),
+        "information_gain_micros": _scale_micros(
+            information_gain, config.information_gain_weight_micros
+        ),
+        "diversity_gain_micros": _scale_micros(
+            diversity_gain, config.diversity_gain_weight_micros
+        ),
+        "compute_cost_micros": -_scale_micros(
+            resource_1, config.compute_cost_weight_micros
+        ),
+        "unsupported_confidence_micros": -_scale_micros(
+            unsupported_confidence,
+            config.unsupported_confidence_weight_micros,
+        ),
+    }
+    return (
+        {
+            "episode_id": episode["episode_id"],
+            "task_id": episode["task_id"],
+            "episode_receipt_sha256": episode["receipt_sha256"],
+            "pass_0_receipt_sha256": parent["receipt_sha256"],
+            "pass_1_receipt_sha256": child["receipt_sha256"],
+            "initial_parsed": initial_parsed,
+            "final_parsed": final_parsed,
+            "initial_correct": initial_correct,
+            "final_correct": final_correct,
+            "transition_kind": _transition_kind(initial_correct, final_correct),
+            "answer_changed": normalized_0 != normalized_1,
+            "initial_answer_sha256": normalized_0,
+            "final_answer_sha256": normalized_1,
+            "information_gain_micros": information_gain,
+            "diversity_gain_micros": diversity_gain,
+            "resource_1_micros": resource_1,
+            "unsupported_confidence_micros": unsupported_confidence,
+            "reward_components_micros": components,
+            "reward_micros": sum(components.values()),
+            "pass_1_policy_sha256": pair["policy_sha256"],
+            "pass_1_input_token_ids": list(episode["prompt_tokens"]),
+            "pass_1_output_token_ids": list(child["tokens"]),
+            "pass_1_behavior_policy_logprobs": list(
+                str(value) for value in child["behavior_logprobs"]
+            ),
+        },
+        episode,
+    )
+
+
 def _admission_reason(
     *,
     right_to_wrong: int,
@@ -442,7 +548,9 @@ def _assemble_reward_batch(
 
 def build_verified_transition_reward_batch(
     store: TransitionArtifactStore,
-    evidence: Sequence[VerifiedTransitionEvidence],
+    evidence: Sequence[
+        VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence
+    ],
     *,
     independent_scorer: Callable[[Any, Any], Mapping[str, Any]],
     token_encoder: Callable[[bytes], Sequence[int]],
@@ -462,7 +570,9 @@ def build_verified_transition_reward_batch(
     seen_episode_ids: set[str] = set()
     task_id: str | None = None
     for item in evidence:
-        if not isinstance(item, VerifiedTransitionEvidence):
+        if not isinstance(
+            item, (VerifiedTransitionEvidence, VerifiedRecurrentTransitionEvidence)
+        ):
             _fail("transition_reward_evidence_type_invalid")
         record, episode = _reconstruct_transition(
             item,
@@ -530,7 +640,9 @@ def _config_from_document(value: Any) -> TransitionRewardConfig:
 def validate_verified_transition_reward_batch(
     store: TransitionArtifactStore,
     receipt: Mapping[str, Any],
-    evidence: Sequence[VerifiedTransitionEvidence],
+    evidence: Sequence[
+        VerifiedTransitionEvidence | VerifiedRecurrentTransitionEvidence
+    ],
     *,
     independent_scorer: Callable[[Any, Any], Mapping[str, Any]],
     token_encoder: Callable[[bytes], Sequence[int]],

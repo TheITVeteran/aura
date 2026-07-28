@@ -16,6 +16,10 @@ from core.learning.recurrent_grpo import (
     RecurrentSamplingConfig,
     recurrent_sampling_rng_root_sha256,
 )
+from core.learning.verified_token_trace import (
+    build_tokenizer_bundle_identity,
+    tokenizer_file_bindings_from_bytes,
+)
 from core.learning.verified_transition_episode import canonical_json_bytes
 from core.learning.verified_transition_group_admission import (
     TransitionGroupPlanEntry,
@@ -60,6 +64,45 @@ def _encode(value: bytes) -> tuple[int, ...]:
 
 def _decode(value: Any) -> bytes:
     return bytes(value)
+
+
+_TOKENIZER_BUNDLE = build_tokenizer_bundle_identity(
+    tokenizer_class="test.IntegerTokenizer",
+    tokenizer_files=tokenizer_file_bindings_from_bytes(
+        {
+            "tokenizer.json": b'{"kind":"integer"}',
+            "tokenizer_config.json": b'{"separator":" "}',
+        }
+    ),
+    chat_template=None,
+    special_token_map={},
+    encode_options={},
+    decode_options={},
+    implementation_source_sha256="a" * 64,
+)
+
+
+class _TokenizerAdapter:
+    bundle_identity = _TOKENIZER_BUNDLE
+
+    @staticmethod
+    def encode_prompt(text: str) -> tuple[int, ...]:
+        return tuple(int(value) for value in text.split())
+
+    @staticmethod
+    def decode_output(tokens: Any) -> str:
+        return " ".join(str(token) for token in tokens)
+
+    @classmethod
+    def stream_decode_deltas(cls, tokens: Any) -> tuple[str, ...]:
+        values = tuple(tokens)
+        rendered = [
+            cls.decode_output(values[: index + 1]) for index in range(len(values))
+        ]
+        return tuple(
+            value if index == 0 else value[len(rendered[index - 1]) :]
+            for index, value in enumerate(rendered)
+        )
 
 
 class _Task:
@@ -299,6 +342,7 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         token_codec_identity="byte-codec:v1",
         token_encoder_source_sha256=callable_source_sha256(_encode),
         token_decoder_source_sha256=callable_source_sha256(_decode),
+        tokenizer_bundle=_TOKENIZER_BUNDLE,
         dataset_sha256=_sha("dataset"),
         task_schedule=schedule,
         ledger_roots=roots,
@@ -347,6 +391,11 @@ def material(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             "token_encoder": _encode,
             "token_decoder": _decode,
             "token_codec_identity": "byte-codec:v1",
+            "tokenizer_trace_adapter": _TokenizerAdapter(),
+            "training_tasks": tasks,
+            "evidence_verifier_signer": SimpleNamespace(
+                attest=lambda *_args, **_kwargs: {}
+            ),
         }
         arguments.update(overrides)
         return ProductionVerifiedTransitionGroupProvider(**arguments)
@@ -464,9 +513,10 @@ def _prepare(
     provider.prepare_group(
         sequence=sequence,
         task=material["tasks"][sequence],
+        prompt_text=" ".join(str(token) for token in material["prompts"][sequence]),
         prompt_tokens=material["prompts"][sequence],
         samples=group["samples"],
-        completions=("one", "two"),
+        completions=("1 2", "1 2"),
     )
 
 

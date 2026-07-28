@@ -35,6 +35,7 @@ from core.learning.recurrent_grpo import (
     recurrent_policy_sha256,
     recurrent_sampling_rng_root_sha256,
 )
+from core.learning.verified_token_trace import validate_tokenizer_bundle_identity
 from core.learning.verified_training_task import (
     VerifiedTrainingTaskError,
     build_verified_training_task,
@@ -53,6 +54,7 @@ from core.learning.verified_transition_provider import (
     callable_source_sha256,
     validate_verified_transition_provider_contract,
 )
+from core.learning.verified_transition_reward import TransitionRewardConfig
 from core.learning.verified_transition_trainer import (
     VerifiedTransitionGroupProvider,
     VerifiedTransitionProviderRuntime,
@@ -891,6 +893,10 @@ class ProductionVerifiedTransitionProviderFactory:
         if not isinstance(jit, Mapping) or set(jit) != _JIT_CONFIG_KEYS:
             _fail("production_factory_jit_config_invalid")
         sampling = _sampling_config_from_contract(jit["sampling_config"])
+        if jit.get("reward_config_sha256") != _digest(
+            TransitionRewardConfig().to_dict()
+        ):
+            _fail("production_factory_reward_config_mismatch")
         branch_count = _integer(
             jit.get("branch_count"), role="production_factory_branch_count", minimum=1
         )
@@ -1044,6 +1050,10 @@ class ProductionVerifiedTransitionProviderFactory:
                 or runtime.sampling_max_tokens != self._sampling.max_tokens
                 or runtime.dataset_sha256 != self._contract["dataset_sha256"]
                 or runtime.group_size != self._branch_count
+                or validate_tokenizer_bundle_identity(
+                    runtime.tokenizer_trace_adapter.bundle_identity
+                )
+                != self._contract["tokenizer_bundle"]
                 or runtime.output_directory.resolve(strict=False)
                 != Path(self._jit["trainer_output_root"])
                 or runtime.transaction_root.resolve(strict=False)
@@ -1077,6 +1087,9 @@ class ProductionVerifiedTransitionProviderFactory:
                 token_encoder=self._encoder,
                 token_decoder=self._decoder,
                 token_codec_identity=self._codec_identity,
+                tokenizer_trace_adapter=runtime.tokenizer_trace_adapter,
+                training_tasks=runtime.training_tasks,
+                evidence_verifier_signer=self._broker,
             )
             wrapped = JITAdmittingVerifiedTransitionGroupProvider(
                 provider=provider,

@@ -42,7 +42,18 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     VerifiedCampaignTrustPolicy,
     verify_role_attestation,
 )
-from core.learning.verified_transition_episode import canonical_json_bytes
+from core.learning.verified_recurrent_transition_repository import (
+    reconstruct_recurrent_package_inputs,
+    validate_recurrent_replay_package,
+)
+from core.learning.verified_token_trace import (
+    TokenizerTraceAdapter,
+    validate_tokenizer_bundle_identity,
+)
+from core.learning.verified_transition_episode import (
+    TransitionArtifactStore,
+    canonical_json_bytes,
+)
 from core.learning.verified_transition_group_admission import (
     sampling_config_sha256,
     validate_transition_group_manifest,
@@ -73,7 +84,7 @@ from core.learning.verified_transition_update import (
     validate_verified_transition_update_receipt,
 )
 
-PROVIDER_CONTRACT_SCHEMA = "aura.verified_transition.provider_contract.v2"
+PROVIDER_CONTRACT_SCHEMA = "aura.verified_transition.provider_contract.v3"
 PROVIDER_IMPLEMENTATION_ID = "aura.production_verified_transition_provider.v2"
 TASK_COMMITMENT_SCHEMA = "aura.verified_transition.task_commitment.v2"
 CAMPAIGN_SCHEDULE_SCHEMA = "aura.verified_transition.causal_schedule.v1"
@@ -94,6 +105,7 @@ _CONTRACT_KEYS = frozenset(
         "initial_policy_sha256",
         "scorer",
         "token_codec",
+        "tokenizer_bundle",
         "dataset_sha256",
         "task_schedule",
         "task_schedule_sha256",
@@ -358,6 +370,9 @@ def validate_verified_transition_provider_contract(value: Any) -> dict[str, Any]
     _identifier(codec.get("identity"), role="provider_codec_identity")
     _sha256(codec.get("encoder_source_sha256"), role="provider_encoder")
     _sha256(codec.get("decoder_source_sha256"), role="provider_decoder")
+    tokenizer_bundle = validate_tokenizer_bundle_identity(
+        contract.get("tokenizer_bundle")
+    )
 
     schedule = contract.get("task_schedule")
     if not isinstance(schedule, list) or not schedule:
@@ -401,6 +416,7 @@ def validate_verified_transition_provider_contract(value: Any) -> dict[str, Any]
     _integer(contract.get("frozen_at_unix_ns"), role="provider_frozen_at", minimum=1)
     contract["task_schedule"] = normalized_schedule
     contract["ledger_roots"] = normalized_roots
+    contract["tokenizer_bundle"] = tokenizer_bundle
     return contract
 
 
@@ -422,6 +438,7 @@ def build_verified_transition_provider_contract(
     token_codec_identity: str,
     token_encoder_source_sha256: str,
     token_decoder_source_sha256: str,
+    tokenizer_bundle: Mapping[str, Any],
     dataset_sha256: str,
     task_schedule: Sequence[Mapping[str, Any]],
     ledger_roots: Mapping[str, str],
@@ -433,6 +450,7 @@ def build_verified_transition_provider_contract(
     schedule = [dict(item) for item in task_schedule]
     schedule_sha = _digest(schedule)
     roots = dict(ledger_roots)
+    frozen_tokenizer_bundle = validate_tokenizer_bundle_identity(tokenizer_bundle)
     body = {
         "schema": PROVIDER_CONTRACT_SCHEMA,
         "provider": {
@@ -463,6 +481,7 @@ def build_verified_transition_provider_contract(
             "encoder_source_sha256": token_encoder_source_sha256,
             "decoder_source_sha256": token_decoder_source_sha256,
         },
+        "tokenizer_bundle": frozen_tokenizer_bundle,
         "dataset_sha256": dataset_sha256,
         "task_schedule": schedule,
         "task_schedule_sha256": schedule_sha,
@@ -516,12 +535,23 @@ class VerifiedTransitionProductionRequest:
     campaign_schedule_root_sha256: str
     sequence: int
     task: Any
+    prompt_text: str
     prompt_tokens: tuple[int, ...]
     samples: tuple[Any, ...]
     completions: tuple[str, ...]
     task_commitment: Mapping[str, Any]
     lineage_plan: Mapping[str, Any]
+    group_manifest: Mapping[str, Any]
+    group_manifest_attestation: Mapping[str, Any]
     provider_config: Mapping[str, Any]
+    ledger_roots: Mapping[str, str]
+    campaign_ledger: CausalCampaignLedger
+    campaign_trust_policy: VerifiedCampaignTrustPolicy
+    tokenizer_bundle_sha256: str
+    tokenizer_trace_adapter: TokenizerTraceAdapter
+    independent_scorer: Callable[[Any, Any], Mapping[str, Any]]
+    token_encoder: Callable[[bytes], Sequence[int]]
+    token_decoder: Callable[[Sequence[int]], bytes]
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +572,9 @@ class VerifiedTransitionFinalizeRequest:
     completed_groups: int
     halt_reason: str
     replay_groups: tuple[VerifiedTransitionReplayGroup, ...]
+    campaign_ledger: CausalCampaignLedger
+    campaign_trust_policy: VerifiedCampaignTrustPolicy
+    evidence_verifier_signer: Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -582,6 +615,9 @@ class ProductionVerifiedTransitionGroupProvider:
         token_encoder: Callable[[bytes], Sequence[int]],
         token_decoder: Callable[[Sequence[int]], bytes],
         token_codec_identity: str,
+        tokenizer_trace_adapter: TokenizerTraceAdapter,
+        training_tasks: Sequence[Any],
+        evidence_verifier_signer: Any,
     ) -> None:
         frozen = validate_verified_transition_provider_contract(contract)
         provider = cast(Mapping[str, Any], frozen["provider"])
@@ -631,6 +667,13 @@ class ProductionVerifiedTransitionGroupProvider:
         ):
             _fail("provider_runtime_token_codec_mismatch")
         if (
+            validate_tokenizer_bundle_identity(
+                tokenizer_trace_adapter.bundle_identity
+            )
+            != frozen["tokenizer_bundle"]
+        ):
+            _fail("provider_runtime_tokenizer_bundle_mismatch")
+        if (
             frozen["trust_policy_sha256"] != campaign_trust_policy.policy_sha256
             or frozen["trust_root_key_id"] != campaign_trust_policy.root_key_id
             or _root_of(campaign_ledger, role="campaign_ledger")
@@ -660,6 +703,20 @@ class ProductionVerifiedTransitionGroupProvider:
         self._scorer = independent_scorer
         self._encoder = token_encoder
         self._decoder = token_decoder
+        self._tokenizer_trace_adapter = tokenizer_trace_adapter
+        self._training_tasks = {
+            cast(str, task.task_id): task
+            for task in training_tasks
+            if isinstance(getattr(task, "task_id", None), str)
+        }
+        if any(
+            row["task_id"] not in self._training_tasks
+            for row in frozen["task_schedule"]
+        ):
+            _fail("provider_runtime_task_registry_incomplete")
+        if not callable(getattr(evidence_verifier_signer, "attest", None)):
+            _fail("provider_evidence_verifier_signer_missing")
+        self._evidence_verifier_signer = evidence_verifier_signer
         self._plans: dict[int, _AdmittedPlan] = {}
         self._accepted_steps: list[dict[str, Any]] = []
         self._pending_sequence: int | None = None
@@ -893,6 +950,7 @@ class ProductionVerifiedTransitionGroupProvider:
         *,
         commitment: Mapping[str, Any],
         task: Any,
+        prompt_text: str,
         prompt_tokens: Sequence[int],
         samples: Sequence[Any],
         completions: Sequence[str],
@@ -906,10 +964,13 @@ class ProductionVerifiedTransitionGroupProvider:
             or len(samples) != len(commitment["sample_seeds"])
             or len(completions) != len(samples)
             or any(not isinstance(text, str) for text in completions)
+            or not isinstance(prompt_text, str)
+            or list(self._tokenizer_trace_adapter.encode_prompt(prompt_text))
+            != list(prompt_tokens)
         ):
             _fail("provider_runtime_task_or_sample_count_mismatch")
         observed_seeds: list[int] = []
-        for sample in samples:
+        for sample, completion in zip(samples, completions, strict=True):
             observed_seeds.append(getattr(sample, "seed", None))
             if (
                 getattr(sample, "policy_sha256", None) != policy_sha256
@@ -917,6 +978,8 @@ class ProductionVerifiedTransitionGroupProvider:
                 != commitment["recurrent_execution_spec_sha256"]
                 or getattr(sample, "prompt_tokens_sha256", None)
                 != commitment["prompt_tokens_sha256"]
+                or self._tokenizer_trace_adapter.decode_output(sample.tokens)
+                != completion
             ):
                 _fail("provider_runtime_sample_commitment_mismatch")
         if observed_seeds != commitment["sample_seeds"]:
@@ -1107,6 +1170,7 @@ class ProductionVerifiedTransitionGroupProvider:
         *,
         sequence: int,
         task: Any,
+        prompt_text: str,
         prompt_tokens: Sequence[int],
         samples: Sequence[Any],
         completions: Sequence[str],
@@ -1121,6 +1185,7 @@ class ProductionVerifiedTransitionGroupProvider:
             self._validate_runtime_inputs(
                 commitment=commitment,
                 task=task,
+                prompt_text=prompt_text,
                 prompt_tokens=prompt_tokens,
                 samples=samples,
                 completions=completions,
@@ -1155,6 +1220,7 @@ class ProductionVerifiedTransitionGroupProvider:
                 ],
                 sequence=sequence,
                 task=task,
+                prompt_text=prompt_text,
                 prompt_tokens=tuple(prompt_tokens),
                 samples=tuple(samples),
                 completions=tuple(completions),
@@ -1162,9 +1228,26 @@ class ProductionVerifiedTransitionGroupProvider:
                     dict[str, Any], _clone(commitment, role="task_commitment")
                 ),
                 lineage_plan=dict(plan.lineage_plan),
+                group_manifest=dict(plan.group_manifest),
+                group_manifest_attestation=dict(
+                    plan.group_manifest_attestation
+                ),
                 provider_config=cast(
                     dict[str, Any], _clone(self._provider_config, role="provider_config")
                 ),
+                ledger_roots=cast(
+                    dict[str, str],
+                    _clone(self._contract["ledger_roots"], role="ledger_roots"),
+                ),
+                campaign_ledger=self._ledger,
+                campaign_trust_policy=self._policy,
+                tokenizer_bundle_sha256=cast(
+                    str, self._contract["tokenizer_bundle"]["bundle_sha256"]
+                ),
+                tokenizer_trace_adapter=self._tokenizer_trace_adapter,
+                independent_scorer=self._scorer,
+                token_encoder=self._encoder,
+                token_decoder=self._decoder,
             )
             validated = self._validate_prepared(
                 self._producer(request),
@@ -1591,6 +1674,91 @@ class ProductionVerifiedTransitionGroupProvider:
             _fail("provider_restore_artifact_crosscheck_mismatch")
         return group
 
+    def _reconstruct_replay_package(
+        self,
+        package: Mapping[str, Any],
+        *,
+        step: Mapping[str, Any],
+    ) -> VerifiedTransitionReplayGroup | None:
+        """Rebuild one committed group from immutable package data."""
+
+        document = validate_recurrent_replay_package(package)
+        sequence = cast(int, step["campaign_sequence"])
+        roots = self._contract["ledger_roots"]
+        task = self._training_tasks.get(cast(str, step["task_id"]))
+        if (
+            task is None
+            or document["sequence"] != sequence
+            or document["contract_sha256"] != self.contract_sha256
+            or document["campaign_schedule_root_sha256"]
+            != self._contract["campaign_schedule_root_sha256"]
+            or document["task_id"] != step["task_id"]
+            or document["tokenizer_bundle_sha256"]
+            != self._contract["tokenizer_bundle"]["bundle_sha256"]
+            or document["group_manifest"]["manifest_sha256"]
+            != step["group_manifest_sha256"]
+            or document["reward_receipt_sha256"]
+            != step["reward_receipt_sha256"]
+            or document["group_admission_sha256"]
+            != step["group_admission_sha256"]
+        ):
+            _fail("provider_replay_package_binding_mismatch")
+        store = TransitionArtifactStore(roots["transition_artifacts"])
+        samples, evidence = reconstruct_recurrent_package_inputs(
+            document,
+            store=store,
+            task=task,
+            independent_scorer=self._scorer,
+            tokenizer_trace_adapter=self._tokenizer_trace_adapter,
+            campaign_trust_policy=self._policy,
+        )
+        if [sample.receipt() for sample in samples] != step["samples"]:
+            _fail("provider_replay_sample_step_mismatch")
+        reward = store.read_json(
+            document["reward_artifact"], role="recurrent_replay_reward"
+        )
+        reward = validate_verified_transition_reward_batch(
+            store,
+            reward,
+            evidence,
+            independent_scorer=self._scorer,
+            token_encoder=self._encoder,
+            token_decoder=self._decoder,
+        )
+        if reward["receipt_sha256"] != step["reward_receipt_sha256"]:
+            _fail("provider_replay_reward_step_mismatch")
+        if step["step_kind"] == "verified_rejected_group":
+            if (
+                reward["optimizer_admitted"] is not False
+                or document["group_admission_artifact"] is not None
+                or document["group_admission_sha256"] is not None
+                or step["policy_before_sha256"] != step["policy_after_sha256"]
+            ):
+                _fail("provider_replay_rejected_group_invalid")
+            return None
+        admission = store.read_json(
+            document["group_admission_artifact"],
+            role="recurrent_replay_group_admission",
+        )
+        journal = VerifiedTransitionUpdateJournal.open(roots["updates"])
+        group = VerifiedTransitionReplayGroup(
+            sequence=sequence,
+            transition_store=store,
+            group_admission_receipt=admission,
+            reward_receipt=reward,
+            transition_evidence=evidence,
+            samples=samples,
+            prompt_tokens=document["prompt_tokens"],
+            group_manifest=document["group_manifest"],
+            group_manifest_attestation=document["group_manifest_attestation"],
+            independent_scorer=self._scorer,
+            token_encoder=self._encoder,
+            token_decoder=self._decoder,
+            update_journal=journal,
+            update_receipt=step["update"],
+        )
+        return self._validate_replay_group(group, step=step)
+
     def restore_groups(
         self,
         *,
@@ -1627,16 +1795,24 @@ class ProductionVerifiedTransitionGroupProvider:
                 step_receipts=tuple(steps),
                 replay_artifact_root=self._contract["ledger_roots"]["replay_artifacts"],
             )
-            loaded = tuple(self._loader(request))
-            updated = [step for step in steps if step["step_kind"] == "verified_optimizer_update"]
-            if [group.sequence for group in loaded] != [
-                step["campaign_sequence"] for step in updated
-            ]:
+            packages = tuple(self._loader(request))
+            if len(packages) != len(steps):
+                _fail("provider_restore_package_set_mismatch")
+            replay_groups = []
+            for package, step in zip(packages, steps, strict=True):
+                if not isinstance(package, Mapping):
+                    _fail("provider_restore_package_type_invalid")
+                group = self._reconstruct_replay_package(package, step=step)
+                if group is not None:
+                    replay_groups.append(group)
+            updated = [
+                step["campaign_sequence"]
+                for step in steps
+                if step["step_kind"] == "verified_optimizer_update"
+            ]
+            if [group.sequence for group in replay_groups] != updated:
                 _fail("provider_restore_updated_group_set_mismatch")
-            return tuple(
-                self._validate_replay_group(group, step=step)
-                for group, step in zip(loaded, updated, strict=True)
-            )
+            return tuple(replay_groups)
 
     def finalize(
         self,
@@ -1660,6 +1836,9 @@ class ProductionVerifiedTransitionGroupProvider:
                 completed_groups=completed_groups,
                 halt_reason=halt_reason,
                 replay_groups=tuple(replay_groups),
+                campaign_ledger=self._ledger,
+                campaign_trust_policy=self._policy,
+                evidence_verifier_signer=self._evidence_verifier_signer,
             )
             closure = self._finalizer(request)
             if not isinstance(closure, VerifiedTransitionCampaignClosure):

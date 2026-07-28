@@ -152,6 +152,7 @@ class VerifiedTransitionProviderRuntime:
 
     model: Any
     tokenizer: Any
+    tokenizer_trace_adapter: Any
     execution_spec: RLCExecutionSpec
     training_tasks: tuple[Any, ...]
     output_directory: Path
@@ -212,6 +213,7 @@ class VerifiedTransitionGroupProvider(Protocol):
         *,
         sequence: int,
         task: Any,
+        prompt_text: str,
         prompt_tokens: Sequence[int],
         samples: Sequence[Any],
         completions: Sequence[str],

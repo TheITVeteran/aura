@@ -1018,11 +1018,16 @@ def _load_execution_spec(mode: str, path: str | None):
     return RLCExecutionSpec.from_dict(payload)
 
 
-def _task_prompt_tokens(tokenizer, task) -> list[int]:
-    tokens = list(tokenizer.encode(_render(tokenizer, task)))
+def _rendered_task_prompt(tokenizer, task) -> tuple[str, list[int]]:
+    rendered = _render(tokenizer, task)
+    tokens = list(tokenizer.encode(rendered))
     if not tokens or any(type(token) is not int or token < 0 for token in tokens):
         raise RuntimeError("rendered task produced invalid prompt tokens")
-    return tokens
+    return rendered, tokens
+
+
+def _task_prompt_tokens(tokenizer, task) -> list[int]:
+    return _rendered_task_prompt(tokenizer, task)[1]
 
 
 def _scheduled_verified_training_task(
@@ -1063,6 +1068,7 @@ def sample_recurrent_group(
     verified_group_provider: Any | None = None,
     campaign_sequence: int | None = None,
     model_path: str | None = None,
+    token_trace_adapter: Any | None = None,
 ):
     """Bounded behavior-policy completions from the fixed recurrent graph."""
 
@@ -1072,12 +1078,12 @@ def sample_recurrent_group(
         recurrent_policy_sha256,
         sample_final_recurrent_transition_completion,
         sample_recurrent_completion,
+        validate_recurrent_policy_sample_receipt,
     )
     from core.learning.verified_transition_group_admission import (
         sampling_config_sha256,
     )
-
-    prompt_tokens = _task_prompt_tokens(tokenizer, task)
+    _prompt_text, prompt_tokens = _rendered_task_prompt(tokenizer, task)
     requested_sampling = sampling_config
     sampling = sampling_config or RecurrentSamplingConfig(max_tokens=max_tokens)
     if not isinstance(sampling, RecurrentSamplingConfig):
@@ -1089,6 +1095,10 @@ def sample_recurrent_group(
             "verified_group_provider and campaign_sequence must be supplied together"
         )
     if verified_group_provider is not None:
+        if token_trace_adapter is None:
+            raise RuntimeError(
+                "verified recurrent sampling requires a bound tokenizer trace adapter"
+            )
         policy_sha256 = recurrent_policy_sha256(model, spec)
         plan = verified_group_provider.sampling_plan(
             sequence=campaign_sequence,
@@ -1147,8 +1157,9 @@ def sample_recurrent_group(
                 raise RuntimeError(
                     "causal recurrent sample differs from signed group plan"
                 )
+            validate_recurrent_policy_sample_receipt(sample.receipt())
             samples.append(sample)
-            completions.append(tokenizer.decode(list(sample.tokens)))
+            completions.append(token_trace_adapter.decode_output(sample.tokens))
         return prompt_tokens, samples, completions
     samples = []
     completions: list[str] = []
@@ -1890,6 +1901,16 @@ def main(
         model, tokenizer = load(args.model)
         model.freeze()
         verified_group_provider: VerifiedTransitionGroupProvider | None = None
+        token_trace_adapter = None
+        if execution_spec is not None:
+            from core.learning.verified_token_trace import (
+                build_resident_tokenizer_trace_adapter,
+            )
+
+            token_trace_adapter = build_resident_tokenizer_trace_adapter(
+                tokenizer,
+                model_path,
+            )
 
         from core.brain.llm.latent_cortex.recurrence_adapter import (
             ScopedLoRALinear,
@@ -1963,6 +1984,7 @@ def main(
                 VerifiedTransitionProviderRuntime(
                     model=model,
                     tokenizer=tokenizer,
+                    tokenizer_trace_adapter=token_trace_adapter,
                     execution_spec=execution_spec,
                     training_tasks=tuple(train_tasks),
                     output_directory=out_dir,
@@ -2761,6 +2783,7 @@ def main(
                             verified_group_provider=verified_group_provider,
                             campaign_sequence=step_number - 1,
                             model_path=args.model,
+                            token_trace_adapter=token_trace_adapter,
                         )
                     )
                     active_recurrent_step["samples"] = tuple(recurrent_samples)
@@ -2839,6 +2862,7 @@ def main(
                     prepared = verified_group_provider.prepare_group(
                         sequence=step_number - 1,
                         task=task,
+                        prompt_text=_render(tokenizer, task),
                         prompt_tokens=prompt,
                         samples=recurrent_samples,
                         completions=completions,

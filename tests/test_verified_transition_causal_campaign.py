@@ -36,6 +36,9 @@ from core.learning.verified_transition_group_admission import (
     TransitionGroupPlanEntry,
     build_transition_group_manifest,
 )
+from core.learning.verified_recurrent_transition_repository import (
+    finalize_verified_recurrent_transition_campaign,
+)
 
 BASE_SECOND = 1_800_000_000
 
@@ -500,13 +503,31 @@ def test_closed_campaign_rejects_terminal_evidence_substitution(
         material["ledger"].validate_closed(policy=material["policy"])
 
 
-def test_incomplete_campaign_cannot_produce_close_payload(
+def test_unstarted_campaign_tail_closes_as_explicitly_aborted(
     material: dict[str, Any],
 ) -> None:
     _admit(material, sequence=0, policy_before=material["initial_policy"])
+    policy_after = _sha("actual-policy-after-0")
     _finish_updated(
-        material, sequence=0, policy_after=_sha("actual-policy-after-0")
+        material, sequence=0, policy_after=policy_after
     )
+    payload = material["ledger"].close_payload(
+        completed_at_unix_ns=(BASE_SECOND + 181) * 1_000_000_000,
+        policy=material["policy"],
+    )
+    assert payload["group_statuses"] == ["updated", "aborted"]
+    assert payload["group_start_sha256s"][1] is None
+    assert payload["group_terminal_sha256s"][1] is None
+    assert payload["final_policy_sha256"] == policy_after
+
+
+def test_started_group_without_terminal_cannot_close(
+    material: dict[str, Any],
+) -> None:
+    _admit(material, sequence=0, policy_before=material["initial_policy"])
+    policy_after = _sha("actual-policy-after-0")
+    _finish_updated(material, sequence=0, policy_after=policy_after)
+    _admit(material, sequence=1, policy_before=policy_after)
     with pytest.raises(
         VerifiedTransitionCausalCampaignError,
         match="causal_campaign_incomplete:sequence=1",
@@ -515,6 +536,44 @@ def test_incomplete_campaign_cannot_produce_close_payload(
             completed_at_unix_ns=(BASE_SECOND + 181) * 1_000_000_000,
             policy=material["policy"],
         )
+
+
+def test_production_finalizer_closes_unstarted_tail_with_external_verifier(
+    material: dict[str, Any],
+) -> None:
+    _admit(material, sequence=0, policy_before=material["initial_policy"])
+    _finish_updated(
+        material,
+        sequence=0,
+        policy_after=_sha("production-finalizer-policy-after"),
+    )
+
+    class Broker:
+        @staticmethod
+        def attest(policy, **kwargs):
+            return build_role_attestation(
+                policy,
+                role=kwargs["role"],
+                payload=kwargs["payload"],
+                signed_at_unix=kwargs["signed_at_unix"],
+                private_key=material["role_keys"][EVIDENCE_VERIFIER],
+            )
+
+    closure = finalize_verified_recurrent_transition_campaign(
+        type(
+            "Request",
+            (),
+            {
+                "schema": "aura.verified_transition.finalize_request.v2",
+                "completed_groups": 1,
+                "campaign_ledger": material["ledger"],
+                "campaign_trust_policy": material["policy"],
+                "evidence_verifier_signer": Broker(),
+            },
+        )()
+    )
+    closed = closure.campaign_ledger.validate_closed(policy=material["policy"])
+    assert closed["close_payload"]["group_statuses"] == ["updated", "aborted"]
 
 
 def test_close_requires_external_evidence_verifier_signature(

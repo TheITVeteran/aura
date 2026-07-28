@@ -361,6 +361,58 @@ def build_tokenizer_bundle_identity(
     return {**body, "bundle_sha256": _sha256_json(body)}
 
 
+def build_resident_tokenizer_trace_adapter(
+    tokenizer: Any,
+    model_root: str | Path,
+) -> HuggingFaceTokenizerTraceAdapter:
+    """Bind a loaded tokenizer to every resident non-weight behavior file."""
+
+    root = Path(model_root).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        _fail("resident_tokenizer_root_invalid")
+    weight_suffixes = {".safetensors", ".npz", ".gguf"}
+    children = sorted(root.iterdir(), key=lambda item: item.name)
+    if any(path.is_symlink() for path in children):
+        _fail("resident_tokenizer_bundle_symlink_rejected")
+    relative_files = [
+        path.name
+        for path in children
+        if path.is_file()
+        and path.name != "README.md"
+        and path.suffix not in weight_suffixes
+    ]
+    required = {"config.json", "tokenizer.json", "tokenizer_config.json"}
+    if not required.issubset(relative_files):
+        _fail("resident_tokenizer_bundle_incomplete")
+    special_tokens = {
+        name: getattr(tokenizer, name, None)
+        for name in (
+            "bos_token_id",
+            "eos_token_id",
+            "pad_token_id",
+            "unk_token_id",
+        )
+    }
+    if any(
+        value is not None and type(value) is not int
+        for value in special_tokens.values()
+    ):
+        _fail("resident_tokenizer_special_token_invalid")
+    tokenizer_type = type(tokenizer)
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class=(
+            f"{tokenizer_type.__module__}.{tokenizer_type.__qualname__}"
+        ),
+        tokenizer_files=tokenizer_file_bindings(root, relative_files),
+        chat_template=getattr(tokenizer, "chat_template", None),
+        special_token_map=special_tokens,
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256=tokenizer_adapter_source_sha256(),
+    )
+    return HuggingFaceTokenizerTraceAdapter(tokenizer, bundle)
+
+
 def validate_tokenizer_bundle_identity(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != _BUNDLE_KEYS:
         _fail("tokenizer_bundle_schema_invalid")
@@ -627,13 +679,13 @@ def build_verified_token_trace(
     return {**body, "trace_sha256": _sha256_json(body)}
 
 
-def validate_verified_token_trace(
+def validate_verified_token_trace_structure(
     trace: Any,
     *,
-    adapter: TokenizerTraceAdapter,
     expected_trace_sha256: str | None = None,
+    expected_tokenizer_bundle_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Replay a trace against the exact bound tokenizer-only adapter."""
+    """Validate a trace envelope without claiming tokenizer replay."""
 
     if not isinstance(trace, Mapping) or set(trace) != _TRACE_KEYS:
         _fail("verified_token_trace_schema_invalid")
@@ -655,10 +707,13 @@ def validate_verified_token_trace(
     bundle = validate_tokenizer_bundle_identity(document.get("tokenizer_bundle"))
     if document.get("tokenizer_bundle_sha256") != bundle["bundle_sha256"]:
         _fail("tokenizer_bundle_reference_mismatch")
-    adapter_bundle = _adapter_bundle(adapter)
-    if canonical_json_bytes(bundle) != canonical_json_bytes(adapter_bundle):
-        _fail("tokenizer_bundle_substitution")
-
+    if expected_tokenizer_bundle_sha256 is not None:
+        expected_bundle = _require_sha256(
+            expected_tokenizer_bundle_sha256,
+            role="expected_tokenizer_bundle",
+        )
+        if bundle["bundle_sha256"] != expected_bundle:
+            _fail("tokenizer_bundle_substitution")
     prompt = document.get("prompt")
     generation = document.get("generation")
     if not isinstance(prompt, Mapping) or set(prompt) != _PROMPT_KEYS:
@@ -714,14 +769,35 @@ def validate_verified_token_trace(
     if generation.get("streaming_deltas_sha256") != _sha256_json(delta_b64):
         _fail("streaming_deltas_digest_mismatch")
 
+    return document
+
+
+def validate_verified_token_trace(
+    trace: Any,
+    *,
+    adapter: TokenizerTraceAdapter,
+    expected_trace_sha256: str | None = None,
+    expected_tokenizer_bundle_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Replay a structurally valid trace against the exact bound tokenizer."""
+
+    document = validate_verified_token_trace_structure(
+        trace,
+        expected_trace_sha256=expected_trace_sha256,
+        expected_tokenizer_bundle_sha256=expected_tokenizer_bundle_sha256,
+    )
+    bundle = validate_tokenizer_bundle_identity(document["tokenizer_bundle"])
+    adapter_bundle = _adapter_bundle(adapter)
+    if canonical_json_bytes(bundle) != canonical_json_bytes(adapter_bundle):
+        _fail("tokenizer_bundle_substitution")
     _validate_trace_observations(
         adapter=adapter,
-        prompt_text=prompt_text,
-        prompt_token_ids=prompt_tokens,
-        output_token_ids=output_tokens,
-        behavior_logprobs=logprobs,
-        response_text=response_text,
-        streaming_deltas=normalized_deltas,
+        prompt_text=document["prompt"]["text"],
+        prompt_token_ids=document["prompt"]["token_ids"],
+        output_token_ids=document["generation"]["token_ids"],
+        behavior_logprobs=document["generation"]["behavior_logprobs"],
+        response_text=document["generation"]["response_text"],
+        streaming_deltas=document["generation"]["streaming_deltas"],
     )
     return document
 
@@ -732,6 +808,7 @@ __all__ = [
     "TokenizerTraceAdapter",
     "VERIFIED_TOKEN_TRACE_SCHEMA",
     "VerifiedTokenTraceError",
+    "build_resident_tokenizer_trace_adapter",
     "build_tokenizer_bundle_identity",
     "build_verified_token_trace",
     "tokenizer_adapter_source_sha256",
@@ -739,4 +816,5 @@ __all__ = [
     "tokenizer_file_bindings_from_bytes",
     "validate_tokenizer_bundle_identity",
     "validate_verified_token_trace",
+    "validate_verified_token_trace_structure",
 ]

@@ -44,7 +44,7 @@ CAUSAL_GROUP_TERMINAL_SCHEMA = (
     "aura.verified_transition.causal_group_terminal.v1"
 )
 CAUSAL_CAMPAIGN_CLOSE_PAYLOAD_SCHEMA = (
-    "aura.verified_transition.causal_campaign_close_payload.v1"
+    "aura.verified_transition.causal_campaign_close_payload.v2"
 )
 CAUSAL_CAMPAIGN_RECEIPT_SCHEMA = (
     "aura.verified_transition.causal_campaign_receipt.v1"
@@ -1190,29 +1190,37 @@ class VerifiedTransitionCausalCampaignLedger:
     ) -> dict[str, Any]:
         self._assert_policy(policy)
         opened, manifest = self._open_record()
-        starts: list[str] = []
-        terminals: list[str] = []
+        starts: list[str | None] = []
+        terminals: list[str | None] = []
         statuses: list[str] = []
         final_policy: str | None = cast(str, manifest["initial_policy_sha256"])
         latest = cast(int, manifest["planned_at_unix_ns"])
         group_count = cast(int, manifest["group_count"])
-        missing = next(
-            (
-                sequence
-                for sequence in range(group_count)
-                if not self._exists(self._record_name(sequence, "started"))
-                or not self._exists(self._record_name(sequence, "terminal"))
-            ),
-            None,
-        )
-        if missing is not None:
-            raise VerifiedTransitionCausalCampaignError(
-                f"causal_campaign_incomplete:sequence={missing}"
-            )
-        records = self._record_pairs_through(
-            group_count - 1, manifest=manifest
-        )
-        for start, terminal in records:
+        tail_started = False
+        records: list[tuple[dict[str, Any], dict[str, Any]] | None] = []
+        for sequence in range(group_count):
+            has_start = self._exists(self._record_name(sequence, "started"))
+            has_terminal = self._exists(self._record_name(sequence, "terminal"))
+            if not has_start:
+                tail_started = True
+                if has_terminal:
+                    _fail("causal_campaign_terminal_without_start")
+                records.append(None)
+                continue
+            if tail_started:
+                _fail("causal_campaign_noncontiguous_started_tail")
+            if not has_terminal:
+                raise VerifiedTransitionCausalCampaignError(
+                    f"causal_campaign_incomplete:sequence={sequence}"
+                )
+            records.append(self._record_pair(sequence))
+        for record in records:
+            if record is None:
+                starts.append(None)
+                terminals.append(None)
+                statuses.append("aborted")
+                continue
+            start, terminal = record
             if final_policy is None or start["policy_before_sha256"] != final_policy:
                 _fail("causal_campaign_policy_lineage_broken")
             final_policy = cast(str | None, terminal["policy_after_sha256"])
