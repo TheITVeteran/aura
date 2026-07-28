@@ -17,6 +17,42 @@ from core.utils.deadlines import get_deadline
 _MISSING = object()
 
 
+def _admission_snapshot(**overrides):
+    """A memory-admission snapshot shaped the way production makes them.
+
+    Fixtures used to hand the gate bare dicts like
+    ``{"can_admit": True, "pressure_pct": 40.0}``. Production never produces
+    that: every snapshot comes from ``_headroom_snapshot``, which stamps a
+    schema and a measurement time so an INCOMPLETE or STALE receipt cannot
+    authorize a ~20GB model load (CP126, "Missing admission fields are
+    interpreted as permission").
+
+    A fixture that omits the stamp is testing a shape that does not exist,
+    and it was the reason the permissive reading looked safe.
+    """
+    import time as _time
+
+    from core.brain.inference_gate import ADMISSION_SNAPSHOT_SCHEMA
+
+    snapshot = {
+        "tier": "primary",
+        "pressure_pct": 40.0,
+        "total_gb": 64.0,
+        "available_gb": 32.0,
+        "process_rss_gb": 0.0,
+        "process_rss_limit_gb": 0.0,
+        "max_pressure_pct": 84.0,
+        "min_available_gb": 16.0,
+        "can_admit": True,
+        "reason": "",
+        "measured": True,
+        "schema": ADMISSION_SNAPSHOT_SCHEMA,
+        "measured_at_monotonic": _time.monotonic(),
+    }
+    snapshot.update(overrides)
+    return snapshot
+
+
 @pytest.mark.asyncio
 async def test_foreground_resource_context_uses_canonical_admission(monkeypatch):
     from core.resilience import resource_arbitrator
@@ -633,7 +669,9 @@ async def test_deep_handoff_uses_solver_then_returns_response():
             raise AssertionError(f"Unexpected model path: {model_path}")
 
         # Fixed memory headroom so test doesn't depend on actual system RAM
-        _low_pressure = {"tier": "secondary", "pressure_pct": 40.0, "total_gb": 64.0, "available_gb": 32.0, "max_pressure_pct": 84.0, "min_available_gb": 16.0, "can_admit": True}
+        _low_pressure = _admission_snapshot(
+            tier="secondary", pressure_pct=40.0, available_gb=32.0,
+        )
         with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
             with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):
                 with replace("core.brain.llm.model_registry.get_runtime_model_path", return_value="/models/active"):
@@ -691,11 +729,9 @@ async def test_deep_handoff_failure_still_schedules_primary_restore():
             gate,
             "_enforce_foreground_admission",
             new=AsyncCallProbe(
-                return_value={
-                    "can_admit": True,
-                    "pressure_pct": 40.0,
-                    "available_gb": 28.0,
-                }
+                return_value=_admission_snapshot(
+                    pressure_pct=40.0, available_gb=28.0,
+                )
             ),
         ):
             with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
@@ -1693,15 +1729,13 @@ async def test_user_facing_secondary_uses_compact_foreground_context_builders():
                 return cortex
             raise AssertionError(f"Unexpected model path: {model_path}")
 
-        low_pressure = {
-            "tier": "secondary",
-            "pressure_pct": 40.0,
-            "total_gb": 64.0,
-            "available_gb": 32.0,
-            "max_pressure_pct": 86.0,
-            "min_available_gb": 10.0,
-            "can_admit": True,
-        }
+        low_pressure = _admission_snapshot(
+            tier="secondary",
+            pressure_pct=40.0,
+            available_gb=32.0,
+            max_pressure_pct=86.0,
+            min_available_gb=10.0,
+        )
 
         with replace("core.brain.llm.mlx_client.get_mlx_client", side_effect=_fake_get_mlx_client):
             with replace("core.brain.llm.model_registry.get_deep_model_path", return_value="/models/deep"):

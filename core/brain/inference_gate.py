@@ -377,6 +377,70 @@ async def _thread_lock_context(
             logger.debug("Foreground-ready lock %s was already released.", label)
 
 
+#: Identity and freshness contract for a memory-admission snapshot.
+#:
+#: CP126 (high): "Missing admission fields are interpreted as permission.
+#: Foreground admission results are consumed as dictionaries and can_admit
+#: defaults to True when absent. An incomplete or stale admission receipt
+#: therefore authorizes the expensive lane rather than failing closed or
+#: requiring a validated schema."
+#:
+#: The absent-field half is already closed at the consumption sites, which
+#: read `.get("can_admit", False)`. What remained is the other two words in
+#: that finding — INCOMPLETE and STALE. A bare dict carrying
+#: `{"can_admit": True}` and nothing else was indistinguishable from a full
+#: measurement, and a snapshot taken minutes ago was indistinguishable from
+#: one taken now. Both authorize a ~20GB model load on evidence that may no
+#: longer be true.
+#:
+#: Stamping identity and measurement time makes both answerable.
+ADMISSION_SNAPSHOT_SCHEMA = "aura.memory_admission_snapshot.v1"
+
+#: How long a memory measurement may authorize a heavy lane. Memory pressure
+#: on this host moves in seconds under load, so an older reading is history
+#: rather than evidence.
+ADMISSION_SNAPSHOT_MAX_AGE_S = 30.0
+
+_REQUIRED_ADMISSION_FIELDS = (
+    "can_admit",
+    "measured",
+    "pressure_pct",
+    "available_gb",
+    "tier",
+)
+
+
+def admission_permits(
+    snapshot: Any,
+    *,
+    max_age_s: float = ADMISSION_SNAPSHOT_MAX_AGE_S,
+) -> tuple[bool, str]:
+    """Does this snapshot actually authorize a heavy lane right now?
+
+    Returns ``(permitted, reason)``. Refuses an unrecognised shape, a
+    partial receipt, and a measurement too old to still be true — each with
+    a distinct reason, because "we were refused" and "we asked with a stale
+    receipt" need different responses from an operator.
+    """
+    if not isinstance(snapshot, dict):
+        return False, f"admission_snapshot_not_a_dict:{type(snapshot).__name__}"
+    if snapshot.get("schema") != ADMISSION_SNAPSHOT_SCHEMA:
+        return False, f"admission_snapshot_schema_unrecognised:{snapshot.get('schema')!r}"
+    missing = [key for key in _REQUIRED_ADMISSION_FIELDS if key not in snapshot]
+    if missing:
+        return False, f"admission_snapshot_incomplete:{','.join(missing)}"
+    if not bool(snapshot.get("can_admit")):
+        return False, str(snapshot.get("reason") or "admission_refused")
+    stamped = snapshot.get("measured_at_monotonic")
+    try:
+        age = time.monotonic() - float(stamped)
+    except (TypeError, ValueError):
+        return False, "admission_snapshot_unstamped"
+    if age > max(1.0, float(max_age_s)):
+        return False, f"admission_snapshot_stale:{age:.1f}s"
+    return True, ""
+
+
 class InferenceGate:
     """Isolated inference gateway for Aura's managed local runtime + cloud fallback."""
 
@@ -988,6 +1052,8 @@ class InferenceGate:
                 "can_admit": can_admit,
                 "reason": reason,
                 "measured": True,
+                "schema": ADMISSION_SNAPSHOT_SCHEMA,
+                "measured_at_monotonic": time.monotonic(),
             }
         except (AttributeError, TypeError, ValueError, OSError) as exc:
             _record_inference_degradation(
@@ -1015,6 +1081,8 @@ class InferenceGate:
                     else "memory_probe_failed"
                 ),
                 "measured": False,
+                "schema": ADMISSION_SNAPSHOT_SCHEMA,
+                "measured_at_monotonic": time.monotonic(),
             }
 
     def _note_cortex_stuck_kill(self) -> None:
@@ -1403,6 +1471,8 @@ class InferenceGate:
                 "can_admit": can_admit,
                 "reason": reason,
                 "measured": True,
+                "schema": ADMISSION_SNAPSHOT_SCHEMA,
+                "measured_at_monotonic": time.monotonic(),
             }
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError, psutil.Error) as exc:
             _record_inference_degradation(
@@ -1431,6 +1501,8 @@ class InferenceGate:
                     else "memory_probe_failed"
                 ),
                 "measured": False,
+                "schema": ADMISSION_SNAPSHOT_SCHEMA,
+                "measured_at_monotonic": time.monotonic(),
             }
 
     @staticmethod
@@ -6749,7 +6821,8 @@ class InferenceGate:
             if requested_tier == "primary" and not protected_foreground_lane:
                 try:
                     primary_headroom = self._headroom_snapshot("primary")
-                    if not primary_headroom.get("can_admit", False):
+                    _primary_ok, _primary_reason = admission_permits(primary_headroom)
+                    if not _primary_ok:
                         logger.warning(
                             "InferenceGate: primary lane outside safe memory envelope "
                             "(pressure=%.1f%% available=%.1fGB). Downgrading to brainstem.",
@@ -6980,10 +7053,9 @@ class InferenceGate:
                 requested_tier,
                 protected_foreground=protected_foreground_lane,
             )
-            if (
-                not admission_snapshot.get("can_admit", False)
-                and requested_tier == "secondary"
-            ):
+            # A complete, fresh receipt or none at all — see admission_permits.
+            _admitted, _admission_reason = admission_permits(admission_snapshot)
+            if not _admitted and requested_tier == "secondary":
                 logger.warning(
                     "🛡️ InferenceGate: deep local handoff exceeds safe headroom "
                     "(pressure=%.1f%% available=%.1fGB process=%.1f/%.1fGB). "
