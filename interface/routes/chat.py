@@ -12502,6 +12502,38 @@ def _is_explicit_capability_inventory_request(user_message: str) -> bool:
     ):
         return False
 
+    # LIVE DEFECT, 2026-07-27. The structural rule below is proximity-based:
+    # her as the subject, then a capability word within eighty characters. It
+    # cannot tell WHOSE capability is being discussed.
+    #
+    # Bryan asked "Can I get a % chance on the odds that you'll one day build
+    # me a ship capable of traveling light speed to explore the stars?" —
+    # "you'll" and "capable" inside eighty characters — and got a recitation
+    # of all 75 governed skill surfaces. "Capable" described the SHIP.
+    #
+    # He noticed immediately ("Not what I asked for, Aura lol"), and her own
+    # next turn diagnosed it: "I was going to give you a tool catalog. You
+    # want the ship, not the catalog?"
+    #
+    # A capability word attached to some other object is not a question about
+    # her inventory, so an "a/an/the <noun> capable of" construction
+    # disqualifies that occurrence. Same for a robot body capable of running
+    # her, or a system capable of X.
+    _capability_belongs_elsewhere = re.search(
+        r"\b(?:a|an|the|any|some|another|one|my|his|their|its)\s+"
+        r"(?:\w+[\s-]+){0,3}(?:capable|capabilit|abilit)\w*\b",
+        text,
+        flags=re.IGNORECASE,
+    ) and not re.search(
+        r"\b(?:your|aura'?s?|her)\s+(?:\w+\s+){0,2}"
+        r"(?:capable|capabilit|abilit|tools?|skills?)\w*\b"
+        r"|\b(?:you|aura|she)\s+(?:are|is|'re|'s)\s+capable\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if _capability_belongs_elsewhere:
+        return False
+
     if re.search(
         r"\bwhat(?:'s| is| are)?\b[^?]{0,80}?\b(?:you|your|aura|she|her)\b"
         r"|\b(?:you|your|aura|she|her)\b[^?]{0,80}?\b(?:capable|abilit|"
