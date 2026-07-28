@@ -1813,6 +1813,74 @@ class SovereignVoiceEngine:
         )
         return assessment
 
+    def begin_owner_voice_conversation(self) -> None:
+        """The owner opened a voice conversation from the UI. Speech is for her.
+
+        The wake-word boundary exists so AMBIENT audio — a video, a nearby
+        conversation — cannot hijack the typed chat lane. It was also gating the
+        case where the owner had just pressed a control labelled "Start voice
+        conversation", which is the opposite situation: an explicit invitation.
+
+        Measured live: the mic came up, Whisper transcribed the owner's speech
+        correctly, every utterance was filed as `transcript_candidate` with
+        `requires_wake_word_session=True`, and nothing ever answered. From the
+        outside she could hear him and would not respond.
+
+        No TTL: the session lasts exactly as long as the owner leaves voice on,
+        which is what the control's own "Stop the voice conversation" label
+        promises. Ambient enablement (wake-word listening, boot) does not call
+        this, so that boundary is untouched.
+        """
+
+        self._owner_voice_conversation = True
+        self._owner_voice_conversation_started_at = time.time()
+        logger.info(
+            "🎙️ Owner voice conversation OPEN — speech routes to chat without a "
+            "wake word until voice is switched off."
+        )
+
+    def end_owner_voice_conversation(self) -> None:
+        if getattr(self, "_owner_voice_conversation", False):
+            logger.info("🎙️ Owner voice conversation CLOSED — wake word required again.")
+        self._owner_voice_conversation = False
+        self._owner_voice_conversation_started_at = 0.0
+        self._owner_voice_chunk_at = 0.0
+
+    #: How long after the last owner-streamed audio chunk the conversation stays
+    #: open. The UI stops streaming the moment the owner presses stop, so this is
+    #: an idle window, not a conversation timeout — long enough to think between
+    #: sentences, short enough that a closed conversation does not linger.
+    OWNER_VOICE_CHUNK_IDLE_S: float = 45.0
+
+    def note_owner_voice_chunk(self) -> None:
+        """Audio arrived from the owner's own UI voice control.
+
+        This is the signal the wake-word boundary was missing. Chunks on this
+        path exist only because the owner pressed the control and is deliberately
+        speaking to her, which is categorically different from a microphone that
+        happens to be listening.
+        """
+
+        if not getattr(self, "_owner_voice_conversation", False):
+            self.begin_owner_voice_conversation()
+        self._owner_voice_chunk_at = time.time()
+
+    def owner_voice_conversation_active(self) -> bool:
+        """True only while the owner has an explicit voice conversation open."""
+
+        if not getattr(self, "_owner_voice_conversation", False):
+            return False
+        last_chunk = float(getattr(self, "_owner_voice_chunk_at", 0.0) or 0.0)
+        if last_chunk > 0.0:
+            # Streaming from the UI keeps it open on its own; the server-side mic
+            # need not be the source.
+            if (time.time() - last_chunk) <= self.OWNER_VOICE_CHUNK_IDLE_S:
+                return True
+            return False
+        # Opened by an explicit microphone enablement instead: a conversation
+        # cannot outlive the microphone it speaks through.
+        return bool(getattr(self, "microphone_enabled", False))
+
     def _dispatch_transcript(
         self,
         text: str,
@@ -1838,7 +1906,10 @@ class SovereignVoiceEngine:
         # Record validation state
         self._last_transcript_time = now
         self._last_transcript_text = normalized
-        direct_command_dispatch = _direct_stt_command_dispatch_enabled()
+        direct_command_dispatch = (
+            _direct_stt_command_dispatch_enabled()
+            or self.owner_voice_conversation_active()
+        )
         audio_source = dict(source_assessment or self._last_audio_source_assessment or {})
         audio_source["response_authorized"] = bool(direct_command_dispatch)
 

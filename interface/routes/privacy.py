@@ -68,6 +68,11 @@ def get_browser_camera_privacy() -> Dict[str, Any]:
 
 class PrivacyPayload(BaseModel):
     enabled: bool
+    # True when the owner pressed the UI's voice-conversation control, as opposed
+    # to the microphone coming up for ambient wake-word listening. Only the
+    # former is an invitation to be answered without a wake word, so this
+    # defaults False and every existing caller keeps the wake-word boundary.
+    conversation: bool = False
 
 
 # ── Routes ────────────────────────────────────────────────────
@@ -174,6 +179,19 @@ async def api_privacy_microphone(payload: PrivacyPayload, _: None = Depends(_req
         elif not enabled and hasattr(voice, "stop_listening"):
             voice.stop_listening()
         logger.info("\U0001f512 Privacy: Microphone %s", 'enabled' if enabled else 'disabled')
+        # An owner who pressed "Start voice conversation" has already declared
+        # that the speech is for her; requiring a wake word per utterance made
+        # her hear him and not answer. Ambient enablement keeps the boundary.
+        if enabled and payload.conversation and bool(
+            getattr(voice, "microphone_enabled", False)
+        ):
+            begin = getattr(voice, "begin_owner_voice_conversation", None)
+            if callable(begin):
+                begin()
+        elif not enabled:
+            end = getattr(voice, "end_owner_voice_conversation", None)
+            if callable(end):
+                end()
         listening = bool(getattr(voice, "_mic_listening", False))
         ok = bool((not enabled) or listening_started or listening)
         return {
@@ -201,6 +219,16 @@ async def api_voice_chunk(request: Request):
         raise HTTPException(status_code=413, detail="Voice chunk too large")
     voice = _voice_engine_fn() if _voice_engine_fn else None
     if voice and hasattr(voice, "feed_chunk"):
+        # Audio on this path exists only because the owner pressed the UI's
+        # voice control and is deliberately speaking to her — categorically
+        # different from a microphone that happens to be listening. That
+        # distinction is what the wake-word boundary was missing: measured live,
+        # Whisper transcribed the owner correctly, every utterance was filed as a
+        # `transcript_candidate` requiring a wake-word session, and nothing ever
+        # answered. She could hear him and would not respond.
+        note = getattr(voice, "note_owner_voice_chunk", None)
+        if callable(note):
+            note()
         await voice.feed_chunk(chunk)
     return JSONResponse({"ok": True})
 
