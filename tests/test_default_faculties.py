@@ -71,3 +71,54 @@ def test_declaration_is_idempotent():
 
 def test_a_faculty_that_gates_others_carries_leverage(registry):
     assert registry.leverage("memory") > registry.leverage("temporal_reasoning")
+
+
+# --- the memory probe measures recall, not machinery ---------------------
+
+
+def test_the_memory_probe_reads_real_recall_telemetry(monkeypatch):
+    from core.memory import recall_telemetry
+
+    class _Telemetry:
+        def snapshot(self):
+            return {"window": {"hit_rate": 0.62}, "lifetime": {"hit_rate": 0.5}}
+
+    monkeypatch.setattr(recall_telemetry, "get_recall_telemetry", lambda: _Telemetry())
+    assert mod._recall_hit_rate() == 0.62
+
+
+def test_it_falls_back_to_lifetime_when_the_window_is_cold(monkeypatch):
+    from core.memory import recall_telemetry
+
+    class _Telemetry:
+        def snapshot(self):
+            return {"window": {"hit_rate": None}, "lifetime": {"hit_rate": 0.4}}
+
+    monkeypatch.setattr(recall_telemetry, "get_recall_telemetry", lambda: _Telemetry())
+    assert mod._recall_hit_rate() == 0.4
+
+
+def test_no_recall_attempts_is_unknown_not_zero(monkeypatch):
+    """A hit rate over zero attempts is not 0.0 — it is unmeasured."""
+    from core.memory import recall_telemetry
+
+    class _Telemetry:
+        def snapshot(self):
+            return {"window": {"hit_rate": None}, "lifetime": {"hit_rate": None}}
+
+    monkeypatch.setattr(recall_telemetry, "get_recall_telemetry", lambda: _Telemetry())
+    assert mod._recall_hit_rate() is None
+
+
+def test_recall_quality_outweighs_mere_availability(registry):
+    """Whether the machinery is up must not drown out whether it works."""
+    memory = next(f for f in registry.all() if f.faculty_id == "memory")
+    weights = {m.metric_id: m.weight for m in memory.metrics}
+    assert weights["recall_hit_rate"] > weights["dense_retrieval_available"]
+
+
+def test_reasoning_stays_blind_rather_than_using_a_proxy(registry):
+    """reasoning_solved_cache.stats() measures cache reuse, not correctness."""
+    reasoning = next(f for f in registry.all() if f.faculty_id == "reasoning")
+    assert reasoning.metrics[0].probe() is None
+    assert "cache reuse" in (reasoning.metrics[0].probe.__doc__ or "")

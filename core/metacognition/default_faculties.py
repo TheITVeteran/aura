@@ -5,11 +5,18 @@ a specific mind. Every probe here reads a real runtime surface, and every
 faculty without one says so rather than being quietly omitted — an undeclared
 faculty is invisible, and invisible is worse than known-unmeasured.
 
-The honest state today: concurrency safety and operational integrity are
-measurable from live counters; memory is measurable only as far as "is dense
-retrieval even available"; temporal reasoning has no probe at all. That last
-one is not a gap in this file, it is a true statement about Aura, and the
-model is built to surface it as a target rather than hide it.
+The honest state today: attention allocation and operational integrity read
+live counters; memory reads its real recall hit rate, which is None until
+something has actually been recalled — unknown, not zero. Temporal reasoning
+and multi-step reasoning have no probe at all.
+
+Those last two are not gaps in this file, they are true statements about
+Aura, and the model exists to surface them as targets rather than hide them.
+Wiring a convenient proxy would be worse than leaving them blind:
+reasoning_solved_cache.stats() was available and deliberately not used,
+because it measures cache reuse rather than whether reasoning was correct,
+and it reports 0.0 for zero attempts — a fabricated score in the exact shape
+this model is built to reject.
 """
 
 from __future__ import annotations
@@ -72,6 +79,34 @@ def _open_degradations() -> float | None:
         return None
 
 
+def _recall_hit_rate() -> float | None:
+    """How often a recall attempt actually returned something usable.
+
+    The real memory metric: not "is the machinery present" but "does asking
+    my memory a question get an answer". ``RecallTelemetry`` already reports
+    None when nothing has been attempted, which is exactly the right answer —
+    a hit rate over zero attempts is not zero, it is unknown, and this model
+    is built to keep that distinction.
+    """
+    try:
+        from core.memory.recall_telemetry import get_recall_telemetry
+
+        snapshot = get_recall_telemetry().snapshot()
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+        return None
+    if not isinstance(snapshot, dict):
+        return None
+    # Prefer the recent window; fall back to lifetime when the window is cold.
+    for scope in ("window", "lifetime"):
+        section = snapshot.get(scope)
+        if isinstance(section, dict) and section.get("hit_rate") is not None:
+            try:
+                return float(section["hit_rate"])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _dense_retrieval_available() -> float | None:
     """Whether recall runs on dense embeddings or has fallen back to lexical.
 
@@ -118,6 +153,20 @@ def declare_default_faculties(registry: FacultyRegistry | None = None) -> Facult
             gates=("attention_allocation", "temporal_reasoning", "reasoning"),
             metrics=(
                 ImprovementMetric(
+                    metric_id="recall_hit_rate",
+                    unit="",
+                    direction="higher_is_better",
+                    probe=_recall_hit_rate,
+                    floor=0.0,
+                    target=0.75,
+                    ceiling=1.0,
+                    weight=3.0,
+                    description=(
+                        "Fraction of recall attempts that returned something "
+                        "usable — measured from live retrievals, not a benchmark."
+                    ),
+                ),
+                ImprovementMetric(
                     metric_id="dense_retrieval_available",
                     unit="",
                     direction="higher_is_better",
@@ -125,9 +174,10 @@ def declare_default_faculties(registry: FacultyRegistry | None = None) -> Facult
                     floor=0.0,
                     target=1.0,
                     ceiling=1.0,
+                    weight=1.0,
                     description=(
-                        "Availability of dense retrieval, not recall quality. "
-                        "Should become recall@k against a fixed probe set."
+                        "Whether the good retrieval path is even up. A capacity "
+                        "check, weighted below the quality metric above."
                     ),
                 ),
             ),
@@ -188,7 +238,10 @@ def declare_default_faculties(registry: FacultyRegistry | None = None) -> Facult
                     metric_id="event_order_accuracy",
                     unit="",
                     direction="higher_is_better",
-                    probe=_unmeasured("no temporal benchmark is wired into the runtime"),
+                    probe=_unmeasured(
+                        "no temporal benchmark is wired in; needs a task set of "
+                        "event-ordering and duration questions scored at runtime"
+                    ),
                     floor=0.0,
                     target=0.9,
                     ceiling=1.0,
@@ -208,7 +261,10 @@ def declare_default_faculties(registry: FacultyRegistry | None = None) -> Facult
                     unit="",
                     direction="higher_is_better",
                     probe=_unmeasured(
-                        "no live verifier stream is aggregated into a rate yet"
+                        "no live verifier stream is aggregated into a rate yet. "
+                        "reasoning_solved_cache.stats() is deliberately NOT used: "
+                        "it measures cache reuse, not whether reasoning was "
+                        "correct, and it reports 0.0 for zero attempts"
                     ),
                     floor=0.0,
                     target=0.85,
