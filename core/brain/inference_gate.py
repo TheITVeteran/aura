@@ -200,6 +200,12 @@ def _grounded_state_signal_text(value: Any, *, limit: int) -> str:
         text = text.replace(source, replacement)
     return text[:limit]
 
+#: Arguments every ``_generate_with_client`` call passes by name. They must
+#: never also appear inside the ``**morpho_kwargs`` splat beside them.
+_GENERATE_EXPLICIT_KWARGS: frozenset[str] = frozenset(
+    {"messages", "max_tokens", "temperature", "origin", "is_background", "foreground_request"}
+)
+
 _INFERENCE_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -7858,7 +7864,15 @@ class InferenceGate:
                 )
                 max_tokens = _plan_floor
                 context["max_tokens"] = max_tokens
-                morpho_kwargs["max_tokens"] = max_tokens
+                # NOT morpho_kwargs. Every _generate_with_client call site
+                # passes max_tokens= explicitly AND splats **morpho_kwargs, so
+                # putting it in both raised
+                #   TypeError: _generate_with_client() got multiple values for
+                #   keyword argument 'max_tokens'
+                # which failed the inference_gate closed and surfaced as
+                # user_cycle_no_response — the engine returning nothing at all
+                # on every desktop turn, in two seconds, while ordinary
+                # conversation through the same engine kept working.
             if output_contract_is_user_facing:
                 output_contract_is_user_facing = False
                 logger.info(
@@ -8444,6 +8458,19 @@ class InferenceGate:
                 visible_user_prompt,
                 context,
             )
+            # Every _generate_with_client call site passes these EXPLICITLY and also
+            # splats **morpho_kwargs, so any overlap is a guaranteed TypeError —
+            # "got multiple values for keyword argument" — which fails the
+            # inference_gate closed and reaches the person as user_cycle_no_response:
+            # the engine returning nothing at all, in two seconds, while ordinary
+            # conversation through the same engine keeps working. One added key did
+            # exactly that to every desktop turn.
+            #
+            # Scrubbed here rather than trusted to every future writer: the explicit
+            # argument is the authority, and a duplicate in the splat can only ever
+            # be the same value or a bug.
+            for _reserved in _GENERATE_EXPLICIT_KWARGS:
+                morpho_kwargs.pop(_reserved, None)
             morpho_kwargs.setdefault("clean_user_surface_contract", True)
             morpho_kwargs.setdefault(
                 "user_surface_validation_prompt",
