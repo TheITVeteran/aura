@@ -3,8 +3,11 @@
 The honest way to increase a frozen model's capacity without enlarging its weights:
 keep a datastore of (hidden-state key -> next token) pairs and, at generation time,
 interpolate the nearest neighbors' tokens into the model's own next-token distribution.
-A small model + a large datastore matches a much bigger model on knowledge, because the
-datastore is *non-parametric* capacity that grows without retraining.
+In the kNN-LM literature a small model plus a large datastore can close much of the
+knowledge gap to a bigger model, because the datastore is *non-parametric* capacity that
+grows without retraining. That is the result this design is BASED on; it is not a
+measurement of this implementation. Nothing here benchmarks Aura against a larger model,
+so this module claims a mechanism, not a capability.
 
 This is NOT prompt-level RAG — it operates on the next-token distribution itself, so the
 information lives in a reachable store instead of in parameters. It is fail-open logit
@@ -351,10 +354,23 @@ class NonParametricMemory:
     ) -> dict[int, float]:
         """Blend the model's next-token probs with kNN recall: p = λ·p_kNN + (1-λ)·p_LM.
 
-        Fail-open: returns ``lm_probs`` unchanged when there are no neighbors or λ≈0, so
-        generation never degrades below the raw model. An error anywhere in the
-        recall/blend path also fails open to the raw model probabilities — the
-        documented contract now has a real exception boundary behind it.
+        The guarantee is narrower than "never degrades", and the difference matters.
+
+        What IS guaranteed, and tested: when there are no neighbours above the
+        similarity gate, when λ resolves to ≈0, or when anything in the
+        recall/blend path raises, this returns ``lm_probs`` UNCHANGED — the
+        same object contents, not merely something similar. Those three paths
+        cannot make generation worse because they do not touch the
+        distribution at all.
+
+        What is NOT guaranteed: that a blend which DOES fire improves the
+        output. Once λ>0 and neighbours pass the gate, probability mass moves,
+        and moving it can be wrong — a confidently-recalled neighbour from a
+        different fact is exactly the failure the similarity gate exists to
+        catch, and the July measurement recorded below shows it happening.
+        Saying "generation never degrades below the raw model" claimed the
+        second thing while only implementing the first (CP126: "comments
+        overstate demonstrated capacity and safety").
         """
         try:
             neighbors = self.query(query_key, k=k)
@@ -386,7 +402,26 @@ class NonParametricMemory:
             with self._lock:
                 self._stats["interpolated"] += 1
             return blended
-        except (TypeError, ValueError, KeyError, AttributeError, ZeroDivisionError, FloatingPointError) as exc:
+        except (
+            TypeError,
+            ValueError,
+            KeyError,
+            AttributeError,
+            ZeroDivisionError,
+            FloatingPointError,
+            # The docstring promised "an error ANYWHERE in the recall/blend
+            # path fails open", and the list stopped short of the ones a
+            # backing index actually raises. A FAISS or numpy-backed query
+            # can raise RuntimeError, OSError, IndexError or OverflowError,
+            # and each of those escaped into the token loop — killing the
+            # generation the fail-open contract exists to protect (CP126:
+            # "comments overstate demonstrated capacity and safety").
+            RuntimeError,
+            OSError,
+            IndexError,
+            OverflowError,
+            MemoryError,
+        ) as exc:
             # Honor the fail-open contract: any recall/blend error returns the
             # raw model distribution rather than breaking generation.
             with self._lock:
