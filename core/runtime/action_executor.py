@@ -33,7 +33,7 @@ from core.runtime.action_verification import (
     observe_action_effect,
 )
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
-from core.runtime.errors import record_degradation
+from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.flags import FlagKind, declare
 from core.runtime.network_gateway import get_network_gateway
@@ -248,8 +248,29 @@ class ActionExecutor:
                             expectation=expectation_contract,
                         )
         except ImportError as exc:
-            logger.debug("Pre-action cortex unavailable: %s", exc)
+            # `deliberation_worthy_action = False` is the SAME value this
+            # function uses for "this action does not need deliberation", so a
+            # cortex that failed to import was indistinguishable from a policy
+            # decision that it was unnecessary — at logger.debug, which nobody
+            # reads. Every consequential action would then proceed
+            # undeliberated with no signal that the check had not run.
+            #
+            # Not deliberating because the cortex says so is a decision.
+            # Not deliberating because the cortex could not be loaded is a lost
+            # capability, and it is recorded as one.
             deliberation_worthy_action = False
+            record_degradation(
+                "action_executor.preaction_cortex",
+                exc,
+                action=(
+                    f"proceeded with {action_name} WITHOUT pre-action "
+                    "deliberation; the cortex could not be imported"
+                ),
+                severity="degraded",
+                classification=FallbackClassification.SILENT_LOSS_OF_CAPABILITY,
+                extra={"action": action_name, "domain": domain.value},
+                enforce_failure_policy=False,
+            )
         except _ACTION_EXECUTOR_RECOVERABLE_ERRORS as exc:
             record_degradation(
                 "action_executor.external_execution",
