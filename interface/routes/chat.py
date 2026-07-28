@@ -18771,6 +18771,16 @@ async def api_chat(
     if len(body.message.encode('utf-8', errors='replace')) > MAX_CHAT_MESSAGE_BYTES:
         raise HTTPException(status_code=413, detail="Message too large (max 64KB)")
 
+    # From here until this turn is answered, her own unprompted speech waits.
+    # She is meant to have things to say; a person waiting on an answer is not
+    # the moment for them.
+    try:
+        from core.conversation.surface_delivery import note_turn_started
+
+        note_turn_started()
+    except _CHAT_RECOVERABLE_ERRORS as _exc:
+        record_degradation("chat", _exc, severity="info", action="turn start unrecorded")
+
     request_client = getattr(request, "client", None)
     _request_origin = str(getattr(request_client, "host", "unknown") or "unknown")
     _request_access_profile = request_access_profile(request)

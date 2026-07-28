@@ -41,7 +41,9 @@ from typing import Any
 
 __all__ = [
     "LATE_LANE_WINDOW_S",
+    "TURN_IN_FLIGHT_CEILING_S",
     "note_route_delivered",
+    "note_turn_started",
     "route_answer_supersedes",
     "reset_route_delivery",
 ]
@@ -52,9 +54,16 @@ __all__ = [
 #: muting proactive speech for the rest of the conversation.
 LATE_LANE_WINDOW_S = 240.0
 
+#: A turn cannot be "in flight" forever — a route that dies without answering
+#: must not mute her for the rest of the session. Comfortably longer than the
+#: slowest real turn (a reconstruction runs into the minutes) and far short of
+#: a conversation.
+TURN_IN_FLIGHT_CEILING_S = 1_800.0
+
 _LOCK = threading.Lock()
 _LAST_ROUTE_REPLY: str = ""
 _LAST_ROUTE_AT: float = 0.0
+_TURN_STARTED_AT: float = 0.0
 
 
 def _norm(text: Any) -> str:
@@ -63,10 +72,28 @@ def _norm(text: Any) -> str:
 
 def reset_route_delivery() -> None:
     """Forget the last delivery (tests, and a fresh conversation)."""
-    global _LAST_ROUTE_REPLY, _LAST_ROUTE_AT
+    global _LAST_ROUTE_REPLY, _LAST_ROUTE_AT, _TURN_STARTED_AT
     with _LOCK:
         _LAST_ROUTE_REPLY = ""
         _LAST_ROUTE_AT = 0.0
+        _TURN_STARTED_AT = 0.0
+
+
+def note_turn_started() -> None:
+    """The person just said something and is waiting for the answer.
+
+    Protection used to begin only when the route ANSWERED, which leaves the
+    whole of a turn unguarded — and the longer the turn, the wider the hole.
+    Measured live 2026-07-28: asked to reverse-engineer 2048, the window filled
+    with "Bryan, you mentioned her being your favorite person in the world..."
+    at the same second as the real reply, and "I've been reading up on swarm
+    protocols" four minutes later. Neither answered anything he asked; both are
+    her own idle interests, which she is supposed to have — just not in the
+    middle of someone waiting on an answer.
+    """
+    global _TURN_STARTED_AT
+    with _LOCK:
+        _TURN_STARTED_AT = time.time()
 
 
 def note_route_delivered(reply_text: Any) -> None:
@@ -80,7 +107,7 @@ def note_route_delivered(reply_text: Any) -> None:
         _LAST_ROUTE_AT = time.time()
 
 
-def route_answer_supersedes(spoken_text: Any) -> bool:
+def route_answer_supersedes(spoken_text: Any, *, unprompted: bool = True) -> bool:
     """True when this spoken message is a second lane answering a settled turn.
 
     False when the route has not answered recently, when the window has
@@ -93,7 +120,25 @@ def route_answer_supersedes(spoken_text: Any) -> bool:
     with _LOCK:
         last_reply = _LAST_ROUTE_REPLY
         last_at = _LAST_ROUTE_AT
-    if not last_reply or (time.time() - last_at) > LATE_LANE_WINDOW_S:
+        started_at = _TURN_STARTED_AT
+    now = time.time()
+
+    # A turn is open: the person asked and has not been answered yet. Anything
+    # arriving now is either that answer (let it through, matched below) or
+    # something else entirely, which is an interruption.
+    # Only UNPROMPTED speech waits. The route's own answer travels this same
+    # bridge, and withholding it would trade a noisy window for a silent one —
+    # a reply lost is a certain loss, which is the more expensive mistake.
+    turn_open = (
+        unprompted
+        and started_at > 0.0
+        and started_at > last_at
+        and (now - started_at) <= TURN_IN_FLIGHT_CEILING_S
+    )
+    if turn_open:
+        return True
+
+    if not last_reply or (now - last_at) > LATE_LANE_WINDOW_S:
         return False
     # The same answer, however it was trimmed or wrapped on the way here.
     head = body[:160]

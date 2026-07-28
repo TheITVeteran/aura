@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -35,6 +36,11 @@ DEFAULT_MEMORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB default limit
 # cascades) is uncapped and can still reach 1.0. Kept just below the veto line.
 OPERATIONAL_THREAT_CAP = 0.70
 CRITICAL_THREAT_THRESHOLD = 0.75
+#: "RuntimeError: ", "ValueError: " — an exception type at the head of a
+#: message, left behind when a propagation wrapper is stripped.
+_ORIGIN_SUBSYSTEM_RE = re.compile(r"Subsystem '([^']+)' failed")
+_EXCEPTION_PREFIX_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Violation):\s*")
+
 DEGRADATION_THREAT_WINDOW_S = 60.0
 DEGRADATION_THREAT_DENOMINATOR = 5.0
 DEGRADATION_THREAT_SATURATION_EPSILON = 1e-4
@@ -98,6 +104,67 @@ class ExistentialStakes:
         # because fresh records keep adding full weight.
         decay = 1.0 - (age_s / DEGRADATION_THREAT_WINDOW_S)
         return base * decay
+
+    #: A propagated failure carries its origin's text inside this prefix.
+    _ESCALATION_PREFIX = "CRITICAL SERVICE FAILURE:"
+    _ORIGINAL_ERROR_MARKER = "Original error:"
+
+    @classmethod
+    def _origin_subsystem(cls, message: str) -> str:
+        """Which subsystem the wrapper says actually failed.
+
+        The escalation text names it — "Subsystem 'cognitive_engine' failed
+        with failure policy 'fail-closed'" — so a propagated record can be
+        filed under the subsystem it is about rather than the one that
+        re-raised it. Nested wrappers name each layer; the innermost is the
+        one that really broke, so the last match wins.
+        """
+        found = _ORIGIN_SUBSYSTEM_RE.findall(str(message or ""))
+        return str(found[-1]) if found else ""
+
+    @classmethod
+    def _is_propagated(cls, message: str) -> bool:
+        """Did a caller re-record someone else's failure under its own name?"""
+        return cls._ESCALATION_PREFIX in str(message or "")
+
+    @classmethod
+    def _root_cause_text(cls, message: str) -> str:
+        """Strip propagation wrappers down to the failure that actually happened.
+
+        A failure is recorded by the subsystem that hit it, and again by every
+        caller that re-raises it, each under its own name. The dedup key is
+        (subsystem, error type), so three names means three "distinct problems"
+        for one event. Measured live 2026-07-28, a single empty generation
+        produced:
+
+            cognitive_engine (critical)         compact desktop generation
+                                                returned no usable text
+            chat (degraded)                     CRITICAL SERVICE FAILURE:
+                                                Subsystem 'cognitive_engine' ...
+            chat.cognitive_engine_reply (degraded)  ... the same failure again
+
+        which is 2.0 + 1.0 + 1.0 = 4.0 against a denominator of 5, i.e.
+        deg_threat 0.8 — enough on its own to trip the Ulysses covenant and
+        refuse every build the owner asked for, from one failed turn.
+
+        Collapsing the wrappers makes the three records share a signature, so
+        the harmonic discount treats them as one problem repeating rather than
+        three problems happening.
+        """
+        text = str(message or "")
+        # Wrappers nest; unwrap until the text stops being one.
+        for _ in range(4):
+            if cls._ESCALATION_PREFIX not in text:
+                break
+            marker = text.find(cls._ORIGINAL_ERROR_MARKER)
+            if marker < 0:
+                break
+            text = text[marker + len(cls._ORIGINAL_ERROR_MARKER):].strip()
+        # Unwrapping leaves the re-raised exception's own type in front of the
+        # message ("RuntimeError: compact desktop generation ..."), which would
+        # keep the propagated record from matching the origin it came from.
+        text = _EXCEPTION_PREFIX_RE.sub("", text, count=1).strip()
+        return text[:80]
 
     def _should_log_critical(self, now: float) -> bool:
         bucket = int(self._threat * 10.0)
@@ -200,11 +267,31 @@ class ExistentialStakes:
                         weight = self._degradation_record_weight(record, now=now)
                         if weight <= 0.0:
                             continue
-                        signature = (
-                            str(getattr(record, "subsystem", "") or "unknown"),
-                            str(getattr(record, "error_type", "") or "")
-                            or str(getattr(record, "error_message", "") or "")[:80],
-                        )
+                        # Key on the failure, not on who reported it: a
+                        # propagated record names a different subsystem for the
+                        # same event, and counting those separately turns one
+                        # failed turn into an existential emergency.
+                        raw_message = str(getattr(record, "error_message", "") or "")
+                        if self._is_propagated(raw_message):
+                            # Demonstrably the same event travelling upward.
+                            # File it under the subsystem the wrapper says
+                            # failed, so it merges with that subsystem's own
+                            # record of the failure rather than counting beside
+                            # it.
+                            signature = (
+                                self._origin_subsystem(raw_message)
+                                or str(getattr(record, "subsystem", "") or "unknown"),
+                                self._root_cause_text(raw_message),
+                            )
+                        else:
+                            # No wrapper, so no evidence this is a repeat. Five
+                            # subsystems failing independently is a real
+                            # cascade and must still be able to reach critical.
+                            signature = (
+                                str(getattr(record, "subsystem", "") or "unknown"),
+                                self._root_cause_text(raw_message)
+                                or str(getattr(record, "error_type", "") or ""),
+                            )
                         repeat = seen.get(signature, 0)
                         seen[signature] = repeat + 1
                         recent_degradation_weight += weight / (1.0 + repeat) ** 2

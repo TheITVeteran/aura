@@ -51,7 +51,11 @@ def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
             return False
         from core.conversation.surface_delivery import route_answer_supersedes
 
-        if route_answer_supersedes(body):
+        # "chat_response" is the route answering the person; "aura_message" is
+        # her speaking on her own account. Only the latter has to wait.
+        if route_answer_supersedes(
+            body, unprompted=str(ws_msg.get("type", "")) != "chat_response"
+        ):
             logger.warning(
                 "EventBridge: withheld a second answer to a turn the route "
                 "already answered: %r",
