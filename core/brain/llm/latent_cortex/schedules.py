@@ -35,7 +35,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from core.brain.verifiers.foundry import wilson_lower_bound, wilson_upper_bound
 
@@ -115,6 +115,44 @@ class StageOp:
     alpha: float | None = None  # override the recurrence alpha for this stage
     kind: str = "window"
     revert_on_drop: bool = False
+
+    #: Places of alpha that are part of a schedule's IDENTITY.
+    ALPHA_QUANTUM_PLACES: ClassVar[int] = 6
+
+    def __post_init__(self) -> None:
+        """Quantize alpha so the executed value IS the hashed value.
+
+        CP126 2e5d5cd6: execution retained the raw ``alpha`` while
+        ``to_dict`` rounded it to six places before hashing. Two schedules
+        whose alphas differed past the sixth place therefore behaved
+        differently but shared one schedule hash — and that hash is the key
+        for receipts, the score cache, and promotion evidence. Distinct
+        recurrence behaviour aliasing onto one identity means a schedule can
+        inherit another's measured results.
+
+        Quantizing here rather than widening the hash is deliberate: it makes
+        the two agree by construction, so no future serializer can reopen the
+        gap. Alpha is a recurrence blend weight; six places is far below any
+        behavioural resolution, and the value is now honestly what it claims.
+
+        This deliberately does NOT raise. Direct construction is permissive by
+        design so that ``validate()`` can REPORT an unexecutable program
+        instead of the caller crashing on it; ``from_dict`` is the strict gate
+        for untrusted input. An alpha that cannot even be represented as a
+        finite float is left exactly as supplied, so the existing validation
+        path still sees it and still refuses it.
+        """
+        if self.alpha is None:
+            return
+        try:
+            alpha = float(self.alpha)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if not math.isfinite(alpha):
+            return
+        quantized = round(alpha, self.ALPHA_QUANTUM_PLACES)
+        if quantized != alpha:
+            object.__setattr__(self, "alpha", quantized)
 
     def to_dict(self) -> dict[str, Any]:
         if self.kind != "window":
