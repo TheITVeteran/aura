@@ -5268,6 +5268,57 @@ class UnitaryResponsePhase(Phase):
                     else:
                         messages.insert(0, {"role": "system", "content": text})
 
+                # ── Desktop execution planning contract ──────────────────
+                # Unconditional at this level on purpose: the earlier attempt
+                # sat inside the pre-linguistic guard and never ran, which is
+                # why every fix aimed at this block stayed invisible.
+                try:
+                    _matched_now = list(
+                        new_state.response_modifiers.get("matched_skills", []) or []
+                    )
+                    _is_desktop_turn = any(
+                        "desktop" in str(skill).lower()
+                        or "computer_use" in str(skill).lower()
+                        for skill in _matched_now
+                    )
+                    if not _is_desktop_turn:
+                        from core.runtime.desktop_objective_intent import (
+                            looks_like_desktop_objective,
+                        )
+
+                        _is_desktop_turn = bool(looks_like_desktop_objective(objective))
+                    if _is_desktop_turn:
+                        from core.runtime.desktop_task_contract import (
+                            desktop_task_action_sentence,
+                        )
+
+                        _prepend_system_guidance(
+                            "## LIVE DESKTOP EXECUTION PLANNING CONTRACT\n"
+                            "This request is a live desktop/computer objective and you CAN "
+                            "carry it out: you drive real apps, files and the browser through "
+                            "the governed desktop_task lane. Never say you cannot interact "
+                            "with the device.\n"
+                            "Produce a compact execution draft as a JSON object with an "
+                            "optional `document_body` (the prose that belongs INSIDE the "
+                            "artifact, never your reply to the user) and a bounded `steps` "
+                            "array. Allowed step actions are "
+                            f"{desktop_task_action_sentence()}.\n"
+                            "Do not answer conversationally instead of planning, and do not "
+                            "paste the artifact's content into chat."
+                        )
+                        logger.info(
+                            "🖥️ [UNITARY] Desktop execution planning contract injected "
+                            "(matched_skills=%s).",
+                            _matched_now[:3] or "objective-detected",
+                        )
+                except _RESPONSE_RECOVERABLE_ERRORS as _desk_exc:
+                    _record_response_degradation(
+                        _desk_exc,
+                        "UnitaryResponse: desktop planning contract skipped: %s",
+                        _desk_exc,
+                        action="continued without the desktop execution planning contract",
+                    )
+
                 if contract.reason != "ordinary_dialogue":
                     contract_block = contract.to_prompt_block().strip()
                     _prepend_system_guidance(contract_block)
@@ -5317,71 +5368,6 @@ class UnitaryResponsePhase(Phase):
                 else:
                     try:
                         from core.cognition.pre_linguistic import get_pre_linguistic
-
-                        # ── Desktop execution planning contract ──────────
-                        # The unitary pipeline had NO desktop planning contract
-                        # at all, so on the live path she was asked to operate
-                        # the machine with nothing telling her she could. She
-                        # answered from identity text, verbatim:
-                        #   "I can't interact with your device or open apps.
-                        #    But here's a note for you: 'Orcas, also known as
-                        #    killer whales...'"
-                        # — a false capability denial with the artifact's content
-                        # typed into chat, while Notes stayed untouched, on a
-                        # turn the router had already routed to desktop_task.
-                        #
-                        # Driven by the ROUTER's own decision (matched_skills),
-                        # which is the single source of truth for "this turn is
-                        # skill-backed work", with the objective detector only as
-                        # a fallback for lanes that never reached the router.
-                        try:
-                            _matched_now = list(
-                                new_state.response_modifiers.get("matched_skills", []) or []
-                            )
-                            _is_desktop_turn = any(
-                                "desktop" in str(skill).lower()
-                                or "computer_use" in str(skill).lower()
-                                for skill in _matched_now
-                            )
-                            if not _is_desktop_turn:
-                                from core.runtime.desktop_objective_intent import (
-                                    looks_like_desktop_objective,
-                                )
-
-                                _is_desktop_turn = bool(
-                                    looks_like_desktop_objective(objective)
-                                )
-                            if _is_desktop_turn:
-                                from core.runtime.desktop_task_contract import (
-                                    desktop_task_action_sentence,
-                                )
-
-                                _prepend_system_guidance(
-                                    "## LIVE DESKTOP EXECUTION PLANNING CONTRACT\n"
-                                    "This request is a live desktop/computer objective and you "
-                                    "CAN carry it out: you drive real apps, files and the browser "
-                                    "through the governed desktop_task lane. Never say you cannot "
-                                    "interact with the device.\n"
-                                    "Produce a compact execution draft as a JSON object with an "
-                                    "optional `document_body` (the prose that belongs INSIDE the "
-                                    "artifact, never your reply to the user) and a bounded `steps` "
-                                    "array. Allowed step actions are "
-                                    f"{desktop_task_action_sentence()}.\n"
-                                    "Do not answer conversationally instead of planning, and do not "
-                                    "paste the artifact's content into chat."
-                                )
-                                logger.info(
-                                    "🖥️ [UNITARY] Desktop execution planning contract injected "
-                                    "(matched_skills=%s).",
-                                    _matched_now[:3] or "objective-detected",
-                                )
-                        except _RESPONSE_RECOVERABLE_ERRORS as _desk_exc:
-                            _record_response_degradation(
-                                _desk_exc,
-                                "UnitaryResponse: desktop planning contract skipped: %s",
-                                _desk_exc,
-                                action="continued without the desktop execution planning contract",
-                            )
 
                         pl_engine = get_pre_linguistic()
                         if pl_engine._started:
