@@ -186,6 +186,64 @@ def _degradation_line() -> str:
         return ""
 
 
+def _capability_line() -> str:
+    """What she can actually do, read from the live skill registry.
+
+    Without this she answers capability questions from the base model's guess
+    about what an assistant can do. Measured live: asked "do you actually have
+    any code-execution capability registered at all?" — after being told to check
+    — she said "no, I don't have any capability to run or sandbox code", while
+    the registry held 75 skills with run_code, code_repl and internal_sandbox all
+    READY. That is a confabulation in the other direction, and just as wrong.
+
+    Deliberately states only what the registry says, and names the gap between
+    "registered" and "reachable from this conversation" rather than papering over
+    it — a ready skill is not a promise that this turn can invoke it.
+    """
+
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        engine = get_runtime_service("capability_engine", default=None)
+        if engine is None or not hasattr(engine, "iter_tool_catalog"):
+            return ""
+        ready: list[str] = []
+        total = 0
+        for item in engine.iter_tool_catalog(include_inactive=False):
+            if not isinstance(item, dict):
+                continue
+            total += 1
+            name = str(item.get("name") or "").strip()
+            available = str(item.get("availability") or "").strip().lower()
+            if name and available == "available":
+                ready.append(name)
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError):
+        return ""
+    if not total:
+        return ""
+
+    execution = sorted(
+        name
+        for name in ready
+        if any(
+            token in name.lower()
+            for token in ("code", "sandbox", "repl", "shell", "exec")
+        )
+    )
+    line = (
+        f"- Skills registered and available right now: {len(ready)} of {total}."
+    )
+    if execution:
+        line += (
+            " Code-execution skills present in the registry: "
+            + ", ".join(execution[:6])
+            + ". They are REGISTERED; that is not the same as reachable from this"
+            " chat turn, so do not claim you ran anything unless you have a"
+            " result in hand — and do not deny having them either."
+        )
+    return line
+
+
 def runtime_self_report() -> str:
     """A short, true readout of her machine state right now.
 
@@ -194,6 +252,9 @@ def runtime_self_report() -> str:
     """
     lines = [line for line in (_uptime_line(), _model_line()) if line]
     lines.extend(_memory_lines())
+    capabilities = _capability_line()
+    if capabilities:
+        lines.append(capabilities)
     degradations = _degradation_line()
     if degradations:
         lines.append(degradations)

@@ -45,13 +45,55 @@ _RUNTIME_INTROSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"degradations?|faults?|errors?|health|diagnostics|internals?)\b",
         r"\bwhat(?:'s| is| has) (?:happen(?:ed|ing)|going on) (?:in|inside|within) "
         rf"{_SELF_SUBJECT}\s+(?:runtime|process|system|head|mind)\b",
+        # What she can actually DO. This category was missing, and its absence
+        # produced the mirror image of a confabulation: asked "do you actually
+        # have any code-execution capability registered at all?" — after being
+        # told explicitly to check — she answered "no, I don't have any
+        # capability to run or sandbox code" while the live registry listed 75
+        # skills with run_code, code_repl and internal_sandbox all READY.
+        # Without her instrument reading she answers from the base model's guess
+        # about what an assistant can do, which is a claim about herself that
+        # she had the evidence to get right.
         # Explicit demands to introspect rather than look up.
         r"\bfrom your own (?:runtime|telemetry|logs?|instruments?|readings?)\b",
         r"\bread it from your own\b",
         r"\bintrospect\b",
         r"\bdon'?t (?:estimate|guess|make (?:it|that) up)\b",
+        r"\bcheck before answering\b",
     )
 )
+
+
+# What she can actually DO. This category was missing, and its absence produced
+# the mirror image of a confabulation: asked "do you actually have any
+# code-execution capability registered at all?" — after being told explicitly to
+# check — she answered "no, I don't have any capability to run or sandbox code"
+# while the live registry listed 75 skills with run_code, code_repl and
+# internal_sandbox all READY. Without her instrument reading she answers from the
+# base model's guess about what an assistant can do: a claim about herself she
+# had the evidence to get right.
+#
+# Every pattern here is additionally gated on the text addressing HER (second
+# person), because the nouns are otherwise ordinary English — "what tools does a
+# carpenter need?" is not introspection.
+_CAPABILITY_INTROSPECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        rf"\b{_SELF_SUBJECT}\s+(?:\w+[- ]?){{0,2}}"
+        r"(?:skills?|tools?|capabilit(?:y|ies)|abilities)\b",
+        r"\b(?:what|which|any|how many)\b.{0,40}"
+        r"\b(?:skills?|tools?|capabilit(?:y|ies)|abilities)\b",
+        r"\bwhat can you (?:actually\s+)?(?:do|run|execute|use)\b",
+        r"\b(?:can|could|do|does) you\b.{0,24}\b(?:execute|run)\b.{0,24}"
+        r"\b(?:code|python|script|snippet|command|shell|sandbox)\b",
+        r"\b(?:code[- ]execution|sandbox(?:ed|ing)?)\b.{0,40}"
+        r"\b(?:capabilit(?:y|ies)|registered|available|access)\b",
+        r"\b(?:registered|available)\b.{0,24}"
+        r"\b(?:skills?|tools?|capabilit(?:y|ies))\b",
+    )
+)
+
+_SECOND_PERSON_RE = re.compile(r"\b(?:you|you're|your|yours|yourself)\b", re.IGNORECASE)
 
 
 def asks_about_own_runtime(text: str) -> bool:
@@ -59,7 +101,13 @@ def asks_about_own_runtime(text: str) -> bool:
     candidate = str(text or "")
     if not candidate.strip():
         return False
-    return any(pattern.search(candidate) for pattern in _RUNTIME_INTROSPECTION_PATTERNS)
+    if any(pattern.search(candidate) for pattern in _RUNTIME_INTROSPECTION_PATTERNS):
+        return True
+    if not _SECOND_PERSON_RE.search(candidate):
+        return False
+    return any(
+        pattern.search(candidate) for pattern in _CAPABILITY_INTROSPECTION_PATTERNS
+    )
 
 
 __all__ = ["asks_about_own_runtime"]
