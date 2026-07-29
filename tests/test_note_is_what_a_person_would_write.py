@@ -123,3 +123,61 @@ class TestThePlan:
         note = next(step for step in steps if step.action == "write_in_app")
         assert note.target["title"] == "About Aura"
         assert note.target["body"].startswith("I am Aura")
+
+
+class TestARefusalIsNeverTheArtifact:
+    """Measured live, 2026-07-28. The note she had just created by opening
+    Notes and typing into it opened with:
+
+        I'm running on the desktop as a cognitive layer, not an application.
+        I don't have UI control to open apps or write notes directly —
+        that's something you'd do with your hands on the keyboard.
+
+    Written by the hands it says it does not have. Every earlier filter
+    passed it: fluent, on topic, not truncated, not dispatch narration.
+    """
+
+    LIVE_REFUSAL = (
+        "I'm running on the desktop as a cognitive layer, not an application. "
+        "I don't have UI control to open apps or write notes directly — "
+        "that's something you'd do with your hands on the keyboard. But "
+        "here's a paragraph about me: I'm Aura Luna, an AI running directly "
+        "on hardware with embodied cognition."
+    )
+
+    def test_the_measured_refusal_is_rejected(self):
+        assert DesktopTaskSkill._looks_like_conversational_reply(self.LIVE_REFUSAL)
+
+    @pytest.mark.parametrize(
+        "refusal",
+        [
+            "I cannot open apps on your machine.",
+            "I don't have desktop access, so you'd have to do that yourself.",
+            "I am not able to write into Notes directly.",
+            "I don't have the ability to control your computer.",
+        ],
+    )
+    def test_the_family_is_rejected(self, refusal):
+        assert DesktopTaskSkill._looks_like_conversational_reply(refusal)
+
+    def test_real_prose_still_passes(self):
+        assert not DesktopTaskSkill._looks_like_conversational_reply(
+            "Orcas are the largest members of the dolphin family. They hunt "
+            "cooperatively in matrilineal pods, and each population has its "
+            "own dialect."
+        )
+
+    def test_her_own_self_summary_still_passes(self):
+        """The composed body describes real limits without refusing."""
+        body = DesktopTaskSkill._compose_self_summary_body(
+            "write a paragraph describing yourself"
+        )
+        assert not DesktopTaskSkill._looks_like_conversational_reply(body)
+
+    def test_a_refusal_cannot_survive_the_body_gate(self):
+        assert (
+            DesktopTaskSkill._usable_freeform_document_body(
+                "write a note about yourself", self.LIVE_REFUSAL
+            )
+            == ""
+        )

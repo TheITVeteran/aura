@@ -949,6 +949,19 @@ class DesktopTaskSkill(BaseSkill):
         r"|\bi\s+can\s+use\s+governed\s+(?:web|desktop|file)\b"
         r"|\bwhen\s+the\s+runtime\s+authorizes\b"
         r"|\bhow\s+can\s+i\s+help\b"
+        # A REFUSAL is never the artifact, and it is the worst possible one:
+        # measured live 2026-07-28, a note that she created by opening Notes
+        # and typing into it opened with "I don't have UI control to open apps
+        # or write notes directly — that's something you'd do with your hands
+        # on the keyboard." Written by the hands it says it does not have.
+        r"|\bi\s+(?:don'?t|do\s+not|cannot|can'?t)\s+have\s+"
+        r"(?:ui|desktop|gui|direct|any)?\s*(?:control|access)\b"
+        r"|\bi\s+(?:cannot|can'?t)\s+(?:open|write|create|control|access|use)\s+"
+        r"(?:apps?|applications?|notes?|files?|your\b)"
+        r"|\bthat'?s\s+something\s+you'?d\s+do\b"
+        r"|\bwith\s+your\s+(?:own\s+)?hands\s+on\s+the\s+keyboard\b"
+        r"|\bi\s+am\s+not\s+able\s+to\s+(?:open|write|create|interact)\b"
+        r"|\bi\s+(?:don'?t|do\s+not)\s+(?:have|possess)\s+the\s+ability\b"
         r")"
     )
 
