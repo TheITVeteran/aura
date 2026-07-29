@@ -73,7 +73,19 @@ class EnhancedWebSearchSkill(BaseSkill):
         "synthesize an evidence-grounded answer, and retain what was learned when appropriate."
     )
     input_model = WebSearchInput
-    timeout_seconds = 60.0
+    # Deep research is a multi-page pipeline, not a single fetch.
+    #
+    # 60s covered a plain search and starved the thing this skill exists for:
+    # live 2026-07-28, "find 3 recent articles about orcas, read them, and
+    # write a synthesis" died on "Task web_search timed out" at 60,046ms, and
+    # the desktop task then reported "research returned 0 usable source(s)".
+    # Every page that HAD been fetched was discarded with it.
+    #
+    # Query expansion, several page fetches, reranking and synthesis do not
+    # fit in a minute on a local 32B. The budget matches the work; the deep
+    # pipeline still bounds itself by MAX_RESEARCH_LOOPS, and every individual
+    # fetch already fails fast and independently.
+    timeout_seconds = 180.0
     metabolic_cost = 2
 
     def __init__(self):

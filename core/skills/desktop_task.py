@@ -2005,6 +2005,20 @@ class DesktopTaskSkill(BaseSkill):
             }
         sources = self._research_sources_from_result(result)
         required_sources = self._requested_research_source_count(objective)
+        # Fewer sources than asked for is a shortfall to disclose, not a
+        # reason to produce nothing. "Find 3 articles and write a synthesis"
+        # with 2 good sources is a synthesis of 2 good sources; with 0 it is
+        # nothing, and only that case is a failure. Live 2026-07-28 a search
+        # timeout took the count to 0 and the whole task — folder, PDF and
+        # all — was abandoned.
+        if required_sources and sources and len(sources) < required_sources:
+            logger.info(
+                "Research found %d of the %d requested source(s); continuing "
+                "with what was gathered rather than discarding the task.",
+                len(sources),
+                required_sources,
+            )
+            required_sources = len(sources)
         if required_sources and len(sources) < required_sources:
             return {
                 "desktop_task_research_query": query,
