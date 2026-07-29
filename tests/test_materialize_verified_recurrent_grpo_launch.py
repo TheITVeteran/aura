@@ -81,6 +81,7 @@ def _policy_material(
     campaign_id: str,
     protocol_sha256: str,
     shared_custody: bool = False,
+    custody_class: str = "external_service",
 ) -> tuple[Path, Path, Path, Path]:
     root_key = Ed25519PrivateKey.generate()
     role_keys = {role: Ed25519PrivateKey.generate() for role in CAMPAIGN_TRUST_ROLES}
@@ -148,7 +149,7 @@ def _policy_material(
             "release_sha256": (
                 signer_pin["release_sha256"] if signer_pin else _sha(f"{role}-release")
             ),
-            "custody_class": "external_service",
+            "custody_class": custody_class,
             "custody_evidence_sha256": (
                 signer_pin["custody_sha256"] if signer_pin else _sha(f"{role}-custody")
             ),
@@ -212,21 +213,23 @@ def _policy_material(
 
 
 @pytest.mark.parametrize(
-    "crash_role",
+    ("crash_role", "custody_class"),
     [
-        "materialization_intent",
-        "task_answer_nonces",
-        "task_commitments",
-        "provider-config_json",
-        "launch_bundle",
-        "launch_bundle_digest",
-        "materialization_receipt",
+        ("materialization_intent", "external_service"),
+        ("task_answer_nonces", "external_service"),
+        ("task_commitments", "external_service"),
+        ("provider-config_json", "external_service"),
+        ("launch_bundle", "external_service"),
+        ("launch_bundle_digest", "external_service"),
+        ("materialization_receipt", "external_service"),
+        ("materialization_receipt", "host_isolated_service"),
     ],
 )
 def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     crash_role: str,
+    custody_class: str,
 ) -> None:
     campaign_id = "resident-32b-recurrent-grpo-cp-test"
     source = _write(tmp_path / "source.py", b"x = 1\n")
@@ -325,6 +328,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
         tmp_path,
         campaign_id=campaign_id,
         protocol_sha256=contract["contract_sha256"],
+        custody_class=custody_class,
     )
     task = khop_reachability(1, 9)
     nonce = b"n" * 32
@@ -401,7 +405,11 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     assert receipt["reopened"] is True
     assert injected["raised"] is True
     assert receipt["task_count"] == 1
-    assert receipt["claim_boundary"].startswith("launch_custody_only")
+    assert receipt["claim_boundary"] == (
+        "launch_custody_only_no_training_or_reasoning_gain_claim"
+        if custody_class == "external_service"
+        else "host_isolated_research_launch_external_claim_custody_still_required"
+    )
     bundle_path = Path(receipt["bundle_path"])
     assert bundle_path.is_file()
     assert hashlib.sha256(bundle_path.read_bytes()).hexdigest() == receipt["bundle_sha256"]

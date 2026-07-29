@@ -31646,3 +31646,22 @@ update. Evidence:
 No reasoning, frontier, promotion, or `WOW Signal` claim is made. CP420S9 is
 total checkpoint 697. A fresh CP420S10 campaign and both resident gates are
 required before launch.
+
+### 2026-07-29 - CP420S10 host-isolated launch recovery
+
+CP420S10 passed both resident gates and materialized a signed 288-task launch
+bundle. The first run reopened that bundle successfully. The required
+idempotent second run then failed because completed-launch recovery expected
+only an external-custody claim boundary and rejected the correctly disclosed
+host-isolated boundary.
+
+Recovery now accepts only the two defined structural boundary values, reopens
+and verifies the archived trust policy, derives the required boundary from its
+custody classes, and rejects any discrepancy. A new host-isolated
+post-publication crash/recovery case passes inside the 115/115 focused matrix.
+
+CP420S10 is immutable and retired by this source repair, with no optimizer
+update. Evidence:
+`artifacts/current/cp420s10_host_custody_reopen_evidence.json`. No reasoning,
+frontier, promotion, or `WOW Signal` claim is made. CP420S10 is total
+checkpoint 698. CP420S11 is the next fresh launch campaign.

@@ -578,10 +578,7 @@ def _recover_completed_launch(
         or bundle_path != expected_bundle_path
         or receipt.get("reopened") is not True
         or receipt.get("claim_boundary")
-        not in {
-            "launch_custody_only_no_training_or_reasoning_gain_claim",
-            "host_isolated_research_launch_external_claim_custody_still_required",
-        }
+        != "launch_custody_only_no_training_or_reasoning_gain_claim"
     ):
         _fail("materialization_receipt_invalid")
 
@@ -635,13 +632,6 @@ def _recover_completed_launch(
         or archive.trust_root != root_raw
     ):
         _fail("materialization_archive_input_mismatch")
-    expected_claim_boundary = (
-        "launch_custody_only_no_training_or_reasoning_gain_claim"
-        if externally_custodied_roles(archive.trust_policy)
-        else "host_isolated_research_launch_external_claim_custody_still_required"
-    )
-    if receipt.get("claim_boundary") != expected_claim_boundary:
-        _fail("materialization_receipt_custody_boundary_mismatch")
     signer_inputs = {
         TASK_ISSUER: task_signer_document,
         EVIDENCE_VERIFIER: verifier_signer_document,

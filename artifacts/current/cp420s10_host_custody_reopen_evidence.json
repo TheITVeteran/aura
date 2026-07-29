@@ -1,0 +1,50 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s10",
+  "claim_boundary": "launch_repair_only_no_training_or_reasoning_gain_claim",
+  "contract_file_sha256": "4f0e031aa7b88d5485fc4aa557a53d35f1c66eae8387d2ff971c452281dce28f",
+  "contract_sha256": "0da183e4d98e32d345d118b6446b8641341fdc896c601cebf4a92eb5298b7fdd",
+  "failure": {
+    "code": "materialization_receipt_invalid",
+    "optimizer_update_occurred": false,
+    "phase": "completed_host_isolated_launch_recovery",
+    "training_started": false
+  },
+  "first_materialization": {
+    "bundle_sha256": "da808bceabff0ed4de265d14d95e4107192c4a5e5bbe8e415d8285e42cb4478d",
+    "claim_boundary": "host_isolated_research_launch_external_claim_custody_still_required",
+    "provider_contract_sha256": "42718b4a931038d20cd40821da4d37f2e30e8ab413b3cf094b38f8da5b093e7a",
+    "receipt_sha256": "63b23d85dbe823ddee20807d8e1eb75bbd9d1f550565594ebce1bd3a68379008",
+    "reopened": true,
+    "task_count": 288
+  },
+  "gates": {
+    "answer_channel": {
+      "correct_count": 6,
+      "receipt_sha256": "ba7cb84d41f05eb9d662832ced978a611cd09343f57b7c492568554d1c59b72d",
+      "task_count": 6,
+      "valid_contract_count": 6,
+      "verdict": "answer_channel_operational"
+    },
+    "initial_policy": {
+      "initial_policy_sha256": "c2bbc1e2521b52ac12e23bbeb489196fa4cbb1545639534fbb21f2c13d98b1b6",
+      "receipt_sha256": "3db298a4853d44dc59befda02c442c94a015a7a144418c0d3b91713e5890f263",
+      "wiring_projection_count": 24
+    }
+  },
+  "repair": {
+    "early_boundary_allowlist": [
+      "launch_custody_only_no_training_or_reasoning_gain_claim",
+      "host_isolated_research_launch_external_claim_custody_still_required"
+    ],
+    "final_boundary_authority": "independently_reopened_verified_trust_policy",
+    "host_boundary_promotes_external_claim": false
+  },
+  "schema": "aura.spark.cp420s10_host_custody_reopen_evidence.v1",
+  "tests": {
+    "launch_and_source_bound_matrix": {
+      "passed": 115,
+      "total": 115
+    }
+  },
+  "verdict": "repair_verified_fresh_source_bound_campaign_required"
+}

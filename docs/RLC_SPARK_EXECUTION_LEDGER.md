@@ -5680,3 +5680,23 @@ optimizer update. Evidence:
 Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false.
 CP420S9 is total checkpoint 697. CP420S10 must be freshly frozen and pass both
 resident gates before launch resumes.
+
+### 2026-07-29 - CP420S10: host-isolated launch recovery preserves its claim boundary
+
+CP420S10 passed both resident gates and successfully materialized and reopened
+its signed 288-task launch bundle. The required second materialization then
+failed closed because completed-launch recovery hard-coded the
+independent-external-custody receipt value and rejected the honest
+host-isolated claim boundary written by the first run.
+
+Recovery now admits only the two defined boundary values during structural
+validation, independently reopens the signed trust policy, derives the one
+correct value from its verified custody classes, and rejects any mismatch. The
+crash/recovery matrix now includes a host-isolated receipt published immediately
+before failure and passes 115/115.
+
+CP420S10 is immutable and retired by this source repair. It performed no
+optimizer update. Evidence:
+`artifacts/current/cp420s10_host_custody_reopen_evidence.json`. Reasoning gain,
+frontier gain, promotion, and `WOW Signal` remain false. CP420S10 is total
+checkpoint 698. A fresh CP420S11 contract and resident gates are required.
