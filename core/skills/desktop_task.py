@@ -62,6 +62,11 @@ _COMPUTER_USE_SKILL = None
 _FOCUS_SENSITIVE_ACTIONS = frozenset({"type", "hotkey", "click", "scroll", "read_screen_text"})
 
 
+#: Text inside quotes is a name someone chose — a folder, a file, a phrase to
+#: type — never a request to open an application.
+_QUOTED_SPAN_RE = re.compile(r"['\"\u2018\u2019\u201c\u201d]([^'\"\u2018\u2019\u201c\u201d]{1,80})")
+
+
 def _local_timestamp() -> str:
     """Timestamp string used in user-visible desktop artifacts."""
     return time.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -590,6 +595,42 @@ class DesktopTaskSkill(BaseSkill):
                 if marker == "browser" and "chrome" in text:
                     continue
                 apps.append(app)
+
+        # ...and then everything else that is actually on this machine.
+        #
+        # The table above is eleven names, so "open Reminders" named no app at
+        # all and the work fell through to a text file on disk. The machine
+        # already knows what is installed; an app it has is an app she can be
+        # asked for, without anyone adding a row.
+        #
+        # A NAMED app needs a verb, and must not be inside quotes.
+        #
+        # The eleven-name table above could match loosely because those names
+        # rarely appear by accident. Ninety-one cannot: "a new folder called
+        # 'Aura's Journal'" contains two installed app names, and matching
+        # them opened two applications to make a folder. This is the same
+        # failure as "in your own words" launching Microsoft Word, one list
+        # further along — so the general form carries the general guard.
+        quoted = " ".join(_QUOTED_SPAN_RE.findall(text))
+        try:
+            from core.perception.app_dictionary import installed_apps
+
+            for name in installed_apps():
+                lowered_name = name.lower()
+                if name in apps or len(name) < 4:
+                    continue
+                if re.search(rf"\b{re.escape(lowered_name)}\b", quoted):
+                    continue  # It is the name of a thing, not a request.
+                if re.search(
+                    rf"\b(?:open|launch|start|run|use|using|switch\s+to|"
+                    rf"in|into|inside|with|via|from)\s+"
+                    rf"(?:up\s+)?(?:my\s+|the\s+|a\s+)?"
+                    rf"{re.escape(lowered_name)}\b",
+                    text,
+                ):
+                    apps.append(name)
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS as exc:
+            logger.debug("Could not enumerate installed applications: %s", exc)
         return apps[:4]
 
     @staticmethod
@@ -1449,6 +1490,49 @@ class DesktopTaskSkill(BaseSkill):
             "to describe the subject clearly, ground it in concrete details, and preserve enough context that "
             "the note is useful after the moment of writing has passed."
         )
+
+    @classmethod
+    def _named_writable_app(cls, objective: str) -> str:
+        """The app this objective names that text can be written into.
+
+        Empty when it names none, or names only apps that publish no
+        scripting dictionary — in which case the artifact-file lane is the
+        honest route, because typing at an unscriptable app depends on focus
+        it will not reliably keep.
+        """
+        try:
+            named = cls._extract_apps(objective)
+            for app in cls._generic_open_app_mentions(objective):
+                if app not in named:
+                    named.append(app)
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS as exc:
+            logger.debug("Could not read app mentions from the objective: %s", exc)
+            return ""
+        for app in named:
+            if cls._app_text_target(app):
+                return app
+        return ""
+
+    @staticmethod
+    def _app_text_target(app: str) -> str:
+        """How this app takes text, as "class.property", or "" if it cannot.
+
+        An empty answer means "type at it", which is what a person would have
+        to do with an app that publishes no dictionary — not a failure, and
+        not a reason to refuse the objective.
+        """
+        if not str(app or "").strip():
+            return ""
+        try:
+            from core.perception.app_dictionary import text_target_for
+
+            recipe = text_target_for(app)
+        except _DESKTOP_TASK_RECOVERABLE_ERRORS as exc:
+            logger.debug("Could not read %s's scripting dictionary: %s", app, exc)
+            return ""
+        if recipe is None:
+            return ""
+        return f"{recipe.klass}.{recipe.text_property}"
 
     @staticmethod
     def _note_title_for(objective: str, topic: str) -> str:
@@ -2668,14 +2752,15 @@ class DesktopTaskSkill(BaseSkill):
 
         action = step.action
         payload = cls._target_payload(step.target)
-        if action == "create_note":
+        if action in {"write_in_app", "create_note"}:
             title = str(result.get("title") or "").strip()
+            app = str(result.get("app") or "Notes").strip()
             verified = bool(result.get("effect_verified")) and bool(title)
             return (
                 verified,
-                f"note={title}"
+                f"{app.lower()}_document={title}"
                 if verified
-                else "note was not found in Notes after creation",
+                else f"the document was not found in {app} after writing",
             )
         if action == "create_folder":
             path = str(result.get("path") or "").strip()
@@ -2968,6 +3053,20 @@ class DesktopTaskSkill(BaseSkill):
 
     @staticmethod
     def _writing_app_from_apps(apps: list[str]) -> str:
+        """Which of the named apps is something you write in.
+
+        This was a four-name allowlist — Notes, TextEdit, Pages, Word — so
+        "open Reminders and write..." fell through to a text file on disk,
+        which is not what anyone asked for. An app is a writing app if it
+        says so: a scripting dictionary with a text-bearing document class is
+        exactly that claim, published by the app itself.
+
+        The allowlist survives as a fallback ordering only, for the case
+        where no dictionary can be read at all.
+        """
+        for app in apps:
+            if DesktopTaskSkill._app_text_target(app):
+                return app
         for app in apps:
             if app in {"Notes", "TextEdit", "Pages", "Microsoft Word"}:
                 return app
@@ -3214,9 +3313,15 @@ class DesktopTaskSkill(BaseSkill):
             any(token in lowered for token in ("search", "look up", "news", "article"))
             or ("google" in lowered and not web_document_url)
         )
+        # "open notes" and "notes app" were literal tokens here, so naming any
+        # other application dropped out of the interactive lane and the text
+        # landed in a file on disk instead of in the app the person asked for.
+        # The general question is whether the objective names an application
+        # you can write in, which the app answers itself.
         wants_interactive_text_entry = wants_document and (
             bool(web_document_url)
-            or any(token in lowered for token in ("type", "paste", "start typing", "open notes", "notes app"))
+            or any(token in lowered for token in ("type", "paste", "start typing"))
+            or bool(self._named_writable_app(text))
         )
         wants_artifact_file = wants_folder or wants_pdf or bool(
             re.search(r"\b(?:save|export|write|create)\b.*\b(?:file|folder|directory|pdf|artifact)\b", lowered)
@@ -3341,40 +3446,43 @@ class DesktopTaskSkill(BaseSkill):
             )
             writing_app = "" if web_document_url else self._writing_app_from_apps(apps)
 
-            # Notes has a scripting interface, so use it.
+            # ASK THE APP, do not recognise it.
             #
-            # The keystroke route needs the app to hold the front from cmd+n
-            # through cmd+v, and on a real desktop the browser takes focus
-            # back mid-sequence — live 2026-07-28 that failed repeatedly with
-            # "did not become frontmost (observed=Google Chrome)". One
-            # scripted call creates the note atomically: no focus, no
-            # clipboard, no timing, and it reads the note back to verify.
+            # This used to read `if writing_app == "Notes"`, which is one app
+            # hardcoded on a machine that happens to have Notes — Bryan's
+            # objection, and the right one. Every scriptable macOS app
+            # publishes a dictionary describing how it holds text, so
+            # text_target_for() derives the route for whatever app was named:
+            # Notes answers note.body, TextEdit document.text, Reminders
+            # reminder.body. None of those is written down anywhere.
             #
-            # Keystrokes remain the route for apps with no dictionary; this
-            # is a preference for the better mechanism, not a replacement of
-            # the general one.
-            # Notes has a scripting dictionary, so use it.
-            #
-            # Keystrokes need the app to hold the front from cmd+n through
-            # cmd+v, and the browser takes focus back mid-sequence. Notes
-            # still opens visibly; the note appears instead of being typed
-            # character by character, and it is verified by reading it back.
+            # Keystrokes stay the route for an app with no dictionary, which
+            # is the honest fallback rather than a special case: typing needs
+            # the app to hold the front from cmd+n through cmd+v, and on a
+            # real desktop the browser takes focus back mid-sequence — live
+            # 2026-07-28 that failed repeatedly with "did not become
+            # frontmost (observed=Google Chrome)". The app still opens
+            # visibly either way, and the text is streamed in so the writing
+            # is watchable, then read back to verify.
             _native_note_written = False
-            if writing_app == "Notes":
+            _write_target = self._app_text_target(writing_app) if writing_app else ""
+            if _write_target:
                 _native_note_written = True
                 topic = self._extract_requested_writing_topic(text)
                 steps.append(
                     DesktopTaskStep(
-                        action="create_note",
+                        action="write_in_app",
                         target={
+                            "app": writing_app,
                             "title": self._note_title_for(text, topic),
                             "body": body,
                         },
                         reason=(
-                            "Create the note through the Notes scripting interface, "
-                            "which does not depend on window focus."
+                            f"Write into {writing_app} through the scripting "
+                            f"interface it publishes ({_write_target}), which "
+                            "does not depend on window focus."
                         ),
-                        expect="Note exists in Notes with the composed body.",
+                        expect=f"{writing_app} holds a document with the composed body.",
                     )
                 )
             if (not _native_note_written) and writing_app and not (
@@ -3639,6 +3747,7 @@ class DesktopTaskSkill(BaseSkill):
                 "hotkey",
                 "run_applescript",
                 "write_text_file",
+                "write_in_app",
                 "create_note",
             }:
                 return False
@@ -3716,6 +3825,7 @@ class DesktopTaskSkill(BaseSkill):
             "write_text_file",
             "set_clipboard",
             "render_text_pdf",
+            "write_in_app",
             "create_note",
         }:
             return False
@@ -3733,6 +3843,7 @@ class DesktopTaskSkill(BaseSkill):
                 "render_text_pdf",
                 "move_file",
                 "fetch_topic_image",
+                "write_in_app",
                 "create_note",
             )
         )

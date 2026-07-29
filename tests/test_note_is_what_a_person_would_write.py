@@ -104,7 +104,7 @@ class TestThePlan:
             {},
         )
         actions = [step.action for step in steps]
-        assert "create_note" in actions
+        assert "write_in_app" in actions
         opens = [
             index
             for index, step in enumerate(steps)
@@ -112,7 +112,7 @@ class TestThePlan:
             and str(step.target or "").strip().lower() == "notes"
         ]
         assert opens, actions
-        assert max(opens) < actions.index("create_note")
+        assert max(opens) < actions.index("write_in_app")
 
     def test_the_note_step_carries_a_real_title_and_body(self):
         steps = DesktopTaskSkill()._derive_single_objective_steps(
@@ -120,6 +120,6 @@ class TestThePlan:
             "paragraph describing yourself?",
             {},
         )
-        note = next(step for step in steps if step.action == "create_note")
+        note = next(step for step in steps if step.action == "write_in_app")
         assert note.target["title"] == "About Aura"
         assert note.target["body"].startswith("I am Aura")

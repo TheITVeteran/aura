@@ -16987,6 +16987,7 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "write_text_file",
         "render_text_pdf",
         "type",
+        "write_in_app",
         "create_note",
     }
     if not (actions & prose_actions):
@@ -16999,6 +17000,7 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "wait",
         "hotkey",
         "type",
+        "write_in_app",
         "create_note",
         "write_text_file",
         "render_text_pdf",

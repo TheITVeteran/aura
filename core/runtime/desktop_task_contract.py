@@ -35,8 +35,17 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     # scripting interface. Typing into a window depends on focus surviving
     # from one step to the next, and on a real desktop it does not: live
     # 2026-07-28 "open Notes and write a note" repeatedly lost the front to
-    # Chrome between cmd+n and cmd+v. The Notes scripting interface creates
-    # the note atomically, with no focus, no clipboard and no timing.
+    # Chrome between cmd+n and cmd+v.
+    #
+    # write_in_app is the general form: name any application, and how it
+    # takes text is derived from the scripting dictionary the app itself
+    # publishes (core/perception/app_dictionary.py). Notes answers
+    # note.body, TextEdit document.text, Reminders reminder.body — none of
+    # which is written down anywhere. An app with no dictionary falls back
+    # to typing, which is what a person would have to do too.
+    "write_in_app",
+    # The Notes-shaped name, kept because plans and receipts already use it.
+    # It resolves through write_in_app.
     "create_note",
 )
 
@@ -49,8 +58,9 @@ DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
         "read_menu_clock",
         "read_screen_text",
         "wait",
-        # Idempotent in practice: a retry writes the same note again rather
-        # than half of one, which is the safe direction for a retry.
+        # Idempotent in practice: a retry writes the same document again
+        # rather than half of one, which is the safe direction for a retry.
+        "write_in_app",
         "create_note",
     }
 )

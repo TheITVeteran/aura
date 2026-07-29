@@ -93,7 +93,7 @@ def _fake_computer_use_result(params):
             "sha256": hashlib.sha256(str(target).encode("utf-8")).hexdigest(),
             "effect_verified": True,
         }
-    if action == "create_note":
+    if action in {"write_in_app", "create_note"}:
         payload = target if isinstance(target, dict) else {"body": str(target)}
         title = str(payload.get("title") or "Note")
         return {
@@ -949,11 +949,11 @@ def test_desktop_task_exact_notes_pdf_demo_request_derives_effectful_steps():
     # Notes is written through its scripting interface rather than typed at:
     # keystrokes need the app to hold the front from cmd+n to cmd+v, and the
     # browser takes focus back mid-sequence. Notes still opens visibly.
-    assert "create_note" in actions
+    assert "write_in_app" in actions
     assert "render_text_pdf" in actions
     assert any(str(step.target).lower() == "notes" for step in steps)
     assert any(
-        step.action == "create_note"
+        step.action == "write_in_app"
         and isinstance(step.target, dict)
         and step.target.get("body") == "Hello. I’m Aura"
         for step in steps
@@ -1545,7 +1545,7 @@ def test_desktop_task_sequences_independent_work_products_without_losing_focus()
         if step.action == "open_app" and step.target == "Google Chrome"
     )
     # Notes is written through its scripting interface, not typed at.
-    notes_paste_index = actions.index("create_note", notes_index)
+    notes_paste_index = actions.index("write_in_app", notes_index)
     docs_url_index = next(
         index for index, step in enumerate(steps)
         if step.action == "open_url"
@@ -1604,7 +1604,7 @@ async def test_desktop_task_write_steps_carry_verified_surface_context(monkeypat
     # itself rather than a paste shortcut. The surface context it carries is
     # the thing this test exists to check, and that is unchanged.
     notes_write = next(
-        call for call in computer_calls if call[1]["action"] == "create_note"
+        call for call in computer_calls if call[1]["action"] == "write_in_app"
     )
     # The target is JSON-serialised on the way to the executor.
     note_target = notes_write[1]["target"]
@@ -2097,7 +2097,7 @@ def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
     # between opening it and writing into it.
     open_idx = actions.index("open_app")
     assert "notes" in str(steps[open_idx].target).lower()
-    writes = [i for i, s in enumerate(steps) if s.action == "create_note"]
+    writes = [i for i, s in enumerate(steps) if s.action == "write_in_app"]
     assert writes, actions
     last_notes_open = max(
         i for i, step in enumerate(steps)
@@ -2166,9 +2166,9 @@ def test_mixed_native_and_browser_writing_stays_on_verified_primitives():
 
     assert "open_app" in actions
     assert "open_url" in actions
-    # create_note IS a verified primitive: it reads the note back after
+    # write_in_app IS a verified primitive: it reads the document back after
     # writing, which the paste it replaced could never do.
-    assert "create_note" in actions
+    assert "write_in_app" in actions
     assert skill._should_escalate_to_os_automation(objective, steps, {}) is False
 
 

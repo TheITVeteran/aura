@@ -523,6 +523,57 @@ class ComputerUseSkill(BaseSkill):
     #: The whole visible write is bounded: past this it finishes in one call.
     _NOTE_STREAM_BUDGET_S = 9.0
 
+    async def _write_in_app(self, target: Any) -> dict[str, Any]:
+        """Put text into whatever application was named, generally.
+
+        Bryan's correction: a create_note action is not OS control, it is one
+        app hardcoded on a machine that happens to have Notes. She should be
+        able to meet an application she has never seen, find out what it is,
+        and work it.
+
+        macOS already publishes the answer. Every scriptable app ships a
+        scripting definition describing its own object model, so
+        core/perception/app_dictionary.py derives "make a new X and set its Y"
+        from the app itself: Notes answers note.body, TextEdit document.text,
+        Reminders reminder.body. Nothing here knows any of those in advance.
+
+        An app with no dictionary is not a failure and not a special case —
+        it is the honest fallback to typing at it the way a person does, with
+        the focus fragility that implies, which is exactly why the dictionary
+        is preferred whenever one exists.
+        """
+        payload = target if isinstance(target, dict) else {}
+        if not payload and isinstance(target, str):
+            try:
+                payload = json.loads(target)
+            except (TypeError, ValueError):
+                payload = {"body": target}
+        app_name = str(payload.get("app") or payload.get("application") or "").strip()
+        if not app_name:
+            return await self._create_note(target)
+
+        from core.perception.app_dictionary import resolve_app, text_target_for
+
+        resolved, _path = resolve_app(app_name)
+        if not resolved:
+            return {
+                "ok": False,
+                "error": f"{app_name} is not installed on this machine",
+                "app": app_name,
+            }
+        recipe = text_target_for(resolved)
+        if recipe is None:
+            return {
+                "ok": False,
+                "error": (
+                    f"{resolved} publishes no scripting dictionary, so text has "
+                    "to be typed into it while it holds focus"
+                ),
+                "app": resolved,
+                "requires_keystrokes": True,
+            }
+        return await self._write_through_dictionary(recipe, payload)
+
     async def _create_note(self, target: Any) -> dict[str, Any]:
         """Create a Notes note through its scripting interface, visibly.
 
@@ -611,6 +662,155 @@ class ComputerUseSkill(BaseSkill):
             ),
             "characters": len(body),
         }
+
+    async def _write_through_dictionary(
+        self, recipe: Any, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Make a document in an app and fill it, using the app's own model.
+
+        The Notes path is this path with recipe = note/body; nothing here is
+        about Notes.
+        """
+        title = str(payload.get("title") or payload.get("name") or "").strip()
+        body = str(payload.get("body") or payload.get("text") or "").strip()
+        if not body:
+            return {"ok": False, "error": "writing into an app requires a body"}
+        if not title:
+            title = body.split("\n", 1)[0][:60].strip() or "Untitled"
+
+        app = self._applescript_string(recipe.app)
+        wants_html = recipe.text_property == "body"
+        render = self._html_paragraphs if wants_html else (lambda value: value)
+
+        properties = []
+        if recipe.name_property:
+            properties.append(
+                f"{recipe.name_property}:{self._applescript_string(title)}"
+            )
+        properties.append(f'{recipe.text_property}:""')
+        create = (
+            f"tell application {app}\n"
+            "    activate\n"
+            f"    set theDoc to make new {recipe.klass} with properties "
+            f"{{{', '.join(properties)}}}\n"
+            "    return 1\n"
+            "end tell"
+        )
+        try:
+            await asyncio.to_thread(self._run_applescript, create, timeout=20)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            return {
+                "ok": False,
+                "error": f"{recipe.app} refused to make a new {recipe.klass}: {exc}",
+                "app": recipe.app,
+                "title": title,
+            }
+
+        # Address the document we just made: the newest one is document 1 in
+        # every app that orders them front-first, and by name where the class
+        # has one, which is more robust when the user has others open.
+        if recipe.name_property:
+            selector = f"{recipe.klass} {self._applescript_string(title)}"
+        else:
+            selector = f"{recipe.klass} 1"
+
+        wrote = await self._stream_document_text(
+            recipe.app, selector, recipe.text_property, body, render
+        )
+        if not wrote:
+            return {
+                "ok": False,
+                "error": f"could not write the text into {recipe.app}",
+                "app": recipe.app,
+                "title": title,
+            }
+
+        verify = (
+            f"tell application {app} to return "
+            f"(count of characters of ({recipe.text_property} of {selector} as text))"
+        )
+        try:
+            observed = await asyncio.to_thread(self._run_applescript, verify, timeout=15)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            return {
+                "ok": False,
+                "error": f"{recipe.app} would not read the document back: {exc}",
+                "app": recipe.app,
+                "title": title,
+            }
+        try:
+            observed_chars = int(str(observed or "0").strip() or 0)
+        except (TypeError, ValueError):
+            observed_chars = 0
+        verified = observed_chars > 0
+        return {
+            "ok": verified,
+            "action": "write_in_app",
+            "app": recipe.app,
+            "title": title,
+            "target": f"{recipe.klass}.{recipe.text_property}",
+            "effect_verified": verified,
+            "verification": (
+                f"{recipe.app} holds a {recipe.klass} of {observed_chars} characters."
+                if verified
+                else f"The {recipe.klass} in {recipe.app} read back empty."
+            ),
+            "characters": len(body),
+        }
+
+    @staticmethod
+    def _html_paragraphs(value: str) -> str:
+        escaped = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return "".join(f"<div>{line}</div>" for line in escaped.split("\n"))
+
+    async def _stream_document_text(
+        self, app: str, selector: str, prop: str, body: str, render: Any
+    ) -> bool:
+        """Fill a document's text property in visible pieces.
+
+        Same reason as the Notes streamer it generalises: Bryan asked to see
+        her type, and the mechanism that made this reliable is the one nobody
+        can watch. Every app that redraws on assignment shows the text
+        arriving; none of it depends on which window has focus.
+        """
+        app_ref = self._applescript_string(app)
+        deadline = time.monotonic() + float(self._NOTE_STREAM_BUDGET_S)
+        chunk = max(16, int(self._NOTE_STREAM_CHUNK_CHARS))
+        index = 0
+        wrote_any = False
+        while index < len(body):
+            if time.monotonic() >= deadline:
+                written = body
+            else:
+                end = min(len(body), index + chunk)
+                if end < len(body):
+                    space = body.rfind(" ", index, end)
+                    if space > index:
+                        end = space
+                written = body[:end]
+            index = len(written)
+            script = (
+                f"tell application {app_ref} to set {prop} of {selector} to "
+                f"{self._applescript_string(render(written))}"
+            )
+            try:
+                await asyncio.to_thread(self._run_applescript, script, timeout=15)
+                wrote_any = True
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                logger.debug("Document text stream chunk failed: %s", exc)
+                final = (
+                    f"tell application {app_ref} to set {prop} of {selector} to "
+                    f"{self._applescript_string(render(body))}"
+                )
+                try:
+                    await asyncio.to_thread(self._run_applescript, final, timeout=20)
+                    return True
+                except _COMPUTER_USE_RECOVERABLE_ERRORS as inner:
+                    logger.debug("Document text write failed outright: %s", inner)
+                    return wrote_any
+            if index < len(body):
+                await asyncio.sleep(float(self._NOTE_STREAM_PAUSE_S))
+        return wrote_any
 
     async def _stream_note_body(self, note_name: str, body: str, html: Any) -> bool:
         """Write the body into an existing note in visible pieces.
@@ -2799,14 +2999,17 @@ end tell
             elif action == "set_clipboard":
                 return await asyncio.to_thread(self._set_clipboard, params.target)
 
-            elif action == "create_note":
+            elif action in {"write_in_app", "create_note"}:
+                # One action. "create_note" is kept as the name a plan may
+                # already use, but it resolves through the same general path:
+                # name an app, derive how it takes text, write.
                 blocked = await self._require_permissions(
-                    "creating a note through the Notes scripting interface",
+                    "writing text into an application through its scripting interface",
                     "AUTOMATION",
                 )
                 if blocked:
                     return blocked
-                return await self._create_note(params.target)
+                return await self._write_in_app(params.target)
 
             elif action == "get_clipboard":
                 return await asyncio.to_thread(self._get_clipboard)
