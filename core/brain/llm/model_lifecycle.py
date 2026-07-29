@@ -118,11 +118,61 @@ class DiskPreflight:
         }
 
 
+#: A model directory is not "a directory with something in it". These are the
+#: artifact families a loadable checkpoint must actually contain: weights in
+#: some supported format, plus the config that describes how to load them.
+_WEIGHT_SUFFIXES = (".safetensors", ".bin", ".gguf", ".npz", ".pt", ".pth")
+_CONFIG_NAMES = ("config.json", "params.json", "model_index.json")
+#: Markers left behind by an interrupted transfer. Their presence means the
+#: directory is mid-flight, whatever else it contains.
+_INCOMPLETE_MARKERS = (".incomplete", ".lock", ".tmp", ".part")
+
+
 def _dir_is_populated(path: Path) -> bool:
+    """True when the directory contains a plausibly loadable model.
+
+    This used to be `is_dir() and any(iterdir())`, so a partial download, a
+    stray lock file, a metadata-only directory, or an unrelated file all
+    satisfied "the model is present" — and inventory, all_present, and the
+    post-download success check were all built on it. A model that does not
+    exist would be reported production-ready.
+
+    This is a structural check, not an integrity proof: it does not verify
+    hashes, sizes, or that the weights actually load. It rules out the
+    obviously-not-a-model cases the old check waved through.
+    """
     try:
-        return path.is_dir() and any(path.iterdir())
+        if not path.is_dir():
+            return False
+        entries = list(path.iterdir())
     except OSError:
         return False
+    if not entries:
+        return False
+
+    has_weights = False
+    has_config = False
+    for entry in entries:
+        name = entry.name
+        # An in-flight transfer marker disqualifies the directory outright.
+        if any(marker in name for marker in _INCOMPLETE_MARKERS):
+            return False
+        if entry.is_file():
+            lowered = name.lower()
+            if lowered.endswith(_WEIGHT_SUFFIXES):
+                has_weights = True
+            elif name in _CONFIG_NAMES:
+                has_config = True
+        elif entry.is_dir():
+            # Sharded layouts keep weights one level down.
+            try:
+                for sub in entry.iterdir():
+                    if sub.is_file() and sub.name.lower().endswith(_WEIGHT_SUFFIXES):
+                        has_weights = True
+                        break
+            except OSError:
+                continue
+    return has_weights and has_config
 
 
 def _dir_size_bytes(path: Path, *, cap_entries: int = 100_000) -> int:
@@ -161,6 +211,31 @@ class ModelLifecycleManager:
         self._base_dir = Path(base_dir) if base_dir is not None else self._default_base_dir()
         self._models_dir = self._base_dir / "models"
         self._observer = observer
+
+    def _model_path(self, name: str) -> Path:
+        """Resolve a plan name to a path INSIDE the governed model root.
+
+        Plan names used to flow straight into ``self._models_dir / name``, so an
+        absolute name or one containing parent-traversal segments redirected
+        presence checks, directory creation, and download targets outside the
+        model root entirely.
+        """
+        raw = str(name or "").strip()
+        if not raw:
+            raise ValueError("model name must not be empty")
+        candidate = Path(raw)
+        if candidate.is_absolute() or ".." in candidate.parts:
+            raise ValueError(
+                f"model name {raw!r} must be relative to the model root and "
+                "must not traverse outside it"
+            )
+        root = self._models_dir.resolve()
+        resolved = (root / candidate).resolve()
+        if resolved != root and root not in resolved.parents:
+            raise ValueError(
+                f"model name {raw!r} resolves outside the model root {root}"
+            )
+        return resolved
 
     # ---- defaults pulled lazily from the registry (kept injectable for tests) ----
 
@@ -207,7 +282,7 @@ class ModelLifecycleManager:
             and resolved_path.exists()
             and _dir_is_populated(resolved_path)
         )
-        base_path = self._models_dir / name
+        base_path = self._model_path(name)
         present_base = _dir_is_populated(base_path)
         present = present_resolved or present_base
 
@@ -326,7 +401,7 @@ class ModelLifecycleManager:
                 return report
 
         for status in missing:
-            target_dir = str(self._models_dir / status.name)
+            target_dir = str(self._model_path(status.name))
             ok = False
             last_error = ""
             for attempt in range(1, max(1, retries) + 1):
