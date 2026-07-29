@@ -31,6 +31,13 @@ DESKTOP_TASK_ALLOWED_ACTIONS: tuple[str, ...] = (
     "create_folder",
     "fetch_topic_image",
     "system_control",
+    # Native app scripting, preferred over keystrokes wherever an app has a
+    # scripting interface. Typing into a window depends on focus surviving
+    # from one step to the next, and on a real desktop it does not: live
+    # 2026-07-28 "open Notes and write a note" repeatedly lost the front to
+    # Chrome between cmd+n and cmd+v. The Notes scripting interface creates
+    # the note atomically, with no focus, no clipboard and no timing.
+    "create_note",
 )
 
 DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
@@ -42,6 +49,9 @@ DESKTOP_TASK_RETRY_SAFE_ACTIONS: frozenset[str] = frozenset(
         "read_menu_clock",
         "read_screen_text",
         "wait",
+        # Idempotent in practice: a retry writes the same note again rather
+        # than half of one, which is the safe direction for a retry.
+        "create_note",
     }
 )
 

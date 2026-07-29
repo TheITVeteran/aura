@@ -2585,6 +2585,15 @@ class DesktopTaskSkill(BaseSkill):
 
         action = step.action
         payload = cls._target_payload(step.target)
+        if action == "create_note":
+            title = str(result.get("title") or "").strip()
+            verified = bool(result.get("effect_verified")) and bool(title)
+            return (
+                verified,
+                f"note={title}"
+                if verified
+                else "note was not found in Notes after creation",
+            )
         if action == "create_folder":
             path = str(result.get("path") or "").strip()
             verified = bool(path) and bool(result.get("effect_verified"))
@@ -3248,6 +3257,20 @@ class DesktopTaskSkill(BaseSkill):
                 search_url=search_url,
             )
             writing_app = "" if web_document_url else self._writing_app_from_apps(apps)
+
+            # Notes has a scripting interface, so use it.
+            #
+            # The keystroke route needs the app to hold the front from cmd+n
+            # through cmd+v, and on a real desktop the browser takes focus
+            # back mid-sequence — live 2026-07-28 that failed repeatedly with
+            # "did not become frontmost (observed=Google Chrome)". One
+            # scripted call creates the note atomically: no focus, no
+            # clipboard, no timing, and it reads the note back to verify.
+            #
+            # Keystrokes remain the route for apps with no dictionary; this
+            # is a preference for the better mechanism, not a replacement of
+            # the general one.
+            _native_note_written = False
             if writing_app and not (
                 steps and self._step_opens_app(steps[-1], writing_app)
             ):
@@ -3262,14 +3285,15 @@ class DesktopTaskSkill(BaseSkill):
                         expect=f"{writing_app} is frontmost before writing.",
                     )
                 )
-            steps.append(
-                DesktopTaskStep(
-                    action="set_clipboard",
-                    target=body,
-                    reason="Stage the CognitiveEngine-composed document body for the active writing surface.",
-                    expect="Clipboard contains the composed body.",
+            if not _native_note_written:
+                steps.append(
+                    DesktopTaskStep(
+                        action="set_clipboard",
+                        target=body,
+                        reason="Stage the CognitiveEngine-composed document body for the active writing surface.",
+                        expect="Clipboard contains the composed body.",
+                    )
                 )
-            )
             if web_document_url:
                 steps.append(
                     DesktopTaskStep(
@@ -3279,7 +3303,7 @@ class DesktopTaskSkill(BaseSkill):
                         expect="Wait completes within the bounded desktop-task budget.",
                     )
                 )
-            if (not web_document_url) and any(
+            if (not web_document_url) and (not _native_note_written) and any(
                 marker in lowered for marker in ("note", "textedit", "pages", "word", "document", "journal")
             ):
                 if any(step.action == "open_app" for step in steps):

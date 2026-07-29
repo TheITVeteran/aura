@@ -459,6 +459,77 @@ class ComputerUseSkill(BaseSkill):
             return expected, True
         return observed, False
 
+    async def _create_note(self, target: Any) -> dict[str, Any]:
+        """Create a Notes note through its scripting interface.
+
+        Keystroke automation for this was never going to be reliable: it
+        needs the app to hold the front from cmd+n through cmd+v, and on a
+        real desktop the browser takes focus back mid-sequence. The Notes
+        dictionary makes the whole thing one atomic call with no focus, no
+        clipboard and no timing — and it verifies by reading the note back,
+        so a silent failure cannot be reported as success.
+        """
+        payload = target if isinstance(target, dict) else {}
+        if not payload and isinstance(target, str):
+            try:
+                payload = json.loads(target)
+            except (TypeError, ValueError):
+                payload = {"body": target}
+        title = str(payload.get("title") or payload.get("name") or "").strip()
+        body = str(payload.get("body") or payload.get("text") or "").strip()
+        if not body:
+            return {"ok": False, "error": "create_note requires a body"}
+        if not title:
+            title = body.split("\n", 1)[0][:60].strip() or "Note"
+
+        def _html(value: str) -> str:
+            escaped = (
+                value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            lines = [line for line in escaped.split("\n")]
+            return "".join(f"<div>{line}</div>" for line in lines)
+
+        script = (
+            'tell application "Notes"\n'
+            f"    set theNote to make new note with properties "
+            f"{{name:{self._applescript_string(title)}, "
+            f"body:{self._applescript_string(_html(title) + _html(body))}}}\n"
+            "    return name of theNote\n"
+            "end tell"
+        )
+        try:
+            created = await asyncio.to_thread(self._run_applescript, script, timeout=20)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            return {"ok": False, "error": f"create_note failed: {exc}", "title": title}
+
+        created_name = str(created or "").strip()
+        # Read it back: a note that cannot be found was not created.
+        verify = (
+            'tell application "Notes" to return name of note '
+            f"{self._applescript_string(created_name or title)}"
+        )
+        try:
+            confirmed = await asyncio.to_thread(self._run_applescript, verify, timeout=15)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            return {
+                "ok": False,
+                "error": f"create_note could not verify the note: {exc}",
+                "title": title,
+            }
+        verified = bool(str(confirmed or "").strip())
+        return {
+            "ok": verified,
+            "action": "create_note",
+            "title": created_name or title,
+            "effect_verified": verified,
+            "verification": (
+                f"Note '{created_name or title}' exists in Notes."
+                if verified
+                else "Note was not found after creation."
+            ),
+            "characters": len(body),
+        }
+
     async def hold_focus(self, app_name: str) -> bool:
         """Keep an app in front for as long as we are working in it.
 
@@ -2576,6 +2647,15 @@ end tell
 
             elif action == "set_clipboard":
                 return await asyncio.to_thread(self._set_clipboard, params.target)
+
+            elif action == "create_note":
+                blocked = await self._require_permissions(
+                    "creating a note through the Notes scripting interface",
+                    "AUTOMATION",
+                )
+                if blocked:
+                    return blocked
+                return await self._create_note(params.target)
 
             elif action == "get_clipboard":
                 return await asyncio.to_thread(self._get_clipboard)
