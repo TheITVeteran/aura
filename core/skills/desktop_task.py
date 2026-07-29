@@ -40,6 +40,23 @@ _DESKTOP_TASK_RECOVERABLE_ERRORS = (
 FETCHED_IMAGE_SOURCE_SENTINEL = "aura://fetched-image-source"
 MAX_DESKTOP_TASK_STEPS = 32
 
+def _computer_use_skill_singleton():
+    """The computer_use skill instance used for focus management."""
+    global _COMPUTER_USE_SKILL
+    if _COMPUTER_USE_SKILL is None:
+        from core.skills.computer_use import ComputerUseSkill
+
+        _COMPUTER_USE_SKILL = ComputerUseSkill()
+    return _COMPUTER_USE_SKILL
+
+
+_COMPUTER_USE_SKILL = None
+
+#: Steps whose effect depends on WHICH app is in front. Keystrokes and clicks
+#: land wherever focus is, so these re-assert it first; everything else (file
+#: writes, downloads, settings) is indifferent to the frontmost window.
+_FOCUS_SENSITIVE_ACTIONS = frozenset({"type", "hotkey", "click", "scroll", "read_screen_text"})
+
 
 def _local_timestamp() -> str:
     """Timestamp string used in user-visible desktop artifacts."""
@@ -1285,9 +1302,15 @@ class DesktopTaskSkill(BaseSkill):
         if not text:
             return ""
         patterns = (
+            # "a new note WITH THREE SENTENCES about humpback whales" — the
+            # qualifier between the noun and "about" defeated this, so the
+            # topic came back empty and the note was written about "the
+            # requested subject". Measured live 2026-07-28.
             r"\b(?:write|draft|compose|type|create)\s+(?:me\s+)?(?:a\s+|an\s+)?"
-            r"(?:short\s+|full\s+|one\s+)?(?:paragraph|note|document|essay|summary|report|journal\s+entry)"
-            r"\s+(?:about|on|describing|explaining)\s+(.+)$",
+            r"(?:new\s+|short\s+|full\s+|one\s+)?"
+            r"(?:paragraph|note|document|essay|summary|report|journal\s+entry)"
+            r"(?:\s+(?:with|containing|of|that\s+has)\s+[^.]{0,60}?)?"
+            r"\s+(?:about|on|describing|explaining|covering)\s+(.+)$",
             r"\b(?:write|draft|compose|type)\s+(.+?)\s+(?:in|into|to)\s+(?:notes|google docs|docs|a note|the note)\b",
         )
         for pattern in patterns:
@@ -1295,6 +1318,9 @@ class DesktopTaskSkill(BaseSkill):
             if not match:
                 continue
             topic = match.group(1).strip(" .,:;?!\"'")
+            # A following instruction is not part of the subject: "about
+            # humpback whales. Actually do it" is about humpback whales.
+            topic = re.split(r"(?<=[a-z])[.!?]\s+\S", topic)[0].strip(" .,:;?!\"'")
             topic = re.split(
                 r"\b(?:and then|then|after that|also|export|save|create a folder|make a folder)\b",
                 topic,
@@ -4202,6 +4228,25 @@ class DesktopTaskSkill(BaseSkill):
             result: dict[str, Any] = {}
             effect_verified = False
             effect_evidence = "step did not execute"
+            _focus_app = ""
+            for _prior in steps[: index + 1]:
+                if str(getattr(_prior, "action", "")) == "open_app":
+                    _focus_app = str(getattr(_prior, "target", "") or "").strip()
+
+            # Hold the app the way a person does.
+            #
+            # An interaction step sends keystrokes to whatever is frontmost.
+            # Checking focus once at open_app and hoping it survives until
+            # cmd+v is how "open Notes and write a note" failed with
+            # "observed=Google Chrome" — the browser took focus back between
+            # steps, which is exactly what browsers do. A person keeps the app
+            # they are working in in front until they are finished.
+            if resolved_step.action in _FOCUS_SENSITIVE_ACTIONS and _focus_app:
+                try:
+                    await _computer_use_skill_singleton().hold_focus(_focus_app)
+                except _DESKTOP_TASK_RECOVERABLE_ERRORS as exc:
+                    logger.debug("hold_focus skipped for %s: %s", _focus_app, exc)
+
             while attempt < attempt_limit:
                 attempt += 1
                 step_context["desktop_task_attempt"] = attempt

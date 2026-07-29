@@ -459,6 +459,55 @@ class ComputerUseSkill(BaseSkill):
             return expected, True
         return observed, False
 
+    async def hold_focus(self, app_name: str) -> bool:
+        """Keep an app in front for as long as we are working in it.
+
+        Bryan's framing, and it is how people actually use a computer: you
+        bring an app forward, you work in it for as long as you need, and
+        then you put it away. Aura was instead checking "is it frontmost?"
+        once per step and failing the whole task when a browser stole focus
+        back between keystrokes.
+
+        This re-asserts focus cheaply. Polling the frontmost app costs
+        nothing; asking an app to activate is an AppleScript round trip, so
+        it only happens when focus has actually been lost.
+        """
+        name = str(app_name or "").strip()
+        if not name:
+            return False
+        current = await asyncio.to_thread(self._frontmost_app_name)
+        if self._frontmost_app_matches(current, name):
+            return True
+        try:
+            await self._activate_app(name)
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            logger.debug("hold_focus activation failed for %s: %s", name, exc)
+            return False
+        await asyncio.sleep(0.25)
+        current = await asyncio.to_thread(self._frontmost_app_name)
+        return self._frontmost_app_matches(current, name)
+
+    async def release_focus(self, app_name: str) -> bool:
+        """Put the app away when the work in it is done.
+
+        The other half of how a person uses an app: when they finish, they
+        hide it rather than leaving it sitting over everything the person was
+        already doing.
+        """
+        name = str(app_name or "").strip()
+        if not name:
+            return False
+        script = (
+            f"tell application \"System Events\" to set visible of "
+            f"application process {self._applescript_string(name)} to false"
+        )
+        try:
+            await asyncio.to_thread(self._run_applescript, script, timeout=5)
+            return True
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            logger.debug("release_focus failed for %s: %s", name, exc)
+            return False
+
     async def _wait_for_frontmost_app(self, expected: str) -> tuple[bool, str]:
         """Wait for an app to actually reach the front, re-asking as we go.
 
