@@ -1,0 +1,4 @@
+[tasks] 288 train / 36 held-out from recurrence_curriculum (disjoint prompts and identities verified)
+[envelope] {'schema': 'aura.mlx_memory_guard.v1', 'memory_limit_gb': 26.88, 'cache_limit_gb': 2.0, 'wired_limit_gb': 36.48, 'reclaim_every': 16, 'host_memory_gb': 64.0}
+[wiring] 24 projections adapted
+[policy-probe] policy=fb7b014e26e0d0a4aa0d03a7fa509e33e449e40c8c33148b32859caa3a73877f receipt=29b42bbabfdf7793805deb9b7600bdae6762fa54d017b37204cf2c0b14fcddc0 path=/Users/bryan/.aura/codex-worktrees/spark-cp419/artifacts/closeout/latent_cortex/cp420s8_resident_32b_recurrent_grpo/policy-probe/initial_policy_probe.json

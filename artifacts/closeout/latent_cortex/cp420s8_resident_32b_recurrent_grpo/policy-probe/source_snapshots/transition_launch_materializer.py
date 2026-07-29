@@ -1149,15 +1149,8 @@ def materialize_launch(
             policy=policy,
         )
 
-    published: dict[str, Path] = {}
-    preregistration_copy = launch_root / "preregistration-contract.json"
-    _publish(
-        preregistration_copy,
-        _prereg_raw,
-        role="preregistration-contract_json",
-    )
-    published["preregistration-contract.json"] = preregistration_copy
     artifact_documents = {
+        "preregistration-contract.json": (contract, False),
         "provider-contract.json": (provider_contract, True),
         "provider-config.json": (provider_config, True),
         "trust-policy.json": (policy.document, True),
@@ -1170,6 +1163,7 @@ def materialize_launch(
             True,
         ),
     }
+    published: dict[str, Path] = {}
     for name, (document, newline) in artifact_documents.items():
         path = launch_root / name
         payload = canonical_json_bytes(document) + (b"\n" if newline else b"")

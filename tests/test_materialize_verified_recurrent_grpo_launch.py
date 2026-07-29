@@ -241,6 +241,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     spec_sha = _sha("execution")
     contract_body = {
         "campaign_id": campaign_id,
+        "research_parameters": {"temperature": 0.25},
         "model": {
             "path": "model",
             "base_checkpoint": {"fingerprint": _sha("model")},
@@ -277,11 +278,13 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     }
     contract = {
         **contract_body,
-        "contract_sha256": hashlib.sha256(canonical_json_bytes(contract_body)).hexdigest(),
+        "contract_sha256": hashlib.sha256(
+            materializer._research_json_bytes(contract_body)
+        ).hexdigest(),
     }
     contract_path = _write(
         tmp_path / "preregistration.json",
-        canonical_json_bytes(contract),
+        materializer._research_json_bytes(contract),
     )
     bundle_identity = build_tokenizer_bundle_identity(
         tokenizer_class="fixture.Tokenizer",

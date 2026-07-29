@@ -1,0 +1,53 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s8",
+  "claim_boundary": "launch_repair_only_no_training_or_reasoning_gain_claim",
+  "contract_file_sha256": "003a7e647c5bda71b37d906811c57454182d6a12e921e0784b3b8c7ba336aa9e",
+  "contract_sha256": "ac205799adf6186c8616d8afff732c9c751b11399e5c0c31f4d93d129fc9a410",
+  "failure": {
+    "code": "json_floating_point_forbidden",
+    "optimizer_update_occurred": false,
+    "phase": "verified_launch_archive_publication",
+    "training_started": false
+  },
+  "gates": {
+    "answer_channel": {
+      "correct_count": 6,
+      "detached_receipt_sha256": "99004c9028829d8f1c1aa9326ab43b7381b2912cab82bdc2dc9b6165dfb145e6",
+      "receipt_sha256": "fdca78c0775080dd30442e4c545384770a65b8eb20a49941a1c2e94f39f0f9e1",
+      "task_count": 6,
+      "valid_contract_count": 6,
+      "verdict": "answer_channel_operational"
+    },
+    "initial_policy": {
+      "detached_receipt_sha256": "fc3d8618a798dc007b8bddd94ced1e5179841d99d1f7e914ccea7a3222601d0b",
+      "initial_policy_sha256": "fb7b014e26e0d0a4aa0d03a7fa509e33e449e40c8c33148b32859caa3a73877f",
+      "receipt_sha256": "29b42bbabfdf7793805deb9b7600bdae6762fa54d017b37204cf2c0b14fcddc0",
+      "wiring_projection_count": 24
+    }
+  },
+  "repair": {
+    "archive_behavior": "preserve_exact_validated_preregistration_bytes",
+    "finite_float_scope": "preregistration_contract_only",
+    "strict_no_float_scope": [
+      "launch_bundle",
+      "provider_contract",
+      "provider_config",
+      "trust_policy",
+      "task_commitments",
+      "task_answer_nonces",
+      "verified_transition_evidence"
+    ]
+  },
+  "schema": "aura.spark.cp420s8_preregistration_archive_serialization_evidence.v1",
+  "tests": {
+    "adjacent_launch_and_source_binding": {
+      "passed": 96,
+      "total": 96
+    },
+    "materializer_recovery_matrix": {
+      "passed": 18,
+      "total": 18
+    }
+  },
+  "verdict": "repair_verified_fresh_source_bound_campaign_required"
+}

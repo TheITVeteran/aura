@@ -31596,3 +31596,32 @@ CP420S7 remains immutable and performed no optimizer update. Evidence:
 `artifacts/current/cp420s7_verified_task_integer_portability_evidence.json`.
 Reasoning gain, frontier gain, and `WOW Signal` remain unclaimed. A fresh
 CP420S8 contract and resident gates are next.
+
+### 2026-07-29 - CP420S8 preregistration archive codec closure
+
+CP420S8 passed its resident initial-policy and answer-channel gates. The
+initial policy attached all 24 recurrent projections, and the answer lane
+returned 6/6 valid and correct held-out answers. Four distinct
+Keychain-backed same-host signer roles were also provisioned without exporting
+private keys.
+
+Materialization then failed closed before campaign-open publication, training,
+or optimizer mutation. The preregistration legitimately contains finite
+research floats, but both the archive publisher and independent archive
+reopener incorrectly routed it through the verified-transition integer-only
+JSON codec.
+
+The archive now preserves the exact canonical preregistration bytes, and the
+independent reopener applies finite-JSON canonicalization only to that document
+and its digest. All signed transition, provider, policy, commitment, nonce, and
+launch objects remain float-free. The finite-float materializer recovery matrix
+passes 18/18, and 96/96 adjacent launch and source-bound contract tests pass.
+
+CP420S8 remains immutable and is retired by this source repair. It performed no
+optimizer update. Evidence:
+`artifacts/current/cp420s8_preregistration_archive_serialization_evidence.json`.
+No gain, frontier, promotion, or `WOW Signal` claim is made. CP420S8 is total
+checkpoint 696; the 696-920 envelope is approximately 75.7%-100.0% with an
+87.8% midpoint. The evidence-adjusted estimate is 3-7 checkpoints to a
+preliminary gain verdict and 8-17 to the powered conditional `WOW Signal`
+decision. A fresh CP420S9 contract and resident gates are next.

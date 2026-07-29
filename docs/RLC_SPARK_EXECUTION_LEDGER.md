@@ -5629,3 +5629,32 @@ matrix passes 84/84. Evidence:
 
 No optimizer update or gain claim occurred. CP420S8 must be freshly frozen and
 pass the resident gates before materialization resumes.
+
+### 2026-07-29 - CP420S8: preregistration and transition evidence use distinct JSON domains
+
+The fresh CP420S8 resident policy probe passed with all 24 recurrent
+projections attached, and the held-out answer channel returned 6/6 valid,
+correct answers. Four distinct Keychain-backed host signer roles were then
+provisioned without exporting private keys. Materialization failed closed
+before campaign-open publication or optimizer mutation because the archive
+publisher and independent reopener attempted to serialize the finite-float
+preregistration through the verified-transition integer-only JSON codec.
+
+The launch archive now preserves the exact bytes of the already canonical and
+validated preregistration. Its independent verifier uses the same canonical
+finite-JSON domain only for that preregistration and its internal digest.
+Provider state, policy, commitments, nonces, launch metadata, and transition
+evidence remain on the stricter no-float codec. The materializer crash/recovery
+matrix now includes a finite-float preregistration and passes 18/18; the
+adjacent launch, source-binding, training-contract, and initial-policy matrix
+passes 96/96.
+
+CP420S8 is immutable and retired because the repair changes source-bound launch
+code. It performed no optimizer update. Evidence:
+`artifacts/current/cp420s8_preregistration_archive_serialization_evidence.json`.
+Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false.
+CP420S8 is total checkpoint 696. The 696-920 completion envelope is
+approximately 75.7%-100.0%, with an 87.8% midpoint. The evidence-adjusted
+range is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to
+the powered conditional `WOW Signal` decision. CP420S9 must be freshly frozen
+and pass the resident gates before launch materialization resumes.

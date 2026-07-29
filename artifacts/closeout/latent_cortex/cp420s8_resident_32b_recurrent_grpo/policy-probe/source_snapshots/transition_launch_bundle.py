@@ -107,25 +107,11 @@ def _identifier(value: Any, *, role: str) -> str:
     return value
 
 
-def _canonical_finite_json_bytes(value: Any, *, role: str) -> bytes:
-    try:
-        return json.dumps(
-            value,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
-        raise VerifiedTransitionLaunchBundleError(f"{role}_invalid") from exc
-
-
 def _canonical_document(
     raw: bytes,
     *,
     role: str,
     allow_bare_canonical: bool = False,
-    allow_finite_floats: bool = False,
 ) -> dict[str, Any]:
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -145,11 +131,7 @@ def _canonical_document(
         raise
     except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise VerifiedTransitionLaunchBundleError(f"{role}_invalid") from exc
-    canonical = (
-        _canonical_finite_json_bytes(value, role=role)
-        if allow_finite_floats
-        else canonical_json_bytes(value)
-    )
+    canonical = canonical_json_bytes(value)
     accepted = {canonical + b"\n"}
     if allow_bare_canonical:
         accepted.add(canonical)
@@ -341,18 +323,12 @@ def validate_verified_transition_launch_archive(
         ),
         role="preregistration_contract",
         allow_bare_canonical=True,
-        allow_finite_floats=True,
     )
     preregistration_unsigned = dict(preregistration)
     claimed_preregistration = preregistration_unsigned.pop("contract_sha256", None)
     if (
         claimed_preregistration
-        != hashlib.sha256(
-            _canonical_finite_json_bytes(
-                preregistration_unsigned,
-                role="preregistration_contract",
-            )
-        ).hexdigest()
+        != hashlib.sha256(canonical_json_bytes(preregistration_unsigned)).hexdigest()
     ):
         _fail("launch_preregistration_internal_digest_mismatch")
     if claimed_preregistration != _sha256(
