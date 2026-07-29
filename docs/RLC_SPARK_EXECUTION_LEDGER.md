@@ -5775,3 +5775,29 @@ gain. Evidence:
 CP420S12 is immutable and retired. No optimizer update, reasoning gain,
 frontier gain, promotion, or `WOW Signal` is claimed. CP420S12 remains total
 checkpoint 700; the repair checkpoint is 701 and a fresh campaign is required.
+
+### 2026-07-29 - CP420S13 prelaunch: adequate training and unattended recovery
+
+The next source-bound campaign cannot publish a recurrent adapter merely
+because it reaches the final scheduled step. Protocol v7 adds an independently
+recomputed training-adequacy certificate requiring the exact unique 288-task
+pass, at least 25% real optimizer updates, update activity in every
+preregistered evaluation window, a distinct policy digest for every accepted
+update, every scheduled held-out evaluation, and a healthy verified learning
+signal. The frozen identity verifier recomputes the certificate from step
+receipts and refuses an under-dosed bundle. Existing v5 and v6 bundles remain
+verifiable under their historical schemas.
+
+The detached training target now owns a source-bound watchdog. It atomically
+journals each attempt, releases failed MLX state, and resumes from the exact
+durable checkpoint only when progress evidence permits it. Recovery is capped
+at four total attempts and stops after two consecutive failures with no
+durable progress. This closes the failure mode where a recoverable exception
+terminated after roughly 20 minutes and remained dormant until a human
+returned.
+
+The focused trainer, identity, preregistration, post-training, and watchdog
+matrix passes 98/98. This is prelaunch reliability evidence only. CP420S13
+still requires a fresh resident canary, contract, trust roots, launch bundle,
+and explicit user green light before the 32B process starts. No intelligence
+gain or `WOW Signal` is claimed.

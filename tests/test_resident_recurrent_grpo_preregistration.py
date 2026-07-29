@@ -421,6 +421,73 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     ]
 
 
+def test_training_watchdog_retries_only_into_exact_durable_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import run_verified_recurrent_grpo_training as runner
+
+    training = tmp_path / "training"
+    bundle = tmp_path / "bundle.json"
+    digest_file = tmp_path / "bundle.sha256"
+    bundle.write_text("{}\n", encoding="ascii")
+    digest_file.write_text("a" * 64 + "\n", encoding="ascii")
+    contract = {
+        "campaign_id": "watchdog-test",
+        "contract_sha256": "b" * 64,
+        "launch_not_before_unix": 0,
+        "paths": {
+            "artifact_root": "artifacts/watchdog-test",
+            "verified_launch_bundle": "bundle.json",
+            "verified_launch_bundle_sha256": "bundle.sha256",
+            "training_output": "training",
+        },
+        "training": {
+            "argv": ["tools/train_grpo.py"],
+            "dataset": {"sha256": hashlib.sha256(b"dataset\n").hexdigest()},
+            "watchdog_policy": {
+                **prereg.TRAINING_WATCHDOG_POLICY,
+                "retry_backoff_s": 0.001,
+            },
+        },
+    }
+    calls = 0
+
+    def run(_argv):
+        nonlocal calls
+        calls += 1
+        training.mkdir(exist_ok=True)
+        (training / "dataset_manifest.json").write_bytes(b"dataset\n")
+        if calls == 1:
+            (training / "baseline-progress.json").write_text(
+                f'{{"completed":{calls}}}\n',
+                encoding="ascii",
+            )
+            raise RuntimeError("transient resident failure")
+        return 0
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "main", run)
+    monkeypatch.setattr(prereg, "_release_failed_training_runtime", lambda: None)
+    monkeypatch.setattr(prereg.time, "sleep", lambda _seconds: None)
+
+    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 0
+    assert calls == 2
+    journal = json.loads(
+        (tmp_path / "artifacts/watchdog-test/training-watchdog/attempts.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert [record["durable_progress"] for record in journal["records"]] == [True, False]
+    status = json.loads(
+        (tmp_path / "artifacts/watchdog-test/training-watchdog/status.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert status["state"] == "complete"
+
+
 def test_answer_channel_preflight_command_is_bounded_and_source_separated():
     contract = _contract()
 

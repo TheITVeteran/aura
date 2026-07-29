@@ -5,15 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, Never
 
 from core.learning.grpo import GRPO_SCHEMA, group_advantages
 
 PROTOCOL_SCHEMA_V5: Final = "aura.grpo_protocol.v5"
-PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v6"
+PROTOCOL_SCHEMA_V6: Final = "aura.grpo_protocol.v6"
+PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v7"
 TRAINING_RECEIPT_SCHEMA: Final = "aura.grpo_training.v5"
 STEP_RECEIPT_SCHEMA: Final = "aura.recurrent_grpo_step.v1"
+TRAINING_ADEQUACY_SCHEMA: Final = "aura.recurrent_grpo.training_adequacy.v1"
+TRAINING_ADEQUACY_MIN_UPDATE_FRACTION: Final = 0.25
+TRAINING_ADEQUACY_MIN_UPDATES_PER_WINDOW: Final = 1
 
 PROTOCOL_TRAINING_KEYS_V5: Final = frozenset(
     {
@@ -138,6 +143,117 @@ class RecurrentGRPOArtifactSchemaError(ValueError):
 
 def _fail(code: str) -> Never:
     raise RecurrentGRPOArtifactSchemaError(code)
+
+
+def recurrent_training_adequacy_policy() -> dict[str, Any]:
+    """Return the source-bound minimum dose required for adapter publication."""
+
+    return {
+        "schema": TRAINING_ADEQUACY_SCHEMA,
+        "schedule": "one_complete_unique_task_pass",
+        "minimum_optimizer_update_fraction": TRAINING_ADEQUACY_MIN_UPDATE_FRACTION,
+        "minimum_optimizer_updates_per_evaluation_window": (
+            TRAINING_ADEQUACY_MIN_UPDATES_PER_WINDOW
+        ),
+        "evaluation_schedule": "every_eval_interval_plus_terminal_step",
+        "policy_transition_requirement": "distinct_digest_per_optimizer_update",
+        "learning_signal_required": True,
+    }
+
+
+def recurrent_training_adequacy_report(
+    *,
+    step_receipts: Sequence[Mapping[str, Any]],
+    scheduled_task_ids: Sequence[str],
+    max_steps: int,
+    eval_every: int,
+    evaluation_steps: Sequence[int],
+    learning_signal: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Recompute whether one proof-grade recurrent training dose was adequate."""
+
+    if (
+        type(max_steps) is not int
+        or max_steps <= 0
+        or type(eval_every) is not int
+        or eval_every <= 0
+        or any(not isinstance(task_id, str) or not task_id for task_id in scheduled_task_ids)
+        or any(type(step) is not int or step <= 0 for step in evaluation_steps)
+    ):
+        _fail("training_adequacy_input_invalid")
+    expected_tasks = list(scheduled_task_ids)
+    observed_tasks = [receipt.get("task_id") for receipt in step_receipts]
+    observed_steps = [receipt.get("step") for receipt in step_receipts]
+    update_receipts = [
+        receipt
+        for receipt in step_receipts
+        if receipt.get("step_kind") in {"optimizer_update", "verified_optimizer_update"}
+    ]
+    update_steps = [receipt.get("step") for receipt in update_receipts]
+    update_policies = [receipt.get("policy_after_sha256") for receipt in update_receipts]
+    expected_evaluations = list(range(eval_every, max_steps + 1, eval_every))
+    if not expected_evaluations or expected_evaluations[-1] != max_steps:
+        expected_evaluations.append(max_steps)
+    observed_evaluations = sorted(set(evaluation_steps))
+    minimum_updates = max(
+        1,
+        math.ceil(max_steps * TRAINING_ADEQUACY_MIN_UPDATE_FRACTION),
+    )
+    window_counts: list[dict[str, int]] = []
+    window_start = 1
+    for window_end in expected_evaluations:
+        window_counts.append(
+            {
+                "start_step": window_start,
+                "end_step": window_end,
+                "optimizer_updates": sum(
+                    type(step) is int and window_start <= step <= window_end
+                    for step in update_steps
+                ),
+            }
+        )
+        window_start = window_end + 1
+
+    checks = {
+        "one_complete_pass": (
+            len(step_receipts) == max_steps
+            and len(expected_tasks) == max_steps
+            and observed_steps == list(range(1, max_steps + 1))
+        ),
+        "exact_task_schedule": observed_tasks == expected_tasks,
+        "unique_task_coverage": (
+            len(expected_tasks) == len(set(expected_tasks))
+            and len(observed_tasks) == len(set(observed_tasks))
+        ),
+        "minimum_optimizer_updates": len(update_receipts) >= minimum_updates,
+        "distributed_update_activity": all(
+            window["optimizer_updates"]
+            >= TRAINING_ADEQUACY_MIN_UPDATES_PER_WINDOW
+            for window in window_counts
+        ),
+        "distinct_policy_transitions": (
+            len(update_policies) == len(set(update_policies))
+            and all(isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) for value in update_policies)
+        ),
+        "evaluation_schedule_complete": observed_evaluations == expected_evaluations,
+        "learning_signal": learning_signal.get("learning_signal") is True,
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    return {
+        "schema": TRAINING_ADEQUACY_SCHEMA,
+        "policy": recurrent_training_adequacy_policy(),
+        "max_steps": max_steps,
+        "scheduled_tasks": len(expected_tasks),
+        "optimizer_updates": len(update_receipts),
+        "minimum_optimizer_updates": minimum_updates,
+        "optimizer_update_fraction": round(len(update_receipts) / max_steps, 6),
+        "evaluation_steps": observed_evaluations,
+        "expected_evaluation_steps": expected_evaluations,
+        "update_windows": window_counts,
+        "checks": checks,
+        "failed_checks": failed,
+        "admitted": not failed,
+    }
 
 
 def protocol_semantic_sha256(value: Any) -> str:
@@ -444,6 +560,7 @@ def validate_step_reward_channels(
 __all__ = [
     "PROTOCOL_SCHEMA",
     "PROTOCOL_SCHEMA_V5",
+    "PROTOCOL_SCHEMA_V6",
     "PROTOCOL_TRAINING_KEYS",
     "PROTOCOL_TRAINING_KEYS_V5",
     "STEP_RECEIPT_KEYS",

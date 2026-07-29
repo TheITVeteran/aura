@@ -10,6 +10,7 @@ that remain unavailable until independent evidence accepts them.
 from __future__ import annotations
 
 import argparse
+import gc
 import hashlib
 import json
 import os
@@ -79,7 +80,14 @@ from core.learning.recurrence_curriculum import (  # noqa: E402
 from core.learning.recurrent_grpo import (  # noqa: E402
     VerifiedTrajectoryGroupConfig,
 )
-from core.runtime.atomic_writer import atomic_write_bytes_if_absent  # noqa: E402
+from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
+    recurrent_training_adequacy_policy,
+)
+from core.runtime.atomic_writer import (  # noqa: E402
+    atomic_write_bytes,
+    atomic_write_bytes_if_absent,
+    ensure_private_directory,
+)
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools import run_detached_step  # noqa: E402
 from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
@@ -94,6 +102,13 @@ DEFAULT_ROOT = "artifacts/closeout/latent_cortex/cp259_resident_32b_recurrent_gr
 NOT_BEFORE = "2026-07-21T17:00:00-07:00"
 TRAINING_SEED = 2026072102
 CONFIRMATORY_OBSERVATIONS_PER_DOMAIN = 411
+TRAINING_WATCHDOG_POLICY: Mapping[str, Any] = {
+    "schema": "aura.resident_recurrent_grpo.training_watchdog.v1",
+    "max_attempts": 4,
+    "retry_backoff_s": 30.0,
+    "max_consecutive_no_progress_failures": 2,
+    "restart_scope": "exact_source_bound_checkpoint_resume_only",
+}
 TRAINING_PARAMETERS: Mapping[str, Any] = {
     "task_source": "recurrence_curriculum",
     "domains": list(RECURRENCE_TRAINING_FAMILIES),
@@ -540,11 +555,13 @@ def build_contract(
                 else {}
             ),
             "resume_contract": "exact_identity_bound_checkpoint",
+            "watchdog_policy": dict(TRAINING_WATCHDOG_POLICY),
             "completion_required": {
                 "schema": "aura.recurrent_grpo_training_completion.v1",
                 "complete": True,
                 "halt_reason": "max_steps",
                 "causal_gain_proven": False,
+                "training_adequacy": recurrent_training_adequacy_policy(),
             },
             "resource_envelope": {
                 "host_memory_bytes": 68_719_476_736,
@@ -699,6 +716,13 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         execution_spec=DEFAULT_SPEC,
     )
     expected_trajectory_config = _verified_trajectory_config_commitment(_spec)
+    expected_completion = {
+        "schema": "aura.recurrent_grpo_training_completion.v1",
+        "complete": True,
+        "halt_reason": "max_steps",
+        "causal_gain_proven": False,
+        "training_adequacy": recurrent_training_adequacy_policy(),
+    }
     if (
         training.get("execution_mode") != "recurrent"
         or training.get("parameters") != TRAINING_PARAMETERS
@@ -712,6 +736,8 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
             and training.get("verified_trajectory_config_artifact") != expected_trajectory_config
         )
         or training.get("resume_contract") != "exact_identity_bound_checkpoint"
+        or training.get("watchdog_policy") != TRAINING_WATCHDOG_POLICY
+        or training.get("completion_required") != expected_completion
     ):
         _fail("training_contract_mismatch")
     dataset = training["dataset"]
@@ -932,6 +958,106 @@ def _write_once(path: Path, document: Mapping[str, Any]) -> None:
         _fail("contract_publication_raced")
 
 
+def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
+    """Bind watchdog decisions to durable trainer progress, not elapsed time."""
+
+    files: dict[str, str] = {}
+    for relative in (
+        "latest.json",
+        "baseline-progress.json",
+        "calibration-progress.json",
+        "training_completion.json",
+        "grpo_receipt.json",
+    ):
+        path = training_root / relative
+        if path.is_file() and not path.is_symlink():
+            files[relative] = _sha256(read_stable_bytes(path, max_bytes=32 * 1024 * 1024))
+    checkpoint_step: int | None = None
+    latest = training_root / "latest.json"
+    if latest.is_file() and not latest.is_symlink():
+        pointer = _strict_json(latest)
+        relative = pointer.get("checkpoint")
+        if isinstance(relative, str):
+            complete_path = training_root / relative / "complete.json"
+            if complete_path.is_file() and not complete_path.is_symlink():
+                complete = _strict_json(complete_path)
+                if type(complete.get("step")) is int:
+                    checkpoint_step = int(complete["step"])
+                files[f"{relative}/complete.json"] = _sha256(
+                    read_stable_bytes(complete_path, max_bytes=1024 * 1024)
+                )
+    document = {
+        "schema": "aura.resident_recurrent_grpo.training_progress.v1",
+        "checkpoint_step": checkpoint_step,
+        "files": dict(sorted(files.items())),
+    }
+    return {**document, "sha256": _sha256(canonical_json_bytes(document))}
+
+
+def _watchdog_documents(
+    contract: Mapping[str, Any],
+) -> tuple[Path, Path, Path, list[dict[str, Any]]]:
+    root = ensure_private_directory(
+        _repo_path(
+            str(PurePosixPath(str(contract["paths"]["artifact_root"])) / "training-watchdog"),
+            role="training_watchdog",
+            must_exist=False,
+        )
+    )
+    journal_path = root / "attempts.json"
+    status_path = root / "status.json"
+    if not journal_path.exists():
+        return root, journal_path, status_path, []
+    raw = read_stable_bytes(journal_path, max_bytes=4 * 1024 * 1024)
+    try:
+        document = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise PreregistrationError("training_watchdog_journal_invalid") from exc
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema", "campaign_id", "contract_sha256", "records"}
+        or document.get("schema") != "aura.resident_recurrent_grpo.training_watchdog_journal.v1"
+        or document.get("campaign_id") != contract["campaign_id"]
+        or document.get("contract_sha256") != contract["contract_sha256"]
+        or not isinstance(document.get("records"), list)
+        or any(not isinstance(record, dict) for record in document["records"])
+        or canonical_json_bytes(document) != raw
+    ):
+        _fail("training_watchdog_journal_invalid")
+    return root, journal_path, status_path, [dict(record) for record in document["records"]]
+
+
+def _write_watchdog_documents(
+    contract: Mapping[str, Any],
+    *,
+    journal_path: Path,
+    status_path: Path,
+    records: Sequence[Mapping[str, Any]],
+    status: Mapping[str, Any],
+) -> None:
+    journal = {
+        "schema": "aura.resident_recurrent_grpo.training_watchdog_journal.v1",
+        "campaign_id": contract["campaign_id"],
+        "contract_sha256": contract["contract_sha256"],
+        "records": [dict(record) for record in records],
+    }
+    atomic_write_bytes(journal_path, canonical_json_bytes(journal), mode=0o600)
+    atomic_write_bytes(status_path, canonical_json_bytes(dict(status)), mode=0o600)
+
+
+def _release_failed_training_runtime() -> None:
+    """Release resident MLX state before an exact checkpoint resume attempt."""
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+
+        mx.clear_cache()
+    except (ImportError, RuntimeError):
+        pass
+    gc.collect()
+
+
 def _run_training(
     contract: Mapping[str, Any],
     *,
@@ -960,23 +1086,104 @@ def _run_training(
     informational_digest = informational_digest_path.read_text(encoding="ascii").strip()
     if informational_digest != bundle_digest:
         _fail("verified_launch_bundle_external_digest_mismatch")
-    result = run_verified_recurrent_grpo_training.main(
-        [
-            "--verified-launch-bundle",
-            str(bundle_path),
-            "--expected-launch-bundle-sha256",
-            bundle_digest,
-            "--expected-preregistration-sha256",
-            str(contract["contract_sha256"]),
-            *argv[1:],
-        ]
-    )
-    if result != 0:
-        return int(result)
     training_root = _repo_path(
         str(contract["paths"]["training_output"]),
         role="training_output",
+        must_exist=False,
     )
+    _root, journal_path, status_path, records = _watchdog_documents(contract)
+    policy = contract["training"]["watchdog_policy"]
+    max_attempts = int(policy["max_attempts"])
+    no_progress_limit = int(policy["max_consecutive_no_progress_failures"])
+    consecutive_no_progress = 0
+    if records:
+        consecutive_no_progress = int(records[-1].get("consecutive_no_progress_failures") or 0)
+    if len(records) >= max_attempts:
+        _fail("training_watchdog_attempt_budget_exhausted")
+    invocation = [
+        "--verified-launch-bundle",
+        str(bundle_path),
+        "--expected-launch-bundle-sha256",
+        bundle_digest,
+        "--expected-preregistration-sha256",
+        str(contract["contract_sha256"]),
+        *argv[1:],
+    ]
+    while len(records) < max_attempts:
+        attempt = len(records) + 1
+        before = _training_progress_snapshot(training_root)
+        started_at = time.time()
+        status = {
+            "schema": "aura.resident_recurrent_grpo.training_watchdog_status.v1",
+            "campaign_id": contract["campaign_id"],
+            "contract_sha256": contract["contract_sha256"],
+            "state": "running",
+            "attempt": attempt,
+            "max_attempts": max_attempts,
+            "started_at": started_at,
+            "progress": before,
+        }
+        _write_watchdog_documents(
+            contract,
+            journal_path=journal_path,
+            status_path=status_path,
+            records=records,
+            status=status,
+        )
+        error: Exception | None = None
+        result = 1
+        try:
+            result = int(run_verified_recurrent_grpo_training.main(invocation))
+        except Exception as exc:
+            error = exc
+        after = _training_progress_snapshot(training_root)
+        progressed = after["sha256"] != before["sha256"]
+        consecutive_no_progress = 0 if progressed else consecutive_no_progress + 1
+        record = {
+            "attempt": attempt,
+            "started_at": started_at,
+            "finished_at": time.time(),
+            "returncode": result if error is None else 1,
+            "error_type": type(error).__name__ if error is not None else None,
+            "error": str(error)[:1000] if error is not None else None,
+            "progress_before": before,
+            "progress_after": after,
+            "durable_progress": progressed,
+            "consecutive_no_progress_failures": consecutive_no_progress,
+        }
+        records.append(record)
+        terminal_state = (
+            "complete"
+            if error is None and result == 0
+            else "exhausted"
+            if len(records) >= max_attempts
+            or consecutive_no_progress >= no_progress_limit
+            else "retry_wait"
+        )
+        _write_watchdog_documents(
+            contract,
+            journal_path=journal_path,
+            status_path=status_path,
+            records=records,
+            status={
+                **status,
+                "state": terminal_state,
+                "finished_at": record["finished_at"],
+                "progress": after,
+                "last_error_type": record["error_type"],
+                "last_error": record["error"],
+                "consecutive_no_progress_failures": consecutive_no_progress,
+            },
+        )
+        if terminal_state == "complete":
+            break
+        if terminal_state == "exhausted":
+            if error is not None:
+                raise error
+            return int(result)
+        _release_failed_training_runtime()
+        time.sleep(float(policy["retry_backoff_s"]))
+
     produced_dataset = (training_root / "dataset_manifest.json").read_bytes()
     if _sha256(produced_dataset) != contract["training"]["dataset"]["sha256"]:
         _fail("produced_dataset_commitment_mismatch")

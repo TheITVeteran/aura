@@ -20,6 +20,9 @@ from core.learning.grpo_training_state import (
     canonical_json_bytes,
     sha256_bytes,
 )
+from core.learning.recurrent_grpo_artifact_schema import (
+    recurrent_training_adequacy_report,
+)
 from core.learning.verified_transition_trainer import (
     VerifiedTransitionTrainingScheduleEntry,
 )
@@ -133,6 +136,67 @@ def test_dataset_identity_binds_split_order_and_task_bytes():
     swapped = _dataset_payload([second], [first], seed=11)
     assert sha256_bytes(canonical_json_bytes(swapped)) != digest
     assert _dataset_payload([first], [second], seed=11) == payload
+
+
+def test_recurrent_training_adequacy_requires_full_distributed_real_updates():
+    tasks = [f"task-{index}" for index in range(8)]
+    receipts = [
+        {
+            "step": index + 1,
+            "task_id": task_id,
+            "step_kind": (
+                "verified_optimizer_update" if index in {0, 4} else "verified_rejected_group"
+            ),
+            "policy_after_sha256": hashlib.sha256(task_id.encode("ascii")).hexdigest(),
+        }
+        for index, task_id in enumerate(tasks)
+    ]
+
+    report = recurrent_training_adequacy_report(
+        step_receipts=receipts,
+        scheduled_task_ids=tasks,
+        max_steps=8,
+        eval_every=4,
+        evaluation_steps=[4, 8],
+        learning_signal={"learning_signal": True},
+    )
+
+    assert report["admitted"] is True
+    assert report["minimum_optimizer_updates"] == 2
+    assert [window["optimizer_updates"] for window in report["update_windows"]] == [1, 1]
+
+
+def test_recurrent_training_adequacy_rejects_end_loaded_or_incomplete_dose():
+    tasks = [f"task-{index}" for index in range(8)]
+    receipts = [
+        {
+            "step": index + 1,
+            "task_id": task_id,
+            "step_kind": (
+                "verified_optimizer_update" if index in {6, 7} else "verified_rejected_group"
+            ),
+            "policy_after_sha256": hashlib.sha256(task_id.encode("ascii")).hexdigest(),
+        }
+        for index, task_id in enumerate(tasks[:-1])
+    ]
+
+    report = recurrent_training_adequacy_report(
+        step_receipts=receipts,
+        scheduled_task_ids=tasks,
+        max_steps=8,
+        eval_every=4,
+        evaluation_steps=[8],
+        learning_signal={"learning_signal": True},
+    )
+
+    assert report["admitted"] is False
+    assert {
+        "one_complete_pass",
+        "exact_task_schedule",
+        "minimum_optimizer_updates",
+        "distributed_update_activity",
+        "evaluation_schedule_complete",
+    }.issubset(report["failed_checks"])
 
 
 def test_verified_training_task_and_seed_come_only_from_provider_schedule():

@@ -38,7 +38,9 @@ from core.learning.grpo_training_state import canonical_json_bytes as training_j
 from core.learning.recurrent_grpo import recurrent_policy_sha256
 from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA_V5,
+    PROTOCOL_SCHEMA_V6,
     protocol_semantic_sha256,
+    recurrent_training_adequacy_report,
 )
 from core.learning.verified_transition_trainer import (
     VerifiedTransitionMutationResult,
@@ -433,11 +435,11 @@ def _fixture(
         "optimizer_updates": 1,
         "invocation_count": 1,
         "termination": {"reason": "max_steps", "completed_budget": True, "signal": None},
-        "learning_signal": {},
+        "learning_signal": {"learning_signal": True},
         "curriculum": {},
         "calibration": None,
         "baseline": {},
-        "history": [],
+        "history": [{"step": 1}],
         "step_receipts": [step_receipt],
         "final": {},
         "adapter_decode_delta": 0.0,
@@ -453,6 +455,15 @@ def _fixture(
         },
         "elapsed_minutes": 1.0,
     }
+    if protocol_schema not in {PROTOCOL_SCHEMA_V5, PROTOCOL_SCHEMA_V6}:
+        receipt["training_adequacy"] = recurrent_training_adequacy_report(
+            step_receipts=receipt["step_receipts"],
+            scheduled_task_ids=["train-1"],
+            max_steps=1,
+            eval_every=1,
+            evaluation_steps=[1],
+            learning_signal=receipt["learning_signal"],
+        )
     if mutate_receipt is not None:
         mutate_receipt(receipt)
     receipt_bytes = training_json_bytes(receipt)
@@ -602,6 +613,21 @@ def test_recurrent_grpo_v5_bundle_remains_verifiable_after_v6_migration(
     )
     assert protocol["schema"] == PROTOCOL_SCHEMA_V5
     assert "verified_trajectory_config" not in protocol["training"]
+
+
+def test_recurrent_grpo_v6_bundle_remains_verifiable_after_v7_migration(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path, protocol_schema=PROTOCOL_SCHEMA_V6)
+
+    identity = _validate(fixture)
+
+    assert identity == fixture["identity"]
+    protocol = json.loads(
+        (fixture["out"] / "campaign_adapter/training_protocol.json").read_text(encoding="ascii")
+    )
+    assert protocol["schema"] == PROTOCOL_SCHEMA_V6
+    assert "verified_trajectory_config" in protocol["training"]
 
 
 def test_recurrent_grpo_v6_bundle_with_trajectory_config_verifies_end_to_end(

@@ -27,11 +27,13 @@ from core.learning.recurrent_grpo import VerifiedTrajectoryGroupConfig
 from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA,
     PROTOCOL_SCHEMA_V5,
+    PROTOCOL_SCHEMA_V6,
     PROTOCOL_TRAINING_KEYS,
     PROTOCOL_TRAINING_KEYS_V5,
     STEP_RECEIPT_KEYS,
     RecurrentGRPOArtifactSchemaError,
     protocol_semantic_sha256,
+    recurrent_training_adequacy_report,
     validate_step_reward_channels,
 )
 from core.learning.recurrent_grpo_artifact_schema import (
@@ -743,6 +745,8 @@ def validate_recurrent_grpo_adapter_identity(
     protocol_schema = protocol.get("schema")
     if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
         training_keys = set(PROTOCOL_TRAINING_KEYS)
+    elif protocol_schema == PROTOCOL_SCHEMA_V6:
+        training_keys = set(PROTOCOL_TRAINING_KEYS)
     elif protocol_schema == PROTOCOL_SCHEMA_V5:
         training_keys = set(PROTOCOL_TRAINING_KEYS_V5)
     else:
@@ -884,6 +888,8 @@ def validate_recurrent_grpo_adapter_identity(
         "verdict",
         "elapsed_minutes",
     }
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+        receipt_keys.add("training_adequacy")
     _exact(receipt, receipt_keys, role="training_receipt")
     config = _exact(
         receipt.get("config"),
@@ -979,6 +985,33 @@ def validate_recurrent_grpo_adapter_identity(
         trajectory_shaping_weight=float(trajectory_shaping_weight),
         advantage_clip=float(advantage_clip),
     )
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+        history = receipt.get("history")
+        learning_signal = receipt.get("learning_signal")
+        if not isinstance(history, list) or not isinstance(learning_signal, Mapping):
+            _fail("training_adequacy_evidence_missing")
+        expected_adequacy = recurrent_training_adequacy_report(
+            step_receipts=receipt["step_receipts"],
+            scheduled_task_ids=[task["task_id"] for task in train_tasks],
+            max_steps=max_steps,
+            eval_every=_integer(
+                training.get("eval_every"),
+                role="training_eval_every",
+                minimum=1,
+                maximum=max_steps,
+            ),
+            evaluation_steps=[
+                int(report["step"])
+                for report in history
+                if isinstance(report, Mapping) and type(report.get("step")) is int
+            ],
+            learning_signal=learning_signal,
+        )
+        if (
+            receipt.get("training_adequacy") != expected_adequacy
+            or expected_adequacy["admitted"] is not True
+        ):
+            _fail("training_adequacy_not_admitted")
 
     sources = _exact(parsed["sources"], set(REQUIRED_SOURCE_ROLES), role="sources")
     protocol_sources = _exact(

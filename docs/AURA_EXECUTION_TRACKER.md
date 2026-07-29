@@ -31727,3 +31727,22 @@ incorrect/unparseable. Evidence:
 This is checkpoint 701. CP420S12 remains retired with no optimizer update and
 no gain claim. The next campaign must be freshly frozen from the repaired
 source.
+
+### 2026-07-29 - CP420S13 prelaunch adequacy and watchdog gate
+
+The fresh recurrent campaign is now source-bound to protocol v7. Adapter
+publication requires a machine-recomputed full-dose certificate: all 288
+unique scheduled tasks, at least 25% accepted optimizer updates, accepted
+updates in every 96-step evaluation window, distinct post-update policy
+digests, complete held-out evaluation checkpoints, and a healthy verified
+learning signal. Historical v5/v6 identities remain backward compatible.
+
+The detached target also includes bounded exact-resume recovery independent of
+Codex wakeups. It journals progress and errors atomically, clears failed MLX
+state, retries only the frozen launch, caps attempts at four, and refuses to
+continue after two no-progress failures. The focused matrix passes 98/98.
+
+Open before green light: commit/push this source, run the expanded matrix and
+resident canary, freeze CP420S13, provision fresh signers, materialize and
+reopen the launch bundle twice, and verify the final single-command launch
+surface. No training or gain claim has started.

@@ -73,9 +73,10 @@ from core.learning.grpo_training_state import (  # noqa: E402
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     PROTOCOL_SCHEMA as GRPO_PROTOCOL_SCHEMA,
 )
-from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
+from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402  # noqa: E402
     STEP_RECEIPT_SCHEMA,
     protocol_semantic_sha256,
+    recurrent_training_adequacy_report,
     validate_step_reward_channels,
 )
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
@@ -3777,6 +3778,29 @@ def main(
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
 
+        training_adequacy: dict[str, Any] | None = None
+        if execution_spec is not None and halt_reason == "max_steps":
+            preview_learning_signal = _signal_admission_report(
+                telemetry.verdict(config),
+                step_receipts=step_receipts,
+            )
+            training_adequacy = recurrent_training_adequacy_report(
+                step_receipts=step_receipts,
+                scheduled_task_ids=[task.task_id for task in train_tasks],
+                max_steps=args.max_steps,
+                eval_every=args.eval_every,
+                evaluation_steps=[
+                    int(report["step"])
+                    for report in history
+                    if type(report.get("step")) is int
+                ],
+                learning_signal=preview_learning_signal,
+            )
+            print(f"[training-adequacy] {training_adequacy}", flush=True)
+            if not training_adequacy["admitted"]:
+                halt_reason = "training_adequacy_failed"
+                training_allowed = False
+
         if execution_spec is not None:
             assert verified_group_provider is not None
             transition_closure = verified_group_provider.finalize(
@@ -3828,6 +3852,7 @@ def main(
             "signal": requested_signal,
         },
         "learning_signal": learning_signal,
+        "training_adequacy": training_adequacy,
         "curriculum": curriculum_report,
         "calibration": calibration,
         "baseline": baseline_eval,
