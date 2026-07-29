@@ -67,6 +67,28 @@ def _local_timestamp() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
 
+#: "include the current date and time", "timestamped", "dated".
+_TIMESTAMP_REQUEST_RE = re.compile(
+    # "a timestamped paragraph" is the commonest phrasing and the one the
+    # older \btimestamp\b pattern could never match, because the boundary
+    # falls before the "ed".
+    r"(?i)\b(?:time\s?stamp(?:ed|s)?|date\s?stamp(?:ed|s)?|dated|"
+    r"current\s+(?:date|time)|date\s+and\s+time|time\s+and\s+date)\b"
+)
+
+
+def _objective_wants_a_timestamp(objective: Any) -> bool:
+    """Did the request actually ask for the time to be in the document?
+
+    A timestamp nobody asked for is furniture at the top of someone's note;
+    a timestamp somebody asked for is the content. The two composers used to
+    disagree about this — the freeform one checked, the self-summary one
+    always stamped — so the same objective produced a different document
+    depending on which path it took.
+    """
+    return bool(_TIMESTAMP_REQUEST_RE.search(str(objective or "")))
+
+
 class DesktopTaskStep(BaseModel):
     action: str = Field(
         ...,
@@ -1311,6 +1333,17 @@ class DesktopTaskSkill(BaseSkill):
             )
         return ""
 
+    #: Trailing "in Notes", "into a Google Doc", "on my Desktop" — where the
+    #: writing lands, never what it is about.
+    _DESTINATION_TAIL_RE = re.compile(
+        r"(?i)[\s,]*\b(?:in|into|inside|to|on|onto|under|within)\s+"
+        r"(?:the\s+|a\s+|an\s+|my\s+|your\s+)?"
+        r"(?:notes(?:\s+app)?|note|google\s+docs?|docs?|textedit|pages|"
+        r"a\s+new\s+note|a\s+document|a\s+file|a\s+pdf|pdf|"
+        r"desktop|documents(?:\s+folder)?|downloads|folder)"
+        r"(?:\s+app)?\s*$"
+    )
+
     @staticmethod
     def _extract_requested_writing_topic(objective: str) -> str:
         """Extract the subject of a requested note/document when possible."""
@@ -1343,6 +1376,12 @@ class DesktopTaskSkill(BaseSkill):
                 maxsplit=1,
                 flags=re.IGNORECASE,
             )[0].strip(" .,:;?!\"'")
+            # WHERE the writing goes is not WHAT it is about. "a note about
+            # orcas in the Notes app" is about orcas; the destination rode
+            # along and became the title "Orcas In The Notes App". Same shape
+            # as "orcas online" searching for a wireless ISP — a trailing
+            # adjunct read as part of the subject.
+            topic = DesktopTaskSkill._DESTINATION_TAIL_RE.sub("", topic).strip(" .,:;?!\"'")
             if topic:
                 return topic[:180]
         return ""
@@ -1394,7 +1433,7 @@ class DesktopTaskSkill(BaseSkill):
         verb = "are" if plural else "is"
         possessive = "their" if plural else "its"
         timestamp = ""
-        if re.search(r"\b(?:timestamp|time stamp|date stamp|dated)\b", str(objective or ""), flags=re.IGNORECASE):
+        if _objective_wants_a_timestamp(objective):
             timestamp = f"[{_local_timestamp()}] "
         if re.search(r"\bparagraph\b", str(objective or ""), flags=re.IGNORECASE):
             return (
@@ -1410,6 +1449,28 @@ class DesktopTaskSkill(BaseSkill):
             "to describe the subject clearly, ground it in concrete details, and preserve enough context that "
             "the note is useful after the moment of writing has passed."
         )
+
+    @staticmethod
+    def _note_title_for(objective: str, topic: str) -> str:
+        """A title a person would give the note, not the pronoun they used.
+
+        "describe yourself" extracted the topic "yourself", which became the
+        title "Yourself" — a note named after the word in the request rather
+        than after its subject. The pronoun's antecedent is in the
+        conversation, not in the sentence, which is the same reason recalled
+        memory needs a speaker attribute.
+        """
+        subject = resolve_second_person(objective)
+        if subject:
+            return f"About {subject}"
+        cleaned = " ".join(str(topic or "").split())[:60].strip(" .,:;-")
+        if not cleaned:
+            return "Note"
+        # Title-casing a sentence fragment reads as a headline someone chose;
+        # title-casing a whole sentence reads as a machine did it.
+        if len(cleaned.split()) <= 6:
+            return cleaned.title()
+        return cleaned[0].upper() + cleaned[1:]
 
     @classmethod
     def _compose_self_summary_body(cls, objective: str) -> str:
@@ -1428,8 +1489,14 @@ class DesktopTaskSkill(BaseSkill):
         primary = facts[0] if facts else (
             "I am Aura: a local governed cognitive-agent runtime running on this machine."
         )
+        # A person asked to write a paragraph about themselves does not open
+        # with a bracketed machine timestamp — Bryan read the note back and
+        # saw furniture before he saw a sentence. But "include the current
+        # date and time" is a real request that some objectives make, and the
+        # freeform composer already honours it on exactly this condition.
+        prefix = f"[{stamp}] " if _objective_wants_a_timestamp(objective) else ""
         return (
-            f"[{stamp}] {primary}\n\n"
+            f"{prefix}{primary}\n\n"
             "I am not just a raw chat model answering from a single prompt. My live path is "
             "supposed to bind conversation, memory, affective state, planning, tool governance, "
             "desktop action, health monitoring, and self-repair into one runtime. The language "
@@ -3300,7 +3367,7 @@ class DesktopTaskSkill(BaseSkill):
                     DesktopTaskStep(
                         action="create_note",
                         target={
-                            "title": (topic[:60].strip() or "Note").title(),
+                            "title": self._note_title_for(text, topic),
                             "body": body,
                         },
                         reason=(

@@ -19,6 +19,7 @@ from core.brain.llm.latent_cortex.output_quality import (
     request_facets,
 )
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
+from core.dialogue.referents import borrowed_first_person_spans
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
 logger = logging.getLogger("Aura.Conversation.ResponseReliability")
@@ -6610,6 +6611,22 @@ def assess_user_facing_reply(
         reasons.append("ungrounded_person_narrative")
     if _has_ungrounded_person_address(user_message, raw, recent_messages):
         reasons.append("ungrounded_person_address")
+    # A sentence the OWNER said, replayed in the first person as hers.
+    #
+    # Measured 2026-07-28: Bryan's "I was trying to get you to write one about
+    # yourself in your own words" came back to him six turns later as her own
+    # stated intent, because it had travelled through memory with no speaker.
+    # The attribution now rides with the datum (core/dialogue/referents.py),
+    # and this is the check that the attribution was actually honoured —
+    # otherwise the fix is a hope about prompting rather than a mechanism.
+    #
+    # Not a hard failure: the reply is still served. It is recorded, so a
+    # regression shows up as a rate rather than as an anecdote six turns deep
+    # in a transcript nobody re-reads.
+    if recent_messages and borrowed_first_person_spans(
+        raw, [*recent_messages, user_message]
+    ):
+        reasons.append("borrowed_owner_first_person_speech")
 
     user_norm = _normalize(user_message)
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in user_norm:

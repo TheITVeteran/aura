@@ -505,8 +505,26 @@ class ComputerUseSkill(BaseSkill):
             return expected, True
         return observed, False
 
+    #: How the body arrives in the note. Both routes go through the Notes
+    #: dictionary; they differ only in whether a person can watch it happen.
+    #:
+    #: Bryan asked to *see* her type, and the honest tension is that the
+    #: mechanism which made this reliable — one atomic scripting call — is
+    #: also the one nobody can watch. Keystrokes are watchable and lose the
+    #: race for focus against whatever window is in front.
+    #:
+    #: So: keep the scripting interface, and write the body into the note in
+    #: pieces. Notes redraws its editor on every assignment, so the text
+    #: appears progressively in front of you. No keystroke is sent, no
+    #: clipboard is used, nothing depends on which window has focus, and the
+    #: note is still read back at the end.
+    _NOTE_STREAM_CHUNK_CHARS = 90
+    _NOTE_STREAM_PAUSE_S = 0.11
+    #: The whole visible write is bounded: past this it finishes in one call.
+    _NOTE_STREAM_BUDGET_S = 9.0
+
     async def _create_note(self, target: Any) -> dict[str, Any]:
-        """Create a Notes note through its scripting interface.
+        """Create a Notes note through its scripting interface, visibly.
 
         Keystroke automation for this was never going to be reliable: it
         needs the app to hold the front from cmd+n through cmd+v, and on a
@@ -514,6 +532,10 @@ class ComputerUseSkill(BaseSkill):
         dictionary makes the whole thing one atomic call with no focus, no
         clipboard and no timing — and it verifies by reading the note back,
         so a silent failure cannot be reported as success.
+
+        The body is then streamed in rather than pasted whole, so the writing
+        is something a person can watch without the focus race that made
+        watching it unreliable in the first place.
         """
         payload = target if isinstance(target, dict) else {}
         if not payload and isinstance(target, str):
@@ -535,11 +557,18 @@ class ComputerUseSkill(BaseSkill):
             lines = [line for line in escaped.split("\n")]
             return "".join(f"<div>{line}</div>" for line in lines)
 
+        # The note is created empty and named, then filled. Creating it with
+        # the finished body would be one call and nothing to see.
         script = (
             'tell application "Notes"\n'
+            "    activate\n"
             f"    set theNote to make new note with properties "
             f"{{name:{self._applescript_string(title)}, "
-            f"body:{self._applescript_string(_html(title) + _html(body))}}}\n"
+            # Notes renders `name` as the note's first line itself, so
+            # prepending the title to the body prints it twice — measured:
+            # a note that opened "Yourself / Yourself / ...".
+            'body:""}\n'
+            "    show theNote\n"
             "    return name of theNote\n"
             "end tell"
         )
@@ -549,6 +578,13 @@ class ComputerUseSkill(BaseSkill):
             return {"ok": False, "error": f"create_note failed: {exc}", "title": title}
 
         created_name = str(created or "").strip()
+        streamed = await self._stream_note_body(created_name or title, body, _html)
+        if not streamed:
+            return {
+                "ok": False,
+                "error": "create_note could not write the body into the note",
+                "title": created_name or title,
+            }
         # Read it back: a note that cannot be found was not created.
         verify = (
             'tell application "Notes" to return name of note '
@@ -575,6 +611,60 @@ class ComputerUseSkill(BaseSkill):
             ),
             "characters": len(body),
         }
+
+    async def _stream_note_body(self, note_name: str, body: str, html: Any) -> bool:
+        """Write the body into an existing note in visible pieces.
+
+        Returns False only if the note never received any text — a note left
+        empty is the failure Bryan reported as "notes that open with no text",
+        and it must not be reported as a success.
+
+        Chunks break on whitespace so words do not appear split, and the whole
+        stream is bounded: past the budget the remainder lands in one
+        assignment rather than letting a long document hold the step open.
+        """
+        target_note = self._applescript_string(note_name)
+        written = ""
+        deadline = time.monotonic() + float(self._NOTE_STREAM_BUDGET_S)
+        chunk = max(16, int(self._NOTE_STREAM_CHUNK_CHARS))
+        index = 0
+        last_ok = False
+        while index < len(body):
+            if time.monotonic() >= deadline:
+                written = body  # Out of budget: finish it in one assignment.
+            else:
+                end = min(len(body), index + chunk)
+                if end < len(body):
+                    # Prefer a whitespace boundary so words stay whole.
+                    space = body.rfind(" ", index, end)
+                    if space > index:
+                        end = space
+                written = body[:end]
+            index = len(written)
+            script = (
+                f'tell application "Notes" to set body of note {target_note} '
+                f"to {self._applescript_string(html(written))}"
+            )
+            try:
+                await asyncio.to_thread(self._run_applescript, script, timeout=15)
+                last_ok = True
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                logger.debug("Note body stream chunk failed: %s", exc)
+                # One bad chunk is not a lost note: fall back to writing the
+                # whole body once, and report honestly if even that fails.
+                final = (
+                    f'tell application "Notes" to set body of note {target_note} '
+                    f"to {self._applescript_string(html(body))}"
+                )
+                try:
+                    await asyncio.to_thread(self._run_applescript, final, timeout=20)
+                    return True
+                except _COMPUTER_USE_RECOVERABLE_ERRORS as inner:
+                    logger.debug("Note body write failed outright: %s", inner)
+                    return last_ok
+            if index < len(body):
+                await asyncio.sleep(float(self._NOTE_STREAM_PAUSE_S))
+        return last_ok
 
     async def hold_focus(self, app_name: str) -> bool:
         """Keep an app in front for as long as we are working in it.

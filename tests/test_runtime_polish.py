@@ -883,9 +883,19 @@ def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
     assert "Math.min(input.scrollHeight, 150)" not in aura_js
     assert "Math.min(textarea.scrollHeight, 150)" not in aura_js
     assert "body {\n    background: var(--bg);" in aura_css
+    # Selection is now the DEFAULT and interactive chrome opts out, which is
+    # the inverse of what this used to assert. The old shape was
+    # `user-select: none` on the body with an allowlist of elements that opted
+    # back in, so most of what Aura said could not be selected, copied, or
+    # right-clicked — including anything the allowlist had not been updated
+    # for. What matters for the composer is unchanged: dragging across a
+    # button must not start a selection, and the body must stay selectable.
+    assert "-webkit-user-select: text;" in aura_css
+    assert "user-select: text;" in aura_css
     assert "-webkit-user-select: none;" in aura_css
     assert "user-select: none;" in aura_css
-    assert ".msg,\n.thought-card," in aura_css
+    for chrome in ("button,", ".btn,", ".tab,", "[role=\"button\"],"):
+        assert chrome in aura_css, f"interactive chrome must opt out: {chrome}"
     assert "#chat-input" in aura_css and "caret-color: var(--accent);" in aura_css
     assert "max-height: min(34vh, 360px);" in aura_css
     assert "overflow-y: hidden;" in aura_css
@@ -948,12 +958,15 @@ def test_splash_title_sequence_uses_current_aura_neon_lockup():
     assert 'class="splash-logo-word splash-logo-right"' in index_html
     assert 'class="splash-sigil"' in index_html
     assert 'class="splash-sigil-svg"' in index_html
-    assert 'class="sigil-orbits"' in index_html
-    assert 'id="sigil-orbit-a"' in index_html
-    assert 'id="sigil-orbit-b"' in index_html
-    assert 'id="sigil-orbit-c"' in index_html
-    assert index_html.count("<animateMotion") == 3
-    assert index_html.count('<mpath href="#sigil-orbit-') == 3
+    # The mark is the neuron that matches the native launcher, not the older
+    # atom with three electron orbits (c3a780ecf). What the contract is
+    # actually about survives the redesign: every spike rides a real fibre in
+    # the artwork via animateMotion/mpath, rather than being approximated with
+    # hand-tuned offsets that drift when the geometry changes.
+    for fibre in ("#axon", "#dend-a", "#dend-b", "#dend-c", "#dend-d"):
+        assert f'<mpath href="{fibre}"' in index_html, f"no spike rides {fibre}"
+    assert index_html.count("<animateMotion") >= index_html.count('<mpath href="#')
+    assert index_html.count('<mpath href="#') >= 5
     assert 'aria-label="Aura Luna"' in index_html
 
     assert "Retro Neon Title Sequence" in aura_css
@@ -962,9 +975,7 @@ def test_splash_title_sequence_uses_current_aura_neon_lockup():
     assert ".splash-title-lockup" in aura_css
     assert ".splash-logo-word" in aura_css
     assert ".splash-sigil-svg" in aura_css
-    assert ".sigil-orbits" in aura_css
     assert "@keyframes neonTitleFlicker" in aura_css
-    assert "@keyframes sigilCage" in aura_css
     assert "@media (prefers-reduced-motion: reduce)" in aura_css
     assert "@media (max-width: 720px)" in aura_css
 

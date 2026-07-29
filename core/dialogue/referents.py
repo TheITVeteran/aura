@@ -55,6 +55,7 @@ __all__ = [
     "UNATTRIBUTED",
     "ReferentFrame",
     "attribute",
+    "borrowed_first_person_spans",
     "current_frame",
     "has_person_reference",
     "resolve_second_person",
@@ -279,3 +280,93 @@ def resolve_second_person(
         return ""
     active = frame or _DEFAULT_FRAME
     return active.second_person_of(speaker)
+
+
+# ---------------------------------------------------------------------------
+# The check, not just the label.
+#
+# Everything above makes the right information available. None of it forces
+# the reply to use it — and "the prompt now says who spoke" is a hope, not a
+# mechanism. This is the mechanism: after a reply is generated, look for the
+# specific failure that was actually observed, which is Aura reproducing a
+# sentence the OWNER said, in the first person, as her own.
+#
+# It is deliberately narrow. Paraphrase is normal and quoting is fine; what is
+# not fine is a long verbatim run of the owner's first-person speech
+# reappearing as hers with no quotation and no attribution. That is what
+# happened on 2026-07-28 and it is what this detects.
+# ---------------------------------------------------------------------------
+
+#: Shorter runs than this are ordinary phrase overlap ("I was trying to").
+_MIN_BORROWED_WORDS = 8
+
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+#: A run inside quotation marks is a quote, and a quote is attribution.
+_QUOTED_RE = re.compile(r"[\"“‘']([^\"”’']{12,})[\"”’']")
+
+
+def _words(text: Any) -> list[str]:
+    return _WORD_RE.findall(str(text or "").lower())
+
+
+def borrowed_first_person_spans(
+    reply: Any,
+    owner_utterances: Any,
+    *,
+    min_words: int = _MIN_BORROWED_WORDS,
+) -> list[str]:
+    """Runs of the owner's own first-person speech reappearing as Aura's.
+
+    ``owner_utterances`` is whatever the owner actually said — recalled
+    snippets attributed to :data:`OWNER`, or the raw turns. Returns the
+    borrowed spans, longest first; an empty list is the clean case.
+
+    A span only counts when it carries a first- or second-person pronoun,
+    because those are the words whose meaning flips with the speaker. Shared
+    phrasing with no pronoun in it ("the orca articles in the folder") is two
+    people talking about the same thing, which is what conversation is.
+    """
+    reply_words = _words(reply)
+    if len(reply_words) < min_words:
+        return []
+    reply_text = str(reply or "")
+    quoted = {
+        " ".join(_words(match.group(1))) for match in _QUOTED_RE.finditer(reply_text)
+    }
+
+    if isinstance(owner_utterances, (str, bytes)):
+        sources: list[str] = [str(owner_utterances)]
+    else:
+        sources = [str(item or "") for item in (owner_utterances or [])]
+
+    found: list[str] = []
+    for source in sources:
+        source_words = _words(source)
+        if len(source_words) < min_words:
+            continue
+        source_grams = {
+            " ".join(source_words[i : i + min_words])
+            for i in range(len(source_words) - min_words + 1)
+        }
+        start = 0
+        while start <= len(reply_words) - min_words:
+            gram = " ".join(reply_words[start : start + min_words])
+            if gram not in source_grams:
+                start += 1
+                continue
+            # Extend the match as far as it runs.
+            end = start + min_words
+            while end < len(reply_words):
+                candidate = " ".join(reply_words[end - min_words + 1 : end + 1])
+                if candidate not in source_grams:
+                    break
+                end += 1
+            span = " ".join(reply_words[start:end])
+            if has_person_reference(span) and not any(
+                span in quote or quote in span for quote in quoted
+            ):
+                found.append(span)
+            start = end
+    found.sort(key=lambda item: -len(item))
+    return found

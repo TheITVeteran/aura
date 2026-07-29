@@ -328,6 +328,7 @@ def resource_observer(request, monkeypatch, tmp_path):
         from core.runtime.control_plane import reset_runtime_control_plane
         from core.runtime.model_lane_control import reset_model_lane_controller_for_test
         from core.runtime.receipts import reset_receipt_store
+        from core.conversation.surface_delivery import reset_route_delivery
         from core.runtime.runtime_pressure import reset_unified_runtime_pressure_for_test
         from core.state.state_gateway import reset_state_gateway
 
@@ -343,6 +344,11 @@ def resource_observer(request, monkeypatch, tmp_path):
         reset_receipt_store()
         reset_memory_write_gateway()
         reset_state_gateway()
+        # "What the route already answered" is process-global, so one test's
+        # reply suppressed the next test's identical one as a duplicate:
+        # test_ordinary_speech_is_not_withheld passed alone and failed in a
+        # chunk, which is the order-dependence shape, not a flake.
+        reset_route_delivery()
 
     host_markers = ("host_observation", "live", "hardware", "longrun")
     host_backed = any(request.node.get_closest_marker(name) for name in host_markers)

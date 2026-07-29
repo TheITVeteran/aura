@@ -890,6 +890,14 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
         "ungrounded_person_address",
         "low_signal_acknowledgement_placeholder",
         "generic_assistant_language",
+        # Replaying the owner's own first-person sentence as her own is a
+        # comprehension defect worth measuring, not worth destroying a turn
+        # over — the rest of the reply is usually fine, and killing it leaves
+        # the person with nothing while the underlying attribution problem
+        # goes unrecorded. It is fixed at the source (core/dialogue/
+        # referents.py); this reason is how a regression there becomes a rate
+        # instead of an anecdote.
+        "borrowed_owner_first_person_speech",
     }
 )
 

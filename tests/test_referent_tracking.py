@@ -191,3 +191,80 @@ class TestARequestAboutHerself:
         assert resolve_second_person(
             "write a note where you write a paragraph describing yourself"
         ) == "Aura"
+
+
+class TestTheCheckNotJustTheLabel:
+    """Attribution that nothing verifies is a hope, not a mechanism.
+
+    Everything above makes the speaker available. This is what confirms the
+    reply used it — the specific failure that was actually observed, which is
+    Aura reproducing a sentence Bryan said, in the first person, as her own.
+    """
+
+    BRYAN = [
+        "It was the notes thing. I was trying to get you to write one about "
+        "yourself in your own words. Like about who you are"
+    ]
+
+    def test_the_measured_echo_is_caught(self):
+        from core.dialogue.referents import borrowed_first_person_spans
+
+        assert borrowed_first_person_spans(
+            "I was trying to get you to write a paragraph about yourself in "
+            "your own words. Like an actual summary of who you are.",
+            self.BRYAN,
+        )
+
+    def test_talking_about_the_same_thing_is_not_borrowing(self):
+        from core.dialogue.referents import borrowed_first_person_spans
+
+        assert not borrowed_first_person_spans(
+            "I wrote the note about myself and saved it.", self.BRYAN
+        )
+
+    def test_an_actual_quote_is_attribution_and_passes(self):
+        from core.dialogue.referents import borrowed_first_person_spans
+
+        assert not borrowed_first_person_spans(
+            "You said \"I was trying to get you to write one about yourself in "
+            "your own words\" — so I did.",
+            self.BRYAN,
+        )
+
+    def test_shared_phrasing_without_a_pronoun_is_ignored(self):
+        """Two people describing the same folder is conversation."""
+        from core.dialogue.referents import borrowed_first_person_spans
+
+        assert not borrowed_first_person_spans(
+            "The orca articles are in the Documents folder now",
+            ["put the orca articles are in the Documents folder now please"],
+        )
+
+    def test_it_reaches_the_reply_assessment(self):
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        verdict = assess_user_facing_reply(
+            "How did you know to do that?",
+            "I was trying to get you to write a paragraph about yourself in "
+            "your own words. Like an actual summary of who you are.",
+            recent_user_messages=self.BRYAN,
+        )
+        assert "borrowed_owner_first_person_speech" in verdict.reasons
+
+    def test_it_never_destroys_the_turn(self):
+        """A comprehension defect is worth measuring, not worth leaving the
+        person with nothing."""
+        from core.brain.llm.mlx_worker import _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+        from core.conversation.response_reliability import assess_user_facing_reply
+
+        assert (
+            "borrowed_owner_first_person_speech"
+            in _DELIVERABLE_RESIDUAL_SURFACE_REASONS
+        )
+        verdict = assess_user_facing_reply(
+            "How did you know to do that?",
+            "I was trying to get you to write a paragraph about yourself in "
+            "your own words. Like an actual summary of who you are.",
+            recent_user_messages=self.BRYAN,
+        )
+        assert verdict.hard_failure is False

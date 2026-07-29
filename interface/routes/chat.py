@@ -16976,7 +16976,19 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     actions = {str(getattr(step, "action", "") or "") for step in steps}
     if not actions:
         return False
-    prose_actions = {"set_clipboard", "write_text_file", "render_text_pdf", "type"}
+    # create_note carries a document body exactly as write_text_file does.
+    # It arrived with the native Notes path and was in none of these sets, so
+    # "open Notes and write a report about quantum mechanics" classified as
+    # self-sufficient and skipped cognition — which is how a note ends up
+    # holding the deterministic composer's "Notes on the requested subject:
+    # The requested subject is the focus of this note."
+    prose_actions = {
+        "set_clipboard",
+        "write_text_file",
+        "render_text_pdf",
+        "type",
+        "create_note",
+    }
     if not (actions & prose_actions):
         return True
     literal_body_actions = {
@@ -16987,6 +16999,7 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "wait",
         "hotkey",
         "type",
+        "create_note",
         "write_text_file",
         "render_text_pdf",
         "move_file",
@@ -21708,7 +21721,14 @@ async def api_chat(
                 )
                 # The refusal itself is worthless as a document body, so the
                 # executor composes its own rather than inheriting it.
-                executed_after_refusal = await _execute_desktop_objective_from_chat(
+                #
+                # Through the tracked gate, not the executor directly: this
+                # lane runs real desktop steps, and a lane that bypasses the
+                # gate leaves _desktop_exec_state empty, so the reply doors
+                # serve a receipt-less reply about work that did happen.
+                # That is the exact failure the gate was built for in
+                # visible-demo rounds 3-5.
+                executed_after_refusal = await _run_desktop_objective_tracked(
                     _semantic_user_message,
                     cognitive_reply="",
                 )
