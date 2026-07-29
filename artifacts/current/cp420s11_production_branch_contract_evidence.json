@@ -1,0 +1,52 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s11",
+  "claim_boundary": "training_admission_repair_only_no_reasoning_gain_claim",
+  "contract_file_sha256": "819dfd861474010a9da76c332dcf9f7d7619dde7d83cf71d1278c7a1f8cbbde3",
+  "contract_sha256": "ff77af176d5bbc9ca170247f6ccadbf005184324a24398d2af5c701b8bbf4d72",
+  "failure": {
+    "code": "AttributeError:RLCExecutionSpec.branches",
+    "detached_receipt_sha256": "78c9f96c83e0ede24658132b3e523f4fe24492b36219fc01ca768e4d31d7d2a5",
+    "model_loaded": true,
+    "optimizer_update_occurred": false,
+    "phase": "production_verified_provider_runtime_graph_admission",
+    "training_started": false
+  },
+  "gates": {
+    "answer_channel": {
+      "correct_count": 6,
+      "receipt_sha256": "d1b835064910382c73feef961644425f64c0268bdeaa9975a35d4978dfb1c700",
+      "task_count": 6,
+      "valid_contract_count": 6,
+      "verdict": "answer_channel_operational"
+    },
+    "initial_policy": {
+      "initial_policy_sha256": "87eb421af78a25d079a38c22a0a00905c4c6220dcf0251c15e7d6897ef963b32",
+      "receipt_sha256": "7ec3733376847f7c071d5eee92acb93c8f84259e2aa2f8c7b6e5834464d69ef6",
+      "wiring_projection_count": 24
+    },
+    "launch_bundle": {
+      "bundle_sha256": "80282e30f368f87e5635c87fa5a0ddfd9396fef2d6a63bd32de64d680e997325",
+      "claim_boundary": "host_isolated_research_launch_external_claim_custody_still_required",
+      "deterministic_reopen_passed": true,
+      "provider_contract_sha256": "7da87537f3cf637671ba5f1c5c75ec34eb10e8e8780fb268129275e3d09d097e",
+      "receipt_sha256": "ddde5f99b919d75fd43701588676a33136d7670b008ba97c0109b5012aba6610",
+      "task_count": 288
+    }
+  },
+  "repair": {
+    "canonical_branch_count": "len(RLCExecutionSpec.branch_roles)",
+    "stale_field_removed": "RLCExecutionSpec.branches"
+  },
+  "schema": "aura.spark.cp420s11_production_branch_contract_evidence.v1",
+  "tests": {
+    "focused_launch_matrix": {
+      "passed": 115,
+      "total": 115
+    },
+    "production_factory": {
+      "passed": 24,
+      "total": 24
+    }
+  },
+  "verdict": "repair_verified_fresh_source_bound_campaign_required"
+}

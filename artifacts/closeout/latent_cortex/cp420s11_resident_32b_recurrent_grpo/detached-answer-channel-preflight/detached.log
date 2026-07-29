@@ -1,0 +1,7 @@
+[tasks] 12 train / 6 held-out from answer_channel_curriculum (disjoint prompts and identities verified)
+[envelope] {'schema': 'aura.mlx_memory_guard.v1', 'memory_limit_gb': 26.88, 'cache_limit_gb': 2.0, 'wired_limit_gb': 36.48, 'reclaim_every': 16, 'host_memory_gb': 64.0}
+[wiring] 24 projections adapted
+[answer-channel-preflight] 1/6 running=1.000
+[answer-channel-preflight] 4/6 running=1.000
+[answer-channel-preflight] 6/6 running=1.000
+[answer-channel-preflight] valid=6/6 correct=6/6 verdict=answer_channel_operational path=/Users/bryan/.aura/codex-worktrees/spark-cp419/artifacts/closeout/latent_cortex/cp420s11_resident_32b_recurrent_grpo/answer-channel-preflight/answer_channel_preflight.json

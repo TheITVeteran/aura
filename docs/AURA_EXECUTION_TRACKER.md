@@ -31665,3 +31665,21 @@ update. Evidence:
 `artifacts/current/cp420s10_host_custody_reopen_evidence.json`. No reasoning,
 frontier, promotion, or `WOW Signal` claim is made. CP420S10 is total
 checkpoint 698. CP420S11 is the next fresh launch campaign.
+
+### 2026-07-29 - CP420S11 production branch-contract admission
+
+CP420S11 passed both resident gates and deterministically reopened its signed
+288-task launch bundle twice. Training then loaded the resident 32B and attached
+all 24 recurrent projections, but production provider admission failed before
+the first optimizer update on a stale `RLCExecutionSpec.branches` field.
+
+The canonical execution contract stores virtual width as `branch_roles`.
+Provider admission now compares the signed branch count with
+`len(branch_roles)`, and production-factory fixtures exercise that exact
+interface. The focused launch matrix passes 115/115; the provider-factory suite
+passes 24/24.
+
+CP420S11 performed no optimizer update. Evidence:
+`artifacts/current/cp420s11_production_branch_contract_evidence.json`. No
+reasoning, frontier, promotion, or `WOW Signal` claim is made. CP420S11 is total
+checkpoint 699. CP420S12 is next.

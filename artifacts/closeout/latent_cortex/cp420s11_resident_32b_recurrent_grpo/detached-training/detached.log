@@ -1,0 +1,23 @@
+[tasks] 288 train / 36 held-out from recurrence_curriculum (disjoint prompts and identities verified)
+[envelope] {'schema': 'aura.mlx_memory_guard.v1', 'memory_limit_gb': 26.88, 'cache_limit_gb': 2.0, 'wired_limit_gb': 36.48, 'reclaim_every': 16, 'host_memory_gb': 64.0}
+[wiring] 24 projections adapted
+Traceback (most recent call last):
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1327, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1289, in main
+    return _run_training(
+           ^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 963, in _run_training
+    result = run_verified_recurrent_grpo_training.main(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/run_verified_recurrent_grpo_training.py", line 97, in main
+    return int(train_grpo.main(verified_group_provider_factory=factory))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/train_grpo.py", line 2266, in main
+    verified_group_provider = verified_group_provider_factory.create(
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/core/learning/verified_transition_production_factory.py", line 1336, in create
+    or runtime.execution_spec.branches != self._branch_count
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'RLCExecutionSpec' object has no attribute 'branches'

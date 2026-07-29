@@ -448,7 +448,10 @@ class CommandRoleSignerBroker:
             raise VerifiedTransitionProductionFactoryError(
                 "signer_broker_response_invalid"
             ) from exc
-        if not isinstance(response, dict) or stdout_bytes != canonical_json_bytes(response) + b"\n":
+        if (
+            not isinstance(response, dict)
+            or stdout_bytes != canonical_json_bytes(response) + b"\n"
+        ):
             _fail("signer_broker_response_invalid")
         return response
 
@@ -1012,7 +1015,9 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                 commitment = self._provider.task_commitment(sequence=sequence)
                 intent = self._store.reserve_intent(
                     sequence=sequence,
-                    campaign_schedule_root_sha256=(self._provider.campaign_schedule_root_sha256),
+                    campaign_schedule_root_sha256=(
+                        self._provider.campaign_schedule_root_sha256
+                    ),
                     policy_before_sha256=policy_sha256,
                     task_id=cast(str, commitment["task_id"]),
                     prompt_tokens_sha256=prompt_sha256,
@@ -1328,7 +1333,7 @@ class ProductionVerifiedTransitionProviderFactory:
             if (
                 runtime.execution_spec.sha256
                 != self._contract["task_schedule"][0]["recurrent_execution_spec_sha256"]
-                or len(runtime.execution_spec.branch_roles) != self._branch_count
+                or runtime.execution_spec.branches != self._branch_count
                 or runtime.sampling_max_tokens != self._sampling.max_tokens
                 or runtime.dataset_sha256 != self._contract["dataset_sha256"]
                 or runtime.group_size != self._branch_count

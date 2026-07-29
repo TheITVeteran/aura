@@ -823,7 +823,10 @@ def test_factory_binds_schedule_and_constructs_only_after_live_policy_exists(
             model=object(),
             tokenizer=object(),
             tokenizer_trace_adapter=_TokenizerAdapter(),
-            execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
+            execution_spec=SimpleNamespace(
+                sha256=_sha("execution"),
+                branch_roles=("constructive_solution", "counterexample_search"),
+            ),
             training_tasks=bound,
             output_directory=material["output_root"],
             transaction_root=material["transaction_root"],
@@ -854,7 +857,10 @@ def test_factory_rejects_live_initial_policy_substitution(
                 model=object(),
                 tokenizer=object(),
                 tokenizer_trace_adapter=_TokenizerAdapter(),
-                execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
+                execution_spec=SimpleNamespace(
+                    sha256=_sha("execution"),
+                    branch_roles=("constructive_solution", "counterexample_search"),
+                ),
                 training_tasks=bound,
                 output_directory=material["output_root"],
                 transaction_root=material["transaction_root"],
@@ -934,7 +940,10 @@ def test_factory_rejects_live_runtime_contract_drift(
         model=object(),
         tokenizer=object(),
         tokenizer_trace_adapter=_TokenizerAdapter(),
-        execution_spec=SimpleNamespace(sha256=_sha("execution"), branches=2),
+        execution_spec=SimpleNamespace(
+            sha256=_sha("execution"),
+            branch_roles=("constructive_solution", "counterexample_search"),
+        ),
         training_tasks=bound,
         output_directory=(
             tmp_path / "other-output" if drift == "output" else material["output_root"]

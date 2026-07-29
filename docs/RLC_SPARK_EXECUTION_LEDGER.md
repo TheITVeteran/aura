@@ -5700,3 +5700,22 @@ optimizer update. Evidence:
 `artifacts/current/cp420s10_host_custody_reopen_evidence.json`. Reasoning gain,
 frontier gain, promotion, and `WOW Signal` remain false. CP420S10 is total
 checkpoint 698. A fresh CP420S11 contract and resident gates are required.
+
+### 2026-07-29 - CP420S11: production admission reads the canonical branch graph
+
+CP420S11 passed both resident gates, materialized a signed 288-task bundle, and
+reopened that exact bundle twice. The detached trainer loaded the resident 32B,
+attached all 24 recurrent projections, and then failed before its first
+optimizer update because production provider admission read a stale
+`RLCExecutionSpec.branches` attribute.
+
+The execution contract represents virtual width canonically as
+`branch_roles`; admission now compares `len(branch_roles)` with the signed
+provider branch count. Production-factory fixtures use that real interface, so
+the stale field cannot return unnoticed. The focused matrix passes 115/115 and
+the provider-factory suite passes 24/24.
+
+No optimizer update occurred. Evidence:
+`artifacts/current/cp420s11_production_branch_contract_evidence.json`.
+Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false.
+CP420S11 is total checkpoint 699. CP420S12 is the next fresh launch campaign.
