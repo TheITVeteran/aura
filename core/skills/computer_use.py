@@ -474,12 +474,24 @@ class ComputerUseSkill(BaseSkill):
         macOS activation is a request, not a guarantee, and asking again is
         cheap.
         """
+        # Bounded by the CLOCK, not by an attempt count.
+        #
+        # Counting attempts hid the real cost: each re-activation is an
+        # AppleScript call with its own 5s timeout, so "retry every other
+        # attempt" turned an intended 8s wait into 60s and blew the step
+        # budget outright — "open_app failed: Operation took too long".
+        # Polling is cheap and re-asking is expensive, so they get separate
+        # budgets.
+        deadline = time.monotonic() + 12.0
+        last_activation = 0.0
         last_seen = ""
-        for attempt in range(24):
+        while time.monotonic() < deadline:
             last_seen = await asyncio.to_thread(self._frontmost_app_name)
             if self._frontmost_app_matches(last_seen, expected):
                 return True, last_seen
-            if attempt % 2 == 0:
+            now = time.monotonic()
+            if now - last_activation >= 3.0:
+                last_activation = now
                 try:
                     await self._activate_app(expected)
                 except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
