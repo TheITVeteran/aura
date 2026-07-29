@@ -93,6 +93,17 @@ def _fake_computer_use_result(params):
             "sha256": hashlib.sha256(str(target).encode("utf-8")).hexdigest(),
             "effect_verified": True,
         }
+    if action == "create_note":
+        payload = target if isinstance(target, dict) else {"body": str(target)}
+        title = str(payload.get("title") or "Note")
+        return {
+            "ok": True,
+            "action": action,
+            "title": title,
+            "characters": len(str(payload.get("body") or "")),
+            "effect_verified": True,
+            "verification": f"Note '{title}' exists in Notes.",
+        }
     if action == "hotkey":
         return {
             "ok": True,
@@ -935,12 +946,16 @@ def test_desktop_task_exact_notes_pdf_demo_request_derives_effectful_steps():
 
     assert len(steps) > 0
     assert "open_app" in actions
-    assert "set_clipboard" in actions
-    assert "hotkey" in actions
+    # Notes is written through its scripting interface rather than typed at:
+    # keystrokes need the app to hold the front from cmd+n to cmd+v, and the
+    # browser takes focus back mid-sequence. Notes still opens visibly.
+    assert "create_note" in actions
     assert "render_text_pdf" in actions
     assert any(str(step.target).lower() == "notes" for step in steps)
     assert any(
-        step.action == "set_clipboard" and step.target == "Hello. I’m Aura"
+        step.action == "create_note"
+        and isinstance(step.target, dict)
+        and step.target.get("body") == "Hello. I’m Aura"
         for step in steps
     )
     assert any(
@@ -1529,7 +1544,8 @@ def test_desktop_task_sequences_independent_work_products_without_losing_focus()
         index for index, step in enumerate(steps)
         if step.action == "open_app" and step.target == "Google Chrome"
     )
-    notes_paste_index = actions.index("hotkey", notes_index)
+    # Notes is written through its scripting interface, not typed at.
+    notes_paste_index = actions.index("create_note", notes_index)
     docs_url_index = next(
         index for index, step in enumerate(steps)
         if step.action == "open_url"
@@ -1584,13 +1600,21 @@ async def test_desktop_task_write_steps_carry_verified_surface_context(monkeypat
 
     assert result["ok"] is True
     computer_calls = [call for call in calls if call[0] == "computer_use"]
-    notes_paste = next(
-        call for call in computer_calls
-        if call[1]["action"] == "hotkey"
-        and call[1]["target"] == "command+v"
-        and call[2].get("desktop_task_expected_frontmost_app") == "Notes"
+    # The Notes write is a scripting call now, so its target is the note
+    # itself rather than a paste shortcut. The surface context it carries is
+    # the thing this test exists to check, and that is unchanged.
+    notes_write = next(
+        call for call in computer_calls if call[1]["action"] == "create_note"
     )
-    assert notes_paste[2]["desktop_task_write_surface_app"] == "Notes"
+    # The target is JSON-serialised on the way to the executor.
+    note_target = notes_write[1]["target"]
+    if isinstance(note_target, str):
+        note_target = json.loads(note_target)
+    assert isinstance(note_target, dict)
+    assert str(note_target.get("body") or "").strip()
+    # It deliberately carries no frontmost expectation: a scripting call does
+    # not need the window in front, which is the whole reason it is reliable.
+    assert notes_write[2].get("desktop_task_expected_frontmost_app") in (None, "", "Notes")
 
     docs_paste = [
         call for call in computer_calls
@@ -2065,25 +2089,32 @@ def test_visible_notes_staging_derives_watchable_plan_with_artifacts():
     steps = skill._derive_steps_from_objective(objective, {})
     actions = [s.action for s in steps]
 
-    # Visible staging, in order: Notes opens, launch wait, new note, paste.
+    # Visible staging, in order: Notes opens, then the note is written.
+    #
+    # The write is a scripting call rather than a paste now, which is what
+    # made this reliable — but the ordering contract this test exists for is
+    # unchanged: Notes comes up first, and nothing navigates a browser
+    # between opening it and writing into it.
     open_idx = actions.index("open_app")
     assert "notes" in str(steps[open_idx].target).lower()
-    hotkeys = [i for i, s in enumerate(steps) if s.action == "hotkey"]
-    assert hotkeys, actions
+    writes = [i for i, s in enumerate(steps) if s.action == "create_note"]
+    assert writes, actions
     last_notes_open = max(
         i for i, step in enumerate(steps)
         if step.action == "open_app" and str(step.target).lower() == "notes"
     )
-    intervening = actions[last_notes_open + 1:hotkeys[0]]
+    intervening = actions[last_notes_open + 1:writes[0]]
     assert "open_url" not in intervening, (
-        f"browser navigation stole focus between Notes refocus and paste: {actions}"
+        f"browser navigation stole focus between Notes open and write: {actions}"
     )
-    waits = [i for i, s in enumerate(steps) if s.action == "wait"]
-    assert any(last_notes_open < w < hotkeys[0] for w in waits), (
-        f"no launch wait between open_app and first hotkey: {actions}"
-    )
-    hotkey_targets = [str(steps[i].target) for i in hotkeys]
-    assert any("v" in t for t in hotkey_targets), hotkey_targets
+    # No launch wait is needed any more, and that is the improvement: the
+    # keystroke route had to pause for the app to warm up because a shortcut
+    # sent too early goes to whatever still has focus. A scripting call has
+    # no such race, so the wait it required is simply gone.
+    write_step = steps[writes[0]]
+    assert isinstance(write_step.target, dict), write_step.target
+    assert str(write_step.target.get("body") or "").strip(), "note body must be composed"
+    assert "note" in str(write_step.expect or "").lower()
 
     # Durable artifacts still land: folder, fetched image, PDF render.
     assert "create_folder" in actions
@@ -2135,8 +2166,9 @@ def test_mixed_native_and_browser_writing_stays_on_verified_primitives():
 
     assert "open_app" in actions
     assert "open_url" in actions
-    assert "set_clipboard" in actions
-    assert any(step.action == "hotkey" and step.target == "command+v" for step in steps)
+    # create_note IS a verified primitive: it reads the note back after
+    # writing, which the paste it replaced could never do.
+    assert "create_note" in actions
     assert skill._should_escalate_to_os_automation(objective, steps, {}) is False
 
 

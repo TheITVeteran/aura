@@ -3270,8 +3270,31 @@ class DesktopTaskSkill(BaseSkill):
             # Keystrokes remain the route for apps with no dictionary; this
             # is a preference for the better mechanism, not a replacement of
             # the general one.
+            # Notes has a scripting dictionary, so use it.
+            #
+            # Keystrokes need the app to hold the front from cmd+n through
+            # cmd+v, and the browser takes focus back mid-sequence. Notes
+            # still opens visibly; the note appears instead of being typed
+            # character by character, and it is verified by reading it back.
             _native_note_written = False
-            if writing_app and not (
+            if writing_app == "Notes":
+                _native_note_written = True
+                topic = self._extract_requested_writing_topic(text)
+                steps.append(
+                    DesktopTaskStep(
+                        action="create_note",
+                        target={
+                            "title": (topic[:60].strip() or "Note").title(),
+                            "body": body,
+                        },
+                        reason=(
+                            "Create the note through the Notes scripting interface, "
+                            "which does not depend on window focus."
+                        ),
+                        expect="Note exists in Notes with the composed body.",
+                    )
+                )
+            if (not _native_note_written) and writing_app and not (
                 steps and self._step_opens_app(steps[-1], writing_app)
             ):
                 steps.append(
@@ -3285,7 +3308,7 @@ class DesktopTaskSkill(BaseSkill):
                         expect=f"{writing_app} is frontmost before writing.",
                     )
                 )
-            if not _native_note_written:
+            if not (_native_note_written and not web_document_url):
                 steps.append(
                     DesktopTaskStep(
                         action="set_clipboard",
@@ -3327,14 +3350,15 @@ class DesktopTaskSkill(BaseSkill):
                         expect="The focused app accepts the new-document shortcut.",
                     )
                 )
-            steps.append(
-                DesktopTaskStep(
-                    action="hotkey",
-                    target="command+v",
-                    reason="Paste the staged document body into the active writing surface.",
-                    expect="The focused writing surface accepts the paste shortcut.",
+            if not (_native_note_written and not web_document_url):
+                steps.append(
+                    DesktopTaskStep(
+                        action="hotkey",
+                        target="command+v",
+                        reason="Paste the staged document body into the active writing surface.",
+                        expect="The focused writing surface accepts the paste shortcut.",
+                    )
                 )
-            )
 
         artifact_image_path = ""
         if wants_image and wants_artifact_file and image_query:
@@ -3521,7 +3545,19 @@ class DesktopTaskSkill(BaseSkill):
             if not actions & {"click", "hotkey", "run_applescript"}:
                 return False
         if re.search(r"\b(?:type|paste|fill|write)\b", lowered):
-            if not actions & {"type", "set_clipboard", "hotkey", "run_applescript", "write_text_file"}:
+            # create_note writes text through an app's scripting interface —
+            # it covers a "write" objective as completely as a paste does,
+            # and verifies itself afterwards, which a paste cannot. Without
+            # it here a natively-written note looked like uncovered intent
+            # and escalated to blind OS automation.
+            if not actions & {
+                "type",
+                "set_clipboard",
+                "hotkey",
+                "run_applescript",
+                "write_text_file",
+                "create_note",
+            }:
                 return False
         if re.search(r"\b(?:arrange|resize|drag|minimi[sz]e|maximi[sz]e|organize)\b", lowered):
             if "run_applescript" not in actions:
@@ -3588,15 +3624,34 @@ class DesktopTaskSkill(BaseSkill):
             return False
         if wants_folder and "create_folder" not in actions:
             return False
-        if wants_document and not actions & {"write_text_file", "set_clipboard", "render_text_pdf"}:
+        # create_note produces a durable, read-backable document — the note
+        # exists in Notes afterwards and the executor confirms it. Leaving it
+        # out here made a natively-written note look like an uncovered
+        # document objective, which discarded a good bounded plan in favour
+        # of blind OS automation.
+        if wants_document and not actions & {
+            "write_text_file",
+            "set_clipboard",
+            "render_text_pdf",
+            "create_note",
+        }:
             return False
         if wants_pdf and "render_text_pdf" not in actions:
             return False
         if "image" in lowered and "fetch_topic_image" not in actions and "open_url" not in actions:
             return False
+        # A note IS a durable artifact: it persists in Notes and can be read
+        # back, which is the property this list is testing for.
         return any(
             action in actions
-            for action in ("create_folder", "write_text_file", "render_text_pdf", "move_file", "fetch_topic_image")
+            for action in (
+                "create_folder",
+                "write_text_file",
+                "render_text_pdf",
+                "move_file",
+                "fetch_topic_image",
+                "create_note",
+            )
         )
 
     @staticmethod
