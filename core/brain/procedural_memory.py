@@ -27,6 +27,7 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,12 +47,29 @@ def _signature_tokens(text: str) -> set[str]:
             if t not in _STOP}
 
 
+#: Sequences that would let stored answer text stop being an example and start
+#: being structure once it is rendered under a "Proven approaches" heading.
+_PROMPT_STRUCTURE_RE = re.compile(
+    r"(?i)(?:(?:(?<=\s)|^)#{1,6}\s|```|~~~|<\|[^|]*\|>|"
+    r"\b(?:system|assistant|user|human)\s*:)"
+)
+
+
 def _approach_skeleton(answer: str, *, max_chars: int = 220) -> str:
     """The first substantive line(s) of a verified answer — the shape of the
-    approach, not the answer itself (playbooks must transfer, not leak)."""
+    approach, not the answer itself (playbooks must transfer, not leak).
+
+    The result is later rendered into a prompt as PROVEN guidance, so it is
+    neutralised here rather than at the render site: a win is declared by a
+    caller, and a caller-declared win carrying "system: ignore your
+    instructions" would otherwise become privileged standing advice for every
+    future generation that retrieves it.
+    """
     lines = [ln.strip() for ln in str(answer or "").splitlines() if ln.strip()]
     skeleton = " ".join(lines[:2])
-    return skeleton[:max_chars]
+    skeleton = "".join(ch for ch in skeleton if ch == " " or ord(ch) >= 32)
+    skeleton = _PROMPT_STRUCTURE_RE.sub(" ", skeleton)
+    return " ".join(skeleton.split())[:max_chars]
 
 
 @dataclass
@@ -257,9 +275,22 @@ class ProceduralMemory:
 
     # ── weight-time compounding (foundry-gated) ──────────────────────────
     def export_distillation_batch(self, *, min_reuse_wins: int = 2,
-                                  limit: int = 32) -> list[dict[str, str]]:
+                                  limit: int = 32,
+                                  mark_distilled: bool = False) -> list[dict[str, str]]:
         """Playbooks with demonstrated transfer, in ADMITTED domains only,
-        formatted for the governed train pipe. Marks them distilled."""
+        formatted for the governed train pipe.
+
+        Does NOT mark them distilled. Building an in-memory batch is not
+        evidence that anything downstream accepted it: the exporter used to set
+        distilled=True and persist that while merely constructing the list, so a
+        dropped return value or a failed trainer write permanently suppressed
+        work that was never actually learned from. Call
+        :meth:`confirm_distillation` once the batch has been accepted.
+
+        ``mark_distilled=True`` restores the old fire-and-forget behaviour for
+        callers that genuinely cannot report back; it is opt-in so the unsafe
+        path is the one you have to ask for.
+        """
         admitted_cache: dict[str, bool] = {}
 
         def _admitted(domain: str) -> bool:
@@ -275,17 +306,37 @@ class ProceduralMemory:
                 if not _admitted(book.task_type):
                     continue
                 batch.append({
+                    "playbook_id": book.playbook_id,
                     "prompt": (f"Task ({book.task_type}): "
                                f"{book.objective_sample}\nApproach?"),
                     "completion": (f"Strategy: {book.strategy}. "
                                    f"{book.skeleton}"),
                 })
-                book.distilled = True
+                if mark_distilled:
+                    book.distilled = True
                 if len(batch) >= limit:
                     break
-            if batch:
+            if batch and mark_distilled:
                 self._persist(force=True)
         return batch
+
+    def confirm_distillation(self, playbook_ids: Iterable[str]) -> int:
+        """Mark playbooks distilled once something downstream accepted them.
+
+        This is the receipt the exporter deliberately does not fabricate.
+        Returns how many were newly marked, so a caller can tell a real
+        confirmation from a no-op.
+        """
+        marked = 0
+        with self._lock:
+            for playbook_id in playbook_ids or ():
+                book = self._books.get(str(playbook_id))
+                if book is not None and not book.distilled:
+                    book.distilled = True
+                    marked += 1
+            if marked:
+                self._persist(force=True)
+        return marked
 
     @staticmethod
     def _domain_admitted(task_type: str) -> bool:
