@@ -122,6 +122,21 @@ class EnhancedWebSearchSkill(BaseSkill):
         return normalized
 
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
+        # Who asked? Curiosity researching on its own is a feature and stays
+        # one — it simply must not escalate onto the foreground lane, because
+        # the person at the keyboard is the one actually waiting.
+        _ctx = dict(context or {})
+        _origin = str(
+            _ctx.get("authority_origin") or _ctx.get("origin") or _ctx.get("source") or ""
+        ).strip().lower()
+        _requested_by_user = bool(
+            _ctx.get("foreground_request")
+            or _ctx.get("user_facing")
+            or _origin in {
+                "user", "desktop_ui", "voice", "chat", "web_interlocutor",
+                "desktop_chat", "admin",
+            }
+        )
         if isinstance(params, dict):
             query = params.get("query") or params.get("q", "")
             deep = bool(params.get("deep", False))
@@ -176,7 +191,15 @@ class EnhancedWebSearchSkill(BaseSkill):
                     content = res.get("answer") or str([r.get("snippet", "") for r in results])
                     return {"ok": True, "content": content, "sources": results}
                 
-                res = await run_deep_research(query, brain, _search_fn)
+                # Curiosity may research all it likes; it just may not
+                # take the foreground lane to do it. Only a person's request
+                # earns that escalation.
+                res = await run_deep_research(
+                    query,
+                    brain,
+                    _search_fn,
+                    requested_by_user=_requested_by_user,
+                )
                 answer = str(res.get("answer") or "").strip()
                 if answer:
                     normalized = self._normalize_deep_research_result(query, res)

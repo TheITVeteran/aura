@@ -440,7 +440,7 @@ async def test_web_search_skill_uses_cognitive_engine_for_deep_research(monkeypa
             engine_calls.append({"prompt": prompt, "kwargs": dict(kwargs)})
             return "deep research draft"
 
-    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None):
+    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None, **_kwargs):
         generated = await brain.generate("expand query")
         assert generated == {"response": "deep research draft"}
         return {"answer": f"researched: {question}", "sources": []}
@@ -468,7 +468,7 @@ async def test_web_search_skill_deep_research_falls_back_when_synthesis_is_empty
         async def generate(self, prompt, **kwargs):
             return "deep research draft"
 
-    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None):
+    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None, **_kwargs):
         generated = await brain.generate("expand query")
         assert generated == {"response": "deep research draft"}
         return {"answer": "", "sources": [{"title": "Source", "url": "https://example.com"}]}
@@ -507,7 +507,7 @@ async def test_web_search_skill_retries_with_cached_artifact_when_force_refresh_
         async def generate(self, prompt, **kwargs):
             return "deep research draft"
 
-    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None):
+    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None, **_kwargs):
         return {"answer": "", "sources": [{"title": "Source", "url": "https://example.com"}]}
 
     calls = []
@@ -556,7 +556,7 @@ async def test_web_search_skill_deep_research_success_retains_artifact(monkeypat
         async def generate(self, prompt, **kwargs):
             return "deep research draft"
 
-    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None):
+    async def _fake_run_deep_research(question, brain, search_fn, max_loops=3, on_phase=None, **_kwargs):
         return {
             "answer": "Deep retained answer",
             "sources": [{"title": "Source", "url": "https://example.com/source"}],

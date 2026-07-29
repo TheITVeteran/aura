@@ -49,6 +49,17 @@ class ResearchState:
     all_sources: List[Dict[str, str]] = field(default_factory=list)
     synthesis_status: str = "pending"
     synthesis_detail: str = ""
+    #: Did a PERSON ask for this research, or did curiosity start it?
+    #:
+    #: The synthesis escalates itself to foreground_request=True on the
+    #: reasoning that it "IS the deliverable the person asked for" — true when
+    #: someone asked. The curiosity loop starts research too, and that
+    #: escalation locked the desktop out of its own cortex: measured live
+    #: 2026-07-28, "origin=deep_research_synth ... Routing to Cortex
+    #: (timeout=103s, user_facing=True)" held the foreground lane while
+    #: conversation_ready stayed False with reason active_generation_in_flight.
+    #: Nobody was waiting on that research. Bryan was waiting to talk.
+    requested_by_user: bool = False
 
 
 class ResearchPhase(Enum):
@@ -277,6 +288,9 @@ async def synthesize_answer(
         except TypeError:
             return await brain.generate(prompt, options=options)
 
+    # Autonomous research never escalates. If curiosity started this, an empty
+    # background result means "not now", which is the correct answer for work
+    # nobody is waiting on.
     result = await _attempt(foreground=False)
     text = str((result or {}).get("response") or "").strip()
     if not text:
@@ -286,13 +300,21 @@ async def synthesize_answer(
         # synthesis and discarding five fetched sources. Measured live:
         #   "Deep research gathered 5 source(s) over 1 quer(ies) in 2.9s but
         #    could not synthesize them (the model returned no text)"
-        logger.info(
-            "Deep research synthesis came back empty; retrying as foreground "
-            "work rather than discarding %d gathered source(s).",
-            len(state.all_sources),
-        )
-        result = await _attempt(foreground=True)
-        text = str((result or {}).get("response") or "").strip()
+        if not state.requested_by_user:
+            logger.info(
+                "Autonomous deep research synthesis came back empty; leaving "
+                "the foreground lane alone. %d source(s) stay gathered for a "
+                "later pass — nobody is waiting on this.",
+                len(state.all_sources),
+            )
+        else:
+            logger.info(
+                "Deep research synthesis came back empty; retrying as foreground "
+                "work rather than discarding %d gathered source(s).",
+                len(state.all_sources),
+            )
+            result = await _attempt(foreground=True)
+            text = str((result or {}).get("response") or "").strip()
 
     if not text:
         # Synthesis that produced nothing is not a completed synthesis. On
@@ -327,6 +349,7 @@ async def run_deep_research(
     search_fn: Any,
     max_loops: int = MAX_RESEARCH_LOOPS,
     on_phase: Any = None,
+    requested_by_user: bool = False,
 ) -> Dict[str, Any]:
     """Run the full deep research pipeline.
 
@@ -341,7 +364,9 @@ async def run_deep_research(
         {"answer": str, "sources": list, "loops": int, "queries": list}
     """
     start_time = time.time()
-    state = ResearchState(original_question=question)
+    state = ResearchState(
+        original_question=question, requested_by_user=bool(requested_by_user)
+    )
 
     def _notify(phase: ResearchPhase):
         if on_phase:

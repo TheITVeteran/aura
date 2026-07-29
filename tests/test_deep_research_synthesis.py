@@ -15,8 +15,9 @@ class _Brain:
         return {"response": "A real synthesis across the sources."}
 
 
-def _state():
+def _state(requested_by_user: bool = True):
     s = types.SimpleNamespace()
+    s.requested_by_user = requested_by_user
     s.original_question = "orcas"
     s.all_sources = [{"url": f"https://x{i}.org/a"} for i in range(5)]
     s.running_summary = "summary"
@@ -31,11 +32,27 @@ def _state():
 
 
 def test_empty_background_synthesis_is_retried_as_foreground():
+    """When a PERSON asked, the sources are worth a foreground retry."""
     brain = _Brain(empty_first=True)
-    out = asyncio.run(dr.synthesize_answer(_state(), brain))
+    out = asyncio.run(dr.synthesize_answer(_state(requested_by_user=True), brain))
     assert out.synthesis_status == "ok", "sources were discarded instead of retried"
     assert len(brain.calls) == 2, "the retry must actually happen"
     assert brain.calls[1].get("foreground_request") is True
+
+
+def test_autonomous_synthesis_never_takes_the_foreground_lane():
+    """Curiosity may research; it may not take the lane a person waits on.
+
+    Live 2026-07-28 an autonomous synthesis escalated itself to
+    foreground_request=True on a fresh boot and held the cortex while
+    conversation_ready stayed False — the desktop was unusable because she was
+    reading about something nobody had asked for. An empty background result
+    is the correct answer for work nobody is waiting on.
+    """
+    brain = _Brain(empty_first=True)
+    asyncio.run(dr.synthesize_answer(_state(requested_by_user=False), brain))
+    assert len(brain.calls) == 1, "autonomous research must not retry on the foreground lane"
+    assert not brain.calls[0].get("foreground_request")
 
 
 def test_a_first_pass_success_does_not_retry():
