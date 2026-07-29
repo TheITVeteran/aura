@@ -3669,25 +3669,48 @@ end tell
                     await self._activate_app(params.target)
                 except (TimeoutError, RuntimeError) as exc:
                     activation_error = str(exc)
-                effect_verified, frontmost_app = await self._wait_for_frontmost_app(params.target)
+                is_frontmost, frontmost_app = await self._wait_for_frontmost_app(
+                    params.target
+                )
+                # LAUNCHING IS THE ACTION. BEING FRONTMOST IS A WISH.
+                #
+                # This failed the step whenever the app lost the focus race,
+                # and losing it is not something she controls: the person is
+                # typing in something while she works, and that something
+                # keeps taking the front back. Measured 2026-07-29 —
+                #
+                #   open_app failed: Application launch command succeeded, but
+                #   the requested app did not become frontmost
+                #   (observed=Claude). Completed 0/2 steps.
+                #
+                # — where "Claude" is the window Bryan happened to be reading.
+                # Notes had launched perfectly well; the whole task died at
+                # step zero over which window had the highlight.
+                #
+                # The app is open, which is what was asked. Whether it also
+                # holds the front is reported honestly as its own field, and
+                # every step that genuinely needs focus re-asserts it itself
+                # (hold_focus) or does not need it at all (the scripting
+                # dictionary). Failing here pre-empted both.
+                launched = True
                 verification = (
                     f"Frontmost app confirmed as {frontmost_app}."
-                    if effect_verified
+                    if is_frontmost
                     else (
-                        "Application launch command succeeded, but the requested app "
-                        f"did not become frontmost (observed={frontmost_app or 'unavailable'}"
+                        f"{params.target} launched; another app holds the front "
+                        f"(observed={frontmost_app or 'unavailable'})"
                         + (f", activation_error={activation_error}" if activation_error else "")
-                        + ")."
+                        + ". Steps that need focus re-assert it themselves."
                     )
                 )
                 return {
-                    "ok": effect_verified,
+                    "ok": launched,
                     "opened": params.target,
                     "returncode": result.returncode,
                     "frontmost_app": frontmost_app,
-                    "effect_verified": effect_verified,
+                    "is_frontmost": is_frontmost,
+                    "effect_verified": launched,
                     "verification": verification,
-                    **({} if effect_verified else {"error": verification}),
                 }
 
             elif action == "open_url":

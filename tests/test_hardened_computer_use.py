@@ -2090,7 +2090,7 @@ async def test_open_url_still_rejects_after_forced_navigation_mismatch(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_open_app_rejects_zero_exit_without_frontmost_confirmation(monkeypatch):
+async def test_open_app_reports_a_lost_focus_race_without_failing(monkeypatch):
     skill = ComputerUseSkill()
 
     async def controlled_permission_pass(capability, *permission_names):
@@ -2117,10 +2117,26 @@ async def test_open_app_rejects_zero_exit_without_frontmost_confirmation(monkeyp
 
     result = await skill.execute({"action": "open_app", "target": "Notes"}, {})
 
-    assert result["ok"] is False
-    assert result["effect_verified"] is False
+    # LAUNCHING IS THE ACTION. BEING FRONTMOST IS A WISH.
+    #
+    # This asserted ok is False, which meant losing the focus race killed the
+    # step — and losing it is not something she controls, because the person is
+    # typing in something while she works. Measured 2026-07-29:
+    #
+    #   open_app failed: Application launch command succeeded, but the
+    #   requested app did not become frontmost (observed=Claude).
+    #   Completed 0/2 steps.
+    #
+    # "Claude" was the window Bryan happened to be reading. Notes had launched
+    # perfectly well and the whole task died at step zero over which window had
+    # the highlight — pre-empting both of the mechanisms that handle this:
+    # hold_focus re-asserts the front for steps that need it, and the scripting
+    # dictionary does not need it at all.
+    assert result["ok"] is True, "the app opened, which is what was asked"
     assert result["frontmost_app"] == "Finder"
-    assert "did not become frontmost" in result["error"]
+    assert result["is_frontmost"] is False, "and that is reported, not hidden"
+    assert "another app holds the front" in result["verification"]
+    assert "error" not in result
 
 
 @pytest.mark.asyncio
