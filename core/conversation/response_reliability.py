@@ -20,6 +20,7 @@ from core.brain.llm.latent_cortex.output_quality import (
 )
 from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.dialogue.referents import borrowed_first_person_spans
+from core.dialogue.shared_history import has_fabricated_shared_history
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
 logger = logging.getLogger("Aura.Conversation.ResponseReliability")
@@ -6513,6 +6514,7 @@ def assess_user_facing_reply(
     reply_text: Any,
     *,
     recent_user_messages: Iterable[str] | None = None,
+    grounding: Iterable[str] | None = None,
 ) -> ConversationReplyAssessment:
     """Classify whether a reply is safe to present as a completed chat turn."""
     # Defense in depth. The ingress now binds the visible request
@@ -6623,6 +6625,37 @@ def assess_user_facing_reply(
     # Not a hard failure: the reply is still served. It is recorded, so a
     # regression shows up as a rate rather than as an anecdote six turns deep
     # in a transcript nobody re-reads.
+    # SHE INVENTED AN EVENING THEY NEVER HAD.
+    #
+    # Measured 2026-07-28, three turns in a row: "the tone of your previous
+    # response ... heavy with a sense of responsibility" (his previous
+    # response was "Stuck on that one?"), then "the moon was full and I got
+    # to thinking about things, wondering how you were doing up there in that
+    # prison", then "I thought you had a problem with your eyes."
+    #
+    # None of it was recalled — the episodic store contains none of it. Given
+    # a turn with almost no content to answer, the model supplied a shared
+    # past instead of saying it had none, and each fabrication became the
+    # context that licensed the next.
+    #
+    # NOT hard yet, and the reason is a wire that does not exist.
+    #
+    # A reply reporting a conversation the person did not have deserves to
+    # die. But this assessment only sees the visible request and the recent
+    # turns — it does NOT see the memory evidence she was given to recall
+    # from, because no call site passes it. So a genuine recall grounded in
+    # retained memory ("I can verify durable memory evidence that we
+    # discussed retained memory...") reads identically to an invention, and
+    # killing it would gate away exactly the thing that makes recall worth
+    # having.
+    #
+    # Recorded and delivered until fabricated_shared_history() can be given
+    # `grounding=` from the recall lane. Then it becomes hard, and the
+    # measured failures below die at the gate instead of reaching Bryan.
+    if has_fabricated_shared_history(
+        raw, user_message, recent_messages, grounding=grounding
+    ):
+        reasons.append("fabricated_shared_history")
     if recent_messages and borrowed_first_person_spans(
         raw, [*recent_messages, user_message]
     ):

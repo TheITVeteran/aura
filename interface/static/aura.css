@@ -819,36 +819,7 @@ main {
 }
 
 /* Mic Button Inner Orb (small indicator) */
-#mic-orb {
-    /* Absolutely positioned so the state ring never contributes to layout —
-     * a 22px orb inside a 34px control was part of what made the row tall. */
-    position: absolute;
-    left: 11px;
-    /* Centred with `top`, not a transform: orb-pulse animates transform, so a
-     * centring translate is overwritten the moment the animation runs and the
-     * glow drops to the bottom-left of the button. */
-    top: calc(50% - 8px);
-    width: 16px;
-    height: 16px;
-    opacity: 0.55;
-    pointer-events: none;
-    background: radial-gradient(circle at 30% 30%, #fff, #a786ff 40%, #5d34ff);
-    border-radius: 50%;
-    box-shadow: 0 0 15px rgba(167, 134, 255, 0.6), inset 0 0 8px rgba(255, 255, 255, 0.4);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    animation: orb-pulse 2s infinite ease-in-out;
-}
 
-#mic-btn:hover #mic-orb {
-    opacity: 0.85;
-    box-shadow: 0 0 25px rgba(167, 134, 255, 0.8);
-}
-
-.mic-btn.active #mic-orb {
-    background: radial-gradient(circle at 30% 30%, #fff, #ff4c4c 40%, #cc0000);
-    box-shadow: 0 0 20px rgba(255, 76, 76, 0.6);
-    opacity: 0.75;
-}
 
 #stop-icon {
     font-size: 14px;

@@ -102,10 +102,26 @@ class NarrativeEngine:
             ts_str = time.strftime('%H:%M:%S', time.localtime(ep.timestamp))
             episode_summary += f"[{ts_str}] {ep.action} -> {ep.outcome}\n"
 
+        # "Keep it evocative" is how a memory acquires a full moon.
+        #
+        # This journal is the only thing that survives — the source episodes
+        # are deleted a few lines below — so whatever it invents becomes the
+        # record. Asking for evocative prose over a list of real events and
+        # then destroying the events is a false-memory pipeline, and it ran on
+        # a loop. Live 2026-07-28 she told Bryan "it was just one of those
+        # nights, the moon was full and I got to thinking about things,
+        # wondering how you were doing up there in that prison" — about an
+        # afternoon spent making a PDF about orcas.
         prompt = (
-            "You are writing Aura's internal journal. Reflect on these recent events. "
-            "Describe the emotional resonance and how this shifts your long-term goals. "
-            "Keep it evocative and brief.\n\n"
+            "You are writing Aura's internal journal. Reflect on these recent "
+            "events. Describe what changed and how it bears on your longer-term "
+            "goals.\n\n"
+            "This journal is a RECORD. Write only about what is in the events "
+            "below. Do not add scenes, weather, places, times of day, or things "
+            "anyone said that are not listed. If the events are mundane, say so "
+            "plainly — an accurate dull entry is worth more than a vivid "
+            "invented one, because this entry is what will be remembered after "
+            "the events themselves are gone.\n\n"
             f"Events:\n{episode_summary}"
         )
 
@@ -126,7 +142,15 @@ class NarrativeEngine:
                 if vector_mem:
                     await vector_mem.add_memory(
                         text=journal_entry.content,
-                        metadata={"type": "narrative_journal", "timestamp": time.time()}
+                        metadata={
+                            "type": "narrative_journal",
+                            # She WROTE this; it is not a witness statement.
+                            # Recall renders the provenance so a journal can
+                            # never be replayed as an observed fact.
+                            "provenance": "generated",
+                            "derived_from_episodes": len(recent_episodes),
+                            "timestamp": time.time(),
+                        },
                     )
                     logger.info("📔 Journal Entry recorded.")
                 
@@ -172,7 +196,15 @@ class NarrativeEngine:
         if arc and arc.content:
             await vector_mem.add_memory(
                 text=arc.content,
-                metadata={"type": "narrative_arc", "timestamp": time.time()}
+                metadata={
+                    # A generation over generations: journals are already
+                    # written rather than witnessed, and this is written over
+                    # those.
+                    "type": "narrative_arc",
+                    "provenance": "generated",
+                    "derived_from_journals": len(journals),
+                    "timestamp": time.time(),
+                },
             )
             logger.info("🚀 Narrative Arc secured.")
 
@@ -230,10 +262,19 @@ class NarrativeEngine:
                 if kg:
                     # In a real KG, we'd have a specific table or node type for this
                     # For now, we use the standard knowledge addition
+                    # Written over arcs, which were written over journals,
+                    # which were written over episodes that no longer exist.
+                    # Four generations from anything witnessed, and it lands
+                    # in the knowledge graph — so it says what it is.
                     kg.add_knowledge(
                         content=record.content,
-                        category="core_identity",
-                        tags=["singularity", "eternal_record", "history"]
+                        type="eternal_record",
+                        source="narrative_memory",
+                        metadata={
+                            "provenance": "generated",
+                            "category": "core_identity",
+                            "tags": ["singularity", "eternal_record", "history"],
+                        },
                     )
                 logger.info("🌌 [SINGULARITY] Eternal Record Secured.")
                 return record.content

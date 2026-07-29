@@ -7145,10 +7145,10 @@ async function toggleVoice(desiredState = null, { quiet = false } = {}) {
     const orb = $('voice-orb');
     state.voiceActive = targetState;
     $('voice-orb-wrap').classList.toggle('active', state.voiceActive);
-    // Setting textContent on the button deletes #mic-orb and #stop-icon —
-    // the very elements that show the state — and replaced them with an emoji
-    // that rendered as a bare ■. State is a class and a hidden toggle now; the
-    // drawn icons stay in the DOM.
+    // Setting textContent on the button deletes #stop-icon — the very element
+    // that shows the state — and replaced it with an emoji that rendered as a
+    // bare ■. State is a class and a hidden toggle now; the drawn icons stay
+    // in the DOM.
     setMicButtonState(state.voiceActive ? 'listening' : 'idle');
 
     if (state.voiceActive) {

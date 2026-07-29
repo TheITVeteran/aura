@@ -9086,6 +9086,19 @@ async def _run_cognitive_engine_chat_turn(
             visible,
             assessment_text,
             recent_user_messages=recent_user_messages,
+            # What she was ENTITLED to have known, so a real recall is not
+            # mistaken for an invention. The fabricated-shared-history check
+            # asks "does this content appear anywhere in what they said" —
+            # and a memory she legitimately retrieved appears in neither the
+            # visible request nor the recent turns, only here.
+            grounding=[
+                text
+                for text in (
+                    retained_memory_evidence_context,
+                    conversation_recall_context,
+                )
+                if text
+            ],
         )
         # The engine path does not leave through _finalize_fastpath, so the
         # numeric floor installed there never saw these replies. Live

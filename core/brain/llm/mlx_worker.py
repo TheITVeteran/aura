@@ -898,6 +898,11 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
         # referents.py); this reason is how a regression there becomes a rate
         # instead of an anecdote.
         "borrowed_owner_first_person_speech",
+        # Same reasoning, one step stronger: an invented shared past is worse
+        # than a borrowed sentence and will become a hard failure once the
+        # assessment can see the memory evidence she recalled from. Until
+        # then, flagging beats killing a real recall.
+        "fabricated_shared_history",
     }
 )
 

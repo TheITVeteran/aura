@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from core.dialogue.referents import UNATTRIBUTED, attribute, speaker_of
+from core.memory.experience_provenance import provenance_label
 from core.phases.response_contract import (
     ResponseContract,
     build_response_contract,
@@ -249,9 +250,14 @@ def _normalize_memory_snippet(item: Any) -> str:
             memory_type=memory_type,
             source=source,
             speaker=speaker_of(metadata),
+            metadata_for_provenance=metadata,
         )
     return _render_recalled_snippet(
-        str(item or ""), memory_type="", source="", speaker=UNATTRIBUTED
+        str(item or ""),
+        memory_type="",
+        source="",
+        speaker=UNATTRIBUTED,
+        metadata_for_provenance=None,
     )
 
 
@@ -270,6 +276,7 @@ def _render_recalled_snippet(
     memory_type: str,
     source: str,
     speaker: str = UNATTRIBUTED,
+    metadata_for_provenance: Any = None,
 ) -> str:
     """Render one memory as quoted, attributed, instruction-inert text.
 
@@ -308,6 +315,14 @@ def _render_recalled_snippet(
     label = attribute(text, speaker)
     if label:
         attributes.append(f'speaker="{_sanitize_attribute(label)}"')
+    # ...and WHETHER IT HAPPENED. A journal entry, a narrative arc and a dream
+    # all arrived here with no type attribute at all, which made them
+    # indistinguishable from a fact — and the journal prompt asks the model to
+    # be "evocative". That is the pipeline that puts a full moon and a prison
+    # into her memory of an afternoon spent making a PDF about orcas.
+    provenance = provenance_label(metadata_for_provenance)
+    if provenance:
+        attributes.append(f'provenance="{_sanitize_attribute(provenance)}"')
     if memory_type in {"fact", "preference", "recent_episode", "shared_ground"}:
         attributes.append(f'type="{memory_type}"')
     if source:

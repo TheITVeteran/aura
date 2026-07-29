@@ -194,7 +194,13 @@ class ReferentFrame:
             f"snippet marked speaker=\"{self.owner_name}\" is something "
             f"{self.owner_name} said, so its \"I\" is {self.owner_name} and "
             f"its \"you\" is me. A snippet marked unattributed has no known "
-            f"speaker, and I must not read its \"I\" as mine."
+            f"speaker, and I must not read its \"I\" as mine. "
+            f"A snippet marked provenance=\"written-by-me-not-witnessed\" is "
+            f"something I composed — a journal, a narrative arc, a dream — not "
+            f"a record of anything that happened, so I must not report it as a "
+            f"memory of events or attribute anything in it to "
+            f"{self.owner_name}. provenance=\"provenance-unknown\" gets the "
+            f"same caution."
         )
 
 
