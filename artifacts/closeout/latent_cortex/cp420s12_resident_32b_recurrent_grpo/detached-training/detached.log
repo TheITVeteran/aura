@@ -1,0 +1,29 @@
+[tasks] 288 train / 36 held-out from recurrence_curriculum (disjoint prompts and identities verified)
+[envelope] {'schema': 'aura.mlx_memory_guard.v1', 'memory_limit_gb': 26.88, 'cache_limit_gb': 2.0, 'wired_limit_gb': 36.48, 'reclaim_every': 16, 'host_memory_gb': 64.0}
+[wiring] 24 projections adapted
+[baseline-recurrent] 1/36 running=1.000
+[baseline-recurrent] 4/36 running=0.750
+[baseline-recurrent] 8/36 running=0.875
+[baseline-recurrent] 12/36 running=0.667
+[baseline-recurrent] 16/36 running=0.688
+[baseline-recurrent] 20/36 running=0.700
+[baseline-recurrent] 24/36 running=0.625
+Traceback (most recent call last):
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1327, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1289, in main
+    return _run_training(
+           ^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 963, in _run_training
+    result = run_verified_recurrent_grpo_training.main(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/run_verified_recurrent_grpo_training.py", line 97, in main
+    return int(train_grpo.main(verified_group_provider_factory=factory))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/train_grpo.py", line 2858, in main
+    baseline_eval = evaluate_recurrent_heldout(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/train_grpo.py", line 1587, in evaluate_recurrent_heldout
+    raise RuntimeError(f"recurrent held-out task {task.task_id} failed: {result.reason}")
+RuntimeError: recurrent held-out task recurrence-budget_plan-d2-s8082805353550149447 failed: answer_replacement_abstained

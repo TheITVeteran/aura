@@ -31705,3 +31705,25 @@ This is launch evidence only: no optimizer update, reasoning gain, frontier
 gain, promotion, or `WOW Signal` is claimed. The custody boundary remains
 host-isolated rather than independently administered. CP420S12 is total
 checkpoint 700.
+
+### 2026-07-29 - CP420S12 research policy-failure and exact-resume repair
+
+CP420S12 failed after 24/36 recurrent baseline cases, before calibration or an
+optimizer update, because serving-side answer replacement abstained on a wrong
+budget-planning output and the research evaluator misclassified the bounded
+policy result as an infrastructure failure.
+
+The repaired research graph retains wrong and incomplete neural outputs as
+negative evidence while preserving the live serving policy. Baseline cases and
+calibration probes are now atomically journaled under the complete experiment
+identity, and a step-zero checkpoint makes the exact source-bound run resumable
+before either expensive phase finishes. The preregistered 320-token evaluation
+budget no longer receives an unreported second 320-token grace window.
+
+A resident-32B rerun of the exact failing task completed at four recurrent
+steps and 320 tokens without raising; it was correctly scored
+incorrect/unparseable. Evidence:
+`artifacts/current/cp420s12_research_policy_failure_evidence.json`.
+This is checkpoint 701. CP420S12 remains retired with no optimizer update and
+no gain claim. The next campaign must be freshly frozen from the repaired
+source.

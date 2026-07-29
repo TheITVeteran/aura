@@ -46,6 +46,7 @@ import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -130,6 +131,8 @@ RNG_STRATEGY = "stateless_sha256_step_seeded_v1"
 EXECUTION_MODES = ("standard", "recurrent")
 TASK_SOURCES = ("verifiable", "recurrence_curriculum", "answer_channel_curriculum")
 _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+_PHASE_PROGRESS_SCHEMA = "aura.grpo.phase_progress.v1"
+_PHASE_PROGRESS_MAX_BYTES = 16 * 1024 * 1024
 
 
 # Set by main() from --cot. Reasoning room is the fix the CP238 finding
@@ -137,6 +140,184 @@ _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # FINAL_ANSWER format denied it chain-of-thought. This invites the
 # token-level deliberation that actually makes models reason.
 _COT_PREAMBLE = ""
+
+
+def _load_phase_progress(
+    path: Path,
+    *,
+    phase: str,
+    identity: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Load one canonical, identity-bound pretraining phase journal."""
+
+    if not path.exists():
+        return [], False
+    try:
+        raw = read_stable_bytes(path, max_bytes=_PHASE_PROGRESS_MAX_BYTES)
+        payload = json.loads(raw)
+    except (OSError, TypeError, ValueError) as exc:
+        raise GRPOCheckpointError(f"{phase} progress journal is unreadable") from exc
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema", "phase", "identity", "records", "complete"}
+        or payload.get("schema") != _PHASE_PROGRESS_SCHEMA
+        or payload.get("phase") != phase
+        or payload.get("identity") != dict(identity)
+        or type(payload.get("complete")) is not bool
+        or not isinstance(payload.get("records"), list)
+        or any(not isinstance(record, dict) for record in payload["records"])
+    ):
+        raise GRPOCheckpointError(f"{phase} progress journal identity differs")
+    if canonical_json_bytes(payload) != raw:
+        raise GRPOCheckpointError(f"{phase} progress journal is not canonical")
+    return [dict(record) for record in payload["records"]], bool(payload["complete"])
+
+
+def _write_phase_progress(
+    path: Path,
+    *,
+    phase: str,
+    identity: Mapping[str, Any],
+    records: Sequence[Mapping[str, Any]],
+    complete: bool,
+) -> None:
+    payload = {
+        "schema": _PHASE_PROGRESS_SCHEMA,
+        "phase": phase,
+        "identity": dict(identity),
+        "records": [dict(record) for record in records],
+        "complete": bool(complete),
+    }
+    atomic_write_bytes(path, canonical_json_bytes(payload), mode=0o600)
+
+
+def _validate_calibration_progress_record(record: Mapping[str, Any]) -> None:
+    if (
+        set(record)
+        != {
+            "family",
+            "difficulty",
+            "probe_index",
+            "task_id",
+            "seed",
+            "pass_rate",
+            "answer_channel",
+            "elapsed_s",
+        }
+        or not isinstance(record.get("family"), str)
+        or type(record.get("difficulty")) is not int
+        or type(record.get("probe_index")) is not int
+        or not isinstance(record.get("task_id"), str)
+        or type(record.get("seed")) is not int
+        or isinstance(record.get("pass_rate"), bool)
+        or not isinstance(record.get("pass_rate"), (int, float))
+        or not 0.0 <= float(record["pass_rate"]) <= 1.0
+        or not isinstance(record.get("answer_channel"), dict)
+        or isinstance(record.get("elapsed_s"), bool)
+        or not isinstance(record.get("elapsed_s"), (int, float))
+        or not math.isfinite(float(record["elapsed_s"]))
+        or float(record["elapsed_s"]) < 0.0
+    ):
+        raise GRPOCheckpointError("recurrent calibration progress record is invalid")
+
+
+@dataclass(slots=True)
+class _CalibrationProgressJournal:
+    path: Path
+    identity: dict[str, Any]
+    records: list[dict[str, Any]]
+    prior_complete: bool
+    saved_count: int
+    deadline: float
+    replayed: int = 0
+
+    @classmethod
+    def open(
+        cls,
+        path: Path,
+        *,
+        identity: Mapping[str, Any],
+        budget_s: float,
+    ) -> _CalibrationProgressJournal:
+        if not math.isfinite(float(budget_s)) or float(budget_s) <= 0.0:
+            raise ValueError("calibration progress budget must be finite and positive")
+        records, complete = _load_phase_progress(
+            path,
+            phase="recurrent_calibration",
+            identity=identity,
+        )
+        for record in records:
+            _validate_calibration_progress_record(record)
+        spent_s = sum(float(record["elapsed_s"]) for record in records)
+        remaining_s = max(0.0, float(budget_s) - spent_s)
+        return cls(
+            path=path,
+            identity=dict(identity),
+            records=records,
+            prior_complete=complete,
+            saved_count=len(records),
+            deadline=time.monotonic() + remaining_s,
+        )
+
+    @property
+    def remaining_s(self) -> float:
+        return max(0.0, self.deadline - time.monotonic())
+
+    def replay(
+        self,
+        *,
+        family: str,
+        difficulty: int,
+        probe_index: int,
+        task_id: str,
+        seed: int,
+    ) -> dict[str, Any] | None:
+        if self.replayed >= self.saved_count:
+            return None
+        record = self.records[self.replayed]
+        if (
+            record["family"] != family
+            or record["difficulty"] != difficulty
+            or record["probe_index"] != probe_index
+            or record["task_id"] != task_id
+            or record["seed"] != seed
+        ):
+            raise GRPOCheckpointError(
+                "recurrent calibration progress is not an exact probe prefix"
+            )
+        self.replayed += 1
+        return dict(record)
+
+    def permits_new_probe(self) -> bool:
+        return not self.prior_complete and time.monotonic() < self.deadline
+
+    def append(self, record: Mapping[str, Any]) -> None:
+        if self.replayed != self.saved_count:
+            raise GRPOCheckpointError(
+                "recurrent calibration cannot append before replay completes"
+            )
+        _validate_calibration_progress_record(record)
+        self.records.append(dict(record))
+        _write_phase_progress(
+            self.path,
+            phase="recurrent_calibration",
+            identity=self.identity,
+            records=self.records,
+            complete=False,
+        )
+
+    def finish(self) -> None:
+        if self.replayed != self.saved_count:
+            raise GRPOCheckpointError(
+                "recurrent calibration progress exceeds the expected probe sequence"
+            )
+        _write_phase_progress(
+            self.path,
+            phase="recurrent_calibration",
+            identity=self.identity,
+            records=self.records,
+            complete=True,
+        )
 
 
 def _stable_seed(base_seed: int, *parts: Any) -> int:
@@ -1541,6 +1722,8 @@ def evaluate_recurrent_heldout(
     seed: int,
     progress_label: str = "",
     progress_every: int = 4,
+    progress_path: Path | None = None,
+    progress_identity: Mapping[str, Any] | None = None,
 ):
     """Greedy held-out accuracy through the exact fixed RLC graph."""
 
@@ -1561,7 +1744,10 @@ def evaluate_recurrent_heldout(
     )
     config.decode_temperature = 0.0
     config.decode_contract = "final_answer_v1"
-    config.decode_contract_grace_tokens = max_tokens
+    # `max_tokens` is the preregistered scientific budget, not the beginning
+    # of a second hidden budget. An incomplete contract is scored as an
+    # incorrect bounded policy output at that exact ceiling.
+    config.decode_contract_grace_tokens = 0
     engine = LatentCortexEngine(
         model,
         tokenizer=tokenizer,
@@ -1574,7 +1760,67 @@ def evaluate_recurrent_heldout(
     contract_reasons: Counter[str] = Counter()
     total = len(tasks)
     correct_so_far = 0
-    for index, task in enumerate(tasks):
+    if (progress_path is None) is not (progress_identity is None):
+        raise ValueError("recurrent evaluation progress path and identity must be paired")
+    prior_records: list[dict[str, Any]] = []
+    prior_complete = False
+    if progress_path is not None:
+        assert progress_identity is not None
+        prior_records, prior_complete = _load_phase_progress(
+            progress_path,
+            phase="recurrent_baseline",
+            identity=progress_identity,
+        )
+        if len(prior_records) > total:
+            raise GRPOCheckpointError("recurrent baseline progress exceeds task count")
+        expected_prefix = [task.task_id for task in tasks[: len(prior_records)]]
+        observed_prefix = [record.get("task_id") for record in prior_records]
+        if observed_prefix != expected_prefix or prior_complete != (len(prior_records) == total):
+            raise GRPOCheckpointError("recurrent baseline progress is not an exact task prefix")
+        for task, record in zip(
+            tasks[: len(prior_records)],
+            prior_records,
+            strict=True,
+        ):
+            required = {
+                "task_id",
+                "selected_branch",
+                "steps_taken",
+                "decode_termination",
+                "output_tokens",
+                "correct",
+                "score_reason",
+                "episode_ok",
+                "episode_reason",
+                "scored_policy_failure",
+                "contract",
+            }
+            contract = record.get("contract")
+            if (
+                set(record) != required
+                or type(record.get("correct")) is not bool
+                or not isinstance(record.get("score_reason"), str)
+                or not isinstance(record.get("episode_reason"), str)
+                or type(record.get("episode_ok")) is not bool
+                or type(record.get("scored_policy_failure")) is not bool
+                or not isinstance(contract, dict)
+                or set(contract) != {"marker_count", "complete", "valid", "reason"}
+                or not isinstance(contract.get("reason"), str)
+            ):
+                raise GRPOCheckpointError("recurrent baseline progress record is invalid")
+            correct = bool(record["correct"])
+            results.append((task, correct))
+            receipts.append(dict(record))
+            reasons[str(record["score_reason"])] += 1
+            contract_reasons[str(contract["reason"])] += 1
+            correct_so_far += int(correct)
+        if prior_records and progress_label:
+            print(
+                f"[{progress_label}] resumed {len(prior_records)}/{total} "
+                f"running={correct_so_far / len(prior_records):.3f}",
+                flush=True,
+            )
+    for index, task in enumerate(tasks[len(prior_records) :], start=len(prior_records)):
         mx.random.seed(_stable_seed(seed, "recurrent_eval", index, task.task_id))
         scope = nullcontext() if adapters_on else recurrence_adapter_disabled()
         with scope:
@@ -1583,9 +1829,21 @@ def evaluate_recurrent_heldout(
                 decode_max_tokens=max_tokens,
                 decode_sentence_grace_tokens=0,
             )
-        if not result.ok:
+        scored_policy_failure = bool(
+            not result.ok
+            and (
+                result.reason == "answer_replacement_abstained"
+                or result.reason.startswith("decode_incomplete:")
+            )
+        )
+        if not result.ok and not scored_policy_failure:
             raise RuntimeError(f"recurrent held-out task {task.task_id} failed: {result.reason}")
-        verdict = task.grade(result.text)
+        response_text = (
+            ""
+            if result.reason == "answer_replacement_abstained"
+            else result.text
+        )
+        verdict = task.grade(response_text)
         correct = bool(verdict["correct"])
         reason = _grade_reason(verdict)
         reasons[reason] += 1
@@ -1593,28 +1851,39 @@ def evaluate_recurrent_heldout(
             contract_answer_state,
         )
 
-        contract_state = contract_answer_state(result.text)
+        contract_state = contract_answer_state(response_text)
         contract_reason = str(contract_state.get("reason") or "unknown")
         contract_reasons[contract_reason] += 1
         results.append((task, correct))
         correct_so_far += int(correct)
-        receipts.append(
-            {
-                "task_id": task.task_id,
-                "selected_branch": result.receipt.selected_branch,
-                "steps_taken": result.receipt.steps_taken,
-                "decode_termination": result.receipt.decode_termination,
-                "output_tokens": len(result.tokens),
-                "correct": bool(verdict["correct"]),
-                "score_reason": reason,
-                "contract": {
-                    "marker_count": int(contract_state.get("marker_count") or 0),
-                    "complete": bool(contract_state.get("complete")),
-                    "valid": bool(contract_state.get("valid")),
-                    "reason": contract_reason,
-                },
-            }
-        )
+        episode_record = {
+            "task_id": task.task_id,
+            "selected_branch": result.receipt.selected_branch,
+            "steps_taken": result.receipt.steps_taken,
+            "decode_termination": result.receipt.decode_termination,
+            "output_tokens": len(result.tokens),
+            "correct": bool(verdict["correct"]),
+            "score_reason": reason,
+            "episode_ok": bool(result.ok),
+            "episode_reason": str(result.reason or ""),
+            "scored_policy_failure": scored_policy_failure,
+            "contract": {
+                "marker_count": int(contract_state.get("marker_count") or 0),
+                "complete": bool(contract_state.get("complete")),
+                "valid": bool(contract_state.get("valid")),
+                "reason": contract_reason,
+            },
+        }
+        receipts.append(episode_record)
+        if progress_path is not None:
+            assert progress_identity is not None
+            _write_phase_progress(
+                progress_path,
+                phase="recurrent_baseline",
+                identity=progress_identity,
+                records=receipts,
+                complete=len(receipts) == total,
+            )
         if envelope is not None:
             envelope.reclaim(force=True)
         completed = index + 1
@@ -2843,6 +3112,12 @@ def main(
         if pre_stage_recovery_halt is not None:
             training_allowed = False
         if resumed is None:
+            checkpoint_path = checkpoint_now()
+            print(
+                f"[checkpoint 0] pretraining phases pending at {checkpoint_path.name}",
+                flush=True,
+            )
+        if baseline_eval is None:
             if execution_spec is None:
                 baseline_eval = evaluate_heldout(
                     model,
@@ -2855,6 +3130,19 @@ def main(
                 )
                 baseline_role = "frozen_pretraining_baseline"
             else:
+                baseline_seed = _stable_seed(args.seed, "baseline")
+                baseline_progress_identity = {
+                    "schema": "aura.grpo.recurrent_baseline_identity.v1",
+                    "protocol_sha256": protocol_sha256,
+                    "dataset_sha256": dataset_sha256,
+                    "execution_spec_sha256": execution_spec.sha256,
+                    "base_checkpoint": base_identity,
+                    "model_behavior": behavior_identity,
+                    "max_tokens": args.max_tokens,
+                    "seed": baseline_seed,
+                    "adapters_on": False,
+                    "task_ids": [task.task_id for task in holdout],
+                }
                 baseline_eval = evaluate_recurrent_heldout(
                     model,
                     tokenizer,
@@ -2863,8 +3151,10 @@ def main(
                     max_tokens=args.max_tokens,
                     envelope=envelope,
                     adapters_on=False,
-                    seed=_stable_seed(args.seed, "baseline"),
+                    seed=baseline_seed,
                     progress_label="baseline-recurrent",
+                    progress_path=out_dir / "baseline-progress.json",
+                    progress_identity=baseline_progress_identity,
                 )
                 baseline_role = "frozen_base_recurrent_baseline"
             baseline_eval["step"] = 0
@@ -2916,17 +3206,57 @@ def main(
                         print(f"[halt] remedy: {_reach.remedy}", flush=True)
                     training_allowed = False
                     halt_reason = "scope_unreachable"
+            checkpoint_path = checkpoint_now()
+            print(
+                f"[checkpoint 0] baseline durable at {checkpoint_path.name}",
+                flush=True,
+            )
+        elif isinstance(baseline_eval.get("scope_reachability"), Mapping) and (
+            baseline_eval["scope_reachability"].get("verdict") == "unreachable"
+        ):
+            training_allowed = False
+            halt_reason = "scope_unreachable"
 
-        if args.calibrate and resumed is None:
+        if args.calibrate and calibration is None:
             cal_group = min(config.group_size, args.calibrate_group)
             cal_tokens = _calibration_token_budget(args.max_tokens, args.calibrate_tokens)
-            cal_deadline = time.monotonic() + args.calibrate_minutes * 60.0
             cells_sorted = sorted(by_cell)
+            calibration_progress_path = out_dir / "calibration-progress.json"
+            calibration_progress_identity = {
+                "schema": "aura.grpo.recurrent_calibration_identity.v1",
+                "protocol_sha256": protocol_sha256,
+                "dataset_sha256": dataset_sha256,
+                "execution_spec_sha256": (
+                    execution_spec.sha256 if execution_spec is not None else None
+                ),
+                "base_checkpoint": base_identity,
+                "model_behavior": behavior_identity,
+                "max_tokens": cal_tokens,
+                "group_size": cal_group,
+                "samples_per_cell": args.calibrate_samples,
+                "minutes": args.calibrate_minutes,
+                "seed": args.seed,
+                "cells": [
+                    {
+                        "family": family,
+                        "difficulty": difficulty,
+                        "task_ids": [task.task_id for task in by_cell[(family, difficulty)]],
+                    }
+                    for family, difficulty in cells_sorted
+                ],
+            }
+            calibration_journal = _CalibrationProgressJournal.open(
+                calibration_progress_path,
+                identity=calibration_progress_identity,
+                budget_s=args.calibrate_minutes * 60.0,
+            )
             probe_counts: dict[tuple[str, int], int] = {}
             probes: list[dict[str, Any]] = []
             print(
                 f"[calibrate] {len(cells_sorted)} cells x {cal_group} completions "
-                f"x {cal_tokens} tokens, cap {args.calibrate_minutes}m",
+                f"x {cal_tokens} tokens, cap {args.calibrate_minutes}m "
+                f"(resumed {calibration_journal.saved_count} probes; "
+                f"{calibration_journal.remaining_s / 60.0:.1f}m remaining)",
                 flush=True,
             )
 
@@ -2935,12 +3265,25 @@ def main(
                 pool = by_cell.get(key)
                 probe_index = probe_counts.get(key, 0)
                 probe_counts[key] = probe_index + 1
-                if not pool or time.monotonic() >= cal_deadline:
+                if not pool:
                     return None
                 decision_seed = _stable_seed(
                     args.seed, "calibration", family, difficulty, probe_index
                 )
                 probe = pool[decision_seed % len(pool)]
+                saved = calibration_journal.replay(
+                    family=family,
+                    difficulty=difficulty,
+                    probe_index=probe_index,
+                    task_id=probe.task_id,
+                    seed=decision_seed,
+                )
+                if saved is not None:
+                    probes.append(dict(saved))
+                    return float(saved["pass_rate"])
+                if not calibration_journal.permits_new_probe():
+                    return None
+                probe_started = time.monotonic()
                 if execution_spec is None:
                     with recurrence_adapter_scope(start=None, stop=None):
                         _, completions = sample_group(
@@ -2976,8 +3319,10 @@ def main(
                         "seed": decision_seed,
                         "pass_rate": round(rate, 6),
                         "answer_channel": answer_channel,
+                        "elapsed_s": round(time.monotonic() - probe_started, 6),
                     }
                 )
+                calibration_journal.append(probes[-1])
                 print(
                     f"[calibrate] {family}@{difficulty} pass={rate:.2f} "
                     f"({elapsed_training_s() / 60.0:.1f}m)",
@@ -2991,6 +3336,7 @@ def main(
                 _measure,
                 samples_per_cell=args.calibrate_samples,
             )
+            calibration_journal.finish()
             curriculum_report = curriculum.report()
             expected_probes = len(cells_sorted) * max(2, args.calibrate_samples)
             calibration = {

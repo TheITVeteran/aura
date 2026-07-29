@@ -5745,3 +5745,33 @@ Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false pending
 completed training and the preregistered held-out, equal-compute, causal, and
 external-verification gates. CP420S12 is total checkpoint 700. The 700-920
 completion envelope is approximately 76.1%-100.0%, with an 88.0% midpoint.
+
+### 2026-07-29 - CP420S12: raw-policy failures are evidence, not infrastructure crashes
+
+CP420S12 stopped after 24/36 frozen recurrent baseline cases and before any
+optimizer update. The resident model's wrong answer on
+`recurrence-budget_plan-d2-s8082805353550149447` reached the live
+answer-replacement authority, which abstained; the research evaluator treated
+that bounded policy failure as an engine failure and aborted the campaign.
+
+Research execution now disables serving-side answer replacement while leaving
+the live product default unchanged. Bounded abstentions and incomplete decodes
+are scored as incorrect policy observations; cancellation, latent-phase,
+worker, invariant, and cleanup failures remain fatal. The 320-token
+preregistered ceiling is now a hard ceiling rather than silently adding a
+second 320-token grace budget.
+
+Pretraining is crash-resumable without reusing stale evidence. A step-zero
+checkpoint lands before the baseline, each baseline case and calibration probe
+is written to a canonical journal bound to protocol, dataset, model, execution
+spec, seed, order, and budget, and a second checkpoint seals the completed
+baseline. Exact identity drift refuses reuse.
+
+The exact failed case was rerun on the resident 32B at four recurrent steps. It
+completed without a fatal error at the 320-token ceiling and was honestly
+scored incorrect/unparseable. This proves the evaluator repair, not a reasoning
+gain. Evidence:
+`artifacts/current/cp420s12_research_policy_failure_evidence.json`.
+CP420S12 is immutable and retired. No optimizer update, reasoning gain,
+frontier gain, promotion, or `WOW Signal` is claimed. CP420S12 remains total
+checkpoint 700; the repair checkpoint is 701 and a fresh campaign is required.

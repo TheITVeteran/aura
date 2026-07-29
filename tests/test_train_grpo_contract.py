@@ -266,6 +266,101 @@ def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
         _calibration_token_budget(320, 128)
 
 
+def test_calibration_progress_replays_exact_prefix_and_remaining_budget(
+    tmp_path,
+):
+    path = tmp_path / "calibration-progress.json"
+    identity = {
+        "schema": "test.recurrent_calibration_identity.v1",
+        "protocol_sha256": "a" * 64,
+    }
+    first = {
+        "family": "logic",
+        "difficulty": 2,
+        "probe_index": 0,
+        "task_id": "logic-2-0",
+        "seed": 7,
+        "pass_rate": 0.5,
+        "answer_channel": _answer_channel_report_from_verdicts(
+            [{"correct": True}, {"correct": False}]
+        ),
+        "elapsed_s": 1.25,
+    }
+    second = {
+        **first,
+        "family": "code",
+        "task_id": "code-2-0",
+        "seed": 11,
+        "pass_rate": 1.0,
+        "answer_channel": _answer_channel_report_from_verdicts(
+            [{"correct": True}, {"correct": True}]
+        ),
+        "elapsed_s": 0.25,
+    }
+
+    initial = train_grpo._CalibrationProgressJournal.open(
+        path,
+        identity=identity,
+        budget_s=10.0,
+    )
+    initial.append(first)
+
+    resumed = train_grpo._CalibrationProgressJournal.open(
+        path,
+        identity=identity,
+        budget_s=10.0,
+    )
+    assert resumed.saved_count == 1
+    assert 0.0 < resumed.remaining_s <= 8.75
+    with pytest.raises(GRPOCheckpointError, match="exact probe prefix"):
+        resumed.replay(
+            family="wrong",
+            difficulty=2,
+            probe_index=0,
+            task_id="logic-2-0",
+            seed=7,
+        )
+    assert resumed.replay(
+        family="logic",
+        difficulty=2,
+        probe_index=0,
+        task_id="logic-2-0",
+        seed=7,
+    ) == first
+    resumed.append(second)
+    resumed.finish()
+
+    completed = train_grpo._CalibrationProgressJournal.open(
+        path,
+        identity=identity,
+        budget_s=10.0,
+    )
+    assert completed.prior_complete is True
+    assert completed.replay(
+        family="logic",
+        difficulty=2,
+        probe_index=0,
+        task_id="logic-2-0",
+        seed=7,
+    ) == first
+    assert completed.replay(
+        family="code",
+        difficulty=2,
+        probe_index=0,
+        task_id="code-2-0",
+        seed=11,
+    ) == second
+    assert completed.permits_new_probe() is False
+    completed.finish()
+
+    with pytest.raises(GRPOCheckpointError, match="identity differs"):
+        train_grpo._CalibrationProgressJournal.open(
+            path,
+            identity={**identity, "protocol_sha256": "b" * 64},
+            budget_s=10.0,
+        )
+
+
 def test_recurrent_calibration_requires_measured_learnable_signal():
     calibration = {
         "learnable": [],
@@ -922,7 +1017,7 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
 
     assert report["overall"] == pytest.approx(1.0)
     assert captured_configs[0].decode_contract == "final_answer_v1"
-    assert captured_configs[0].decode_contract_grace_tokens == 8
+    assert captured_configs[0].decode_contract_grace_tokens == 0
     assert report["episode_receipts"][0]["decode_termination"] == "contract_complete"
     assert report["episode_receipts"][0]["score_reason"] == "correct"
     assert report["episode_receipts"][0]["contract"] == {
@@ -933,3 +1028,280 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
     }
     assert report["score_reasons"] == {"correct": 1}
     assert report["contract_reasons"] == {"complete": 1}
+
+
+def test_recurrent_heldout_scores_receipted_abstention_as_incorrect(monkeypatch):
+    class Random:
+        @staticmethod
+        def seed(_seed):
+            return None
+
+    mlx = types.ModuleType("mlx")
+    mlx_core = types.ModuleType("mlx.core")
+    mlx_core.random = Random()
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core)
+
+    class FakeEngine:
+        def __init__(self, _model, *, tokenizer, config, schedule_library):
+            assert tokenizer is not None
+            assert schedule_library is None
+            assert config.answer_replacement_enabled is False
+
+        @staticmethod
+        def reason(**_kwargs):
+            return types.SimpleNamespace(
+                ok=False,
+                reason="answer_replacement_abstained",
+                text="",
+                tokens=[],
+                receipt=types.SimpleNamespace(
+                    selected_branch=1,
+                    steps_taken=4,
+                    decode_termination="confidence_bound_abstention",
+                ),
+            )
+
+    import core.brain.llm.latent_cortex.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "LatentCortexEngine", FakeEngine)
+    adapter_module = types.ModuleType("core.brain.llm.latent_cortex.recurrence_adapter")
+    adapter_module.recurrence_adapter_disabled = __import__("contextlib").nullcontext
+    adapter_module.current_recurrence_adapter_scope = lambda: None
+    adapter_module.recurrence_adapter_scope = lambda *_args, **_kwargs: __import__(
+        "contextlib"
+    ).nullcontext()
+    monkeypatch.setitem(
+        sys.modules,
+        "core.brain.llm.latent_cortex.recurrence_adapter",
+        adapter_module,
+    )
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+        @staticmethod
+        def encode(_text):
+            return [1, 2, 3]
+
+    class Task:
+        task_id = "abstained-contract-task"
+        prompt = "solve"
+        domain = "logic"
+        depth = 2
+        knowledge = "parametric"
+        grader = "exact_json"
+        expected = {"value": 1}
+
+        @staticmethod
+        def grade(text):
+            return {
+                "correct": False,
+                "reason": "missing_answer" if not text else "wrong_answer",
+            }
+
+    report = evaluate_recurrent_heldout(
+        object(),
+        Tokenizer(),
+        [Task()],
+        spec=RLCExecutionSpec(
+            n_slots=4,
+            branch_roles=("constructive_solution", "critical_audit"),
+            recurrent_steps=4,
+        ),
+        max_tokens=8,
+        envelope=None,
+        adapters_on=False,
+        seed=12,
+    )
+
+    assert report["overall"] == 0.0
+    assert report["score_reasons"] == {"missing_answer": 1}
+    assert report["contract_reasons"] == {"no_marker": 1}
+    assert report["episode_receipts"] == [
+        {
+            "task_id": "abstained-contract-task",
+            "selected_branch": 1,
+            "steps_taken": 4,
+            "decode_termination": "confidence_bound_abstention",
+            "output_tokens": 0,
+            "correct": False,
+            "score_reason": "missing_answer",
+            "episode_ok": False,
+            "episode_reason": "answer_replacement_abstained",
+            "scored_policy_failure": True,
+            "contract": {
+                "marker_count": 0,
+                "complete": False,
+                "valid": False,
+                "reason": "no_marker",
+            },
+        }
+    ]
+
+
+def test_recurrent_heldout_resumes_only_unfinished_identity_bound_suffix(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    class Random:
+        @staticmethod
+        def seed(_seed):
+            return None
+
+    mlx = types.ModuleType("mlx")
+    mlx_core = types.ModuleType("mlx.core")
+    mlx_core.random = Random()
+    monkeypatch.setitem(sys.modules, "mlx", mlx)
+    monkeypatch.setitem(sys.modules, "mlx.core", mlx_core)
+
+    calls = []
+    fail_second = [True]
+
+    class FakeEngine:
+        def __init__(self, _model, *, tokenizer, config, schedule_library):
+            assert tokenizer is not None
+            assert schedule_library is None
+            assert config.answer_replacement_enabled is False
+
+        @staticmethod
+        def reason(*, token_ids, **_kwargs):
+            value = token_ids[0]
+            calls.append(value)
+            if value == 2 and fail_second[0]:
+                return types.SimpleNamespace(
+                    ok=False,
+                    reason="resident_worker_lost",
+                    text="",
+                    tokens=[],
+                    receipt=types.SimpleNamespace(
+                        selected_branch=0,
+                        steps_taken=1,
+                        decode_termination="worker_lost",
+                    ),
+                )
+            return types.SimpleNamespace(
+                ok=True,
+                reason="",
+                text=f'FINAL_ANSWER: {{"value":{value}}}',
+                tokens=[value],
+                receipt=types.SimpleNamespace(
+                    selected_branch=0,
+                    steps_taken=4,
+                    decode_termination="contract_complete",
+                ),
+            )
+
+    import core.brain.llm.latent_cortex.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "LatentCortexEngine", FakeEngine)
+    adapter_module = types.ModuleType("core.brain.llm.latent_cortex.recurrence_adapter")
+    adapter_module.recurrence_adapter_disabled = __import__("contextlib").nullcontext
+    adapter_module.current_recurrence_adapter_scope = lambda: None
+    adapter_module.recurrence_adapter_scope = lambda *_args, **_kwargs: __import__(
+        "contextlib"
+    ).nullcontext()
+    monkeypatch.setitem(
+        sys.modules,
+        "core.brain.llm.latent_cortex.recurrence_adapter",
+        adapter_module,
+    )
+
+    class Tokenizer:
+        @staticmethod
+        def apply_chat_template(messages, **_kwargs):
+            return messages[0]["content"]
+
+        @staticmethod
+        def encode(text):
+            return [1 if "first" in text else 2]
+
+    @dataclass(frozen=True)
+    class Task:
+        task_id: str
+        prompt: str
+        expected_value: int
+        domain: str = "logic"
+        depth: int = 2
+        knowledge: str = "parametric"
+        grader: str = "exact_json"
+
+        def grade(self, text):
+            expected = f'FINAL_ANSWER: {{"value":{self.expected_value}}}'
+            return {
+                "correct": text == expected,
+                "reason": "correct" if text == expected else "wrong_answer",
+            }
+
+    tasks = [
+        Task("first-task", "solve first", 1),
+        Task("second-task", "solve second", 2),
+    ]
+    spec = RLCExecutionSpec(
+        n_slots=4,
+        branch_roles=("constructive_solution", "critical_audit"),
+        recurrent_steps=4,
+    )
+    progress_path = tmp_path / "baseline-progress.json"
+    identity = {
+        "schema": "test.recurrent_baseline_identity.v1",
+        "protocol_sha256": "a" * 64,
+        "task_ids": [task.task_id for task in tasks],
+    }
+
+    with pytest.raises(RuntimeError, match="resident_worker_lost"):
+        evaluate_recurrent_heldout(
+            object(),
+            Tokenizer(),
+            tasks,
+            spec=spec,
+            max_tokens=8,
+            envelope=None,
+            adapters_on=False,
+            seed=12,
+            progress_path=progress_path,
+            progress_identity=identity,
+        )
+
+    interrupted = json.loads(progress_path.read_text(encoding="ascii"))
+    assert interrupted["complete"] is False
+    assert [record["task_id"] for record in interrupted["records"]] == ["first-task"]
+    assert calls == [1, 2]
+
+    fail_second[0] = False
+    report = evaluate_recurrent_heldout(
+        object(),
+        Tokenizer(),
+        tasks,
+        spec=spec,
+        max_tokens=8,
+        envelope=None,
+        adapters_on=False,
+        seed=12,
+        progress_label="baseline-recurrent",
+        progress_path=progress_path,
+        progress_identity=identity,
+    )
+
+    assert calls == [1, 2, 2]
+    assert report["overall"] == 1.0
+    assert json.loads(progress_path.read_text(encoding="ascii"))["complete"] is True
+    assert "[baseline-recurrent] resumed 1/2" in capsys.readouterr().out
+
+    with pytest.raises(GRPOCheckpointError, match="identity differs"):
+        evaluate_recurrent_heldout(
+            object(),
+            Tokenizer(),
+            tasks,
+            spec=spec,
+            max_tokens=8,
+            envelope=None,
+            adapters_on=False,
+            seed=12,
+            progress_path=progress_path,
+            progress_identity={**identity, "protocol_sha256": "b" * 64},
+        )
+    assert calls == [1, 2, 2]

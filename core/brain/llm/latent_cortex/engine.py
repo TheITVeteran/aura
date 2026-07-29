@@ -2566,10 +2566,23 @@ class LatentCortexEngine:
             receipt.flag("checkpoint_invariant_violated")
             failure_reason = failure_reason or "checkpoint_invariant_violated"
         if failure_reason:
+            # A bounded decode can be an invalid product answer while still
+            # being valid raw-policy evidence. Preserve only that explicitly
+            # classified neural trace so research callers can grade it and
+            # learn from its token log-probabilities. Integrity, cancellation,
+            # latent-phase, and cleanup failures remain empty and unusable.
+            retain_policy_trace = failure_reason.startswith("decode_incomplete:")
+            failure_tokens = out_tokens if retain_policy_trace else []
+            failure_text = (
+                self.tokenizer.decode(failure_tokens)
+                if self.tokenizer is not None and failure_tokens
+                else ""
+            )
             return LatentReasoningResult(
                 ok=False,
-                text="",
+                text=failure_text,
                 receipt=receipt,
+                tokens=failure_tokens,
                 reason=failure_reason,
                 decode_token_logprobs=decode_token_logprobs,
                 answer_replacement_private=answer_replacement_private,

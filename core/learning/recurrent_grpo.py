@@ -1511,6 +1511,9 @@ def cortex_config_from_execution_spec(
         decode_contract="none",
         decode_min_tokens=0,
         decode_repetition_penalty=1.0,
+        # Research sampling must retain refuted policy outputs as negative
+        # examples. Live serving keeps confidence-bound replacement enabled.
+        answer_replacement_enabled=False,
         allow_vanilla_fallback=False,
         escape={"enabled": False},
         telemetry_enabled=False,
@@ -1563,7 +1566,10 @@ def sample_recurrent_completion(
         sample_seed=seed,
         episode_id=episode_id,
     )
-    if not result.ok:
+    scored_policy_termination = bool(
+        not result.ok and result.reason.startswith("decode_incomplete:")
+    )
+    if not result.ok and not scored_policy_termination:
         raise RuntimeError(f"cached recurrent sampling failed: {result.reason}")
     if not result.tokens:
         raise RuntimeError("cached recurrent sampling produced no completion tokens")

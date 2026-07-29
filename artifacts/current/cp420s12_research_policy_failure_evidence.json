@@ -1,0 +1,62 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s12",
+  "claim_boundary": "research_evaluator_and_resume_repair_only_no_reasoning_gain_claim",
+  "failure": {
+    "baseline_completed_tasks": 24,
+    "baseline_total_tasks": 36,
+    "detached_duration_s": 1436.846559,
+    "detached_receipt_sha256": "5b68e3ac0261468afdabed562b7bc7316e936e40bab7187a67248450f92b7a37",
+    "detached_receipt_file_sha256": "bfb797e0de9ffeb0b5a09c2cffd13cfcc4a43556a6abe1a5d1f1250dac23e00d",
+    "detached_status_file_sha256": "056f00768d03ef14937316fa4b7ce226c90d06bf26fc50c05c1924d3ee8b4bc0",
+    "log_file_sha256": "3a073388addf5b74fa77d4c62b47f073dcc192f324a574c43c7d92ee0d43d2b6",
+    "optimizer_update_occurred": false,
+    "reason": "answer_replacement_abstained",
+    "task_id": "recurrence-budget_plan-d2-s8082805353550149447"
+  },
+  "repair": {
+    "baseline_progress": "canonical_identity_bound_per_case_journal",
+    "calibration_progress": "canonical_identity_bound_per_probe_journal_with_remaining_wall_budget",
+    "checkpoint_zero": "durable_before_baseline_and_after_baseline",
+    "live_answer_replacement_default_changed": false,
+    "research_answer_replacement_enabled": false,
+    "research_decode_contract_grace_tokens": 0,
+    "research_policy_failures_scored": [
+      "answer_replacement_abstained",
+      "decode_incomplete:*"
+    ],
+    "runtime_and_integrity_failures_remain_fatal": true
+  },
+  "resident_32b_canary": {
+    "adapters_on": false,
+    "contract_reason": "no_marker",
+    "correct": false,
+    "decode_termination": "token_limit_contract_incomplete",
+    "execution_spec_sha256": "f465245ff7d8b9f88a33f33cc7372303ce0c1ad4fc5ba3c21c2aa2c1bc006198",
+    "expected": {
+      "cost": 8,
+      "reward": 22,
+      "selected": [
+        "C",
+        "D",
+        "E"
+      ]
+    },
+    "fatal_error": false,
+    "output_tokens": 320,
+    "recurrent_steps": 4,
+    "score_reason": "unparseable",
+    "task_id": "recurrence-budget_plan-d2-s8082805353550149447"
+  },
+  "schema": "aura.spark.cp420s12_research_policy_failure_evidence.v1",
+  "tests": {
+    "focused_engine_recurrent_trainer": {
+      "passed": 110,
+      "total": 110
+    },
+    "expanded_training_matrix": {
+      "passed": 250,
+      "total": 250
+    }
+  },
+  "verdict": "repair_verified_fresh_source_bound_campaign_required"
+}

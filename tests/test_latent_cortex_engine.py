@@ -858,6 +858,47 @@ def test_production_episode_refuses_secondary_vanilla_decode(tiny_model):
     assert not any(flag.startswith("fallback_vanilla") for flag in result.receipt.honest_flags)
 
 
+def test_bounded_incomplete_decode_retains_raw_policy_trace(tiny_model, monkeypatch):
+    class Tokenizer:
+        @staticmethod
+        def decode(tokens):
+            return ",".join(str(token) for token in tokens)
+
+    engine = LatentCortexEngine(
+        tiny_model,
+        tokenizer=Tokenizer(),
+        config=_config(allow_vanilla_fallback=False),
+    )
+
+    def incomplete_episode(
+        _tokens,
+        _budget,
+        _verifier,
+        _domain,
+        receipt,
+        _decode_max_tokens,
+        **kwargs,
+    ):
+        trace = [11, 17]
+        receipt.decode_termination = "budget_exhausted"
+        receipt.decode_generated_tokens = len(trace)
+        kwargs["token_logprobs_out"].extend([-0.2, -0.3])
+        return trace, receipt, {}
+
+    monkeypatch.setattr(engine, "_latent_episode", incomplete_episode)
+
+    result = engine.reason(
+        token_ids=PROMPT_TOKENS,
+        capture_decode_logprobs=True,
+    )
+
+    assert result.ok is False
+    assert result.reason == "decode_incomplete:budget_exhausted"
+    assert result.text == "11,17"
+    assert result.tokens == [11, 17]
+    assert result.decode_token_logprobs == [-0.2, -0.3]
+
+
 def test_budget_binds_and_is_reported(tiny_model):
     tight = ComputeBudget(max_layer_apps=PROMPT_TOKENS.__len__() * N_LAYERS + 200)
     engine = LatentCortexEngine(tiny_model, config=_config())

@@ -322,6 +322,7 @@ def test_execution_spec_maps_to_fixed_live_training_graph():
     assert config.latent_opt.enabled is False
     assert config.fast_weights.enabled is False
     assert config.allow_vanilla_fallback is False
+    assert config.answer_replacement_enabled is False
     assert config.decode_temperature == 1.0
     assert config.decode_top_p == 1.0
 
@@ -364,6 +365,45 @@ def test_cached_recurrent_sampler_is_admitted_by_differentiable_policy():
     assert validated["sample_kind"] == "engine_episode"
     assert validated["episode_id"] == "engine-sample-test-117"
     assert validated["episode_receipt"]["episode_id"] == sample.episode_id
+
+
+def test_cached_recurrent_sampler_keeps_bounded_incomplete_policy_trace(
+    monkeypatch,
+):
+    from core.brain.llm.latent_cortex import engine as engine_module
+
+    original_engine = engine_module.LatentCortexEngine
+
+    class IncompleteDecodeEngine:
+        def __init__(self, *args, **kwargs):
+            self._inner = original_engine(*args, **kwargs)
+
+        def reason(self, **kwargs):
+            result = self._inner.reason(**kwargs)
+            assert result.tokens
+            result.ok = False
+            result.reason = "decode_incomplete:budget_exhausted"
+            return result
+
+    monkeypatch.setattr(engine_module, "LatentCortexEngine", IncompleteDecodeEngine)
+    model = _prepared(seed=934)
+    _set_adapter_delta(model, 0.02)
+
+    sample = sample_recurrent_completion(
+        model,
+        [5, 9, 17],
+        spec=_spec(
+            depth=2,
+            branch_roles=("constructive_solution", "critical_audit"),
+        ),
+        seed=117,
+        sampling=RecurrentSamplingConfig(max_tokens=3),
+        episode_id="engine-incomplete-sample-test-117",
+    )
+
+    assert len(sample.tokens) == 3
+    assert len(sample.behavior_logprobs) == 3
+    assert sample.behavior_admitted is True
 
 
 def test_flat_transaction_tensors_reproduce_live_policy_identity() -> None:
