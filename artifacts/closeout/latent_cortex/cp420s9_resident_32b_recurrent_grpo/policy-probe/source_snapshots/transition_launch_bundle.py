@@ -345,14 +345,15 @@ def validate_verified_transition_launch_archive(
     )
     preregistration_unsigned = dict(preregistration)
     claimed_preregistration = preregistration_unsigned.pop("contract_sha256", None)
-    preregistration_canonical = _canonical_finite_json_bytes(
-        preregistration_unsigned,
-        role="preregistration_contract",
-    )
-    if claimed_preregistration not in {
-        hashlib.sha256(preregistration_canonical).hexdigest(),
-        hashlib.sha256(preregistration_canonical + b"\n").hexdigest(),
-    }:
+    if (
+        claimed_preregistration
+        != hashlib.sha256(
+            _canonical_finite_json_bytes(
+                preregistration_unsigned,
+                role="preregistration_contract",
+            )
+        ).hexdigest()
+    ):
         _fail("launch_preregistration_internal_digest_mismatch")
     if claimed_preregistration != _sha256(
         expected_preregistration_sha256,

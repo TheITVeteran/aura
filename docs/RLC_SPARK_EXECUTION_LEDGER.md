@@ -5658,3 +5658,25 @@ approximately 75.7%-100.0%, with an 87.8% midpoint. The evidence-adjusted
 range is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to
 the powered conditional `WOW Signal` decision. CP420S9 must be freshly frozen
 and pass the resident gates before launch materialization resumes.
+
+### 2026-07-29 - CP420S9: archive digest matches the frozen contract convention
+
+CP420S9 again passed the resident policy and 6/6 answer-channel gates. Launch
+materialization published the signed campaign-open state and reached the
+independent archive reopener, which rejected the preregistration internal
+digest before training because the contract freezer hashes canonical finite
+JSON with one terminal newline while the reopener checked only the bare
+canonical form.
+
+The independent reopener now accepts the same two exact forms already admitted
+by the preregistration validator: canonical finite JSON, with or without one
+terminal newline. It still rejects arbitrary whitespace, alternate float
+representations, and every noncanonical encoding. The launch and source-bound
+matrix passes 114/114 using the production newline digest form.
+
+CP420S9 is immutable and retired by the verifier repair. It performed no
+optimizer update. Evidence:
+`artifacts/current/cp420s9_preregistration_digest_compatibility_evidence.json`.
+Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false.
+CP420S9 is total checkpoint 697. CP420S10 must be freshly frozen and pass both
+resident gates before launch resumes.

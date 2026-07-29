@@ -279,7 +279,7 @@ def test_materializer_publishes_and_reopens_exact_externally_rooted_bundle(
     contract = {
         **contract_body,
         "contract_sha256": hashlib.sha256(
-            materializer._research_json_bytes(contract_body)
+            materializer._research_json_bytes(contract_body) + b"\n"
         ).hexdigest(),
     }
     contract_path = _write(

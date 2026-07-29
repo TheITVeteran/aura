@@ -31625,3 +31625,24 @@ checkpoint 696; the 696-920 envelope is approximately 75.7%-100.0% with an
 87.8% midpoint. The evidence-adjusted estimate is 3-7 checkpoints to a
 preliminary gain verdict and 8-17 to the powered conditional `WOW Signal`
 decision. A fresh CP420S9 contract and resident gates are next.
+
+### 2026-07-29 - CP420S9 preregistration digest compatibility
+
+CP420S9 passed the resident initial-policy and 6/6 answer-channel gates, then
+reached independent launch-archive reopening. The reopener failed closed
+before training because the contract freezer hashes canonical finite JSON with
+one terminal newline while the archive verifier admitted only the equivalent
+bare canonical digest.
+
+The verifier now accepts precisely the two canonical forms already accepted at
+the preregistration boundary: bare canonical finite JSON or that byte string
+plus one terminal newline. It does not admit arbitrary whitespace or alternate
+numeric encodings. The production-form launch and source-bound matrix passes
+114/114.
+
+CP420S9 is immutable and retired by this source repair, with no optimizer
+update. Evidence:
+`artifacts/current/cp420s9_preregistration_digest_compatibility_evidence.json`.
+No reasoning, frontier, promotion, or `WOW Signal` claim is made. CP420S9 is
+total checkpoint 697. A fresh CP420S10 campaign and both resident gates are
+required before launch.
