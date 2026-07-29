@@ -2446,7 +2446,17 @@ def test_wallpaper_derivation_fetches_controls_and_shows_source():
     assert fetch_idx < control_idx
     assert steps[fetch_idx].target["topic"] == "squid"
     assert steps[control_idx].target["domain"] == "wallpaper"
-    assert steps[control_idx].target["value"] == steps[fetch_idx].target["path"]
+    # The control step references the fetch RECEIPT, not the planned filename.
+    # Live 2026-07-29 those were the same string and the wallpaper step died
+    # with "No such file or directory: orca_wallpaper.png" while a real
+    # orca_wallpaper.jpg sat on the Desktop — the planner names the file
+    # before the fetch knows what it was served, so the extension is a guess.
+    from core.skills.desktop_task import FETCHED_IMAGE_PATH_SENTINEL
+
+    assert steps[control_idx].target["value"] == FETCHED_IMAGE_PATH_SENTINEL
+    # ...and the fetch still saves where the person asked, which is the other
+    # half of the contract this test protects.
+    assert "squid" in steps[fetch_idx].target["path"]
     source_steps = [
         s for s in steps
         if s.action == "open_url"
@@ -2544,7 +2554,17 @@ def test_demo_class_objective_stays_on_verified_primitive_lane():
     )
     wallpaper = [step for step in steps if step.action == "system_control"][0]
     assert wallpaper.target["domain"] == "wallpaper"
-    assert "eagle" in wallpaper.target["value"]
+    from core.skills.desktop_task import FETCHED_IMAGE_PATH_SENTINEL
+
+    # The topic rides on the FETCH step; the control step resolves its path
+    # from that fetch's receipt at execution time.
+    assert wallpaper.target["value"] == FETCHED_IMAGE_PATH_SENTINEL
+    eagle_fetch = next(
+        step
+        for step in steps
+        if step.action == "fetch_topic_image" and "eagle" in str(step.target)
+    )
+    assert eagle_fetch
 
 
 def test_same_named_folder_reference_keeps_later_pdf_in_shared_destination():

@@ -42,6 +42,15 @@ _DESKTOP_TASK_RECOVERABLE_ERRORS = (
 # fetch_topic_image receipt — derivation cannot know the source page
 # before the fetch runs ("show me where you found it").
 FETCHED_IMAGE_SOURCE_SENTINEL = "aura://fetched-image-source"
+
+# The path the image ACTUALLY landed at, resolved from the fetch receipt for
+# the same reason the source URL is: derivation cannot know it in advance.
+# The plan guessed ".png" and the gateway saved the JPEG it was actually
+# served, so setting the wallpaper failed with "No such file or directory:
+# orca_wallpaper.png" while orca_wallpaper.jpg sat on the Desktop — the
+# download had worked perfectly and the next step was looking for a file that
+# was never going to exist.
+FETCHED_IMAGE_PATH_SENTINEL = "aura://fetched-image-path"
 MAX_DESKTOP_TASK_STEPS = 32
 
 def _computer_use_skill_singleton():
@@ -3608,7 +3617,9 @@ class DesktopTaskSkill(BaseSkill):
                         expect="Image file exists with a recorded source page URL.",
                     )
                 )
-                control_value = image_path
+                # Not image_path: the extension is a guess until the fetch
+                # reports what it was served.
+                control_value = FETCHED_IMAGE_PATH_SENTINEL
             else:
                 control_value = value
             steps.append(
@@ -4338,6 +4349,7 @@ class DesktopTaskSkill(BaseSkill):
             )
 
         last_image_page_url = ""
+        last_image_path = ""
         expected_frontmost_app = ""
         current_surface_requires_editable_focus = False
         expected_clipboard_sha256 = ""
@@ -4382,6 +4394,40 @@ class DesktopTaskSkill(BaseSkill):
                 continue
 
             target = resolved_step.target
+            if resolved_step.action == "system_control" and isinstance(target, dict):
+                if target.get("value") == FETCHED_IMAGE_PATH_SENTINEL:
+                    if not last_image_path:
+                        reference_error = (
+                            "no fetched image path available to apply"
+                        )
+                        receipt = {
+                            "index": index,
+                            "action": resolved_step.action,
+                            "reason": resolved_step.reason,
+                            "expect": resolved_step.expect,
+                            "critical": resolved_step.critical,
+                            "ok": False,
+                            "effect_verified": False,
+                            "effect_evidence": reference_error,
+                            "attempts": 0,
+                            "result": {
+                                "ok": False,
+                                "status": "desktop_step_reference_unresolved",
+                                "error": reference_error,
+                            },
+                        }
+                        receipts.append(receipt)
+                        await self._emit_durable_step_receipt(
+                            receipt,
+                            objective=objective,
+                            planner=planner,
+                            tool="desktop_task",
+                        )
+                        failures.append(receipt)
+                        if resolved_step.critical and params.stop_on_error:
+                            break
+                        continue
+                    target = dict(target, value=last_image_path)
             if resolved_step.action == "open_url":
                 # Resolve the fetched-image source sentinel from the
                 # fetch receipt — the source page is only known at runtime.
@@ -4602,6 +4648,10 @@ class DesktopTaskSkill(BaseSkill):
             )
             if resolved_step.action == "fetch_topic_image" and receipt["ok"]:
                 last_image_page_url = str(result.get("page_url") or "") or last_image_page_url
+                last_image_path = (
+                    str(result.get("path") or result.get("file") or "")
+                    or last_image_path
+                )
             if receipt["ok"] and resolved_step.action == "set_clipboard":
                 expected_clipboard_sha256 = str(result.get("sha256") or "").strip()
                 chars = result.get("chars")
