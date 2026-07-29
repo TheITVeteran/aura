@@ -31683,3 +31683,25 @@ CP420S11 performed no optimizer update. Evidence:
 `artifacts/current/cp420s11_production_branch_contract_evidence.json`. No
 reasoning, frontier, promotion, or `WOW Signal` claim is made. CP420S11 is total
 checkpoint 699. CP420S12 is next.
+
+### 2026-07-29 - CP420S12 resident 32B training launch
+
+The repaired source was frozen into CP420S12 and passed both resident gates:
+all 24 recurrent projections attached during the initial-policy probe, and the
+answer channel returned 6/6 valid, correct outputs. Four Keychain-backed,
+same-host signer roles were provisioned without private-key export. The signed
+288-task launch bundle reopened twice with the identical SHA-256
+`639191d233e21724ebe9eb787538a6a18dadab99aea95417e791f9b0bdc3abc8`.
+
+The detached 32B worker crossed the CP420S11 provider-admission failure and
+entered its 36-task recurrent baseline under the preregistered 26.88 GB MLX
+envelope. A child-bound `caffeinate -i` process protects it from idle system
+sleep. The training graph runs four recurrent steps over two branches and
+tests task depths 2, 4, and 8; it is not capped at one.
+
+Evidence:
+`artifacts/current/cp420s12_resident_32b_training_launch_evidence.json`.
+This is launch evidence only: no optimizer update, reasoning gain, frontier
+gain, promotion, or `WOW Signal` is claimed. The custody boundary remains
+host-isolated rather than independently administered. CP420S12 is total
+checkpoint 700.

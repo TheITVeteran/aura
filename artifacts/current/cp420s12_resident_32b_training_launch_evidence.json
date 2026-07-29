@@ -1,0 +1,94 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s12",
+  "claim_boundary": "host_isolated_training_launch_only_no_reasoning_gain_claim",
+  "contract": {
+    "contract_file_sha256": "2ba112a092934642d4d92bcf83a3506e0275f1b27167347c089980a12c57189e",
+    "contract_sha256": "bf2a10b04233c761b22068a2d641fbe28b302cf22453c2a7c1732cb6e8fd5b46",
+    "holdout_tasks": 36,
+    "source_checkpoint": "f9ea9bc3c9dd952d9d2a3369fc1e42148990bd15",
+    "training_tasks": 288
+  },
+  "execution": {
+    "branch_count": 2,
+    "execution_spec_sha256": "9428a4ecdb76de0459e06c9ef2ed930e6a2f7645edac6921bac39d975f5f10ed",
+    "intervention_probe_steps": [
+      1,
+      2,
+      4
+    ],
+    "recurrent_steps": 4,
+    "task_depths": [
+      2,
+      4,
+      8
+    ],
+    "wiring_projection_count": 24
+  },
+  "gates": {
+    "answer_channel": {
+      "correct_count": 6,
+      "detached_receipt_sha256": "9cfab3c63fac6451372ae01cce0d85fc5d1777225b398da0b1cf915bf3fcde86",
+      "receipt_sha256": "1c3c8bd6d288f7314496d5f5bcf05bb521e53cd1cde799ecb66240d6fe463f9e",
+      "task_count": 6,
+      "valid_contract_count": 6,
+      "verdict": "answer_channel_operational"
+    },
+    "initial_policy": {
+      "detached_receipt_sha256": "1cbf29bc56f0a07aee6be824ce7f4064170052949e3791bb29bb544d27fd71ac",
+      "initial_policy_sha256": "2d850f292f3b4f62e9a210af8218dfbc94af87844c221d44ea1d60e6933df8d4",
+      "receipt_sha256": "4b6afb4e4bdaa59ec5a14c1939d7d3a0db4becb269b6f6024477af4c95bb7785"
+    },
+    "launch_bundle": {
+      "bundle_sha256": "639191d233e21724ebe9eb787538a6a18dadab99aea95417e791f9b0bdc3abc8",
+      "claim_boundary": "host_isolated_research_launch_external_claim_custody_still_required",
+      "deterministic_reopen_passed": true,
+      "provider_contract_sha256": "f198b5f0cb01db1cfe8713585750a16e04599e417eee98d476a119517480dac7",
+      "receipt_sha256": "47d111951ed541c9eb5187b87dee113199f9014ff48173663e2dd51c892e0f9f",
+      "task_count": 288
+    }
+  },
+  "model": {
+    "behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674",
+    "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "path": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
+  },
+  "observed_at": "2026-07-29T01:57:01-07:00",
+  "outcome": {
+    "frontier_gain_claimed": false,
+    "optimizer_update_observed": false,
+    "promotion_claimed": false,
+    "reasoning_gain_claimed": false,
+    "training_campaign_started": true,
+    "training_phase": "baseline_recurrent",
+    "wow_signal_claimed": false
+  },
+  "runtime": {
+    "caffeinate_pid": 35776,
+    "child_pid": 35771,
+    "command_sha256": "6f5f23bf892d464e04344a05c4b8bbd84c8d7b0842de0719d76e8222fed675a7",
+    "detached_state": "running",
+    "former_branch_contract_failure_crossed": true,
+    "memory_limit_gb": 26.88,
+    "plan_sha256": "c7ac24a20523610f74de44f96699f7897a1861823e43db6e6db2bd8c8e38bf2c",
+    "restart_count": 0,
+    "sleep_inhibition": "caffeinate_-i_bound_to_child",
+    "supervisor_pid": 35770
+  },
+  "schema": "aura.spark.cp420s12_resident_32b_training_launch_evidence.v1",
+  "trust": {
+    "claim_boundary": "same_host_process_isolation_not_independent_external_administration",
+    "evidence_verifier": {
+      "key_id": "4f0ff442923ecbaec19ce298024de91b769207c0c6e8e2b9f8825758c2a1da26",
+      "pid": 35687
+    },
+    "policy_sha256": "154963a300f3755846d548e72b1994b5d6a2093323db9a41ceac967ad88ce96a",
+    "private_role_keys_exported": false,
+    "private_role_keys_persisted_in_keychain": true,
+    "role_count": 4,
+    "task_issuer": {
+      "key_id": "46131ad9b10d40fd226e128ac42a2d7630dad4dd5be9218f522a32f3b2543ab7",
+      "pid": 35684
+    }
+  },
+  "verdict": "resident_32b_campaign_active_baseline_in_progress"
+}

@@ -5719,3 +5719,29 @@ No optimizer update occurred. Evidence:
 `artifacts/current/cp420s11_production_branch_contract_evidence.json`.
 Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false.
 CP420S11 is total checkpoint 699. CP420S12 is the next fresh launch campaign.
+
+### 2026-07-29 - CP420S12: resident 32B recurrent training admitted
+
+CP420S12 froze the repaired source at `f9ea9bc3c`, passed the resident initial
+policy probe with all 24 recurrent projections attached, and passed the
+answer-channel gate with 6/6 valid and correct outputs. Four distinct,
+Keychain-backed host signer roles were provisioned without exporting private
+keys. Two independent launch reopenings produced the same signed 288-task
+bundle, `639191d233e21724ebe9eb787538a6a18dadab99aea95417e791f9b0bdc3abc8`.
+
+The detached resident trainer then loaded the 32B, admitted the 26.88 GB MLX
+envelope, attached all 24 projections, crossed the former provider branch
+contract failure, and entered the 36-task recurrent baseline. Supervisor,
+worker, signer services, and a worker-bound `caffeinate -i` process were live
+at the launch checkpoint. The frozen execution graph uses two branches and
+four recurrent steps; the curriculum spans depths 2, 4, and 8, with causal
+intervention probes at steps 1, 2, and 4. No relevant path is capped at one.
+
+This checkpoint proves launch admission and durable execution, not an
+optimizer update or intelligence gain. Host process isolation is not
+independent external administration. Evidence:
+`artifacts/current/cp420s12_resident_32b_training_launch_evidence.json`.
+Reasoning gain, frontier gain, promotion, and `WOW Signal` remain false pending
+completed training and the preregistered held-out, equal-compute, causal, and
+external-verification gates. CP420S12 is total checkpoint 700. The 700-920
+completion envelope is approximately 76.1%-100.0%, with an 88.0% midpoint.
