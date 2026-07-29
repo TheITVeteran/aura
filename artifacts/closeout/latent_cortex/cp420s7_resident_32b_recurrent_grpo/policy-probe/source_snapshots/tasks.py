@@ -507,13 +507,7 @@ def _sample_seed(
     attempt: int,
 ) -> int:
     coordinates = f"{CURRICULUM_VERSION}:{root_seed}:{family}:{depth}:{cell}:{attempt}"
-    # Keep public task coordinates portable across strict signed-64-bit JSON
-    # implementations while retaining more than the preregistered 60 bits of
-    # generation entropy.
-    return int.from_bytes(
-        hashlib.sha256(coordinates.encode("ascii")).digest()[:8],
-        "big",
-    ) & ((1 << 63) - 1)
+    return int.from_bytes(hashlib.sha256(coordinates.encode("ascii")).digest()[:16])
 
 
 def task_battery(

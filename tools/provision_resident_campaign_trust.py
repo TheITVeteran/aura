@@ -33,7 +33,6 @@ from core.brain.llm.latent_cortex.campaign_trust import (  # noqa: E402
     CAMPAIGN_TRUST_ROLES,
     validate_campaign_trust_policy,
 )
-from core.learning.verified_transition_episode import canonical_json_bytes  # noqa: E402
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 
 AGENT_REQUEST_SCHEMA = "aura.campaign_role_signer_agent.request.v1"
@@ -50,7 +49,16 @@ class TrustProvisioningError(RuntimeError):
 
 
 def _canonical(value: Any) -> bytes:
-    return canonical_json_bytes(value)
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError, UnicodeError, RecursionError) as exc:
+        raise TrustProvisioningError("document_not_canonical") from exc
 
 
 def _digest(value: Any) -> str:

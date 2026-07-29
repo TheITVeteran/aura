@@ -31574,3 +31574,25 @@ is total checkpoint 694. The 694-920 completion envelope is approximately
 75.4%-100.0%, with an 87.7% midpoint. The evidence-adjusted range is 2-6
 checkpoints to a defensible preliminary gain verdict and 7-16 to the powered
 conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-29 - CP420S7 verified-task integer portability
+
+The fresh post-trust CP420S7 contract passed both resident gates: policy probe
+`250d20c9...db292` attached 24 projections without an optimizer update, and
+the answer channel returned 6/6 valid, correct contracts. Live same-host
+Keychain provisioning also created four distinct role identities without
+exporting role private keys.
+
+Materialization then failed before campaign-open publication because curriculum
+task coordinates were unsigned 128-bit integers while the verified-task JSON
+protocol correctly requires portable signed-64-bit values. The generator now
+uses 63 deterministic seed bits, retaining more than the preregistered 60-bit
+entropy floor. All 324 train/holdout tasks build verified commitments; the
+largest observed seed remains below `2^63-1`. The role-payload v2 consumer in
+verified-task answer authority was also updated.
+
+The affected curriculum, verified-task, and materializer matrix passes 84/84.
+CP420S7 remains immutable and performed no optimizer update. Evidence:
+`artifacts/current/cp420s7_verified_task_integer_portability_evidence.json`.
+Reasoning gain, frontier gain, and `WOW Signal` remain unclaimed. A fresh
+CP420S8 contract and resident gates are next.

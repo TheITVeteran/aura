@@ -55,7 +55,7 @@ TASK_ISSUER = "task_issuer"
 CAMPAIGN_ROLE_ATTESTATION_SCHEMA = (
     "aura.latent_cortex.campaign_role_attestation.v1"
 )
-CAMPAIGN_ROLE_PAYLOAD_SCHEMA = "aura.latent_cortex.campaign_role_payload.v2"
+CAMPAIGN_ROLE_PAYLOAD_SCHEMA = "aura.latent_cortex.campaign_role_payload.v1"
 
 PASS_NAMES = ("pass_0", "pass_1")
 MIN_ANSWER_NONCE_BYTES = 32
@@ -850,13 +850,8 @@ def _verify_task_issuer_attestation(
     if type(signed_payload) is not dict or set(signed_payload) != {
         "schema",
         "policy_sha256",
-        "campaign_name",
-        "protocol_sha256",
         "role",
         "signer_id",
-        "operation",
-        "purpose",
-        "idempotency_key",
         "signed_at_unix",
         "payload",
     }:
@@ -875,13 +870,8 @@ def _verify_task_issuer_attestation(
     if (
         signed_payload.get("schema") != CAMPAIGN_ROLE_PAYLOAD_SCHEMA
         or signed_payload.get("policy_sha256") != policy_sha256
-        or signed_payload.get("campaign_name") != policy_document.get("campaign_name")
-        or signed_payload.get("protocol_sha256") != policy_document.get("protocol_sha256")
         or signed_payload.get("role") != TASK_ISSUER
         or signed_payload.get("signer_id") != pin.get("signer_id")
-        or not isinstance(signed_payload.get("operation"), str)
-        or not isinstance(signed_payload.get("purpose"), str)
-        or not isinstance(signed_payload.get("idempotency_key"), str)
         or signed_payload.get("payload")
         != _clone_json(expected_payload, role="answer_authority_expected_payload")
     ):

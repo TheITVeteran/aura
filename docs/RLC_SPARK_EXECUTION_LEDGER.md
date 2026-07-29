@@ -5612,3 +5612,20 @@ total checkpoint 694. The 694-920 completion envelope is approximately
 75.4%-100.0%, with an 87.7% midpoint. The evidence-adjusted range is 2-6
 checkpoints to a defensible preliminary gain verdict and 7-16 to the powered
 conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-29 - CP420S7: verified task coordinates are wire-portable
+
+CP420S7 passed the resident policy and 6/6 answer-channel gates, then failed
+closed during materialization before training. The first recurrence task carried
+a deterministic unsigned 128-bit seed into a protocol that deliberately limits
+JSON integers to signed 64-bit for cross-language replay.
+
+Curriculum coordinates now retain 63 deterministic bits, exceeding the 60-bit
+entropy floor while remaining wire-portable. Every one of the 324 train and
+holdout tasks now builds a verified commitment, and the answer-authority
+consumer recognizes the operation/purpose-bound role payload v2. The focused
+matrix passes 84/84. Evidence:
+`artifacts/current/cp420s7_verified_task_integer_portability_evidence.json`.
+
+No optimizer update or gain claim occurred. CP420S8 must be freshly frozen and
+pass the resident gates before materialization resumes.

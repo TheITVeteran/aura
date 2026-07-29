@@ -1,0 +1,42 @@
+{
+  "schema": "aura.spark.cp420s7_verified_task_integer_portability_evidence.v1",
+  "checkpoint": "CP420S7",
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s7",
+  "contract_sha256": "35b4854a4ae34abc55a39d3f642845564e17ba277502f238e8c8172a077a12f1",
+  "resident_gates": {
+    "initial_policy_probe_passed": true,
+    "initial_policy_sha256": "250d20c9f500f89337432382afc7742f71d74d8b6a6c6e64965481475afdb292",
+    "initial_policy_probe_receipt_sha256": "dde57dba892afb0f66d7a2e10abcb1ff237c8087063368c0feb62dbd650a7898",
+    "detached_policy_probe_receipt_sha256": "3b70823172f7a969284c8b1dc38412f0855dc250e778784aeec643a0412925b4",
+    "answer_channel_preflight_passed": true,
+    "answer_channel_valid_and_correct": "6/6",
+    "answer_channel_receipt_sha256": "2e385d8fb423916c81b023de9308a2d061eba0ab89b6e7b6367382bc8827b785",
+    "detached_answer_channel_receipt_sha256": "e34151f1c802f133ca76c6122c8bb3545de382fc75b0d16c67326d8f03d8d33e"
+  },
+  "materialization_failure": {
+    "code": "public_parameters_integer_out_of_bounds",
+    "first_task_id": "recurrence-khop-d2-s174941842165386481725432891293796278601",
+    "root_cause": "curriculum task coordinates used unsigned 128-bit seeds while the verified JSON protocol requires signed 64-bit integers",
+    "optimizer_update_performed": false,
+    "campaign_retained_immutable": true
+  },
+  "repair": {
+    "seed_width_bits": 63,
+    "minimum_preregistered_entropy_bits": 60,
+    "all_training_and_holdout_tasks_verified": 324,
+    "maximum_observed_seed": 9219403715992230795,
+    "signed_64_maximum": 9223372036854775807,
+    "role_payload_v2_consumers_updated": true
+  },
+  "verification": {
+    "targeted_tests_passed": 84,
+    "targeted_tests_failed": 0,
+    "all_324_tasks_build_verified": true,
+    "ruff": "pass",
+    "py_compile": "pass"
+  },
+  "training_started": false,
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}
