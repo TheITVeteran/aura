@@ -1144,6 +1144,56 @@ class ComputerUseSkill(BaseSkill):
             return False, f"{last_seen or 'unknown'} ({detail})"
         return False, last_seen
 
+    #: Bundle identifiers macOS uses for the browsers we allow, so the
+    #: registered default resolves to a name the rest of the lane knows.
+    _BROWSER_BUNDLE_NAMES: dict[str, str] = {
+        "com.apple.safari": "Safari",
+        "com.google.chrome": "Google Chrome",
+        "org.mozilla.firefox": "Firefox",
+        "com.microsoft.edgemac": "Microsoft Edge",
+        "company.thebrowser.browser": "Arc",
+    }
+
+    def _default_browser_name(self) -> str:
+        """Which browser this Mac hands http(s) URLs to.
+
+        Read from LaunchServices rather than inferred from the screen: the
+        screen answers a different question ("what is in front right now"),
+        and immediately after `open` the answer is always still the app that
+        called it.
+        """
+        import plistlib
+
+        preference = (
+            Path.home()
+            / "Library/Preferences/com.apple.LaunchServices"
+            / "com.apple.launchservices.secure.plist"
+        )
+        handlers: list[Any] = []
+        try:
+            handlers = plistlib.loads(preference.read_bytes()).get("LSHandlers", [])
+        except (OSError, ValueError, plistlib.InvalidFileException) as exc:
+            # An absent or unreadable preference file is the ordinary state of
+            # a Mac whose owner never changed the default — falling through to
+            # Safari is the answer, not "" (which reads as "no browser at all"
+            # and skips verification entirely, the bug this method exists for).
+            logger.debug("Could not read the default browser handler: %s", exc)
+        for handler in handlers:
+            if not isinstance(handler, dict):
+                continue
+            if str(handler.get("LSHandlerURLScheme") or "").lower() not in {
+                "http",
+                "https",
+            }:
+                continue
+            bundle = str(handler.get("LSHandlerRoleAll") or "").lower()
+            name = self._BROWSER_BUNDLE_NAMES.get(bundle)
+            if name in _ALLOWED_URL_BROWSERS:
+                return name
+        # No explicit handler registered means Safari, which is the macOS
+        # default and not a guess.
+        return "Safari" if "Safari" in _ALLOWED_URL_BROWSERS else ""
+
     @staticmethod
     def _applescript_string(value: str) -> str:
         return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -3462,10 +3512,34 @@ end tell
                         return {"ok": False, "error": "The default browser did not accept the URL."}
                 expected_browser = browser
                 if not expected_browser:
-                    observed_browser = await asyncio.to_thread(self._frontmost_app_name)
-                    expected_browser = (
-                        observed_browser if observed_browser in _ALLOWED_URL_BROWSERS else ""
+                    # ASK THE SYSTEM which browser it just handed the URL to.
+                    #
+                    # This sampled the frontmost app the instant after `open`,
+                    # which is a race it always lost: the browser has not come
+                    # forward yet, so the observed app was Aura or a terminal,
+                    # which is not in the allowed set, so expected_browser was
+                    # "" and verification was skipped entirely. Live 2026-07-29
+                    # every research run died at step 1 with
+                    # "frontmost=unavailable, active_url=unavailable" — not
+                    # because the browser refused, but because nobody ever
+                    # asked it to come forward.
+                    #
+                    # LaunchServices knows the answer before the race starts.
+                    expected_browser = await asyncio.to_thread(
+                        self._default_browser_name
                     )
+                if not expected_browser:
+                    # No registered default: give the browser a moment to
+                    # arrive rather than reading the screen once and giving up.
+                    deadline = time.monotonic() + 6.0
+                    while time.monotonic() < deadline:
+                        observed_browser = await asyncio.to_thread(
+                            self._frontmost_app_name
+                        )
+                        if observed_browser in _ALLOWED_URL_BROWSERS:
+                            expected_browser = observed_browser
+                            break
+                        await asyncio.sleep(0.4)
                 effect_verified = False
                 frontmost_app = ""
                 active_url = ""
