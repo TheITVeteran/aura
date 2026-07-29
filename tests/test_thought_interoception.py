@@ -53,7 +53,9 @@ def _fresh_singletons():
 class TestStepStats:
     def test_exact_math_on_known_distribution(self):
         lp = _logprobs([0.7, 0.2, 0.05, 0.05])
-        surprisal, entropy, top1, top2, argmax_hit = _step_stats(lp, 1)
+        stats = _step_stats(lp, 1)
+        surprisal, entropy = stats.surprisal, stats.entropy
+        top1, top2, argmax_hit = stats.top1, stats.top2, stats.argmax_hit
         assert surprisal == pytest.approx(-math.log(0.2), rel=1e-9)
         expected_entropy = -sum(p * math.log(p) for p in [0.7, 0.2, 0.05, 0.05])
         assert entropy == pytest.approx(expected_entropy, rel=1e-9)
@@ -63,7 +65,7 @@ class TestStepStats:
 
     def test_argmax_hit_true_for_top_token(self):
         lp = _logprobs([0.9, 0.1])
-        *_, argmax_hit = _step_stats(lp, 0)
+        argmax_hit = _step_stats(lp, 0).argmax_hit
         assert argmax_hit is True
 
     def test_out_of_range_token_returns_none(self):
@@ -132,11 +134,31 @@ class TestInteroceptionTap:
         assert len(payload["curve"]) <= 128
 
     def test_fail_open_on_garbage(self):
+        """Garbage input must never raise into the decode loop — and must not
+        vanish either.
+
+        CP126: total measurement failure used to return None, making "the
+        provider gave unusable distributions on every token" indistinguishable
+        from "no tap ran at all". The tap promises a `dropped` count, so it now
+        reports one instead of going silent; a silent instrument is the one
+        failure mode an observability surface must not have.
+        """
         tap = InteroceptionTap()
         tap.feed(0, None, "x")
         tap.feed("junk", object(), None)
         tap.feed(0, "not-an-array", "y")
-        assert tap.finalize() is None  # nothing measured, never raised
+
+        payload = tap.finalize()
+        assert payload is not None
+        assert payload["measured"] is False
+        assert payload["dropped"] == 3
+        assert payload["measured_token_count"] == 0
+        assert payload["reason"] == "no_usable_distribution"
+
+    def test_untouched_tap_still_reports_nothing(self):
+        """A tap that observed nothing at all is genuinely absent, so callers
+        can keep omitting the field."""
+        assert InteroceptionTap().finalize() is None
 
     def test_dropped_counted_alongside_measured(self):
         tap = InteroceptionTap()
@@ -945,3 +967,51 @@ class TestPromptSurfaces:
             "I was wrong earlier: it opened in 1889, according to Wikipedia."
         ) is True
         assert ContextAssembler._build_self_correction_block() == ""
+
+
+class TestInteroceptionProvenanceAndStage:
+    """CP126: measurements the parent could misattribute, and maths that
+    assumed a normalization nothing established."""
+
+    def test_payload_carries_binding_provenance(self):
+        """An integer attempt is not enough to tell two generations apart, so
+        the parent could misattribute measurements across attempts or models."""
+        tap = InteroceptionTap(request_id="req-7", model_id="cortex-32b",
+                               provider="mlx")
+        lp = _logprobs([0.7, 0.3])
+        tap.feed(0, lp, "hello")
+
+        payload = tap.finalize(attempt=2)
+
+        assert payload["request_id"] == "req-7"
+        assert payload["model_id"] == "cortex-32b"
+        assert payload["provider"] == "mlx"
+        assert payload["attempt"] == 2
+        assert payload["created_at"] > 0
+
+    def test_normalized_distribution_is_reported_as_verified(self):
+        tap = InteroceptionTap()
+        tap.feed(0, _logprobs([0.6, 0.4]), "x")
+
+        assert tap.finalize()["logprob_stage"] == "verified_log_softmax"
+
+    def test_unnormalized_input_is_flagged_not_silently_measured(self):
+        """Entropy and surprisal are only meaningful over normalized
+        log-probabilities; the tap exponentiates whatever it is handed, so raw
+        logits would produce numbers that look like nats but are not."""
+        import numpy as np
+
+        raw_logits = np.array([2.5, 1.0, 0.3], dtype=np.float64)  # not log-softmax
+        tap = InteroceptionTap()
+        tap.feed(0, raw_logits, "x")
+
+        assert tap.finalize()["logprob_stage"] == "unnormalized"
+
+    def test_failure_payload_still_carries_provenance(self):
+        tap = InteroceptionTap(request_id="req-9")
+        tap.feed(0, None, "x")
+
+        payload = tap.finalize()
+
+        assert payload["measured"] is False
+        assert payload["request_id"] == "req-9"

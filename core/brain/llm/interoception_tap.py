@@ -37,7 +37,7 @@ import logging
 import math
 import os
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 logger = logging.getLogger("Aura.Brain.InteroceptionTap")
 
@@ -93,6 +93,25 @@ def _finite(x: Any) -> float | None:
     return f
 
 
+class StepStats(NamedTuple):
+    """One decode step's measurements.
+
+    A NamedTuple rather than a bare tuple: appending a field to a positional
+    tuple silently rebinds callers that unpack with ``*_, last`` — which is
+    precisely how adding the probability sum broke three call sites. Named
+    access makes later measurements additive.
+    """
+
+    surprisal: float
+    entropy: float
+    top1: float
+    top2: float
+    argmax_hit: bool
+    #: Total probability mass of the supplied distribution, used once per
+    #: attempt to verify it really was normalized log-probabilities.
+    prob_sum: float | None = None
+
+
 def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, float, bool] | None:
     """Compute (surprisal, entropy, top1_logprob, top2_logprob, argmax_hit).
 
@@ -110,7 +129,11 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
             if not (0 <= int(token_id) < size):
                 return None
             mlx_token_logprob = lp[int(token_id)]
-            mlx_entropy = -mx.sum(mx.exp(lp) * lp)
+            mlx_probs = mx.exp(lp)
+            mlx_entropy = -mx.sum(mlx_probs * lp)
+            # Total probability mass rides along in the same materialization, so
+            # verifying normalization costs no extra device synchronization.
+            mlx_prob_sum = mx.sum(mlx_probs)
             pair = mx.topk(lp, k=2) if size >= 2 else mx.stack([lp[0], lp[0]])
             arg = mx.argmax(lp)
             # One materialization for the whole step: five scalars.
@@ -121,10 +144,12 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
                     pair.reshape(-1)[0],
                     pair.reshape(-1)[1],
                     arg.astype(mx.float32),
+                    mlx_prob_sum,
                 ]
             ).tolist()
-            if isinstance(packed, (list, tuple)) and len(packed) >= 5:
-                raw_stats = (packed[0], packed[1], packed[2], packed[3], packed[4])
+            if isinstance(packed, (list, tuple)) and len(packed) >= 6:
+                raw_stats = (packed[0], packed[1], packed[2], packed[3],
+                             packed[4], packed[5])
     except ImportError:
         raw_stats = None
 
@@ -139,6 +164,7 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
         with np.errstate(over="ignore", invalid="ignore"):
             probs = np.exp(arr)
             numpy_entropy = float(-np.sum(probs * arr))
+            numpy_prob_sum = float(np.sum(probs))
         if size >= 2:
             top_idx = np.argpartition(arr, -2)[-2:]
             numpy_top_a = float(arr[top_idx[0]])
@@ -151,6 +177,7 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
             numpy_top_a,
             numpy_top_b,
             float(int(np.argmax(arr))),
+            numpy_prob_sum,
         )
 
     token_logprob = _finite(raw_stats[0])
@@ -158,6 +185,7 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
     top_a = _finite(raw_stats[2])
     top_b = _finite(raw_stats[3])
     arg_raw = _finite(raw_stats[4])
+    prob_sum = _finite(raw_stats[5]) if len(raw_stats) > 5 else None
     if (
         token_logprob is None
         or entropy_raw is None
@@ -172,7 +200,7 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
     surprisal = max(0.0, -token_logprob)
     entropy = max(0.0, entropy_raw)
     argmax_hit = int(arg_raw) == int(token_id)
-    return surprisal, entropy, top1, top2, argmax_hit
+    return StepStats(surprisal, entropy, top1, top2, argmax_hit, prob_sum)
 
 
 def _downsample_mean(values: list[float], points: int) -> list[float]:
@@ -209,6 +237,9 @@ class InteroceptionTap:
         sample_points: int | None = None,
         near_tie_gap: float = 0.10,
         step_stride: int = 1,
+        request_id: str = "",
+        model_id: str = "",
+        provider: str = "",
     ) -> None:
         self._spike_k = spike_k if spike_k is not None else _env_int(
             "AURA_INTEROCEPTION_TOPK_SPIKES", 8, 0, 32
@@ -237,6 +268,52 @@ class InteroceptionTap:
         self._last_feed_at: float | None = None
         self._step_error_logged = False
 
+        # Provenance, so the parent can bind a measurement to what produced it.
+        self._request_id = str(request_id or "")[:64]
+        self._model_id = str(model_id or "")[:128]
+        self._provider = str(provider or "")[:64]
+        self._created_at = time.time()
+        #: What the observed array actually was. "assumed_log_softmax" is the
+        #: honest default: the maths treats the input as normalized
+        #: log-probabilities, and nothing upstream states that it is. Set to
+        #: "verified_log_softmax" once a distribution passes the sum-to-one
+        #: check below, or "unnormalized" when it demonstrably does not.
+        self._logprob_stage = "assumed_log_softmax"
+        self._normalization_checked = False
+
+    def _provenance(self) -> dict[str, Any]:
+        return {
+            "request_id": self._request_id,
+            "model_id": self._model_id,
+            "provider": self._provider,
+            "created_at": round(self._created_at, 3),
+        }
+
+    def _note_normalization(self, total_probability: float) -> None:
+        """Record whether the supplied array really was a log-probability
+        distribution.
+
+        Entropy and surprisal are only meaningful over normalized
+        log-probabilities. The tap exponentiates whatever it is handed, so raw
+        logits or post-processor scores would produce numbers that LOOK like
+        nats but are not. Checked once per attempt (the stage does not change
+        mid-generation) to keep this off the hot path.
+        """
+        if self._normalization_checked:
+            return
+        self._normalization_checked = True
+        if not math.isfinite(total_probability):
+            self._logprob_stage = "non_finite"
+        elif 0.90 <= total_probability <= 1.10:
+            self._logprob_stage = "verified_log_softmax"
+        else:
+            self._logprob_stage = "unnormalized"
+            logger.warning(
+                "Interoception tap: supplied distribution sums to %.4f, not 1.0 — "
+                "entropy/surprisal are not in nats. Reporting stage=unnormalized.",
+                total_probability,
+            )
+
     # ── ingestion ────────────────────────────────────────────────────────────
     def feed(self, token_id: Any, logprobs: Any, token_text: Any) -> None:
         """Record one decode step. Never raises."""
@@ -261,7 +338,10 @@ class InteroceptionTap:
             if stats is None:
                 self._dropped += 1
                 return
-            surprisal, entropy, top1, top2, argmax_hit = stats
+            surprisal, entropy = stats.surprisal, stats.entropy
+            top1, top2, argmax_hit = stats.top1, stats.top2, stats.argmax_hit
+            if stats.prob_sum is not None:
+                self._note_normalization(stats.prob_sum)
             now = time.monotonic()
             if self._first_feed_at is None:
                 self._first_feed_at = now
@@ -307,13 +387,37 @@ class InteroceptionTap:
     def finalize(self, *, attempt: int = 0, generation_tps: float | None = None) -> dict[str, Any] | None:
         """Distil the attempt into a compact, JSON-safe payload. Never raises.
 
-        Returns ``None`` when nothing was measured, so callers can simply omit
-        the field and the parent treats interoception as absent.
+        Returns ``None`` only when the tap genuinely observed nothing. If
+        measurements were ATTEMPTED and all failed, a payload is still emitted
+        carrying the drop count — see below.
         """
         try:
             n = len(self._surprisals)
             if n == 0:
-                return None
+                # The tap promises a `dropped` count, then used to throw it away
+                # in exactly the case it matters: total measurement failure
+                # returned None, making "the provider gave unusable
+                # distributions on every token" indistinguishable from "no tap
+                # ran at all". A silent instrument is the one failure mode an
+                # observability surface must never have.
+                if self._dropped <= 0 and self._observed_tokens <= 0:
+                    return None
+                return {
+                    "version": PAYLOAD_VERSION,
+                    "attempt": int(attempt),
+                    "measured": False,
+                    "token_count": self._observed_tokens,
+                    "measured_token_count": 0,
+                    "dropped": self._dropped,
+                    "skipped_stride": self._skipped_stride,
+                    "reason": (
+                        "no_usable_distribution"
+                        if self._dropped > 0
+                        else "no_tokens_sampled"
+                    ),
+                    "logprob_stage": self._logprob_stage,
+                    **self._provenance(),
+                }
             duration = 0.0
             if self._first_feed_at is not None and self._last_feed_at is not None:
                 duration = max(0.0, self._last_feed_at - self._first_feed_at)
@@ -330,6 +434,17 @@ class InteroceptionTap:
             payload: dict[str, Any] = {
                 "version": PAYLOAD_VERSION,
                 "attempt": int(attempt),
+                "measured": True,
+                # Provenance: without these the parent can misattribute
+                # measurements across attempts or models, since an integer
+                # attempt is not enough to tell two generations apart.
+                **self._provenance(),
+                # Which stage of the sampler produced the array we read. The
+                # maths below assumes normalized log-probabilities; if the
+                # provider handed us raw logits or post-processor scores the
+                # numbers are not entropy and surprisal at all, so what was
+                # observed is reported rather than assumed.
+                "logprob_stage": self._logprob_stage,
                 "token_count": self._observed_tokens,
                 "measured_token_count": n,
                 "sampling_stride": self._step_stride,
@@ -398,13 +513,26 @@ def interoception_enabled() -> bool:
     return _env_flag("AURA_INTEROCEPTION", True)
 
 
-def maybe_build_tap() -> InteroceptionTap | None:
-    """Env-gated constructor. Returns ``None`` (tap disabled) on any failure."""
+def maybe_build_tap(
+    *,
+    request_id: str = "",
+    model_id: str = "",
+    provider: str = "",
+) -> InteroceptionTap | None:
+    """Env-gated constructor. Returns ``None`` (tap disabled) on any failure.
+
+    Provenance is optional so existing callers keep working, but supplying it
+    is what lets the parent bind a measurement to the request and model that
+    produced it rather than guessing from an attempt number.
+    """
     try:
         if not interoception_enabled():
             return None
         return InteroceptionTap(
-            step_stride=_env_int("AURA_INTEROCEPTION_STEP_STRIDE", 4, 1, 64)
+            step_stride=_env_int("AURA_INTEROCEPTION_STEP_STRIDE", 4, 1, 64),
+            request_id=request_id,
+            model_id=model_id,
+            provider=provider,
         )
     except _STEP_RECOVERABLE as exc:
         logger.debug("Interoception tap unavailable: %s", exc)

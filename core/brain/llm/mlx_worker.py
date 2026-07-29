@@ -5181,7 +5181,19 @@ def _mlx_worker_loop(
                                     # response actually returned.
                                     try:
                                         from core.brain.llm.interoception_tap import maybe_build_tap
-                                        intero_tap = maybe_build_tap()
+                                        # Bind the measurement to the request and
+                                        # model that produced it; without this the
+                                        # parent has only an attempt number and can
+                                        # misattribute across attempts or models.
+                                        intero_tap = maybe_build_tap(
+                                            request_id=str(
+                                                job.get("request_id")
+                                                or job.get("trace_id")
+                                                or ""
+                                            ),
+                                            model_id=str(job.get("model") or ""),
+                                            provider="mlx",
+                                        )
                                     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _intero_exc:
                                         _record_mlx_degradation(
                                             _intero_exc,
