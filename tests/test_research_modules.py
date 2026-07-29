@@ -162,6 +162,33 @@ class TestPhiComputer(unittest.TestCase):
 class TestPlasticityGovernor(unittest.TestCase):
     """Tests for core/adaptation/plasticity_governor.py"""
 
+    def setUp(self):
+        """Isolate persisted Fisher state per test.
+
+        These tests previously relied on restore being broken: every governor
+        started with a blank Fisher because _load() iterated an empty snapshot
+        dict. Now that persistence works, an instance would inherit whichever
+        parameter set an earlier test happened to leave in the shared
+        ~/.aura/data/plasticity file, and importance assertions would read a
+        contaminated map.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from core.adaptation import plasticity_governor as _pg
+
+        self._pg = _pg
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._saved_dir = _pg._DATA_DIR
+        self._saved_path = _pg._FISHER_PATH
+        _pg._DATA_DIR = Path(self._tmpdir.name)
+        _pg._FISHER_PATH = Path(self._tmpdir.name) / "fisher_state.npz"
+
+    def tearDown(self):
+        self._pg._DATA_DIR = self._saved_dir
+        self._pg._FISHER_PATH = self._saved_path
+        self._tmpdir.cleanup()
+
     def test_register_and_consolidate(self):
         """Register parameters and consolidate Fisher."""
         from core.adaptation.plasticity_governor import (

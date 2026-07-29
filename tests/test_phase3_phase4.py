@@ -374,6 +374,26 @@ class TestLesionIntegration(unittest.TestCase):
         self.assertGreaterEqual(r2.phi, 0.0)
 
     def test_ewc_lesion_allows_drift(self):
+        # Isolate persisted Fisher: this lesion contrasts a CONSOLIDATED
+        # governor against a genuinely fresh one. Persistence now works
+        # (it previously restored nothing), so without isolation the "fresh"
+        # governor would restore the consolidated one's Fisher from the shared
+        # ~/.aura state and the lesion would compare a thing against itself.
+        import tempfile
+        from pathlib import Path
+
+        from core.adaptation import plasticity_governor as _pg
+
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        saved_dir, saved_path = _pg._DATA_DIR, _pg._FISHER_PATH
+        _pg._DATA_DIR = Path(tmpdir.name)
+        _pg._FISHER_PATH = Path(tmpdir.name) / "fisher_state.npz"
+
+        def _restore():
+            _pg._DATA_DIR, _pg._FISHER_PATH = saved_dir, saved_path
+        self.addCleanup(_restore)
+
         from core.adaptation.plasticity_governor import PlasticityGovernor
         gov = PlasticityGovernor()
         params = np.ones(20)
@@ -386,10 +406,10 @@ class TestLesionIntegration(unittest.TestCase):
         delta = np.ones(20) * 0.5
         penalized, report = gov.penalize_update("test", params + 1.0, delta)
         self.assertGreater(report.penalty_magnitude, 0)
-        # Without EWC (fresh governor): no penalty
+        # Without EWC (fresh governor, distinct parameter set): no penalty
         gov2 = PlasticityGovernor()
-        gov2.register_parameters("test", params)
-        penalized2, report2 = gov2.penalize_update("test", params + 1.0, delta)
+        gov2.register_parameters("unconsolidated", params)
+        penalized2, report2 = gov2.penalize_update("unconsolidated", params + 1.0, delta)
         self.assertEqual(report2.penalty_magnitude, 0)
 
 
