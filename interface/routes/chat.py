@@ -1249,7 +1249,21 @@ class PreemptibleChatLock:
 
 def _get_fg_lock(): return _locks.setdefault("fg", PreemptibleChatLock())
 _foreground_chat_lock = _get_fg_lock()
-_FOREGROUND_CHAT_BUSY_WAIT_S = 2.0
+# How long a person's NEW message waits for the turn ahead of it.
+#
+# This was 2.0 seconds. A desktop task legitimately holds the foreground lane
+# for the length of its work — measured live at 58.7s, with the MLX client
+# logging "Waiting for foreground owner Cortex to release (held 58.7s)" — so
+# a follow-up typed during that window waited two seconds and was refused
+# with "I still have the previous turn open." The person did nothing wrong
+# and lost their message.
+#
+# Waiting is the correct behaviour: the lane is busy, not broken. The bound
+# is the preemption threshold, because past that point the holder is treated
+# as stuck and forcibly cleared anyway — so no turn can wait longer than the
+# system's own definition of "this is no longer legitimate work". The wait is
+# additionally clamped by the remaining foreground budget on every call.
+_FOREGROUND_CHAT_BUSY_WAIT_S = 90.0
 
 
 def _env_float(name: str, default: float, *, minimum: float) -> float:
@@ -19443,7 +19457,14 @@ async def api_chat(
             )
 
         try:
+            # A person's typed turn outranks whatever is holding the lane for
+            # background reasons; it never outranks another person's turn,
+            # which is why this waits rather than preempting.
             foreground_busy_wait_s = 30.0 if is_benchmark else _FOREGROUND_CHAT_BUSY_WAIT_S
+            if not is_benchmark:
+                foreground_busy_wait_s = min(
+                    foreground_busy_wait_s, _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S
+                )
             foreground_lock_token = await asyncio.wait_for(
                 _foreground_chat_lock.acquire(),
                 timeout=max(0.05, min(foreground_busy_wait_s, _remaining_foreground_budget(reserve=1.0))),

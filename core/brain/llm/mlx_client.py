@@ -242,6 +242,16 @@ _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
 # The budget the CURRENT holder declared for itself when it took ownership.
 # Eviction is judged against this, never against a newcomer's budget.
 _FOREGROUND_OWNER_STALE_AFTER: float | None = None
+# Whether the current holder is a PERSON's turn or background work.
+#
+# Eviction compared ages only, so a person's typed message queued behind
+# whatever happened to be holding the lane — including autonomous loops that
+# have nobody waiting on them. Measured live: "Waiting for foreground owner
+# Cortex to release (held 58.7s)". Background work is interruptible by
+# design; someone sitting at the keyboard is not, so a user-facing request
+# takes the lane from a background holder immediately, and waits its turn
+# behind another user-facing one.
+_FOREGROUND_OWNER_IS_USER_FACING = False
 # No foreground owner may be evicted before this, whatever anyone declares.
 # A newcomer with a 5s budget must not be able to steal a lane from a turn
 # that is legitimately still working.
@@ -2008,7 +2018,7 @@ async def _foreground_owner_context(
 ):
     """Serialize foreground work so background model activity cannot compete with it."""
     global _FOREGROUND_OWNER_NAME, _FOREGROUND_OWNER_ACQUIRED_AT
-    global _FOREGROUND_OWNER_STALE_AFTER
+    global _FOREGROUND_OWNER_STALE_AFTER, _FOREGROUND_OWNER_IS_USER_FACING
 
     wait_budget = _foreground_owner_wait_budget(
         deadline,
@@ -2023,6 +2033,7 @@ async def _foreground_owner_context(
         acquired = _FOREGROUND_OWNER_LOCK.acquire(False)
         cleared_holder: str | None = None
         cleared_holder_age = 0.0
+        preempted_background = False
         try:
             if acquired:
                 holder = _FOREGROUND_OWNER_NAME
@@ -2031,8 +2042,23 @@ async def _foreground_owner_context(
                     _FOREGROUND_OWNER_NAME = owner_name
                     _FOREGROUND_OWNER_ACQUIRED_AT = time.time()
                     _FOREGROUND_OWNER_STALE_AFTER = stale_after
+                    _FOREGROUND_OWNER_IS_USER_FACING = bool(foreground_request)
                     owner_acquired = True
                     break
+
+                # A person outranks background work, immediately.
+                if (
+                    foreground_request
+                    and holder != owner_name
+                    and not _FOREGROUND_OWNER_IS_USER_FACING
+                ):
+                    _FOREGROUND_OWNER_NAME = None
+                    _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
+                    _FOREGROUND_OWNER_STALE_AFTER = None
+                    _FOREGROUND_OWNER_IS_USER_FACING = False
+                    cleared_holder = holder
+                    cleared_holder_age = holder_age
+                    preempted_background = True
                 # CP126 4cb6a1a0. Eviction used to compare the holder's age
                 # against the NEWCOMER's stale_after, which is normalized from
                 # a caller-selected timeout to as little as 5 seconds. A short
@@ -2057,6 +2083,16 @@ async def _foreground_owner_context(
         finally:
             if acquired:
                 _FOREGROUND_OWNER_LOCK.release()
+        if cleared_holder is not None and preempted_background:
+            logger.info(
+                "⚡ [MLX] A person is waiting: took the lane from background "
+                "holder %s (held %.1fs) for %s.",
+                cleared_holder,
+                cleared_holder_age,
+                owner_name,
+            )
+            preempted_background = False
+            continue
         if cleared_holder is not None:
             logger.warning(
                 "♻️ [MLX] Cleared stale foreground owner %s after %.1fs so %s can proceed.",
