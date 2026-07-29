@@ -2463,11 +2463,20 @@ class DesktopTaskSkill(BaseSkill):
                     prompt=prompt,
                     timeout=110.0,
                     temperature=0.6,
-                    # The prompt above asks for several substantive paragraphs
-                    # across three sources. 1100 tokens could not hold that, and
-                    # the document was cut mid-clause: the live synthesis ended
-                    # "...The increase is a" and then the Sources list began.
-                    max_tokens=2048,
+                    # SCALED TO THE SOURCES, not a flat ceiling.
+                    #
+                    # 1100 was too small — the live synthesis was cut
+                    # mid-clause, ending "...The increase is a" before the
+                    # Sources list. 2048 for everything is the opposite error:
+                    # once the fetch stopped over-reading, a three-source
+                    # request still produced a four-kilobyte document, and
+                    # since the whole cost of this step is the local model
+                    # writing, the time saved by reading less went straight
+                    # back into writing more. Measured: research 82.4s -> 27.8s,
+                    # total unchanged at ~100s.
+                    #
+                    # The floor keeps the mid-clause failure from returning.
+                    max_tokens=max(1100, min(2048, 350 + 380 * max(1, len(sources)))),
                     # Pin synthesis to the on-device Cortex: it has no external
                     # quota, so the document never degrades to a thin heuristic
                     # fallback because a cloud tier returned 429 RESOURCE_EXHAUSTED.
