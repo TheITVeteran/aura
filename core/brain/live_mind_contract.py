@@ -6,13 +6,15 @@ worker application or quality success that the worker did not report.
 """
 
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
 import hashlib
+import math
 import re
 import uuid
 from collections.abc import Mapping
 from typing import Any
+
+from core.runtime.errors import record_degradation
 
 REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS = frozenset(
     {
@@ -240,16 +242,33 @@ def verify_text_mutation_chain(
     elif len(entries) != len(value):
         reasons.append("mutation_ledger_malformed")
     if expected_before == expected_after and not reasons:
-        return {
-            "schema": "aura.text_mutation_chain.v1",
-            "passed": True,
-            "before_sha256": expected_before,
-            "after_sha256": expected_after,
-            "ledger_entry_count": len(entries),
-            "chain_start_sequence": 0,
-            "chain_length": 0,
-            "reasons": [],
-        }
+        # "Nothing changed" is a claim about the ledger, so it has to be checked
+        # against the ledger. This used to return passed with a zero-length
+        # chain WITHOUT looking at the entries at all, so a ledger recording a
+        # real post-certification mutation still produced a clean no-change
+        # proof — precisely the case the proof exists to catch.
+        #
+        # Entries before the certified hash are legitimate prefix provenance
+        # (see the docstring), so only mutations that START at the certified
+        # hash and move away from it contradict the claim.
+        contradicting = [
+            entry for entry in entries
+            if str(entry.get("before_sha256") or "").strip().lower() == expected_before
+            and str(entry.get("after_sha256") or "").strip().lower() != expected_before
+        ]
+        if contradicting:
+            reasons.append("no_change_claim_contradicted_by_ledger")
+        else:
+            return {
+                "schema": "aura.text_mutation_chain.v1",
+                "passed": True,
+                "before_sha256": expected_before,
+                "after_sha256": expected_after,
+                "ledger_entry_count": len(entries),
+                "chain_start_sequence": 0,
+                "chain_length": 0,
+                "reasons": [],
+            }
     if not entries:
         reasons.append("mutation_chain_missing")
 
@@ -294,13 +313,57 @@ def verify_text_mutation_chain(
     }
 
 
+#: Admissible ranges for the generation controls. Presence of a KEY proves
+#: nothing about whether the setting is usable, so each control declares the
+#: shape and range it must actually satisfy.
+_CONTROL_RANGES: dict[str, tuple[float, float]] = {
+    # Sampling temperature: 0 is greedy decoding; above 2 is not a setting any
+    # of Aura's decoders accept.
+    "temperature": (0.0, 2.0),
+    # Nucleus sampling mass must be a probability, and 0 would admit no tokens.
+    "top_p": (1e-6, 1.0),
+    # Steering strength is a unit interval by construction.
+    "clean_user_surface_steering_alpha": (0.0, 1.0),
+}
+#: Recurrent loop counts are a positive integer count of passes, bounded so a
+#: malformed value cannot request an unbounded number of them.
+_MAX_CLEAN_SURFACE_LOOPS = 32
+
+
 def live_mind_generation_controls_present(generation_controls: Any) -> bool:
-    return bool(
-        isinstance(generation_controls, Mapping)
-        and REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
-            generation_controls.keys()
-        )
-    )
+    """True only when the controls are present AND usable.
+
+    Key presence used to be the whole test, so a mapping carrying nulls, NaN,
+    strings, or out-of-range numbers counted as "controls structurally
+    present" — a proof of configuration that proved nothing about whether
+    generation could actually be steered.
+    """
+    if not isinstance(generation_controls, Mapping):
+        return False
+    if not REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
+        generation_controls.keys()
+    ):
+        return False
+
+    for key, (low, high) in _CONTROL_RANGES.items():
+        raw = generation_controls.get(key)
+        # bool is an int subclass, and a numeric STRING is a serialisation
+        # artefact rather than a setting — neither is evidence that generation
+        # was configured.
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            return False
+        value = float(raw)
+        # NaN fails every comparison, so it must be rejected explicitly rather
+        # than by the range check below.
+        if not math.isfinite(value) or not (low <= value <= high):
+            return False
+
+    loops = generation_controls.get("clean_user_surface_recurrent_loops")
+    if isinstance(loops, bool) or not isinstance(loops, int):
+        return False
+    if not (1 <= loops <= _MAX_CLEAN_SURFACE_LOOPS):
+        return False
+    return True
 
 
 def normalize_live_mind_surface_control_receipt(
