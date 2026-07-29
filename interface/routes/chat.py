@@ -16927,6 +16927,28 @@ def _desktop_task_action_expectation(objective: str) -> dict[str, Any]:
     }
 
 
+#: A reply that declines the work rather than doing it.
+#:
+#: Narrow on purpose: this only decides whether to run an executor that was
+#: already going to run, on a turn already classified as a desktop objective.
+_CAPABILITY_REFUSAL_RE = re.compile(
+    r"\bi\s+(?:can'?t|cannot)\s+(?:\w+ly\s+){0,2}"
+    r"(?:physically\s+)?(?:interact|access|control|open|write|create|do)\b"
+    r"|\bi(?:'m| am)\s+not\s+(?:\w+ly\s+){0,2}able\s+to\b"
+    r"|\bi(?:'m| am)\s+just\s+(?:a|this)\s+text\b"
+    r"|\bno\s+hands\b"
+    r"|\bi\s+don'?t\s+have\s+(?:a\s+)?(?:body|hands|screen|mac|computer)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_capability_refusal(text: Any) -> bool:
+    body = str(text or "").strip()
+    if not body:
+        return False
+    return bool(_CAPABILITY_REFUSAL_RE.search(body))
+
+
 def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str) -> bool:
     """Whether desktop_task can honestly complete without a model-composed body.
 
@@ -21662,6 +21684,43 @@ async def api_chat(
                 _semantic_user_message,
                 _live_turn_trace.get("turn_id") or _live_turn_trace.get("idempotency_key") or "",
             )
+            # A refusal is not an answer to an instruction she can carry out.
+            #
+            # Live 2026-07-28: "Open the Notes app and write a new note with
+            # three sentences about humpback whales. Actually do it." The
+            # route classified it correctly (desktop_execution_contract=True)
+            # and the planner produced a complete, executable plan —
+            # open_app Notes, set_clipboard, cmd+n, cmd+v. Cognition was asked
+            # for the prose first, said "I can't physically interact with your
+            # device or open apps", and THAT was served. The hands were right
+            # there.
+            #
+            # Deferring to cognition for better prose is right. Letting its
+            # refusal end a turn she can perform is not: when the model
+            # declines work the executor can do, the executor does it.
+            if _looks_like_desktop_objective(
+                _semantic_user_message
+            ) and _looks_like_capability_refusal(salvaged_no_reply):
+                logger.info(
+                    "Cognition declined a desktop objective it does not own; "
+                    "running the governed desktop lane instead of serving the "
+                    "refusal."
+                )
+                executed_after_refusal = await _execute_desktop_objective_from_chat(
+                    _semantic_user_message
+                )
+                if isinstance(executed_after_refusal, dict) and executed_after_refusal.get(
+                    "response"
+                ):
+                    return await _finalize_fastpath(
+                        _apply_aura_voice_shaping(
+                            str(executed_after_refusal.get("response") or "")
+                        ),
+                        status=str(
+                            executed_after_refusal.get("status") or "desktop_objective"
+                        ),
+                    )
+
             if salvaged_no_reply:
                 logger.warning(
                     "Serving the preserved repairable draft (%d chars) rather "
