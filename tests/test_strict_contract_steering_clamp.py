@@ -166,7 +166,14 @@ def test_operator_evidence_and_prose_alphas_unchanged():
     assert 0.3 <= prose <= 0.35 + 1e-9
 
 
-def test_live_mind_surface_controls_apply_restore_and_emit_receipt():
+def test_live_mind_surface_controls_apply_restore_and_emit_receipt(monkeypatch):
+    # The production recurrent ceiling is deliberately 1: an unvalidated depth
+    # setting once took the whole conversation surface down, so raising it is
+    # an explicit opt-in (see _LIVE_RECURRENT_CEILING_DEFAULT). This test is
+    # about the APPLY/RESTORE/RECEIPT mechanism, so it opts in the documented
+    # way rather than asserting a depth the live default refuses.
+    monkeypatch.setenv("AURA_USER_SURFACE_RECURRENT_MAX_LOOPS", "2")
+
     class FakeEngine:
         def __init__(self):
             self._surface_alpha_override = None
@@ -486,3 +493,38 @@ def test_live_status_retry_suffix_requests_concrete_runtime_signals_without_temp
     assert "concrete observable runtime or sensory signal" in prompt
     assert "CPU/RAM pressure" in prompt
     assert "metaphor-only attention-texture" in prompt
+
+
+def test_live_recurrent_ceiling_defaults_to_one(monkeypatch):
+    """The user-surface recurrent ceiling is an incident-driven safety default.
+
+    An unvalidated depth setting once produced empty cortex output on a
+    user-facing request, latched the foreground lane busy, and refused every
+    later message. The ceiling is 1 until an accuracy gate says otherwise, so
+    a job asking for more must be clamped rather than honoured.
+    """
+    from core.brain.llm.mlx_worker import (
+        _live_recurrent_ceiling,
+        _surface_control_recurrent_loops,
+    )
+
+    monkeypatch.delenv("AURA_USER_SURFACE_RECURRENT_MAX_LOOPS", raising=False)
+
+    assert _live_recurrent_ceiling() == 1
+    assert _surface_control_recurrent_loops(
+        {"clean_user_surface_recurrent_loops": 8}
+    ) == 1
+
+
+def test_recurrent_ceiling_opt_in_is_still_bounded(monkeypatch):
+    """Opting in raises the ceiling but must not remove it."""
+    from core.brain.llm.mlx_worker import _surface_control_recurrent_loops
+
+    monkeypatch.setenv("AURA_USER_SURFACE_RECURRENT_MAX_LOOPS", "3")
+
+    assert _surface_control_recurrent_loops(
+        {"clean_user_surface_recurrent_loops": 99}
+    ) == 3
+    assert _surface_control_recurrent_loops(
+        {"clean_user_surface_recurrent_loops": 0}
+    ) == 1

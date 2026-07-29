@@ -5290,7 +5290,11 @@ def _mlx_worker_loop(
                                     # the trimmed-reuse path could never run.
                                     from mlx_lm.models.cache import (
                                         can_trim_prompt_cache as _mlx_can_trim,
+                                    )
+                                    from mlx_lm.models.cache import (
                                         make_prompt_cache as _mlx_make_cache,
+                                    )
+                                    from mlx_lm.models.cache import (
                                         trim_prompt_cache as _mlx_trim,
                                     )
 

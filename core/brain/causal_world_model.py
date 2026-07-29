@@ -815,8 +815,20 @@ def register_causal_world_model(orchestrator=None) -> CausalWorldModel:
     on the same file.
     """
     existing = get_runtime_service("causal_world_model", default=None)
-    if isinstance(existing, CausalWorldModel):
-        return existing
+    # Short-circuit on absence before touching isinstance. The reuse check used
+    # to evaluate isinstance() unconditionally against the module-global symbol,
+    # so it raised TypeError whenever nothing was registered AND that symbol had
+    # been rebound to a factory (as dependency-injection and test harnesses do)
+    # — turning "construct the first instance" into a hard failure.
+    if existing is not None:
+        # Only a real class can be an isinstance() argument; if the symbol has
+        # been substituted, fall back to identifying the singleton by the
+        # interface callers actually rely on.
+        if isinstance(CausalWorldModel, type):
+            if isinstance(existing, CausalWorldModel):
+                return existing
+        elif hasattr(existing, "simulate") or hasattr(existing, "name"):
+            return existing
     model = CausalWorldModel()
     register_runtime_service(
         "causal_world_model",
