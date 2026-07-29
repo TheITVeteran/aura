@@ -1,0 +1,41 @@
+{
+  "schema": "aura.spark.cp420s4_worktree_model_resolution_evidence.v1",
+  "checkpoint": "CP420S4",
+  "failed_campaign": {
+    "campaign_id": "resident-32b-recurrent-grpo-cp420s3",
+    "detached_receipt_sha256": "2807b3083c5637374630efcc4051d8db1f87234615f4af71c68d5118761efa37",
+    "duration_seconds": 15.151574,
+    "returncode": 2,
+    "failure": "relative resident model path existed only in the authenticated main checkout",
+    "resident_model_loaded": false
+  },
+  "repair": {
+    "direct_model_paths_preserved": true,
+    "worktree_main_checkout_fallback_confined_to_same_git_repository": true,
+    "path_traversal_and_outside_root_fallback_rejected": true,
+    "resolved_model_path_used_for_lane_ownership": true,
+    "resolved_model_path_used_for_mlx_load": true,
+    "resolved_model_path_used_for_recurrent_sampling": true
+  },
+  "fresh_campaign": {
+    "campaign_id": "resident-32b-recurrent-grpo-cp420s4",
+    "contract_sha256": "d2e6f659f7acac0c89964ec3791fd87d5474092ce03cc5a8e1b143da6d40b05d",
+    "resident_checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "source_bindings": 51,
+    "training_tasks": 288,
+    "powered_confirmatory_tasks": 2877,
+    "powered_confirmatory_cells": 17262,
+    "claim_eligible": false
+  },
+  "verification": {
+    "targeted_tests_passed": 58,
+    "targeted_tests_failed": 0,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "fresh_contract_verified": true
+  },
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}

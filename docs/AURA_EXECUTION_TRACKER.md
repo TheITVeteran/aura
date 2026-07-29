@@ -31471,3 +31471,33 @@ approximately 75.1%-100.0%, with an 87.6% midpoint. The evidence-adjusted range
 is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to the
 powered conditional `WOW Signal` decision. Final multi-hour soaks remain
 deferred.
+
+### 2026-07-29 - CP420S4 worktree-safe resident model ownership
+
+The first authorized CP420S3 policy probe failed honestly before model load.
+The preregistration authenticated the resident checkpoint in the repository's
+main checkout, but `train_grpo` resolved and loaded the original relative path
+inside the frozen worktree. The detached receipt closed after 15.151574
+seconds with no descendants and no resident state mutation.
+
+The trainer now resolves a direct path first and, only when that path is
+missing, searches authenticated roots of the same Git repository. Relative
+fallback rejects traversal and outside-root targets. The one resolved path is
+now authoritative for model-lane ownership, MLX loading, checkpoint identity,
+and recurrent sampling instead of being computed and then ignored. A synthetic
+worktree/main-checkout regression reproduces the production layout.
+
+The post-rebase trainer, preregistration, and verified-runner matrix passes
+58/58. Ruff, bytecode compilation, diff hygiene, and the fresh contract verify.
+The failed CP420S3 campaign remains immutable. Fresh CP420S4 contract
+`d2e6f659f7acac0c89964ec3791fd87d5474092ce03cc5a8e1b143da6d40b05d`
+binds 51 source roles, 288 training tasks, 2,877 powered confirmatory tasks,
+and 17,262 confirmatory cells. Evidence:
+`artifacts/current/cp420s4_worktree_model_resolution_evidence.json`.
+
+No reasoning, frontier, promotion, or `WOW Signal` claim follows from path
+repair. CP420S4 is total checkpoint 692. The 692-920 completion envelope is
+approximately 75.2%-100.0%, with an 87.6% midpoint. The evidence-adjusted
+range remains 3-7 checkpoints to a defensible preliminary gain verdict and
+8-17 to the powered conditional `WOW Signal` decision. Final multi-hour soaks
+remain deferred.

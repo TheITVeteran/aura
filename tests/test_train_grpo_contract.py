@@ -8,9 +8,11 @@ import json
 import sys
 import types
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
+import tools.train_grpo as train_grpo
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
 from core.learning.grpo import GRPOConfig, GRPOTelemetry, group_advantages
 from core.learning.grpo_training_state import (
@@ -38,6 +40,7 @@ from tools.train_grpo import (
     _publish_immutable_tensor_snapshot,
     _record_recurrent_step_failure,
     _render,
+    _resolve_model_path,
     _scheduled_verified_training_task,
     _shape_recurrent_rewards_from_ce_trails,
     _should_halt_for_no_learning_signal,
@@ -69,6 +72,24 @@ class _Task:
 def test_stable_seed_has_a_fixed_process_independent_value():
     assert _stable_seed(7, "cell", 4) == 3478236081
     assert _stable_seed(7, "cell", 4) != _stable_seed(7, "cell", 5)
+
+
+def test_model_path_resolves_from_authenticated_main_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    main = tmp_path / "main"
+    worktree = tmp_path / "worktree"
+    gitdir = main / ".git" / "worktrees" / "spark"
+    model = main / "training" / "fused-model" / "resident"
+    gitdir.mkdir(parents=True)
+    model.mkdir(parents=True)
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {gitdir}\n", encoding="ascii")
+    monkeypatch.setattr(train_grpo, "REPO_ROOT", worktree)
+    monkeypatch.chdir(worktree)
+
+    assert _resolve_model_path("training/fused-model/resident") == model.resolve()
 
 
 def test_pre_stage_recovery_runs_after_exact_restore_and_before_training_loop():
@@ -163,12 +184,8 @@ def test_grpo_can_bind_the_broad_recurrence_training_registry():
     assert len(train) == 8
     assert len(holdout) == 4
     assert source.name == "recurrence_curriculum.py"
-    assert {task.metadata["source"] for task in train} == {
-        "recurrence_curriculum"
-    }
-    assert {task.task_id for task in train}.isdisjoint(
-        {task.task_id for task in holdout}
-    )
+    assert {task.metadata["source"] for task in train} == {"recurrence_curriculum"}
+    assert {task.task_id for task in train}.isdisjoint({task.task_id for task in holdout})
 
 
 def test_grpo_rejects_an_unbound_task_registry():
@@ -289,15 +306,10 @@ def test_training_halts_when_grpo_has_no_learning_signal():
     for _ in range(3):
         telemetry.observe(group_advantages([0.0, 0.0, 0.0, 0.0]))
 
-    assert (
-        _should_halt_for_no_learning_signal(telemetry, config, min_groups=4)
-        is None
-    )
+    assert _should_halt_for_no_learning_signal(telemetry, config, min_groups=4) is None
 
     telemetry.observe(group_advantages([0.0, 0.0, 0.0, 0.0]))
-    verdict = _should_halt_for_no_learning_signal(
-        telemetry, config, min_groups=4
-    )
+    verdict = _should_halt_for_no_learning_signal(telemetry, config, min_groups=4)
 
     assert verdict is not None
     assert verdict["learning_signal"] is False
@@ -503,9 +515,7 @@ def test_recurrent_failure_receipt_is_immutable_and_latest_is_bound(tmp_path):
     )
 
     payload = json.loads(receipt.read_text(encoding="ascii"))
-    latest = json.loads(
-        (tmp_path / "latest_failure.json").read_text(encoding="ascii")
-    )
+    latest = json.loads((tmp_path / "latest_failure.json").read_text(encoding="ascii"))
     assert payload["attempted_step"] == 3
     assert payload["last_durable_step"] == 1
     assert payload["volatile_completed_steps"] == 1
@@ -683,9 +693,7 @@ def test_initial_adapter_snapshot_is_immutable_and_inspectable(tmp_path):
         },
         role="initial recurrent optimizer snapshot",
     )
-    optimizer_binding = inspect_initial_optimizer_snapshot(
-        optimizer_target
-    )
+    optimizer_binding = inspect_initial_optimizer_snapshot(optimizer_target)
     assert optimizer_binding["path"] == optimizer_target.name
     assert optimizer_binding["tensor_count"] == 3
 
@@ -726,9 +734,7 @@ def test_empty_text_completion_uses_eos_for_policy_credit():
         def __call__(tokens):
             return mx.zeros((1, tokens.shape[1], 4))
 
-    logprobs = completion_logprob(
-        Model(), Tokenizer(), "prompt", "", adapters_on=False
-    )
+    logprobs = completion_logprob(Model(), Tokenizer(), "prompt", "", adapters_on=False)
     assert logprobs.shape == (1, 1)
     assert float(logprobs[0, 0]) < 0.0
 
@@ -848,16 +854,12 @@ def test_recurrent_heldout_uses_contract_aware_decode(monkeypatch):
     import core.brain.llm.latent_cortex.engine as engine_module
 
     monkeypatch.setattr(engine_module, "LatentCortexEngine", FakeEngine)
-    adapter_module = types.ModuleType(
-        "core.brain.llm.latent_cortex.recurrence_adapter"
-    )
-    adapter_module.recurrence_adapter_disabled = __import__(
-        "contextlib"
-    ).nullcontext
+    adapter_module = types.ModuleType("core.brain.llm.latent_cortex.recurrence_adapter")
+    adapter_module.recurrence_adapter_disabled = __import__("contextlib").nullcontext
     adapter_module.current_recurrence_adapter_scope = lambda: None
-    adapter_module.recurrence_adapter_scope = (
-        lambda *_args, **_kwargs: __import__("contextlib").nullcontext()
-    )
+    adapter_module.recurrence_adapter_scope = lambda *_args, **_kwargs: __import__(
+        "contextlib"
+    ).nullcontext()
     monkeypatch.setitem(
         sys.modules,
         "core.brain.llm.latent_cortex.recurrence_adapter",

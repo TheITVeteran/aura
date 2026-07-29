@@ -46,7 +46,7 @@ import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -143,6 +143,50 @@ def _stable_seed(base_seed: int, *parts: Any) -> int:
     """Process-independent seed for one named training decision."""
     payload = canonical_json_bytes([int(base_seed), *parts])
     return int.from_bytes(hashlib.sha256(payload).digest()[:4], "big")
+
+
+def _repository_roots(repo_root: Path) -> tuple[Path, ...]:
+    roots = [repo_root.resolve()]
+    marker = repo_root / ".git"
+    try:
+        if marker.is_file():
+            text = marker.read_text(encoding="utf-8").strip()
+            if text.startswith("gitdir:"):
+                gitdir = Path(text.split(":", 1)[1].strip())
+                for parent in gitdir.resolve().parents:
+                    if parent.name == ".git":
+                        roots.append(parent.parent.resolve())
+                        break
+    except OSError:
+        pass
+    return tuple(dict.fromkeys(roots))
+
+
+def _resolve_model_path(value: str) -> Path:
+    """Resolve a model directly or from this worktree's authenticated main checkout."""
+
+    supplied = Path(value).expanduser()
+    try:
+        return supplied.resolve(strict=True)
+    except OSError as direct_error:
+        pure = PurePosixPath(value)
+        if (
+            pure.is_absolute()
+            or str(pure) != value
+            or ".." in pure.parts
+            or "\\" in value
+            or "\x00" in value
+        ):
+            raise direct_error
+        for root in _repository_roots(REPO_ROOT):
+            candidate = root / pure
+            try:
+                resolved = candidate.resolve(strict=True)
+                resolved.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            return resolved
+        raise direct_error
 
 
 def _source_binding(path: Path) -> dict[str, Any]:
@@ -1751,7 +1795,7 @@ def main(
         runtime_environment_identity,
     )
 
-    model_path = str(Path(args.model).expanduser().resolve(strict=True))
+    model_path = str(_resolve_model_path(args.model))
     source_files = {
         "trainer": Path(__file__),
         "grpo": REPO_ROOT / "core/learning/grpo.py",
@@ -1819,8 +1863,7 @@ def main(
                     REPO_ROOT / "core/learning/verified_transition_transaction.py"
                 ),
                 "transition_measurement_chain": (
-                    REPO_ROOT
-                    / "core/learning/verified_transition_measurement_chain.py"
+                    REPO_ROOT / "core/learning/verified_transition_measurement_chain.py"
                 ),
                 "transition_rejection_transaction": (
                     REPO_ROOT / "core/learning/verified_transition_rejection_transaction.py"
@@ -1929,7 +1972,7 @@ def main(
     with (
         standalone_model_lane(
             owner_id=f"train-grpo:{Path(args.out_dir).name}",
-            model_path=args.model,
+            model_path=model_path,
             purpose="training",
             preemptible=False,
             metadata={"tool": "train_grpo", "operator_launched": True},
@@ -1937,7 +1980,7 @@ def main(
         mlx_memory_envelope(fraction=args.memory_fraction) as envelope,
     ):
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
-        model, tokenizer = load(args.model)
+        model, tokenizer = load(model_path)
         model.freeze()
         verified_group_provider: VerifiedTransitionGroupProvider | None = None
         token_trace_adapter = None
@@ -1979,9 +2022,7 @@ def main(
                             projection,
                             ScopedLoRALinear,
                         ):
-                            site = (
-                                f"model.layers.{index}.{parent_name}.{target}"
-                            )
+                            site = f"model.layers.{index}.{parent_name}.{target}"
                             setattr(
                                 parent,
                                 target,
@@ -2026,19 +2067,11 @@ def main(
             assert token_trace_adapter is not None
             probe_path = out_dir / "initial_policy_probe.json"
             snapshot_path = out_dir / "initial_adapter.safetensors"
-            optimizer_snapshot_path = (
-                out_dir / "initial_optimizer.safetensors"
-            )
-            initial_tensors = dict(
-                tree_flatten(model.trainable_parameters())
-            )
-            probe_optimizer = build_recurrent_policy_optimizer(
-                args.learning_rate
-            )
+            optimizer_snapshot_path = out_dir / "initial_optimizer.safetensors"
+            initial_tensors = dict(tree_flatten(model.trainable_parameters()))
+            probe_optimizer = build_recurrent_policy_optimizer(args.learning_rate)
             probe_optimizer.init(model.trainable_parameters())
-            initial_optimizer_tensors = dict(
-                tree_flatten(probe_optimizer.state)
-            )
+            initial_optimizer_tensors = dict(tree_flatten(probe_optimizer.state))
             _publish_immutable_tensor_snapshot(
                 snapshot_path,
                 initial_tensors,
@@ -2053,9 +2086,7 @@ def main(
                 snapshot_path,
                 execution_spec_sha256=execution_spec.sha256,
             )
-            initial_optimizer_artifact = inspect_initial_optimizer_snapshot(
-                optimizer_snapshot_path
-            )
+            initial_optimizer_artifact = inspect_initial_optimizer_snapshot(optimizer_snapshot_path)
             probe_identity = {
                 "campaign_id": args.adapter_id,
                 "initial_policy_sha256": recurrent_policy_sha256(model, execution_spec),
@@ -2072,14 +2103,8 @@ def main(
                 },
                 "source_bindings": sources,
                 "initial_adapter_artifact": initial_adapter_artifact,
-                "optimizer_initialization": (
-                    recurrent_policy_optimizer_config(
-                        args.learning_rate
-                    )
-                ),
-                "initial_optimizer_artifact": (
-                    initial_optimizer_artifact
-                ),
+                "optimizer_initialization": (recurrent_policy_optimizer_config(args.learning_rate)),
+                "initial_optimizer_artifact": (initial_optimizer_artifact),
             }
             with interprocess_file_lock(out_dir / ".initial-policy-probe.lock"):
                 if probe_path.exists() or probe_path.is_symlink():
@@ -2266,9 +2291,7 @@ def main(
             and trajectory_group_config.intervention_config is not None
         ):
             if verified_group_provider_factory is None:
-                raise RuntimeError(
-                    "intervention training requires a verified provider factory"
-                )
+                raise RuntimeError("intervention training requires a verified provider factory")
             initial_state_custody = getattr(
                 verified_group_provider_factory,
                 "initial_policy_state_custody",
@@ -2286,26 +2309,19 @@ def main(
                 "ledger_roots",
                 None,
             )
-            if (
-                not isinstance(ledger_roots, Mapping)
-                or not isinstance(ledger_roots.get("updates"), str)
+            if not isinstance(ledger_roots, Mapping) or not isinstance(
+                ledger_roots.get("updates"), str
             ):
-                raise RuntimeError(
-                    "intervention training requires the frozen update journal root"
-                )
-            measurement_update_journal = (
-                VerifiedTransitionUpdateJournal.open(
-                    ledger_roots["updates"]
-                )
+                raise RuntimeError("intervention training requires the frozen update journal root")
+            measurement_update_journal = VerifiedTransitionUpdateJournal.open(
+                ledger_roots["updates"]
             )
-            measurement_chain_store = (
-                VerifiedTransitionMeasurementChainStore.open(
-                    out_dir / "verified-transition-transactions",
-                    transaction_store=transaction_store,
-                    initial_policy_state_custody=initial_state_custody,
-                    provider_contract_sha256=provider_contract_sha256,
-                    training_protocol_sha256=protocol_sha256,
-                )
+            measurement_chain_store = VerifiedTransitionMeasurementChainStore.open(
+                out_dir / "verified-transition-transactions",
+                transaction_store=transaction_store,
+                initial_policy_state_custody=initial_state_custody,
+                provider_contract_sha256=provider_contract_sha256,
+                training_protocol_sha256=protocol_sha256,
             )
         rejection_transaction_store = (
             VerifiedTransitionRejectionTransactionStore.open(
@@ -2487,22 +2503,16 @@ def main(
             rejection_transactions = rejection_transaction_store.inventory()
             if measurement_chain_store is not None:
                 if measurement_update_journal is None:
-                    raise GRPOCheckpointError(
-                        "pre-measurement recovery journal is missing"
-                    )
-                recovered_pre_stage = (
-                    measurement_chain_store.reconcile_interrupted_admissions(
-                        update_journal=measurement_update_journal,
-                        live_adapter_tensors=adapter_tensors(),
-                        live_optimizer_tensors=dict(
-                            tree_flatten(optimizer.state)
-                        ),
-                        observed_policy_sha256=recurrent_policy_sha256(
-                            model,
-                            execution_spec,
-                        ),
-                        reconciled_at_unix_ns=time.time_ns(),
-                    )
+                    raise GRPOCheckpointError("pre-measurement recovery journal is missing")
+                recovered_pre_stage = measurement_chain_store.reconcile_interrupted_admissions(
+                    update_journal=measurement_update_journal,
+                    live_adapter_tensors=adapter_tensors(),
+                    live_optimizer_tensors=dict(tree_flatten(optimizer.state)),
+                    observed_policy_sha256=recurrent_policy_sha256(
+                        model,
+                        execution_spec,
+                    ),
+                    reconciled_at_unix_ns=time.time_ns(),
                 )
                 if recovered_pre_stage:
                     if (
@@ -2511,13 +2521,10 @@ def main(
                         or recovered_pre_stage[0]["sequence"] != step
                     ):
                         raise GRPOCheckpointError(
-                            "pre-stage recovery does not match the exact "
-                            "durable trainer checkpoint"
+                            "pre-stage recovery does not match the exact durable trainer checkpoint"
                         )
                     recovery_body = {
-                        "schema": (
-                            "aura.grpo.pre_stage_recovery_halt.v1"
-                        ),
+                        "schema": ("aura.grpo.pre_stage_recovery_halt.v1"),
                         "protocol_sha256": protocol_sha256,
                         "dataset_sha256": dataset_sha256,
                         "execution_spec_sha256": execution_spec.sha256,
@@ -2527,9 +2534,7 @@ def main(
                     }
                     recovery_receipt = {
                         **recovery_body,
-                        "receipt_sha256": sha256_bytes(
-                            canonical_json_bytes(recovery_body)
-                        ),
+                        "receipt_sha256": sha256_bytes(canonical_json_bytes(recovery_body)),
                     }
                     _publish_immutable_bytes(
                         out_dir / "pre_stage_recovery_halt.json",
@@ -3001,8 +3006,7 @@ def main(
         halt_reason = (
             "pre_stage_admission_burned"
             if pre_stage_recovery_halt is not None
-            else
-            "calibration_not_admitted"
+            else "calibration_not_admitted"
             if calibration and not bool(calibration.get("admission", {}).get("training_admitted"))
             else "no_reachable_frontier"
             if not training_allowed
@@ -3065,7 +3069,7 @@ def main(
                         seed=sample_seed,
                         verified_group_provider=verified_group_provider,
                         campaign_sequence=step_number - 1,
-                        model_path=args.model,
+                        model_path=model_path,
                         token_trace_adapter=token_trace_adapter,
                     )
                     active_recurrent_step["samples"] = tuple(recurrent_samples)

@@ -5520,3 +5520,33 @@ approximately 75.1%-100.0%, with an 87.6% midpoint. The evidence-adjusted range
 is 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to the
 powered conditional `WOW Signal` decision. Final multi-hour soaks remain
 deferred.
+
+### 2026-07-29 - CP420S4: the frozen worktree can own the shared resident model
+
+The authorized CP420S3 initial-policy probe terminated before model load after
+15.151574 seconds. Contract verification had correctly authenticated the
+single resident checkpoint stored in the main checkout, but the trainer later
+passed the unresolved worktree-relative path to model-lane ownership, MLX, and
+recurrent sampling. The failed detached receipt is retained; no campaign state
+was rewritten and no resident tensor was loaded or mutated.
+
+`train_grpo` now preserves ordinary direct model paths while adding a confined
+fallback across authenticated roots of the same Git repository. Traversal,
+noncanonical relative paths, and outside-root resolution remain inadmissible.
+The resulting absolute path is used consistently for lane admission, model
+load, identity, tokenizer traces, and recurrent episodes.
+
+The current-main targeted matrix passes 58/58 and the fresh CP420S4
+preregistration verifies. Contract
+`d2e6f659f7acac0c89964ec3791fd87d5474092ce03cc5a8e1b143da6d40b05d`
+binds 51 source roles, 288 training tasks, 2,877 powered confirmatory tasks,
+and 17,262 confirmatory cells. Evidence:
+`artifacts/current/cp420s4_worktree_model_resolution_evidence.json`.
+
+This closes the path defect, not the scientific campaign. Reasoning gain,
+frontier gain, promotion, and `WOW Signal` remain false until fresh resident
+evidence passes. CP420S4 is total checkpoint 692. The 692-920 completion
+envelope is approximately 75.2%-100.0%, with an 87.6% midpoint. The
+evidence-adjusted range remains 3-7 checkpoints to a defensible preliminary
+gain verdict and 8-17 to the powered conditional `WOW Signal` decision. Final
+multi-hour soaks remain deferred.
