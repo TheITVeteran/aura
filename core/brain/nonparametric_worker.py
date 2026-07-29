@@ -145,6 +145,31 @@ def last_recall_outcome() -> dict[str, Any]:
 _MIN_USABLE_ENTRY_FRACTION = 0.5
 _MIN_USABLE_ENTRIES = 32
 
+#: DECODABLE IS NOT THE SAME AS APPLICABLE.
+#:
+#: Measured 2026-07-29, and I caused it. The 2026-07-13 store was refused for
+#: carrying no token text; decoding its ids from the resident tokenizer took it
+#: from 12 usable entries to 1,488, the guard above passed, and the store began
+#: steering live generation. Two demo turns immediately degraded:
+#:
+#:   "Neurotransmitter profile actually includes dopamine, serotonin and
+#:    norepagephrine like apes"
+#:   "the inner core could prefer crystallishing iron alloys ... beneath a
+#:    potential 'lagging' crust"
+#:
+#: Garbled words and a fabricated premise — exactly the "grammatically shaped
+#: and says nothing" failure the original guard was written for. The reason is
+#: not the decode: those 1,689 keys were ingested from a CODING corpus ("Here
+#: is the fix:", "def add(a, b)"), and blending a narrow domain into open
+#: conversation at a weight reaching 0.87 corrupts it.
+#:
+#: A kNN store is only safe to blend when it is large enough that its
+#: neighbours are actually near the query. At 1,689 keys over a 5120-wide
+#: space the nearest neighbour of "octopus cognition" is whatever coding token
+#: happens to be least far away, which is noise wearing the shape of grammar.
+#: This floor is what that costs; it is a density requirement, not a taste.
+_MIN_ENTRIES_TO_STEER_GENERATION = 50_000
+
 
 #: Refusals already reported, so a permanently-unusable store is named once
 #: per process rather than once per turn. The 2026-07-13 store produced 591
@@ -200,6 +225,16 @@ def _unusable_datastore_reason(memory: Any) -> str:
         return ""
     usable = sum(1 for token in tokens if str(token or "").strip())
     reason = ""
+    if total < _MIN_ENTRIES_TO_STEER_GENERATION:
+        # Sparse: report and decline, but do NOT quarantine. A small store is
+        # a store that has not grown yet, not a broken one, and deleting it
+        # would throw away the beginning of a good one.
+        return (
+            f"{total} entries is too sparse to steer a {getattr(memory, '_dim', '?')}"
+            f"-wide space (need {_MIN_ENTRIES_TO_STEER_GENERATION:,}); "
+            "recall stays off until the store is dense enough for its "
+            "neighbours to be near"
+        )
     if usable < _MIN_USABLE_ENTRIES:
         reason = (
             f"only {usable} of {total} entries carry a recallable token "
