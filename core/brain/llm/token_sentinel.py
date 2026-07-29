@@ -174,6 +174,24 @@ class TokenSentinel:
     Total cost per check: < 0.3ms.
     """
 
+    @staticmethod
+    def _positive_interval(value: Any, default: int, name: str) -> int:
+        """Coerce a check cadence to a usable positive integer."""
+        try:
+            interval = int(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "SENTINEL: %s=%r is not an integer; using %d.", name, value, default
+            )
+            return default
+        if interval < 1:
+            logger.warning(
+                "SENTINEL: %s=%r must be >= 1 (it is a modulo divisor on every "
+                "token); using %d.", name, value, default
+            )
+            return default
+        return interval
+
     def __init__(
         self,
         check_interval: int = 8,
@@ -190,11 +208,31 @@ class TokenSentinel:
             steering_hooks: List of AffectiveSteeringHook instances to update
             boundary_context: Optional context about what boundaries are active
         """
-        self._check_interval = check_interval
-        self._affect_interval = affect_interval
+        # These are used as modulo divisors on EVERY generated token. A zero
+        # raised ZeroDivisionError straight out of the token loop — taking down
+        # generation from a config value — and a non-integer or negative one
+        # produced undocumented schedules. Coerced to a sane positive int here
+        # so a malformed setting degrades the sentinel's cadence rather than
+        # the response.
+        self._check_interval = self._positive_interval(check_interval, 8, "check_interval")
+        self._affect_interval = self._positive_interval(affect_interval, 16, "affect_interval")
         self._substrate_mem = substrate_mem
         self._steering_hooks = steering_hooks or []
         self._boundary_context = boundary_context
+
+        #: True when either interval had to be corrected, so status() can report
+        #: that the sentinel is not running on the cadence it was asked for.
+        self._interval_corrected = (
+            self._check_interval != check_interval
+            or self._affect_interval != affect_interval
+        )
+
+        #: Set when the semantic ontology grounder could not run, so status()
+        #: can distinguish "screened and clean" from "not fully screened".
+        self._ontology_check_degraded = False
+        #: One-shot, so an inactive affect path is reported without spamming
+        #: a degradation on every pulse interval.
+        self._affect_unavailable_reported = False
 
         # Accumulation state
         self._tokens: list[str] = []
@@ -320,12 +358,24 @@ class TokenSentinel:
                     seq_len,
                     repeats,
                 )
+                # seq_len and repeats count TOKENS. Using their product to
+                # slice self._text treated them as CHARACTERS, and tokens are
+                # variable width — typically several characters each. The
+                # "clean" prefix therefore kept most of the loop it claimed to
+                # have removed (or, for sub-character tokens, cut into valid
+                # text before it). Measure the repeated span in characters.
+                loop_token_count = seq_len * repeats
+                loop_chars = len("".join(self._tokens[-loop_token_count:]))
+                clean = (
+                    self._text[:-loop_chars] if 0 < loop_chars < len(self._text)
+                    else ""
+                )
                 return InterventionSignal(
                     type=InterventionType.ABORT_LOOP,
                     reason=f"Generative loop detected: {seq_str[:20]!r} x{repeats}",
                     token_position=self._token_count,
                     generated_so_far=self._text,
-                    clean_prefix=self._text[: -(seq_len * repeats)].rstrip(),
+                    clean_prefix=clean.rstrip(),
                 )
         return InterventionSignal(type=InterventionType.NONE)
 
@@ -400,6 +450,23 @@ class TokenSentinel:
         hooks use stale state. This pulse syncs them.
         """
         if not self._substrate_mem or not self._steering_hooks:
+            # The advertised live-affect path can be entirely inactive while
+            # diagnostics merely show zero pulses — indistinguishable from "no
+            # pulse was due yet". Record it once so the absence is visible
+            # rather than inferred.
+            if not self._affect_unavailable_reported:
+                self._affect_unavailable_reported = True
+                missing = []
+                if not self._substrate_mem:
+                    missing.append("substrate_mem")
+                if not self._steering_hooks:
+                    missing.append("steering_hooks")
+                record_degradation(
+                    "token_sentinel",
+                    RuntimeError(f"live affect inactive: missing {', '.join(missing)}"),
+                    severity="warning",
+                    action="generated without mid-generation affect steering",
+                )
             return
 
         try:
@@ -433,6 +500,14 @@ class TokenSentinel:
             "drift_warnings": self._drift_warnings,
             "affect_pulses": self._affect_pulses,
             "boundary_fired": self._boundary_fired,
+            # Zero pulses used to be indistinguishable from "the live-affect
+            # path is not wired at all", and a clean ontology result from "the
+            # semantic check could not run". Both absences are now stated.
+            "live_affect_available": bool(self._substrate_mem and self._steering_hooks),
+            "ontology_check_degraded": self._ontology_check_degraded,
+            "check_interval": self._check_interval,
+            "affect_interval": self._affect_interval,
+            "interval_corrected": self._interval_corrected,
             "elapsed_s": round(elapsed, 2),
             "intervention_details": [
                 {"type": s.type.name, "reason": s.reason, "at_token": s.token_position}
@@ -453,8 +528,21 @@ class TokenSentinel:
                 grounding = detect_unsupported_embodiment_claim(self._text)
                 if not grounding.ok:
                     unsupported_match = grounding.match
-            except (ImportError, RuntimeError, TypeError, ValueError):
+            except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+                # This was swallowed into an empty match, so generation
+                # continued as though the semantic ontology check had PASSED
+                # when it had not run at all. The sentinel cannot block on a
+                # check it could not perform, but it must not pretend the
+                # check succeeded either.
                 unsupported_match = ""
+                self._ontology_check_degraded = True
+                record_degradation(
+                    "token_sentinel", exc, severity="warning",
+                    action=(
+                        "semantic ontology grounding unavailable; only the local "
+                        "regex screened this generation"
+                    ),
+                )
         if match or unsupported_match:
             matched_text = match.group(0) if match else unsupported_match
             logger.warning(
