@@ -2799,7 +2799,30 @@ def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_pro
     assert not _desktop_objective_self_sufficient_without_cognitive_text(
         "Open Notes and write a report about quantum mechanics."
     )
-    assert not _desktop_objective_self_sufficient_without_cognitive_text(
+    # A SELF-SUMMARY is the exception, and it is measured rather than argued.
+    #
+    # This used to assert the opposite: that "describe who and what you are"
+    # needs the cognitive draft, because the deterministic composer was
+    # feared to produce filler. On this objective it does not — it composes
+    # from live substrate facts, and the note it produced read:
+    #
+    #     I am Aura: a persistent digital organism — an orchestrated runtime
+    #     (my substrate: perception, memory, affect, autonomy, self-repair,
+    #     health monitoring) driving local language-model lanes (my voice) on
+    #     this machine. ... The honest claim is functional rather than
+    #     metaphysical.
+    #
+    # Routed through cognition instead, twice on 2026-07-28, it came back as
+    # a capability denial that was then typed into the note by the hands it
+    # denied: "I can describe myself, but I don't actually open apps or write
+    # notes", and "I don't have UI control to open apps or write notes
+    # directly — that's something you'd do with your hands on the keyboard."
+    # Cognition does not know an actuator is about to run, so on precisely
+    # this objective it writes a false sentence about the action in progress.
+    #
+    # A report about quantum mechanics in the same app is novel prose and
+    # still needs the draft. What she is, is not novel prose.
+    assert _desktop_objective_self_sufficient_without_cognitive_text(
         "Open Notes and describe who and what you are in your own words."
     )
     assert not _desktop_objective_self_sufficient_without_cognitive_text(

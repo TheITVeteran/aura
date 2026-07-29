@@ -962,6 +962,8 @@ class DesktopTaskSkill(BaseSkill):
         r"|\bwith\s+your\s+(?:own\s+)?hands\s+on\s+the\s+keyboard\b"
         r"|\bi\s+am\s+not\s+able\s+to\s+(?:open|write|create|interact)\b"
         r"|\bi\s+(?:don'?t|do\s+not)\s+(?:have|possess)\s+the\s+ability\b"
+        r"|\bi\s+(?:don'?t|do\s+not)\s+actually\s+(?:open|write|create|control)\b"
+        r"|\bhere'?s\s+the\s+paragraph\s+you\s+wanted\b"
         r")"
     )
 

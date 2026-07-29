@@ -17021,6 +17021,21 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
         "move_file",
         "read_menu_clock",
     }
+    # A SELF-SUMMARY is the one body the executor owns canonically, and
+    # writing it into an app is the same bounded artifact as writing it to a
+    # file. Routed through cognition instead, it came back as a capability
+    # denial that was then TYPED INTO THE APP by the hands it denied — "I
+    # can describe myself, but I don't actually open apps or write notes."
+    # Measured twice live in two different phrasings, which is why this is a
+    # routing fix rather than another phrase in a regex.
+    #
+    # Deliberately narrower than the set above: a report about quantum
+    # mechanics written into the same app is novel prose and still needs
+    # cognition. What she is, is not novel prose.
+    if actions <= (local_artifact_actions | {"write_in_app", "open_app"}) and (
+        DesktopTaskSkill._objective_requests_self_summary(text)
+    ):
+        return True
     if actions <= local_artifact_actions and (
         DesktopTaskSkill._objective_requests_self_summary(text)
         or DesktopTaskSkill._objective_requests_written_artifact(text)
