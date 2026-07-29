@@ -22,7 +22,7 @@ CAMPAIGN_TRUST_POLICY_SCHEMA = "aura.latent_cortex.campaign_trust_policy.v2"
 CAMPAIGN_ROLE_ATTESTATION_SCHEMA = (
     "aura.latent_cortex.campaign_role_attestation.v1"
 )
-CAMPAIGN_ROLE_PAYLOAD_SCHEMA = "aura.latent_cortex.campaign_role_payload.v2"
+CAMPAIGN_ROLE_PAYLOAD_SCHEMA = "aura.latent_cortex.campaign_role_payload.v1"
 CAMPAIGN_POLICY_SIGNATURE_REQUEST_SCHEMA = (
     "aura.latent_cortex.campaign_policy_signature_request.v1"
 )
@@ -81,13 +81,8 @@ _ATTESTATION_KEYS = {
 _SIGNED_PAYLOAD_KEYS = {
     "schema",
     "policy_sha256",
-    "campaign_name",
-    "protocol_sha256",
     "role",
     "signer_id",
-    "operation",
-    "purpose",
-    "idempotency_key",
     "signed_at_unix",
     "payload",
 }
@@ -104,14 +99,10 @@ _SIGNATURE_REQUEST_KEYS = {
 _CUSTODY_CLASSES = {
     "test_fixture",
     "local_software",
-    "host_isolated_service",
     "external_service",
     "remote_hsm",
 }
 _EXTERNAL_CUSTODY_CLASSES = {"external_service", "remote_hsm"}
-_OPERATIONAL_CUSTODY_CLASSES = _EXTERNAL_CUSTODY_CLASSES | {
-    "host_isolated_service",
-}
 
 
 class CampaignTrustError(ValueError):
@@ -330,10 +321,7 @@ def _validate_campaign_trust_policy_document(
             _fail("campaign_trust_revoked_role_key")
         if signer_id in signer_ids:
             _fail("campaign_trust_signer_identity_reused")
-        if (
-            pin.get("custody_class") != "host_isolated_service"
-            and organization_id in organization_ids
-        ):
+        if organization_id in organization_ids:
             _fail("campaign_trust_organization_reused")
         if public_raw in role_keys:
             _fail("campaign_trust_role_key_reused")
@@ -572,28 +560,12 @@ def externally_custodied_roles(policy: VerifiedCampaignTrustPolicy) -> bool:
     )
 
 
-def operationally_isolated_roles(policy: VerifiedCampaignTrustPolicy) -> bool:
-    """Return true when every role has at least process-isolated custody.
-
-    This predicate is sufficient for a non-claim-eligible research training
-    transaction. It deliberately does not satisfy independent external custody.
-    """
-
-    return all(
-        policy.role_pin(role)["custody_class"] in _OPERATIONAL_CUSTODY_CLASSES
-        for role in CAMPAIGN_TRUST_ROLES
-    )
-
-
 def prepare_role_signature_request(
     policy: VerifiedCampaignTrustPolicy,
     *,
     role: str,
     payload: Mapping[str, Any],
     signed_at_unix: int,
-    operation: str = "role_attestation",
-    purpose: str = "role-attestation",
-    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Prepare exact role-attestation bytes for a detached signature."""
 
@@ -606,34 +578,11 @@ def prepare_role_signature_request(
     normalized_payload = _normalized_json(payload, role="campaign_attestation_payload")
     if not isinstance(normalized_payload, dict):
         _fail("campaign_attestation_payload_invalid")
-    normalized_operation = _identifier(operation, role="campaign_attestation_operation")
-    normalized_purpose = _identifier(purpose, role="campaign_attestation_purpose")
-    normalized_idempotency_key = (
-        _identifier(idempotency_key, role="campaign_attestation_idempotency")
-        if idempotency_key is not None
-        else hashlib.sha256(
-            canonical_json_bytes(
-                {
-                    "policy_sha256": policy.policy_sha256,
-                    "role": role,
-                    "operation": normalized_operation,
-                    "purpose": normalized_purpose,
-                    "signed_at_unix": signed_at,
-                    "payload": normalized_payload,
-                }
-            )
-        ).hexdigest()
-    )
     signed_payload = {
         "schema": CAMPAIGN_ROLE_PAYLOAD_SCHEMA,
         "policy_sha256": policy.policy_sha256,
-        "campaign_name": policy.document["campaign_name"],
-        "protocol_sha256": policy.document["protocol_sha256"],
         "role": role,
         "signer_id": pin["signer_id"],
-        "operation": normalized_operation,
-        "purpose": normalized_purpose,
-        "idempotency_key": normalized_idempotency_key,
         "signed_at_unix": signed_at,
         "payload": normalized_payload,
     }
@@ -666,13 +615,8 @@ def assemble_role_attestation(
     if (
         signed_payload.get("schema") != CAMPAIGN_ROLE_PAYLOAD_SCHEMA
         or signed_payload.get("policy_sha256") != policy.policy_sha256
-        or signed_payload.get("campaign_name") != policy.document["campaign_name"]
-        or signed_payload.get("protocol_sha256") != policy.document["protocol_sha256"]
         or signed_payload.get("role") != role
         or signed_payload.get("signer_id") != pin["signer_id"]
-        or not isinstance(signed_payload.get("operation"), str)
-        or not isinstance(signed_payload.get("purpose"), str)
-        or not isinstance(signed_payload.get("idempotency_key"), str)
         or not isinstance(signed_payload.get("payload"), dict)
     ):
         _fail("campaign_attestation_identity_mismatch")
@@ -698,9 +642,6 @@ def build_role_attestation(
     payload: Mapping[str, Any],
     signed_at_unix: int,
     private_key: Any,
-    operation: str = "role_attestation",
-    purpose: str = "role-attestation",
-    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """Sign one canonical role payload with the policy-pinned private key."""
 
@@ -709,9 +650,6 @@ def build_role_attestation(
         role=role,
         payload=payload,
         signed_at_unix=signed_at_unix,
-        operation=operation,
-        purpose=purpose,
-        idempotency_key=idempotency_key,
     )
     pin = policy.role_pin(role)
     public_key = private_key.public_key()
@@ -762,8 +700,6 @@ def verify_role_attestation(
     if (
         signed_payload.get("schema") != CAMPAIGN_ROLE_PAYLOAD_SCHEMA
         or signed_payload.get("policy_sha256") != policy.policy_sha256
-        or signed_payload.get("campaign_name") != policy.document["campaign_name"]
-        or signed_payload.get("protocol_sha256") != policy.document["protocol_sha256"]
         or signed_payload.get("role") != role
         or signed_payload.get("signer_id") != pin["signer_id"]
     ):
@@ -824,7 +760,6 @@ __all__ = [
     "assemble_signed_campaign_policy",
     "build_role_attestation",
     "externally_custodied_roles",
-    "operationally_isolated_roles",
     "load_ed25519_public_key",
     "policy_signed_payload",
     "prepare_policy_signature_request",

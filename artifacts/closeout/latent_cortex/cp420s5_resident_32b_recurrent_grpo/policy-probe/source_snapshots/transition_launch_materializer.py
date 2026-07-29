@@ -26,7 +26,6 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     EVIDENCE_VERIFIER,
     TASK_ISSUER,
     externally_custodied_roles,
-    operationally_isolated_roles,
     validate_campaign_trust_policy,
 )
 from core.learning.grpo import GRPOConfig
@@ -832,9 +831,8 @@ def materialize_launch(
         expected_protocol_sha256=str(contract["contract_sha256"]),
         now_unix=observed_second,
     )
-    if not operationally_isolated_roles(policy):
-        _fail("operational_role_custody_required")
-    external_custody = externally_custodied_roles(policy)
+    if not externally_custodied_roles(policy):
+        _fail("external_role_custody_required")
     task_broker = _build_signer(task_signer_document)
     verifier_broker = _build_signer(verifier_signer_document)
     brokers = {
@@ -1241,11 +1239,7 @@ def materialize_launch(
         "bundle_sha256": external_bundle_sha256,
         "created_at_unix_ns": planned_ns,
         "reopened": True,
-        "claim_boundary": (
-            "launch_custody_only_no_training_or_reasoning_gain_claim"
-            if external_custody
-            else "host_isolated_research_launch_external_claim_custody_still_required"
-        ),
+        "claim_boundary": ("launch_custody_only_no_training_or_reasoning_gain_claim"),
     }
     receipt = {**receipt_body, "receipt_sha256": _digest(receipt_body)}
     _publish(

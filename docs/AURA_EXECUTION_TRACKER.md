@@ -31535,3 +31535,42 @@ total checkpoint 693. The 693-920 completion envelope is approximately
 75.3%-100.0%, with an 87.7% midpoint. The evidence-adjusted range remains 3-7
 checkpoints to a defensible preliminary gain verdict and 8-17 to the powered
 conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.
+
+### 2026-07-29 - CP420S6 resident policy/answer proof and isolated host signers
+
+CP420S5 now passes both active resident gates. The detached initial-policy probe
+loaded the bound 32B, attached all 24 recurrent projections, and sealed policy
+`dd92ca2cb583fdd68869a4e5152d209520b249614b4c1ff45543b5db62f46d8e`
+without an optimizer update. The read-only recurrent answer preflight then
+produced six valid contracts and six correct answers across all six tasks. Both
+runs exited with empty process lineage and immutable receipts.
+
+An independent adversarial review then found that the first campaign-manifest
+purpose would be rejected, same-host roles were mislabeled as independent
+organizations, purpose was outside the signed bytes, partial JIT signing was
+not crash-idempotent, and evidence replay was separable from close signing.
+Those defects are now closed. The trust model distinguishes
+`host_isolated_service` research custody from real external custody; only the
+latter can promote the final claim. Signed role payloads bind campaign,
+protocol, operation, purpose, and idempotency. JIT intents are durably reserved
+before either signature, and the verifier refuses a close unless its own
+durable journal contains the exact replayed receipt and evidence digest.
+
+Production role keys are restartable through the same-user macOS Keychain;
+tests use ephemeral process keys and never touch the operator Keychain. Broker
+output is disk-spooled and bounded, and pinned artifacts must be owned,
+single-linked, and nonwritable by group/world. The expanded signer,
+materializer, factory, episode, trust, and bundle matrix passes 154/154. Ruff,
+compilation, and diff hygiene pass.
+Evidence:
+`artifacts/current/cp420s6_resident_probe_and_host_signer_evidence.json`.
+
+The custody claim remains explicit: these are isolated same-host research
+principals, not independently administered external organizations. They may
+authorize the training run and produce tamper-evident evidence, but they cannot
+by themselves satisfy the final independent-custody claim. Live Keychain
+provisioning, launch-bundle materialization, and training remain next. CP420S6
+is total checkpoint 694. The 694-920 completion envelope is approximately
+75.4%-100.0%, with an 87.7% midpoint. The evidence-adjusted range is 2-6
+checkpoints to a defensible preliminary gain verdict and 7-16 to the powered
+conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.

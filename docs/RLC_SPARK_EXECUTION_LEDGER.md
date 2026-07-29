@@ -5580,3 +5580,35 @@ approximately 75.3%-100.0%, with an 87.7% midpoint. The evidence-adjusted range
 remains 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to
 the powered conditional `WOW Signal` decision. Final multi-hour soaks remain
 deferred.
+
+### 2026-07-29 - CP420S6: resident gates pass; host-isolated trust is executable
+
+The fresh CP420S5 resident 32B passes the deterministic initial-policy probe
+and the recurrent answer-channel preflight. Its 24 intended projections produce
+sealed initial policy `dd92ca2c...f46d8e`; the read-only answer lane returns
+6/6 valid contracts and 6/6 correct task answers. Neither run performed an
+optimizer update.
+
+Adversarial review found seven material defects in the first signer draft:
+campaign-manifest rejection, false external-organization classification,
+unsigned purpose/operation, non-idempotent partial JIT signing, verifier/close
+separation, unbounded command output, and nonrestartable production role keys.
+The corrected protocol distinguishes host-isolated research custody from
+independent external custody and binds campaign, protocol, operation, purpose,
+and idempotency inside every Ed25519 payload. Durable JIT intents make
+signature retries byte-identical. The verifier journals accepted artifact
+replay and will not sign a close carrying any other receipt.
+
+Live role keys use restartable same-user macOS Keychain custody; tests remain
+ephemeral. Broker output is bounded without memory accumulation, and command
+artifacts must be owned, single-linked, and nonwritable by group/world. The
+affected signer, trust, materializer, provider-factory, episode, and bundle
+matrix passes 154/154. Evidence:
+`artifacts/current/cp420s6_resident_probe_and_host_signer_evidence.json`.
+
+This is strong same-host process isolation, not independent external
+administration, and the later claim must preserve that distinction. CP420S6 is
+total checkpoint 694. The 694-920 completion envelope is approximately
+75.4%-100.0%, with an 87.7% midpoint. The evidence-adjusted range is 2-6
+checkpoints to a defensible preliminary gain verdict and 7-16 to the powered
+conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.

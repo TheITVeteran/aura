@@ -33,7 +33,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     TASK_ISSUER,
     CampaignTrustError,
     VerifiedCampaignTrustPolicy,
-    operationally_isolated_roles,
+    externally_custodied_roles,
     validate_campaign_trust_policy,
     verify_role_attestation,
 )
@@ -2540,8 +2540,8 @@ def _verified_transition_policy(
         _fail("transition_trust_context_invalid")
     _validated_attempt_ledger(trust_context)
     policy = trust_context.verified_policy()
-    if not operationally_isolated_roles(policy):
-        _fail("transition_operational_role_custody_required")
+    if not externally_custodied_roles(policy):
+        _fail("transition_external_role_custody_required")
     if policy.policy_sha256 != expected["verifier_trust_policy_sha256"]:
         _fail("transition_trust_policy_mismatch")
     runner = policy.role_pin(CAMPAIGN_RUNNER)
@@ -5176,8 +5176,8 @@ def build_transition_attempt_journal(
         event_times_unix_ns=event_times,
     )
     policy = trust_context.verified_policy()
-    if not operationally_isolated_roles(policy):
-        _fail("transition_operational_role_custody_required")
+    if not externally_custodied_roles(policy):
+        _fail("transition_external_role_custody_required")
     open_attestation = _verify_attempt_ledger_open_attestation(
         policy=policy,
         trust_context=trust_context,

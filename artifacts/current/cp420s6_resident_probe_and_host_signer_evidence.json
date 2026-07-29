@@ -1,0 +1,66 @@
+{
+  "schema": "aura.spark.cp420s6_resident_probe_and_host_signer_evidence.v1",
+  "checkpoint": "CP420S6",
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s5",
+  "initial_policy_probe": {
+    "detached_receipt_sha256": "7f78275cbd7dc0b9ba91f79f4447ceaf649b708199cba79d8d645300f464acbc",
+    "duration_seconds": 17.196174,
+    "resident_model_loaded": true,
+    "recurrent_projections_attached": 24,
+    "initial_policy_sha256": "dd92ca2cb583fdd68869a4e5152d209520b249614b4c1ff45543b5db62f46d8e",
+    "policy_probe_receipt_sha256": "95607bf0056cc71f6a66e4f1adfbbd629fe38f94ff3acde1863056c6f387864a",
+    "optimizer_update_performed": false,
+    "passed": true
+  },
+  "answer_channel_preflight": {
+    "detached_receipt_sha256": "4bbaf7d4497f4ed9fef4281a049b66c6a057df7f0db1475579fc26e6726c7b97",
+    "duration_seconds": 91.599202,
+    "valid_contracts": 6,
+    "correct_answers": 6,
+    "tasks": 6,
+    "verdict": "answer_channel_operational",
+    "report_receipt_sha256": "d5310cfd645f73a9458ff83e463c1667948cd28f23ce79d29c7d2bcc48ba8577",
+    "passed": true
+  },
+  "host_signer_implementation": {
+    "distinct_role_services": 4,
+    "production_role_private_keys_restartable_in_macos_keychain": true,
+    "test_role_private_keys_process_memory_only": true,
+    "role_private_keys_exported": false,
+    "root_private_key_one_use_and_not_persisted": true,
+    "policy_seal_is_one_time": true,
+    "canonical_request_validation": true,
+    "signed_campaign_protocol_operation_purpose_and_idempotency": true,
+    "campaign_role_purpose_confinement": true,
+    "campaign_manifest_purpose_supported": true,
+    "durable_jit_signing_intent": true,
+    "byte_identical_idempotent_replay": true,
+    "final_evidence_artifact_replay_coupled_to_close_signature": true,
+    "broker_output_spooled_and_bounded": true,
+    "broker_artifacts_owned_nonwritable_and_single_link": true,
+    "recovery_reopens_identical_live_services": true,
+    "unauthorized_purpose_rejected": true
+  },
+  "verification": {
+    "targeted_tests_passed": 154,
+    "targeted_tests_failed": 0,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass"
+  },
+  "independent_review_findings_closed": [
+    "campaign_manifest_purpose_mismatch",
+    "false_external_organization_classification",
+    "purpose_operation_and_idempotency_not_signed",
+    "jit_partial_signature_retry_not_idempotent",
+    "evidence_replay_separable_from_close_signature",
+    "unbounded_broker_output_capture",
+    "nonrestartable_production_role_keys"
+  ],
+  "claim_boundary": "same_host_keychain_and_process_isolation_not_independent_external_administration",
+  "production_trust_provisioned": false,
+  "training_started": false,
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}

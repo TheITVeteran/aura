@@ -16,7 +16,6 @@ import json
 import os
 import stat
 import subprocess
-import tempfile
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -29,7 +28,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     TASK_ISSUER,
     VerifiedCampaignTrustPolicy,
     assemble_role_attestation,
-    operationally_isolated_roles,
+    externally_custodied_roles,
     prepare_role_signature_request,
 )
 from core.learning.durable_external_verifier_job import (
@@ -84,7 +83,6 @@ from core.runtime.file_read_gateway import read_stable_bytes
 
 JIT_PROVIDER_CONFIG_SCHEMA = "aura.verified_transition.jit_provider_config.v1"
 JIT_PLAN_PACKAGE_SCHEMA = "aura.verified_transition.jit_plan_package.v1"
-JIT_PLAN_INTENT_SCHEMA = "aura.verified_transition.jit_plan_intent.v1"
 SAMPLING_CONFIG_CONTRACT_SCHEMA = "aura.recurrent_sampling_config.fixed_point.v1"
 COMMAND_SIGNER_REQUEST_SCHEMA = "aura.external_role_signer.request.v1"
 COMMAND_SIGNER_RESPONSE_SCHEMA = "aura.external_role_signer.response.v1"
@@ -322,12 +320,6 @@ class CommandRoleSignerBroker:
             ) from exc
         if not stat.S_ISREG(metadata.st_mode) or not os.access(resolved, os.X_OK):
             _fail("signer_broker_executable_invalid")
-        if (
-            metadata.st_uid != os.getuid()
-            or metadata.st_nlink != 1
-            or stat.S_IMODE(metadata.st_mode) & 0o022
-        ):
-            _fail("signer_broker_executable_not_owned_immutable")
         self._executable = resolved
         self._executable_sha256 = _sha256(executable_sha256, role="signer_broker_executable_sha256")
         self._release_manifest = self._regular_artifact(
@@ -393,12 +385,7 @@ class CommandRoleSignerBroker:
             metadata = resolved.stat()
         except OSError as exc:
             raise VerifiedTransitionProductionFactoryError(f"{role}_unavailable") from exc
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or metadata.st_uid != os.getuid()
-            or metadata.st_nlink != 1
-            or stat.S_IMODE(metadata.st_mode) & 0o022
-        ):
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             _fail(f"{role}_invalid")
         return resolved
 
@@ -418,21 +405,15 @@ class CommandRoleSignerBroker:
         }
         self._assert_executable_identity()
         try:
-            with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-                completed = subprocess.run(
-                    [str(self._executable), *self._arguments],
-                    input=request_bytes,
-                    stdout=stdout,
-                    stderr=stderr,
-                    check=False,
-                    timeout=self._timeout_seconds,
-                    env=environment,
-                    shell=False,
-                )
-                stdout.seek(0)
-                stdout_bytes = stdout.read(64 * 1024 + 1)
-                stderr.seek(0)
-                stderr_bytes = stderr.read(64 * 1024 + 1)
+            completed = subprocess.run(
+                [str(self._executable), *self._arguments],
+                input=request_bytes,
+                capture_output=True,
+                check=False,
+                timeout=self._timeout_seconds,
+                env=environment,
+                shell=False,
+            )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise VerifiedTransitionProductionFactoryError(
                 "signer_broker_execution_failed"
@@ -440,17 +421,17 @@ class CommandRoleSignerBroker:
         self._assert_executable_identity()
         if completed.returncode != 0:
             _fail("signer_broker_rejected_request")
-        if len(stdout_bytes) > 64 * 1024 or len(stderr_bytes) > 64 * 1024:
+        if len(completed.stdout) > 64 * 1024 or len(completed.stderr) > 64 * 1024:
             _fail("signer_broker_output_too_large")
         try:
-            response = json.loads(stdout_bytes)
+            response = json.loads(completed.stdout)
         except (UnicodeError, json.JSONDecodeError) as exc:
             raise VerifiedTransitionProductionFactoryError(
                 "signer_broker_response_invalid"
             ) from exc
         if (
             not isinstance(response, dict)
-            or stdout_bytes != canonical_json_bytes(response) + b"\n"
+            or completed.stdout != canonical_json_bytes(response) + b"\n"
         ):
             _fail("signer_broker_response_invalid")
         return response
@@ -551,16 +532,6 @@ class CommandRoleSignerBroker:
             role=role,
             payload=payload,
             signed_at_unix=signed_at_unix,
-            operation=(
-                "campaign_close"
-                if role == EVIDENCE_VERIFIER
-                else "campaign_manifest"
-                if purpose.endswith(":campaign-manifest")
-                else "group_lineage"
-                if purpose.endswith(":lineage")
-                else "group_manifest"
-            ),
-            purpose=purpose,
         )
         envelope = {
             "schema": COMMAND_SIGNER_REQUEST_SCHEMA,
@@ -620,84 +591,6 @@ class JITVerifiedTransitionPlanStore:
     def _path(self, sequence: int) -> Path:
         value = _integer(sequence, role="jit_plan_sequence")
         return self.root / f"plan-{value:08d}.json"
-
-    def _intent_path(self, sequence: int) -> Path:
-        value = _integer(sequence, role="jit_plan_sequence")
-        return self.root / f"plan-{value:08d}.intent.json"
-
-    def reserve_intent(
-        self,
-        *,
-        sequence: int,
-        campaign_schedule_root_sha256: str,
-        policy_before_sha256: str,
-        task_id: str,
-        prompt_tokens_sha256: str,
-        observed_at_unix_ns: int,
-    ) -> dict[str, Any]:
-        planned_at = (
-            _integer(
-                observed_at_unix_ns,
-                role="jit_plan_intent_observed_at",
-                minimum=1,
-            )
-            // 1_000_000_000
-        ) * 1_000_000_000
-        body = {
-            "schema": JIT_PLAN_INTENT_SCHEMA,
-            "contract_sha256": self.contract_sha256,
-            "campaign_schedule_root_sha256": _sha256(
-                campaign_schedule_root_sha256,
-                role="jit_plan_intent_schedule_root",
-            ),
-            "sequence": _integer(sequence, role="jit_plan_sequence"),
-            "policy_before_sha256": _sha256(
-                policy_before_sha256,
-                role="jit_plan_intent_policy",
-            ),
-            "task_id": _identifier(task_id, role="jit_plan_intent_task"),
-            "prompt_tokens_sha256": _sha256(
-                prompt_tokens_sha256,
-                role="jit_plan_intent_prompt",
-            ),
-            "planned_at_unix_ns": planned_at,
-            "admitted_at_unix_ns": planned_at + 1,
-        }
-        intent = {**body, "intent_sha256": _digest(body)}
-        path = self._intent_path(sequence)
-        with interprocess_file_lock(self.root / ".publish.lock"):
-            if not atomic_write_bytes_if_absent(
-                path,
-                canonical_json_bytes(intent),
-                mode=0o600,
-            ):
-                raw = read_stable_bytes(path, max_bytes=1 << 20)
-                try:
-                    existing = json.loads(raw)
-                except (UnicodeError, json.JSONDecodeError) as exc:
-                    raise VerifiedTransitionProductionFactoryError(
-                        "jit_plan_intent_invalid"
-                    ) from exc
-                immutable = {
-                    key: value
-                    for key, value in intent.items()
-                    if key not in {"planned_at_unix_ns", "admitted_at_unix_ns", "intent_sha256"}
-                }
-                existing_immutable = {
-                    key: value
-                    for key, value in existing.items()
-                    if key not in {"planned_at_unix_ns", "admitted_at_unix_ns", "intent_sha256"}
-                }
-                existing_body = dict(existing)
-                claimed = existing_body.pop("intent_sha256", None)
-                if (
-                    raw != canonical_json_bytes(existing)
-                    or immutable != existing_immutable
-                    or claimed != _digest(existing_body)
-                ):
-                    _fail("jit_plan_intent_conflict")
-                intent = existing
-        return intent
 
     def load(self, *, sequence: int) -> dict[str, Any] | None:
         path = self._path(sequence)
@@ -803,8 +696,8 @@ class JITAdmittingVerifiedTransitionGroupProvider:
         reward_config_sha256: str,
         now_unix_ns: Callable[[], int] = time.time_ns,
     ) -> None:
-        if not operationally_isolated_roles(policy):
-            _fail("jit_provider_operational_role_custody_required")
+        if not externally_custodied_roles(policy):
+            _fail("jit_provider_external_role_custody_required")
         if type(branch_count) is not int or not 1 <= branch_count <= 256:
             _fail("jit_provider_branch_count_invalid")
         if provider.contract_sha256 != plan_store.contract_sha256:
@@ -852,7 +745,6 @@ class JITAdmittingVerifiedTransitionGroupProvider:
         task: Any,
         prompt_tokens: Sequence[int],
         policy_sha256: str,
-        intent: Mapping[str, Any],
     ) -> dict[str, Any]:
         commitment = self._provider.task_commitment(sequence=sequence)
         prompt_sha256 = _digest(list(prompt_tokens))
@@ -891,11 +783,8 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                     sampling_config_sha256=config_sha256,
                 )
             )
-        planned_at = _integer(
-            intent.get("planned_at_unix_ns"),
-            role="jit_provider_planned_at",
-            minimum=1,
-        )
+        observed = _integer(self._now_unix_ns(), role="jit_provider_observed_at", minimum=1)
+        planned_at = (observed // 1_000_000_000) * 1_000_000_000
         manifest = build_transition_group_manifest(
             group_id=f"{self._provider.campaign_id}:group:{sequence}",
             task_id=cast(str, commitment["task_id"]),
@@ -923,10 +812,13 @@ class JITAdmittingVerifiedTransitionGroupProvider:
             signed_at_unix=signed_at,
             purpose=f"{self._provider.campaign_id}:group:{sequence}:lineage",
         )
-        admitted_at = _integer(
-            intent.get("admitted_at_unix_ns"),
-            role="jit_provider_admitted_at",
-            minimum=planned_at + 1,
+        admitted_at = max(
+            planned_at + 1,
+            _integer(
+                self._now_unix_ns(),
+                role="jit_provider_admitted_at",
+                minimum=1,
+            ),
         )
         body = {
             "schema": JIT_PLAN_PACKAGE_SCHEMA,
@@ -1011,25 +903,12 @@ class JITAdmittingVerifiedTransitionGroupProvider:
                     raise
             package = self._store.load(sequence=sequence)
             if package is None:
-                prompt_sha256 = _digest(list(prompt_tokens))
-                commitment = self._provider.task_commitment(sequence=sequence)
-                intent = self._store.reserve_intent(
-                    sequence=sequence,
-                    campaign_schedule_root_sha256=(
-                        self._provider.campaign_schedule_root_sha256
-                    ),
-                    policy_before_sha256=policy_sha256,
-                    task_id=cast(str, commitment["task_id"]),
-                    prompt_tokens_sha256=prompt_sha256,
-                    observed_at_unix_ns=self._now_unix_ns(),
-                )
                 package = self._store.publish(
                     self._build_package(
                         sequence=sequence,
                         task=task,
                         prompt_tokens=prompt_tokens,
                         policy_sha256=policy_sha256,
-                        intent=intent,
                     ),
                     sequence=sequence,
                 )
@@ -1163,8 +1042,7 @@ class ProductionVerifiedTransitionProviderFactory:
             or issuer_pin["release_sha256"] != task_issuer_signer_broker.release_sha256
             or issuer_pin["custody_evidence_sha256"]
             != task_issuer_signer_broker.custody_evidence_sha256
-            or issuer_pin["custody_class"]
-            not in {"host_isolated_service", "external_service", "remote_hsm"}
+            or issuer_pin["custody_class"] not in {"external_service", "remote_hsm"}
         ):
             _fail("production_factory_signer_custody_pin_mismatch")
         verifier_pin = campaign_trust_policy.role_pin(EVIDENCE_VERIFIER)
@@ -1174,8 +1052,7 @@ class ProductionVerifiedTransitionProviderFactory:
             or verifier_pin["release_sha256"] != evidence_verifier_signer_broker.release_sha256
             or verifier_pin["custody_evidence_sha256"]
             != evidence_verifier_signer_broker.custody_evidence_sha256
-            or verifier_pin["custody_class"]
-            not in {"host_isolated_service", "external_service", "remote_hsm"}
+            or verifier_pin["custody_class"] not in {"external_service", "remote_hsm"}
         ):
             _fail("production_factory_verifier_custody_pin_mismatch")
         replay_root = Path(frozen["ledger_roots"]["replay_artifacts"])
