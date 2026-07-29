@@ -53,13 +53,19 @@ class TestTheCountComesFromTheRequest:
             == 3
         )
 
-    def test_no_number_asked_means_no_number_claimed(self):
-        assert (
-            DesktopTaskSkill._requested_research_source_count(
-                "write a summary about orcas"
-            )
-            == 0
-        )
+    @pytest.mark.parametrize(
+        "objective",
+        [
+            "write a summary about orcas",
+            "find some articles about orcas",
+            "open some articles about orcas",
+            "research orcas and write it up",
+        ],
+    )
+    def test_no_number_asked_means_no_number_claimed(self, objective):
+        """It used to return 1 for any objective mentioning sources, and 3 if
+        the word "different" appeared — two numbers nobody chose."""
+        assert DesktopTaskSkill._requested_research_source_count(objective) == 0
 
     def test_the_count_is_bounded(self):
         """A request for forty sources is not a licence to read forty."""
@@ -98,11 +104,37 @@ class TestOneParserNotTwo:
 
 
 class TestTheFetchFollowsTheRequest:
-    def test_the_search_asks_for_what_was_requested_plus_one_spare(self):
-        """The spare covers a dead link — the reason a margin existed at all.
-        Five-for-three was not a margin, it was two extra articles read."""
+    def test_the_search_asks_for_exactly_what_was_requested(self):
+        """No spare, no floor, no ceiling of someone's choosing.
+
+        Bryan: "we shouldnt be hardcoding ANY test values into Aura. She
+        should search for the number of sources or articles because my
+        specific request asked for it. Not because she is mechanically forced
+        to find an arbitrary number." A "+1 spare for a dead link" was the
+        same mistake one size smaller.
+        """
         import inspect
 
         source = inspect.getsource(DesktopTaskSkill)
-        assert "_requested_research_source_count(objective)" in source
-        assert "min(5, requested + 1) if requested else 5" in source
+        assert "num_results = requested" in source
+        assert "requested + 1" not in source
+
+    def test_an_unstated_count_is_not_invented(self):
+        """The key is simply not sent, so web_search's own documented default
+        applies — one default where it is described, not five guesses."""
+        import inspect
+
+        source = inspect.getsource(DesktopTaskSkill)
+        assert '**({"num_results": num_results} if num_results else {})' in source
+
+    def test_the_only_surviving_bound_protects_the_runtime(self):
+        """Under memory pressure a deep multi-source fetch spikes RAM. That
+        ceiling is a safety limit with a stated reason, and it only ever
+        lowers a request."""
+        import inspect
+
+        import core.skills.desktop_task as module
+
+        assert module._MEMORY_SAFE_SOURCE_CEILING > 0
+        source = inspect.getsource(module)
+        assert "It only ever lowers a request, never raises one." in source

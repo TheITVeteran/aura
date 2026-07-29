@@ -76,6 +76,13 @@ _FOCUS_SENSITIVE_ACTIONS = frozenset({"type", "hotkey", "click", "scroll", "read
 _QUOTED_SPAN_RE = re.compile(r"['\"\u2018\u2019\u201c\u201d]([^'\"\u2018\u2019\u201c\u201d]{1,80})")
 
 
+#: The one bound that is real rather than arbitrary: under memory pressure a
+#: deep multi-source fetch is what spikes RAM on a live desktop, so the count
+#: is capped to protect the runtime — not to express a preference about how
+#: much research is enough. It only ever lowers a request, never raises one.
+_MEMORY_SAFE_SOURCE_CEILING = 3
+
+
 def _local_timestamp() -> str:
     """Timestamp string used in user-visible desktop artifacts."""
     return time.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -403,22 +410,20 @@ class DesktopTaskSkill(BaseSkill):
         lowered = str(objective or "").lower()
         if not any(token in lowered for token in ("open", "show", "bring up", "pull up", "tab")):
             return 0
-        return DesktopTaskSkill._counted_in_request(lowered) or 3
+        # "open some articles" with no number opens what the search returned
+        # rather than a hardcoded three.
+        return DesktopTaskSkill._counted_in_request(lowered)
 
     @staticmethod
     def _requested_research_source_count(objective: str) -> int:
-        lowered = str(objective or "").lower()
-        counted = DesktopTaskSkill._counted_in_request(lowered)
-        if counted:
-            return counted
-        if not any(
-            token in lowered
-            for token in ("article", "articles", "source", "sources", "news", "stories")
-        ):
-            return 0
-        if "different" in lowered:
-            return 3
-        return 1
+        """How many sources the request asked for. 0 means it did not say.
+
+        It used to say 1 for any objective mentioning sources, and 3 if the
+        word "different" appeared — two numbers nobody chose for this
+        request. 0 is the honest answer, and every caller now handles it as
+        "unspecified" rather than substituting a favourite.
+        """
+        return DesktopTaskSkill._counted_in_request(str(objective or "").lower())
 
     #: Adjectives a person puts between the number and the noun. "3 RECENT
     #: articles" matched nothing before this and fell through to 1, so a
@@ -2201,19 +2206,25 @@ class DesktopTaskSkill(BaseSkill):
         if not query:
             return {}
         deep_search = True
-        # READ WHAT WAS ASKED FOR, PLUS ONE.
+        # THE REQUEST DECIDES. Nothing else does.
         #
-        # This was a flat 5. Asked for "3 recent articles about orcas" she
-        # searched, fetched and read five — and the whole cost of the step is
-        # the local model reading them (measured: gathering logs as 0.0s, the
-        # run as 82.4s). So two of those five were pure latency for material
-        # nobody asked for, and the document cited more sources than the
-        # request wanted.
+        # This was a flat 5: asked for "3 recent articles about orcas" she
+        # fetched and read five, and reading is the entire cost of the step
+        # (gathering logs as 0.0s). Two of those five were latency for
+        # material nobody asked for, and the document cited more sources than
+        # the request wanted.
         #
-        # The spare covers a dead link, which is the reason a margin existed
-        # at all; the validation below already tolerates coming up short.
+        # A "+1 spare for a dead link" lived here briefly and was the same
+        # mistake one size smaller — a number with no one behind it. If a
+        # source fails to fetch, the validation below already says so
+        # honestly rather than silently padding.
+        #
+        # When the request names no count, nothing here invents one: the key
+        # is simply not sent, so web_search's own documented default applies.
+        # One default, in the schema where it is described, instead of five
+        # scattered guesses.
         requested = self._requested_research_source_count(objective)
-        num_results = min(5, requested + 1) if requested else 5
+        num_results = requested
         pressure_limited = False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -2225,7 +2236,11 @@ class DesktopTaskSkill(BaseSkill):
             )
             if pressure_limited:
                 deep_search = False
-                num_results = 3
+                num_results = (
+                    min(num_results, _MEMORY_SAFE_SOURCE_CEILING)
+                    if num_results
+                    else _MEMORY_SAFE_SOURCE_CEILING
+                )
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as exc:
             record_degradation(
                 "desktop_task",
@@ -2234,7 +2249,11 @@ class DesktopTaskSkill(BaseSkill):
                 severity="warning",
             )
             deep_search = False
-            num_results = 3
+            num_results = (
+                min(num_results, _MEMORY_SAFE_SOURCE_CEILING)
+                if num_results
+                else _MEMORY_SAFE_SOURCE_CEILING
+            )
             pressure_limited = True
         step_context = self._child_step_context(context)
         step_context.update(
@@ -2254,7 +2273,8 @@ class DesktopTaskSkill(BaseSkill):
                 "web_search",
                 {
                     "query": query,
-                    "num_results": num_results,
+                    # Present only when the request asked for a number.
+                    **({"num_results": num_results} if num_results else {}),
                     # Deep article fetches are useful, but they are no longer
                     # allowed to run before memory admission. Under pressure we
                     # use snippets and fewer sources instead of risking a live
