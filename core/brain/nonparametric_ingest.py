@@ -41,6 +41,11 @@ class Encoder(Protocol):
     def encode_hidden(self, text: str) -> np.ndarray: ...
     def first_token(self, continuation: str) -> int: ...
 
+    # Optional. When present, the store learns what each key PREDICTS in
+    # readable form; without it the store is keys and integers, and the
+    # generation path has no token text to recall.
+    def decode_token(self, token_id: int) -> str: ...
+
 
 #: Legacy receipts kept only 16 hex chars (64 bits). At datastore scale that is
 #: collision-prone, and a collision silently classifies a DISTINCT trusted pair
@@ -52,6 +57,43 @@ _LEGACY_HASH_LEN = 16
 #: Largest trusted store this will load into memory at once (64 MiB). Generous
 #: for a legitimate local cache, bounded against an adversarial or runaway one.
 _MAX_TRUSTED_STORE_BYTES = 64 * 1024 * 1024
+
+
+def _decode_token(encoder: Any, token_id: int) -> str:
+    """The readable text of one token, or "" if the encoder cannot say.
+
+    THE STORE MUST KNOW WHAT ITS KEYS PREDICT.
+    
+    ingest_sequence stored `answer if position == start else ""` — the whole
+    answer at the first position and nothing at every other one. The live
+    5120-wide store built 2026-07-13 therefore held 1,689 keys of which 1,677
+    carried no token text and 12 carried an entire answer as a single "token".
+    Neither is what a per-token kNN store holds, and the worker's usability
+    guard correctly refused to let it steer generation — 591 refusals in one
+    session, with the faculty dark throughout.
+    
+    The token ids were always right. Only the decode was missing.
+    """
+    for name in ("decode_token", "decode", "detokenize"):
+        method = getattr(encoder, name, None)
+        if not callable(method):
+            continue
+        try:
+            text = method(int(token_id))
+        except (RuntimeError, AttributeError, TypeError, ValueError, IndexError):
+            continue
+        if isinstance(text, str) and text:
+            return text
+    tokenizer = getattr(encoder, "tokenizer", None)
+    decode = getattr(tokenizer, "decode", None) if tokenizer is not None else None
+    if callable(decode):
+        try:
+            text = decode([int(token_id)])
+            if isinstance(text, str) and text:
+                return text
+        except (RuntimeError, AttributeError, TypeError, ValueError, IndexError):
+            pass
+    return ""
 
 
 def _pair_hash(context: str, answer: str) -> str:
@@ -205,7 +247,14 @@ class NonParametricIngestor:
         with self._lock:
             if self._is_seen(h):
                 return False
-            if not self._mem.add(key, token_id, token=answer, weight=weight):
+            # `answer` is the continuation, not the token this key predicts;
+            # storing it made a whole reply masquerade as one token.
+            if not self._mem.add(
+                key,
+                token_id,
+                token=_decode_token(encoder, token_id),
+                weight=weight,
+            ):
                 return False
             self._mark_seen(h)
         return True
@@ -303,7 +352,9 @@ class NonParametricIngestor:
                                 dtype=np.float32,
                             ),
                             int(full_ids[position + 1]),
-                            answer if position == start else "",
+                            # The token this key predicts, decoded — not the
+                            # whole answer at position 0 and nothing after.
+                            _decode_token(encoder, int(full_ids[position + 1])),
                         )
                     )
         except (RuntimeError, AttributeError, TypeError, ValueError, IndexError) as exc:

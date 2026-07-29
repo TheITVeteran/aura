@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+import pathlib
+import time
 from typing import Any
 
 import numpy as np
@@ -144,6 +146,49 @@ _MIN_USABLE_ENTRY_FRACTION = 0.5
 _MIN_USABLE_ENTRIES = 32
 
 
+#: Refusals already reported, so a permanently-unusable store is named once
+#: per process rather than once per turn. The 2026-07-13 store produced 591
+#: identical warnings in a single session — the guard was working and the log
+#: was the only thing that suffered.
+_REPORTED_UNUSABLE: set[str] = set()
+
+
+def _quarantine_unusable_datastore(memory: Any, reason: str) -> str:
+    """Move a provably-unusable store aside so a good one can be built.
+
+    Renamed, never deleted: the files are evidence of how the store went wrong
+    and they are the user's data. What matters is that they stop being loaded,
+    because the guard below is permanent — nothing else retires the store, so
+    without this the faculty is dark for every future session too.
+    """
+    raw_path = str(getattr(memory, "_path", "") or "")
+    if not raw_path:
+        return ""
+    base = pathlib.Path(raw_path).expanduser()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved: list[str] = []
+    for suffix in (".keys.npy", ".meta.json"):
+        source = base.with_name(base.name + suffix)
+        if not source.exists():
+            continue
+        target = source.with_name(f"{source.name}.unusable-{stamp}")
+        try:
+            source.rename(target)
+            moved.append(target.name)
+        except OSError as exc:
+            logger.warning("Could not quarantine %s: %s", source, exc)
+            return ""
+    if not moved:
+        return ""
+    logger.warning(
+        "Non-parametric memory: quarantined an unusable datastore (%s). "
+        "Renamed to %s; a fresh store will build from this session onward.",
+        reason,
+        ", ".join(moved),
+    )
+    return ", ".join(moved)
+
+
 def _unusable_datastore_reason(memory: Any) -> str:
     """Why this datastore may not steer live generation, or "" if it may."""
     try:
@@ -154,17 +199,30 @@ def _unusable_datastore_reason(memory: Any) -> str:
     if total == 0:
         return ""
     usable = sum(1 for token in tokens if str(token or "").strip())
+    reason = ""
     if usable < _MIN_USABLE_ENTRIES:
-        return (
+        reason = (
             f"only {usable} of {total} entries carry a recallable token "
             f"(need at least {_MIN_USABLE_ENTRIES})"
         )
-    if usable < total * _MIN_USABLE_ENTRY_FRACTION:
-        return (
+    elif usable < total * _MIN_USABLE_ENTRY_FRACTION:
+        reason = (
             f"{total - usable} of {total} entries carry no recallable token "
             f"({100.0 * usable / total:.1f}% usable)"
         )
-    return ""
+    if not reason:
+        return ""
+    # SAY IT ONCE, AND THEN DO SOMETHING ABOUT IT.
+    #
+    # This condition cannot improve on its own — the store on disk is what it
+    # is — so repeating the verdict every turn is noise and leaving the store
+    # in place keeps the faculty dark forever. Quarantine it once and let a
+    # fresh one accumulate.
+    key = f"{str(getattr(memory, '_path', '') or '?')}:{total}:{usable}"
+    if key not in _REPORTED_UNUSABLE:
+        _REPORTED_UNUSABLE.add(key)
+        _quarantine_unusable_datastore(memory, reason)
+    return reason
 
 
 def maybe_build_foreground(

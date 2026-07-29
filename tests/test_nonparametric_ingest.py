@@ -14,19 +14,36 @@ from core.brain.nonparametric_memory import NonParametricMemory
 class FakeEncoder:
     dim = 8
 
+    def __init__(self) -> None:
+        # A real tokenizer can turn an id back into text, and the store is
+        # useless without that: the live 5120-wide store held 1,689 keys of
+        # which 1,677 carried no token text, because nothing ever decoded.
+        # A fake encoder that cannot decode does not stand in for a real one.
+        self._vocab: dict[int, str] = {}
+
     def encode_hidden(self, text: str) -> np.ndarray:
         seed = int(hashlib.sha256(text.encode()).hexdigest()[:8], 16)
         return np.random.default_rng(seed).standard_normal(self.dim).astype(np.float32)
 
     def first_token(self, continuation: str) -> int:
-        return int(hashlib.sha256(continuation.encode()).hexdigest()[:4], 16) % 1000
+        token_id = int(hashlib.sha256(continuation.encode()).hexdigest()[:4], 16) % 1000
+        self._vocab.setdefault(token_id, continuation.strip())
+        return token_id
+
+    def decode_token(self, token_id: int) -> str:
+        return self._vocab.get(int(token_id), f"<{int(token_id)}>")
 
 
 class FakeSeqEncoder(FakeEncoder):
     """Adds the id-level hooks ingest_sequence needs (prefix-consistent tokenization)."""
 
     def encode_tokens(self, text: str) -> list[int]:
-        return [int(hashlib.sha1(w.encode()).hexdigest()[:6], 16) % 5000 for w in text.split()]
+        ids = []
+        for word in text.split():
+            token_id = int(hashlib.sha1(word.encode()).hexdigest()[:6], 16) % 5000
+            self._vocab.setdefault(token_id, word)
+            ids.append(token_id)
+        return ids
 
     def encode_hidden_ids(self, ids: list[int]) -> np.ndarray:
         seed = int(hashlib.sha256(str(list(ids)).encode()).hexdigest()[:8], 16)
@@ -40,6 +57,7 @@ class FakeSeqEncoder(FakeEncoder):
 
 class FakeBatchSeqEncoder(FakeSeqEncoder):
     def __init__(self) -> None:
+        super().__init__()
         self.batch_calls = 0
         self.prefix_calls = 0
 
