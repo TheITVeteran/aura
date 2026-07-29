@@ -68,6 +68,31 @@ class TestTheTopicIsResolvedNotDemanded:
     def test_an_empty_topic_yields_nothing(self, ComputerUseSkill):
         assert ComputerUseSkill._image_topic_candidates("", _DeadGateway(), {}) == []
 
+    def test_the_article_search_does_not_guess_at_senses(self, ComputerUseSkill):
+        """Wikipedia's full-text search ranks by prominence, not by what a word
+        depicts, so it answers a different question:
+
+            "rock" -> Rock music, The Rock, "Rock, Rock, Rock!" (1956 film)
+            "tree" -> Kruskal's tree theorem, Oliver Tree
+
+        Measured the hard way: asked for a rock as his wallpaper, Bryan got the
+        one-sheet poster for "Rock, Rock, Rock!". The lookup succeeded and the
+        sense was wrong, which is worse than failing.
+        """
+        source = inspect.getsource(ComputerUseSkill._image_topic_candidates)
+        assert "list=search" not in source, (
+            "the fuzzy article search must not choose the sense of a word"
+        )
+        assert "return seen[:2]" in source, "only the literal title and the noun"
+
+    def test_a_document_is_not_a_picture(self, ComputerUseSkill):
+        """Commons renders a PDF's first page as a .jpg thumbnail, so a suffix
+        check on the rendering let a scanned poetry book through as "a lonely
+        traffic cone"."""
+        source = inspect.getsource(ComputerUseSkill._commons_image_candidate)
+        assert '".pdf"' in source and '".djvu"' in source
+        assert 'title.endswith' in source, "judge the file, not its rendering"
+
     def test_a_disambiguation_page_is_not_a_picture(self, ComputerUseSkill):
         source = inspect.getsource(ComputerUseSkill._fetch_topic_image)
         assert 'endswith("disambiguation")' in source, (

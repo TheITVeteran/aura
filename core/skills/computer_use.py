@@ -1884,36 +1884,23 @@ end tell
         if stripped:
             _add(stripped[:1].upper() + stripped[1:])
 
-        # Wikipedia's search resolves the phrase to real article titles, which
-        # is the step that was missing entirely.
-        from urllib.parse import quote
-
-        query = stripped or raw
-        search_url = (
-            "https://en.wikipedia.org/w/api.php?action=query&list=search"
-            f"&srsearch={quote(query)}&srlimit=5&srnamespace=0&format=json"
-        )
-        try:
-            response = cls._polite_media_request(
-                gateway,
-                search_url,
-                headers,
-                timeout=15.0,
-                source="computer_use:fetch_topic_image.search",
-            )
-            if response.get("ok"):
-                body = response.get("content") or response.get("text") or b"{}"
-                if isinstance(body, bytes):
-                    body = body.decode("utf-8", errors="replace")
-                hits = (
-                    (json.loads(body or "{}").get("query") or {}).get("search") or []
-                )
-                for hit in hits:
-                    if isinstance(hit, dict):
-                        _add(str(hit.get("title") or ""))
-        except Exception as exc:  # noqa: BLE001 - a fallback may never raise
-            logger.debug("Wikipedia title search unavailable for %r: %s", topic, exc)
-        return seen[:6]
+        # NO FUZZY ARTICLE SEARCH. It answers a different question.
+        #
+        # Wikipedia's full-text search ranks by article prominence, not by
+        # what a word depicts, so asking it to name "a picture of X" returns
+        # whatever is famous:
+        #
+        #   "rock" -> Rock music, The Rock, "Rock, Rock, Rock!" (a 1956 film)
+        #   "tree" -> Kruskal's tree theorem, Oliver Tree
+        #
+        # Measured the hard way: asked for a rock as his wallpaper, Bryan got
+        # the one-sheet poster for "Rock, Rock, Rock!". The lookup succeeded
+        # and the sense was wrong, which is worse than failing.
+        #
+        # Only the literal title and the bare noun are tried here. Finding a
+        # picture of a thing is Wikimedia Commons' job — it indexes files that
+        # are OF things — and the caller reaches for it before giving up.
+        return seen[:2]
 
     @staticmethod
     def _commons_image_candidate(
@@ -1958,6 +1945,16 @@ end tell
             return None
         for page in (pages.values() if isinstance(pages, dict) else []):
             if not isinstance(page, dict):
+                continue
+            # JUDGE THE FILE, NOT ITS RENDERING.
+            #
+            # Commons renders the first page of a PDF or DjVu as a .jpg
+            # thumbnail, so a suffix check on thumburl let documents through:
+            # "a lonely traffic cone" came back as a scanned poetry book.
+            title = str(page.get("title") or "").lower()
+            if title.endswith((".pdf", ".djvu", ".tif", ".tiff", ".svg", ".ogv", ".webm")):
+                continue
+            if not title.endswith((".jpg", ".jpeg", ".png", ".webp")):
                 continue
             for info in page.get("imageinfo") or []:
                 if not isinstance(info, dict):
@@ -2069,10 +2066,12 @@ end tell
             if wide != thumbnail_url:
                 candidates.insert(1, wide)
         if not candidates:
+            # The actual image search, and the only step that is one.
             commons = self._commons_image_candidate(topic, gateway, ua)
             if commons:
                 candidates = [commons[0]]
                 page_url = commons[1] or page_url
+                lookup_error = ""
         if not candidates:
             # BEING THROTTLED IS NOT THE SAME AS THERE BEING NO PICTURE.
             #
