@@ -379,7 +379,27 @@ class ComputerUseSkill(BaseSkill):
     }
 
     def _frontmost_app_name(self) -> str:
-        """Cheap frontmost-app query — no accessibility tree walk."""
+        """Which app owns the front window right now.
+
+        The screen blueprint answers this in-process from the window server's
+        own z-order, in about the time one osascript fork takes to *start*.
+        That difference is structural rather than cosmetic: this is called in
+        a poll loop, so the old path spent a 5s-timeout subprocess on every
+        tick and made the wait it was supposed to measure the slowest part of
+        the step.
+
+        The AppleScript remains as the fallback, because a blueprint that
+        cannot be taken must not silently become "no app is frontmost" — that
+        reads as failure, and this function's answer decides whether we type.
+        """
+        try:
+            from core.perception.screen_blueprint import capture_blueprint
+
+            blueprint = capture_blueprint(fresh=True)
+            if not blueprint.unavailable and blueprint.frontmost_app:
+                return blueprint.frontmost_app
+        except Exception as exc:  # noqa: BLE001 - fall through to the slow path
+            logger.debug("Blueprint frontmost query unavailable: %s", exc)
         try:
             return self._run_applescript(
                 'tell application "System Events" to get name of first '
@@ -389,6 +409,32 @@ class ComputerUseSkill(BaseSkill):
         except (TimeoutError, RuntimeError) as exc:
             logger.debug("Frontmost app query failed: %s", exc)
             return ""
+
+    def _window_is_actually_visible(self, app_name: str) -> tuple[bool, str]:
+        """Is this app's window really in view, or just nominally in front?
+
+        Frontmost is a claim about focus; a person means something stricter by
+        "it's open" — that they can see it. A window can hold focus and still
+        be almost entirely behind another one, and typing into it then looks
+        to the person like nothing happened. The blueprint measures the
+        visible fraction, so this is answerable instead of assumed.
+        """
+        try:
+            from core.perception.screen_blueprint import capture_blueprint
+
+            blueprint = capture_blueprint(fresh=True)
+        except Exception as exc:  # noqa: BLE001
+            return True, f"screen layout unreadable ({type(exc).__name__})"
+        if blueprint.unavailable:
+            return True, blueprint.unavailable_reason
+        windows = blueprint.windows_for(app_name)
+        if not windows:
+            return False, f"{app_name} has no window on screen"
+        best = max(windows, key=lambda window: window.visible_fraction)
+        if best.is_visible:
+            return True, best.describe()
+        covering = best.covered_by[0] if best.covered_by else "another window"
+        return False, f"{app_name} is hidden behind {covering}"
 
     @staticmethod
     def _frontmost_app_matches(actual: str, expected: str) -> bool:
@@ -617,6 +663,21 @@ class ComputerUseSkill(BaseSkill):
                 except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
                     logger.debug("Frontmost activation retry failed for %s: %s", expected, exc)
             await asyncio.sleep(0.35)
+
+        # Say what actually happened, not just which name came back. "did not
+        # become frontmost (observed=Google Chrome)" is a symptom; the
+        # blueprint knows whether the window never opened, opened behind
+        # something, or opened where nobody can see it — and those are three
+        # different problems with three different repairs.
+        try:
+            visible, detail = await asyncio.to_thread(
+                self._window_is_actually_visible, expected
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnosis may never mask the result
+            logger.debug("Blueprint diagnosis failed for %s: %s", expected, exc)
+            return False, last_seen
+        if detail and not visible:
+            return False, f"{last_seen or 'unknown'} ({detail})"
         return False, last_seen
 
     @staticmethod
