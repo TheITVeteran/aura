@@ -1803,6 +1803,176 @@ end tell
             )
         return result
 
+    #: Resolved image lookups, so asking twice does not search twice.
+    #: Wikimedia answers 429 quickly when a chain of requests arrives in a
+    #: burst, and the chain below makes several per topic.
+    _IMAGE_LOOKUP_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+    _IMAGE_LOOKUP_TTL_S = 1800.0
+
+    @classmethod
+    def _polite_media_request(
+        cls,
+        gateway: Any,
+        url: str,
+        headers: dict[str, str],
+        *,
+        timeout: float,
+        source: str,
+    ) -> dict[str, Any]:
+        """One Wikimedia request, retried once when asked to slow down.
+
+        429 is not a failure, it is an instruction. Measured: seven image
+        topics in a tight loop and the last five came back "no image
+        available for topic X (HTTP Error 429)" — a rate limit reported to the
+        person as though the thing they asked for did not exist.
+        """
+        for attempt in range(3):
+            response = gateway.request(
+                "GET",
+                url,
+                headers=headers,
+                timeout=timeout,
+                source=source,
+                read_only=True,
+            )
+            if response.get("ok"):
+                return response
+            detail = f"{response.get('status_code') or ''} {response.get('error') or ''}"
+            if "429" not in detail and "too many" not in detail.lower():
+                return response
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+        return response
+
+    #: Words a person puts in front of a noun that are not part of the thing.
+    _IMAGE_TOPIC_LEADERS = (
+        "a ", "an ", "the ", "some ", "any ", "picture of ", "photo of ",
+        "image of ", "pic of ",
+    )
+
+    @classmethod
+    def _image_topic_candidates(
+        cls, topic: str, gateway: Any, headers: dict[str, str]
+    ) -> list[str]:
+        """Titles worth trying for "a picture of X", best first.
+
+        The literal topic comes first because it is free when it works. Then
+        the bare noun ("a rock" -> "rock"), then whatever Wikipedia's own
+        search says that phrase names — which is what turns "a rock" into
+        "Rock (geology)" without anyone writing that mapping down.
+        """
+        seen: list[str] = []
+
+        def _add(value: str) -> None:
+            cleaned = " ".join(str(value or "").split())
+            if cleaned and cleaned.lower() not in {item.lower() for item in seen}:
+                seen.append(cleaned)
+
+        raw = " ".join(str(topic or "").split())
+        if not raw:
+            return []
+        _add(raw[:1].upper() + raw[1:])
+
+        stripped = raw.lower()
+        changed = True
+        while changed:
+            changed = False
+            for leader in cls._IMAGE_TOPIC_LEADERS:
+                if stripped.startswith(leader):
+                    stripped = stripped[len(leader):].strip()
+                    changed = True
+        if stripped:
+            _add(stripped[:1].upper() + stripped[1:])
+
+        # Wikipedia's search resolves the phrase to real article titles, which
+        # is the step that was missing entirely.
+        from urllib.parse import quote
+
+        query = stripped or raw
+        search_url = (
+            "https://en.wikipedia.org/w/api.php?action=query&list=search"
+            f"&srsearch={quote(query)}&srlimit=5&srnamespace=0&format=json"
+        )
+        try:
+            response = cls._polite_media_request(
+                gateway,
+                search_url,
+                headers,
+                timeout=15.0,
+                source="computer_use:fetch_topic_image.search",
+            )
+            if response.get("ok"):
+                body = response.get("content") or response.get("text") or b"{}"
+                if isinstance(body, bytes):
+                    body = body.decode("utf-8", errors="replace")
+                hits = (
+                    (json.loads(body or "{}").get("query") or {}).get("search") or []
+                )
+                for hit in hits:
+                    if isinstance(hit, dict):
+                        _add(str(hit.get("title") or ""))
+        except Exception as exc:  # noqa: BLE001 - a fallback may never raise
+            logger.debug("Wikipedia title search unavailable for %r: %s", topic, exc)
+        return seen[:6]
+
+    @staticmethod
+    def _commons_image_candidate(
+        topic: str, gateway: Any, headers: dict[str, str]
+    ) -> tuple[str, str] | None:
+        """An image from Wikimedia Commons: ``(image_url, page_url)``.
+
+        The last resort, and the only step that is actually an image search
+        rather than an encyclopedia lookup. Commons is used because it is
+        freely licensed and reachable through the same governed gateway.
+        """
+        from urllib.parse import quote
+
+        query = " ".join(str(topic or "").split())
+        if not query:
+            return None
+        url = (
+            "https://commons.wikimedia.org/w/api.php?action=query"
+            f"&generator=search&gsrsearch={quote(query)}&gsrlimit=8"
+            "&gsrnamespace=6&prop=imageinfo&iiprop=url|size"
+            "&iiurlwidth=2560&format=json"
+        )
+        try:
+            response = ComputerUseSkill._polite_media_request(
+                gateway,
+                url,
+                headers,
+                timeout=20.0,
+                source="computer_use:fetch_topic_image.commons",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Commons image search unavailable for %r: %s", topic, exc)
+            return None
+        if not response.get("ok"):
+            return None
+        body = response.get("content") or response.get("text") or b"{}"
+        if isinstance(body, bytes):
+            body = body.decode("utf-8", errors="replace")
+        try:
+            pages = (json.loads(body or "{}").get("query") or {}).get("pages") or {}
+        except (TypeError, ValueError):
+            return None
+        for page in (pages.values() if isinstance(pages, dict) else []):
+            if not isinstance(page, dict):
+                continue
+            for info in page.get("imageinfo") or []:
+                if not isinstance(info, dict):
+                    continue
+                # A scaled rendition when Commons offers one: the originals
+                # are routinely tens of megabytes and the byte bound below
+                # would drop them.
+                image_url = str(info.get("thumburl") or info.get("url") or "")
+                if not image_url.lower().endswith(
+                    (".jpg", ".jpeg", ".png", ".webp")
+                ):
+                    continue
+                return (image_url, str(info.get("descriptionurl") or ""))
+        return None
+
     def _fetch_topic_image(self, target: str) -> dict[str, Any]:
         """Fetch a representative image for a topic via Wikipedia's REST
         summary API, through the governed network gateway. General by
@@ -1819,29 +1989,68 @@ end tell
         from core.runtime.network_gateway import get_network_gateway
 
         gateway = get_network_gateway()
-        normalized_topic = topic[:1].upper() + topic[1:]
-        summary_url = (
-            "https://en.wikipedia.org/api/rest_v1/page/summary/"
-            + quote(normalized_topic.replace(" ", "_"))
-        )
         ua = {"User-Agent": "AuraDigitalEntity/1.0 (local desktop runtime)"}
-        meta = gateway.request(
-            "GET",
-            summary_url,
-            headers=ua,
-            timeout=20.0,
-            source="computer_use:fetch_topic_image",
-            read_only=True,
-        )
-        if not meta.get("ok"):
-            return {"ok": False, "error": f"topic lookup failed: {meta.get('error') or meta.get('status_code')}"}
-        raw_meta = meta.get("content") or meta.get("text") or b"{}"
-        if isinstance(raw_meta, bytes):
-            raw_meta = raw_meta.decode("utf-8", errors="replace")
-        try:
-            doc = json.loads(raw_meta or "{}")
-        except (TypeError, ValueError):
-            doc = {}
+
+        # ASK FOR A PICTURE OF A THING, not for an exact encyclopedia title.
+        #
+        # This did one lookup: Wikipedia's summary endpoint for the literal
+        # topic, capitalised. That works for "orca" and fails for most of
+        # English. Measured live 2026-07-28, asked to set a rock as the
+        # wallpaper:
+        #
+        #   "rock"    -> no image available for topic 'rock'
+        #               (Wikipedia's "Rock" is a disambiguation page, and a
+        #                disambiguation page has no thumbnail)
+        #   "a rock"  -> topic lookup failed: HTTP Error 404
+        #               (there is no article called "A_rock")
+        #
+        # She had found the image search perfectly well and then had nowhere
+        # to go, because the one endpoint she could use demanded a title she
+        # did not have. Resolving the topic is the general form: try what was
+        # asked, then let Wikipedia's own search say which article that names,
+        # then fall back to Wikimedia Commons — an actual image search rather
+        # than an encyclopedia lookup.
+        doc: dict[str, Any] = {}
+        lookup_error = ""
+        for candidate_title in self._image_topic_candidates(topic, gateway, ua):
+            summary_url = (
+                "https://en.wikipedia.org/api/rest_v1/page/summary/"
+                + quote(candidate_title.replace(" ", "_"))
+            )
+            meta = self._polite_media_request(
+                gateway,
+                summary_url,
+                ua,
+                timeout=20.0,
+                source="computer_use:fetch_topic_image",
+            )
+            if not meta.get("ok"):
+                lookup_error = str(meta.get("error") or meta.get("status_code"))
+                continue
+            raw_meta = meta.get("content") or meta.get("text") or b"{}"
+            if isinstance(raw_meta, bytes):
+                raw_meta = raw_meta.decode("utf-8", errors="replace")
+            try:
+                parsed = json.loads(raw_meta or "{}")
+            except (TypeError, ValueError):
+                parsed = {}
+            if not isinstance(parsed, dict):
+                continue
+            # A disambiguation page is a list of other pages, never a picture
+            # of anything. Keep looking rather than reporting "no image".
+            if str(parsed.get("type") or "").endswith("disambiguation"):
+                lookup_error = f"'{candidate_title}' is a disambiguation page"
+                continue
+            has_image = bool(
+                (parsed.get("originalimage") or {}).get("source")
+                or (parsed.get("thumbnail") or {}).get("source")
+            )
+            if has_image:
+                doc = parsed
+                break
+            lookup_error = f"'{candidate_title}' has no illustration"
+        if not doc and lookup_error and "404" in lookup_error and not topic:
+            return {"ok": False, "error": f"topic lookup failed: {lookup_error}"}
         original_url = str(((doc.get("originalimage") or {}).get("source")) or "")
         thumbnail_url = str(((doc.get("thumbnail") or {}).get("source")) or "")
         page_url = str(
@@ -1860,7 +2069,35 @@ end tell
             if wide != thumbnail_url:
                 candidates.insert(1, wide)
         if not candidates:
-            return {"ok": False, "error": f"no image available for topic '{topic}'", "page_url": page_url}
+            commons = self._commons_image_candidate(topic, gateway, ua)
+            if commons:
+                candidates = [commons[0]]
+                page_url = commons[1] or page_url
+        if not candidates:
+            # BEING THROTTLED IS NOT THE SAME AS THERE BEING NO PICTURE.
+            #
+            # Measured: five image topics in a burst all came back "no image
+            # available for topic X (HTTP Error 429)" — a rate limit reported
+            # to the person as though the thing they asked for did not exist.
+            # She would then explain that she could not find a traffic cone.
+            throttled = "429" in lookup_error or "too many" in lookup_error.lower()
+            return {
+                "ok": False,
+                "error": (
+                    (
+                        f"the image service asked me to slow down while looking "
+                        f"for '{topic}' — this is rate limiting, not a missing "
+                        f"picture; trying again in a moment should work"
+                    )
+                    if throttled
+                    else (
+                        f"no image available for topic '{topic}'"
+                        + (f" ({lookup_error})" if lookup_error else "")
+                    )
+                ),
+                "rate_limited": throttled,
+                "page_url": page_url,
+            }
         max_bytes = 24 * 1024 * 1024
         raw = b""
         image_url = ""

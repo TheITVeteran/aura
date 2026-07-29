@@ -8907,3 +8907,68 @@ function markLegacyShellReady() {
 }
 
 markLegacyShellReady();
+
+/* ══════════════════════════════════════════════════════════
+   Frame-rate governor
+   ══════════════════════════════════════════════════════════
+   Bryan, recording the demo: "Aura lags a bit when I do and it makes it look
+   kinda ugly."
+
+   Nothing here detects a screen recorder, on purpose. A recorder, a slow
+   machine and a busy 32B generation all present as the same symptom — dropped
+   frames — and all three deserve the same response. Measuring the symptom
+   handles every cause, including the ones nobody thought of.
+
+   Hysteresis matters: shedding on one bad frame would flicker the whole
+   background, which looks worse than the lag. It takes a sustained stretch
+   below the floor to go lean and a sustained stretch above it to come back.
+   ══════════════════════════════════════════════════════════ */
+(function auraFrameGovernor() {
+    const FLOOR_FPS = 45;        // below this, we are visibly dropping frames
+    const RECOVER_FPS = 55;      // and this much headroom to come back
+    const WINDOW_MS = 1000;      // one sample per second
+    const BAD_SAMPLES_TO_SHED = 3;
+    const GOOD_SAMPLES_TO_RESTORE = 5;
+
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (!window.requestAnimationFrame) return;
+
+    let frames = 0;
+    let windowStart = 0;
+    let bad = 0;
+    let good = 0;
+    let lean = false;
+
+    function apply(next) {
+        if (next === lean) return;
+        lean = next;
+        document.body.classList.toggle('perf-lean', lean);
+        // Announced once per transition so a slow demo is explainable after
+        // the fact rather than remembered as "it felt bad".
+        try {
+            console.info(lean
+                ? '[perf] frames dropping — shed ambient GPU work (perf-lean on)'
+                : '[perf] frame rate recovered — ambient work restored');
+        } catch (_) { /* console may be unavailable */ }
+    }
+
+    function tick(now) {
+        if (!windowStart) windowStart = now;
+        frames += 1;
+        const elapsed = now - windowStart;
+        if (elapsed >= WINDOW_MS) {
+            const fps = (frames * 1000) / elapsed;
+            frames = 0;
+            windowStart = now;
+            // A backgrounded tab reports near-zero fps and needs no rescue.
+            if (!document.hidden) {
+                if (fps < FLOOR_FPS) { bad += 1; good = 0; }
+                else if (fps >= RECOVER_FPS) { good += 1; bad = 0; }
+                if (!lean && bad >= BAD_SAMPLES_TO_SHED) apply(true);
+                else if (lean && good >= GOOD_SAMPLES_TO_RESTORE) apply(false);
+            }
+        }
+        window.requestAnimationFrame(tick);
+    }
+    window.requestAnimationFrame(tick);
+})();
