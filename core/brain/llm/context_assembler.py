@@ -719,6 +719,26 @@ class ContextAssembler:
                 pass  # no-op: intentional
         personhood_context = "\n\n".join(personhood_blocks) + "\n\n" if personhood_blocks else ""
 
+        # What Aura knows and feels about the people/places/things in play.
+        # This is a REPORT of state that is already causal (the bridge has
+        # altered retrieval depth, retrieval targeting, and affect before this
+        # runs); deleting this block would not disable any of those effects.
+        entity_memory_context = ""
+        if not black_box_steering:
+            dossiers = response_mods.get("entity_memory") or mods.get("entity_memory")
+            if isinstance(dossiers, list) and dossiers:
+                try:
+                    from core.memory.entity_memory_bridge import (
+                        render_entity_memory_block,
+                    )
+
+                    entity_memory_context = render_entity_memory_block(
+                        dossiers, compact=is_casual or elasticity >= 1
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+                    record_degradation('context_assembler', _e)
+                    logger.debug("Entity memory context injection skipped: %s", _e)
+
         imagination_context = ""
         if not black_box_steering:
             frame = response_mods.get("imagination_workspace") or mods.get("imagination_workspace")
@@ -934,6 +954,8 @@ class ContextAssembler:
             # 3. Social/Humor strategy
             if personhood_context:
                 base += personhood_context
+            if entity_memory_context:
+                base += entity_memory_context
             if imagination_context:
                 base += imagination_context
             if bicameral_context:
@@ -956,6 +978,8 @@ class ContextAssembler:
                 base += continuity_block
             if personhood_context:
                 base += personhood_context
+            if entity_memory_context:
+                base += entity_memory_context
             if imagination_context:
                 base += imagination_context
             if bicameral_context:
@@ -977,6 +1001,7 @@ class ContextAssembler:
                 f"{temporal_finitude_block}"
                 f"{meta_qualia_block}"
                 f"{personhood_context}"
+                f"{entity_memory_context}"
                 f"{imagination_context}"
                 f"{bicameral_context}"
                 f"{cognitive_situation_context}"

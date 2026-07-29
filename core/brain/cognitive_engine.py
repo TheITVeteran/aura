@@ -1083,6 +1083,47 @@ class CognitiveEngine:
         merged_context["spiking_active_inference"] = advice_dict
         return merged_context
 
+    def _apply_entity_memory(
+        self,
+        state: AuraState,
+        objective: str,
+        context: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Make what Aura knows about the people/places/things in play causal.
+
+        This runs on the live path so recognising an entity actually changes
+        retrieval depth, retrieval targeting, and affect before the answer is
+        generated — see core/memory/entity_memory_bridge.py, which owns the
+        effects. Failure here is never fatal: the turn proceeds without the
+        entity context, which is exactly how it behaved before this existed.
+        """
+        merged_context = dict(context or {})
+        try:
+            from core.memory.entity_memory_bridge import apply_entity_context
+
+            summary = apply_entity_context(state, objective, merged_context)
+            if summary.get("entities"):
+                merged_context["entity_memory"] = (
+                    summary.get("context", {}).get("entity_memory")
+                    or merged_context.get("entity_memory")
+                )
+                state.cognition.modifiers["entity_memory_effects"] = list(
+                    summary.get("effects", [])
+                )
+                logger.debug(
+                    "🧠 Entity memory: %d entity(ies) in play, %d effect(s).",
+                    len(summary["entities"]), len(summary.get("effects", [])),
+                )
+        except _COGNITIVE_ENGINE_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "cognitive_engine",
+                exc,
+                severity="warning",
+                action="continued cognitive cycle without entity memory context",
+            )
+            logger.debug("Entity memory context skipped: %s", exc)
+        return merged_context
+
     def _apply_imagination_workspace(
         self,
         state: AuraState,
@@ -1603,6 +1644,7 @@ class CognitiveEngine:
             context,
             is_background=is_background,
         )
+        context = self._apply_entity_memory(state, objective, context)
         context = self._apply_bicameral_advisory(
             state,
             objective,

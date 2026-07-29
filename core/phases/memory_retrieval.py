@@ -265,6 +265,42 @@ class MemoryRetrievalPhase(BasePhase):
                 stage="retrieval_modulation",
             )
 
+        # Entity memory targets the search. When Aura has recognised a person,
+        # place, or thing in what was said, that entity's canonical name and its
+        # best-evidenced associations are appended to the query, so retrieval
+        # looks for what she KNOWS about it rather than only the literal words
+        # the user happened to type ("he" retrieves nothing; the resolved name
+        # and its bound episode ids retrieve the history).
+        try:
+            entity_cues = response_modifiers.get("entity_retrieval_cues")
+            if isinstance(entity_cues, (list, tuple)) and entity_cues:
+                seen_cue: set[str] = set()
+                extra: list[str] = []
+                lowered_query = query.lower()
+                for cue in entity_cues:
+                    text = str(cue or "").strip()
+                    if not text or len(text) > 120:
+                        continue
+                    folded = text.lower()
+                    if folded in seen_cue or folded in lowered_query:
+                        continue
+                    seen_cue.add(folded)
+                    extra.append(text)
+                    if len(extra) >= 6:
+                        break
+                if extra:
+                    query = f"{query} {' '.join(extra)}".strip()[:2000]
+                    logger.debug(
+                        "🧠 MemoryRetrieval: entity memory added %d retrieval cue(s).",
+                        len(extra),
+                    )
+        except _MEMORY_RECOVERABLE_ERRORS as exc:
+            _record_memory_degradation(
+                exc,
+                action="searched without entity-memory retrieval cues",
+                stage="entity_cue_targeting",
+            )
+
         logger.info("🧠 MemoryRetrieval: Searching for context: %s...", query[:50])
 
         async def _get_dual():
