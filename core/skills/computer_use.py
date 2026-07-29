@@ -400,15 +400,38 @@ class ComputerUseSkill(BaseSkill):
                 return blueprint.frontmost_app
         except Exception as exc:  # noqa: BLE001 - fall through to the slow path
             logger.debug("Blueprint frontmost query unavailable: %s", exc)
-        try:
-            return self._run_applescript(
-                'tell application "System Events" to get name of first '
-                "application process whose frontmost is true",
-                timeout=5,
-            ).strip()
-        except (TimeoutError, RuntimeError) as exc:
-            logger.debug("Frontmost app query failed: %s", exc)
-            return ""
+        for attempt, timeout_s in enumerate((5, 10), start=1):
+            try:
+                name = self._run_applescript(
+                    'tell application "System Events" to get name of first '
+                    "application process whose frontmost is true",
+                    timeout=timeout_s,
+                ).strip()
+            except (TimeoutError, RuntimeError) as exc:
+                logger.warning(
+                    "Frontmost app query failed (attempt %d, timeout %ss): %s",
+                    attempt,
+                    timeout_s,
+                    exc,
+                )
+                continue
+            if name:
+                return name
+            logger.warning(
+                "Frontmost app query returned nothing on attempt %d.", attempt
+            )
+        # BOTH sources are gone, and that is not the same fact as "no app is
+        # frontmost" — which is how it read to every caller. Live 2026-07-29
+        # the browser step failed with "frontmost=unavailable, active_url=
+        # unavailable" and reported it as the browser refusing to come
+        # forward, when nothing had been able to look at the screen at all.
+        # Logged loudly because a silent "" is what made it undiagnosable.
+        logger.error(
+            "Cannot determine the frontmost application: the window server "
+            "and System Events both declined. Desktop steps that verify "
+            "focus will refuse rather than act blind."
+        )
+        return ""
 
     def _window_is_actually_visible(self, app_name: str) -> tuple[bool, str]:
         """Is this app's window really in view, or just nominally in front?
