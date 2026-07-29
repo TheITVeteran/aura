@@ -788,6 +788,39 @@ class DesktopTaskSkill(BaseSkill):
         return bool(cls._literal_document_body_from_objective(objective))
 
     @staticmethod
+    def _strip_status_narration_head(text: str) -> str:
+        """Drop status narration the model prefixed to real content.
+
+        Live 2026-07-28 the note was created and its content was correct —
+        three genuine sentences about humpback whales — but the body began
+        "<Notes app opened> New note created. ". Notes takes its title from
+        the first line, so the note was NAMED after the executor's progress
+        report.
+
+        The whole-body guard cannot help here: the body is good, only its
+        head is machinery. Rejecting it would throw away real writing, so
+        this trims rather than refuses.
+        """
+        body = str(text or "").lstrip()
+        for _ in range(3):
+            trimmed = re.sub(
+                r"^\s*<[^>\n]{1,60}>\s*", "", body
+            )
+            trimmed = re.sub(
+                r"^\s*(?:new\s+(?:note|document|file)\s+created|"
+                r"note\s+created|document\s+created|opened\s+\w+|"
+                r"creating\s+(?:the\s+)?(?:note|document)|"
+                r"here\s+(?:is|'s)\s+the\s+note)\b[\s.:,\-–—]*",
+                "",
+                trimmed,
+                flags=re.IGNORECASE,
+            )
+            if trimmed == body:
+                break
+            body = trimmed.lstrip()
+        return body or str(text or "").strip()
+
+    @staticmethod
     def _strip_artifact_action_tail(text: str) -> str:
         """Remove assistant/tool action narration from authored artifact text."""
         body = str(text or "").strip()
@@ -856,6 +889,7 @@ class DesktopTaskSkill(BaseSkill):
         declared = cls._extract_declared_document_content(body)
         if declared:
             body = declared
+        body = cls._strip_status_narration_head(body)
         body = cls._strip_artifact_action_tail(body)
         if not body:
             return ""

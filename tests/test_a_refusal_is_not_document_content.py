@@ -68,3 +68,38 @@ def test_real_content_is_written(text: str):
 def test_a_conversational_turn_is_not_document_content(text: str):
     """A question back to the user is never the product of a task."""
     assert DesktopTaskSkill._looks_like_dispatch_narration(text)
+
+
+#: Status narration the model prefixed to genuinely good content.
+NARRATED_HEADS = [
+    (
+        "<Notes app opened> New note created. Humpback whales are known for "
+        "their complex songs.",
+        "Humpback whales are known for their complex songs.",
+    ),
+    (
+        "New note created. Orcas hunt in coordinated pods.",
+        "Orcas hunt in coordinated pods.",
+    ),
+    (
+        "<opened Notes> Humpback whales migrate thousands of miles.",
+        "Humpback whales migrate thousands of miles.",
+    ),
+]
+
+
+@pytest.mark.parametrize("written,expected", NARRATED_HEADS)
+def test_status_narration_is_trimmed_not_rejected(written: str, expected: str):
+    """The note was created and its content WAS correct — three real
+    sentences about humpback whales — but the body opened with "<Notes app
+    opened> New note created.", and Notes names a note after its first line.
+
+    The whole-body guard cannot help: the body is good, only its head is
+    machinery. Rejecting it would throw away real writing.
+    """
+    assert DesktopTaskSkill._strip_status_narration_head(written) == expected
+
+
+def test_clean_content_is_left_exactly_alone():
+    text = "Humpback whales are known for their complex songs."
+    assert DesktopTaskSkill._strip_status_narration_head(text) == text
