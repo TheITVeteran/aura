@@ -166,3 +166,65 @@ class TestTheActionIsOneAction:
         assert "write_in_app" in DESKTOP_TASK_ALLOWED_ACTIONS
         assert "create_note" in DESKTOP_TASK_ALLOWED_ACTIONS
         assert "write_in_app" in DESKTOP_TASK_RETRY_SAFE_ACTIONS
+
+
+class TestSheTypesWhenSheCan:
+    """Bryan: "I've seen her type in the notes app before ... i know she can do it."
+
+    He has, and she can. Typing stopped because keystrokes were replaced
+    wholesale by the scripting call after they kept losing the front to
+    Chrome mid-sequence — a real problem solved by removing the thing that
+    made it watchable. Order fixes it: type first, and let the dictionary
+    catch the words only if focus is actually lost.
+    """
+
+    def test_typing_is_attempted_before_the_dictionary(self):
+        import inspect
+
+        from core.skills.computer_use import ComputerUseSkill
+
+        source = inspect.getsource(ComputerUseSkill._write_in_app)
+        type_at = source.index("_type_into_app")
+        write_through = source.index("_write_through_dictionary")
+        assert type_at < write_through, (
+            "the dictionary must be the fallback, not the first choice — "
+            "otherwise nobody ever sees her type"
+        )
+
+    def test_typing_holds_the_front_and_gives_up_honestly(self):
+        import inspect
+
+        from core.skills.computer_use import ComputerUseSkill
+
+        source = inspect.getsource(ComputerUseSkill._type_into_app)
+        assert "hold_focus" in source, "typing must re-assert the front"
+        assert "lost the front" in source, (
+            "losing focus mid-sentence must be reported, not typed through"
+        )
+        assert "_TYPING_BUDGET_S" in source, "visible typing must be bounded"
+
+    def test_chunks_break_on_words(self):
+        from core.skills.computer_use import ComputerUseSkill
+
+        chunks = ComputerUseSkill._typing_chunks(
+            "Orcas are the largest members of the dolphin family."
+        )
+        assert "".join(chunks) == (
+            "Orcas are the largest members of the dolphin family."
+        )
+        assert all(chunk for chunk in chunks)
+        # A chunk should not split a word in half; every chunk but the last
+        # ends at a space.
+        assert all(chunk.endswith(" ") for chunk in chunks[:-1]), chunks
+
+    def test_the_result_says_which_hand_wrote_it(self):
+        """A fallback that hides that it fell back is how 'she typed it'
+        becomes a claim nobody can check."""
+        import inspect
+
+        from core.skills.computer_use import ComputerUseSkill
+
+        typed = inspect.getsource(ComputerUseSkill._type_into_app)
+        assert '"wrote_by": "keystrokes"' in typed
+        wrapper = inspect.getsource(ComputerUseSkill._write_in_app)
+        assert "typing_fallback_reason" in wrapper

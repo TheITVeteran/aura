@@ -518,6 +518,13 @@ class ComputerUseSkill(BaseSkill):
     #: appears progressively in front of you. No keystroke is sent, no
     #: clipboard is used, nothing depends on which window has focus, and the
     #: note is still read back at the end.
+    #: Visible typing. Short runs so it reads as typing rather than as paste,
+    #: and a wall-clock budget so a long document never holds the step open —
+    #: past it, the rest lands through the dictionary.
+    _TYPING_CHUNK_CHARS = 12
+    _TYPING_PAUSE_S = 0.04
+    _TYPING_BUDGET_S = 25.0
+
     _NOTE_STREAM_CHUNK_CHARS = 90
     _NOTE_STREAM_PAUSE_S = 0.11
     #: The whole visible write is bounded: past this it finishes in one call.
@@ -562,17 +569,142 @@ class ComputerUseSkill(BaseSkill):
                 "app": app_name,
             }
         recipe = text_target_for(resolved)
+
+        # TYPE IT, if she can hold the front.
+        #
+        # Bryan: "I've seen her type in the notes app before ... i know she
+        # can do it." He has, and she can. The reason it stopped is that
+        # keystrokes were replaced wholesale by the scripting call after they
+        # kept losing the front to Chrome mid-sequence — a real problem
+        # solved by removing the thing that made it watchable.
+        #
+        # Order matters more than choice. hold_focus() already re-asserts the
+        # front the way a person does, so try the keys first and watch her
+        # type; the dictionary is what catches the words if the desktop takes
+        # focus away anyway. That is a fallback, not a replacement, and the
+        # result says which one wrote the text.
+        typed = await self._type_into_app(resolved, payload)
+        if typed.get("ok"):
+            return typed
+
         if recipe is None:
             return {
                 "ok": False,
                 "error": (
-                    f"{resolved} publishes no scripting dictionary, so text has "
-                    "to be typed into it while it holds focus"
+                    f"{resolved} publishes no scripting dictionary and would not "
+                    f"hold focus for typing ({typed.get('error') or 'focus lost'})"
                 ),
                 "app": resolved,
                 "requires_keystrokes": True,
             }
-        return await self._write_through_dictionary(recipe, payload)
+        written = await self._write_through_dictionary(recipe, payload)
+        if written.get("ok"):
+            written["typing_fallback_reason"] = str(
+                typed.get("error") or "the app did not hold focus for typing"
+            )
+        return written
+
+    async def _type_into_app(self, app: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Open a fresh document and type the body into it, character by
+        character, the way a person does.
+
+        Bounded by the clock rather than by the text: a long document types
+        its opening and then finishes through the dictionary, so watching it
+        never costs the objective. Focus is re-asserted between chunks — that
+        is the whole reason this can be tried at all.
+        """
+        body = str(payload.get("body") or payload.get("text") or "").strip()
+        if not body:
+            return {"ok": False, "error": "typing requires a body"}
+        if not await self.hold_focus(app):
+            return {"ok": False, "error": f"{app} did not come to the front"}
+
+        try:
+            await self._run_hotkey_for_app(app, "command+n")
+        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+            return {"ok": False, "error": f"could not open a new document: {exc}"}
+        await asyncio.sleep(0.6)
+        if not await self.hold_focus(app):
+            return {"ok": False, "error": f"{app} lost the front before typing"}
+
+        deadline = time.monotonic() + float(self._TYPING_BUDGET_S)
+        typed_chars = 0
+        for chunk in self._typing_chunks(body):
+            if time.monotonic() >= deadline:
+                return {
+                    "ok": False,
+                    "error": "typing budget reached with the document unfinished",
+                    "typed_characters": typed_chars,
+                }
+            if not self._frontmost_app_matches(
+                await asyncio.to_thread(self._frontmost_app_name), app
+            ):
+                return {
+                    "ok": False,
+                    "error": f"{app} lost the front mid-sentence",
+                    "typed_characters": typed_chars,
+                }
+            script = (
+                'tell application "System Events" to keystroke '
+                f"{self._applescript_string(chunk)}"
+            )
+            try:
+                await asyncio.to_thread(self._run_applescript, script, timeout=15)
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                return {
+                    "ok": False,
+                    "error": f"keystroke refused: {exc}",
+                    "typed_characters": typed_chars,
+                }
+            typed_chars += len(chunk)
+            await asyncio.sleep(float(self._TYPING_PAUSE_S))
+
+        return {
+            "ok": True,
+            "action": "write_in_app",
+            "app": app,
+            "title": str(payload.get("title") or "").strip(),
+            "effect_verified": True,
+            "verification": (
+                f"Typed {typed_chars} characters into {app} while it held the front."
+            ),
+            "characters": typed_chars,
+            "wrote_by": "keystrokes",
+        }
+
+    async def _run_hotkey_for_app(self, app: str, combo: str) -> None:
+        """Send one shortcut to a named app, re-asserting the front first."""
+        await self.hold_focus(app)
+        key = combo.rsplit("+", 1)[-1]
+        modifiers = combo.rsplit("+", 1)[0].split("+") if "+" in combo else []
+        using = ", ".join(f"{name.strip()} down" for name in modifiers if name.strip())
+        script = (
+            'tell application "System Events" to keystroke '
+            f"{self._applescript_string(key)}"
+            + (f" using {{{using}}}" if using else "")
+        )
+        await asyncio.to_thread(self._run_applescript, script, timeout=15)
+
+    @classmethod
+    def _typing_chunks(cls, body: str) -> list[str]:
+        """Break the body where a person pauses: at word boundaries.
+
+        One keystroke call per character would be honest and would also take
+        four minutes for a paragraph, most of it osascript startup. A short
+        run per call reads as typing and costs one fork per few words.
+        """
+        chunk = max(4, int(cls._TYPING_CHUNK_CHARS))
+        chunks: list[str] = []
+        index = 0
+        while index < len(body):
+            end = min(len(body), index + chunk)
+            if end < len(body):
+                space = body.rfind(" ", index, end)
+                if space > index:
+                    end = space + 1
+            chunks.append(body[index:end])
+            index = end
+        return chunks
 
     async def _create_note(self, target: Any) -> dict[str, Any]:
         """Create a Notes note through its scripting interface, visibly.
