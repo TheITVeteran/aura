@@ -197,7 +197,19 @@ class EnhancedWebSearchSkill(BaseSkill):
                 
                 # Adapting existing Search pipeline format to standard search_fn format
                 async def _search_fn(q: str):
-                    res = await self.pipeline.search(q, num_results=5, deep=False, force_refresh=force_refresh)
+                    # The CALLER's count, not a constant.
+                    #
+                    # This was a flat 5, so desktop_task asking for 3 sources
+                    # still had five fetched and read here — and reading is
+                    # the entire cost of a research turn. Every count above
+                    # this line now follows the request; this was the one
+                    # place it stopped.
+                    res = await self.pipeline.search(
+                        q,
+                        num_results=num_results,
+                        deep=False,
+                        force_refresh=force_refresh,
+                    )
                     results = res.get("results", [])
                     # format sources
                     content = res.get("answer") or str([r.get("snippet", "") for r in results])
