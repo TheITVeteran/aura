@@ -1,4 +1,3 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import errno
 import json
@@ -7,13 +6,14 @@ import mmap
 import os
 import tempfile
 import uuid
+import weakref
 from contextlib import contextmanager
-from multiprocessing import shared_memory
-from multiprocessing import resource_tracker
+from multiprocessing import resource_tracker, shared_memory
 from pathlib import Path
 from threading import Lock
 from typing import Any
-import weakref
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Bus.SharedMem")
 _SHM_ATTACH_TRACKING_LOCK = Lock()
@@ -208,6 +208,8 @@ class SharedMemoryTransport:
         self.size = size
         self.shm = _FileBackedSharedMemory(self.name, path, fd, mm)
         self._backend = "file_mmap"
+        # Attaching is not owning, on this backend either.
+        self._is_owner = False
         logger.debug("Attached to file-backed shared memory: %s", path)
 
     async def create(self):
@@ -260,6 +262,10 @@ class SharedMemoryTransport:
                     self.shm = shared_memory.SharedMemory(name=self.name)
                 self.size = getattr(self.shm, "size", self.size) or self.size
                 self._backend = "posix_shm"
+                # ATTACHING is not owning. A stale flag left over from a
+                # previous create() on this object would make the next close()
+                # unlink a segment this instance merely attached to.
+                self._is_owner = False
                 logger.debug("✓ Attached to Shared Memory: %s", self.name)
                 return
             except FileNotFoundError:
@@ -315,15 +321,33 @@ class SharedMemoryTransport:
 
         length = len(serialized)
         if length > self.payload_capacity:
-            # Graceful overflow: truncate payload instead of crashing.
-            # Log the overflow so it can be investigated, but don't bring
-            # down the bus — that's worse than losing some state data.
-            logger.warning(
-                "SHM %s: Payload too large (%d > %d bytes). Truncating to fit.",
+            # REFUSE, do not truncate. Slicing UTF-8 at an arbitrary byte
+            # boundary produces invalid UTF-8 and almost always invalid JSON,
+            # and the old code then published those bytes under a COMPLETED
+            # even version — so the writer was told it succeeded while every
+            # reader silently decoded None. Losing a write loudly is strictly
+            # better than acknowledging state nobody can recover; the previous
+            # valid payload is left intact for readers.
+            record_degradation(
+                'shared_mem_bus',
+                ValueError(
+                    f"payload {length}B exceeds capacity {self.payload_capacity}B"
+                ),
+                severity="warning",
+                action=(
+                    f"refused an oversized write to {self.name}; the previous "
+                    "payload is still readable"
+                ),
+            )
+            logger.error(
+                "SHM %s: Payload too large (%d > %d bytes). Write REFUSED "
+                "(truncating would publish unparseable bytes as a valid write).",
                 self.name, length, self.payload_capacity,
             )
-            serialized = serialized[:self.payload_capacity]
-            length = len(serialized)
+            raise ValueError(
+                f"shared-memory payload too large for {self.name}: "
+                f"{length} > {self.payload_capacity} bytes"
+            )
 
         # 2. Get current version and ensure it's EVEN
         current_ver = int.from_bytes(buf[0:8], byteorder='big')
@@ -400,7 +424,27 @@ class SharedMemoryTransport:
                 length = int.from_bytes(buf[8:12], byteorder='big')
                 if length == 0:
                     return None
-                
+                # The length prefix comes from shared bytes another process
+                # wrote. A forged, stale, or torn value used to be sliced
+                # directly, so a bogus length silently produced a short/garbage
+                # read that surfaced as an ambiguous None.
+                if length > self.payload_capacity:
+                    record_degradation(
+                        'shared_mem_bus',
+                        ValueError(
+                            f"length prefix {length} exceeds capacity "
+                            f"{self.payload_capacity}"
+                        ),
+                        severity="warning",
+                        action=f"rejected an out-of-bounds length prefix on {self.name}",
+                    )
+                    logger.error(
+                        "SHM %s: length prefix %d exceeds payload capacity %d; "
+                        "segment is corrupt or written by an incompatible peer.",
+                        self.name, length, self.payload_capacity,
+                    )
+                    return None
+
                 content_raw = bytes(buf[12:12+length])
                 
                 # 4. Read end version
@@ -441,6 +485,12 @@ class SharedMemoryTransport:
                 except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
                     record_degradation('shared_mem_bus', e)
                     logger.debug("Unlink failed (already gone?): %s", e)
+            # Clear ownership BEFORE dropping the handle. close() used to
+            # leave _is_owner set, so if this object later attached to a
+            # replacement segment with the same name it would deregister and
+            # unlink a segment it had only attached to — destroying another
+            # process's data.
+            self._is_owner = False
             try:
                 shm.close()
             except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:

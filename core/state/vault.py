@@ -1,19 +1,18 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import logging
-import time
-import os
 import json
+import logging
+import os
 import signal
-import traceback
-from multiprocessing import Process, Pipe
+import time
 from types import SimpleNamespace
-from typing import Dict, Any, Optional
+from typing import Any
 
-from .state_repository import StateRepository, get_state_shm_size_bytes
-from .aura_state import AuraState
-from ..bus.shared_mem_bus import SharedMemoryTransport
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
+
+from ..bus.shared_mem_bus import SharedMemoryTransport
+from .aura_state import AuraState
+from .state_repository import StateRepository, get_state_shm_size_bytes
 
 logger = logging.getLogger("Actor.StateVault")
 
@@ -46,13 +45,13 @@ class StateVaultActor:
         self.repo = StateRepository(db_path=db_path, is_vault_owner=True)
         self.shm_transport = SharedMemoryTransport(name="aura_state_shm", size=get_state_shm_size_bytes())
         self._is_running = False
-        self._bus: Optional[Any] = None # Will be linked to the pipe
+        self._bus: Any | None = None # Will be linked to the pipe
         self._heartbeat_interval = 3.0
-        self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
         self._background_tasks: set[asyncio.Task] = set()
-        self._stop_event: Optional[asyncio.Event] = None
+        self._stop_event: asyncio.Event | None = None
 
-    def _track_task(self, coro: Any, *, name: Optional[str] = None) -> asyncio.Task:
+    def _track_task(self, coro: Any, *, name: str | None = None) -> asyncio.Task:
         task = get_task_tracker().create_task(coro, name=name)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
@@ -142,22 +141,22 @@ class StateVaultActor:
                 logger.debug("StateVault heartbeat failed: %s", e)
             await asyncio.sleep(self._heartbeat_interval)
 
-    async def _process_ping_bus(self, payload: Any, trace_id: Optional[str]):
+    async def _process_ping_bus(self, payload: Any, trace_id: str | None):
         """Respond to health pings immediately."""
         return {"type": "pong", "ts": time.time()}
 
-    async def _process_stop_bus(self, payload: Any, trace_id: Optional[str]):
+    async def _process_stop_bus(self, payload: Any, trace_id: str | None):
         self._is_running = False
         stop_event = getattr(self, "_stop_event", None)
         if stop_event is not None:
             stop_event.set()
         return {"ok": True, "stopping": True}
 
-    async def _process_commit_bus(self, payload: Any, trace_id: Optional[str]):
+    async def _process_commit_bus(self, payload: Any, trace_id: str | None):
         """Bridge between bus handler and existing commit logic."""
         return await self._process_commit_inner(payload, trace_id)
 
-    async def _process_get_state_bus(self, payload: Any, trace_id: Optional[str]):
+    async def _process_get_state_bus(self, payload: Any, trace_id: str | None):
         """Bridge for get_state."""
         if not self.repo._current:
             return None
@@ -173,7 +172,7 @@ class StateVaultActor:
             
         return res
 
-    def _preserve_cold_store_for_hot_payload(self, state_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _preserve_cold_store_for_hot_payload(self, state_data: dict[str, Any]) -> dict[str, Any]:
         """Restore cold continuity when a proxy sends a bounded hot-state payload."""
         if "cold" in state_data or self.repo._current is None:
             return state_data
@@ -190,14 +189,14 @@ class StateVaultActor:
             logger.warning("Cold-store preservation failed for hot state commit: %s", exc)
         return merged
 
-    async def _deserialize_commit_state(self, state_data: Dict[str, Any]) -> AuraState:
+    async def _deserialize_commit_state(self, state_data: dict[str, Any]) -> AuraState:
         """Deserialize bus commit payloads without dropping durable cold state."""
         if not isinstance(state_data, dict):
             raise ValueError("state_vault commit payload must include a state dictionary")
         normalized = self._preserve_cold_store_for_hot_payload(state_data)
         return await asyncio.to_thread(lambda: self.repo._deserialize(json.dumps(normalized)))
 
-    async def _process_commit_inner(self, payload: Dict[str, Any], trace_id: Optional[str]):
+    async def _process_commit_inner(self, payload: dict[str, Any], trace_id: str | None):
         """Atomically commit a state mutation (Core Logic)."""
         try:
             new_state_data = payload.get("state")
@@ -238,14 +237,32 @@ class StateVaultActor:
             async with governed_scope(sync_decision):
                 mode = await self.repo._sync_to_shm(state, serialized_state)
             logger.debug("SHM Updated: Version %s (%s)", state.version, mode)
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, ValueError) as e:
+            # ValueError covers the transport's oversized-payload refusal, which
+            # replaced a silent truncation that published corrupt bytes.
             record_degradation('vault', e)
             logger.error("SHM Update Failed: %s", e)
 
     def _update_shared_memory(self, state: AuraState):
-        """Legacy synchronous path (deprecated)."""
+        """Legacy synchronous path (deprecated).
+
+        The transport now REFUSES an oversized payload rather than truncating
+        it into unparseable bytes and reporting success. That refusal must not
+        take the vault process down with it: a state too large for the segment
+        is a degradation to record, not a reason to stop persisting.
+        """
         state_dict = self.repo._circular_safe_asdict(state)
-        self.shm_transport.write(state_dict)
+        try:
+            self.shm_transport.write(state_dict)
+        except ValueError as exc:
+            record_degradation(
+                'vault', exc, severity="warning",
+                action=(
+                    "skipped a shared-memory state publish that exceeded the "
+                    "segment; readers keep the previous consistent snapshot"
+                ),
+            )
+            logger.error("SHM publish refused (state too large): %s", exc)
 
 def vault_process_entry(db_path: str, pipe):
     """Entry point for the vault process."""
