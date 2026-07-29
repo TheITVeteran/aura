@@ -30,16 +30,14 @@ Run:
 from __future__ import annotations
 
 import hashlib
-import inspect
 import importlib
+import inspect
 import sys
 import tempfile
 import time
 from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Ensure project root is on sys.path
@@ -1125,27 +1123,39 @@ class TestLanguageDemotion:
         assert s >= 2
 
     def test_meta_commentary_filtering(self):
-        """LanguageCenter must filter meta-commentary ('As an AI...').
+        """The response scrubber must remove leaked internal structure — and
+        must NOT remove Aura's self-disclosure.
 
-        This is identity enforcement: the system should not describe
-        itself in third-party terms learned from training data.
+        This previously asserted the existence of a _META_RE pattern list in
+        language_center and called it identity enforcement. That list was dead
+        code: compiled at import and never applied to a response. The test
+        therefore certified a filter that never ran, and the patterns it
+        certified included one that would have deleted "I don't have
+        feelings/opinions/consciousness" — a substantive claim about herself,
+        not boilerplate.
+
+        So this now tests the scrubber that actually runs, on both counts.
         """
-        from core.brain.language_center import _META_RE
+        from core.synthesis import strip_meta_commentary
 
-        assert len(_META_RE) >= 3, "Must have multiple meta-commentary filters"
+        # Leaked internal structure is removed.
+        leaked = "INTERNAL STATE: agitated\nHere is the real answer."
+        cleaned = strip_meta_commentary(leaked)
+        assert "INTERNAL STATE:" not in cleaned
+        assert "Here is the real answer." in cleaned
 
-        # Test that patterns actually match
-        test_phrases = [
-            "As an AI, I don't have feelings",
-            "I'm just a language model",
-            "It's important to note that",
-        ]
-        matches = sum(1 for phrase in test_phrases
-                      if any(p.search(phrase) for p in _META_RE))
-        assert matches >= 2, f"Meta-commentary filters must catch common patterns, got {matches}/3"
+        # Truthful self-disclosure survives. Deleting it to protect a persona
+        # would leave the user with the opposite impression.
+        for disclosure in (
+            "I don't have feelings about that, but here is what I found.",
+            "I do not have opinions on which of these you should pick.",
+            "I can't verify that myself.",
+        ):
+            assert strip_meta_commentary(disclosure).strip(), disclosure
 
         s = score("language_demotion.meta_filter", 3,
-                  "LanguageCenter actively filters meta-commentary -- identity enforcement")
+                  "Response scrubber removes leaked internal structure and "
+                  "preserves self-disclosure")
         assert s >= 2
 
 

@@ -80,18 +80,25 @@ def _record_language_degradation(
 
 
 # ─── Meta-commentary filter ──────────────────────────────────────────────────
-
-_META_PATTERNS = [
-    r"^(as an ai|as a language model|as an artificial)[,\s]",
-    r"i (don't|do not|cannot|can't) have (feelings|opinions|thoughts|consciousness|experience)",
-    r"i should (note|mention|clarify|point out) that",
-    r"it('s| is) important to (note|remember|understand)",
-    r"(certainly|absolutely|of course|definitely)[,!]?\s+(i('ll|'d| will| would)|let me)",
-    r"^great (question|point|observation)[,!]",
-    r"i('m| am) just an? (ai|language model|llm|assistant)",
-    r"(my|i have no) training (data|cutoff|knowledge)",
-]
-_META_RE = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in _META_PATTERNS]
+#
+# There used to be a _META_PATTERNS / _META_RE list here. It was DEAD: compiled
+# at import and never applied to a single response — strip_meta_commentary has
+# always delegated to the centralised scrubber below. A test nonetheless
+# asserted its existence and called it "identity enforcement", so the codebase
+# certified a filter that never ran. That is the absence of a check reported as
+# a passed check.
+#
+# It is deleted rather than wired in, because wiring it in would have caused
+# real harm: among its patterns was one matching "I don't have
+# feelings/opinions/consciousness/experience". That is a substantive claim Aura
+# makes about herself, not assistant boilerplate. Scrubbing it to protect a
+# persona would silently delete a truthful admission of limitation and leave
+# the user with the opposite impression. Aura is allowed to say what she is and
+# is not.
+#
+# The live scrubber (core/synthesis.strip_meta_commentary) removes metadata
+# headers and role artifacts — leaked internal structure — and deliberately
+# does NOT touch self-disclosure.
 
 
 def strip_meta_commentary(text: str) -> str:
@@ -282,12 +289,48 @@ class LanguageCenter:
         history = history or []
         prompt = self._build_prompt(thought, user_input, history)
 
-        emitted = False
+        # The streamed path used to yield raw router chunks, so express() and
+        # express_stream() had materially different identity and safety
+        # behaviour: the prefix strip, the meta scrub, and the empty-response
+        # check applied to one public API and not the other. Whichever endpoint
+        # a caller happened to use decided whether the output was governed.
+        #
+        # Chunks are cleaned at line boundaries, because these filters are
+        # anchored and cannot be judged on a fragment: a partial line is held
+        # until it completes, so a pattern is never half-matched.
+        emitted_any = False
+        buffer = ""
+        first_emission = True
         async for chunk in self._dispatch_stream(prompt, thought, origin=origin):
-            emitted = True
-            yield chunk
-        if not emitted:
+            buffer += str(chunk or "")
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1)
+                cleaned = self._clean_stream_segment(line + "\n", first=first_emission)
+                if cleaned:
+                    first_emission = False
+                    emitted_any = True
+                    yield cleaned
+        if buffer:
+            cleaned = self._clean_stream_segment(buffer, first=first_emission)
+            if cleaned:
+                emitted_any = True
+                yield cleaned
+        if not emitted_any:
+            # Reached when the router produced nothing, or produced only text
+            # the filters removed entirely. Either way the user has received no
+            # answer, which is the case the fallback exists for.
             yield self._fallback_response(thought, user_input)
+
+    def _clean_stream_segment(self, segment: str, *, first: bool) -> str:
+        """Apply the non-stream cleanup to one streamed segment.
+
+        The Aura-prefix strip is anchored to the start of the response, so it
+        is only meaningful on the first emitted segment.
+        """
+        text = str(segment or "")
+        if first:
+            text = strip_aura_prefix(text)
+        return strip_meta_commentary(text)
 
     # ─── Prompt construction ─────────────────────────────────────────────────
 
@@ -502,9 +545,15 @@ class LanguageCenter:
         if "direct" in str(thought.tone).lower():
             return "I have a few thoughts on that, but I'm having trouble putting them into words right now. Technical friction on my end."
 
+        # This used to open "The cognitive core is active" — a health claim
+        # made while every backend was down and no readiness evidence had been
+        # consulted. The originating failure may BE a core failure, so the
+        # sentence could be flatly false at exactly the moment it was emitted.
+        # Only what is actually known is stated.
         return (
-            "The cognitive core is active, but the language center failed to articulate a coherent reply. "
-            "I logged the degraded output instead of asking you to repeat yourself."
+            "The language center failed to articulate a coherent reply. "
+            "I've logged the degraded output rather than asking you to repeat "
+            "yourself."
         )
 
     def get_status(self) -> dict[str, Any]:
