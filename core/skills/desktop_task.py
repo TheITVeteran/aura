@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 import urllib.parse
@@ -20,6 +21,8 @@ from core.runtime.errors import record_degradation
 from core.runtime.os_automation_effects import extract_target_paths
 from core.skills.base_skill import BaseSkill
 from core.skills.os_affordances import detect_os_settings, get_affordance
+
+logger = logging.getLogger(__name__)
 
 #: Failures the artifact-authoring path can survive: the router is absent,
 #: the call times out, or the response is the wrong shape. None of them

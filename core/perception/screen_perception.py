@@ -37,6 +37,13 @@ class ScreenSnapshot:
     focused_value: str = ""
     accessibility_text: str = ""    # frontmost app accessibility tree text
     screen_text: str = ""           # OCR text
+    #: Every window on the screen, front to back, with geometry and how much
+    #: of each survives the windows above it. The fields above describe the
+    #: ONE window that happens to be in front; a person sees the whole desk.
+    #: Without this, "is Notes open" and "can I see Notes" are the same
+    #: unanswerable question — see core/perception/screen_blueprint.py.
+    window_layout: str = ""
+    open_apps: tuple[str, ...] = ()
     text_hash: str = ""             # for change detection
     screenshot_path: str = ""       # saved screenshot file
     has_modal: bool = False         # dialog/alert detected
@@ -263,6 +270,21 @@ class ScreenPerception:
         snap.focused_description = summary.get("focused_description", "")
         snap.focused_value = summary.get("focused_value", "")
         snap.accessibility_text = self._bounded_text(summary.get("accessibility_text", ""))
+
+        # The whole desk, not just the window on top of it. Cheap enough
+        # (in-process, cached for a moment) to belong on every snapshot, and
+        # it is what makes "Chrome is covering your note" sayable at all.
+        try:
+            from core.perception.screen_blueprint import capture_blueprint
+
+            blueprint = await asyncio.to_thread(capture_blueprint)
+            if not blueprint.unavailable:
+                snap.window_layout = blueprint.describe()
+                snap.open_apps = blueprint.apps
+                if not snap.active_app and blueprint.frontmost_app:
+                    snap.active_app = blueprint.frontmost_app
+        except Exception as exc:  # noqa: BLE001 - a snapshot may never fail on extras
+            logger.debug("Screen blueprint unavailable for snapshot: %s", exc)
 
         # Take screenshot
         if save_screenshot:

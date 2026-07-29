@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
@@ -50,6 +51,7 @@ __all__ = [
     "ScreenBlueprint",
     "WindowFrame",
     "blueprint_is_available",
+    "blueprint_is_enabled",
     "capture_blueprint",
     "read_browser_document",
     "read_window_elements",
@@ -74,6 +76,31 @@ _CACHE_TTL_S = 1.5
 
 _CACHE_LOCK = threading.Lock()
 _CACHED: tuple[float, "ScreenBlueprint"] | None = None
+
+#: Set to "0" to make every capture report itself unavailable.
+#:
+#: This exists because the blueprint answers a question that used to have
+#: exactly one seam. Callers such as ComputerUseSkill._frontmost_app_name ask
+#: the window server first and fall back to AppleScript — so a caller that
+#: controls only the AppleScript transport (every test in the desktop suite)
+#: stopped controlling the answer, and quietly began reading the real screen
+#: of whatever machine the suite happened to run on. A test that reads the
+#: live desktop is not a test.
+#:
+#: It is a production switch as well as a test one: a machine whose window
+#: server misreports z-order should be able to fall back to the slow path
+#: without an edit.
+_BLUEPRINT_ENV = "AURA_SCREEN_BLUEPRINT"
+
+
+def blueprint_is_enabled() -> bool:
+    """False when the window-server path has been switched off."""
+    return str(os.environ.get(_BLUEPRINT_ENV, "1")).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 @dataclass(frozen=True)
@@ -279,6 +306,8 @@ def _is_real_window(entry: Any) -> bool:
 
 def blueprint_is_available() -> bool:
     """Can this machine produce a blueprint at all?"""
+    if not blueprint_is_enabled():
+        return False
     try:
         import Quartz  # noqa: F401
     except Exception:  # noqa: BLE001 - absence is an answer, not an error
@@ -305,6 +334,11 @@ def capture_blueprint(*, fresh: bool = False) -> ScreenBlueprint:
     stay distinguishable to everything reasoning above this.
     """
     global _CACHED
+    if not blueprint_is_enabled():
+        return ScreenBlueprint(
+            unavailable=True,
+            unavailable_reason=f"{_BLUEPRINT_ENV} is switched off",
+        )
     if not fresh:
         with _CACHE_LOCK:
             cached = _CACHED

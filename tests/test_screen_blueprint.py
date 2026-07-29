@@ -40,6 +40,21 @@ def _window(app: str, x: int, y: int, w: int, h: int, z: int, **kwargs) -> Windo
     )
 
 
+
+@pytest.fixture(autouse=True)
+def _blueprint_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This module is about the blueprint, so it opts back in.
+
+    tests/conftest.py switches the window-server path off for every other
+    test, because it is not reachable by the AppleScript mocks the rest of
+    the desktop suite uses.
+    """
+    monkeypatch.setenv("AURA_SCREEN_BLUEPRINT", "1")
+    import core.perception.screen_blueprint as module
+
+    monkeypatch.setattr(module, "_CACHED", None)
+
+
 class TestOcclusionIsMeasuredNotGuessed:
     """"Chrome is covering Notes" has to be a measurement.
 
@@ -215,3 +230,46 @@ class TestTheBlueprintIsCheapEnoughToUseInALoop:
         capture_blueprint()
         capture_blueprint()
         assert calls["n"] == 1
+
+
+class TestTheBlueprintReachesPerceptionNotJustTheOsLane:
+    """Bryan's question was whether OS control is tied to real perception.
+
+    If the blueprint only fed the desktop-task lane, she could aim a click
+    accurately and still be unable to say what is on the screen — the
+    knowledge would exist in the hands and not in the head.
+    """
+
+    def test_a_snapshot_carries_the_whole_desk(self) -> None:
+        import asyncio
+
+        from core.perception.screen_perception import get_screen_perception
+
+        snapshot = asyncio.run(get_screen_perception().capture())
+        # This machine has windows open; the point is the field is populated
+        # from structure rather than left to OCR.
+        assert isinstance(snapshot.open_apps, tuple)
+        if snapshot.open_apps:
+            assert snapshot.window_layout
+            assert "front to back" in snapshot.window_layout
+
+    def test_an_unreadable_blueprint_leaves_the_snapshot_intact(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Perception must degrade, never fail. A snapshot that raised
+        because an optional extra was unavailable would take down every
+        caller that only wanted the frontmost app."""
+        import asyncio
+
+        import core.perception.screen_blueprint as blueprint_module
+        from core.perception.screen_perception import get_screen_perception
+
+        monkeypatch.setattr(blueprint_module, "_CACHED", None)
+
+        def _explode() -> list:
+            raise RuntimeError("window server gone")
+
+        monkeypatch.setattr(blueprint_module, "_raw_window_list", _explode)
+        snapshot = asyncio.run(get_screen_perception().capture())
+        assert snapshot.window_layout == ""
+        assert snapshot.open_apps == ()

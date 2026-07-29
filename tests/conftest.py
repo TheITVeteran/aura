@@ -309,6 +309,13 @@ def resource_observer(request, monkeypatch, tmp_path):
     # nothing in it could explain, which is precisely the pass-alone /
     # fail-together shape that makes an aggregate pass count untrustworthy.
     monkeypatch.setenv("AURA_RUNTIME_LEASE_DIR", str(runtime_root / "leases"))
+    # 2026-07-28: the screen blueprint reads the real macOS window server
+    # in-process, so it is not reachable by the AppleScript mocks the desktop
+    # suite uses — a test that mocked "what is frontmost" silently started
+    # getting the answer from whatever was actually on screen. Off by default;
+    # a test that is genuinely about the blueprint sets it back to "1" itself
+    # (see tests/test_screen_blueprint.py).
+    monkeypatch.setenv("AURA_SCREEN_BLUEPRINT", "0")
 
     def _reset_resource_singletons():
         from core.agency.capability_token import reset_token_store
