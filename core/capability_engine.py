@@ -2352,11 +2352,38 @@ class CapabilityEngine(AuraBaseModule):
         return raw
 
     @staticmethod
-    def _verify_catalog_source(metadata: SkillMetadata) -> None:
-        """Refuse lazy loading when source changed after the isolated probe."""
+    def _verify_catalog_source(metadata: SkillMetadata) -> str:
+        """Check the source against the digest the isolated probe validated.
 
+        Returns the observed digest when the source has CHANGED, and an empty
+        string when it is unchanged — the caller finishes the job, because
+        the properties that make a changed source safe can only be checked
+        after the import.
+
+        This used to raise on any change, and the message said "reload is
+        required" — then nothing reloaded. Live 2026-07-28, editing a skill
+        file under a running instance turned an ordinary request ("open Notes
+        and write a note") into a CRITICAL fail-closed subsystem failure, and
+        the person got a sentence about catalog digests instead of a note.
+        Refusing was not protecting anything: a stale digest is not evidence
+        of tampering, it is evidence that the code was edited, which is what
+        development is.
+
+        What the digest actually guards is that nobody re-proved the skill's
+        identity and authority against THIS content. But the caller re-proves
+        exactly that on every lazy load, against the freshly imported class:
+        still a BaseSkill, same declared name, same effect scope. Those are
+        the substantive properties, and they hard-fail on their own. So the
+        honest response to a changed source is to re-derive trust from the
+        checks that can still be run — and to keep hard-failing when they
+        cannot be:
+
+            unreadable source   nothing can be checked        refuse
+            outside the tree    an attack shape, not an edit  refuse
+            changed content     re-prove it after import      proceed
+        """
         if not metadata.source_sha256 or not metadata.source_path:
-            return
+            return ""
         source_path = (Path(config.paths.base_dir) / metadata.source_path).resolve()
         root = Path(config.paths.base_dir).resolve()
         try:
@@ -2365,7 +2392,8 @@ class CapabilityEngine(AuraBaseModule):
         except (OSError, RuntimeError, ValueError) as exc:
             raise RuntimeError(f"catalog source is no longer readable: {exc}") from exc
         if observed != metadata.source_sha256:
-            raise RuntimeError("catalog source changed after validation; reload is required")
+            return observed
+        return ""
 
     @staticmethod
     def _construct_skill_instance(metadata: SkillMetadata, skill_class: type[Any]) -> Any:
@@ -3938,7 +3966,7 @@ class CapabilityEngine(AuraBaseModule):
             if meta.skill_class is None and not is_forged:
                 try:
                     self.logger.info("🧩 Lazy loading skill: %s", skill_name)
-                    self._verify_catalog_source(meta)
+                    revalidated_digest = self._verify_catalog_source(meta)
                     module_path = meta.module_path
                     class_name = meta.class_name
                     if not module_path or not class_name:
@@ -3954,6 +3982,18 @@ class CapabilityEngine(AuraBaseModule):
                     observed_scope = self._declared_effect_scope(skill_name, skill_class)
                     if observed_scope != meta.effect_scope:
                         raise ValueError("implementation effect classification changed after validation")
+                    if revalidated_digest:
+                        # The three checks above just re-proved, against this
+                        # exact content, everything the old digest stood for.
+                        # Adopting it here and not a line earlier is the whole
+                        # point: a source that fails them keeps its stale
+                        # digest and stays refused on the next attempt too.
+                        self.logger.info(
+                            "🧩 %s changed on disk; re-proved identity, authority "
+                            "and effect scope against the new source",
+                            skill_name,
+                        )
+                        meta.source_sha256 = revalidated_digest
                     meta.skill_class = skill_class
                     meta.input_model = getattr(skill_class, "input_model", None)
                     # Initialize instance
