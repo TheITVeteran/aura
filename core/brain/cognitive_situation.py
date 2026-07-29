@@ -547,9 +547,18 @@ class CognitiveSituationEngine:
             "requires_memory_grounding": semantic >= 0.45 or ambiguity >= 0.42,
             "deliberate_mode": not is_background and (semantic >= 0.52 or ambiguity >= 0.48 or sensorimotor >= 0.62),
             "perception_repair_required": bool(perception_repairs),
+            # Abstention keyed on action_hits alone let READ-ONLY perception
+            # questions through: "what is on my screen?" has sensor hits and no
+            # action hit, so with no fusion frame Aura answered a question about
+            # what she could see without being able to see anything. Asking
+            # about the world is exactly when the absence of a percept must
+            # force abstention — the answer would otherwise be invented.
             "perception_abstention_required": bool(
                 unresolved_sensor_conflicts
-                or (action_hits and (not fusion_frame_available or fusion_confidence < 0.40))
+                or (
+                    (action_hits or sensor_hits)
+                    and (not fusion_frame_available or fusion_confidence < 0.40)
+                )
             ),
             "social_repair_required": social_repair >= 0.50,
             "social_confirmation_required": bool(action_hits and social_repair >= 0.50),
@@ -648,12 +657,12 @@ class CognitiveSituationEngine:
             service = optional_service("other_agent_model")
             if service is None or not hasattr(service, "cognitive_snapshot"):
                 return {}
+            # Fail CLOSED on identity. Falling back to the service's mutable
+            # active_agent_id meant that, with no user_id in context, a prior or
+            # concurrent user's social model could steer this frame — and be
+            # copied into it. A social model is about a specific person; without
+            # an identified subject there is no one it is about.
             requested_agent = _compact(context.get("user_id"), limit=160)
-            if not requested_agent:
-                requested_agent = _compact(
-                    getattr(service, "active_agent_id", ""),
-                    limit=160,
-                )
             if not requested_agent:
                 return {}
             snapshot = service.cognitive_snapshot(requested_agent)
@@ -925,6 +934,28 @@ def get_cognitive_situation_engine() -> CognitiveSituationEngine:
     return _ENGINE
 
 
+#: Sequences that would let a caller-supplied frame field stop being content
+#: and start acting as prompt structure or a role turn.
+_SITUATION_STRUCTURE_RE = re.compile(
+    r"(?i)(?:(?:(?<=\s)|^)#{1,6}\s|```|~~~|<\|[^|]*\|>|"
+    r"\b(?:system|assistant|user|human)\s*:)"
+)
+
+
+def _directive_safe(value: Any, limit: int = 200) -> str:
+    """Render one frame field as inert prompt text.
+
+    render_cognitive_situation_prompt_block accepts ANY dictionary — there is
+    no producer identity or signature on a frame — and interpolates its
+    interpretations, affordances, and constraints into text the model reads as
+    directives. Anything reaching this function is therefore untrusted.
+    """
+    text = " ".join(str(value or "").split())
+    text = "".join(ch for ch in text if ch == " " or ord(ch) >= 32)
+    text = _SITUATION_STRUCTURE_RE.sub(" ", text)
+    return " ".join(text.split())[:limit]
+
+
 def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: bool = False) -> str:
     if not isinstance(frame, dict):
         return ""
@@ -976,7 +1007,8 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
         interpretations = frame.get("semantic_interpretations") or []
         if isinstance(interpretations, list) and interpretations:
             rendered = "; ".join(
-                f"{item.get('label')}: {item.get('focus')}"
+                f"{_directive_safe(item.get('label'), 80)}: "
+                f"{_directive_safe(item.get('focus'), 120)}"
                 for item in interpretations[:3]
                 if isinstance(item, dict)
             )
@@ -984,20 +1016,23 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
                 lines.append(f"Candidate interpretations: {rendered}.")
         affordances = frame.get("embodied_affordances") or []
         if isinstance(affordances, list) and affordances:
-            lines.append("Embodied affordances: " + ", ".join(map(str, affordances[:5])) + ".")
+            lines.append("Embodied affordances: " + ", ".join(
+                _directive_safe(a, 100) for a in affordances[:5]) + ".")
         causal = frame.get("causal_effects") or {}
         if isinstance(causal, dict):
             constraints = causal.get("perception_planning_constraints")
             if isinstance(constraints, list) and constraints:
-                lines.append("Perception constraints: " + ", ".join(map(str, constraints[:5])) + ".")
+                lines.append("Perception constraints: " + ", ".join(
+                    _directive_safe(c, 120) for c in constraints[:5]) + ".")
             repairs = causal.get("perception_repair_requirements")
             if isinstance(repairs, list) and repairs:
-                lines.append("Perception repair: " + ", ".join(map(str, repairs[:5])) + ".")
+                lines.append("Perception repair: " + ", ".join(
+                    _directive_safe(r, 120) for r in repairs[:5]) + ".")
             social_constraints = causal.get("social_planning_constraints")
             if isinstance(social_constraints, list) and social_constraints:
                 lines.append(
                     "Social constraints: "
-                    + ", ".join(map(str, social_constraints[:5]))
+                    + ", ".join(_directive_safe(c, 120) for c in social_constraints[:5])
                     + "."
                 )
         routing = frame.get("routing_bias") or {}
