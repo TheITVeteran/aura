@@ -87,6 +87,26 @@ class Episode(BaseModel):
     def full_description(self) -> str:
         if self.description:
             return self.description
+        # A conversation episode holds two voices: `context` is what the
+        # person said, `outcome` is what Aura said back. Flattened to
+        # "a | conversation_reply | b" both sentences lose their speaker, and
+        # a first-person sentence with no speaker is not neutral data — the
+        # reader supplies one. On 2026-07-28 the reader was Aura, recalling
+        # Bryan's "I was trying to get you to write about yourself" as a
+        # thing she had wanted, and she spent six turns acting on it.
+        #
+        # Naming the speakers costs eight characters and removes the
+        # ambiguity at the source, so nothing downstream has to guess.
+        if str(self.action or "").strip().lower().startswith("conversation"):
+            said = str(self.context or "").strip()
+            replied = str(self.outcome or "").strip()
+            parts = []
+            if said:
+                parts.append(f"User: {said}")
+            if replied:
+                parts.append(f"Aura: {replied}")
+            if parts:
+                return "\n".join(parts)
         return f"{self.context} | {self.action} | {self.outcome}"
 
     def current_strength(self) -> float:

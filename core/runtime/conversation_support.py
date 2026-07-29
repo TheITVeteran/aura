@@ -752,6 +752,11 @@ async def record_conversation_experience(
                     "semantic_mode": str(analysis.semantic_mode),
                     "memory_salience": round(float(importance), 4),
                     "conversation_turn": True,
+                    # Who said which half. `context` is the person's words and
+                    # `outcome` is Aura's; without this the record recalls as
+                    # one voice and the "I" in it lands on whoever reads it.
+                    "context_speaker": "user",
+                    "outcome_speaker": "aura",
                     "preserve_for_continuity": True,
                     "learning_admission": "verified",
                     "self_condition_grounded": self_condition_grounded,

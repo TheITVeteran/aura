@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from core.brain.aura_persona import AURA_BIG_FIVE, AURA_FEW_SHOT_EXAMPLES, AURA_IDENTITY
+from core.dialogue.referents import current_frame
 from core.runtime.conversation_support import build_conversational_context_blocks
 from core.runtime.errors import record_degradation
 from core.state.aura_state import AuraState
@@ -1606,8 +1607,22 @@ class ContextAssembler:
             else:
                 safe_rag = rag_context
                 
-            # Inject RAG as a "system" recall to separate from dialogue
-            messages.append({"role": "system", "content": f"[INTERNAL MEMORY RECALL]\n{safe_rag}"})
+            # Inject RAG as a "system" recall to separate from dialogue.
+            # The referent binding rides with the block it explains rather
+            # than sitting somewhere in the system prompt where it can drift
+            # away from the thing it is about: these snippets carry
+            # speaker="..." precisely so their "I" and "you" resolve to the
+            # right person, and that only helps if the reader is told what
+            # the attribute means. Costs nothing on turns with no recall.
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[INTERNAL MEMORY RECALL]\n"
+                        f"{current_frame().binding_note()}\n\n{safe_rag}"
+                    ),
+                }
+            )
             current_chars += _estimate_chars(safe_rag)
 
         # 5. PRIORITY 5: Older History (Fill remaining budget)

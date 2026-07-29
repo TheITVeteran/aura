@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from core.dialogue.referents import resolve_second_person
 from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
@@ -1144,6 +1145,18 @@ class DesktopTaskSkill(BaseSkill):
         """
 
         topic = self._extract_requested_writing_topic(objective) or objective
+        # "yourself" reaches the authoring model as the bare word "yourself",
+        # which is a pronoun with no antecedent in that prompt — the referent
+        # lives in the conversation, not in the instruction. Bind it here, so
+        # a request to write about herself cannot be authored as a document
+        # about the person who asked. Same seam, same reason, as the speaker
+        # attribute on recalled memory.
+        subject = resolve_second_person(objective)
+        if subject:
+            topic = f"{subject} — that is, you, the one writing this document"
+            if topic_detail := self._extract_requested_writing_topic(objective):
+                if topic_detail.lower().strip() not in {"yourself", "you"}:
+                    topic = f"{subject} ({topic_detail}) — that is, you, the one writing this document"
         try:
             from core.container import ServiceContainer
 

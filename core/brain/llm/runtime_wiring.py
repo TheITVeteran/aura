@@ -7,6 +7,7 @@ import os
 import re
 from typing import Any
 
+from core.dialogue.referents import UNATTRIBUTED, attribute, speaker_of
 from core.phases.response_contract import (
     ResponseContract,
     build_response_contract,
@@ -243,8 +244,15 @@ def _normalize_memory_snippet(item: Any) -> str:
             or metadata.get("provenance")
             or ""
         ).strip()
-        return _render_recalled_snippet(content, memory_type=memory_type, source=source)
-    return _render_recalled_snippet(str(item or ""), memory_type="", source="")
+        return _render_recalled_snippet(
+            content,
+            memory_type=memory_type,
+            source=source,
+            speaker=speaker_of(metadata),
+        )
+    return _render_recalled_snippet(
+        str(item or ""), memory_type="", source="", speaker=UNATTRIBUTED
+    )
 
 
 # Memory content is RECALLED DATA, not instruction. Much of what reaches the
@@ -256,7 +264,13 @@ _RECALL_CLOSE = "</recalled>"
 _MAX_SNIPPET_CHARS = 1200
 
 
-def _render_recalled_snippet(content: Any, *, memory_type: str, source: str) -> str:
+def _render_recalled_snippet(
+    content: Any,
+    *,
+    memory_type: str,
+    source: str,
+    speaker: str = UNATTRIBUTED,
+) -> str:
     """Render one memory as quoted, attributed, instruction-inert text.
 
     CP126 1983010a. Snippets used to be the raw stored string with at most a
@@ -284,6 +298,16 @@ def _render_recalled_snippet(content: Any, *, memory_type: str, source: str) -> 
     if len(text) > _MAX_SNIPPET_CHARS:
         text = text[:_MAX_SNIPPET_CHARS].rstrip() + " …"
     attributes = []
+    # WHO SAID IT comes first, because it is the attribute that decides what
+    # the sentence means. A recalled "I was trying to get you to write about
+    # yourself" is a different claim from Bryan's mouth than from hers, and
+    # for one live evening it travelled bare and she read it as her own. An
+    # unattributed snippet says so out loud rather than defaulting to her
+    # voice — but only when the text actually turns on a pronoun; "the folder
+    # is on the Desktop" means the same thing from anyone.
+    label = attribute(text, speaker)
+    if label:
+        attributes.append(f'speaker="{_sanitize_attribute(label)}"')
     if memory_type in {"fact", "preference", "recent_episode", "shared_ground"}:
         attributes.append(f'type="{memory_type}"')
     if source:
