@@ -114,6 +114,24 @@ class ComputerUseParams(BaseModel):
     y: int = Field(0, description="Screen y coordinate for click/scroll")
 
 
+def _image_suffix_from_bytes(raw: bytes) -> str:
+    """The real image type, read from the file's own first bytes."""
+    if not isinstance(raw, (bytes, bytearray)) or len(raw) < 12:
+        return ""
+    head = bytes(raw[:12])
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return ".gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    if head[4:8] == b"ftyp" and b"avif" in bytes(raw[:32]):
+        return ".avif"
+    return ""
+
+
 class ComputerUseSkill(BaseSkill):
     name = "computer_use"
     description = (
@@ -1153,6 +1171,17 @@ end tell
                 "image_url": candidates[0],
                 "page_url": page_url,
             }
+        # Name the file what it actually is.
+        #
+        # The planner asks for "<topic>_wallpaper.png" and the web returns
+        # whatever the web returns. Live 2026-07-28 a real grizzly image
+        # landed on the Desktop as grizzly_bear_wallpaper.png containing JPEG
+        # data — `file` said "JPEG image data" for a .png. Nothing downstream
+        # had lied; the extension had. Renaming to the sniffed type keeps the
+        # artifact honest for anything that trusts the suffix.
+        sniffed = _image_suffix_from_bytes(raw)
+        if sniffed and path.suffix.lower() != sniffed:
+            path = path.with_suffix(sniffed)
         path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_bytes(path, raw)
         expected_digest = hashlib.sha256(raw).hexdigest()
