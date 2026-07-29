@@ -1101,7 +1101,15 @@ class CognitiveEngine:
         try:
             from core.memory.entity_memory_bridge import apply_entity_context
 
-            summary = apply_entity_context(state, objective, merged_context)
+            # source="user": the objective is what the interlocutor asked, so
+            # it may introduce entities. Aura's own generated text is never
+            # passed here — a name she invented must not become a permanent
+            # member of her world that later mentions then "confirm".
+            summary = apply_entity_context(
+                state, objective, merged_context,
+                source="user",
+                evidence_id=str(merged_context.get("evidence_id") or ""),
+            )
             if summary.get("entities"):
                 merged_context["entity_memory"] = (
                     summary.get("context", {}).get("entity_memory")

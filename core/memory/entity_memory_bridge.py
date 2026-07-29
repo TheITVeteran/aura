@@ -154,6 +154,8 @@ def apply_entity_context(
     context: dict[str, Any] | None = None,
     *,
     memory: Any = None,
+    source: str = "user",
+    evidence_id: str = "",
 ) -> dict[str, Any]:
     """Make what Aura knows about the entities in play causally active.
 
@@ -166,9 +168,37 @@ def apply_entity_context(
         "available": bool(getattr(mem, "available", False)),
         "entities": [],
         "effects": [],
+        "introduced": [],
+        "pronouns": {},
     }
     if not summary["available"]:
         return summary
+
+    try:
+        from core.memory.entity_introduction import (
+            get_discourse_salience,
+            introduce_entities,
+        )
+
+        salience = get_discourse_salience()
+        salience.begin_turn()
+
+        # Meeting someone new. Source-gated: only trusted text may introduce,
+        # so Aura's own generation cannot populate her world with names she
+        # made up. Newly-met entities join this turn's working set immediately —
+        # being introduced IS the first thing that happens with them.
+        newly_met = introduce_entities(
+            objective, source=source, evidence_id=evidence_id, memory=mem,
+        )
+        if newly_met:
+            summary["introduced"] = [
+                {"name": e.canonical_name, "kind": e.kind.value} for e in newly_met
+            ]
+            summary["effects"].append(f"met {len(newly_met)} new entity(ies)")
+    except _BRIDGE_ERRORS as exc:
+        logger.debug("entity introduction skipped: %s", exc)
+        salience = None
+        newly_met = []
 
     try:
         entities = resolve_mentions(objective, memory=mem)
@@ -176,6 +206,35 @@ def apply_entity_context(
         record_degradation("entity_memory_bridge", exc, severity="warning",
                            action="entity context not applied")
         return summary
+
+    # Fold in anything just introduced, then resolve pronouns against discourse
+    # salience. "What is he working on?" carries no name, so without this the
+    # turn has no entity at all and the memory cannot act.
+    known = {e.entity_id for e in entities}
+    for entity in newly_met:
+        if entity.entity_id not in known:
+            entities.append(entity)
+            known.add(entity.entity_id)
+
+    if salience is not None:
+        try:
+            for entity in entities:
+                salience.note(entity)
+            for pronoun, bound in salience.resolve_pronouns(objective).items():
+                summary["pronouns"][pronoun] = bound.name
+                if bound.entity_id not in known:
+                    referent = mem.get_entity(bound.entity_id)
+                    if referent is not None:
+                        entities.append(referent)
+                        known.add(referent.entity_id)
+            if summary["pronouns"]:
+                summary["effects"].append(
+                    "resolved " + ", ".join(
+                        f"{p!r}->{n}" for p, n in summary["pronouns"].items())
+                )
+        except _BRIDGE_ERRORS as exc:
+            logger.debug("pronoun resolution skipped: %s", exc)
+
     if not entities:
         return summary
 

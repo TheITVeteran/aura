@@ -396,3 +396,183 @@ def test_hedging_survives_into_the_report(memory):
 def test_normalize_name_folds_surface_variation():
     assert normalize_name("  Bryan  ") == "bryan"
     assert normalize_name("Aura.app") == "aura app"
+
+
+# ── introduction: how Aura meets someone new ────────────────────────────────
+
+
+def test_introduction_is_licensed_by_construction_not_capitalisation():
+    """The pattern is the evidence: it carries kind and reliability, which a
+    regex over capital letters cannot."""
+    from core.memory.entity_introduction import detect_introductions
+
+    intros = {i.surface: i for i in detect_introductions("my friend Sarah helped")}
+
+    assert "Sarah" in intros
+    assert intros["Sarah"].kind is EntityKind.PERSON
+    assert intros["Sarah"].reliability > 0.9
+
+
+def test_introduction_does_not_swallow_following_words():
+    """Regression: compiling the name pattern with re.IGNORECASE erased the
+    capitalised-vs-lowercase distinction, so this captured 'Sarah helped'."""
+    from core.memory.entity_introduction import detect_introductions
+
+    surfaces = {i.surface for i in detect_introductions("my friend Sarah helped me today")}
+
+    assert "Sarah" in surfaces
+    assert not any(" helped" in s for s in surfaces)
+
+
+def test_possession_does_not_mint_a_verb_as_a_name():
+    """Regression: 'my laptop died' captured 'died' as the entity."""
+    from core.memory.entity_introduction import detect_introductions
+
+    surfaces = {i.surface.lower() for i in detect_introductions("my laptop died")}
+
+    assert "laptop" in surfaces
+    assert "died" not in surfaces
+
+
+def test_person_role_never_becomes_an_entity_named_for_the_role():
+    """'my friend Sarah' introduces Sarah, never an entity called 'friend'."""
+    from core.memory.entity_introduction import detect_introductions
+
+    surfaces = {i.surface.lower() for i in detect_introductions("my friend Sarah called")}
+
+    assert "friend" not in surfaces
+
+
+def test_ordinary_prose_introduces_nothing():
+    from core.memory.entity_introduction import detect_introductions
+
+    assert detect_introductions("the quick brown fox jumped over it") == []
+
+
+def test_kind_is_inferred_from_the_relational_role():
+    from core.memory.entity_introduction import detect_introductions
+
+    by_surface = {i.surface: i.kind for i in
+                  detect_introductions("Rex is my dog and I was in the workshop")}
+
+    assert by_surface.get("Rex") is EntityKind.OTHER      # a pet is not a THING
+    assert by_surface.get("workshop") is EntityKind.PLACE
+
+
+def test_aura_learns_a_new_person_from_the_user(memory):
+    """The gap this closes: previously she could only recognise, never meet."""
+    from core.memory.entity_introduction import introduce_entities
+
+    learned = introduce_entities("my friend Sarah came by", source="user",
+                                 evidence_id="msg_1", memory=memory)
+
+    assert [e.canonical_name for e in learned] == ["sarah"]
+    assert memory.resolve("Sarah", kind=EntityKind.PERSON) is not None
+
+
+def test_auras_own_output_cannot_introduce_entities(memory):
+    """A confabulated name must not become a permanent member of her world,
+    which later mentions would then 'confirm'."""
+    from core.memory.entity_introduction import introduce_entities
+
+    learned = introduce_entities("my friend Napoleon agreed with me",
+                                 source="assistant", memory=memory)
+
+    assert learned == []
+    assert memory.resolve("Napoleon", kind=EntityKind.PERSON) is None
+
+
+def test_introduction_is_bounded_per_utterance(memory):
+    """A pasted document must not mint a hundred people."""
+    from core.memory.entity_introduction import (
+        MAX_INTRODUCTIONS_PER_UTTERANCE,
+        introduce_entities,
+    )
+
+    text = " ".join(f"my friend Person{i}" for i in range(20))
+    learned = introduce_entities(text, source="user", memory=memory)
+
+    assert len(learned) <= MAX_INTRODUCTIONS_PER_UTTERANCE
+
+
+def test_aura_can_say_how_she_met_someone(memory):
+    """An introduction leaves a receipt, so 'how do you know Sarah?' has a real
+    answer rather than a guess."""
+    from core.memory.entity_introduction import introduce_entities
+
+    introduce_entities("my friend Sarah came by", source="user",
+                       evidence_id="msg_1", memory=memory)
+    sarah = memory.resolve("Sarah", kind=EntityKind.PERSON)
+    facts = (memory.dossier(sarah) or {})["facts"]
+
+    intro_fact = next(f for f in facts if f["key"] == "was introduced as")
+    assert "my friend Sarah" in intro_fact["value"]
+    assert intro_fact["provenance"][-1]["evidence_id"] == "msg_1"
+    assert "friend" in {t["key"] for t in (memory.dossier(sarah) or {})["traits"]}
+
+
+# ── coreference: who is "he"? ───────────────────────────────────────────────
+
+
+def test_pronoun_binds_to_the_salient_entity(memory):
+    """'What is she working on?' contains no name; without this the turn has no
+    entity at all and the memory cannot act."""
+    from core.memory.entity_introduction import DiscourseSalience
+
+    sarah = memory.resolve("Sarah", kind=EntityKind.PERSON, create=True)
+    salience = DiscourseSalience()
+    salience.begin_turn()
+    salience.note(sarah)
+    salience.begin_turn()
+
+    bound = salience.resolve_pronouns("What was she working on?")
+
+    assert bound["she"].name == "sarah"
+
+
+def test_pronoun_binding_respects_kind(memory):
+    """'it' must not resolve to a person."""
+    from core.memory.entity_introduction import DiscourseSalience
+
+    sarah = memory.resolve("Sarah", kind=EntityKind.PERSON, create=True)
+    salience = DiscourseSalience()
+    salience.begin_turn()
+    salience.note(sarah)
+
+    assert "it" not in salience.resolve_pronouns("Where is it?")
+
+
+def test_stale_referents_are_left_unresolved_rather_than_guessed(memory):
+    """Resolving 'she' to whoever happens to be in memory is worse than not
+    resolving it."""
+    from core.memory.entity_introduction import DiscourseSalience
+
+    sarah = memory.resolve("Sarah", kind=EntityKind.PERSON, create=True)
+    salience = DiscourseSalience()
+    salience.begin_turn()
+    salience.note(sarah)
+    for _ in range(15):
+        salience.begin_turn()
+
+    assert salience.resolve_pronouns("What is she doing?") == {}
+
+
+def test_live_path_learns_then_resolves_a_pronoun(memory, monkeypatch):
+    """The two fixes together: meet someone in one turn, understand a
+    name-free question about them in the next."""
+    import core.memory.entity_introduction as ei
+    from core.memory.entity_memory_bridge import apply_entity_context
+
+    monkeypatch.setattr(ei, "_SALIENCE", ei.DiscourseSalience())
+
+    first = AuraState.default()
+    intro = apply_entity_context(first, "my friend Sarah dropped by",
+                                 memory=memory, source="user", evidence_id="m1")
+    assert intro["introduced"] == [{"name": "sarah", "kind": "person"}]
+
+    second = AuraState.default()
+    followup = apply_entity_context(second, "What was she working on?",
+                                    memory=memory, source="user", evidence_id="m2")
+
+    assert followup["pronouns"] == {"she": "sarah"}
+    assert "sarah" in second.response_modifiers["entity_retrieval_cues"]
