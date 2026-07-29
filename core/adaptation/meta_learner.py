@@ -26,13 +26,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
+import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.MetaLearner")
@@ -82,7 +88,7 @@ class MetaStep:
     n_evaluations: int
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "cycle_id": self.cycle_id,
             "task_name": self.task_name,
@@ -107,7 +113,7 @@ class ESMetaOptimizer:
         This halves the variance of the gradient estimate.
     """
 
-    def __init__(self, config: Optional[MetaConfig] = None) -> None:
+    def __init__(self, config: MetaConfig | None = None) -> None:
         self.config = config or MetaConfig()
         self._rng = np.random.default_rng(self.config.seed)
 
@@ -115,7 +121,7 @@ class ESMetaOptimizer:
         self,
         params: np.ndarray,
         evaluate: Callable[[np.ndarray], float],
-    ) -> Tuple[np.ndarray, Dict[str, float]]:
+    ) -> tuple[np.ndarray, dict[str, float]]:
         """Estimate gradient via Evolution Strategies.
 
         Returns:
@@ -129,7 +135,7 @@ class ESMetaOptimizer:
         epsilons = []
         rewards = []
 
-        for i in range(n):
+        for _ in range(n):
             eps = self._rng.standard_normal(d) * sigma
             epsilons.append(eps)
 
@@ -143,6 +149,36 @@ class ESMetaOptimizer:
                 rewards.append(r_neg)
 
         rewards_arr = np.array(rewards, dtype=np.float64)
+
+        # An evaluator that returns NaN/inf would otherwise flow through
+        # normalization (poisoning mean and std for EVERY perturbation, not
+        # just its own), then into the gradient, the parameters, the persisted
+        # arrays, and finally the status report. Non-finite rewards are
+        # neutralised to the population mean so one bad evaluation cannot
+        # destroy the step.
+        finite_mask = np.isfinite(rewards_arr)
+        if not np.all(finite_mask):
+            n_bad = int(np.sum(~finite_mask))
+            if not np.any(finite_mask):
+                record_degradation(
+                    'meta_learner',
+                    ValueError("all evaluator rewards were non-finite"),
+                    severity="warning",
+                    action="skipped the ES gradient estimate for this task",
+                )
+                return np.zeros(d, dtype=np.float64), {
+                    "mean_reward": 0.0, "best_reward": 0.0, "worst_reward": 0.0,
+                    "n_evaluations": 0, "non_finite_rewards": n_bad,
+                }
+            record_degradation(
+                'meta_learner',
+                ValueError(f"{n_bad} non-finite evaluator reward(s)"),
+                severity="warning",
+                action="replaced non-finite rewards with the population mean",
+            )
+            rewards_arr = np.where(
+                finite_mask, rewards_arr, float(np.mean(rewards_arr[finite_mask]))
+            )
 
         # Normalize rewards (fitness shaping)
         mean_r = float(np.mean(rewards_arr))
@@ -159,13 +195,28 @@ class ESMetaOptimizer:
             else:
                 gradient += eps * normalized[i]
 
-        gradient /= (n * sigma)
+        # ES estimator scaling. `eps` is the SCALED perturbation delta = sigma*z
+        # (z ~ N(0,I)), so the canonical estimator is
+        #     grad = 1/(n * sigma^2) * SUM delta_i * r_i
+        # and, for antithetic pairs,
+        #     grad = 1/(2n * sigma^2) * SUM delta_i * (r_i^+ - r_i^-).
+        # Dividing by (n * sigma) instead left the estimate scaled by a factor
+        # of sigma — with the default sigma this understated the gradient by
+        # more than an order of magnitude, silently changing the effective
+        # meta learning rate away from the configured one.
+        denom = n * max(sigma * sigma, 1e-12)
+        if self.config.antithetic:
+            denom *= 2.0
+        gradient /= denom
+        if not np.all(np.isfinite(gradient)):
+            gradient = np.nan_to_num(gradient, nan=0.0, posinf=0.0, neginf=0.0)
 
         metrics = {
             "mean_reward": mean_r,
             "best_reward": float(np.max(rewards_arr)),
             "worst_reward": float(np.min(rewards_arr)),
             "n_evaluations": len(rewards_arr),
+            "non_finite_rewards": int(np.sum(~finite_mask)),
         }
 
         return gradient, metrics
@@ -189,27 +240,56 @@ class MetaLearner:
         steps = learner.meta_step()
     """
 
-    def __init__(self, config: Optional[MetaConfig] = None) -> None:
+    def __init__(self, config: MetaConfig | None = None) -> None:
         self.config = config or MetaConfig()
         self._optimizer = ESMetaOptimizer(self.config)
-        self._tasks: Dict[str, MetaTask] = {}
-        self._meta_params: Dict[str, np.ndarray] = {}
+        self._tasks: dict[str, MetaTask] = {}
+        self._meta_params: dict[str, np.ndarray] = {}
         self._cycle_count = 0
-        self._history: Deque[MetaStep] = deque(maxlen=200)
+        self._history: deque[MetaStep] = deque(maxlen=200)
+        # Task registry, RNG, parameters, history and persistence move together.
+        # Concurrent dream/adaptation calls previously interleaved evaluations
+        # and overwrote each other's meta state.
+        self._lock = threading.RLock()
 
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load()
         logger.info("MetaLearner initialized: %d tasks", len(self._tasks))
 
     def register_task(self, task: MetaTask) -> None:
-        """Register a meta-learning task."""
-        self._tasks[task.name] = task
-        if task.name not in self._meta_params:
-            self._meta_params[task.name] = task.baseline_params.copy()
+        """Register a meta-learning task.
+
+        Reconciles the declared parameter_dim against the baseline and any
+        restored parameters. parameter_dim was previously declared and never
+        checked, so a task could be optimised at a width neither its baseline
+        nor its evaluator expected.
+        """
+        baseline = np.asarray(task.baseline_params, dtype=np.float64).ravel()
+        declared = int(getattr(task, "parameter_dim", baseline.size) or baseline.size)
+        if baseline.size != declared:
+            raise ValueError(
+                f"meta-task '{task.name}' declares parameter_dim={declared} but "
+                f"its baseline has {baseline.size} parameters"
+            )
+        if not np.all(np.isfinite(baseline)):
+            raise ValueError(f"meta-task '{task.name}' baseline is not finite")
+
+        with self._lock:
+            self._tasks[task.name] = task
+            restored = self._meta_params.get(task.name)
+            if restored is not None and np.asarray(restored).size != declared:
+                logger.warning(
+                    "Discarded restored meta-parameters for '%s': %d values do "
+                    "not match the declared dimension %d.",
+                    task.name, np.asarray(restored).size, declared,
+                )
+                self._meta_params.pop(task.name, None)
+            if task.name not in self._meta_params:
+                self._meta_params[task.name] = baseline.copy()
         logger.debug("Registered meta-task '%s': %d params",
                       task.name, task.parameter_dim)
 
-    def meta_step(self, task_name: Optional[str] = None) -> List[MetaStep]:
+    def meta_step(self, task_name: str | None = None) -> list[MetaStep]:
         """Execute one meta-learning step over registered tasks.
 
         Args:
@@ -247,7 +327,45 @@ class MetaLearner:
             new_params = current + delta
             delta_norm = float(np.linalg.norm(delta))
 
-            self._meta_params[tname] = new_params
+            # ACCEPTANCE TEST. The new parameters used to be stored
+            # unconditionally — every noisy ES step was committed with no
+            # baseline comparison, no held-out check, and nothing to roll back
+            # to, so a bad step became the new starting point permanently.
+            # The candidate must beat the incumbent on a fresh evaluation
+            # before it is kept; otherwise the incumbent stands.
+            accepted = True
+            reject_reason = ""
+            if not np.all(np.isfinite(new_params)):
+                accepted = False
+                reject_reason = "non-finite parameters"
+            else:
+                try:
+                    incumbent_score = float(task.evaluate(current))
+                    candidate_score = float(task.evaluate(new_params))
+                except (RuntimeError, TypeError, ValueError, ArithmeticError) as exc:
+                    record_degradation('meta_learner', exc, severity="warning",
+                                       action="rejected a meta-step it could not verify")
+                    accepted, reject_reason = False, "acceptance evaluation failed"
+                else:
+                    if not (math.isfinite(incumbent_score) and math.isfinite(candidate_score)):
+                        accepted, reject_reason = False, "non-finite acceptance scores"
+                    elif candidate_score < incumbent_score:
+                        accepted = False
+                        reject_reason = (
+                            f"candidate {candidate_score:.4f} < incumbent "
+                            f"{incumbent_score:.4f}"
+                        )
+
+            if accepted:
+                self._meta_params[tname] = new_params
+            else:
+                # Roll back to the incumbent: keeping it IS the checkpoint.
+                self._meta_params[tname] = current
+                delta_norm = 0.0
+                logger.info(
+                    "Meta-step %d/%s REJECTED (%s); keeping incumbent parameters.",
+                    self._cycle_count, tname, reject_reason,
+                )
 
             step = MetaStep(
                 cycle_id=self._cycle_count,
@@ -274,7 +392,7 @@ class MetaLearner:
 
         return steps
 
-    def get_meta_params(self, task_name: str) -> Optional[np.ndarray]:
+    def get_meta_params(self, task_name: str) -> np.ndarray | None:
         """Get current meta-optimized parameters for a task."""
         return self._meta_params.get(task_name)
 
@@ -292,14 +410,25 @@ class MetaLearner:
 
     def _save(self) -> None:
         try:
-            save_dict: Dict[str, np.ndarray] = {
+            save_dict: dict[str, np.ndarray] = {
                 "cycle_count": np.array([self._cycle_count]),
             }
             for name, params in self._meta_params.items():
                 save_dict[f"meta_{name}"] = params
-            np.savez_compressed(str(_STATE_PATH), **save_dict)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            logger.debug("Meta-learner save failed: %s", exc)
+            # Atomic replace: writing in place meant a crash mid-write left a
+            # truncated .npz that the next boot could not read, silently
+            # discarding every meta-cycle ever completed.
+            tmp_path = _STATE_PATH.with_suffix(".npz.tmp")
+            with open(tmp_path, "wb") as handle:
+                np.savez_compressed(handle, **save_dict)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, _STATE_PATH)
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            # OSError was outside the handler, so a full disk or permission
+            # failure escaped a routine save.
+            record_degradation('meta_learner', exc, severity="warning",
+                               action="meta-learner state not persisted this cycle")
 
     def _load(self) -> None:
         try:
@@ -308,14 +437,31 @@ class MetaLearner:
             data = np.load(str(_STATE_PATH), allow_pickle=False)
             self._cycle_count = int(data.get("cycle_count", [0])[0])
             for key in data.files:
-                if key.startswith("meta_"):
-                    name = key[5:]
-                    self._meta_params[name] = data[key]
-            logger.info("Meta-learner restored (cycle %d)", self._cycle_count)
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            logger.debug("Meta-learner load failed: %s", exc)
+                if not key.startswith("meta_"):
+                    continue
+                name = key[5:]
+                arr = np.asarray(data[key], dtype=np.float64)
+                # This state comes off disk unsigned. A non-finite or
+                # zero-length array used to be trusted straight into the
+                # parameters, where it would poison the next gradient and every
+                # status report derived from it.
+                if arr.size == 0 or not np.all(np.isfinite(arr)):
+                    record_degradation(
+                        'meta_learner',
+                        ValueError(f"invalid persisted parameters for '{name}'"),
+                        severity="warning",
+                        action="discarded unusable persisted meta-parameters",
+                    )
+                    continue
+                self._meta_params[name] = arr
+            self._cycle_count = max(0, int(self._cycle_count))
+            logger.info("Meta-learner restored (cycle %d, %d task(s))",
+                        self._cycle_count, len(self._meta_params))
+        except (OSError, ConnectionError, TimeoutError, ValueError, KeyError) as exc:
+            record_degradation('meta_learner', exc, severity="warning",
+                               action="started with no restored meta-parameters")
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         task_status = {}
         for name in self._tasks:
             mp = self._meta_params.get(name)
@@ -333,7 +479,7 @@ class MetaLearner:
         }
 
 
-_instance: Optional[MetaLearner] = None
+_instance: MetaLearner | None = None
 
 
 def get_meta_learner() -> MetaLearner:
