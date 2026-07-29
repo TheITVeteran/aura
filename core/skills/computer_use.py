@@ -460,12 +460,26 @@ class ComputerUseSkill(BaseSkill):
         return observed, False
 
     async def _wait_for_frontmost_app(self, expected: str) -> tuple[bool, str]:
+        """Wait for an app to actually reach the front, re-asking as we go.
+
+        Ten attempts over ~3.5s was not enough against a browser that keeps
+        reclaiming focus. Live 2026-07-28 "open Notes and write a note" failed
+        with "did not become frontmost (observed=Google Chrome)" — Notes had
+        launched, and the keystrokes would have gone to the wrong window, so
+        failing was correct. The window was simply too short, and it matters
+        more than usual here because the person is watching Aura's own UI in
+        a browser while she works.
+
+        Re-activation every other attempt rather than three times total: on
+        macOS activation is a request, not a guarantee, and asking again is
+        cheap.
+        """
         last_seen = ""
-        for attempt in range(10):
+        for attempt in range(24):
             last_seen = await asyncio.to_thread(self._frontmost_app_name)
             if self._frontmost_app_matches(last_seen, expected):
                 return True, last_seen
-            if attempt in {0, 3, 6}:
+            if attempt % 2 == 0:
                 try:
                     await self._activate_app(expected)
                 except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
