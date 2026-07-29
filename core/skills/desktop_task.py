@@ -114,6 +114,22 @@ class DesktopTaskSkill(BaseSkill):
         return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
+    def _requested_image_folder(objective: str) -> str:
+        """Where the person asked the image to go, or a sane default."""
+        text = str(objective or "").lower()
+        for phrase, folder in (
+            ("desktop", "~/Desktop"),
+            ("downloads", "~/Downloads"),
+            ("documents", "~/Documents"),
+            ("pictures", "~/Pictures"),
+        ):
+            if re.search(
+                rf"\b(?:to|in|into|onto|on)\s+(?:my\s+|the\s+)?{phrase}\b", text
+            ):
+                return folder
+        return "~/Documents"
+
+    @staticmethod
     def _safe_filename(text: str, *, default: str = "aura_desktop_task") -> str:
         stem = re.sub(r"[^A-Za-z0-9._ -]+", "", str(text or "")).strip(" ._-")
         stem = re.sub(r"\s+", "_", stem).strip("_")
@@ -3292,8 +3308,17 @@ class DesktopTaskSkill(BaseSkill):
             if affordance is None:
                 continue
             if affordance.needs_image:
+                # Save where the person said, not where the code prefers.
+                #
+                # "download it to my Desktop, and set it as my wallpaper" put
+                # a real 1.3MB grizzly PNG in ~/Documents, because the
+                # destination was hardcoded. The image was correct and the
+                # wallpaper was set; it simply was not where Bryan asked for
+                # it, which is the difference between following an
+                # instruction and approximating one.
                 image_path = (
-                    f"~/Documents/{self._safe_filename(value)[:40] or 'image'}_{domain}.png"
+                    f"{self._requested_image_folder(text)}/"
+                    f"{self._safe_filename(value)[:40] or 'image'}_{domain}.png"
                 )
                 steps.append(
                     DesktopTaskStep(
