@@ -739,6 +739,27 @@ class ResponseGenerationPhase(BasePhase):
         }:
             return False
 
+        # A SOFT-CANCEL RELEASES THE OWNER. That is what it is for.
+        #
+        # The stall watchdog cancels a job precisely so the resident model
+        # stops being held, so by the time this runs the owner is free and an
+        # ordinary generation is both possible and correct. Treating the
+        # cancellation as exhaustion is the same defect the comment above
+        # describes, arriving through a different door.
+        #
+        # Measured live 2026-07-28. "Did you know the Earth's core is cold?"
+        # — a question she had answered twice in twelve seconds earlier the
+        # same evening — went into the latent lane, spent 88.6s and 177,120
+        # layer applications on branch_select, hit the worker's 40s stall
+        # budget, and was cancelled. The person got "I couldn't get to an
+        # answer I'd stand behind on that one." The enhancement lane failed
+        # and took the answer with it.
+        if normalized.startswith("soft_cancel") or normalized in {
+            "cancelled",
+            "canceled",
+        }:
+            return False
+
         input_token_count = receipt.get("input_token_count")
         input_evidence = bool(
             type(input_token_count) is int and input_token_count > 0

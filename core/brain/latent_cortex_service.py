@@ -52,6 +52,40 @@ _CONTROLLER_SURFACE_OVERRIDE_KEYS = {
 }
 
 
+#: A margin so the episode lands, is proven, and releases the owner strictly
+#: inside the window rather than at its edge.
+_LATENT_WATCHDOG_MARGIN_S = 5.0
+
+
+def _runtime_bounded_wall_clock_s(
+    requested_s: float,
+    *,
+    foreground_request: bool = False,
+) -> float:
+    """Clamp a latent wall-clock allowance to what the worker tolerates.
+
+    The lane may only plan for time the runtime will actually give it. Asking
+    the client for its own ceiling makes this a derivation rather than a
+    second constant to keep in sync — and if the client cannot be reached, the
+    requested value stands, because guessing a smaller number here would be
+    the same mistake in the other direction.
+    """
+    requested = max(1.0, float(requested_s))
+    try:
+        from core.brain.llm.mlx_client import get_mlx_client
+
+        client = get_mlx_client()
+        ceiling = float(
+            client._first_token_hard_ceiling(foreground_request=foreground_request)
+        )
+    except Exception as exc:  # noqa: BLE001 - a budget may never take a turn down
+        logger.debug("Latent wall-clock bound unavailable, using the request: %s", exc)
+        return requested
+    if ceiling <= 0.0:
+        return requested
+    return max(1.0, min(requested, ceiling - _LATENT_WATCHDOG_MARGIN_S))
+
+
 def _controller_accepts_overrides(overrides: dict[str, Any] | None) -> bool:
     """Keep live answer-surface tuning from disabling cognitive control.
 
@@ -580,7 +614,26 @@ class LatentCortexService:
         }
         budget = {
             "max_layer_apps": int((2_000_000 + 8_000_000 * stakes) * headroom),
-            "wall_clock_s": float(30.0 + 90.0 * stakes * headroom),
+            # BOUNDED BY WHAT THE RUNTIME WILL ACTUALLY ALLOW.
+            #
+            # This computed up to 120s on its own authority while the MLX
+            # worker's progress watchdog cancels any job showing no TOKEN
+            # activity past its first-token ceiling — 40s on the foreground
+            # lane. branch_select does layer applications and emits no
+            # tokens, so a perfectly healthy latent episode looks exactly
+            # like a livelocked one from outside.
+            #
+            # Measured live 2026-07-28: "Did you know the Earth's core is
+            # cold?" — answered twice in twelve seconds earlier the same
+            # evening — spent 88.6s and 177,120 layer applications in
+            # branch_select, blew the 40s budget, was soft-cancelled, and
+            # the person got "I couldn't get to an answer I'd stand behind."
+            # Two budgets, neither aware of the other, and the lane could
+            # never use the allowance it granted itself.
+            "wall_clock_s": _runtime_bounded_wall_clock_s(
+                30.0 + 90.0 * stakes * headroom,
+                foreground_request=foreground_request,
+            ),
             # Recorded so an allocation can be explained after the fact: a
             # deeper-than-usual episode should be traceable to the reason it
             # was deeper, not just observed to have been.
