@@ -47,6 +47,7 @@ from tools.train_grpo import (
     _signal_admission_report,
     _stable_seed,
     _task_gold_answer_text,
+    _training_source_files,
     completion_logprob,
     evaluate_heldout,
     evaluate_recurrent_heldout,
@@ -90,6 +91,20 @@ def test_model_path_resolves_from_authenticated_main_checkout(
     monkeypatch.chdir(worktree)
 
     assert _resolve_model_path("training/fused-model/resident") == model.resolve()
+
+
+def test_recurrent_source_inventory_matches_identity_contract() -> None:
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        REQUIRED_SOURCE_ROLES,
+    )
+
+    source_files = _training_source_files(
+        train_grpo.REPO_ROOT / "core/learning/recurrence_curriculum.py",
+        recurrent=True,
+    )
+
+    assert set(source_files) == REQUIRED_SOURCE_ROLES
+    assert all(path.is_file() for path in source_files.values())
 
 
 def test_pre_stage_recovery_runs_after_exact_restore_and_before_training_loop():

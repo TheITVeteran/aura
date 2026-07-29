@@ -205,112 +205,6 @@ def _source_binding(path: Path) -> dict[str, Any]:
     }
 
 
-def _training_source_files(
-    task_source_path: Path,
-    *,
-    recurrent: bool,
-) -> dict[str, Path]:
-    source_files = {
-        "trainer": Path(__file__),
-        "grpo": REPO_ROOT / "core/learning/grpo.py",
-        "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
-        "tasks": task_source_path,
-        "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
-        "artifact_schema": REPO_ROOT / "core/learning/recurrent_grpo_artifact_schema.py",
-        "adapter": REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py",
-    }
-    if not recurrent:
-        return source_files
-
-    source_files.update(
-        {
-            "recurrent_grpo": REPO_ROOT / "core/learning/recurrent_grpo.py",
-            "recurrent_objective": (REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"),
-            "execution_spec": REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py",
-            "latent_engine": REPO_ROOT / "core/brain/llm/latent_cortex/engine.py",
-            "recurrence": REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py",
-            "verified_trainer": REPO_ROOT / "core/learning/verified_transition_trainer.py",
-            "transition_campaign": (REPO_ROOT / "core/learning/verified_transition_campaign.py"),
-            "transition_episode": (REPO_ROOT / "core/learning/verified_transition_episode.py"),
-            "transition_reward": REPO_ROOT / "core/learning/verified_transition_reward.py",
-            "transition_admission": (
-                REPO_ROOT / "core/learning/verified_transition_group_admission.py"
-            ),
-            "transition_update": REPO_ROOT / "core/learning/verified_transition_update.py",
-            "transition_training_evidence": (
-                REPO_ROOT / "core/learning/verified_transition_training_evidence.py"
-            ),
-            "campaign_trust": (REPO_ROOT / "core/brain/llm/latent_cortex/campaign_trust.py"),
-            "transition_provider": (REPO_ROOT / "core/learning/verified_transition_provider.py"),
-            "transition_provider_factory": (
-                REPO_ROOT / "core/learning/verified_transition_production_factory.py"
-            ),
-            "transition_launch_bundle": (
-                REPO_ROOT / "core/learning/verified_transition_launch_bundle.py"
-            ),
-            "transition_launch_runner": (
-                REPO_ROOT / "tools/run_verified_recurrent_grpo_training.py"
-            ),
-            "transition_launch_materializer": (
-                REPO_ROOT / "tools/materialize_verified_recurrent_grpo_launch.py"
-            ),
-            "transition_recurrent_evidence": (
-                REPO_ROOT / "core/learning/verified_recurrent_transition_evidence.py"
-            ),
-            "transition_recurrent_repository": (
-                REPO_ROOT / "core/learning/verified_recurrent_transition_repository.py"
-            ),
-            "transition_policy_probe": (
-                REPO_ROOT / "core/learning/verified_transition_policy_probe.py"
-            ),
-            "transition_measurement_chain": (
-                REPO_ROOT / "core/learning/verified_transition_measurement_chain.py"
-            ),
-            "transition_policy_state_replay": (
-                REPO_ROOT / "core/learning/verified_transition_policy_state_replay.py"
-            ),
-            "transition_policy_state_replay_worker": (
-                REPO_ROOT / "tools/replay_verified_recurrent_policy_states.py"
-            ),
-            "transition_policy_state_replay_resume": (
-                REPO_ROOT / "tools/resume_durable_external_verifier_job.py"
-            ),
-            "durable_external_verifier_job": (
-                REPO_ROOT / "core/learning/durable_external_verifier_job.py"
-            ),
-            "recurrent_training_prompt": (REPO_ROOT / "core/learning/recurrent_training_prompt.py"),
-            "atomic_writer": REPO_ROOT / "core/runtime/atomic_writer.py",
-            "file_read_gateway": REPO_ROOT / "core/runtime/file_read_gateway.py",
-            "file_write_gateway": REPO_ROOT / "core/runtime/file_write_gateway.py",
-            "transition_transaction": (
-                REPO_ROOT / "core/learning/verified_transition_transaction.py"
-            ),
-            "transition_rejection_transaction": (
-                REPO_ROOT / "core/learning/verified_transition_rejection_transaction.py"
-            ),
-            "transition_causal_campaign": (
-                REPO_ROOT / "core/learning/verified_transition_causal_campaign.py"
-            ),
-            "verified_training_task": (REPO_ROOT / "core/learning/verified_training_task.py"),
-            "verified_token_trace": REPO_ROOT / "core/learning/verified_token_trace.py",
-        }
-    )
-
-    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
-        REQUIRED_SOURCE_ROLES,
-    )
-
-    actual_roles = set(source_files)
-    if actual_roles != REQUIRED_SOURCE_ROLES:
-        missing = sorted(REQUIRED_SOURCE_ROLES - actual_roles)
-        extra = sorted(actual_roles - REQUIRED_SOURCE_ROLES)
-        raise GRPOCheckpointError(
-            "recurrent GRPO source inventory differs from its identity contract: "
-            f"missing={missing}, extra={extra}"
-        )
-    return source_files
-
-
 def _task_record(task: Any) -> dict[str, Any]:
     return {
         "task_id": task.task_id,
@@ -1902,10 +1796,85 @@ def main(
     )
 
     model_path = str(_resolve_model_path(args.model))
-    source_files = _training_source_files(
-        task_source_path,
-        recurrent=execution_spec is not None,
-    )
+    source_files = {
+        "trainer": Path(__file__),
+        "grpo": REPO_ROOT / "core/learning/grpo.py",
+        "curriculum": REPO_ROOT / "core/learning/adaptive_curriculum.py",
+        "tasks": task_source_path,
+        "checkpoint": REPO_ROOT / "core/learning/grpo_training_state.py",
+        "artifact_schema": (REPO_ROOT / "core/learning/recurrent_grpo_artifact_schema.py"),
+        "adapter": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence_adapter.py"),
+    }
+    if execution_spec is not None:
+        source_files.update(
+            {
+                "recurrent_grpo": REPO_ROOT / "core/learning/recurrent_grpo.py",
+                "recurrent_objective": (
+                    REPO_ROOT / "core/learning/recurrence_native_objective_v2.py"
+                ),
+                "execution_spec": (REPO_ROOT / "core/brain/llm/latent_cortex/execution_spec.py"),
+                "latent_engine": (REPO_ROOT / "core/brain/llm/latent_cortex/engine.py"),
+                "recurrence": (REPO_ROOT / "core/brain/llm/latent_cortex/recurrence.py"),
+                "verified_trainer": (REPO_ROOT / "core/learning/verified_transition_trainer.py"),
+                "transition_campaign": (
+                    REPO_ROOT / "core/learning/verified_transition_campaign.py"
+                ),
+                "transition_episode": (REPO_ROOT / "core/learning/verified_transition_episode.py"),
+                "transition_reward": (REPO_ROOT / "core/learning/verified_transition_reward.py"),
+                "transition_admission": (
+                    REPO_ROOT / "core/learning/verified_transition_group_admission.py"
+                ),
+                "transition_update": (REPO_ROOT / "core/learning/verified_transition_update.py"),
+                "transition_training_evidence": (
+                    REPO_ROOT / "core/learning/verified_transition_training_evidence.py"
+                ),
+                "campaign_trust": (REPO_ROOT / "core/brain/llm/latent_cortex/campaign_trust.py"),
+                "transition_provider": (
+                    REPO_ROOT / "core/learning/verified_transition_provider.py"
+                ),
+                "transition_provider_factory": (
+                    REPO_ROOT / "core/learning/verified_transition_production_factory.py"
+                ),
+                "transition_launch_bundle": (
+                    REPO_ROOT / "core/learning/verified_transition_launch_bundle.py"
+                ),
+                "transition_launch_runner": (
+                    REPO_ROOT / "tools/run_verified_recurrent_grpo_training.py"
+                ),
+                "transition_launch_materializer": (
+                    REPO_ROOT / "tools/materialize_verified_recurrent_grpo_launch.py"
+                ),
+                "transition_recurrent_evidence": (
+                    REPO_ROOT / "core/learning/verified_recurrent_transition_evidence.py"
+                ),
+                "transition_recurrent_repository": (
+                    REPO_ROOT / "core/learning/verified_recurrent_transition_repository.py"
+                ),
+                "transition_policy_probe": (
+                    REPO_ROOT / "core/learning/verified_transition_policy_probe.py"
+                ),
+                "recurrent_training_prompt": (
+                    REPO_ROOT / "core/learning/recurrent_training_prompt.py"
+                ),
+                "atomic_writer": (REPO_ROOT / "core/runtime/atomic_writer.py"),
+                "file_read_gateway": (REPO_ROOT / "core/runtime/file_read_gateway.py"),
+                "file_write_gateway": (REPO_ROOT / "core/runtime/file_write_gateway.py"),
+                "transition_transaction": (
+                    REPO_ROOT / "core/learning/verified_transition_transaction.py"
+                ),
+                "transition_measurement_chain": (
+                    REPO_ROOT / "core/learning/verified_transition_measurement_chain.py"
+                ),
+                "transition_rejection_transaction": (
+                    REPO_ROOT / "core/learning/verified_transition_rejection_transaction.py"
+                ),
+                "transition_causal_campaign": (
+                    REPO_ROOT / "core/learning/verified_transition_causal_campaign.py"
+                ),
+                "verified_training_task": (REPO_ROOT / "core/learning/verified_training_task.py"),
+                "verified_token_trace": (REPO_ROOT / "core/learning/verified_token_trace.py"),
+            }
+        )
     sources = {role: _source_binding(path) for role, path in source_files.items()}
     base_identity = full_weight_checkpoint_identity(model_path)
     behavior_identity = model_behavior_bundle_identity(model_path)

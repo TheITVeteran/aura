@@ -31501,3 +31501,37 @@ approximately 75.2%-100.0%, with an 87.6% midpoint. The evidence-adjusted
 range remains 3-7 checkpoints to a defensible preliminary gain verdict and
 8-17 to the powered conditional `WOW Signal` decision. Final multi-hour soaks
 remain deferred.
+
+### 2026-07-29 - CP420S5 exact recurrent source closure
+
+The first CP420S4 resident probe crossed model ownership, loaded the resident
+32B under the 26.88 GiB MLX envelope, and attached all 24 intended recurrent
+projections. It then failed closed before any optimizer update because the
+initial-policy receipt's executable source inventory did not exactly match the
+adapter identity contract. The detached failure receipt and process-containment
+evidence remain immutable.
+
+The defect was contract drift: the durable replay worker, resume helper, and
+external verifier had become required roles without corresponding trainer
+bindings, while the measurement chain appeared only in the trainer map and the
+state-replay arithmetic kernel was absent from the adapter closure. A single
+canonical source-inventory constructor now supplies every trainer phase,
+requires exact parity before model load, and binds all 42 runtime roles needed
+to reconstruct training and independently replay policy transitions.
+
+The current-main policy-probe, trainer, adapter-identity, materializer, and
+verified-runner matrix passes 95/95. Ruff, formatting, compilation, diff
+hygiene, exact source parity, and the fresh contract verify. CP420S5 contract
+`3cec8a8fc72742f125e17a8b824d82efe9cd920f921eb4fa38cf94aaf42be718`
+binds the resident fingerprint, 51 campaign source roles, 288 training tasks,
+36 training holdouts, 2,877 powered confirmatory tasks, and 17,262 confirmatory
+cells. Evidence:
+`artifacts/current/cp420s5_recurrent_source_closure_evidence.json`.
+
+This repairs certificate construction; it is not a gain result. No optimizer
+update occurred in CP420S4, and reasoning gain, frontier gain, promotion, and
+`WOW Signal` remain false until fresh resident evidence passes. CP420S5 is
+total checkpoint 693. The 693-920 completion envelope is approximately
+75.3%-100.0%, with an 87.7% midpoint. The evidence-adjusted range remains 3-7
+checkpoints to a defensible preliminary gain verdict and 8-17 to the powered
+conditional `WOW Signal` decision. Final multi-hour soaks remain deferred.

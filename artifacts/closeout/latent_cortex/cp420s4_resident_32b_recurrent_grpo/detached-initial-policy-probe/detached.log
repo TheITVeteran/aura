@@ -1,0 +1,24 @@
+[tasks] 288 train / 36 held-out from recurrence_curriculum (disjoint prompts and identities verified)
+[envelope] {'schema': 'aura.mlx_memory_guard.v1', 'memory_limit_gb': 26.88, 'cache_limit_gb': 2.0, 'wired_limit_gb': 36.48, 'reclaim_every': 16, 'host_memory_gb': 64.0}
+[wiring] 24 projections adapted
+Traceback (most recent call last):
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1327, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1294, in main
+    return _run_initial_policy_probe(contract)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/prepare_resident_recurrent_grpo_campaign.py", line 1007, in _run_initial_policy_probe
+    return int(train_grpo.main())
+               ^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/tools/train_grpo.py", line 2138, in main
+    probe = build_initial_recurrent_policy_probe(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/core/learning/verified_transition_policy_probe.py", line 577, in build_initial_recurrent_policy_probe
+    return validate_initial_recurrent_policy_probe(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/core/learning/verified_transition_policy_probe.py", line 620, in validate_initial_recurrent_policy_probe
+    _fail("initial_policy_probe_invalid")
+  File "/Users/bryan/.aura/codex-worktrees/spark-cp419/core/learning/verified_transition_policy_probe.py", line 115, in _fail
+    raise InitialRecurrentPolicyProbeError(code)
+core.learning.verified_transition_policy_probe.InitialRecurrentPolicyProbeError: initial_policy_probe_invalid

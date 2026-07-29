@@ -1,0 +1,53 @@
+{
+  "schema": "aura.spark.cp420s5_recurrent_source_closure_evidence.v1",
+  "checkpoint": "CP420S5",
+  "failed_campaign": {
+    "campaign_id": "resident-32b-recurrent-grpo-cp420s4",
+    "detached_receipt_sha256": "6983e6301ceb7c39019dac1978c40e07fab3559938ad4151291d51199460d34d",
+    "duration_seconds": 27.010102,
+    "returncode": 1,
+    "failure": "initial_policy_probe_invalid",
+    "resident_model_loaded": true,
+    "recurrent_projections_attached": 24,
+    "optimizer_update_performed": false
+  },
+  "root_cause": {
+    "required_replay_roles_added_without_trainer_source_bindings": true,
+    "measurement_chain_present_only_in_trainer_inventory": true,
+    "policy_state_replay_kernel_absent_from_adapter_identity_closure": true,
+    "validator_rejected_incomplete_source_closure": true
+  },
+  "repair": {
+    "single_canonical_training_source_inventory": true,
+    "exact_role_parity_checked_before_model_load": true,
+    "required_source_roles": 42,
+    "measurement_chain_bound": true,
+    "policy_state_replay_kernel_bound": true,
+    "policy_state_replay_worker_bound": true,
+    "policy_state_replay_resume_bound": true,
+    "durable_external_verifier_bound": true
+  },
+  "fresh_campaign": {
+    "campaign_id": "resident-32b-recurrent-grpo-cp420s5",
+    "contract_sha256": "3cec8a8fc72742f125e17a8b824d82efe9cd920f921eb4fa38cf94aaf42be718",
+    "resident_checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+    "source_bindings": 51,
+    "training_tasks": 288,
+    "holdout_tasks": 36,
+    "powered_confirmatory_tasks": 2877,
+    "powered_confirmatory_cells": 17262,
+    "claim_eligible": false
+  },
+  "verification": {
+    "targeted_tests_passed": 95,
+    "targeted_tests_failed": 0,
+    "source_inventory_exact": true,
+    "ruff": "pass",
+    "py_compile": "pass",
+    "diff_check": "pass",
+    "fresh_contract_verified": true
+  },
+  "reasoning_gain_claimed": false,
+  "frontier_gain_claimed": false,
+  "wow_signal_claimed": false
+}

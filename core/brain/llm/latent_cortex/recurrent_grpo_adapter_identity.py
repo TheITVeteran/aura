@@ -93,6 +93,8 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_recurrent_evidence",
         "transition_recurrent_repository",
         "transition_policy_probe",
+        "transition_measurement_chain",
+        "transition_policy_state_replay",
         "transition_policy_state_replay_worker",
         "transition_policy_state_replay_resume",
         "durable_external_verifier_job",

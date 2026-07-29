@@ -5550,3 +5550,33 @@ envelope is approximately 75.2%-100.0%, with an 87.6% midpoint. The
 evidence-adjusted range remains 3-7 checkpoints to a defensible preliminary
 gain verdict and 8-17 to the powered conditional `WOW Signal` decision. Final
 multi-hour soaks remain deferred.
+
+### 2026-07-29 - CP420S5: recurrent training and replay share one source closure
+
+The CP420S4 resident policy probe proved the worktree-safe model path by loading
+the 32B and attaching 24 recurrent projections. It then rejected its own
+initial-policy receipt before mutation because the trainer and adapter identity
+disagreed about the executable source closure. The failed detached campaign is
+retained exactly and performed no optimizer update.
+
+The trainer now constructs its source inventory in one place and checks exact
+parity with the adapter identity before model admission. The frozen closure
+includes the pre-measurement chain, exact policy-state replay kernel, detached
+replay worker, durable resume helper, and external verifier job. Training can no
+longer certify one source graph and publish an adapter claiming another.
+
+The relevant current-main matrix passes 95/95, with Ruff, formatting,
+compilation, diff hygiene, source parity, and fresh preregistration verification
+green. Contract
+`3cec8a8fc72742f125e17a8b824d82efe9cd920f921eb4fa38cf94aaf42be718`
+binds 51 campaign source roles, 288 training tasks, 36 holdouts, 2,877 powered
+confirmatory tasks, and 17,262 confirmatory cells. Evidence:
+`artifacts/current/cp420s5_recurrent_source_closure_evidence.json`.
+
+No scientific claim is promoted by this repair. Reasoning gain, frontier gain,
+promotion, and `WOW Signal` remain false pending a successful fresh resident
+campaign. CP420S5 is total checkpoint 693. The 693-920 completion envelope is
+approximately 75.3%-100.0%, with an 87.7% midpoint. The evidence-adjusted range
+remains 3-7 checkpoints to a defensible preliminary gain verdict and 8-17 to
+the powered conditional `WOW Signal` decision. Final multi-hour soaks remain
+deferred.
