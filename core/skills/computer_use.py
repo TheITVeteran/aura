@@ -627,9 +627,16 @@ class ComputerUseSkill(BaseSkill):
         if not await self.hold_focus(app):
             return {"ok": False, "error": f"{app} lost the front before typing"}
 
+        # The title goes in first, because in a document the first line IS
+        # the title — typed live, the whole opening paragraph became the
+        # note's name (measured: a 1205-character note called
+        # "I am Aura: a persistent digital organism — ...").
+        title = str(payload.get("title") or "").strip()
+        document = f"{title}\n\n{body}" if title else body
+
         deadline = time.monotonic() + float(self._TYPING_BUDGET_S)
         typed_chars = 0
-        for chunk in self._typing_chunks(body):
+        for chunk in self._typing_chunks(document):
             if time.monotonic() >= deadline:
                 return {
                     "ok": False,
@@ -644,10 +651,16 @@ class ComputerUseSkill(BaseSkill):
                     "error": f"{app} lost the front mid-sentence",
                     "typed_characters": typed_chars,
                 }
-            script = (
-                'tell application "System Events" to keystroke '
-                f"{self._applescript_string(chunk)}"
-            )
+            # A newline is a key, not a character. `keystroke "a\nb"` types
+            # "ab" — measured live: a three-paragraph note arrived as one
+            # unbroken wall because every blank line silently vanished.
+            if chunk == "\n":
+                script = 'tell application "System Events" to key code 36'
+            else:
+                script = (
+                    'tell application "System Events" to keystroke '
+                    f"{self._applescript_string(chunk)}"
+                )
             try:
                 await asyncio.to_thread(self._run_applescript, script, timeout=15)
             except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
@@ -695,15 +708,21 @@ class ComputerUseSkill(BaseSkill):
         """
         chunk = max(4, int(cls._TYPING_CHUNK_CHARS))
         chunks: list[str] = []
-        index = 0
-        while index < len(body):
-            end = min(len(body), index + chunk)
-            if end < len(body):
-                space = body.rfind(" ", index, end)
-                if space > index:
-                    end = space + 1
-            chunks.append(body[index:end])
-            index = end
+        # Each line is typed, and each newline between them is its own chunk
+        # so the caller can send it as the Return key it actually is.
+        lines = str(body or "").split("\n")
+        for line_index, line in enumerate(lines):
+            if line_index:
+                chunks.append("\n")
+            index = 0
+            while index < len(line):
+                end = min(len(line), index + chunk)
+                if end < len(line):
+                    space = line.rfind(" ", index, end)
+                    if space > index:
+                        end = space + 1
+                chunks.append(line[index:end])
+                index = end
         return chunks
 
     async def _create_note(self, target: Any) -> dict[str, Any]:

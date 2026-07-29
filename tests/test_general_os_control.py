@@ -206,16 +206,42 @@ class TestSheTypesWhenSheCan:
     def test_chunks_break_on_words(self):
         from core.skills.computer_use import ComputerUseSkill
 
-        chunks = ComputerUseSkill._typing_chunks(
-            "Orcas are the largest members of the dolphin family."
-        )
-        assert "".join(chunks) == (
-            "Orcas are the largest members of the dolphin family."
-        )
+        line = "Orcas are the largest members of the dolphin family."
+        chunks = ComputerUseSkill._typing_chunks(line)
+        assert "".join(chunks) == line
         assert all(chunk for chunk in chunks)
         # A chunk should not split a word in half; every chunk but the last
         # ends at a space.
         assert all(chunk.endswith(" ") for chunk in chunks[:-1]), chunks
+
+    def test_a_newline_is_its_own_chunk_because_it_is_a_key(self):
+        """`keystroke "a\nb"` types "ab". Measured: a three-paragraph note
+        arrived as one unbroken wall."""
+        from core.skills.computer_use import ComputerUseSkill
+
+        document = "About Aura\n\nOrcas are large. They hunt in pods."
+        chunks = ComputerUseSkill._typing_chunks(document)
+        assert "".join(chunks) == document
+        assert chunks.count("\n") == 2
+        assert not any("\n" in chunk and chunk != "\n" for chunk in chunks)
+
+    def test_the_newline_chunk_is_sent_as_the_return_key(self):
+        import inspect
+
+        from core.skills.computer_use import ComputerUseSkill
+
+        source = inspect.getsource(ComputerUseSkill._type_into_app)
+        assert "key code 36" in source, "Return must be a key, not a character"
+
+    def test_the_title_is_typed_first(self):
+        """In a document the first line IS the title — typed live without
+        one, a 1205-character note was named after its opening paragraph."""
+        import inspect
+
+        from core.skills.computer_use import ComputerUseSkill
+
+        source = inspect.getsource(ComputerUseSkill._type_into_app)
+        assert 'f"{title}' in source
 
     def test_the_result_says_which_hand_wrote_it(self):
         """A fallback that hides that it fell back is how 'she typed it'
