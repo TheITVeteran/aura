@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
@@ -58,7 +58,7 @@ class OnlineLoRAGovernor:
         self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
         self._observer = observer
         self._lock = asyncio.Lock()
-        self.last_receipt: Optional[OnlineLoRAReceipt] = None
+        self.last_receipt: OnlineLoRAReceipt | None = None
 
     @staticmethod
     def enabled() -> bool:
@@ -76,11 +76,51 @@ class OnlineLoRAGovernor:
                 }
             ]
         found: list[dict[str, Any]] = []
+        current_pid = os.getpid()
         for process in table.processes:
+            if process.pid == current_pid:
+                continue
             joined = " ".join(process.cmdline).lower()
-            if "mlx_lm" in joined and "lora" in joined:
-                found.append({"pid": process.pid, "cmdline": list(process.cmdline)})
+            matched = self._training_signature(joined)
+            if matched:
+                found.append({
+                    "pid": process.pid,
+                    "cmdline": list(process.cmdline),
+                    "matched": matched,
+                })
         return found
+
+    #: Command-line signatures of processes that are training or fusing model
+    #: weights. Matching only "mlx_lm ... lora" made the recurrence-native 32B
+    #: trainer and every other training entrypoint INVISIBLE to the exclusion
+    #: check, so this governor would happily start a competing LoRA update
+    #: beside a running trainer while reporting that it had checked.
+    #: Ordered MOST SPECIFIC FIRST, so the reported label names the actual
+    #: entrypoint rather than whichever generic marker happened to appear in
+    #: the command line. Detection is unaffected by order; the label is not.
+    _TRAINING_SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("mlx_lm.lora", ("mlx_lm", "lora")),
+        ("mlx_lm.fuse", ("mlx_lm", "fuse")),
+        ("self_optimizer", ("self_optimizer",)),
+        ("resident_trainer", ("resident", "train")),
+        ("recurrence_trainer", ("recurrence", "train")),
+        ("grpo_trainer", ("grpo",)),
+        # Launchers before the generic script/verb markers they wrap.
+        ("torch_run", ("torchrun",)),
+        ("accelerate_launch", ("accelerate", "launch")),
+        ("distillation", ("distill",)),
+        ("finetune", ("finetune",)),
+        ("fine_tune", ("fine_tune",)),
+        ("train_script", ("train.py",)),
+    )
+
+    @classmethod
+    def _training_signature(cls, joined_cmdline: str) -> str:
+        """Name the training signature this command line matches, if any."""
+        for label, needles in cls._TRAINING_SIGNATURES:
+            if all(needle in joined_cmdline for needle in needles):
+                return label
+        return ""
 
     def _record(self, receipt: OnlineLoRAReceipt) -> OnlineLoRAReceipt:
         provenance = (self._observer or get_resource_observer()).provenance
@@ -120,8 +160,14 @@ class OnlineLoRAGovernor:
             # A command-line census enriches every host process and is allowed
             # only on a worker thread. On large developer workstations it can
             # otherwise stall the owner loop for multiple seconds.
+            # `force` may override the POLICY gate above (an operator choosing
+            # to run while the feature flag is off). It must not override this
+            # one: another trainer holding the model is a physical collision,
+            # not a preference, and two concurrent LoRA updates corrupt the
+            # adapter they share. There is no emergency authority that makes
+            # concurrent training safe, so force does not grant one.
             running = await asyncio.to_thread(self.active_lora_processes)
-            if running and not force:
+            if running:
                 observation_error = str(running[0].get("observation_error") or "")
                 return self._record(
                     OnlineLoRAReceipt(
@@ -131,7 +177,13 @@ class OnlineLoRAGovernor:
                         reason=(
                             f"process_table_unavailable:{observation_error}"
                             if observation_error
-                            else f"active mlx_lm lora process pid={running[0].get('pid')}"
+                            else (
+                                f"active training process "
+                                f"({running[0].get('matched') or 'unknown'}) "
+                                f"pid={running[0].get('pid')}"
+                                + (" [force does not override a training collision]"
+                                   if force else "")
+                            )
                         ),
                     )
                 )
@@ -169,12 +221,26 @@ class OnlineLoRAGovernor:
                         system_prompt="You are Aura.",
                         user_input=conversation_context[-500:] if conversation_context else "Self-reflection trigger.",
                         response=reflection,
-                        explicit_positive=True,
+                        # NOT explicit_positive. This is Aura's own reflection
+                        # with no user feedback, no outcome evidence, and no
+                        # factual verification behind it. Labelling it explicit
+                        # positive feedback made the model train on its own
+                        # output as though a human had endorsed it — the
+                        # textbook self-training loop, where whatever the model
+                        # already tends to say becomes what it is reinforced to
+                        # say. It is captured as unlabelled material for the
+                        # scheduler's own validation to grade.
+                        explicit_positive=False,
                         emotional_context={"arousal": 0.5, "valence": 0.5},
                     )
                     optimizer_result = {
                         "ok": True,
                         "message": "queued_for_scheduler_validation",
+                        # Stated on the receipt (which this module owns) so
+                        # nothing downstream can mistake self-authored text for
+                        # externally-corroborated training signal.
+                        "signal_source": "self_reflection",
+                        "externally_validated": False,
                     }
                 else:
                     optimizer_result = {
@@ -198,9 +264,60 @@ class OnlineLoRAGovernor:
                 )
             )
 
+    @staticmethod
+    def _verify_will_receipt(receipt_id: str) -> bool | None:
+        """True/False when the Will can adjudicate the id, None when it cannot."""
+        try:
+            from core.will import get_will
+
+            will = get_will()
+            lookup = getattr(will, "get_receipt", None) or getattr(
+                will, "lookup_receipt", None
+            )
+            if not callable(lookup):
+                return None
+            receipt = lookup(str(receipt_id))
+            if receipt is None:
+                return False
+            approved = getattr(receipt, "is_approved", None)
+            if callable(approved):
+                return bool(approved())
+            if isinstance(receipt, dict):
+                return bool(receipt.get("approved"))
+            return None
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
     def _decide(self, reflection: str, *, will_receipt_id: str = "") -> dict[str, Any]:
+        # A caller-supplied receipt id used to be accepted as approval on the
+        # sole basis of being non-empty: any string at all authorised a weight
+        # mutation. The id is now checked against the Will that supposedly
+        # issued it, and only a receipt the Will confirms as approved counts.
+        # Full binding (signature, action digest, scope, expiry, replay) needs
+        # the signing boundary this module does not own; what is closed here is
+        # the case where NOTHING was verified.
         if will_receipt_id:
-            return {"approved": True, "receipt_id": will_receipt_id, "reason": "upstream Will-approved reflection"}
+            verified = self._verify_will_receipt(will_receipt_id)
+            if verified is True:
+                return {
+                    "approved": True,
+                    "receipt_id": will_receipt_id,
+                    "reason": "Will-confirmed upstream approval",
+                }
+            if verified is False:
+                return {
+                    "approved": False,
+                    "receipt_id": will_receipt_id,
+                    "reason": "supplied Will receipt is not an approval",
+                }
+            # Verification unavailable: fall through to asking the Will
+            # directly rather than trusting the unverifiable id.
+            record_degradation(
+                "online_lora_governor",
+                RuntimeError("could not verify supplied Will receipt"),
+                severity="warning",
+                action="re-requested a decision from the Will instead of trusting the id",
+            )
         try:
             from core.will import ActionDomain, get_will
 
@@ -258,7 +375,7 @@ class OnlineLoRAGovernor:
         return payload
 
 
-_instance: Optional[OnlineLoRAGovernor] = None
+_instance: OnlineLoRAGovernor | None = None
 
 
 def get_online_lora_governor() -> OnlineLoRAGovernor:
