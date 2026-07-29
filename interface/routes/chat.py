@@ -21706,8 +21706,11 @@ async def api_chat(
                     "running the governed desktop lane instead of serving the "
                     "refusal."
                 )
+                # The refusal itself is worthless as a document body, so the
+                # executor composes its own rather than inheriting it.
                 executed_after_refusal = await _execute_desktop_objective_from_chat(
-                    _semantic_user_message
+                    _semantic_user_message,
+                    cognitive_reply="",
                 )
                 if isinstance(executed_after_refusal, dict) and executed_after_refusal.get(
                     "response"

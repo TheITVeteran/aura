@@ -63,3 +63,18 @@ def test_the_route_runs_the_executor_instead_of_serving_the_refusal():
     source = inspect.getsource(chat_routes)
     assert "_looks_like_capability_refusal(salvaged_no_reply)" in source
     assert "executed_after_refusal" in source
+
+
+def test_the_executor_is_called_with_a_valid_signature():
+    """This path only fires on a live refusal, so no unit test exercised it —
+    and it shipped calling _execute_desktop_objective_from_chat without its
+    required cognitive_reply, turning every refusal into status 'error'.
+    Binding the real signature catches that without needing the live path.
+    """
+    import inspect
+
+    from interface.routes.chat import _execute_desktop_objective_from_chat
+
+    signature = inspect.signature(_execute_desktop_objective_from_chat)
+    # Must bind exactly as the call site invokes it.
+    signature.bind("open notes and write a note", cognitive_reply="")
