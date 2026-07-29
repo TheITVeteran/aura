@@ -5801,3 +5801,29 @@ matrix passes 98/98. This is prelaunch reliability evidence only. CP420S13
 still requires a fresh resident canary, contract, trust roots, launch bundle,
 and explicit user green light before the 32B process starts. No intelligence
 gain or `WOW Signal` is claimed.
+
+### 2026-07-29 - CP420S13 locked and loaded at the green-light boundary
+
+The fresh resident gates are complete. The source-bound 32B initial-policy
+probe attached all 24 recurrent projections. The answer-channel preflight
+returned five valid and correct results out of six and classified the remaining
+bounded token-limit result as policy evidence, not an engine crash; the frozen
+gate verdict is `answer_channel_operational`. The model-bound preregistration
+verification passes with the expected 32B checkpoint fingerprint and behavior
+bundle.
+
+Four distinct Keychain-backed host signer services are live on their private
+Unix sockets with no exported private role keys. The signed 288-task launch
+bundle reopened deterministically three times at SHA-256
+`9cd86ac093b69db70955679c99d8169942958137a19600764fb3b39e2416f000`.
+The exact one-command launch surface is frozen in
+`artifacts/current/cp420s13_resident_32b_training_readiness_evidence.json`.
+On launch it creates the detached source-bound supervisor, child-bound sleep
+inhibitor, step-zero checkpoint, and internal bounded restart watchdog. There
+is no resident 32B or training process running at this checkpoint.
+
+The campaign is waiting only for Bryan's explicit green light. Training,
+optimizer updates, reasoning gain, frontier gain, promotion, and `WOW Signal`
+remain false until measured. Host-isolated signing is not independent external
+administration. CP420S13 readiness is total checkpoint 704. The 704-920
+completion envelope is approximately 76.5%-100.0%, with an 88.3% midpoint.

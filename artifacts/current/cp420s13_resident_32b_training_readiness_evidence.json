@@ -1,0 +1,123 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s13",
+  "claim_boundary": "prelaunch_readiness_only_no_training_or_reasoning_gain_claim",
+  "contract": {
+    "contract_sha256": "07f008b0ec670dfa8101e7d0ebefba072011ae7603649e3bef31ab8a6fbc8dcb",
+    "holdout_tasks": 36,
+    "source_checkpoint": "34cd30071b7e97eafc31f2f395b4904eb9e3bca9",
+    "training_tasks": 288,
+    "verified_from_main_checkpoint": "d71dda1cda5cd78d488f8880f65feae6c873d284"
+  },
+  "gates": {
+    "answer_channel": {
+      "correct_count": 5,
+      "receipt_sha256": "0cb23abde5b3e62560259c0f699e3f1b5a0860d6f1894cd7409d744c6d04fbe2",
+      "task_count": 6,
+      "valid_contract_count": 5,
+      "verdict": "answer_channel_operational"
+    },
+    "expanded_test_matrix": {
+      "passed": 312,
+      "status": "pass"
+    },
+    "initial_policy": {
+      "initial_policy_sha256": "6116ad84c284feab8ebc9b438f8a0254707885046605db1c6516028fda517b17",
+      "recurrent_projection_count": 24,
+      "receipt_sha256": "6839c07a46e805f14a5adaf861ce209b7bf734bf607db1dd02676057e6223576"
+    },
+    "launch_bundle": {
+      "bundle_sha256": "9cd86ac093b69db70955679c99d8169942958137a19600764fb3b39e2416f000",
+      "claim_boundary": "host_isolated_research_launch_external_claim_custody_still_required",
+      "deterministic_reopen_passed": true,
+      "materialization_reopen_count": 3,
+      "provider_contract_sha256": "2f02f92513c0bbe9a8230ec841688fbacef65a3f2368bdeb083e3ed9227b96ee",
+      "receipt_sha256": "c54c00e1f5365dace18c82db0fa88df79dafd853d6272a303fa455df44359304",
+      "task_count": 288
+    },
+    "model_contract": {
+      "behavior_bundle_sha256": "7eb54f8b670bba6e5b37ae5f9c6d016e9628034951b3ee702ca0096123c5e674",
+      "checkpoint_fingerprint": "8eae71e73a14d1228a942d4faf84690d70b62148f25b0f924435535f7c550fad",
+      "verified": true
+    }
+  },
+  "launch": {
+    "argv": [
+      "/Users/bryan/.aura/live-source/.venv/bin/python",
+      "tools/prepare_resident_recurrent_grpo_campaign.py",
+      "launch-training",
+      "--contract",
+      "config/latent_cortex/resident_32b_recurrent_grpo_cp420s13_preregistration.json",
+      "--expected-launch-bundle-sha256",
+      "9cd86ac093b69db70955679c99d8169942958137a19600764fb3b39e2416f000"
+    ],
+    "argv_sha256": "32f1778a03cc8fd85832b28f91e321349ba0199105650a0fdf2f9cca2b9688aa",
+    "detached_timeout_s": 93600,
+    "launch_not_before_unix": 1784678400,
+    "only_remaining_operator_action": "explicit_green_light",
+    "sleep_inhibitor": "caffeinate_-i_child_bound_armed_on_launch",
+    "source_bound_supervisor": "run_detached_step",
+    "training_started": false
+  },
+  "model": {
+    "memory_limit_gb": 26.88,
+    "path": "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
+  },
+  "observed_at": "2026-07-29T16:20:48-07:00",
+  "outcome": {
+    "frontier_gain_claimed": false,
+    "optimizer_update_observed": false,
+    "promotion_claimed": false,
+    "reasoning_gain_claimed": false,
+    "training_campaign_started": false,
+    "wow_signal_claimed": false
+  },
+  "recovery": {
+    "attempt_journal": "atomic",
+    "max_attempts": 4,
+    "max_consecutive_no_progress_failures": 2,
+    "restart_scope": "exact_source_bound_checkpoint_resume_only",
+    "retry_backoff_s": 30.0,
+    "step_zero_checkpoint_required": true
+  },
+  "schema": "aura.spark.cp420s13_resident_32b_training_readiness_evidence.v1",
+  "training_adequacy": {
+    "complete_evaluation_schedule_required": true,
+    "full_unique_schedule_required": true,
+    "minimum_optimizer_update_fraction": 0.25,
+    "minimum_optimizer_updates_per_evaluation_window": 1,
+    "policy_transition_requirement": "distinct_digest_per_optimizer_update",
+    "protocol_version": 7,
+    "publication_refuses_inadequate_training": true
+  },
+  "trust": {
+    "claim_boundary": "same_host_process_isolation_not_independent_external_administration",
+    "expires_at": "2026-08-05T16:16:14-07:00",
+    "policy_sha256": "747e8ede75912e48be626d82ce4f411c1824173760f7ffe56d9c5692a1df25a4",
+    "private_role_keys_exported": false,
+    "private_role_keys_persisted_in_keychain": true,
+    "role_count": 4,
+    "services": {
+      "campaign_runner": {
+        "key_id": "66f8180dd118fed62828254cf41583ae1436377b51b150d178a6d9016c36ec2d",
+        "pid": 52911,
+        "socket_live": true
+      },
+      "contamination_auditor": {
+        "key_id": "92fdc6df2c23146b312004df89ae76e76a01944aac821796c7fac355d3bded4d",
+        "pid": 52914,
+        "socket_live": true
+      },
+      "evidence_verifier": {
+        "key_id": "e7b28b77a00163a9c8b02549833860f08a7a15ed40340a3a5dc39f175e78c5dc",
+        "pid": 52915,
+        "socket_live": true
+      },
+      "task_issuer": {
+        "key_id": "3bf084a3cc6b90b2f11ee7cb9954add8ff99a54ccfc0f94c4d2859a662033c81",
+        "pid": 52908,
+        "socket_live": true
+      }
+    }
+  },
+  "verdict": "locked_and_loaded_waiting_for_explicit_green_light"
+}

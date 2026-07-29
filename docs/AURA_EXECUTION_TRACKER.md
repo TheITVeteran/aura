@@ -31746,3 +31746,29 @@ Open before green light: commit/push this source, run the expanded matrix and
 resident canary, freeze CP420S13, provision fresh signers, materialize and
 reopen the launch bundle twice, and verify the final single-command launch
 surface. No training or gain claim has started.
+
+### 2026-07-29 - CP420S13 resident training is locked and loaded
+
+All work before the explicit launch decision is complete. The expanded
+trainer/RLC/recovery matrix passes 312/312. A real resident-32B policy probe
+attached all 24 recurrent projections, and the real answer-channel preflight
+produced five valid and correct outputs out of six with the frozen operational
+verdict. The complete model-bound contract verifies against the expected
+checkpoint and behavior bundle.
+
+Fresh Keychain-backed task issuer, campaign runner, contamination auditor, and
+evidence verifier services are live on private sockets. Their role keys were
+not exported. The externally digest-pinned 288-task launch bundle reopened
+three times with the identical SHA-256
+`9cd86ac093b69db70955679c99d8169942958137a19600764fb3b39e2416f000`.
+The launch command, source contract, training-dose gates, sleep inhibitor, and
+bounded exact-checkpoint restart policy are frozen in
+`artifacts/current/cp420s13_resident_32b_training_readiness_evidence.json`.
+
+No training process is running, so the desktop remains available for the demo.
+After Bryan's green light, the sole remaining action is executing the frozen
+launch command; no source repair, canary, signer provisioning, bundle
+materialization, or command assembly remains. This is readiness evidence, not
+an optimizer-update or intelligence-gain result. CP420S13 readiness is total
+checkpoint 704. The 704-920 completion envelope is approximately 76.5%-100.0%,
+with an 88.3% midpoint.
