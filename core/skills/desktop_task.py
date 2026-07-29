@@ -403,32 +403,69 @@ class DesktopTaskSkill(BaseSkill):
         lowered = str(objective or "").lower()
         if not any(token in lowered for token in ("open", "show", "bring up", "pull up", "tab")):
             return 0
-        if not any(token in lowered for token in ("article", "articles", "source", "sources", "news", "stories")):
-            return 0
-        explicit = re.search(r"\b([2-5])\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered)
-        if explicit:
-            return max(1, min(5, int(explicit.group(1))))
-        if re.search(r"\b(?:two|a couple)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
-            return 2
-        if re.search(r"\b(?:three|a few|several)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
-            return 3
-        return 3
+        return DesktopTaskSkill._counted_in_request(lowered) or 3
 
     @staticmethod
     def _requested_research_source_count(objective: str) -> int:
         lowered = str(objective or "").lower()
-        if not any(token in lowered for token in ("article", "articles", "source", "sources", "news", "stories")):
+        counted = DesktopTaskSkill._counted_in_request(lowered)
+        if counted:
+            return counted
+        if not any(
+            token in lowered
+            for token in ("article", "articles", "source", "sources", "news", "stories")
+        ):
             return 0
-        explicit = re.search(r"\b([2-5])\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered)
-        if explicit:
-            return max(1, min(5, int(explicit.group(1))))
-        if re.search(r"\b(?:two|a couple)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
-            return 2
-        if re.search(r"\b(?:three|a few|several)\s+(?:different\s+)?(?:articles?|sources?|stories?)\b", lowered):
-            return 3
-        if "different" in lowered and any(token in lowered for token in ("articles", "sources", "stories")):
+        if "different" in lowered:
             return 3
         return 1
+
+    #: Adjectives a person puts between the number and the noun. "3 RECENT
+    #: articles" matched nothing before this and fell through to 1, so a
+    #: request for three sources was validated against one — and only
+    #: "different" was ever allowed through, which is the narrowest possible
+    #: version of the general case.
+    _COUNT_MODIFIERS = (
+        r"(?:(?:different|recent|new|latest|good|solid|reliable|credible|"
+        r"separate|independent|current|major|top|real|actual)\s+){0,3}"
+    )
+
+    _COUNTED_NOUN = r"(?:articles?|sources?|stories?|pieces?|links?|results?)"
+
+    #: Words for small numbers, because people write both.
+    _COUNT_WORDS = {
+        "one": 1,
+        "two": 2,
+        "a couple": 2,
+        "a couple of": 2,
+        "three": 3,
+        "a few": 3,
+        "several": 3,
+        "four": 4,
+        "five": 5,
+    }
+
+    @classmethod
+    def _counted_in_request(cls, lowered: str) -> int:
+        """How many sources the person actually asked for, or 0 if unsaid.
+
+        ONE parser, because there were two that had diverged: the visible-tab
+        count and the research count carried the same regex with different
+        fallbacks, so fixing a phrasing in one left the other wrong.
+        """
+        text = str(lowered or "").lower()
+        digits = re.search(
+            rf"\b([1-9][0-9]?)\s+{cls._COUNT_MODIFIERS}{cls._COUNTED_NOUN}\b", text
+        )
+        if digits:
+            return max(1, min(5, int(digits.group(1))))
+        for word, value in cls._COUNT_WORDS.items():
+            if re.search(
+                rf"\b{re.escape(word)}\s+{cls._COUNT_MODIFIERS}{cls._COUNTED_NOUN}\b",
+                text,
+            ):
+                return value
+        return 0
 
     @staticmethod
     def _objective_requests_research_document(objective: str) -> bool:
@@ -2164,7 +2201,19 @@ class DesktopTaskSkill(BaseSkill):
         if not query:
             return {}
         deep_search = True
-        num_results = 5
+        # READ WHAT WAS ASKED FOR, PLUS ONE.
+        #
+        # This was a flat 5. Asked for "3 recent articles about orcas" she
+        # searched, fetched and read five — and the whole cost of the step is
+        # the local model reading them (measured: gathering logs as 0.0s, the
+        # run as 82.4s). So two of those five were pure latency for material
+        # nobody asked for, and the document cited more sources than the
+        # request wanted.
+        #
+        # The spare covers a dead link, which is the reason a margin existed
+        # at all; the validation below already tolerates coming up short.
+        requested = self._requested_research_source_count(objective)
+        num_results = min(5, requested + 1) if requested else 5
         pressure_limited = False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
