@@ -19,6 +19,8 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+
+from core.runtime.errors import record_degradation
 from pathlib import Path
 from typing import List, Optional
 
@@ -53,20 +55,87 @@ class ContentItem:
         return self.url is not None
 
 
-def load_corpus(path: Path | None = None) -> List[ContentItem]:
-    """Parse the curated-media markdown into ContentItem records.
+@dataclass(frozen=True)
+class CorpusParseReport:
+    """What the parser accepted, and what it could not.
 
-    Returns empty list if file is missing. Raises nothing on malformed
-    bullets — they are skipped with a category-level marker so the parser
-    never blocks on a single bad line.
+    CP126 (high): "Malformed bullets are silently dropped. The docstring
+    promises a category-level marker, but unmatched bullets and entries
+    before the exact library heading are skipped with no count, warning, or
+    parse report."
+
+    The docstring described a marker that does not exist. Skipping a bad
+    line is the right behaviour — one typo should not empty the library —
+    but a corpus that silently loses half its entries to a formatting change
+    looks exactly like a corpus that is genuinely half that size, and the
+    only symptom is Aura quietly never mentioning those films again.
+    """
+
+    total_bullets: int = 0
+    parsed: int = 0
+    unmatched: int = 0
+    before_library_heading: int = 0
+    uncategorised: int = 0
+    samples: tuple[str, ...] = ()
+
+    @property
+    def dropped(self) -> int:
+        """Library entries that were LOST, which preamble bullets are not.
+
+        Measured against the real corpus, all twelve skipped bullets were
+        instructional preamble before the "# The library" heading — prose
+        that was never a library entry. Counting those as loss would make
+        this report cry wolf on a healthy file, and a report that cries wolf
+        gets muted, which is how the original silence returns.
+        """
+        return self.unmatched + self.uncategorised
+
+    @property
+    def complete(self) -> bool:
+        return self.dropped == 0
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "aura.curated_corpus_parse.v1",
+            "total_bullets": self.total_bullets,
+            "parsed": self.parsed,
+            "dropped": self.dropped,
+            "unmatched": self.unmatched,
+            # Reported for completeness, deliberately NOT counted as loss.
+            "before_library_heading": self.before_library_heading,
+            "uncategorised": self.uncategorised,
+            "complete": self.complete,
+            "samples": list(self.samples),
+        }
+
+
+def load_corpus_with_report(
+    path: Path | None = None,
+) -> tuple[List[ContentItem], CorpusParseReport]:
+    """Parse the curated-media markdown, reporting what was skipped.
+
+    Skipping a malformed bullet is deliberate — one typo must not empty the
+    library — but the skip is now counted and sampled, so a formatting change
+    that quietly drops half the corpus is visible instead of looking like a
+    smaller library.
     """
     path = Path(path).expanduser() if path is not None else _default_corpus_path()
     if not path.exists():
-        return []
+        return [], CorpusParseReport()
 
     items: List[ContentItem] = []
     current_category: Optional[str] = None
     in_library = False
+    total_bullets = 0
+    unmatched = 0
+    before_heading = 0
+    uncategorised = 0
+    samples: List[str] = []
+
+    def _sample(line: str) -> None:
+        """Only real losses are sampled; preamble is not a loss."""
+        if len(samples) < 5:
+            samples.append(line.strip()[:120])
 
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.rstrip()
@@ -76,6 +145,9 @@ def load_corpus(path: Path | None = None) -> List[ContentItem]:
             in_library = True
             continue
         if not in_library:
+            if line.startswith("- "):
+                total_bullets += 1
+                before_heading += 1
             continue
 
         if line.startswith("## "):
@@ -83,11 +155,16 @@ def load_corpus(path: Path | None = None) -> List[ContentItem]:
             continue
         if line.startswith("---") or not line.startswith("- "):
             continue
+        total_bullets += 1
         if current_category is None:
+            uncategorised += 1
+            _sample(line)
             continue
 
         match = _BULLET.match(line)
         if not match:
+            unmatched += 1
+            _sample(line)
             continue
 
         title = match.group("title").strip()
@@ -119,6 +196,36 @@ def load_corpus(path: Path | None = None) -> List[ContentItem]:
             )
         )
 
+    report = CorpusParseReport(
+        total_bullets=total_bullets,
+        parsed=len(items),
+        unmatched=unmatched,
+        before_library_heading=before_heading,
+        uncategorised=uncategorised,
+        samples=tuple(samples),
+    )
+    if not report.complete:
+        record_degradation(
+            "curated_media_loader",
+            ValueError(
+                f"curated corpus parsed {report.parsed}/{report.total_bullets} "
+                f"bullets ({report.dropped} skipped)"
+            ),
+            severity="warning",
+            action="loaded the parseable entries; the skipped ones are absent from the library",
+            enforce_failure_policy=False,
+        )
+    return items, report
+
+
+def load_corpus(path: Path | None = None) -> List[ContentItem]:
+    """Parse the curated-media markdown into ContentItem records.
+
+    Returns an empty list if the file is missing, and never raises on a
+    malformed bullet. Callers wanting to know what was skipped should use
+    :func:`load_corpus_with_report`.
+    """
+    items, _report = load_corpus_with_report(path)
     return items
 
 
