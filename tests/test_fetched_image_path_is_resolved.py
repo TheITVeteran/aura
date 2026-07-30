@@ -68,3 +68,13 @@ def test_the_source_page_keeps_its_own_sentinel():
 
 def test_the_two_sentinels_are_distinct():
     assert FETCHED_IMAGE_PATH_SENTINEL != FETCHED_IMAGE_SOURCE_SENTINEL
+
+
+def test_pdf_uses_the_fetch_receipt_not_a_guessed_image_extension():
+    steps = DesktopTaskSkill()._derive_single_objective_steps(
+        "Create a folder called Orca Demo in my Documents folder. Find an "
+        "orca image online and write a synthesis into a PDF saved there.",
+        {},
+    )
+    render = next(step for step in steps if step.action == "render_text_pdf")
+    assert render.target["image_path"] == FETCHED_IMAGE_PATH_SENTINEL

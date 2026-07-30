@@ -3878,7 +3878,11 @@ class DesktopTaskSkill(BaseSkill):
                             "title": self._artifact_document_title(text),
                             "body": body,
                             "overwrite": False,
-                            **({"image_path": artifact_image_path} if artifact_image_path else {}),
+                            **(
+                                {"image_path": FETCHED_IMAGE_PATH_SENTINEL}
+                                if artifact_image_path
+                                else {}
+                            ),
                         },
                         reason="Render the same verified text body into a PDF artifact.",
                         expect="PDF artifact exists and starts with a PDF header.",
@@ -4630,6 +4634,38 @@ class DesktopTaskSkill(BaseSkill):
                             break
                         continue
                     target = dict(target, value=last_image_path)
+            if resolved_step.action == "render_text_pdf" and isinstance(target, dict):
+                if target.get("image_path") == FETCHED_IMAGE_PATH_SENTINEL:
+                    if not last_image_path:
+                        reference_error = "no fetched image path available for PDF rendering"
+                        receipt = {
+                            "index": index,
+                            "action": resolved_step.action,
+                            "reason": resolved_step.reason,
+                            "expect": resolved_step.expect,
+                            "critical": resolved_step.critical,
+                            "ok": False,
+                            "effect_verified": False,
+                            "effect_evidence": reference_error,
+                            "attempts": 0,
+                            "result": {
+                                "ok": False,
+                                "status": "desktop_step_reference_unresolved",
+                                "error": reference_error,
+                            },
+                        }
+                        receipts.append(receipt)
+                        await self._emit_durable_step_receipt(
+                            receipt,
+                            objective=objective,
+                            planner=planner,
+                            tool="desktop_task",
+                        )
+                        failures.append(receipt)
+                        if resolved_step.critical and params.stop_on_error:
+                            break
+                        continue
+                    target = dict(target, image_path=last_image_path)
             if resolved_step.action == "open_url":
                 # Resolve the fetched-image source sentinel from the
                 # fetch receipt — the source page is only known at runtime.

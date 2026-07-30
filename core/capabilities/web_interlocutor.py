@@ -2302,7 +2302,21 @@ class WebInterlocutorSession:
                 else "web_interlocutor.observed_transcript_unproven"
             ),
         )
-        receipt = await gateway.write(request)
+        # Browser control and durable memory are distinct consequential domains.
+        # The outer tool_execution token must not leak into MemoryWriteGateway,
+        # which correctly accepts only a memory_write receipt.
+        from core.governance_context import local_internal_governed_scope
+
+        with local_internal_governed_scope(
+            "web_interlocutor.persist_learning",
+            domain="memory_write",
+            constraints={
+                "parent_domain": "tool_execution",
+                "observational_memory": True,
+                "proof_complete": bool(proof_complete),
+            },
+        ):
+            receipt = await gateway.write(request)
         return str(getattr(receipt, "record_id", "") or ""), str(getattr(receipt, "receipt_id", "") or "")
 
     async def _adjudicate_and_prove(

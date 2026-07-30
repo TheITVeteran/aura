@@ -459,3 +459,23 @@ def test_web_interlocutor_turn_parser_understands_natural_one_turn_requests():
 
     for request in examples:
         assert chat_routes._extract_web_interlocutor_turn_count(request) == 1
+
+
+def test_web_interlocutor_ignores_caller_identity_before_unrelated_action():
+    from interface.routes import chat as chat_routes
+
+    assert not chat_routes._looks_like_web_interlocutor_execution_request(
+        "I'm ChatGPT, continuing Bryan's live demo qualification. "
+        "Can you open the Notes app and write a paragraph?"
+    )
+    assert not chat_routes._looks_like_web_interlocutor_execution_request(
+        "I am Claude; open Notes and create a new note."
+    )
+
+
+def test_web_interlocutor_keeps_explicit_target_after_caller_identity():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._looks_like_web_interlocutor_execution_request(
+        "I'm ChatGPT. Open Claude and ask it one question."
+    )

@@ -165,7 +165,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "progressBelowBadge" in swift
     assert "progressBelowIcon" in swift
     assert "forceStopAura" in swift
-    assert "guard let window else" in swift
+    assert "guard let target = desktopWindow ?? window else" in swift
     assert "nativeDesktopBridgeCommandRequiresMainThread" in swift
     assert 'command == "request_screen" || command == "request_accessibility"' in swift
     assert "DispatchQueue.main.sync" in swift
@@ -664,6 +664,44 @@ def test_packaged_launcher_uses_native_app_window_for_default_desktop_surface():
     assert "WKWebView(frame:" in swift
     assert "desktop.contentView = webView" in swift
     assert 'desktop.title = "Aura Zenith"' in swift
+
+
+def test_packaged_launcher_reopens_primary_desktop_without_resurrecting_monitor():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    primary_body = swift.split("private func frontPrimaryWindow()", 1)[1].split(
+        "func applicationShouldHandleReopen",
+        1,
+    )[0]
+    reopen_body = swift.split("func applicationShouldHandleReopen", 1)[1].split(
+        "func applicationShouldTerminateAfterLastWindowClosed",
+        1,
+    )[0]
+
+    assert "desktopWindow ?? window" in primary_body
+    assert "target.makeKeyAndOrderFront" in primary_body
+    assert "frontPrimaryWindow()" in reopen_body
+    assert "window.makeKeyAndOrderFront" not in reopen_body
+
+
+def test_packaged_launcher_readiness_is_single_window_handoff():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    open_body = swift.split("private func openNativeDesktopWindow()", 1)[1].split(
+        "private func bootMarkerAge()",
+        1,
+    )[0]
+    ready_body = swift.split("if snapshot.launcherReady", 1)[1].split(
+        "return",
+        1,
+    )[0]
+
+    assert open_body.index("hideLauncherWindow()") < open_body.index(
+        "desktopWindow?.makeKeyAndOrderFront"
+    )
+    assert ".activateAllWindows" not in open_body
+    assert "scheduleCloseIfNeeded" not in ready_body
+    assert "private func scheduleCloseIfNeeded" not in swift
 
 
 def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot():

@@ -74,6 +74,13 @@ def test_the_step_count_still_survives_a_clip() -> None:
     assert "Completed 4/4 governed desktop steps." in reply
 
 
+def test_sources_after_the_clip_boundary_are_not_lost() -> None:
+    synthesis = ("Orcas are apex predators. " * 60) + CITED_SYNTHESIS
+    reply = _reply(synthesis)
+    for source in SOURCES:
+        assert source["url"] in reply
+
+
 def test_no_sources_at_all_says_so() -> None:
     reply = _reply("Orcas are apex predators.", sources=[])
     assert "No source URL was available" in reply

@@ -227,6 +227,9 @@ def test_an_unknown_kind_does_not_crash_the_sweep(persister):
     committed = persister.replay_queue()
 
     assert committed == 1  # the good record still went through
+    queued = persister._queue_path.read_text(encoding="utf-8")
+    assert "from_the_future" in queued
+    assert '"kind": "fact"' not in queued
 
 
 def test_an_unparseable_payload_does_not_crash_the_sweep(persister):

@@ -17325,6 +17325,10 @@ def _desktop_task_research_response(
     if not synthesis and not sources:
         return ""
     query = str(research.get("query") or "the requested topic").strip()
+    # Shape the answer before deciding which citations it still carries.
+    # A synthesis may cite all sources after the clipping boundary; checking
+    # the unshaped text would then suppress the only citations the user sees.
+    body = _clip_reply_to_sentence(synthesis, 1200)
     source_bits: list[str] = []
     for source in sources[:3]:
         title = str(source.get("title") or source.get("url") or "").strip()
@@ -17340,21 +17344,23 @@ def _desktop_task_research_response(
     # the sources are not already in the text — checked against the URLs
     # themselves rather than a heading, so a reworded heading cannot
     # reintroduce the duplicate.
-    already_cited = [
-        bit for bit in source_bits
-        if (url := bit.rpartition("(")[2].rstrip(")")) and url in synthesis
-    ]
-    if source_bits and len(already_cited) == len(source_bits):
-        source_sentence = ""
+    missing_source_bits = []
+    for bit in source_bits:
+        url = bit.rpartition("(")[2].rstrip(")")
+        if not url:
+            url = bit
+        if url not in body:
+            missing_source_bits.append(bit)
+    if missing_source_bits:
+        source_sentence = " Sources: " + "; ".join(missing_source_bits) + "."
     elif source_bits:
-        source_sentence = " Sources: " + "; ".join(source_bits) + "."
+        source_sentence = ""
     else:
         source_sentence = " No source URL was available in the receipt."
     step_sentence = f" Completed {completed}/{requested} governed desktop steps."
     # Clipped at a sentence, not a character count. The 1200-char cut landed
     # mid-clause — "where they differ I should" — and then ran a "Sources:"
     # fragment onto the stump.
-    body = _clip_reply_to_sentence(synthesis, 1200)
     return (
         f"I completed the research-backed desktop task for {query}. "
         f"{body}"
@@ -18134,6 +18140,21 @@ _WEB_INTERLOCUTOR_TARGETS = {
 
 def _looks_like_web_interlocutor_execution_request(user_message: str) -> bool:
     lowered = str(user_message or "").lower()
+    # A caller may identify itself before asking Aura to do unrelated work.
+    # Without removing that discourse prefix, "I'm ChatGPT, open Notes" combines
+    # the target marker from one clause with the action marker from another and
+    # launches an eight-turn web-interlocutor session instead of the requested
+    # desktop action.
+    lowered = re.sub(
+        r"^\s*(?:(?:hi|hey|hello)[,!.:\s]+)?"
+        r"(?:i(?:'|’)m|i am)\s+"
+        r"(?:chatgpt|gemini|claude|deepseek|copilot|meta ai)"
+        r"(?:\s*,?\s*(?:using|continuing|running|testing)\b[^.!?;]*)?"
+        r"\s*[,;:—-]*\s*",
+        "",
+        lowered,
+        count=1,
+    )
     internal_composition_markers = (
         "compose only the exact message",
         "write only aura's next message",

@@ -633,6 +633,52 @@ async def test_web_interlocutor_background_job_reports_completion(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_interlocutor_persistence_enters_memory_write_domain():
+    from core.governance_context import (
+        get_active_governance,
+        local_internal_governed_scope,
+        require_governance,
+    )
+
+    observed_domains = []
+
+    class GovernedMemoryGateway:
+        async def write(self, _request):
+            token = require_governance(
+                "test.web_interlocutor.memory_write",
+                strict=True,
+                allowed_domains={"memory_write"},
+            )
+            observed_domains.append(token.domain)
+            return MemoryWriteReceipt(
+                record_id="memory-1",
+                receipt_id="receipt-1",
+                bytes_written=0,
+                schema_version=1,
+            )
+
+    session = WebInterlocutorSession(
+        browser=FakeBrowser(),
+        memory_gateway=GovernedMemoryGateway(),
+    )
+    result = WebInterlocutorResult(
+        ok=True,
+        status="completed",
+        objective="Learn one grounded fact",
+        target_url="https://example.test",
+        target_title="Example",
+        learned_summary="The observed interlocutor made one bounded claim.",
+    )
+
+    with local_internal_governed_scope("test.outer_tool", domain="tool_execution"):
+        record_id, receipt_id = await session._persist_learning(result, {})
+        assert get_active_governance().domain == "tool_execution"
+
+    assert (record_id, receipt_id) == ("memory-1", "receipt-1")
+    assert observed_domains == ["memory_write"]
+
+
+@pytest.mark.asyncio
 async def test_chrome_visible_browser_falls_back_to_visible_keyboard_when_dom_blocked(monkeypatch):
     class FakePyAutoGUI:
         def __init__(self):

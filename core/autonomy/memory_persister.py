@@ -241,6 +241,10 @@ class MemoryPersister:
             try:
                 record = _replay_record(kind, payload)
                 if record is None:
+                    # A newer Aura may have queued a record this binary does
+                    # not understand yet. Keep the exact line for that newer
+                    # reader; silently draining it is irreversible data loss.
+                    remaining.append(line)
                     continue
                 # hash_key() must be inside the guard: a queued payload with a
                 # null or wrong-typed field raises AttributeError here, and one

@@ -19,6 +19,8 @@ a *result*; nothing in core/ should contain that fact.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from core.perception.app_dictionary import (
@@ -254,3 +256,40 @@ class TestSheTypesWhenSheCan:
         assert '"wrote_by": "keystrokes"' in typed
         wrapper = inspect.getsource(ComputerUseSkill._write_in_app)
         assert "typing_fallback_reason" in wrapper
+
+    @pytest.mark.asyncio
+    async def test_dictionary_continuation_restores_and_verifies_title(
+        self, monkeypatch
+    ):
+        from core.skills.computer_use import ComputerUseSkill
+
+        skill = ComputerUseSkill()
+        scripts: list[str] = []
+
+        async def _stream(*_args):
+            return True
+
+        def _run(script, timeout=0):
+            scripts.append(script)
+            if "linefeed" in script:
+                return "42\nAbout Aura"
+            return ""
+
+        monkeypatch.setattr(skill, "_stream_document_text", _stream)
+        monkeypatch.setattr(skill, "_run_applescript", _run)
+        recipe = SimpleNamespace(
+            app="Notes",
+            klass="note",
+            text_property="body",
+            name_property="name",
+        )
+
+        result = await skill._write_through_dictionary(
+            recipe,
+            {"title": "About Aura", "body": "I am Aura."},
+            into_existing=True,
+        )
+
+        assert result["ok"] is True
+        assert result["observed_title"] == "About Aura"
+        assert any("set name of note 1 to" in script for script in scripts)

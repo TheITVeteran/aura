@@ -279,7 +279,6 @@ private func runNativeDesktopBridge(payload: [String: Any]) -> Never {
 
 private let pollInterval: TimeInterval = 0.8
 private let bootMarkerTTL: TimeInterval = 180.0
-private let readyCloseDelay: TimeInterval = 3.0
 private let unhealthyBootWindow: TimeInterval = 90.0
 private let stalledRecoveryWindow: TimeInterval = 300.0
 
@@ -1403,7 +1402,6 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var isPolling = false
     private var nativeBridgeProcessing = false
     private var launchInFlight = false
-    private var closeScheduled = false
     private var lastSnapshot: BootSnapshot?
     private var bundledSemver: String = ""
     private var bundledVersionLabel: String = ""
@@ -1456,16 +1454,21 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard let window else {
+    @discardableResult
+    private func frontPrimaryWindow() -> Bool {
+        guard let target = desktopWindow ?? window else {
             return false
         }
-        window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
+        target.makeKeyAndOrderFront(nil)
+        target.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         NSRunningApplication.current.activate(options: [])
         NSApp.requestUserAttention(.informationalRequest)
         return true
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        frontPrimaryWindow()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -2340,9 +2343,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             renderSnapshot(snapshot)
             if snapshot.launcherReady {
                 clearBootMarker()
-                if autoOpenDesktopWindowIfNeeded() {
-                    scheduleCloseIfNeeded()
-                }
+                autoOpenDesktopWindowIfNeeded()
             }
             return
         }
@@ -2594,16 +2595,6 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         phaseBadge.layer?.borderColor = badgeStyle.color.withAlphaComponent(0.34).cgColor
     }
 
-    private func scheduleCloseIfNeeded() {
-        guard !closeScheduled else { return }
-        closeScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + readyCloseDelay) { [weak self] in
-            if self?.desktopWindow?.isVisible == true {
-                self?.hideLauncherWindow()
-            }
-        }
-    }
-
     private func hideLauncherWindow() {
         window?.orderOut(nil)
     }
@@ -2642,11 +2633,15 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
 
         desktopWebView?.load(URLRequest(url: desktopURL(), cachePolicy: .reloadIgnoringLocalCacheData))
+        // Readiness is a one-window handoff. Retain the monitor for future boot
+        // diagnostics, but remove it before presenting the live desktop so a
+        // Dock activation cannot leave both windows stacked.
+        hideLauncherWindow()
         desktopWindow?.center()
         desktopWindow?.makeKeyAndOrderFront(nil)
         desktopWindow?.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
-        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSRunningApplication.current.activate(options: [])
         NSApp.requestUserAttention(.informationalRequest)
         autoDesktopOpenTriggered = true
         clearGuiWindowLaunchMarker()

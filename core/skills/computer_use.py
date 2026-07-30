@@ -1004,10 +1004,32 @@ class ComputerUseSkill(BaseSkill):
                 "title": title,
             }
 
-        verify = (
-            f"tell application {app} to return "
-            f"(count of characters of ({recipe.text_property} of {selector} as text))"
-        )
+        if recipe.name_property:
+            restore_title = (
+                f"tell application {app} to set {recipe.name_property} of "
+                f"{selector} to {self._applescript_string(title)}"
+            )
+            try:
+                await asyncio.to_thread(
+                    self._run_applescript, restore_title, timeout=15
+                )
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                return {
+                    "ok": False,
+                    "error": f"{recipe.app} would not restore the requested title: {exc}",
+                    "app": recipe.app,
+                    "title": title,
+                }
+            verify = (
+                f"tell application {app} to return "
+                f"((count of characters of ({recipe.text_property} of {selector} as text)) as text) "
+                f"& linefeed & ({recipe.name_property} of {selector} as text)"
+            )
+        else:
+            verify = (
+                f"tell application {app} to return "
+                f"(count of characters of ({recipe.text_property} of {selector} as text))"
+            )
         try:
             observed = await asyncio.to_thread(self._run_applescript, verify, timeout=15)
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
@@ -1017,11 +1039,19 @@ class ComputerUseSkill(BaseSkill):
                 "app": recipe.app,
                 "title": title,
             }
+        observed_parts = str(observed or "0").splitlines()
         try:
-            observed_chars = int(str(observed or "0").strip() or 0)
+            observed_chars = int((observed_parts[0] if observed_parts else "0").strip() or 0)
         except (TypeError, ValueError):
             observed_chars = 0
-        verified = observed_chars > 0
+        observed_title = (
+            "\n".join(observed_parts[1:]).strip()
+            if recipe.name_property and len(observed_parts) > 1
+            else ""
+        )
+        verified = observed_chars > 0 and (
+            not recipe.name_property or observed_title == title
+        )
         return {
             "ok": verified,
             "action": "write_in_app",
@@ -1030,11 +1060,16 @@ class ComputerUseSkill(BaseSkill):
             "target": f"{recipe.klass}.{recipe.text_property}",
             "effect_verified": verified,
             "verification": (
-                f"{recipe.app} holds a {recipe.klass} of {observed_chars} characters."
+                f"{recipe.app} holds '{observed_title or title}', a {recipe.klass} "
+                f"of {observed_chars} characters."
                 if verified
-                else f"The {recipe.klass} in {recipe.app} read back empty."
+                else (
+                    f"The {recipe.klass} in {recipe.app} did not read back with "
+                    f"the requested title and non-empty body."
+                )
             ),
             "characters": len(body),
+            "observed_title": observed_title,
         }
 
     @staticmethod
