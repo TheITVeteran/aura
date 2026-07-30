@@ -16,7 +16,6 @@ Covers:
 """
 from __future__ import annotations
 
-
 import asyncio
 import os
 import sys
@@ -24,7 +23,6 @@ import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
 
 import pytest
 
@@ -155,7 +153,6 @@ class TestBoot:
                     "ConsciousnessPhase",
                     "SelfReviewPhase",
                     "LearningPhase",
-                    "LegacyPhase",
                 ]
                 actual_phase_names = [p.__class__.__name__ for p in kernel._phases]
                 assert actual_phase_names == expected_phase_names, (
@@ -242,9 +239,6 @@ class TestAffectEngine:
     async def test_decay_toward_baseline(self):
         from core.affect import (
             AffectEngine,
-            BASELINE_VALENCE,
-            BASELINE_AROUSAL,
-            BASELINE_ENGAGEMENT,
         )
 
         engine = AffectEngine()
@@ -369,8 +363,8 @@ class TestTaskCommitment:
         _clear_container()
         try:
             from core.agency.task_commitment_verifier import (
-                TaskCommitmentVerifier,
                 DispatchOutcome,
+                TaskCommitmentVerifier,
             )
             from core.state.aura_state import AuraState
 
@@ -422,7 +416,7 @@ class TestApprovalGate:
 
     def test_approve_and_reject_plan_methods_exist(self, monkeypatch):
         """Verify approve_plan and reject_plan work on the _approval_events dict."""
-        from core.agency.autonomous_task_engine import AutonomousTaskEngine, TaskPlan, TaskStep
+        from core.agency.autonomous_task_engine import AutonomousTaskEngine, TaskPlan
 
         kernel = KernelProbe()
         kernel.organs = {"llm": DependencyProbe()}
@@ -648,6 +642,6 @@ class TestMetacognitiveCalibrator:
         from core.final_engines import MetacognitiveCalibrator
 
         cal = MetacognitiveCalibrator()
-        for i in range(600):
+        for _i in range(600):
             cal.record_prediction(confidence=0.5)
         assert len(cal.confidence_history) <= 500

@@ -85,7 +85,6 @@ _KERNEL_PIPELINE_ATTRIBUTE_ORDER: tuple[str, ...] = (
     "consciousness_phase",
     "self_review_phase",
     "learning_phase",
-    "legacy_bridge",
 )
 
 

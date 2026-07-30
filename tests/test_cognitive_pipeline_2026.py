@@ -237,6 +237,7 @@ async def test_cognitive_integration_threads_history_into_reasoning_pipeline(mon
     await cognition.initialize()
 
     context = {
+        "origin": "curriculum",
         "history": [
             {"role": "user", "content": "Earlier"},
             {"role": "assistant", "content": "Later"},
@@ -248,6 +249,7 @@ async def test_cognitive_integration_threads_history_into_reasoning_pipeline(mon
     assert kernel.evaluate_calls[-1]["kwargs"]["history"] == context["history"]
     assert monologue.think_calls[-1]["kwargs"]["history"] == context["history"]
     assert language.express_calls[-1]["kwargs"]["history"] == context["history"]
+    assert language.express_calls[-1]["kwargs"]["origin"] == "curriculum"
 
 
 @pytest.mark.asyncio

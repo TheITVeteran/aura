@@ -415,9 +415,12 @@ class IncomingLogicMixin:
 
         payload_context: dict[str, Any] = {}
         if isinstance(message, dict):
-            payload_context = message.get("context", {})
+            supplied_context = message.get("context", {})
+            if isinstance(supplied_context, dict):
+                payload_context = dict(supplied_context)
             origin = message.get("origin", origin)
             message = message.get("content", str(message))
+        payload_context["origin"] = origin
 
         # v49 [STRICTURE] Fix: Extract actual string if passed a tuple from the priority queue
         # Unpack nested tuples (common in PriorityQueues)

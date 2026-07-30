@@ -401,6 +401,10 @@ class CognitiveIntegrationLayer:
         # ── SUBSTRATE VOICE: Compile speech profile ──────────────────
         _sve = None
         _speech_profile = None
+        state = None
+        context_origin = ""
+        if isinstance(context, dict):
+            context_origin = str(context.get("origin", "") or "").strip()
         try:
             from core.voice.substrate_voice_engine import get_substrate_voice_engine
             _sve = get_substrate_voice_engine()
@@ -411,10 +415,14 @@ class CognitiveIntegrationLayer:
                 state = getattr(getattr(orch, "state_repo", None), "_current", None)
                 if state is None:
                     state = getattr(orch, "state", None) or getattr(orch, "_state", None)
+            state_origin = str(
+                getattr(getattr(state, "cognition", None), "current_origin", "") or ""
+            ).strip()
+            turn_origin = context_origin or state_origin or "user"
             _speech_profile = _sve.compile_profile(
                 state=state,
                 user_message=message[:500],
-                origin="user",
+                origin=turn_origin,
             )
             logger.debug(
                 "🗣️ [Phase7→SubstrateVoice] Profile: budget=%d, tone=%s",
@@ -428,6 +436,11 @@ class CognitiveIntegrationLayer:
                 severity="warning",
             )
             logger.error("SubstrateVoiceEngine compile in Phase 7 failed: %s", _sve_exc, exc_info=True)
+
+        state_origin = str(
+            getattr(getattr(state, "cognition", None), "current_origin", "") or ""
+        ).strip()
+        turn_origin = context_origin or state_origin or "user"
 
         if not self.is_active:
             await self.initialize()
@@ -578,12 +591,10 @@ class CognitiveIntegrationLayer:
         # Agency Integration: Execute tools if needed
         # v1.1 FIX: This restores Aura's ability to 'look things up' in the CogV5 pipeline.
         intent_type = ""
-        origin = ""
+        origin = turn_origin
         if state:
             if hasattr(state, "response_modifiers"):
                 intent_type = state.response_modifiers.get("intent_type", "")
-            if hasattr(state, "cognition") and hasattr(state.cognition, "current_origin"):
-                origin = state.cognition.current_origin
 
         # [STABILITY] Bypassing agency research for embodied actions to prevent stalls.
         is_embodied = "embodied" in str(origin) or "[embodied control contract]" in str(message).lower()
@@ -627,7 +638,12 @@ class CognitiveIntegrationLayer:
                 if self.monologue:
                     packet = await self.monologue.think(message, brief, history=history)
                     _inject_packet_context(packet)
-                    raw = await self.language_center.express(packet, message, history=history)
+                    raw = await self.language_center.express(
+                        packet,
+                        message,
+                        history=history,
+                        origin=turn_origin,
+                    )
                     return self._shape_with_substrate(raw, _sve, _speech_profile)
                 else:
                     from core.introspection.inner_monologue import ThoughtPacket
@@ -640,7 +656,12 @@ class CognitiveIntegrationLayer:
                         model_tier="local"
                     )
                     _inject_packet_context(packet)
-                    raw = await self.language_center.express(packet, message, history=history)
+                    raw = await self.language_center.express(
+                        packet,
+                        message,
+                        history=history,
+                        origin=turn_origin,
+                    )
                     return self._shape_with_substrate(raw, _sve, _speech_profile)
             except _CIL_RECOVERABLE_ERRORS as e:
                 _record_cil_degradation(

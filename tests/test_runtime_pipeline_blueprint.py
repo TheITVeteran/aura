@@ -73,5 +73,4 @@ def test_kernel_phase_attribute_order_matches_shared_runtime_pipeline():
         "consciousness_phase",
         "self_review_phase",
         "learning_phase",
-        "legacy_bridge",
     )
