@@ -164,6 +164,13 @@ class ComputerUseSkill(BaseSkill):
     #: Actions whose cost is dominated by driving another application's UI.
     _WRITE_ACTIONS = frozenset({"write_in_app", "create_note"})
 
+    #: Headroom over the summed sub-budgets. Without it the worst case lands
+    #: EXACTLY on the ceiling (12+12+2+25+50 = 101s against a 101s budget), so
+    #: any real-world jitter — a slow osascript, a busy app — puts the step
+    #: back over the line and we are debugging the same failure again. The
+    #: skill's own clocks are what should stop this work, not the outer budget.
+    _WRITE_BUDGET_GRACE_S = 30.0
+
     @classmethod
     def _write_in_app_budget_s(cls) -> float:
         """What the write path can legitimately take, from its own clocks."""
@@ -172,6 +179,7 @@ class ComputerUseSkill(BaseSkill):
             + 2.0                          # opening the document and letting it settle
             + cls._TYPING_BUDGET_S         # the visible typing window
             + cls._DICTIONARY_WRITE_BUDGET_S  # finishing through the app's own model
+            + cls._WRITE_BUDGET_GRACE_S
         )
 
     @classmethod
