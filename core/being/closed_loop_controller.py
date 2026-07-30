@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 import time
 
+from core.runtime.errors import record_degradation
 from core.being.activation_coupler import ActivationCoupler, DirectionBank, SteeringPlan
 from core.being.causal_self_state import CausalSelfVector, vector_from_aura_now
 from core.being.continuum_adapter import ContinuumAdapter, install_default_continuity_jobs
@@ -53,6 +54,13 @@ class Main15ClosedLoopController:
         self.plasticity = plasticity
         self.continuum = continuum
         self._counter = 0
+        # Receipt accounting. A state mutation whose receipt failed is worse
+        # than one never attempted: the change is live and the record says
+        # it never happened.
+        self._receipts_emitted = 0
+        self._receipts_failed = 0
+        self._receipts_unstored = 0
+        self._last_receipt_error = ""
 
     def before_generation(
         self,
@@ -155,8 +163,24 @@ class Main15ClosedLoopController:
         return experience
 
     def _emit_state_receipt(self, *, event: str, payload: dict[str, Any]) -> None:
+        """Record a state mutation, and record it when that fails.
+
+        CP126 (high): "Receipt failures are silently ignored."
+
+        A receipt is the evidence that a state mutation happened. Swallowing
+        the emit failure produced the worst possible pairing: the mutation
+        still applied, and the only trace of it did not — so the audit trail
+        reads as "no such change" for a change that is now live in her
+        state. That is not a missing log line, it is a false negative in the
+        record used to reconstruct what she did.
+        """
         store = getattr(self.plasticity, "receipt_store", None)
         if store is None:
+            # No store configured is a deployment choice, not a failure, but
+            # it is still a turn with no evidence behind it — count it so the
+            # difference between "unreceipted by design" and "receipting is
+            # broken" is answerable.
+            self._receipts_unstored += 1
             return
         try:
             from core.runtime.receipts import StateMutationReceipt
@@ -167,8 +191,37 @@ class Main15ClosedLoopController:
                 metadata=payload,
             )
             store.emit(receipt)
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            self._receipts_failed += 1
+            self._last_receipt_error = f"{type(exc).__name__}: {exc}"[:200]
+            record_degradation(
+                "being_closed_loop.receipt",
+                exc,
+                severity="warning",
+                action=(
+                    f"state mutation '{event}' applied but its receipt was not "
+                    "emitted; the audit trail is missing this change"
+                ),
+                enforce_failure_policy=False,
+            )
             return
+        self._receipts_emitted += 1
+
+    def receipt_health(self) -> dict[str, Any]:
+        """Whether this controller's mutations are actually being recorded."""
+        emitted = int(getattr(self, "_receipts_emitted", 0))
+        failed = int(getattr(self, "_receipts_failed", 0))
+        unstored = int(getattr(self, "_receipts_unstored", 0))
+        attempted = emitted + failed
+        return {
+            "schema": "aura.closed_loop_receipt_health.v1",
+            "emitted": emitted,
+            "failed": failed,
+            "unstored": unstored,
+            "coverage": (emitted / attempted) if attempted else 0.0,
+            "complete": failed == 0,
+            "last_error": str(getattr(self, "_last_receipt_error", "")),
+        }
 
 
 def build_main15_closed_loop(
