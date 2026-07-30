@@ -21,6 +21,7 @@ real pressure instead of the liveness of a nonexistent loop.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from typing import Any
 
@@ -32,6 +33,66 @@ logger = logging.getLogger("Aura.Runtime.Pressure")
 _LOOP_LAG_RED_S = 5.0
 _MEMORY_RED_PCT = 92.0
 _THERMAL_RED_LEVEL = 3  # critical
+
+
+def _model_resource_lifecycle_snapshot() -> dict[str, Any]:
+    """Observe resident MLX allocation state without importing or waking it.
+
+    Importing ``mlx_client`` from the pressure thread would create a new
+    dependency edge during boot.  Looking only at an already-loaded module
+    keeps this probe passive while still distinguishing a model allocation
+    ramp from steady-state memory growth.
+    """
+    module = sys.modules.get("core.brain.llm.mlx_client")
+    clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+    if not isinstance(clients, dict) or not clients:
+        return {
+            "state": "cold",
+            "load_active": False,
+            "lane_count": 0,
+            "states": [],
+        }
+
+    lane_states: list[str] = []
+    load_active = False
+    live_lanes = 0
+    for client in list(clients.values()):
+        if client is None:
+            continue
+        state = str(getattr(client, "_lane_state", "cold") or "cold").lower()
+        lane_states.append(state)
+        process = getattr(client, "_process", None)
+        try:
+            alive = bool(process is not None and process.is_alive())
+        except (AttributeError, OSError, RuntimeError):
+            alive = False
+        if alive:
+            live_lanes += 1
+        initialized = bool(getattr(client, "_init_done", False))
+        warming = bool(getattr(client, "_warmup_in_flight", False))
+        if warming or (alive and not initialized) or state in {
+            "spawning",
+            "handshaking",
+            "warming",
+            "recovering",
+        }:
+            load_active = True
+
+    if load_active:
+        lifecycle = "model_loading"
+    elif live_lanes and any(state == "ready" for state in lane_states):
+        lifecycle = "steady"
+    elif live_lanes:
+        lifecycle = "model_loading"
+        load_active = True
+    else:
+        lifecycle = "cold"
+    return {
+        "state": lifecycle,
+        "load_active": load_active,
+        "lane_count": live_lanes,
+        "states": sorted(set(lane_states)),
+    }
 
 
 class UnifiedRuntimePressure:
@@ -114,6 +175,11 @@ class UnifiedRuntimePressure:
         snapshot["memory_pct"] = memory_pct
         snapshot["memory_rss_mb"] = round(memory_rss_mb, 3)
         snapshot["process_tree_rss_mb"] = round(process_tree_rss_mb, 3)
+        model_lifecycle = _model_resource_lifecycle_snapshot()
+        snapshot["model_resource_lifecycle"] = model_lifecycle["state"]
+        snapshot["model_load_active"] = model_lifecycle["load_active"]
+        snapshot["model_lane_count"] = model_lifecycle["lane_count"]
+        snapshot["model_lane_states"] = model_lifecycle["states"]
 
         thermal_level = 0
         thermal_provider = "blind"

@@ -32277,3 +32277,44 @@ generation/network window remain required. Resource lifecycle forecasting and
 body-cost settlement are the next rejected-run warning family. Resident-32B
 training remains paused. This is total checkpoint 728. The 728-920 completion
 envelope is approximately 79.1%-100.0%, with an 89.6% midpoint.
+
+### 2026-07-30 - DEMO-Q13 model-aware resource trajectories and level-shift semantics
+
+The rejected certification run measured real memory allocation while the
+resident model loaded, but interpreted that finite allocation ramp as
+steady-state growth. Allostasis extrapolated approximately 75 GB/h toward a
+future red line and entered a real conserving tier. RunawayBudget had a
+partial recent-tail guard, but still classified the completed load as
+warning-level `DRIFT`; an unjudgeable recent tail was also treated as evidence
+that growth continued. Later system-memory forecasts measured the entire host
+without establishing that Aura's own process tree was growing.
+
+Unified runtime pressure now passively observes already-loaded MLX clients and
+publishes explicit `cold`, `model_loading`, or `steady` lifecycle evidence
+without importing or waking a model. Allostasis treats model loading and a
+bounded post-load settling interval as provisional trajectory regimes. It
+resets RSS and host-memory trend evidence at every lifecycle boundary,
+suppresses only forecasts during the transition, and leaves absolute amber/red
+threshold protection active. Once steady, a continuing process-tree leak is
+forecast normally. Host-wide memory trends are retained as measurements but do
+not become Aura-attributed forecasts unless a concurrent credible process-tree
+trend corroborates them. Lifecycle state and provisionality are exposed in
+status and persisted in the append-only event ledger.
+
+RunawayBudget now distinguishes `LEVEL_SHIFT`, `UNKNOWN`, `DRIFT`, and
+`RUNAWAY`. A completed model allocation is informational, sparse recent
+evidence is unknown rather than presumed growth, and only confirmed current
+growth can drive a projection or fail-closed runaway verdict. The existing
+steady 242 MB/h leak, ineffective-mitigation, and hard-ceiling cases still
+fire. Routine forecast supersession is ledgered at informational severity
+instead of becoming operational warning noise.
+
+The full Allostasis, forecast-integrity, statistical-integrity, durability,
+integration, runtime-pressure, resource-observation, and RunawayBudget gate
+passes 211/211; the initial focused gate passes 117/117. Bytecode compilation,
+fatal lint, and diff integrity pass. The signed installed app still requires a
+rebuild and three complete clean GUI demonstrations to prove the prior
+resource-warning cascade is absent. Two-phase body-cost settlement remains an
+open rejected-run warning-family correction. Resident-32B training remains
+paused. This is total checkpoint 729. The 729-920 completion envelope is
+approximately 79.2%-100.0%, with an 89.6% midpoint.

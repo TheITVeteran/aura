@@ -373,6 +373,7 @@ def test_a_settled_level_shift_is_not_a_runaway() -> None:
     """The exact live regression: a loaded model is not a leak."""
     verdict = _assess(_settled_boot_ramp())
     assert not verdict.is_runaway(), verdict.reason
+    assert verdict.state is RunawayState.LEVEL_SHIFT
     assert "settled" in verdict.reason
 
 
@@ -405,3 +406,17 @@ def test_recovery_after_a_spike_reads_nominal() -> None:
     falling = [(float(t), 40_000.0 - 3_000.0 * (t / 3600.0))
                for t in range(0, 3601, 30)]
     assert _assess(falling).state.value == "nominal"
+
+
+def test_unjudgeable_recent_tail_is_unknown_not_confirmed_growth() -> None:
+    detector = RunawayDetector(
+        "rss",
+        _policy(confirm_fraction=0.01, confirm_min_samples=10),
+    )
+    _feed(detector, 8000.0, 500.0, minutes=20, step_s=60.0)
+
+    verdict = detector.assess(now=1000.0 + 20 * 60)
+
+    assert verdict.state is RunawayState.UNKNOWN
+    assert not verdict.is_runaway()
+    assert verdict.projected_breach_s is None

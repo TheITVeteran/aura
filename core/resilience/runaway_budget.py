@@ -47,9 +47,11 @@ logger = logging.getLogger("Aura.Resilience.RunawayBudget")
 class RunawayState(StrEnum):
     """What the trend says, independent of the current level."""
 
-    NOMINAL = "nominal"    # flat or falling
-    DRIFT = "drift"        # rising steadily, mitigation not yet proven useless
-    RUNAWAY = "runaway"    # rising despite repeated mitigation — fail closed
+    NOMINAL = "nominal"          # flat or falling
+    UNKNOWN = "unknown"          # insufficient recent evidence to judge
+    LEVEL_SHIFT = "level_shift"  # rose, then settled at a new baseline
+    DRIFT = "drift"               # rising steadily, mitigation not yet proven useless
+    RUNAWAY = "runaway"           # rising despite repeated mitigation — fail closed
 
 
 @dataclass(frozen=True)
@@ -229,20 +231,20 @@ class RunawayDetector:
             self.policy.confirm_min_samples,
         )
         still_growing = (
-            recent_slope is None
-            or recent_slope >= self.policy.min_slope_per_hour
+            recent_slope is not None
+            and recent_slope >= self.policy.min_slope_per_hour
         )
         # A projection is a statement about the CURRENT rate, so it is computed
         # from the recent slope when there is one. Using the whole-window slope
         # was the defect: see _recent_slope_per_hour.
         projected = _projected_breach_s(
             samples[-1][1],
-            slope_per_hour if recent_slope is None else recent_slope,
+            recent_slope if recent_slope is not None else 0.0,
             self.policy.ceiling,
         )
 
         settled = (
-            "" if still_growing
+            "" if still_growing or recent_slope is None
             else f"; but the last {window * self.policy.confirm_fraction / 60:.0f}min "
                  f"reads {recent_slope:.1f}/h — the level shifted once and settled"
         )
@@ -276,8 +278,15 @@ class RunawayDetector:
             )
 
         if not still_growing:
+            if recent_slope is None:
+                return self._verdict(
+                    RunawayState.UNKNOWN, slope_per_hour, len(samples), window,
+                    net_change, mitigations_in_window, None,
+                    "whole-window growth exists, but the recent tail has "
+                    "insufficient evidence to classify current growth",
+                )
             return self._verdict(
-                RunawayState.DRIFT, slope_per_hour, len(samples), window,
+                RunawayState.LEVEL_SHIFT, slope_per_hour, len(samples), window,
                 net_change, mitigations_in_window, projected,
                 f"rose {slope_per_hour:.1f}/h across the window{settled}",
             )
@@ -334,6 +343,8 @@ class RunawayDetector:
                 logger.error("Could not record runaway degradation: %s", exc)
         elif verdict.state is RunawayState.DRIFT:
             logger.warning("📈 DRIFT [%s]: %s", self.name, verdict.reason)
+        elif verdict.state in {RunawayState.LEVEL_SHIFT, RunawayState.UNKNOWN}:
+            logger.info("ℹ️ [%s] %s: %s", self.name, verdict.state.value, verdict.reason)
         else:
             logger.info("✅ [%s] trend back to nominal: %s", self.name, verdict.reason)
 

@@ -85,6 +85,19 @@ def feed(engine: AllostasisEngine, clock: FakeClock, values, dt: float = 60.0):
     return readings
 
 
+def feed_snapshot(
+    engine: AllostasisEngine,
+    clock: FakeClock,
+    snapshots,
+    dt: float = 60.0,
+):
+    readings = []
+    for snapshot in snapshots:
+        readings.append(engine.ingest(snapshot, at=clock.now()))
+        clock.advance(dt)
+    return readings
+
+
 def ramp(start: float, step: float, n: int) -> list[float]:
     return [start + step * i for i in range(n)]
 
@@ -279,6 +292,88 @@ class TestForecasting:
         assert not any(
             f["threshold_name"] == "red" for f in engine.status()["open_forecasts"]
         )
+
+    def test_model_load_ramp_is_provisional_then_resets_to_steady(self, tmp_path):
+        clock = FakeClock()
+        specs = (
+            simple_spec(
+                key="process_tree_rss_mb",
+                label="process-tree memory",
+            ),
+        )
+        engine = make_engine(
+            tmp_path,
+            clock,
+            specs=specs,
+            model_settling_s=120.0,
+        )
+        loading = [
+            {
+                "process_tree_rss_mb": 500.0 + 30.0 * index,
+                "model_resource_lifecycle": "model_loading",
+                "model_load_active": True,
+            }
+            for index in range(20)
+        ]
+        feed_snapshot(engine, clock, loading)
+        assert engine.status()["open_forecasts"] == []
+        assert engine.status()["tier"] == "settled"
+        assert engine.status()["resource_lifecycle"]["state"] == "model_loading"
+
+        feed_snapshot(
+            engine,
+            clock,
+            [
+                {
+                    "process_tree_rss_mb": 1070.0,
+                    "model_resource_lifecycle": "steady",
+                    "model_load_active": False,
+                }
+                for _ in range(3)
+            ],
+        )
+        status = engine.status()
+        assert status["resource_lifecycle"]["state"] == "steady"
+        assert status["open_forecasts"] == []
+
+    def test_post_settle_process_tree_leak_is_still_forecast(self, tmp_path):
+        clock = FakeClock()
+        specs = (
+            simple_spec(
+                key="process_tree_rss_mb",
+                label="process-tree memory",
+            ),
+        )
+        engine = make_engine(
+            tmp_path,
+            clock,
+            specs=specs,
+            model_settling_s=0.0,
+        )
+        feed_snapshot(
+            engine,
+            clock,
+            [
+                {
+                    "process_tree_rss_mb": 500.0,
+                    "model_resource_lifecycle": "steady",
+                    "model_load_active": False,
+                }
+            ],
+        )
+        feed_snapshot(
+            engine,
+            clock,
+            [
+                {
+                    "process_tree_rss_mb": 500.0 + 5.0 * index,
+                    "model_resource_lifecycle": "steady",
+                    "model_load_active": False,
+                }
+                for index in range(20)
+            ],
+        )
+        assert engine.status()["open_forecasts"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

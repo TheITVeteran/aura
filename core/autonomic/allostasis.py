@@ -769,6 +769,7 @@ class AllostasisEngine:
         resolution_grace_s: float = 120.0,
         target_coverage: float = 0.90,
         eta_cap_s: float = 24 * 3600.0,
+        model_settling_s: float | None = None,
     ) -> None:
         self._now = now_fn
         self._lock = threading.RLock()
@@ -828,6 +829,17 @@ class AllostasisEngine:
         }
         self._regime_started_at: dict[str, float] = {}
         self._regime_events_total = 0
+        self._resource_lifecycle = "boot"
+        self._resource_lifecycle_changed_at = self._now()
+        self._model_settling_s = _nonnegative_float(
+            "model_settling_s",
+            (
+                model_settling_s
+                if model_settling_s is not None
+                else _env_float("AURA_ALLOSTASIS_MODEL_SETTLING_S", 180.0)
+            ),
+        )
+        self._model_settle_until = 0.0
 
         self._open_forecasts: dict[tuple[str, str], Forecast] = {}
         self._resolved_recent: deque[Forecast] = deque(maxlen=64)
@@ -1062,6 +1074,7 @@ class AllostasisEngine:
                     dt = 0.0
             self._last_ingest_at = now
             self._ingest_count += 1
+            self._update_resource_lifecycle(snapshot, now)
 
             for key, spec in self._specs.items():
                 raw = snapshot.get(key, None)
@@ -1105,6 +1118,78 @@ class AllostasisEngine:
                 resolved_forecasts=tuple(resolved),
                 regime_events=tuple(new_regimes),
             )
+
+    def _update_resource_lifecycle(
+        self, snapshot: dict[str, Any], now: float
+    ) -> None:
+        """Separate expected model allocation from steady-state resource drift.
+
+        Absolute threshold protection remains active throughout.  Only
+        trajectory evidence is reset/suppressed, because extrapolating a
+        finite model load as an indefinitely continuing leak is causally
+        invalid.
+        """
+        if (
+            "model_resource_lifecycle" not in snapshot
+            and "model_load_active" not in snapshot
+        ):
+            return
+        reported = str(snapshot.get("model_resource_lifecycle") or "").lower()
+        load_active = bool(snapshot.get("model_load_active", False))
+        if load_active or reported == "model_loading":
+            target = "model_loading"
+        elif self._resource_lifecycle == "model_loading":
+            target = "settling"
+            self._model_settle_until = now + self._model_settling_s
+        elif (
+            self._resource_lifecycle == "settling"
+            and now < self._model_settle_until
+        ):
+            target = "settling"
+        elif reported in {"steady", "cold"}:
+            target = reported
+        else:
+            target = "steady"
+
+        if target == self._resource_lifecycle:
+            return
+        previous = self._resource_lifecycle
+        self._resource_lifecycle = target
+        self._resource_lifecycle_changed_at = now
+        self._reset_resource_trends(
+            now,
+            note=f"resource_lifecycle:{previous}->{target}",
+        )
+        self._pending_events.append({
+            "kind": "resource_lifecycle",
+            "at_unix": round(now, 3),
+            "previous": previous,
+            "state": target,
+            "model_settle_until": round(self._model_settle_until, 3),
+        })
+        logger.info(
+            "🫁 [Allostasis] resource lifecycle %s → %s; RSS trend evidence reset.",
+            previous,
+            target,
+        )
+
+    def _reset_resource_trends(self, now: float, *, note: str) -> None:
+        for key in ("memory_rss_mb", "process_tree_rss_mb", "memory_pct"):
+            if key not in self._specs:
+                continue
+            self._series[key].clear()
+            self._cusum[key] = _CusumState()
+            self._regime_id[key] = f"{key}-{_ISSUER}-{uuid.uuid4().hex}"
+            self._regime_started_at[key] = now
+            for threshold_name in ("amber", "red"):
+                fc = self._open_forecasts.pop((key, threshold_name), None)
+                if fc is not None:
+                    self._finalize_forecast(
+                        fc,
+                        ForecastOutcome.SUPERSEDED,
+                        now,
+                        note=note,
+                    )
 
     # ── CUSUM regime detection ──────────────────────────────────────────────
     def _regime_series(self, key: str) -> list[tuple[float, float]]:
@@ -1378,6 +1463,11 @@ class AllostasisEngine:
         for key, spec in self._specs.items():
             if not spec.forecastable:
                 continue
+            if (
+                self._resource_lifecycle in {"model_loading", "settling"}
+                and key in {"memory_rss_mb", "process_tree_rss_mb", "memory_pct"}
+            ):
+                continue
             window = [(t, v) for (t, v) in self._regime_series(key)
                       if t >= now - self._trend_window_s]
             if len(window) < self._min_trend_samples:
@@ -1388,6 +1478,22 @@ class AllostasisEngine:
             if estimate is None:
                 continue
             trends[key] = (mann_kendall(values), estimate, values[-1])
+        host_trend = trends.get("memory_pct")
+        tree_trend = trends.get("process_tree_rss_mb")
+        if host_trend is not None:
+            tree_spec = self._specs.get("process_tree_rss_mb")
+            tree_growth = (
+                tree_spec is not None
+                and tree_trend is not None
+                and tree_trend[1].slope
+                > tree_spec.min_meaningful_slope
+            )
+            if not tree_growth:
+                # Host-wide memory can move because of other applications,
+                # filesystem cache, or compression. Keep the measurement and
+                # absolute red line, but do not make an unattributed host shift
+                # part of Aura's felt pressure or autonomous throttling.
+                trends.pop("memory_pct", None)
         return trends
 
     def _admissible_p_value(
@@ -1497,7 +1603,15 @@ class AllostasisEngine:
             book.superseded += 1
         self._resolved_recent.append(fc)
         self._pending_events.append({"kind": "resolved", **fc.to_dict()})
-        log = logger.info if outcome in (ForecastOutcome.HIT, ForecastOutcome.INTERVENED) else logger.warning
+        log = (
+            logger.info
+            if outcome in (
+                ForecastOutcome.HIT,
+                ForecastOutcome.INTERVENED,
+                ForecastOutcome.SUPERSEDED,
+            )
+            else logger.warning
+        )
         log(
             "📒 [Allostasis] forecast %s on %s resolved %s (%s). Coverage now %s.",
             fc.forecast_id, fc.vital, outcome.value, note,
@@ -2012,6 +2126,13 @@ class AllostasisEngine:
                 "recently_resolved": [fc.to_dict() for fc in list(self._resolved_recent)[-10:]],
                 "calibration": {k: v.to_dict() for k, v in self._calibration.items()},
                 "allostatic_load": self.allostatic_load(),
+                "resource_lifecycle": {
+                    "state": self._resource_lifecycle,
+                    "changed_at": self._resource_lifecycle_changed_at,
+                    "model_settle_until": self._model_settle_until,
+                    "forecast_provisional": self._resource_lifecycle
+                    in {"model_loading", "settling"},
+                },
                 "regime_events_total": self._regime_events_total,
                 "ingest_count": self._ingest_count,
                 "last_ingest_at": self._last_ingest_at,

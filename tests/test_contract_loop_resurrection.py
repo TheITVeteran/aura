@@ -23,9 +23,60 @@ class TestUnifiedRuntimePressure:
     def test_snapshot_shape_and_nominal_alive(self, monkeypatch):
         pressure = UnifiedRuntimePressure()
         snap = pressure.runtime_pressure_snapshot()
-        for key in ("loop_lag_s", "memory_pct", "thermal_level", "red_zones", "pressure_ok"):
+        for key in (
+            "loop_lag_s",
+            "memory_pct",
+            "thermal_level",
+            "model_resource_lifecycle",
+            "model_load_active",
+            "red_zones",
+            "pressure_ok",
+        ):
             assert key in snap, f"snapshot missing {key}"
         assert isinstance(snap["red_zones"], list)
+
+    def test_model_loading_is_observed_without_importing_the_model_module(
+        self, monkeypatch
+    ):
+        monkeypatch.delitem(
+            __import__("sys").modules,
+            "core.brain.llm.mlx_client",
+            raising=False,
+        )
+
+        snap = UnifiedRuntimePressure().runtime_pressure_snapshot()
+
+        assert snap["model_resource_lifecycle"] == "cold"
+        assert snap["model_load_active"] is False
+
+    def test_live_uninitialized_lane_is_reported_as_model_loading(
+        self, monkeypatch
+    ):
+        import sys
+
+        class _Process:
+            @staticmethod
+            def is_alive():
+                return True
+
+        fake_client = SimpleNamespace(
+            _lane_state="warming",
+            _process=_Process(),
+            _init_done=False,
+            _warmup_in_flight=True,
+        )
+        fake_module = SimpleNamespace(_CLIENTS={"resident": fake_client})
+        monkeypatch.setitem(
+            sys.modules,
+            "core.brain.llm.mlx_client",
+            fake_module,
+        )
+
+        snap = UnifiedRuntimePressure().runtime_pressure_snapshot()
+
+        assert snap["model_resource_lifecycle"] == "model_loading"
+        assert snap["model_load_active"] is True
+        assert snap["model_lane_count"] == 1
 
     def test_red_zone_memory_makes_it_not_alive(self, monkeypatch):
         from core.runtime.resource_observation import SimulatedResourceObserver
