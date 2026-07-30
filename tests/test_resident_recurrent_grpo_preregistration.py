@@ -155,6 +155,7 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     assert parameters["calibrate"] is False
     assert "--fixed-update-canary" in contract["training"]["argv"]
     assert "--calibrate" not in contract["training"]["argv"]
+    assert "--fixed-update-canary" not in prereg._policy_probe_argv(contract)
     assert contract["training"]["dataset"]["train_tasks"] == 12
     assert contract["training"]["dataset"]["holdout_tasks"] == 12
     assert (

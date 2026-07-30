@@ -1904,6 +1904,8 @@ def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:
         if config_index + 1 >= len(argv):
             _fail("verified_trajectory_config_argv_invalid")
         del argv[config_index : config_index + 2]
+    if "--fixed-update-canary" in argv:
+        argv.remove("--fixed-update-canary")
     argv.append("--initial-policy-probe")
     return argv
 
