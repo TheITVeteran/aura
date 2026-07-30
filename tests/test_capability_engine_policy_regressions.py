@@ -3,7 +3,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.capability_engine import CapabilityEngine, SkillMetadata
+from core.capability_engine import (
+    _OUTER_TIMEOUT_GRACE_S,
+    _SKILL_TIMEOUT_CONTEXT_KEY,
+    CapabilityEngine,
+    SkillMetadata,
+)
 from core.container import ServiceContainer
 from core.guardians.user_advocate import UserAdvocateWatchdog
 from core.sim.outcome_simulator import OutcomeSimulationEngine
@@ -525,8 +530,11 @@ async def test_execute_with_retry_uses_skill_execution_timeout(monkeypatch):
     engine.max_retries = 1
     engine.timeout = 1.0
 
+    observed_budgets = []
+
     class SlowVisibleSkill:
         async def safe_execute(self, params, context):
+            observed_budgets.append(context.get(_SKILL_TIMEOUT_CONTEXT_KEY))
             return {"ok": True, "status": "completed"}
 
     observed_timeouts = []
@@ -546,7 +554,12 @@ async def test_execute_with_retry_uses_skill_execution_timeout(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert observed_timeouts == [420.0]
+    # The execution timeout drives the wait, not engine.timeout (1.0s).
+    assert observed_timeouts == [420.0 + _OUTER_TIMEOUT_GRACE_S]
+    # ...and the skill is told the budget, so its own timeout — the one whose
+    # failure path still carries the step receipts — is what fires first.
+    assert observed_budgets == [420.0]
+    assert observed_timeouts[0] > observed_budgets[0]
 
 
 @pytest.mark.asyncio

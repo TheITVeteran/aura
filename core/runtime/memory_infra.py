@@ -369,7 +369,12 @@ def _process_rss_bytes() -> int:
     try:
         from core.runtime.resource_observation import get_resource_observer
 
-        return int(get_resource_observer().memory().process_rss_bytes or 0)
+        # Own RSS only: the default observation adds a full process-table
+        # scan whose result this function discards.
+        return int(
+            get_resource_observer().memory(include_process_tree=False).process_rss_bytes
+            or 0
+        )
     except Exception:  # noqa: BLE001
         logger.debug("process RSS probe failed", exc_info=True)
         return 0

@@ -66,8 +66,16 @@ from core.runtime.service_access import (  # noqa: E402
     resolve_homeostatic_coupling,
     resolve_metabolic_monitor,
 )
+from core.skills.base_skill import (  # noqa: E402
+    SKILL_TIMEOUT_CONTEXT_KEY as _SKILL_TIMEOUT_CONTEXT_KEY,
+)
 from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
 from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
+
+#: How much longer the engine waits than the budget it handed the skill, so a
+#: skill that runs out of time reports its own structured failure instead of
+#: being cancelled mid-sentence by the outer wait.
+_OUTER_TIMEOUT_GRACE_S = 15.0
 
 _USER_FACING_CONTEXT_ORIGINS = frozenset(
     {
@@ -5132,6 +5140,17 @@ class CapabilityEngine(AuraBaseModule):
         except (TypeError, ValueError):
             timeout_s = float(self.timeout)
         timeout_s = max(1.0, timeout_s)
+        # TELL THE SKILL THE BUDGET, THEN LET IT BE THE ONE TO CALL TIME.
+        #
+        # BaseSkill.safe_execute enforces its own declared timeout inside this
+        # wait. Sizing the request here and not passing it down left the skill
+        # cutting the work off at its flat default while this wait sat harmless
+        # at the larger number — the negotiated budget was logged and then had
+        # no effect. Publish it, and keep this wait strictly longer so the
+        # skill's own timeout is what fires: its error path carries the step
+        # receipts, and wait_for cancelling from outside destroys them.
+        context[_SKILL_TIMEOUT_CONTEXT_KEY] = timeout_s
+        outer_timeout_s = timeout_s + _OUTER_TIMEOUT_GRACE_S
         # Sensorimotor grounding: commit an expected world-state BEFORE
         # executing; verify reality (not the tool's claim) after. A tool
         # reporting success without the predicted effect is recorded as
@@ -5151,7 +5170,7 @@ class CapabilityEngine(AuraBaseModule):
 
                 if hasattr(skill, "safe_execute") and callable(skill.safe_execute):
                     output = await asyncio.wait_for(
-                        skill.safe_execute(params, context), timeout=timeout_s
+                        skill.safe_execute(params, context), timeout=outer_timeout_s
                     )
                 else:
                     inputs = self._prepare_inputs(skill, params, context)

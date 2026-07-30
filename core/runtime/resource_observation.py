@@ -965,21 +965,34 @@ class HostResourceObserver:
                 error=f"{type(exc).__name__}:{exc}",
             )
 
+        # OUR OWN RSS IS CHEAP. THE TREE'S IS THE WHOLE MACHINE'S.
+        #
+        # One memory_info() is a single mach call (~3us). children(recursive)
+        # is not a walk of our children — psutil reaches it through
+        # _ppid_map(), which enumerates EVERY pid on the host and builds a
+        # Process for each. Measured here at 7ms against 751 pids while idle,
+        # and far worse while a 32B worker is spawning, because the pid
+        # enumeration contends with process creation.
+        #
+        # include_process_tree=False used to skip both and report an RSS of
+        # zero, so a caller that wanted only this process either paid the
+        # machine's bill or was told it occupied no memory. Sample the cheap
+        # one always; gate only the scan.
         process_rss = 0
         tree_rss = 0
-        if include_process_tree:
-            root = os.getpid() if root_pid is None else int(root_pid)
-            try:
-                process = psutil.Process(root)
-                process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
-                tree_rss = process_rss
+        root = os.getpid() if root_pid is None else int(root_pid)
+        try:
+            process = psutil.Process(root)
+            process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
+            tree_rss = process_rss
+            if include_process_tree:
                 for child in process.children(recursive=True):
                     try:
                         tree_rss += int(getattr(child.memory_info(), "rss", 0) or 0)
                     except (psutil.Error, OSError, RuntimeError, ValueError):
                         continue
-            except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
-                pass
+        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+            pass
         swap_total = 0
         swap_used = 0
         swap_free = 0

@@ -591,10 +591,20 @@ class FlightRecorder:
         ).encode("utf-8", "ignore")[:_PAYLOAD_CAP]
 
     def _sample_rss_mb(self) -> float:
+        """This process's RSS, and nothing that costs a process-table scan.
+
+        Every frame calls this, including the event frames that record_event
+        promises are pure memcpy — and record_degradation feeds those from the
+        event loop. The default observation walks the process tree, which
+        enumerates every pid on the host, so recording a degradation blocked
+        the loop long enough to cause the next one: on 2026-07-29 a 5.2s lag
+        became a 63.5s freeze that way, each degradation buying the next.
+        Only process_rss_bytes is read here, so only that is asked for.
+        """
         try:
             from core.runtime.resource_observation import get_resource_observer
 
-            memory = get_resource_observer().memory()
+            memory = get_resource_observer().memory(include_process_tree=False)
             return float(memory.process_rss_bytes) / (1024.0 * 1024.0)
         except (ImportError, OSError, RuntimeError, AttributeError):
             return 0.0
