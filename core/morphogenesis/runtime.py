@@ -487,7 +487,7 @@ class MorphogeneticRuntime:
                 ttl_ticks=2,
             )
         )
-        if resource_pressure > 0.65:
+        if resource_pressure >= self.metabolism.high_pressure_threshold:
             self.emit_signal(
                 MorphogenSignal(
                     kind=SignalKind.RESOURCE_PRESSURE,
@@ -565,11 +565,16 @@ class MorphogeneticRuntime:
     @staticmethod
     def _immunity_event(signal: MorphogenSignal) -> dict[str, Any]:
         kind = signal.kind.value if hasattr(signal.kind, "value") else str(signal.kind)
+        resource_observation = kind == SignalKind.RESOURCE_PRESSURE.value
         return {
             "type": kind,
             "text": str(signal.payload.get("message") or signal.payload.get("error") or kind),
             "subsystem": signal.subsystem,
             "source": f"morphogenesis:{signal.source}",
+            "source_domain": "environment" if resource_observation else "substrate",
+            "observation_class": (
+                "resource_telemetry" if resource_observation else "runtime_fault"
+            ),
             "danger": float(signal.intensity),
             "resource_pressure": float(
                 signal.intensity

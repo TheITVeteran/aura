@@ -32318,3 +32318,32 @@ resource-warning cascade is absent. Two-phase body-cost settlement remains an
 open rejected-run warning-family correction. Resident-32B training remains
 paused. This is total checkpoint 729. The 729-920 completion envelope is
 approximately 79.2%-100.0%, with an 89.6% midpoint.
+
+### 2026-07-30 - DEMO-Q14 environmental telemetry cannot fabricate code defects
+
+The first signed checkpoint-729 boot was rejected before the demo because it
+still emitted `Repair immune antigen in global` with detail
+`morphogenesis:metabolism`. No exception had occurred. Morphogenesis promoted
+ordinary host pressure above 0.65 into an immune antigen; an evolved cell
+selected a patch proposal; and the repair adapter fabricated a `RuntimeError`
+solely to enter ErrorIntelligence. Resource telemetry had therefore become a
+false code defect and an unnecessary autonomous repair cycle.
+
+Morphogenesis now emits a resource-pressure antigen only at its actual
+high-pressure threshold (0.82 by default), not during routine model allocation
+or ordinary host use. The event carries an explicit environmental source
+domain and `resource_telemetry` observation class. AdaptiveImmunity forbids
+environmental observations from producing patch or schema-migration
+effectors, while preserving bounded resource-policy responses. The autonomous
+repair executor independently rejects environmental, metabolic, and
+resource-pressure antigens, so a future upstream classification regression
+still cannot fabricate an exception or launch code repair.
+
+The morphogenesis lifecycle/bridge, adaptive immunity, immune telemetry,
+autonomous repair executor, proof, and migration gate passes 92/92; bytecode
+compilation and diff integrity pass. The first rebuilt boot proved model
+lifecycle forecasting itself was quiet, but was rejected on this separate
+warning and does not count toward the required three demonstrations. A second
+signed rebuild and clean boot are required before counted run 1. Resident-32B
+training remains paused. This is total checkpoint 730. The 730-920 completion
+envelope is approximately 79.3%-100.0%, with an 89.7% midpoint.

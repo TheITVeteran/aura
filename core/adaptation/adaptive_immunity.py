@@ -2406,6 +2406,8 @@ class AdaptiveImmuneSystem:
             EffectorKind.RESTORE_CHECKPOINT,
             EffectorKind.QUARANTINE,
             EffectorKind.HALT_RUNAWAY,
+            EffectorKind.SCHEMA_MIGRATION,
+            EffectorKind.PATCH_PROPOSAL,
         }:
             artifact.suppressed = True
             artifact.notes = "environmental antigen forbidden from substrate repair"

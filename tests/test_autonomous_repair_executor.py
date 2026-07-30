@@ -110,3 +110,33 @@ async def test_adaptive_immune_patch_adapter_schedules_autonomous_repair():
     assert result["attempted"] is True
     assert result["status"] == "scheduled"
     assert executor.stats["scheduled"] == 1
+
+
+@pytest.mark.asyncio
+async def test_environmental_antigen_never_becomes_source_code_repair():
+    engine = FakeSelfModificationEngine()
+    executor = AutonomousRepairExecutor(
+        service_getter=lambda name: engine if name == "self_modification_engine" else None,
+        cooldown_seconds=0.0,
+    )
+    artifact = SimpleNamespace(
+        artifact_id="art-resource",
+        kind=SimpleNamespace(value="patch_proposal"),
+        component="global",
+        notes="resource pressure",
+    )
+    antigen = SimpleNamespace(
+        subsystem="global",
+        error_signature="resource_pressure",
+        source="morphogenesis:metabolism",
+        source_domain="environment",
+        antigen_id="ag-resource",
+        danger=0.9,
+    )
+
+    result = await executor.attempt_patch_for_antigen(artifact, antigen)
+
+    assert result["attempted"] is False
+    assert result["status"] == "environmental_observation"
+    assert engine.cycles == 0
+    assert engine.errors == []

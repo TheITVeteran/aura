@@ -106,6 +106,26 @@ class AutonomousRepairExecutor:
     async def attempt_patch_for_antigen(self, artifact: Any, antigen: Any) -> dict[str, Any]:
         """Adaptive-immune patch proposal adapter."""
 
+        source_domain = str(getattr(antigen, "source_domain", "substrate") or "substrate")
+        source = str(getattr(antigen, "source", "") or "")
+        error_signature = str(getattr(antigen, "error_signature", "") or "")
+        if (
+            source_domain == "environment"
+            or source.endswith(":metabolism")
+            or error_signature == "resource_pressure"
+        ):
+            self.stats["skipped"] += 1
+            return {
+                "attempted": False,
+                "applied": False,
+                "status": "environmental_observation",
+                "notes": (
+                    "environmental resource telemetry is handled by resource "
+                    "policy, not source-code repair"
+                ),
+                "fingerprint": "",
+            }
+
         request = AutonomousRepairRequest(
             subsystem=str(getattr(antigen, "subsystem", "") or getattr(artifact, "component", "immune")),
             error_type=str(getattr(antigen, "error_signature", "") or getattr(artifact, "kind", "immune_patch")),

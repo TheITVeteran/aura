@@ -394,6 +394,48 @@ async def test_immunity_bridge_ignores_low_intensity(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_resource_pressure_requires_true_high_pressure_and_is_environmental(
+    monkeypatch,
+):
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+
+    class RecordingImmuneSystem:
+        def __init__(self):
+            self.events = []
+
+        def observe_event(self, event):
+            self.events.append(event)
+
+    immune = RecordingImmuneSystem()
+    monkeypatch.setattr(
+        adaptive_immunity_module,
+        "get_adaptive_immune_system",
+        lambda: immune,
+    )
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(adaptive_immunity_bridge=True)
+    )
+
+    rt._emit_system_signals(resource_pressure=0.70)
+    await rt._bridge_signals_to_immunity(rt._consume_signals())
+    assert immune.events == []
+
+    rt._emit_system_signals(resource_pressure=0.90)
+    await rt._bridge_signals_to_immunity(rt._consume_signals())
+    await rt.wait_for_immunity_idle(timeout_s=1.0)
+
+    resource_events = [
+        event
+        for event in immune.events
+        if event["type"] == SignalKind.RESOURCE_PRESSURE.value
+    ]
+    assert len(resource_events) == 1
+    assert resource_events[0]["source_domain"] == "environment"
+    assert resource_events[0]["observation_class"] == "resource_telemetry"
+    await rt.stop()
+
+
+@pytest.mark.asyncio
 async def test_immunity_bridge_is_async_deduplicated_and_bounded(monkeypatch):
     """Slow immunity work must not block ticks or multiply requeued signals."""
     import core.adaptation.adaptive_immunity as adaptive_immunity_module

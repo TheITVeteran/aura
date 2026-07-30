@@ -556,6 +556,34 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
 
+def test_environmental_resource_observation_cannot_schedule_code_patch(tmp_path):
+    immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=37)
+    patch_mesh = _PatchMeshStub()
+    immune._get_service = lambda name: (
+        patch_mesh if name == "autonomous_resilience_mesh" else None
+    )
+    antigen = _test_antigen("global")
+    antigen.source_domain = "environment"
+    antigen.source = "morphogenesis:metabolism"
+    antigen.error_signature = "resource_pressure"
+    artifact = _test_artifact(
+        kind=EffectorKind.PATCH_PROPOSAL,
+        component="global",
+    )
+
+    report = run(
+        immune._maybe_execute_artifact(
+            artifact,
+            antigen,
+            coverage_report={"coverage_ratio": 0.9},
+        )
+    )
+
+    assert report["status"] == "suppressed"
+    assert artifact.suppressed is True
+    assert patch_mesh.calls == []
+
+
 def test_behavioral_rule_cannot_replace_real_repair_artifact(tmp_path, monkeypatch):
     immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=21)
     antigen = _test_antigen(subsystem="runtime_engine")
