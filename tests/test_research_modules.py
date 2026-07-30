@@ -695,3 +695,77 @@ class TestResearchModuleIntegration(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestConsolidationResultIsUnambiguous(unittest.TestCase):
+    """An empty consolidate() must mean "not consolidated", nothing else.
+
+    PRE-EXISTING FLAKE, found 2026-07-30: test_ewc_with_world_model failed
+    roughly one run in six, in isolation, with a seeded RNG.
+
+    PlasticityGovernor() is a singleton whose _step_count survives across
+    instantiations — it was already past twenty thousand — and
+    record_gradient() auto-consolidates every consolidation_interval steps,
+    CLEARING the gradient accumulator. So a caller that records N samples and
+    then calls consolidate() finds its samples already consumed whenever the
+    shared counter happens to cross a multiple of 50 mid-loop.
+
+    consolidate() then returned [], which reads as "consolidation failed" for
+    a parameter that is in fact consolidated. The caller's next move is to
+    retry, or worse, to treat the parameter as unprotected and let EWC skip
+    it — so the flaky test was pointing at a real API hazard, not at itself.
+    """
+
+    def test_consolidate_reports_an_existing_consolidation(self):
+        import numpy as np
+
+        from core.adaptation.plasticity_governor import PlasticityGovernor
+
+        gov = PlasticityGovernor()
+        gov.register_parameters("flake_probe", np.zeros(8))
+        rng = np.random.default_rng(7)
+        for _ in range(20):
+            gov.record_gradient("flake_probe", rng.standard_normal(8) * 0.01)
+        first = gov.consolidate("flake_probe")
+        self.assertGreater(len(first), 0)
+
+        # Simulate the interval-triggered pass having drained the accumulator.
+        snap = gov._snapshots["flake_probe"]
+        snap._gradient_accumulator.clear()
+
+        second = gov.consolidate("flake_probe")
+        self.assertGreater(
+            len(second), 0,
+            "a consolidated parameter reported as unconsolidated",
+        )
+
+    def test_an_unconsolidated_parameter_still_reports_empty(self):
+        """The other direction must not be lost: genuinely unconsolidated
+        parameters must still come back empty, or the signal is worthless."""
+        import numpy as np
+
+        from core.adaptation.plasticity_governor import PlasticityGovernor
+
+        gov = PlasticityGovernor()
+        gov.register_parameters("never_trained", np.zeros(8))
+        self.assertEqual(gov.consolidate("never_trained"), [])
+
+    def test_repeated_runs_are_stable(self):
+        """The flake itself: twelve runs, no dependence on the shared step
+        counter's position."""
+        import numpy as np
+
+        from core.adaptation.plasticity_governor import PlasticityGovernor
+        from core.world_model.learned_world_model import LearnedWorldModel
+
+        for _ in range(12):
+            model = LearnedWorldModel()
+            gov = PlasticityGovernor()
+            gov.register_parameters("world_model_enc", model.W_enc)
+            rng = np.random.default_rng(42)
+            for _ in range(20):
+                gov.record_gradient(
+                    "world_model_enc",
+                    rng.standard_normal(model.W_enc.shape) * 0.01,
+                )
+            self.assertGreater(len(gov.consolidate()), 0)

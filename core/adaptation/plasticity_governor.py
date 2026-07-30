@@ -377,6 +377,42 @@ class PlasticityGovernor:
             # and then treated as an importance map.
             pending = len(snap._gradient_accumulator)
             if pending < self.config.min_samples_for_fisher:
+                # An explicit consolidate() that finds nothing pending is
+                # ambiguous, and the ambiguity is a real hazard rather than a
+                # cosmetic one.
+                #
+                # record_gradient() auto-consolidates every
+                # consolidation_interval steps and CLEARS the accumulator, so
+                # a caller that records N samples and then consolidates can
+                # find its samples already consumed — through no fault of its
+                # own, purely because the shared step counter happened to
+                # cross a multiple. Returning [] then reads as "consolidation
+                # failed" when the parameter is in fact consolidated, and the
+                # caller's next move is usually to retry or to treat the
+                # parameter as unprotected.
+                #
+                # So report the consolidation that DOES exist. An empty list
+                # now means genuinely not consolidated.
+                if snap._consolidation_count > 0 and snap.fisher_diag is not None:
+                    fisher = np.asarray(snap.fisher_diag, dtype=np.float64)
+                    if fisher.size and float(np.sum(fisher)) > 0:
+                        records.append(
+                            ConsolidationRecord(
+                                timestamp=time.time(),
+                                parameter_set=pname,
+                                fisher_norm=float(np.linalg.norm(fisher)),
+                                n_parameters=snap.n_params,
+                                mean_importance=float(np.mean(fisher)),
+                                max_importance=float(np.max(fisher)),
+                            )
+                        )
+                        logger.debug(
+                            "'%s' already consolidated (%d prior pass(es)); "
+                            "%d/%d new samples pending.",
+                            pname, snap._consolidation_count, pending,
+                            self.config.min_samples_for_fisher,
+                        )
+                        continue
                 logger.debug(
                     "Skipped consolidating '%s': %d/%d gradient samples.",
                     pname, pending, self.config.min_samples_for_fisher,
