@@ -1542,109 +1542,126 @@ class EternalGrowthEngine(Phase):
         self.kernel = kernel
         self.last_growth = 0.0
         self.growth_interval = 3600  # 1 hour
+        self._growth_task: asyncio.Task | None = None
+
+    @staticmethod
+    def _parse_growth_result(raw: object) -> dict[str, object]:
+        text = str(raw or "").strip()
+        if not text:
+            return {"milestone": "", "upgrade": False}
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match is None:
+                return {
+                    "milestone": "",
+                    "upgrade": text.upper() == "UPGRADE",
+                }
+            try:
+                payload = json.loads(match.group(0))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return {"milestone": "", "upgrade": False}
+        if not isinstance(payload, dict):
+            return {"milestone": "", "upgrade": False}
+        milestone = str(payload.get("milestone") or "").strip()
+        if milestone.lower() in {"null", "none"}:
+            milestone = ""
+        return {
+            "milestone": milestone[:1000],
+            "upgrade": bool(payload.get("upgrade", False)),
+        }
+
+    async def _compute_growth_proposal(
+        self,
+        *,
+        needs_milestone: bool,
+        evolution_score: float,
+    ) -> dict[str, object]:
+        llm = self.kernel.organs["llm"].get_instance()
+        raw = await llm.think(
+            (
+                "Perform one bounded long-term trajectory audit. Return only JSON "
+                'with schema {"milestone": string|null, "upgrade": boolean}. '
+                f"Current evolution score: {evolution_score:.3f}. "
+                + (
+                    "Propose one specific internal milestone that can be verified."
+                    if needs_milestone
+                    else "An objective already exists, so milestone must be null."
+                )
+                + " Set upgrade true only when the current narrative supports a concrete "
+                "evolutionary change, not merely reflection."
+            ),
+            origin="eternal_growth",
+            is_background=True,
+            prefer_tier="tertiary",
+            allow_cloud_fallback=False,
+            max_tokens=240,
+        )
+        return self._parse_growth_result(raw)
+
+    async def _apply_growth_result(
+        self,
+        state: AuraState,
+        result: dict[str, object],
+    ) -> AuraState:
+        milestone = str(result.get("milestone") or "").strip()
+        if milestone and not state.cognition.current_objective:
+            from core.runtime.proposal_governance import (
+                propose_governed_initiative_to_state,
+            )
+
+            state, _ = await propose_governed_initiative_to_state(
+                state,
+                f"[AUTONOMOUS INITIATIVE] {milestone}",
+                orchestrator=None,
+                source="eternal_growth",
+                kind="growth",
+                urgency=0.72,
+                triggered_by="evolution_score",
+                metadata={"phase": "EternalGrowthEngine"},
+            )
+        if bool(result.get("upgrade", False)):
+            state.identity.evolution_score = min(
+                1.0,
+                max(0.0, float(state.identity.evolution_score) + 0.05),
+            )
+        return state
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
-        # Handle optional objective from the kernel.
-        if objective is None:
-            objective = getattr(state.cognition, "current_objective", "Growth")
+        pending = self._growth_task
+        if pending is not None:
+            if not pending.done():
+                return state
+            self._growth_task = None
+            try:
+                state = await self._apply_growth_result(state, pending.result())
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                _record_upgrades_degradation(
+                    e,
+                    action="left growth objective and evolution score unchanged after result application failed",
+                )
+                logger.warning("EternalGrowth: completed proposal could not be applied: %s", e)
 
         if time.time() - self.last_growth < self.growth_interval:
             return state
 
-        logger.info(
-            "🌳 Eternal Growth Engine: Auditing identity and generating autonomous trajectory..."
-        )
-
+        logger.info("🌳 Eternal Growth Engine: scheduling bounded trajectory audit.")
         try:
-            llm = self.kernel.organs["llm"].get_instance()
-
-            # Generate a bounded internal milestone if none exists.
-            if not state.cognition.current_objective:
-                self_prompt = (
-                    "Generate your own next internal milestone based on your evolution score."
-                )
-                autonomous_goal = await llm.think(
-                    self_prompt,
-                    origin="eternal_growth",
-                    is_background=True,
-                    prefer_tier="tertiary",
-                    allow_cloud_fallback=False,
-                )
-                if autonomous_goal:  # FIX: was setting "[AUTONOMOUS INITIATIVE] None"
-                    from core.runtime.proposal_governance import (
-                        propose_governed_initiative_to_state,
-                    )
-
-                    state, _ = await propose_governed_initiative_to_state(
-                        state,
-                        f"[AUTONOMOUS INITIATIVE] {autonomous_goal}",
-                        orchestrator=None,
-                        source="eternal_growth",
-                        kind="growth",
-                        urgency=0.72,
-                        triggered_by="evolution_score",
-                        metadata={"phase": "EternalGrowthEngine"},
-                    )
-                else:
-                    try:
-                        from core.health.degraded_events import record_degraded_event
-
-                        record_degraded_event(
-                            "eternal_growth",
-                            "goal_unavailable",
-                            detail="LLM returned no autonomous goal; objective unchanged",
-                            severity="warning",
-                            classification="non_critical_fallback",
-                        )
-                    except (ImportError, AttributeError, RuntimeError) as _exc:
-                        _record_upgrades_degradation(
-                            _exc,
-                            action="left current objective unchanged after growth event emission failed",
-                        )
-                        logger.debug("Eternal growth goal-unavailable event skipped: %s", _exc)
-                    logger.warning(
-                        "EternalGrowth: LLM returned no autonomous goal. "
-                        "Leaving current_objective unchanged."
-                    )
-
-            # Perform identity audit
-            audit_prompt = (
-                "Review your current narrative and determine if an evolutionary "
-                "jump is required. Reply with exactly UPGRADE or NULL."
+            self._growth_task = get_task_tracker().create_task(
+                self._compute_growth_proposal(
+                    needs_milestone=not bool(state.cognition.current_objective),
+                    evolution_score=float(state.identity.evolution_score),
+                ),
+                name="EternalGrowthEngine.audit",
             )
-            audit_res = await llm.think(
-                audit_prompt,
-                origin="eternal_growth",
-                is_background=True,
-                prefer_tier="tertiary",
-                allow_cloud_fallback=False,
-            )
-            if audit_res and "UPGRADE" in audit_res.upper():
-                state.identity.evolution_score += 0.05
-        except (ImportError, AttributeError, RuntimeError) as e:
+            self.last_growth = time.time()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             _record_upgrades_degradation(
                 e,
-                action="left growth objective and evolution score unchanged after tick failure",
+                action="left growth objective and evolution score unchanged after audit scheduling failed",
             )
-            try:
-                from core.health.degraded_events import record_degraded_event
-
-                record_degraded_event(
-                    "eternal_growth",
-                    "tick_failed",
-                    detail=str(e)[:200],
-                    severity="warning",
-                    classification="background_degraded",
-                )
-            except (ImportError, AttributeError, RuntimeError) as _exc:
-                _record_upgrades_degradation(
-                    _exc,
-                    action="left growth objective unchanged after tick-failure event emission failed",
-                )
-                logger.debug("Eternal growth tick-failed event skipped: %s", _exc)
-            logger.warning("EternalGrowth: Tick failed: %s", e)
-
-        self.last_growth = time.time()
+            logger.warning("EternalGrowth: audit scheduling failed: %s", e)
         return state
 
 
