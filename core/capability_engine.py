@@ -4847,7 +4847,14 @@ class CapabilityEngine(AuraBaseModule):
                 elif tool_handle is not None:
                     from core.governance_context import governed_scope
 
-                    async with governed_scope(tool_handle.decision):
+                    # The lease lasts as long as the budget we just granted.
+                    # A 30s default against a 101s sanctioned step meant the
+                    # skill lost its governance mid-write and failed with
+                    # "called outside governed context" — the authorization
+                    # expiring underneath work it had authorized.
+                    async with governed_scope(
+                        tool_handle.decision, ttl=timeout_budget
+                    ):
                         result = await self._cognitive_governor.execute_safely(
                             task_name=skill_name,
                             coroutine=resilient_call,
@@ -4866,6 +4873,7 @@ class CapabilityEngine(AuraBaseModule):
                     with local_internal_governed_scope(
                         f"capability_engine.{skill_name}.foreground_user_request",
                         domain="tool_execution",
+                        ttl=timeout_budget,
                     ):
                         result = await self._cognitive_governor.execute_safely(
                             task_name=skill_name,
