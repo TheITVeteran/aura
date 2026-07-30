@@ -4086,58 +4086,6 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
 }
 
 /* ══════════════════════════════════════════════════════════
-   LEAN MODE — shed ambient GPU work when frames are being dropped
-   ══════════════════════════════════════════════════════════
-
-   Bryan, recording the demo: "Aura lags a bit when I do and it makes it look
-   kinda ugly."
-
-   The ambient background is three layers, each 150% of the viewport, each
-   carrying filter: blur(120px), each transformed forever. A 120px blur over
-   one-and-a-half screens is about the most expensive thing you can hand a
-   compositor, and a screen recorder is competing for the same GPU. Add 39
-   backdrop-filter rules on top and the frame budget is gone.
-
-   body.perf-lean is applied by aura.js when it measures sustained frame loss
-   and removed when the frame rate recovers, so this costs nothing when there
-   is headroom and everything it can shed when there is not. It is not a
-   recording mode — a slow machine, a busy 32B generation and a screen
-   recorder all present the same symptom, and all three deserve the same
-   response.
-   ══════════════════════════════════════════════════════════ */
-body.perf-lean .aurora-layer {
-    /* The blur is the cost, not the motion — so the motion stops AND the
-       blur drops to something the compositor can cache. */
-    animation: none !important;
-    filter: blur(48px);
-    opacity: 0.05;
-}
-
-body.perf-lean *,
-body.perf-lean *::before,
-body.perf-lean *::after {
-    /* Ambient loops only. Transitions on interaction stay, because losing
-       those makes the UI feel broken rather than calm. */
-    animation-play-state: paused !important;
-}
-
-body.perf-lean .msg,
-body.perf-lean .thought-card,
-body.perf-lean .panel,
-body.perf-lean .card {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
-
-/* Someone who has asked the OS for less motion gets it unconditionally. */
-@media (prefers-reduced-motion: reduce) {
-    .aurora-layer {
-        animation: none !important;
-        filter: blur(48px);
-    }
-}
-
-/* ══════════════════════════════════════════════════════════
    MAGNUM OPUS — Aurora Ambient Background
    ══════════════════════════════════════════════════════════ */
 .aurora-bg {
