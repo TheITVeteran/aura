@@ -113,8 +113,17 @@ def clear_preserved_draft() -> None:
 # executed inside the turn's task tree appends to the same list the route
 # reads afterwards, while the autonomous loops — whose tasks do not descend
 # from this turn — cannot reach it. That distinction is the whole point.
-_TURN_TOOL_RECEIPTS: contextvars.ContextVar[list[dict[str, Any]]] = (
-    contextvars.ContextVar("aura_turn_tool_receipts", default=[])
+#
+# The default is None, not []. A ContextVar default is ONE object shared by
+# every context that never set it, so `default=[]` meant a receipt recorded
+# outside a turn — a background loop, a boot probe, anything that never called
+# begin_turn_tool_receipts — was appended to that shared list and stayed there
+# for the life of the process. An `ok: True` landing in it silently vouched for
+# every completed-action claim in every later turn that had not begun its own
+# list, which is the exact fail-open this whole mechanism exists to prevent,
+# and it handed the autonomous loops the reach the comment above denies them.
+_TURN_TOOL_RECEIPTS: contextvars.ContextVar[list[dict[str, Any]] | None] = (
+    contextvars.ContextVar("aura_turn_tool_receipts", default=None)
 )
 
 
@@ -124,7 +133,11 @@ def begin_turn_tool_receipts() -> None:
 
 
 def record_tool_receipt(tool_name: Any, *, ok: bool) -> None:
-    """Record that a tool really ran in this turn, and whether it worked."""
+    """Record that a tool really ran in this turn, and whether it worked.
+
+    Outside a turn there is nothing to record against, and inventing a list
+    here would be writing into whatever context happens to be current.
+    """
     name = str(tool_name or "").strip()
     if not name:
         return
