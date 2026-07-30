@@ -31930,3 +31930,30 @@ and diff integrity pass. Installed-app rebuild and live clean-shutdown proof
 remain next, followed by three complete desktop demo runs. Training remains
 paused. This is total checkpoint 709. The 709-920 completion envelope is
 approximately 77.1%-100.0%, with an 88.5% midpoint.
+
+### 2026-07-30 - DEMO-Q3 bounded root exit and native permission discovery
+
+The first rebuilt transition boot proved all service and container teardown
+phases clean, then exposed a root-only hang: global Python logging shutdown
+could block until the native launcher's termination deadline and prevent both
+the terminal shutdown receipt and flight-ring marker. Root logging finalization
+is now bounded on its own daemon lane and occurs after root socket and
+persistence accounting but before receipt publication. A wedged handler can no
+longer defeat process exit or suppress the terminal evidence needed to diagnose
+it.
+
+Capability discovery no longer asks System Events to identify a frontmost app
+as a proxy for Accessibility permission. That AppleScript could wait behind TCC
+and generated a five-second startup degradation. The signed app now reads
+macOS's non-prompting `AXIsProcessTrusted` status API off the event loop. An
+orderly leader-elector stop is recorded as a lease release rather than a lost
+lease. Will decisions above the 250-millisecond contract publish a per-stage
+latency diagnostic so the remaining cold-start SLO regression can be repaired
+from causal timing evidence rather than threshold changes.
+
+The affected capability-discovery, lease, root-finalization, Will, SLO, and
+reliability gate passes 206/206; bytecode compilation and diff integrity pass.
+The installed app must be rebuilt again to prove bounded root exit, native
+permission discovery, and identify the Will slow stage live. Training remains
+paused. This is total checkpoint 710. The 710-920 completion envelope is
+approximately 77.2%-100.0%, with an 88.6% midpoint.

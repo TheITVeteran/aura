@@ -341,6 +341,11 @@ def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
         lambda: calls.append("mp_finalizers"),
     )
     monkeypatch.setattr(
+        aura_main,
+        "_shutdown_logging_before_hard_exit",
+        lambda: calls.append("logging_shutdown") or True,
+    )
+    monkeypatch.setattr(
         flight_recorder,
         "get_flight_recorder",
         lambda: SimpleNamespace(
@@ -363,6 +368,7 @@ def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
     assert exc_info.value.code == 0
     assert calls == [
         "mp_finalizers",
+        "logging_shutdown",
         ("flight_marker", "root_finalization"),
         ("exit", 0),
     ]

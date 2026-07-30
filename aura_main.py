@@ -284,6 +284,27 @@ def _run_multiprocessing_finalizers_before_hard_exit(timeout_s: float = 3.0) -> 
     return True
 
 
+def _shutdown_logging_before_hard_exit(timeout_s: float = 2.0) -> bool:
+    """Flush logging without letting a wedged handler defeat process shutdown."""
+
+    done = threading.Event()
+
+    def _shutdown_logging() -> None:
+        try:
+            logging.shutdown()
+        finally:
+            done.set()
+
+    thread = threading.Thread(
+        target=_shutdown_logging,
+        name="aura-logging-shutdown",
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=max(0.0, float(timeout_s)))
+    return done.is_set()
+
+
 def _finalize_root_runtime_process_exit(
     args: Any,
     exit_code: int = 0,
@@ -359,11 +380,6 @@ def _finalize_root_runtime_process_exit(
             "clean": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
-    logging_shutdown_completed = True
-    try:
-        logging.shutdown()
-    except _AURA_MAIN_BOUNDARY_ERRORS:
-        logging_shutdown_completed = False
     try:
         from core.runtime.runtime_hygiene import get_runtime_hygiene
 
@@ -391,6 +407,14 @@ def _finalize_root_runtime_process_exit(
             "blockers": ["root_resource_report_unavailable"],
             "error": f"{type(exc).__name__}: {exc}",
         }
+    logging_shutdown_completed = _shutdown_logging_before_hard_exit()
+    if not logging_shutdown_completed:
+        print(
+            "Logging shutdown exceeded its 2.0s finalization budget; "
+            "continuing root exit.",
+            file=sys.stderr,
+            flush=True,
+        )
     try:
         from core.runtime.shutdown_coordinator import publish_root_exit_verdict
 

@@ -623,6 +623,19 @@ def test_lease_acquire_then_renew(tmp_path, monkeypatch):
     assert report["record"]["transitions"] == 0
 
 
+def test_orderly_lease_stop_is_release_not_loss(caplog):
+    async def scenario():
+        elector = LeaderElector("orderly-stop")
+        elector._is_leader = True
+        await elector.stop(release=False)
+
+    with caplog.at_level("INFO", logger="Aura.Lease"):
+        asyncio.run(scenario())
+
+    assert "released lease 'orderly-stop': stopped" in caplog.text
+    assert not any(record.levelname == "WARNING" for record in caplog.records)
+
+
 def test_a_live_foreign_holder_blocks_acquisition_and_taints(tmp_path, monkeypatch):
     monkeypatch.setattr(lease_mod, "_lease_path", lambda name: tmp_path / f"{name}.json")
 

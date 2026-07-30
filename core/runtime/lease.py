@@ -431,13 +431,14 @@ class LeaderElector:
                 f"renew deadline exceeded ({since:.1f}s >= {self.renew_deadline_s:.1f}s)"
             )
 
-    async def _relinquish(self, reason: str) -> None:
+    async def _relinquish(self, reason: str, *, expected: bool = False) -> None:
         with self._lock:
             if not self._is_leader:
                 return
             self._is_leader = False
             self.lost_leadership += 1
-        logger.warning("👑 lost lease %r: %s", self.name, reason)
+        log = logger.info if expected else logger.warning
+        log("👑 %s lease %r: %s", "released" if expected else "lost", self.name, reason)
         await _maybe_await(self._on_stopped)
 
     # ── lifecycle ─────────────────────────────────────────────────────
@@ -474,7 +475,7 @@ class LeaderElector:
                 await task
         if release and self.is_leader:
             await self._release_lease()
-        await self._relinquish("stopped")
+        await self._relinquish("stopped", expected=True)
 
     async def _release_lease(self) -> None:
         """Expire our own lease so a successor takes over now, not in 15s."""

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -343,18 +344,10 @@ class CapabilityDiscovery:
         """Check system permissions."""
         # Accessibility
         try:
-            proc = await get_subprocess_gateway().spawn_async(
-                [
-                    "osascript", "-e",
-                    'tell application "System Events" to get name of first application process whose frontmost is true',
-                ],
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                read_only=True,
-                source="capability_discovery.accessibility_probe",
+            report.has_accessibility = await asyncio.wait_for(
+                asyncio.to_thread(self._probe_accessibility_sync),
+                timeout=1.0,
             )
-            await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            report.has_accessibility = proc.returncode == 0
             report.mark("has_accessibility")
         except (OSError, TimeoutError, RuntimeError) as exc:
             record_degradation("capability_discovery.accessibility_probe", exc)
@@ -397,6 +390,26 @@ class CapabilityDiscovery:
             state=INFERRED,
             detail="TCC.db presence only; grant state is not readable",
         )
+
+    @staticmethod
+    def _probe_accessibility_sync() -> bool:
+        """Read macOS Accessibility trust without prompting or scripting UI.
+
+        AppleScript through System Events can wait indefinitely behind a TCC
+        prompt and previously stalled startup discovery. AXIsProcessTrusted is
+        the native, non-prompting status API and returns the permission attached
+        to the signed Aura process identity.
+        """
+
+        if sys.platform != "darwin":
+            return False
+        try:
+            from ApplicationServices import AXIsProcessTrusted
+        except ImportError as exc:
+            raise RuntimeError(
+                "macOS ApplicationServices accessibility API is unavailable"
+            ) from exc
+        return bool(AXIsProcessTrusted())
 
     async def _discover_network(self, report: CapabilityReport) -> None:
         """Check network connectivity."""

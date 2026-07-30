@@ -91,6 +91,39 @@ class TestWritableDirProbeOffLoop:
         assert report.has_python_packages.get("psutil") is True
 
 
+def test_accessibility_probe_uses_native_status_off_event_loop(monkeypatch):
+    probe_threads: list[threading.Thread] = []
+
+    def native_probe() -> bool:
+        probe_threads.append(threading.current_thread())
+        return True
+
+    class PermissionGuard:
+        async def check_permission(self, _permission):
+            return {"granted": True}
+
+    monkeypatch.setattr(
+        CapabilityDiscovery,
+        "_probe_accessibility_sync",
+        staticmethod(native_probe),
+    )
+    monkeypatch.setattr(
+        "core.security.permission_guard.get_permission_guard",
+        lambda: PermissionGuard(),
+    )
+
+    async def scenario():
+        loop_thread = threading.current_thread()
+        report = CapabilityReport()
+        await CapabilityDiscovery()._discover_permissions(report)
+        return loop_thread, report
+
+    loop_thread, report = asyncio.run(scenario())
+    assert report.has_accessibility is True
+    assert report.state_of("has_accessibility") == "probed"
+    assert probe_threads and probe_threads[0] is not loop_thread
+
+
 class TestNonDurableAtomicWrites:
     def test_durable_false_skips_fsync(self, tmp_path, monkeypatch):
         import core.runtime.atomic_writer as aw

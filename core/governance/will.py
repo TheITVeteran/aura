@@ -441,6 +441,15 @@ class UnifiedWill:
             WillDecision with full provenance.  Callers MUST check is_approved().
         """
         t0 = time.time()
+        stage_started = time.perf_counter()
+        latency_stages: list[tuple[str, float]] = []
+
+        def mark_latency_stage(name: str) -> None:
+            nonlocal stage_started
+            now = time.perf_counter()
+            latency_stages.append((name, (now - stage_started) * 1000.0))
+            stage_started = now
+
         self._state.total_decisions += 1
         context = context or {}
 
@@ -496,6 +505,7 @@ class UnifiedWill:
             for item in list(aura_now_packet.get("constraints") or [])
             if str(item)
         ]
+        mark_latency_stage("aura_now")
 
         # ── Critical override (the ONLY bypass) ─────────────────────
         if is_critical:
@@ -578,12 +588,15 @@ class UnifiedWill:
         substrate_coherence, somatic_approach, substrate_receipt = self._consult_substrate(
             content, source, domain, priority, is_critical
         )
+        mark_latency_stage("substrate")
 
         # ── 4. MEMORY CHECK: What do I know about this? ─────────────
         memory_relevance = self._check_memory_relevance(content, context)
+        mark_latency_stage("memory")
 
         # ── 5. SCAR CHECK: Does past experience advise caution? ─────
         scar_constraints = self._check_behavioral_scars(content, source, domain, context)
+        mark_latency_stage("scars")
 
         # ── 6. UNITY INPUT: What is my current togetherness? ─────────
         unity_context = self._read_unity_context()
@@ -603,6 +616,7 @@ class UnifiedWill:
             context,
             aura_now_packet=aura_now_packet,
         )
+        mark_latency_stage("state_inputs")
 
         # ── 9. COMPOSE THE DECISION ─────────────────────────────────
         catatonia_relief = self._catatonia_relief_allowed(domain, source, context)
@@ -632,6 +646,7 @@ class UnifiedWill:
             context=context,
             content=content,
         )
+        mark_latency_stage("policy_compose")
 
         # ── 9b. Inject scar constraints (learned caution from experience) ─
         if scar_constraints:
@@ -683,6 +698,7 @@ class UnifiedWill:
             context=context,
             receipt_id=receipt_id,
         )
+        mark_latency_stage("consequential_gates")
 
         decision = WillDecision(
             receipt_id=receipt_id,
@@ -723,6 +739,19 @@ class UnifiedWill:
             latency_ms=(time.time() - t0) * 1000,
             substrate_receipt_id=substrate_receipt,
         )
+        mark_latency_stage("receipt_construct")
+        if decision.latency_ms > 250.0:
+            logger.info(
+                "Will decision latency diagnostic: total_ms=%.1f domain=%s "
+                "source=%s stages=%s",
+                decision.latency_ms,
+                domain.value,
+                source,
+                {
+                    name: round(duration_ms, 2)
+                    for name, duration_ms in latency_stages
+                },
+            )
 
         # ── 6. UPDATE WILL STATE ────────────────────────────────────
         self._update_will_state(decision)
