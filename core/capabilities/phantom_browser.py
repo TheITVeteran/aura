@@ -29,15 +29,23 @@ from core.utils.exceptions import capture_and_log
 
 try:
     from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import Page, async_playwright
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
+    PlaywrightError = RuntimeError
+    PlaywrightTimeoutError = TimeoutError
+    Page = Any
     PLAYWRIGHT_AVAILABLE = False
 
 try:
-    from playwright_stealth import stealth_async
+    from playwright_stealth import Stealth
+    _STEALTH = Stealth()
+    _STEALTH_IMPORT_ERROR = ""
     STEALTH_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError, ValueError) as stealth_import_error:
+    _STEALTH = None
+    _STEALTH_IMPORT_ERROR = f"{type(stealth_import_error).__name__}: {stealth_import_error}"
     STEALTH_AVAILABLE = False
 
 logger = logging.getLogger("PhantomBrowser")
@@ -157,6 +165,8 @@ class PhantomBrowser:
         self._startup_error = ""
         self._startup_failure_count = 0
         self._last_launch_attempts: list[str] = []
+        self._stealth_applied = False
+        self._stealth_error = _STEALTH_IMPORT_ERROR
         
         if not PLAYWRIGHT_AVAILABLE:
             return
@@ -211,6 +221,9 @@ class PhantomBrowser:
             "startup_failure_count": self._startup_failure_count,
             "startup_error": self._startup_error[:240],
             "last_launch_attempts": list(self._last_launch_attempts),
+            "stealth_available": bool(STEALTH_AVAILABLE),
+            "stealth_applied": bool(self._stealth_applied),
+            "stealth_error": self._stealth_error[:240],
             # A browser running WITHOUT resource coordination is a different
             # state from one running with it; reporting only "active" made
             # them look identical.
@@ -309,7 +322,14 @@ class PhantomBrowser:
                         logger.info("✓ Fell back to %s after %s was unavailable.", bt, self.browser_type)
                     launch_error = None
                     break  # Launch succeeded
-                except (RuntimeError, AttributeError, TypeError, ValueError) as launch_exc:
+                except (
+                    PlaywrightError,
+                    PlaywrightTimeoutError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                ) as launch_exc:
                     self._startup_failure_count += 1
                     self._startup_error = f"{bt}: {launch_exc}"
                     _record_browser_degradation(
@@ -335,29 +355,22 @@ class PhantomBrowser:
                 viewport={'width': 1280, 'height': 800},
                 user_agent=user_agent
             )
+            await self._apply_stealth(self.context)
             self.page = await self.context.new_page()
-
-            # Apply Stealth for anti-detection (2026 upgrade)
-            if STEALTH_AVAILABLE:
-                try:
-                    await stealth_async(self.page)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as se:
-                    _record_browser_degradation(
-                        se,
-                        stage="stealth_setup",
-                        action="continued with standard browser context after stealth setup failed",
-                        severity="warning",
-                        extra={"browser_type": self.browser_type},
-                    )
-                    logger.warning("Stealth application failed: %s", se)
-            else:
-                logger.warning("playwright-stealth is not installed. Running without stealth.")
 
             self.is_active = True
             self._startup_error = ""
             logger.info("✓ Phantom Browser initialized (Visible: %s, UA: %s...)", self.visible, user_agent[:30])
             return True
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+        except (
+            ImportError,
+            PlaywrightError,
+            PlaywrightTimeoutError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as e:
             self._startup_failure_count += 1
             self._startup_error = f"{type(e).__name__}: {e}"
             _record_browser_degradation(
@@ -391,6 +404,40 @@ class PhantomBrowser:
     def _get_random_ua(self) -> str:
         return random.choice(USER_AGENTS)
 
+    async def _apply_stealth(self, context: Any) -> bool:
+        """Apply the installed playwright-stealth API before creating pages."""
+        self._stealth_applied = False
+        if not STEALTH_AVAILABLE or _STEALTH is None:
+            self._stealth_error = _STEALTH_IMPORT_ERROR or "dependency_unavailable"
+            logger.warning(
+                "playwright-stealth unavailable: %s",
+                self._stealth_error,
+            )
+            return False
+        try:
+            await _STEALTH.apply_stealth_async(context)
+        except (
+            PlaywrightError,
+            PlaywrightTimeoutError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            self._stealth_error = f"{type(exc).__name__}: {exc}"
+            _record_browser_degradation(
+                exc,
+                stage="stealth_setup",
+                action="continued with standard browser context after stealth setup failed",
+                severity="warning",
+                extra={"browser_type": self.browser_type},
+            )
+            logger.warning("Stealth application failed: %s", exc)
+            return False
+        self._stealth_applied = True
+        self._stealth_error = ""
+        return True
+
     async def rotate_user_agent(self):
         """Switch to a new context with a different user agent."""
         if not self.is_active:
@@ -405,18 +452,11 @@ class PhantomBrowser:
             viewport={'width': 1280, 'height': 800},
             user_agent=ua
         )
+        await self._apply_stealth(new_context)
         old_context = self.context
         old_page = self.page
         self.context = new_context
         self.page = await self.context.new_page()
-
-        # Apply Stealth to new context/page
-        try:
-            if STEALTH_AVAILABLE:
-                await stealth_async(self.page)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('phantom_browser', e)
-            capture_and_log(e, {'module': __name__})
         
         # Properly close old page and context to prevent resource leaks
         if old_page:

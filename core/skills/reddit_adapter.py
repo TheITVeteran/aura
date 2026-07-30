@@ -34,6 +34,12 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+try:
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+except ImportError:
+    PlaywrightError = RuntimeError
+    PlaywrightTimeoutError = TimeoutError
 
 from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
@@ -54,8 +60,9 @@ _REDDIT_RECOVERABLE_ERRORS = (
     OSError,
     TimeoutError,
     ConnectionError,
+    PlaywrightError,
+    PlaywrightTimeoutError,
     json.JSONDecodeError,
-    asyncio.CancelledError,
 )
 
 
@@ -97,6 +104,18 @@ POST_COOLDOWN_S = 3600  # 1 post per hour
 _STORAGE_DIR = Path(os.path.expanduser("~/.aura/runtime/reddit"))
 _STORAGE_STATE_FILE = _STORAGE_DIR / "browser_state.json"
 _COMMENT_HISTORY_FILE = _STORAGE_DIR / "comment_history.json"
+_CONNECTION_STATE_FILE = _STORAGE_DIR / "connection_state.json"
+_CONNECTION_STATES = frozenset(
+    {
+        "disabled",
+        "public_only",
+        "session_unverified",
+        "session_valid",
+        "auth_required",
+        "captcha_blocked",
+        "transient_failure",
+    }
+)
 
 # ── Sensitive content filter ──────────────────────────────────────────
 _BLOCKED_PHRASES = [
@@ -215,6 +234,138 @@ class RedditAdapterSkill(BaseSkill):
     def __init__(self):
         super().__init__()
         _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+        self._connection_state = self._load_connection_state()
+        self._allow_reauthentication = False
+
+    @staticmethod
+    def _default_connection_state() -> dict[str, Any]:
+        return {
+            "state": "public_only",
+            "reason": "no_session_validated",
+            "updated_at": 0.0,
+            "retry_at": 0.0,
+            "failure_count": 0,
+        }
+
+    def _load_connection_state(self) -> dict[str, Any]:
+        state = self._default_connection_state()
+        if not _CONNECTION_STATE_FILE.exists():
+            return state
+        try:
+            raw = json.loads(_CONNECTION_STATE_FILE.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or raw.get("state") not in _CONNECTION_STATES:
+                raise ValueError("invalid reddit connection-state schema")
+            state.update(
+                {
+                    "state": str(raw["state"]),
+                    "reason": str(raw.get("reason") or ""),
+                    "updated_at": max(0.0, float(raw.get("updated_at") or 0.0)),
+                    "retry_at": max(0.0, float(raw.get("retry_at") or 0.0)),
+                    "failure_count": max(0, int(raw.get("failure_count") or 0)),
+                }
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.info(
+                "Reddit connection state reset after unreadable persistence: %s",
+                type(exc).__name__,
+            )
+        return state
+
+    def get_connection_status(self) -> dict[str, Any]:
+        status = dict(self._connection_state)
+        status["retry_in_s"] = max(
+            0.0,
+            float(status.get("retry_at") or 0.0) - time.time(),
+        )
+        return status
+
+    async def _set_connection_state(
+        self,
+        state: str,
+        *,
+        reason: str,
+        retry_after_s: float = 0.0,
+        increment_failure: bool = False,
+    ) -> dict[str, Any]:
+        if state not in _CONNECTION_STATES:
+            raise ValueError(f"unsupported reddit connection state: {state}")
+        previous = dict(self._connection_state)
+        failure_count = (
+            int(previous.get("failure_count") or 0) + 1
+            if increment_failure
+            else (0 if state == "session_valid" else int(previous.get("failure_count") or 0))
+        )
+        now = time.time()
+        current = {
+            "state": state,
+            "reason": str(reason or ""),
+            "updated_at": now,
+            "retry_at": now + max(0.0, float(retry_after_s)),
+            "failure_count": failure_count,
+        }
+        self._connection_state = current
+        if (
+            previous.get("state") != current["state"]
+            or previous.get("reason") != current["reason"]
+        ):
+            logger.info(
+                "Reddit provider state: %s -> %s (%s)",
+                previous.get("state", "unknown"),
+                current["state"],
+                current["reason"],
+            )
+        try:
+            await get_file_write_gateway().write_text_async(
+                _CONNECTION_STATE_FILE,
+                json.dumps(current, sort_keys=True),
+                source="core.skills.reddit_adapter.connection_state",
+            )
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_reddit_degradation(
+                exc,
+                action="kept reddit provider state in memory after persistence failed",
+                stage="connection_state.persist",
+                severity="warning",
+            )
+        return self.get_connection_status()
+
+    @staticmethod
+    def _session_markers(content: str) -> bool:
+        return any(
+            marker in str(content or "")
+            for marker in (
+                'data-testid="user-drawer-button"',
+                '"loggedIn":true',
+                "header-user-dropdown",
+            )
+        )
+
+    @staticmethod
+    def _captcha_present(content: str) -> bool:
+        lowered = str(content or "").lower()
+        return any(
+            marker in lowered
+            for marker in ("g-recaptcha", "captcha-delivery", "recaptcha", "challenge-platform")
+        )
+
+    @staticmethod
+    def _filter_live_cookies(raw_cookies: Any) -> list[dict[str, Any]]:
+        if not isinstance(raw_cookies, list):
+            return []
+        now = time.time()
+        valid = []
+        for cookie in raw_cookies:
+            if not isinstance(cookie, dict):
+                continue
+            expires = cookie.get("expires", -1)
+            try:
+                expires_value = float(expires)
+            except (TypeError, ValueError):
+                continue
+            if expires_value > 0.0 and expires_value <= now:
+                continue
+            valid.append(dict(cookie))
+        return valid
 
     def _get_creds(self) -> tuple[str, str]:
         """Load Reddit credentials from Keychain."""
@@ -315,15 +466,40 @@ class RedditAdapterSkill(BaseSkill):
     async def _create_browser(self) -> PhantomBrowser:
         """Create browser with persistent login state."""
         browser = PhantomBrowser(visible=False, browser_type="chromium")
-        await asyncio.wait_for(browser.ensure_ready(), timeout=30.0)
+        ready = await asyncio.wait_for(browser.ensure_ready(), timeout=30.0)
+        if not ready or browser.context is None:
+            status = browser.get_status() if hasattr(browser, "get_status") else {}
+            raise RuntimeError(
+                "reddit browser unavailable:"
+                + str(status.get("startup_error") or "context_not_ready")
+            )
 
         # Load persistent storage state if it exists
         if _STORAGE_STATE_FILE.exists():
             try:
-                state = json.loads(_STORAGE_STATE_FILE.read_text())
-                if state.get("cookies") and browser.context:
-                    await browser.context.add_cookies(state["cookies"])
-                    logger.info("✅ Loaded Reddit session cookies")
+                state = json.loads(_STORAGE_STATE_FILE.read_text(encoding="utf-8"))
+                cookies = self._filter_live_cookies(state.get("cookies"))
+                if cookies:
+                    await browser.context.add_cookies(cookies)
+                    has_session = any(
+                        str(cookie.get("name") or "") == "reddit_session"
+                        for cookie in cookies
+                    )
+                    if has_session:
+                        await self._set_connection_state(
+                            "session_unverified",
+                            reason="persisted_session_loaded_for_validation",
+                        )
+                    logger.info(
+                        "Loaded %d non-expired Reddit session cookie(s) for validation.",
+                        len(cookies),
+                    )
+                else:
+                    await self._set_connection_state(
+                        "auth_required",
+                        reason="persisted_session_has_no_live_cookies",
+                        retry_after_s=3600.0,
+                    )
             except _REDDIT_RECOVERABLE_ERRORS as e:
                 _record_reddit_degradation(
                     e,
@@ -366,6 +542,8 @@ class RedditAdapterSkill(BaseSkill):
             return
         try:
             await asyncio.wait_for(browser.close(), timeout=10.0)
+        except asyncio.CancelledError:
+            raise
         except _REDDIT_RECOVERABLE_ERRORS as e:
             _record_reddit_degradation(
                 e,
@@ -377,120 +555,179 @@ class RedditAdapterSkill(BaseSkill):
             browser.is_active = False
 
     async def _ensure_logged_in(self, browser: PhantomBrowser) -> bool:
-        """Check if logged in; if not, perform login."""
+        """Validate an existing session; reauthenticate only for foreground work."""
         try:
-            await browser.browse("https://www.reddit.com")
-            await asyncio.sleep(2)
+            state = self.get_connection_status()
+            if (
+                not self._allow_reauthentication
+                and state["state"] in {"auth_required", "captcha_blocked"}
+                and state["retry_in_s"] > 0.0
+            ):
+                return False
 
-            # Check if we're logged in by looking for user menu
+            if not await browser.browse("https://www.reddit.com"):
+                await self._set_connection_state(
+                    "transient_failure",
+                    reason="session_validation_navigation_failed",
+                    retry_after_s=300.0,
+                    increment_failure=True,
+                )
+                return False
+            await asyncio.sleep(1)
+
             page = browser.page
             if not page:
+                await self._set_connection_state(
+                    "transient_failure",
+                    reason="browser_page_unavailable",
+                    retry_after_s=300.0,
+                    increment_failure=True,
+                )
                 return False
 
             content = await page.content()
-            # Reddit shows different elements when logged in vs not
-            is_logged_in = (
-                'data-testid="user-drawer-button"' in content
-                or '"loggedIn":true' in content
-                or "header-user-dropdown" in content
-            )
-
-            if is_logged_in:
+            if self._session_markers(content):
+                await self._set_connection_state(
+                    "session_valid",
+                    reason="existing_session_validated",
+                )
                 logger.info("✅ Already logged into Reddit")
                 return True
+            if self._captcha_present(content):
+                await self._set_connection_state(
+                    "captcha_blocked",
+                    reason="captcha_on_session_validation",
+                    retry_after_s=21_600.0,
+                    increment_failure=True,
+                )
+                return False
+            if not self._allow_reauthentication:
+                await self._set_connection_state(
+                    "auth_required",
+                    reason="existing_session_invalid",
+                    retry_after_s=3600.0,
+                    increment_failure=True,
+                )
+                return False
 
-            # Need to login
-            logger.info("🔐 Logging into Reddit...")
             try:
                 username, password = await asyncio.to_thread(self._get_creds)
             except RuntimeError:
-                logger.info("RedditAdapter idle: credentials are not configured.")
-                return False
-
-            await browser.browse("https://www.reddit.com/login/")
-            await asyncio.sleep(3)
-
-            # Type credentials
-            try:
-                # Try new Reddit login form
-                username_input = page.locator('input[name="username"], #login-username').first
-                password_input = page.locator('input[name="password"], #login-password').first
-
-                try:
-                    await username_input.wait_for(state="visible", timeout=3000)
-                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
-                    username_input = (
-                        page.frame_locator("iframe")
-                        .locator('input[name="username"], #login-username')
-                        .first
-                    )
-                    password_input = (
-                        page.frame_locator("iframe")
-                        .locator('input[name="password"], #login-password')
-                        .first
-                    )
-
-                # Reddit uses custom <faceplate-text-input> elements now, so .fill() might fail.
-                # Use click + keyboard type instead.
-                await username_input.click(timeout=5000)
-                await page.keyboard.type(username, delay=50)
-                await asyncio.sleep(0.5)
-
-                await password_input.click(timeout=5000)
-                await page.keyboard.type(password, delay=50)
-                await asyncio.sleep(0.5)
-
-                # Press Enter to submit instead of clicking a brittle button locator
-                await page.keyboard.press("Enter")
-                await asyncio.sleep(5)
-
-                # Verify login succeeded
-                current_url = page.url
-                if "login" not in current_url.lower():
-                    logger.info("✅ Reddit login successful")
-                    await self._save_session(browser)
-                    return True
-                else:
-                    logger.warning("⚠️ Reddit login may have failed — still on login page")
-                    return False
-
-            except (
-                RuntimeError,
-                asyncio.CancelledError,
-                TimeoutError,
-                AttributeError,
-            ) as login_exc:
-                if "captcha" in str(login_exc).lower() or "recaptcha" in str(login_exc).lower():
-                    logger.info("Reddit inbox login unavailable: CAPTCHA present.")
-                    return False
-                _record_reddit_degradation(
-                    login_exc,
-                    action="reported reddit login unavailable after interaction failure",
-                    stage="login.interaction",
-                    severity="warning",
+                await self._set_connection_state(
+                    "auth_required",
+                    reason="credentials_not_configured",
+                    retry_after_s=3600.0,
+                    increment_failure=True,
                 )
-                logger.warning("Reddit login interaction failed: %s", login_exc)
                 return False
 
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
-            if (
-                "credentials not found" in str(e).lower()
-                or "captcha" in str(e).lower()
-                or "recaptcha" in str(e).lower()
-            ):
-                logger.info("Reddit login unavailable: %s", type(e).__name__)
+            logger.info("🔐 Recovering Reddit authentication for foreground request...")
+            if not await browser.browse("https://www.reddit.com/login/"):
+                await self._set_connection_state(
+                    "transient_failure",
+                    reason="reauthentication_navigation_failed",
+                    retry_after_s=300.0,
+                    increment_failure=True,
+                )
                 return False
-            _record_reddit_degradation(
-                e,
-                action="reported reddit login unavailable after readiness check failed",
-                stage="login.readiness",
-                severity="warning",
+            await asyncio.sleep(1)
+            content = await page.content()
+            if self._captcha_present(content):
+                await self._set_connection_state(
+                    "captcha_blocked",
+                    reason="captcha_on_reauthentication",
+                    retry_after_s=21_600.0,
+                    increment_failure=True,
+                )
+                return False
+
+            selectors = (
+                'input[name="username"], #login-username',
+                'input[name="password"], #login-password',
             )
-            logger.error("Login check failed: %s", e)
+            login_scope = None
+            username_input = None
+            password_input = None
+            for scope in [page, *list(getattr(page, "frames", ()) or ())]:
+                candidate_username = scope.locator(selectors[0]).first
+                candidate_password = scope.locator(selectors[1]).first
+                try:
+                    await candidate_username.wait_for(state="visible", timeout=1500)
+                    await candidate_password.wait_for(state="visible", timeout=1500)
+                except (
+                    PlaywrightTimeoutError,
+                    PlaywrightError,
+                    RuntimeError,
+                    AttributeError,
+                ):
+                    continue
+                login_scope = scope
+                username_input = candidate_username
+                password_input = candidate_password
+                break
+
+            if login_scope is None or username_input is None or password_input is None:
+                await self._set_connection_state(
+                    "auth_required",
+                    reason="compatible_login_form_not_found",
+                    retry_after_s=3600.0,
+                    increment_failure=True,
+                )
+                return False
+
+            await username_input.fill(username, timeout=5000)
+            await password_input.fill(password, timeout=5000)
+            await password_input.press("Enter")
+            await asyncio.sleep(5)
+            content = await page.content()
+            if self._session_markers(content):
+                logger.info("✅ Reddit login successful")
+                await self._save_session(browser)
+                await self._set_connection_state(
+                    "session_valid",
+                    reason="foreground_reauthentication_succeeded",
+                )
+                return True
+            if self._captcha_present(content):
+                await self._set_connection_state(
+                    "captcha_blocked",
+                    reason="captcha_after_reauthentication",
+                    retry_after_s=21_600.0,
+                    increment_failure=True,
+                )
+            else:
+                await self._set_connection_state(
+                    "auth_required",
+                    reason="credentials_or_login_flow_rejected",
+                    retry_after_s=3600.0,
+                    increment_failure=True,
+                )
+            return False
+        except asyncio.CancelledError:
+            raise
+        except _REDDIT_RECOVERABLE_ERRORS as exc:
+            failures = int(self._connection_state.get("failure_count") or 0) + 1
+            backoff = min(3600.0, 60.0 * (2 ** min(failures, 5)))
+            await self._set_connection_state(
+                "transient_failure",
+                reason=f"{type(exc).__name__}:{str(exc)[:160]}",
+                retry_after_s=backoff,
+                increment_failure=True,
+            )
+            logger.info(
+                "Reddit session validation deferred after provider failure: %s",
+                type(exc).__name__,
+            )
             return False
 
     async def execute(self, params: RedditInput, context: dict[str, Any]) -> dict[str, Any]:
         """Unified entry point for all Reddit operations."""
+        context = dict(context or {})
+        self._allow_reauthentication = bool(
+            context.get("explicit_user_request")
+            or context.get("foreground_request")
+            or context.get("user_visible")
+        )
         if isinstance(params, dict):
             try:
                 params = RedditInput(**params)
@@ -550,6 +787,7 @@ class RedditAdapterSkill(BaseSkill):
                 result = await self._handle_check_shadowban(browser, params)
             else:
                 result = {"ok": False, "error": f"Unsupported Reddit mode: {params.mode}"}
+            result["provider"] = self.get_connection_status()
             result.update(
                 self._finalize_authority(
                     gateway,
@@ -566,6 +804,8 @@ class RedditAdapterSkill(BaseSkill):
                 mode=params.mode,
             )
             return result
+        except asyncio.CancelledError:
+            raise
         except _REDDIT_RECOVERABLE_ERRORS as e:
             finalize_result = self._finalize_authority(
                 gateway,
@@ -607,6 +847,7 @@ class RedditAdapterSkill(BaseSkill):
                             "ok": False,
                             "error": "CAPTCHA_DETECTED",
                             "message": f"Reddit has presented a CAPTCHA. Operation halted.{visual_note}",
+                            "provider": self.get_connection_status(),
                             **finalize_result,
                         }
                         self._complete_welfare_transaction(
@@ -624,7 +865,12 @@ class RedditAdapterSkill(BaseSkill):
                 severity="degraded",
             )
             logger.error("Reddit operation failed: %s", e)
-            result = {"ok": False, "error": str(e), **finalize_result}
+            result = {
+                "ok": False,
+                "error": str(e),
+                "provider": self.get_connection_status(),
+                **finalize_result,
+            }
             self._complete_welfare_transaction(
                 welfare_tx,
                 result,

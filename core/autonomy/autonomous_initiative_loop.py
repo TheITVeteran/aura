@@ -170,6 +170,8 @@ class AutonomousInitiativeLoop:
         self._social_task = None
         self._mission_task = None
         self._discovery_task = None
+        self._supervisor_task = None
+        self._child_restart_state: dict[str, dict[str, float]] = {}
         self._last_self_dev = 0.0
         self._last_discovery = 0.0
         self._last_email_check = 0.0
@@ -182,7 +184,11 @@ class AutonomousInitiativeLoop:
     async def start(self):
         """Starts the initiative loops and returns a boot receipt."""
         async with self._lifecycle_lock:
-            if self.running and any(self._task_alive(task) for task in self._core_tasks()):
+            if (
+                self.running
+                and all(self._task_alive(task) for task in self._core_tasks())
+                and self._task_alive(self._supervisor_task)
+            ):
                 return {
                     "ok": True,
                     "already_running": True,
@@ -195,28 +201,12 @@ class AutonomousInitiativeLoop:
                 "✅ AutonomousInitiativeLoop ACTIVE - Monitoring global events and knowledge gaps."
             )
 
-            self._world_task = task_tracker.create_task(
-                self._world_watcher_loop(), name="WorldWatcher"
-            )
-            self._knowledge_task = task_tracker.create_task(
-                self._knowledge_gap_monitor_loop(), name="KnowledgeGapMonitor"
-            )
-            self._self_dev_task = task_tracker.create_task(
-                self._self_development_loop(),
-                name="SelfDevelopmentLoop",
-            )
-            self._social_task = task_tracker.create_task(
-                self._social_interaction_loop(),
-                name="SocialInteractionLoop",
-            )
-            self._mission_task = task_tracker.create_task(
-                self._mission_watcher_loop(),
-                name="MissionWatcherLoop",
-            )
-            self._discovery_task = task_tracker.create_task(
-                self._discovery_loop(),
-                name="FrontierDiscoveryLoop",
-            )
+            self._spawn_missing_core_tasks()
+            if not self._task_alive(self._supervisor_task):
+                self._supervisor_task = task_tracker.create_task(
+                    self._initiative_supervisor_loop(),
+                    name="InitiativeChildSupervisor",
+                )
 
             status = {
                 "ok": True,
@@ -279,7 +269,112 @@ class AutonomousInitiativeLoop:
         return (self._world_task, self._knowledge_task, self._self_dev_task, self._social_task, self._mission_task, self._discovery_task)
 
     def _all_tasks(self) -> tuple[Any, ...]:
-        return (*self._core_tasks(), self._event_task)
+        return (*self._core_tasks(), self._event_task, self._supervisor_task)
+
+    def _core_task_specs(self) -> tuple[tuple[str, str, Any], ...]:
+        return (
+            ("_world_task", "WorldWatcher", self._world_watcher_loop),
+            ("_knowledge_task", "KnowledgeGapMonitor", self._knowledge_gap_monitor_loop),
+            ("_self_dev_task", "SelfDevelopmentLoop", self._self_development_loop),
+            ("_social_task", "SocialInteractionLoop", self._social_interaction_loop),
+            ("_mission_task", "MissionWatcherLoop", self._mission_watcher_loop),
+            ("_discovery_task", "FrontierDiscoveryLoop", self._discovery_loop),
+        )
+
+    def _spawn_missing_core_tasks(self) -> list[str]:
+        spawned: list[str] = []
+        for attr, task_name, factory in self._core_task_specs():
+            if self._task_alive(getattr(self, attr, None)):
+                continue
+            setattr(
+                self,
+                attr,
+                task_tracker.create_task(factory(), name=task_name),
+            )
+            spawned.append(task_name)
+        return spawned
+
+    async def _initiative_supervisor_loop(self) -> None:
+        """Restart failed initiative children independently with bounded backoff."""
+        while self.running:
+            try:
+                await asyncio.sleep(15.0)
+                await self._supervise_initiative_children_once()
+            except asyncio.CancelledError:
+                raise
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                _record_initiative_degradation(
+                    exc,
+                    action="continued initiative child supervision after supervisor tick failed",
+                    severity="warning",
+                )
+
+    async def _supervise_initiative_children_once(
+        self,
+        *,
+        now: float | None = None,
+    ) -> dict[str, list[str]]:
+        """Inspect and recover each initiative child without coupling siblings."""
+        current_time = time.monotonic() if now is None else float(now)
+        scheduled: list[str] = []
+        restarted: list[str] = []
+        for attr, task_name, factory in self._core_task_specs():
+            task = getattr(self, attr, None)
+            if self._task_alive(task):
+                state = self._child_restart_state.get(task_name)
+                if (
+                    state
+                    and current_time - state.get("last_restart_at", current_time) > 600.0
+                ):
+                    self._child_restart_state.pop(task_name, None)
+                continue
+            if not self.running:
+                break
+            state = self._child_restart_state.setdefault(
+                task_name,
+                {"failures": 0.0, "retry_at": 0.0, "last_restart_at": 0.0},
+            )
+            if current_time < state["retry_at"]:
+                continue
+            if state["retry_at"] > 0.0:
+                setattr(
+                    self,
+                    attr,
+                    task_tracker.create_task(factory(), name=task_name),
+                )
+                state["retry_at"] = 0.0
+                state["last_restart_at"] = current_time
+                restarted.append(task_name)
+                logger.info(
+                    "Initiative child restarted: %s (attempt=%d)",
+                    task_name,
+                    int(state["failures"]),
+                )
+                continue
+            error = "completed_without_shutdown"
+            if task is not None and not task.cancelled():
+                try:
+                    exc = task.exception()
+                except (asyncio.InvalidStateError, RuntimeError):
+                    exc = None
+                if exc is not None:
+                    error = f"{type(exc).__name__}: {exc}"
+            state["failures"] += 1.0
+            delay = min(300.0, 5.0 * (2 ** min(int(state["failures"]) - 1, 6)))
+            state["retry_at"] = current_time + delay
+            state["last_restart_at"] = current_time
+            scheduled.append(task_name)
+            _record_initiative_degradation(
+                RuntimeError(f"{task_name} terminated: {error}"),
+                action="scheduled bounded independent restart for failed initiative child",
+                severity="warning",
+                extra={
+                    "child": task_name,
+                    "restart_in_s": delay,
+                    "failure_count": int(state["failures"]),
+                },
+            )
+        return {"scheduled": scheduled, "restarted": restarted}
 
     @staticmethod
     def _task_alive(task: Any) -> bool:
@@ -317,9 +412,24 @@ class AutonomousInitiativeLoop:
         self_dev_blocker = _self_development_blocker(self.orchestrator)
         social_blocker = _passive_social_blocker(self.orchestrator)
         return {
-            "running": bool(self.running and all(core_tasks.values())),
+            "running": bool(
+                self.running
+                and all(core_tasks.values())
+                and self._task_alive(self._supervisor_task)
+            ),
             "enabled": bool(self.running),
             "core_tasks": core_tasks,
+            "child_supervisor": self._task_alive(self._supervisor_task),
+            "child_restart_state": {
+                name: {
+                    "failure_count": int(state.get("failures", 0.0)),
+                    "retry_in_s": max(
+                        0.0,
+                        float(state.get("retry_at", 0.0)) - time.monotonic(),
+                    ),
+                }
+                for name, state in self._child_restart_state.items()
+            },
             "admission": {
                 "world_and_knowledge": "allowed" if not world_blocker else world_blocker,
                 "self_development": "allowed" if not self_dev_blocker else self_dev_blocker,
@@ -1286,7 +1396,17 @@ class AutonomousInitiativeLoop:
         from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
 
         skill = RedditAdapterSkill()
-        return await skill.execute(RedditInput(**payload), {})
+        return await skill.execute(
+            RedditInput(**payload),
+            {
+                "origin": "autonomous_initiative_loop",
+                "intent_source": "autonomous_initiative_loop",
+                "objective": (
+                    "Read public Reddit state for bounded autonomous social awareness."
+                ),
+                "user_facing": False,
+            },
+        )
 
     async def _remember_social_observation(
         self, text: str, *, tags: list[str] | None = None, importance: float = 0.45
@@ -1521,23 +1641,9 @@ class AutonomousInitiativeLoop:
         logger.info("📱 Browsing Reddit for autonomous initiatives...")
         try:
             cap_engine = optional_service("capability_engine", default=None)
-            inbox = await self._execute_reddit_adapter(
-                {"mode": "check_inbox"}, cap_engine=cap_engine
-            )
-            if inbox.get("ok") and "unread" in str(inbox.get("content", "")).lower():
-                self._emit_feed(
-                    "Reddit Update",
-                    "I have new Reddit notifications. Checking for replies to my comments.",
-                    category="Social",
-                )
-            elif inbox.get("status") == "login_unavailable":
-                self._emit_feed(
-                    "Reddit Inbox",
-                    "Inbox check is blocked by login/CAPTCHA, so I am using public browsing only.",
-                    category="Social",
-                )
-
-            # Browse interesting subreddits
+            # Public reading is independent from account authentication and
+            # always runs first. Boot stabilization must never begin with a
+            # headless password flow.
             subreddits = ["askreddit", "nosleep", "technology", "philosophy", "futurology"]
             import random
 
@@ -1593,7 +1699,46 @@ class AutonomousInitiativeLoop:
                                 importance=0.5,
                             )
 
-        except (ImportError, AttributeError, RuntimeError) as e:
+            provider = (
+                result.get("provider")
+                if isinstance(result.get("provider"), dict)
+                else {}
+            )
+            provider_state = str(provider.get("state") or "")
+            if provider_state in {"session_unverified", "session_valid"}:
+                inbox = await self._execute_reddit_adapter(
+                    {"mode": "check_inbox"}, cap_engine=cap_engine
+                )
+                if inbox.get("ok") and "unread" in str(inbox.get("content", "")).lower():
+                    self._emit_feed(
+                        "Reddit Update",
+                        "I have new Reddit notifications. Checking for replies to my comments.",
+                        category="Social",
+                    )
+                elif inbox.get("status") == "login_unavailable":
+                    self._emit_feed(
+                        "Reddit Inbox",
+                        "The saved session needs recovery; public browsing remains active.",
+                        category="Social",
+                    )
+            elif provider_state:
+                logger.info(
+                    "Reddit authenticated inbox deferred in provider state %s; "
+                    "public browsing remains active.",
+                    provider_state,
+                )
+
+        except asyncio.CancelledError:
+            raise
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            OSError,
+            TimeoutError,
+        ) as e:
             _record_initiative_degradation(
                 e,
                 action="skipped reddit initiative tick after adapter failure",

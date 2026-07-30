@@ -32162,3 +32162,43 @@ Browser/social provider recovery and the other rejected-run warning families
 remain open. Resident-32B training remains paused. This is total checkpoint
 725. The 725-920 completion envelope is approximately 78.8%-100.0%, with an
 89.4% midpoint.
+
+### 2026-07-30 - DEMO-Q10 browser-provider lifecycle and autonomous child supervision
+
+The rejected certification run exposed two coupled provider failures. Aura
+imported the removed `playwright_stealth.stealth_async` API even though the
+installed package exposes `Stealth.apply_stealth_async`, so every browser ran
+without its declared hardening. Separately, the social loop attempted an
+interactive Reddit login at boot, used a generic iframe fallback, treated
+Playwright's own timeout class as uncaught, and had no independent child
+supervisor. One provider timeout therefore killed social awareness for the
+remainder of the process.
+
+PhantomBrowser now applies the installed stealth API to each BrowserContext
+before its first page is created, reports the applied state, and handles
+Playwright launch, navigation, and setup exceptions through the same bounded
+lifecycle. A real Chromium smoke started under resource admission, applied
+stealth, reached a public Reddit page, and closed without leaving a child
+process.
+
+Reddit now has a durable connection-state machine that distinguishes public
+reading, unverified and valid sessions, required authentication, CAPTCHA
+blocking, and transient provider failure. Persisted cookies are expiration
+checked, existing sessions are positively validated, and background autonomy
+cannot retrieve credentials or initiate an interactive login. Explicit
+foreground work may reauthenticate through positively located page or frame
+controls. Public browsing runs before account-only inbox work, bounded backoff
+prevents repeated failed authentication, and cancellation remains a lifecycle
+signal rather than a recoverable provider error.
+
+Each autonomous initiative child is now supervised independently with bounded
+exponential restart. A failed social provider can be scheduled and restarted
+without duplicating or cancelling the world, knowledge, development, mission,
+or discovery loops; restart state is visible in runtime status. The focused
+and adjacent browser, Reddit, autonomy, authority, and desktop-runtime gate
+passes 90/90; bytecode compilation, installed dependency introspection, a real
+network/browser smoke, and diff integrity pass. The installed app still
+requires a signed rebuild and three complete clean GUI demonstrations. Other
+warning families from the rejected run remain open. Resident-32B training
+remains paused. This is total checkpoint 726. The 726-920 completion envelope
+is approximately 78.9%-100.0%, with an 89.5% midpoint.

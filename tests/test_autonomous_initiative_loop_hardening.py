@@ -131,6 +131,53 @@ async def test_stop_awaits_background_task_cancellation(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_child_supervisor_restarts_only_failed_loop(monkeypatch):
+    marker: list[str] = []
+    degradations = []
+    loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
+    _install_held_loops(loop, marker)
+    monkeypatch.setattr(
+        "core.autonomy.autonomous_initiative_loop._record_initiative_degradation",
+        lambda error, **details: degradations.append((error, details)),
+    )
+    loop.running = True
+    loop._spawn_missing_core_tasks()
+    await asyncio.sleep(0)
+    stable_tasks = {
+        attr: getattr(loop, attr)
+        for attr, _name, _factory in loop._core_task_specs()
+        if attr != "_social_task"
+    }
+    old_social = loop._social_task
+    old_social.cancel()
+    try:
+        await old_social
+    except asyncio.CancelledError:
+        pass
+
+    async def fail_social():
+        raise RuntimeError("provider timeout")
+
+    failed_social = asyncio.create_task(fail_social(), name="FailedSocial")
+    await asyncio.sleep(0)
+    loop._social_task = failed_social
+
+    first = await loop._supervise_initiative_children_once(now=100.0)
+    second = await loop._supervise_initiative_children_once(now=106.0)
+    await asyncio.sleep(0)
+
+    assert first == {"scheduled": ["SocialInteractionLoop"], "restarted": []}
+    assert second == {"scheduled": [], "restarted": ["SocialInteractionLoop"]}
+    assert loop._task_alive(loop._social_task)
+    assert all(getattr(loop, attr) is task for attr, task in stable_tasks.items())
+    assert len(degradations) == 1
+    assert degradations[0][1]["extra"]["restart_in_s"] == 5.0
+
+    await loop.stop()
+    assert "social" in marker
+
+
+@pytest.mark.asyncio
 async def test_proactive_initiation_accepts_event_bus_priority_envelope(monkeypatch):
     emitted: list[tuple[str, str, str]] = []
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())

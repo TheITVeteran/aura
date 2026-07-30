@@ -281,6 +281,7 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
                 return {
                     "ok": True,
                     "subreddit": payload.get("subreddit"),
+                    "provider": {"state": "session_unverified"},
                     "posts": [
                         {"title": "A thoughtful systems thread", "url": "/r/technology/comments/abc/thread", "score": "42", "comments": "9"},
                         {"title": "Another thread", "url": "/r/technology/comments/def/thread", "score": "10", "comments": "3"},
@@ -305,7 +306,7 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
     await loop._check_reddit_initiative()
 
     modes = [payload["mode"] for skill, payload, _ in calls if skill == "reddit_adapter"]
-    assert modes == ["check_inbox", "browse", "read_post"]
+    assert modes == ["browse", "read_post", "check_inbox"]
     assert all(
         context["origin"] == "autonomous_initiative_loop"
         and context["intent_source"] == "autonomous_initiative_loop"

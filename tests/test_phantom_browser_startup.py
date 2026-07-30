@@ -10,13 +10,21 @@ class _FakePage:
 
 
 class _FakeContext:
+    def __init__(self):
+        self.page_created = False
+
     async def new_page(self):
+        self.page_created = True
         return _FakePage()
 
 
 class _FakeBrowser:
+    def __init__(self):
+        self.context = None
+
     async def new_context(self, **_kwargs):
-        return _FakeContext()
+        self.context = _FakeContext()
+        return self.context
 
 
 class _Launcher:
@@ -89,6 +97,32 @@ async def test_browser_startup_falls_back_to_chromium(monkeypatch):
     assert fake_playwright.chromium.launched is True
     last = get_degradation_tracker().recent(subsystem="phantom_browser")[-1]
     assert last.action == "trying next browser fallback after launch attempt failed"
+
+
+@pytest.mark.asyncio
+async def test_browser_applies_current_stealth_api_before_page_creation(monkeypatch):
+    fake_playwright = _FakePlaywright(firefox_fail=False)
+    observations = []
+
+    class FakeStealth:
+        async def apply_stealth_async(self, context):
+            observations.append(("stealth", context.page_created))
+
+    monkeypatch.setattr(phantom_module, "PLAYWRIGHT_AVAILABLE", True)
+    monkeypatch.setattr(phantom_module, "STEALTH_AVAILABLE", True)
+    monkeypatch.setattr(phantom_module, "_STEALTH", FakeStealth())
+    monkeypatch.setattr(
+        phantom_module,
+        "async_playwright",
+        lambda: _AsyncPlaywrightFactory(fake_playwright),
+    )
+
+    browser = PhantomBrowser(browser_type="firefox")
+
+    assert await browser.ensure_ready() is True
+    assert observations == [("stealth", False)]
+    assert browser.get_status()["stealth_applied"] is True
+    assert browser.get_status()["stealth_error"] == ""
 
 
 @pytest.mark.asyncio

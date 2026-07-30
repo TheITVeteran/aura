@@ -1,4 +1,7 @@
 import asyncio
+import time
+
+import pytest
 
 from core.runtime.errors import get_degradation_tracker
 from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
@@ -10,6 +13,29 @@ class Auth:
     capability_token_id = "cap-reddit"
     executive_intent_id = "intent-reddit"
     will_receipt_id = "receipt-reddit"
+
+
+@pytest.fixture(autouse=True)
+def _isolate_reddit_storage(monkeypatch, tmp_path):
+    from core.skills import reddit_adapter
+
+    storage = tmp_path / "reddit"
+    monkeypatch.setattr(reddit_adapter, "_STORAGE_DIR", storage)
+    monkeypatch.setattr(
+        reddit_adapter,
+        "_STORAGE_STATE_FILE",
+        storage / "browser_state.json",
+    )
+    monkeypatch.setattr(
+        reddit_adapter,
+        "_COMMENT_HISTORY_FILE",
+        storage / "comment_history.json",
+    )
+    monkeypatch.setattr(
+        reddit_adapter,
+        "_CONNECTION_STATE_FILE",
+        storage / "connection_state.json",
+    )
 
 
 def test_reddit_adapter_marks_authority_finalize_degraded(monkeypatch):
@@ -183,6 +209,7 @@ def test_reddit_login_reads_credentials_off_event_loop(monkeypatch):
 
             async def browse(self, url):
                 calls.append(("browse", url))
+                return True
 
         def get_creds():
             calls.append(("creds", "called"))
@@ -198,6 +225,7 @@ def test_reddit_login_reads_credentials_off_event_loop(monkeypatch):
         monkeypatch.setattr(skill, "_get_creds", get_creds)
         monkeypatch.setattr(reddit_adapter.asyncio, "to_thread", fake_to_thread)
         monkeypatch.setattr(reddit_adapter.asyncio, "sleep", fake_sleep)
+        skill._allow_reauthentication = True
 
         result = await skill._ensure_logged_in(Browser())
 
@@ -206,3 +234,93 @@ def test_reddit_login_reads_credentials_off_event_loop(monkeypatch):
         assert ("creds", "called") in calls
 
     asyncio.run(scenario())
+
+
+def test_reddit_background_session_check_never_attempts_password_login(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        persisted = []
+
+        class Gateway:
+            async def write_text_async(self, path, content, **_kwargs):
+                persisted.append((path, content))
+
+        class Page:
+            async def content(self):
+                return "<html><body>logged out</body></html>"
+
+        class Browser:
+            page = Page()
+
+            async def browse(self, _url):
+                return True
+
+        async def no_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(reddit_adapter, "get_file_write_gateway", lambda: Gateway())
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", no_sleep)
+        skill = RedditAdapterSkill()
+        monkeypatch.setattr(
+            skill,
+            "_get_creds",
+            lambda: (_ for _ in ()).throw(AssertionError("credentials must not be read")),
+        )
+
+        assert await skill._ensure_logged_in(Browser()) is False
+        assert skill.get_connection_status()["state"] == "auth_required"
+        assert persisted
+
+    asyncio.run(scenario())
+
+
+def test_reddit_playwright_timeout_becomes_bounded_provider_state(monkeypatch):
+    async def scenario():
+        from core.skills import reddit_adapter
+
+        class Gateway:
+            async def write_text_async(self, *_args, **_kwargs):
+                return None
+
+        class Page:
+            async def content(self):
+                raise reddit_adapter.PlaywrightTimeoutError("provider timeout")
+
+        class Browser:
+            page = Page()
+
+            async def browse(self, _url):
+                return True
+
+        async def no_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr(reddit_adapter, "get_file_write_gateway", lambda: Gateway())
+        monkeypatch.setattr(reddit_adapter.asyncio, "sleep", no_sleep)
+        skill = RedditAdapterSkill()
+
+        assert await skill._ensure_logged_in(Browser()) is False
+        status = skill.get_connection_status()
+        assert status["state"] == "transient_failure"
+        assert "TimeoutError" in status["reason"]
+        assert 0.0 < status["retry_in_s"] <= 3600.0
+
+    asyncio.run(scenario())
+
+
+def test_reddit_filters_expired_and_malformed_cookies():
+    now = time.time()
+
+    assert RedditAdapterSkill._filter_live_cookies(
+        [
+            {"name": "reddit_session", "expires": now + 60},
+            {"name": "expired", "expires": now - 1},
+            {"name": "session_cookie", "expires": -1},
+            {"name": "bad", "expires": "not-a-number"},
+            "not-a-cookie",
+        ]
+    ) == [
+        {"name": "reddit_session", "expires": now + 60},
+        {"name": "session_cookie", "expires": -1},
+    ]
