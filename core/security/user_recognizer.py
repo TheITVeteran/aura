@@ -91,6 +91,7 @@ class UserRecognizer:
         self._salt: bytes | None = None
         self._fingerprint: dict = dict(_DEFAULT_FINGERPRINT)
         self._session_verified: bool = False
+        self._session_override_reason = ""
         # PERF: Cache PBKDF2 results to avoid repeated 260K-iteration derivations
         # on the event loop. Key = candidate string, Value = derived hash bytes.
         # Bounded to prevent memory leak from brute-force attempts.
@@ -154,11 +155,22 @@ class UserRecognizer:
     def reset_session(self):
         """Call at session end — resets session-level verification."""
         self._session_verified = False
+        self._session_override_reason = ""
 
-    def override_session_owner(self, reason: str = "manual_override"):
+    def override_session_owner(self, reason: str = "manual_override") -> bool:
         """Mark the current session as owner-verified without exposing the passphrase."""
+        reason = str(reason or "manual_override")
+        already_applied = (
+            self._session_verified
+            and self._session_override_reason == reason
+        )
         self._session_verified = True
+        self._session_override_reason = reason
+        if already_applied:
+            logger.debug("UserRecognizer: owner session remains verified (%s).", reason)
+            return False
         logger.info("UserRecognizer: session owner override applied (%s).", reason)
+        return True
 
     def is_session_verified(self) -> bool:
         """Return whether the current session is verified as the owner."""

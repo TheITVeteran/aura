@@ -20,7 +20,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger("Aura.BootProfile")
 
@@ -30,6 +30,11 @@ PHASE_WARN_S = {
     # healthy measured desktop boot is about 9-13 seconds here; retain a real
     # alert at 15 seconds rather than labelling every normal launch slow.
     "orchestrator_runtime_start": 15.0,
+    # This phase deliberately waits up to 12 seconds for asynchronous model
+    # warmup before sealing the signed runtime manifest. Warn only when it
+    # exceeds that contract instead of labelling normal readiness convergence
+    # as a slow boot.
+    "readiness_health_snapshot": 13.0,
 }
 
 
@@ -105,7 +110,7 @@ class BootProfiler:
             "phases": self.phases(),
         }
 
-    def write_artifact(self, path: Optional[Path] = None) -> Optional[Path]:
+    def write_artifact(self, path: Path | None = None) -> Path | None:
         """Persist the profile for post-mortems. Never raises."""
         try:
             from core.governance_context import local_internal_governed_scope

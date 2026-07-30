@@ -67,6 +67,20 @@ class TestMarkApi:
             )
         assert not [r for r in caplog.records if "orchestrator_runtime_start" in r.getMessage()]
 
+    def test_readiness_settlement_uses_its_bounded_wait_budget(self, caplog):
+        prof = BootProfiler()
+        with caplog.at_level(logging.WARNING, logger="Aura.BootProfile"):
+            prof._record(
+                "readiness_health_snapshot",
+                PHASE_WARN_S["readiness_health_snapshot"] - 1.0,
+                0.0,
+            )
+        assert not [
+            record
+            for record in caplog.records
+            if "readiness_health_snapshot" in record.getMessage()
+        ]
+
     def test_summary_names_slowest_phases_first(self):
         prof = BootProfiler()
         prof._record("fast", 0.01, 0.0)
