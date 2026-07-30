@@ -2125,13 +2125,14 @@ class DesktopTaskSkill(BaseSkill):
             if title:
                 source_titles.append(title[:160])
             if snippet:
-                source_lines.append(f"{title}: {snippet[:240]}")
+                source_lines.append(f"{title}: {cls._clip_to_sentence(snippet, 240)}")
                 source_notes.append(
-                    f"{title[:140]} reports or documents that {snippet[:360]}"
+                    f"{title[:140]} reports or documents that "
+                    + cls._clip_to_sentence(snippet, 360)
                     + (f" ({url})" if url else "")
                 )
             else:
-                source_lines.append(title[:240])
+                source_lines.append(cls._clip_to_sentence(title, 240))
                 source_notes.append(f"{title[:180]}" + (f" ({url})" if url else ""))
         topic = str(query or "the requested research topic").strip()
         if not source_lines and not summary:
@@ -2146,7 +2147,7 @@ class DesktopTaskSkill(BaseSkill):
         if summary:
             parts.append(
                 "Taken together, the reporting points to this: "
-                + summary
+                + cls._end_on_a_sentence(summary)
             )
         if source_notes:
             parts.append(
@@ -2162,10 +2163,28 @@ class DesktopTaskSkill(BaseSkill):
                 "making a stronger conclusion."
             )
         if cls._objective_requests_opinion(objective):
+            # This is the DETERMINISTIC composer. It runs when authored
+            # synthesis was suppressed — under memory pressure, the guard in
+            # _allow_research_model_synthesis. So whatever it writes here, no
+            # view was formed, and a paragraph opening "In my view" is a claim
+            # to have formed one.
+            #
+            # Live 2026-07-30 00:33: asked to "write a synthesis with your own
+            # opinion", the document Bryan received said "In my view, the
+            # reliable path is to treat the articles as evidence to compare" —
+            # generic method talk, identical for orcas and for anything else,
+            # asserting an opinion nobody had. The 23:39 run, with the runtime
+            # settled and the guard open, wrote a real one about orcas. The
+            # capability is there; this line was covering for its absence.
+            #
+            # Saying so plainly costs a paragraph of polish and buys the thing
+            # the whole document is for: what is in it is true.
             parts.append(
-                "In my view, the reliable path is to treat the articles as evidence to compare, "
-                "not as a single conclusion to repeat: where the sources converge I can summarize confidently, "
-                "and where they differ I should preserve that uncertainty in the final document."
+                "On my own opinion, which you asked for: I have not formed one here. "
+                "This document is source-bounded extraction — I was not able to author a "
+                "synthesis in my own words on this pass, so read the comparison above as "
+                "evidence I gathered rather than as a view I hold. Ask me again and I will "
+                "give you the opinion rather than a placeholder for it."
             )
         else:
             parts.append(
@@ -2256,6 +2275,47 @@ class DesktopTaskSkill(BaseSkill):
     @classmethod
     def _objective_requests_authored_synthesis(cls, objective: str) -> bool:
         return bool(cls._AUTHORED_SYNTHESIS_RE.search(str(objective or "")))
+
+    @staticmethod
+    def _clip_to_sentence(text: str, limit: int) -> str:
+        """Cut at a sentence, then a word — never mid-word, never mid-clause.
+
+        Live 2026-07-30 00:33, in the PDF that landed in Bryan's Documents:
+        "They are apex predators and one of the world's most widely distributed
+        animals" — a source snippet cut at a character count, so the document he
+        was about to show someone stopped in the middle of a clause. Character
+        limits are the right idea and the wrong unit; prose has boundaries and
+        they are cheap to find.
+        """
+        body = " ".join(str(text or "").split())
+        if len(body) <= limit:
+            return body
+        window = body[:limit]
+        for terminator in (". ", "! ", "? "):
+            cut = window.rfind(terminator)
+            if cut >= limit // 2:
+                return window[: cut + 1].strip()
+        cut = window.rfind(" ")
+        kept = window[:cut] if cut >= limit // 2 else window
+        return kept.rstrip(" ,;:-—") + "…"
+
+    @staticmethod
+    def _end_on_a_sentence(text: str) -> str:
+        """Drop a trailing half-sentence that arrived already truncated.
+
+        The upstream summary is clipped before it reaches the composer, so the
+        composer receives the broken tail rather than making it. Trimming back
+        to the last complete sentence is only worth it when a sentence actually
+        survives — otherwise the mark stays, because silently dropping the only
+        content there is would be worse than showing it was cut.
+        """
+        body = " ".join(str(text or "").split())
+        if not body or body[-1] in ".!?…":
+            return body
+        cut = max(body.rfind(". "), body.rfind("! "), body.rfind("? "))
+        if cut > 0 and (cut + 1) >= len(body) // 2:
+            return body[: cut + 1].strip()
+        return body.rstrip(" ,;:-—") + "…"
 
     async def _collect_research_context(
         self,

@@ -283,3 +283,92 @@ def test_a_body_that_is_only_a_label_is_left_for_the_usability_guards():
     """Stripping must not manufacture an empty document."""
     strip = DesktopTaskSkill._strip_authored_label_prefix
     assert strip("Note created in Notes app:") == "Note created in Notes app:"
+
+
+# ── The document must not end mid-clause, or fake an opinion ───────────────
+#
+# Live 2026-07-30 00:33, in the PDF that landed in Bryan's Documents two
+# minutes after a cold boot. Two separate defects in the deterministic
+# composer — the path that runs when memory pressure has suppressed authored
+# synthesis:
+#
+#   "They are apex predators and one of the world's most widely distributed
+#    animals"                          <- a snippet cut at a character count
+#
+#   "In my view, the reliable path is to treat the articles as evidence to
+#    compare"                          <- generic method talk, identical for
+#                                         any topic, asserting a view that was
+#                                         never formed. The 23:39 run, with the
+#                                         runtime settled, wrote a real opinion
+#                                         about orcas — the capability is there
+#                                         and this line was covering for it.
+
+LIVE_TRUNCATED_SNIPPET = (
+    "Orcas, also known as killer whales (Orcinus orca), are highly intelligent "
+    "marine mammals belonging to the oceanic dolphin family. They are apex "
+    "predators and one of the world's most widely distributed animals"
+)
+
+
+def test_a_summary_that_arrived_truncated_ends_on_a_sentence() -> None:
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    repaired = DesktopTaskSkill._end_on_a_sentence(LIVE_TRUNCATED_SNIPPET)
+    assert repaired.endswith("dolphin family.")
+    assert "most widely distributed animals" not in repaired
+
+
+def test_a_complete_sentence_is_left_exactly_alone() -> None:
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    for intact in ("All three sources agree.", "Is that so?", "Stop!"):
+        assert DesktopTaskSkill._end_on_a_sentence(intact) == intact
+
+
+def test_the_only_sentence_there_is_keeps_its_content() -> None:
+    """Dropping the only content there is would be worse than marking the cut."""
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    lone = "one long unfinished clause without any stop"
+    repaired = DesktopTaskSkill._end_on_a_sentence(lone)
+    assert repaired.startswith("one long unfinished clause")
+    assert repaired.endswith("…")
+
+
+def test_clipping_cuts_at_a_sentence_not_a_character_count() -> None:
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    clipped = DesktopTaskSkill._clip_to_sentence(LIVE_TRUNCATED_SNIPPET, 140)
+    assert clipped.endswith("dolphin family.")
+
+
+def test_clipping_never_cuts_a_word_in_half() -> None:
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    body = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
+    for limit in range(12, len(body)):
+        clipped = DesktopTaskSkill._clip_to_sentence(body, limit)
+        assert len(clipped) <= limit + 1  # +1 for the ellipsis
+        for word in clipped.rstrip("…").split():
+            assert word in body.split(), f"{word!r} is not a whole word"
+
+
+def test_text_under_the_limit_is_untouched() -> None:
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    assert DesktopTaskSkill._clip_to_sentence("Short and done.", 240) == "Short and done."
+
+
+def test_the_fallback_composer_does_not_assert_an_opinion_it_never_formed() -> None:
+    """The composer runs BECAUSE authored synthesis was suppressed."""
+    import inspect
+
+    from core.skills.desktop_task import DesktopTaskSkill
+
+    source = inspect.getsource(DesktopTaskSkill)
+    marker = "On my own opinion, which you asked for: I have not formed one here."
+    assert marker in source, "the fallback must say no view was formed"
+    assert (
+        "In my view, the reliable path is to treat the articles as evidence to compare"
+        not in source
+    ), "the canned pseudo-opinion is back"
