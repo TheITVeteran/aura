@@ -2281,7 +2281,7 @@ def main(
                 "--fixed-update-canary requires the externally verified "
                 "recurrent one-pass canary contract"
             )
-    elif args.adapter_id.endswith("-update-canary"):
+    elif args.adapter_id.endswith("-update-canary") and not args.initial_policy_probe:
         parser.error("update-canary adapter identity requires --fixed-update-canary")
     provider_contract_sha256 = None
     if verified_group_provider_factory is not None:

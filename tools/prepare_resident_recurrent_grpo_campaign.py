@@ -1899,8 +1899,6 @@ def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:
     argv = list(contract["training"]["argv"])
     output_index = argv.index("--out-dir") + 1
     argv[output_index] = str(contract["paths"]["initial_policy_probe"])
-    adapter_index = argv.index("--adapter-id") + 1
-    argv[adapter_index] = f"{contract['campaign_id']}-initial-policy-probe"
     if "--verified-trajectory-config" in argv:
         config_index = argv.index("--verified-trajectory-config")
         if config_index + 1 >= len(argv):

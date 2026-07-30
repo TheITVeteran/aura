@@ -159,7 +159,7 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     assert "--fixed-update-canary" not in probe_argv
     assert (
         probe_argv[probe_argv.index("--adapter-id") + 1]
-        == f"{contract['campaign_id']}-initial-policy-probe"
+        == contract["campaign_id"]
     )
     assert contract["training"]["dataset"]["train_tasks"] == 12
     assert contract["training"]["dataset"]["holdout_tasks"] == 12
