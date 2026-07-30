@@ -171,6 +171,55 @@ def test_warm_start_probes_breadth_before_repeating_one_cell():
     assert curriculum.report()["unexplored"] == ["a@2", "b@2", "c@2"]
 
 
+def test_warm_start_preserves_within_group_reward_variance():
+    calls = []
+
+    def measure(family, difficulty):
+        calls.append((family, difficulty))
+        return (0.0, 1.0, 0.0, 1.0) if len(calls) == 1 else None
+
+    curriculum = warm_start_pass_rates(
+        ["logic", "code"], [2], measure, samples_per_cell=1
+    )
+
+    cell = curriculum.cells[("logic", 2)]
+    assert cell.trials == 4
+    assert cell.pass_rate == pytest.approx(0.5)
+    assert curriculum.report()["learnable"] == ["logic@2"]
+
+
+def test_warm_start_stratifies_early_probes_across_family_and_depth():
+    calls = []
+
+    def measure(family, difficulty):
+        calls.append((family, difficulty))
+        return None
+
+    warm_start_pass_rates(
+        ["a", "b", "c"], [2, 4, 8], measure, samples_per_cell=1
+    )
+
+    assert calls[:6] == [
+        ("a", 2),
+        ("b", 4),
+        ("c", 8),
+        ("a", 4),
+        ("b", 8),
+        ("c", 2),
+    ]
+
+
+@pytest.mark.parametrize("measured", [(), ("bad",), (0.0, 1.1)])
+def test_warm_start_refuses_invalid_group_measurements(measured):
+    with pytest.raises(ValueError):
+        warm_start_pass_rates(
+            ["logic"],
+            [2],
+            lambda _family, _difficulty: measured,
+            samples_per_cell=1,
+        )
+
+
 def test_bad_reward_is_refused():
     with pytest.raises(ValueError, match="rate in"):
         CellStats("f", 1).observe(1.5, degenerate=False)

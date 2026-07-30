@@ -444,6 +444,10 @@ def test_training_watchdog_retries_only_into_exact_durable_progress(
         },
         "training": {
             "argv": ["tools/train_grpo.py"],
+            "parameters": {"max_steps": 288},
+            "completion_required": {
+                "schema": "aura.recurrent_grpo_training_completion.v1",
+            },
             "dataset": {"sha256": hashlib.sha256(b"dataset\n").hexdigest()},
             "watchdog_policy": {
                 **prereg.TRAINING_WATCHDOG_POLICY,
@@ -464,6 +468,16 @@ def test_training_watchdog_retries_only_into_exact_durable_progress(
                 encoding="ascii",
             )
             raise RuntimeError("transient resident failure")
+        (training / "training_completion.json").write_bytes(
+            prereg.canonical_json_bytes(
+                {
+                    "schema": "aura.recurrent_grpo_training_completion.v1",
+                    "complete": True,
+                    "halt_reason": "max_steps",
+                    "step": 288,
+                }
+            )
+        )
         return 0
 
     monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
@@ -479,13 +493,109 @@ def test_training_watchdog_retries_only_into_exact_durable_progress(
             encoding="ascii"
         )
     )
-    assert [record["durable_progress"] for record in journal["records"]] == [True, False]
+    assert [record["durable_progress"] for record in journal["records"]] == [True, True]
     status = json.loads(
         (tmp_path / "artifacts/watchdog-test/training-watchdog/status.json").read_text(
             encoding="ascii"
         )
     )
     assert status["state"] == "complete"
+
+
+def test_training_watchdog_resumes_zero_exit_wall_clock_until_full_dose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import run_verified_recurrent_grpo_training as runner
+
+    training = tmp_path / "training"
+    bundle = tmp_path / "bundle.json"
+    digest_file = tmp_path / "bundle.sha256"
+    bundle.write_text("{}\n", encoding="ascii")
+    digest_file.write_text("a" * 64 + "\n", encoding="ascii")
+    contract = {
+        "campaign_id": "watchdog-wall-clock-test",
+        "contract_sha256": "b" * 64,
+        "launch_not_before_unix": 0,
+        "paths": {
+            "artifact_root": "artifacts/watchdog-wall-clock-test",
+            "verified_launch_bundle": "bundle.json",
+            "verified_launch_bundle_sha256": "bundle.sha256",
+            "training_output": "training",
+        },
+        "training": {
+            "argv": ["tools/train_grpo.py"],
+            "parameters": {"max_steps": 288},
+            "completion_required": {
+                "schema": "aura.recurrent_grpo_training_completion.v1",
+            },
+            "dataset": {"sha256": hashlib.sha256(b"dataset\n").hexdigest()},
+            "watchdog_policy": {
+                **prereg.TRAINING_WATCHDOG_POLICY,
+                "retry_backoff_s": 0.001,
+            },
+        },
+    }
+    calls = 0
+
+    def run(_argv):
+        nonlocal calls
+        calls += 1
+        training.mkdir(exist_ok=True)
+        (training / "dataset_manifest.json").write_bytes(b"dataset\n")
+        if calls == 1:
+            checkpoint = training / "checkpoints" / "step-00000120"
+            checkpoint.mkdir(parents=True)
+            (checkpoint / "complete.json").write_bytes(
+                prereg.canonical_json_bytes({"step": 120})
+            )
+            (training / "latest.json").write_bytes(
+                prereg.canonical_json_bytes(
+                    {"checkpoint": "checkpoints/step-00000120"}
+                )
+            )
+            (training / "grpo_receipt.json").write_bytes(
+                prereg.canonical_json_bytes(
+                    {
+                        "steps": 120,
+                        "termination": {
+                            "reason": "wall_clock_budget",
+                            "completed_budget": False,
+                        },
+                    }
+                )
+            )
+            return 0
+        (training / "training_completion.json").write_bytes(
+            prereg.canonical_json_bytes(
+                {
+                    "schema": "aura.recurrent_grpo_training_completion.v1",
+                    "complete": True,
+                    "halt_reason": "max_steps",
+                    "step": 288,
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "main", run)
+    monkeypatch.setattr(prereg, "_release_failed_training_runtime", lambda: None)
+    monkeypatch.setattr(prereg.time, "sleep", lambda _seconds: None)
+
+    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 0
+    assert calls == 2
+    journal = json.loads(
+        (
+            tmp_path
+            / "artifacts/watchdog-wall-clock-test/training-watchdog/attempts.json"
+        ).read_text(encoding="ascii")
+    )
+    assert [record["disposition"] for record in journal["records"]] == [
+        "resume",
+        "complete",
+    ]
 
 
 def test_answer_channel_preflight_command_is_bounded_and_source_separated():

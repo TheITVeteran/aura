@@ -552,7 +552,7 @@ def task_battery(
         or any(not isinstance(task_id, str) for task_id in excluded_task_ids)
     ):
         raise ValueError("training exclusions are invalid")
-    tasks: list[RecurrenceTrainingTask] = []
+    tasks: dict[tuple[str, int, int], RecurrenceTrainingTask] = {}
     all_prompts = set(excluded_prompts)
     all_ids = set(excluded_task_ids)
     for family in families:
@@ -582,8 +582,26 @@ def task_battery(
                 coordinate_prompts.add(task.prompt)
                 all_prompts.add(task.prompt)
                 all_ids.add(task.task_id)
-                tasks.append(task)
-    return tasks
+                tasks[(family, depth, cell)] = task
+
+    # Execute one example from every family/depth stratum before repeating a
+    # stratum. The per-round order is seed-bound, which removes contiguous
+    # curriculum blocks without introducing process-global RNG state.
+    strata = [(family, depth) for family in families for depth in depths]
+    scheduled: list[RecurrenceTrainingTask] = []
+    for cell in range(per_cell):
+        round_order = list(strata)
+        round_rng = random.Random(
+            int.from_bytes(
+                hashlib.sha256(
+                    f"schedule|{seed}|{cell}".encode("ascii")
+                ).digest()[:8],
+                "big",
+            )
+        )
+        round_rng.shuffle(round_order)
+        scheduled.extend(tasks[(family, depth, cell)] for family, depth in round_order)
+    return scheduled
 
 
 def disjoint_task_split(

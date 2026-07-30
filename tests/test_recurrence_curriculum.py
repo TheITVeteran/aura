@@ -79,6 +79,17 @@ def test_registry_and_battery_are_deterministic_unique_and_complete():
     assert len({task.prompt for task in first}) == len(first)
     assert {task.family for task in first} == set(RECURRENCE_TRAINING_FAMILIES)
     assert {task.depth for task in first} == {1, 4}
+    strata = {
+        (family, depth)
+        for family in RECURRENCE_TRAINING_FAMILIES
+        for depth in (1, 4)
+    }
+    assert {
+        (task.family, task.depth) for task in first[: len(strata)]
+    } == strata
+    assert {
+        (task.family, task.depth) for task in first[len(strata) :]
+    } == strata
     assert first != task_battery(
         RECURRENCE_TRAINING_FAMILIES,
         (1, 4),

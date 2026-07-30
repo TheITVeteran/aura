@@ -415,6 +415,7 @@ def _training_source_files(
             "transition_campaign": (REPO_ROOT / "core/learning/verified_transition_campaign.py"),
             "transition_episode": (REPO_ROOT / "core/learning/verified_transition_episode.py"),
             "transition_reward": REPO_ROOT / "core/learning/verified_transition_reward.py",
+            "scope_reachability": REPO_ROOT / "core/learning/scope_reachability.py",
             "transition_admission": (
                 REPO_ROOT / "core/learning/verified_transition_group_admission.py"
             ),
@@ -606,6 +607,24 @@ def _answer_channel_report_from_verdicts(
     }
 
 
+def _calibration_reward_observations(
+    answer_channel: Mapping[str, Any],
+) -> tuple[float, ...]:
+    """Reconstruct the independently graded outcomes in one calibration group."""
+
+    completions = answer_channel.get("completions")
+    correct = answer_channel.get("correct")
+    if (
+        type(completions) is not int
+        or type(correct) is not int
+        or completions < 1
+        or correct < 0
+        or correct > completions
+    ):
+        raise GRPOCheckpointError("calibration answer-channel counts are invalid")
+    return (1.0,) * correct + (0.0,) * (completions - correct)
+
+
 def _merge_answer_channel_reports(
     step_receipts: Sequence[Mapping[str, Any]] | None,
 ) -> dict[str, Any]:
@@ -764,6 +783,12 @@ def _calibration_token_budget(max_tokens: int, requested: int) -> int:
             "probe truncates reasoning and corrupts learnability"
         )
     return max_tokens
+
+
+def _verified_campaign_halt_is_resumable(halt_reason: str) -> bool:
+    """Keep the verified task ledger open across bounded exact resumes."""
+
+    return halt_reason in {"wall_clock_budget", "interrupted"}
 
 
 def _task_gold_answer_text(task: Any) -> str:
@@ -1086,9 +1111,9 @@ def _publish_recurrent_adapter_bundle(
         LOADER_CONFIG_SCHEMA,
         MANIFEST_FILE,
         MANIFEST_SCHEMA,
-        REQUIRED_SOURCE_ROLES,
         TRAINING_METHOD,
         declared_bindings,
+        required_source_roles,
         validate_recurrent_grpo_adapter_identity,
         validate_recurrent_grpo_adapter_identity_with_verified_transitions,
     )
@@ -1105,7 +1130,8 @@ def _publish_recurrent_adapter_bundle(
             transition_closure=transition_closure,
             transition_groups=transition_groups,
         )
-    if set(source_roles) != REQUIRED_SOURCE_ROLES:
+    expected_source_roles = required_source_roles(str(protocol.get("schema")))
+    if set(source_roles) != expected_source_roles:
         raise GRPOCheckpointError("recurrent GRPO source inventory is incomplete")
     if receipt.get("execution_mode") != "recurrent":
         raise GRPOCheckpointError("only recurrent GRPO can publish this identity")
@@ -1168,7 +1194,7 @@ def _publish_recurrent_adapter_bundle(
     )
 
     sources: dict[str, dict[str, Any]] = {}
-    for role in sorted(REQUIRED_SOURCE_ROLES):
+    for role in sorted(expected_source_roles):
         protocol_binding = protocol["sources"][role]
         snapshot_relative = f"source_snapshots/{role}.py"
         snapshot_bytes = (out_dir / snapshot_relative).read_bytes()
@@ -3218,7 +3244,7 @@ def main(
             training_allowed = False
             halt_reason = "scope_unreachable"
 
-        if args.calibrate and calibration is None:
+        if args.calibrate and calibration is None and training_allowed:
             cal_group = min(config.group_size, args.calibrate_group)
             cal_tokens = _calibration_token_budget(args.max_tokens, args.calibrate_tokens)
             cells_sorted = sorted(by_cell)
@@ -3261,7 +3287,10 @@ def main(
                 flush=True,
             )
 
-            def _measure(family: str, difficulty: int) -> float | None:
+            def _measure(
+                family: str,
+                difficulty: int,
+            ) -> tuple[float, ...] | None:
                 key = (family, difficulty)
                 pool = by_cell.get(key)
                 probe_index = probe_counts.get(key, 0)
@@ -3281,7 +3310,7 @@ def main(
                 )
                 if saved is not None:
                     probes.append(dict(saved))
-                    return float(saved["pass_rate"])
+                    return _calibration_reward_observations(saved["answer_channel"])
                 if not calibration_journal.permits_new_probe():
                     return None
                 probe_started = time.monotonic()
@@ -3308,9 +3337,19 @@ def main(
                     )
                 grade_verdicts = [probe.grade(completion) for completion in completions]
                 answer_channel = _answer_channel_report_from_verdicts(grade_verdicts)
-                rate = sum(int(bool(verdict["correct"])) for verdict in grade_verdicts) / len(
-                    completions
+                observations = tuple(
+                    float(bool(verdict["correct"])) for verdict in grade_verdicts
                 )
+                if observations != _calibration_reward_observations(answer_channel):
+                    # The helper reconstructs count-equivalent outcomes for
+                    # replay. Order is irrelevant to Bernoulli cell statistics.
+                    if sorted(observations) != sorted(
+                        _calibration_reward_observations(answer_channel)
+                    ):
+                        raise RuntimeError(
+                            "calibration answer-channel counts differ from verdicts"
+                        )
+                rate = sum(observations) / len(observations)
                 probes.append(
                     {
                         "family": family,
@@ -3329,7 +3368,7 @@ def main(
                     f"({elapsed_training_s() / 60.0:.1f}m)",
                     flush=True,
                 )
-                return rate
+                return observations
 
             curriculum = warm_start_pass_rates(
                 sorted({domain for domain, _depth in by_cell}),
@@ -3356,7 +3395,9 @@ def main(
                 allow_unexplored_frontier=execution_spec is None,
             )
             print(f"[calibrate] {calibration}", flush=True)
-            training_allowed = bool(calibration["admission"]["training_admitted"])
+            training_allowed = training_allowed and bool(
+                calibration["admission"]["training_admitted"]
+            )
 
         # Step zero is durable only after the true frozen baseline and any
         # calibration are complete. A restart cannot silently recompute them
@@ -3801,7 +3842,9 @@ def main(
                 halt_reason = "training_adequacy_failed"
                 training_allowed = False
 
-        if execution_spec is not None:
+        if execution_spec is not None and not _verified_campaign_halt_is_resumable(
+            halt_reason
+        ):
             assert verified_group_provider is not None
             transition_closure = verified_group_provider.finalize(
                 completed_groups=step,
@@ -3824,7 +3867,7 @@ def main(
     )
     final = history[-1] if history else None
     delta = _point_estimate_delta(baseline_eval, final)
-    completed = halt_reason in {"max_steps", "wall_clock_budget"}
+    completed = halt_reason == "max_steps"
     receipt = {
         "schema": GRPO_TRAIN_SCHEMA,
         "adapter_id": args.adapter_id,

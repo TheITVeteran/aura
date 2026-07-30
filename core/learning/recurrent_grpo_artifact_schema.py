@@ -13,7 +13,8 @@ from core.learning.grpo import GRPO_SCHEMA, group_advantages
 
 PROTOCOL_SCHEMA_V5: Final = "aura.grpo_protocol.v5"
 PROTOCOL_SCHEMA_V6: Final = "aura.grpo_protocol.v6"
-PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v7"
+PROTOCOL_SCHEMA_V7: Final = "aura.grpo_protocol.v7"
+PROTOCOL_SCHEMA: Final = "aura.grpo_protocol.v8"
 TRAINING_RECEIPT_SCHEMA: Final = "aura.grpo_training.v5"
 STEP_RECEIPT_SCHEMA: Final = "aura.recurrent_grpo_step.v1"
 TRAINING_ADEQUACY_SCHEMA: Final = "aura.recurrent_grpo.training_adequacy.v1"
@@ -561,6 +562,7 @@ __all__ = [
     "PROTOCOL_SCHEMA",
     "PROTOCOL_SCHEMA_V5",
     "PROTOCOL_SCHEMA_V6",
+    "PROTOCOL_SCHEMA_V7",
     "PROTOCOL_TRAINING_KEYS",
     "PROTOCOL_TRAINING_KEYS_V5",
     "STEP_RECEIPT_KEYS",

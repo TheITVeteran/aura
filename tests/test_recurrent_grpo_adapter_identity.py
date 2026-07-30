@@ -39,6 +39,7 @@ from core.learning.recurrent_grpo import recurrent_policy_sha256
 from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA_V5,
     PROTOCOL_SCHEMA_V6,
+    PROTOCOL_SCHEMA_V7,
     protocol_semantic_sha256,
     recurrent_training_adequacy_report,
 )
@@ -76,6 +77,7 @@ SOURCE_ROLES = {
     "transition_campaign",
     "transition_episode",
     "transition_reward",
+    "scope_reachability",
     "transition_admission",
     "transition_update",
     "transition_training_evidence",
@@ -103,6 +105,7 @@ SOURCE_ROLES = {
     "verified_training_task",
     "verified_token_trace",
 }
+LEGACY_SOURCE_ROLES = SOURCE_ROLES - {"scope_reachability"}
 
 
 def _sha(payload: bytes) -> str:
@@ -201,7 +204,10 @@ def _fixture(
     source_paths = {}
     snapshot_dir = out / "source_snapshots"
     snapshot_dir.mkdir()
-    for role in sorted(SOURCE_ROLES):
+    fixture_source_roles = (
+        SOURCE_ROLES if protocol_schema == GRPO_PROTOCOL_SCHEMA else LEGACY_SOURCE_ROLES
+    )
+    for role in sorted(fixture_source_roles):
         payload = f"# frozen {role}\n".encode("ascii")
         path = snapshot_dir / f"{role}.py"
         path.write_bytes(payload)
@@ -628,6 +634,23 @@ def test_recurrent_grpo_v6_bundle_remains_verifiable_after_v7_migration(
     )
     assert protocol["schema"] == PROTOCOL_SCHEMA_V6
     assert "verified_trajectory_config" in protocol["training"]
+
+
+def test_recurrent_grpo_v7_bundle_remains_verifiable_after_v8_migration(
+    tmp_path,
+):
+    fixture = _fixture(tmp_path, protocol_schema=PROTOCOL_SCHEMA_V7)
+
+    identity = _validate(fixture)
+
+    assert identity == fixture["identity"]
+    protocol = json.loads(
+        (fixture["out"] / "campaign_adapter/training_protocol.json").read_text(
+            encoding="ascii"
+        )
+    )
+    assert protocol["schema"] == PROTOCOL_SCHEMA_V7
+    assert "scope_reachability" not in protocol["sources"]
 
 
 def test_recurrent_grpo_v6_bundle_with_trajectory_config_verifies_end_to_end(

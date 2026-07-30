@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import math
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -316,31 +317,55 @@ def warm_start_pass_rates(
 ) -> AdaptiveCurriculum:
     """Measure base pass rates BEFORE training, so step one is not wasted.
 
-    ``measure(family, difficulty) -> reward in [0, 1] | None`` runs a quick
-    base rollout. ``None`` means the cell was not measured (for example, a
-    wall-clock deadline); it remains unexplored rather than receiving a
-    fabricated mid-band pass rate. Without this, the first many steps are
-    spent discovering which cells are all-wrong; with it, the sampler starts
-    on the measured learnable band while unknown cells stay explicit.
+    ``measure(family, difficulty)`` returns either one reward, a sequence of
+    independently graded rewards, or ``None``. A sampled GRPO group is the
+    sequence case: preserving its member outcomes matters because a mixed
+    group is direct reward-variance evidence. Collapsing four completions to
+    one mean observation made every cell remain "unexplored" under a bounded
+    first pass, even when that group contained both right and wrong answers.
+
+    ``None`` means the cell was not measured (for example, a wall-clock
+    deadline); it remains unexplored rather than receiving a fabricated
+    mid-band pass rate. Without this, the first many steps are spent
+    discovering which cells are all-wrong; with it, the sampler starts on the
+    measured learnable band while unknown cells stay explicit.
     """
     curriculum = AdaptiveCurriculum.over(families, difficulties)
     samples = max(2, samples_per_cell)
 
-    # Probe breadth before depth. A wall-clock cap should leave a partial
-    # but representative frontier map, not spend the whole budget repeatedly
-    # proving that the first sorted cell is hopeless.
+    # Diagonalize family and difficulty. A wall-clock cap should leave a
+    # stratified partial map, not spend every early probe on all depths of the
+    # first alphabetic family.
+    cell_order = [
+        (family, difficulties[(family_index + offset) % len(difficulties)])
+        for offset in range(len(difficulties))
+        for family_index, family in enumerate(families)
+    ]
     exhausted: set[tuple[str, int]] = set()
     for _sample_index in range(samples):
-        for family in families:
-            for difficulty in difficulties:
-                key = (family, difficulty)
-                if key in exhausted:
-                    continue
-                measured = measure(family, difficulty)
-                if measured is None:
-                    exhausted.add(key)
-                    continue
-                reward = float(measured)
+        for family, difficulty in cell_order:
+            key = (family, difficulty)
+            if key in exhausted:
+                continue
+            measured = measure(family, difficulty)
+            if measured is None:
+                exhausted.add(key)
+                continue
+            if isinstance(measured, Sequence) and not isinstance(
+                measured, (str, bytes, bytearray)
+            ):
+                observations = list(measured)
+                if not observations:
+                    raise ValueError("measured reward sequence must not be empty")
+            else:
+                observations = [measured]
+            for observation in observations:
+                if isinstance(observation, bool):
+                    reward = float(observation)
+                elif isinstance(observation, (int, float)):
+                    reward = float(observation)
+                else:
+                    raise ValueError("measured rewards must be numeric")
                 curriculum.observe(
                     family, difficulty, reward,
                     degenerate=reward <= 0.0 or reward >= 1.0,

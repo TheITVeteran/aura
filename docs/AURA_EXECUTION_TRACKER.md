@@ -31772,3 +31772,37 @@ materialization, or command assembly remains. This is readiness evidence, not
 an optimizer-update or intelligence-gain result. CP420S13 readiness is total
 checkpoint 704. The 704-920 completion envelope is approximately 76.5%-100.0%,
 with an 88.3% midpoint.
+
+### 2026-07-29 - CP420S14 resident-training admissibility and exact-resume closure
+
+A source-level adversarial review supersedes CP420S13's `locked and loaded`
+claim before launch. Its calibration reduced each independently graded
+four-completion group to one mean observation, so the adaptive curriculum
+could classify every bounded probe as unexplored and deny training. A zero
+trainer exit at the wall-clock boundary was also treated as full completion,
+and that boundary finalized the signed task ledger instead of leaving it open
+for an exact checkpoint resume. The launch watchdog therefore could report
+success after a partial dose that no longer had a resumable verified campaign.
+
+Protocol v8 now preserves each calibration completion as an independent
+Bernoulli observation, stratifies bounded calibration across family/depth
+cells, keeps scope-unreachable refusal monotonic, freezes the reachability
+implementation in the source inventory, and deterministically interleaves
+all family/depth strata in every 36-task training window. Wall-clock and
+interruption halts remain resumable; only an exact `max_steps` completion
+artifact can satisfy the full-dose gate. The source-bound watchdog resumes a
+partial zero-exit checkpoint, raises after bounded no-progress or attempt
+exhaustion, allows eight exact attempts, and provides 36 training hours within
+a 72-hour detached containment window. Protocol v5-v7 identities remain
+verifiable under their historical source inventories.
+
+The affected adaptive-curriculum, source-identity, preregistration, watchdog,
+scope, schedule, trainer, provider, signed-transition, and campaign matrix
+passes 500/500. Ruff, bytecode compilation, and diff integrity pass. No
+resident model was loaded and no optimizer update or gain occurred in this
+checkpoint. CP420S13 is immutable but retired; its bundle must not launch.
+Next are publication on current `main`, a disposable exact signed resident-32B
+update canary measuring real admission frequency and step latency, then a fresh
+CP420S14 contract, signers, resident preflights, and launch bundle before the
+explicit green-light boundary. This is total checkpoint 705. The 705-920
+completion envelope is approximately 76.6%-100.0%, with an 88.3% midpoint.

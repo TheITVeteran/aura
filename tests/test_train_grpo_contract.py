@@ -34,6 +34,7 @@ from tools.train_grpo import (
     _assert_exact_adapter_keys,
     _build_task_split,
     _calibration_admission_report,
+    _calibration_reward_observations,
     _calibration_token_budget,
     _dataset_payload,
     _load_execution_spec,
@@ -51,6 +52,7 @@ from tools.train_grpo import (
     _stable_seed,
     _task_gold_answer_text,
     _training_source_files,
+    _verified_campaign_halt_is_resumable,
     completion_logprob,
     evaluate_heldout,
     evaluate_recurrent_heldout,
@@ -328,6 +330,21 @@ def test_calibration_cannot_reintroduce_a_short_reasoning_budget():
     assert _calibration_token_budget(320, 320) == 320
     with pytest.raises(ValueError, match="must equal training"):
         _calibration_token_budget(320, 128)
+
+
+def test_calibration_replay_preserves_group_outcome_counts():
+    assert _calibration_reward_observations(
+        {"completions": 4, "correct": 2}
+    ) == (1.0, 1.0, 0.0, 0.0)
+    with pytest.raises(GRPOCheckpointError, match="counts are invalid"):
+        _calibration_reward_observations({"completions": 2, "correct": 3})
+
+
+def test_bounded_halts_leave_verified_campaign_open_for_exact_resume():
+    assert _verified_campaign_halt_is_resumable("wall_clock_budget")
+    assert _verified_campaign_halt_is_resumable("interrupted")
+    assert not _verified_campaign_halt_is_resumable("max_steps")
+    assert not _verified_campaign_halt_is_resumable("training_adequacy_failed")
 
 
 def test_calibration_progress_replays_exact_prefix_and_remaining_budget(

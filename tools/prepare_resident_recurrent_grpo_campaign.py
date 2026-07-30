@@ -104,7 +104,7 @@ TRAINING_SEED = 2026072102
 CONFIRMATORY_OBSERVATIONS_PER_DOMAIN = 411
 TRAINING_WATCHDOG_POLICY: Mapping[str, Any] = {
     "schema": "aura.resident_recurrent_grpo.training_watchdog.v1",
-    "max_attempts": 4,
+    "max_attempts": 8,
     "retry_backoff_s": 30.0,
     "max_consecutive_no_progress_failures": 2,
     "restart_scope": "exact_source_bound_checkpoint_resume_only",
@@ -135,9 +135,9 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "calibrate_samples": 1,
     "calibrate_group": 4,
     "calibrate_tokens": 320,
-    "calibrate_minutes": 20.0,
+    "calibrate_minutes": 60.0,
     "cot": True,
-    "max_minutes": 1440.0,
+    "max_minutes": 2160.0,
     "memory_fraction": 0.42,
     "seed": TRAINING_SEED,
     "verified_trajectory_config": (
@@ -179,6 +179,7 @@ SOURCE_ROLES: Mapping[str, str] = {
     "transition_campaign": "core/learning/verified_transition_campaign.py",
     "transition_episode": "core/learning/verified_transition_episode.py",
     "transition_reward": "core/learning/verified_transition_reward.py",
+    "scope_reachability": "core/learning/scope_reachability.py",
     "transition_admission": ("core/learning/verified_transition_group_admission.py"),
     "transition_update": "core/learning/verified_transition_update.py",
     "transition_training_evidence": ("core/learning/verified_transition_training_evidence.py"),
@@ -567,7 +568,7 @@ def build_contract(
                 "host_memory_bytes": 68_719_476_736,
                 "mlx_memory_fraction": 0.42,
                 "exclusive_resident_model_owner": True,
-                "detached_timeout_s": 93_600,
+                "detached_timeout_s": 259_200,
                 "multi_hour_soak": False,
             },
         },
@@ -994,6 +995,46 @@ def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
     return {**document, "sha256": _sha256(canonical_json_bytes(document))}
 
 
+def _successful_training_disposition(
+    contract: Mapping[str, Any],
+    *,
+    training_root: Path,
+    progress: Mapping[str, Any],
+) -> str:
+    """Refuse to equate a zero process exit with the complete training dose."""
+
+    max_steps = int(contract["training"]["parameters"]["max_steps"])
+    completion_path = training_root / "training_completion.json"
+    if completion_path.is_file() and not completion_path.is_symlink():
+        completion = _strict_json(completion_path)
+        required = contract["training"]["completion_required"]
+        if (
+            completion.get("schema") != required["schema"]
+            or completion.get("complete") is not True
+            or completion.get("halt_reason") != "max_steps"
+            or completion.get("step") != max_steps
+        ):
+            _fail("training_completion_not_admissible")
+        return "complete"
+
+    receipt_path = training_root / "grpo_receipt.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        _fail("successful_training_exit_without_receipt")
+    receipt = _strict_json(receipt_path)
+    termination = receipt.get("termination")
+    steps = receipt.get("steps")
+    if (
+        not isinstance(termination, Mapping)
+        or termination.get("reason") != "wall_clock_budget"
+        or termination.get("completed_budget") is not False
+        or type(steps) is not int
+        or not 0 <= steps < max_steps
+        or progress.get("checkpoint_step") != steps
+    ):
+        _fail("successful_training_exit_without_complete_dose")
+    return "resume"
+
+
 def _watchdog_documents(
     contract: Mapping[str, Any],
 ) -> tuple[Path, Path, Path, list[dict[str, Any]]]:
@@ -1137,6 +1178,16 @@ def _run_training(
         except Exception as exc:
             error = exc
         after = _training_progress_snapshot(training_root)
+        disposition: str | None = None
+        if error is None and result == 0:
+            try:
+                disposition = _successful_training_disposition(
+                    contract,
+                    training_root=training_root,
+                    progress=after,
+                )
+            except Exception as exc:
+                error = exc
         progressed = after["sha256"] != before["sha256"]
         consecutive_no_progress = 0 if progressed else consecutive_no_progress + 1
         record = {
@@ -1149,12 +1200,13 @@ def _run_training(
             "progress_before": before,
             "progress_after": after,
             "durable_progress": progressed,
+            "disposition": disposition,
             "consecutive_no_progress_failures": consecutive_no_progress,
         }
         records.append(record)
         terminal_state = (
             "complete"
-            if error is None and result == 0
+            if error is None and result == 0 and disposition == "complete"
             else "exhausted"
             if len(records) >= max_attempts
             or consecutive_no_progress >= no_progress_limit
@@ -1180,6 +1232,8 @@ def _run_training(
         if terminal_state == "exhausted":
             if error is not None:
                 raise error
+            if disposition == "resume":
+                _fail("training_watchdog_attempt_budget_exhausted")
             return int(result)
         _release_failed_training_runtime()
         time.sleep(float(policy["retry_backoff_s"]))

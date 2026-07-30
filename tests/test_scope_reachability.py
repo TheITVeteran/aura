@@ -13,10 +13,6 @@ cannot see it: from inside, a futile objective and a hard one look the same.
 """
 from __future__ import annotations
 
-import inspect
-
-import pytest
-
 from core.learning import scope_reachability as sr
 
 
@@ -181,7 +177,14 @@ class TestTheTrainerConsultsTheGuard:
         """Calibration alone costs over an hour; the check must precede it."""
         source = self._trainer_source()
         assert source.index("scope_unreachable") < source.index(
-            "if args.calibrate and resumed is None:"
+            "if args.calibrate and calibration is None and training_allowed:"
+        )
+
+    def test_calibration_cannot_override_a_scope_refusal(self):
+        source = self._trainer_source()
+        assert "if args.calibrate and calibration is None and training_allowed:" in source
+        assert (
+            "training_allowed = training_allowed and bool(" in source
         )
 
     def test_the_verdict_is_recorded_on_the_baseline(self):

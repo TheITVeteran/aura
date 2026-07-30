@@ -28,6 +28,7 @@ from core.learning.recurrent_grpo_artifact_schema import (
     PROTOCOL_SCHEMA,
     PROTOCOL_SCHEMA_V5,
     PROTOCOL_SCHEMA_V6,
+    PROTOCOL_SCHEMA_V7,
     PROTOCOL_TRAINING_KEYS,
     PROTOCOL_TRAINING_KEYS_V5,
     STEP_RECEIPT_KEYS,
@@ -83,6 +84,7 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "transition_campaign",
         "transition_episode",
         "transition_reward",
+        "scope_reachability",
         "transition_admission",
         "transition_update",
         "transition_training_evidence",
@@ -111,6 +113,7 @@ REQUIRED_SOURCE_ROLES = frozenset(
         "verified_token_trace",
     }
 )
+LEGACY_REQUIRED_SOURCE_ROLES = REQUIRED_SOURCE_ROLES - {"scope_reachability"}
 MAX_JSON_BYTES = 256 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 1 << 50
 MAX_TENSORS = 1_000_000
@@ -371,7 +374,10 @@ def declared_bindings(manifest: Mapping[str, Any]) -> list[tuple[str, dict[str, 
         _fail("manifest_schema_unsupported")
     bindings = [(role, artifact_binding(manifest.get(role), role=role)) for role in BINDING_ROLES]
     sources = manifest.get("sources")
-    if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
+    if not isinstance(sources, Mapping) or set(sources) not in {
+        REQUIRED_SOURCE_ROLES,
+        LEGACY_REQUIRED_SOURCE_ROLES,
+    }:
         _fail("sources_schema_invalid")
     for role in sorted(sources):
         source = _exact(
@@ -396,6 +402,16 @@ def declared_bindings(manifest: Mapping[str, Any]) -> list[tuple[str, dict[str, 
     if len(paths) != len(set(paths)):
         _fail("artifact_path_duplicated")
     return bindings
+
+
+def required_source_roles(protocol_schema: str) -> frozenset[str]:
+    """Return the immutable source inventory required by one protocol version."""
+
+    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+        return REQUIRED_SOURCE_ROLES
+    if protocol_schema in {PROTOCOL_SCHEMA_V5, PROTOCOL_SCHEMA_V6, PROTOCOL_SCHEMA_V7}:
+        return LEGACY_REQUIRED_SOURCE_ROLES
+    _fail("training_protocol_schema_invalid")
 
 
 def _normalize_lora(value: Any) -> dict[str, Any]:
@@ -743,7 +759,7 @@ def validate_recurrent_grpo_adapter_identity(
         )
     )
     protocol_schema = protocol.get("schema")
-    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
         training_keys = set(PROTOCOL_TRAINING_KEYS)
     elif protocol_schema == PROTOCOL_SCHEMA_V6:
         training_keys = set(PROTOCOL_TRAINING_KEYS)
@@ -764,7 +780,7 @@ def validate_recurrent_grpo_adapter_identity(
     advantage_clip = training.get("advantage_clip", 4.0)
     trajectory_group_config = None
     trajectory_group_config_sha256 = None
-    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
         trajectory_group_config = training.get("verified_trajectory_config")
         trajectory_group_config_sha256 = training.get("verified_trajectory_config_sha256")
         if trajectory_group_config is None:
@@ -888,7 +904,7 @@ def validate_recurrent_grpo_adapter_identity(
         "verdict",
         "elapsed_minutes",
     }
-    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
         receipt_keys.add("training_adequacy")
     _exact(receipt, receipt_keys, role="training_receipt")
     config = _exact(
@@ -985,7 +1001,7 @@ def validate_recurrent_grpo_adapter_identity(
         trajectory_shaping_weight=float(trajectory_shaping_weight),
         advantage_clip=float(advantage_clip),
     )
-    if protocol_schema == TRAINING_PROTOCOL_SCHEMA:
+    if protocol_schema in {TRAINING_PROTOCOL_SCHEMA, PROTOCOL_SCHEMA_V7}:
         history = receipt.get("history")
         learning_signal = receipt.get("learning_signal")
         if not isinstance(history, list) or not isinstance(learning_signal, Mapping):
@@ -1013,12 +1029,13 @@ def validate_recurrent_grpo_adapter_identity(
         ):
             _fail("training_adequacy_not_admitted")
 
-    sources = _exact(parsed["sources"], set(REQUIRED_SOURCE_ROLES), role="sources")
+    source_roles = required_source_roles(str(protocol_schema))
+    sources = _exact(parsed["sources"], set(source_roles), role="sources")
     protocol_sources = _exact(
-        protocol["sources"], set(REQUIRED_SOURCE_ROLES), role="protocol_sources"
+        protocol["sources"], set(source_roles), role="protocol_sources"
     )
     normalized_sources: dict[str, dict[str, Any]] = {}
-    for role in sorted(REQUIRED_SOURCE_ROLES):
+    for role in sorted(source_roles):
         source = _exact(
             sources[role],
             {"origin_path", "snapshot_path", "sha256", "size_bytes"},
@@ -1616,6 +1633,7 @@ __all__ = [
     "MANIFEST_FILE",
     "MANIFEST_SCHEMA",
     "OBJECTIVE_NAME",
+    "LEGACY_REQUIRED_SOURCE_ROLES",
     "REQUIRED_SOURCE_ROLES",
     "TRAINING_METHOD",
     "TRAINING_PROTOCOL_SCHEMA",
@@ -1625,6 +1643,7 @@ __all__ = [
     "artifact_binding",
     "canonical_json_bytes",
     "declared_bindings",
+    "required_source_roles",
     "sha256_bytes",
     "recurrent_policy_sha256_from_safetensors",
     "tensor_metadata_from_safetensors",
