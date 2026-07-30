@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
 
 logger = logging.getLogger("Aura.LatentCortex.Workspace")
@@ -80,6 +81,7 @@ class LatentWorkspace:
         config: WorkspaceConfig,
         *,
         context_slots: list[dict[str, Any]] | None = None,
+        context_admission: dict[str, Any] | None = None,
     ) -> None:
         self.z = z
         self.roles = list(roles)
@@ -88,6 +90,16 @@ class LatentWorkspace:
         # Which slots were seeded from typed cognitive context (organ → slot),
         # in receipt form: [{"slot": int, "source": str}].
         self.context_slots = list(context_slots or [])
+        # How much of the requested cognitive context actually reached the
+        # workspace. The slot cap is structural (comm slot + one private
+        # hypothesis slot), so dropping is legitimate — reasoning on two of
+        # five memories looking identical to reasoning on all five is not.
+        self.context_admission = dict(context_admission or {
+            "schema": "aura.workspace_context_admission.v1",
+            "requested": 0, "admitted": 0, "dropped": 0,
+            "dropped_sources": [], "n_slots": int(config.n_slots),
+            "complete": True,
+        })
         # Sealed after the prelude pass, when the evidence rows have reached the
         # same layer representation as the recurrent core expects. Recurrent
         # proposals may read these rows but may not replace them.
@@ -131,15 +143,48 @@ class LatentWorkspace:
         if branch_role:
             base_seed = _role_seed(branch_role, base_seed)
 
-        seeds = list(context_seeds or [])
+        requested_seeds = list(context_seeds or [])
         # Keep the comm slot (0) and at least one persistent hypothesis slot.
         # The prior quarter-workspace cap silently discarded admitted evidence
         # on the live four-slot profile.
-        max_context = max(0, min(len(seeds), m - 2))
-        seeds = seeds[:max_context]
+        max_context = max(0, min(len(requested_seeds), m - 2))
+        seeds = requested_seeds[:max_context]
+        # CP126 (high): "Excess context seeds are silently dropped."
+        #
+        # The cap is structural — slot 0 is the communication slot and at
+        # least one hypothesis slot must stay private, so a four-slot
+        # workspace can carry two evidence seeds and no more. That is
+        # correct. What was missing is that the caller admitted N pieces of
+        # cognitive context and the workspace kept fewer, with nothing
+        # saying so: a reasoning trace built on two of five memories looked
+        # exactly like one built on all five.
+        dropped = requested_seeds[max_context:]
+        if dropped:
+            record_degradation(
+                "latent_workspace",
+                ValueError(
+                    f"workspace admitted {len(seeds)} of {len(requested_seeds)} "
+                    f"context seeds (n_slots={m})"
+                ),
+                severity="info",
+                action=(
+                    "seeded the workspace with the leading context and dropped "
+                    "the remainder; reasoning did not see it"
+                ),
+                enforce_failure_policy=False,
+            )
         context_by_slot = {
             1 + j: (j, str(source), vector)
             for j, (source, vector) in enumerate(seeds)
+        }
+        context_admission = {
+            "schema": "aura.workspace_context_admission.v1",
+            "requested": len(requested_seeds),
+            "admitted": len(seeds),
+            "dropped": len(dropped),
+            "dropped_sources": [str(source) for source, _vector in dropped][:8],
+            "n_slots": m,
+            "complete": not dropped,
         }
 
         roles: list[str] = []
@@ -180,7 +225,13 @@ class LatentWorkspace:
             {"slot": slot, "context_index": index, "source": source}
             for slot, (index, source, _vector) in sorted(context_by_slot.items())
         ]
-        return cls(z, roles, config, context_slots=context_slots)
+        return cls(
+            z,
+            roles,
+            config,
+            context_slots=context_slots,
+            context_admission=context_admission,
+        )
 
     # ── State management ────────────────────────────────────────────────
     def snapshot(self):
