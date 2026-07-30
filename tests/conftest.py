@@ -1262,7 +1262,7 @@ def _global_state_contamination_guard(request):
 
 
 @pytest.fixture(autouse=True)
-def _mlx_clients_do_not_outlive_their_test():
+def _mlx_clients_do_not_outlive_their_test(request):
     """Close MLX clients a test created, inside that test.
 
     An MLXLocalClient's finalizer releases its durable lane. A client left for
@@ -1281,6 +1281,20 @@ def _mlx_clients_do_not_outlive_their_test():
     created the object.
     """
     yield
+    # SCOPED BY WHO CAN CREATE ONE, not by what happens to be in the registry.
+    #
+    # The leaking client is built directly — MLXLocalClient(...) — so it never
+    # enters _CLIENTS, which means gating on that registry skipped the very
+    # case this exists for (measured: the failure came straight back). The
+    # collect is what does the work.
+    #
+    # But an unconditional collect after every test costs real minutes across
+    # ~7,400 of them: this sweep went from ~14 to 20+ when the fixture landed.
+    # Only modules that can build one need paying for.
+    module = str(getattr(request.node, "fspath", "") or "")
+    if "mlx" not in module.lower() and "cortex" not in module.lower():
+        return
+
     import gc
 
     try:
