@@ -2120,6 +2120,46 @@ def _launch_training(
         [python, tool, "verify-resume", "--contract", contract_absolute],
         separators=(",", ":"),
     )
+    bundle = _strict_json(
+        _repo_path(
+            str(contract["paths"]["verified_launch_bundle"]),
+            role="verified_launch_bundle",
+        )
+    )
+    if bundle.get("bundle_sha256") != _sha256_value:
+        _fail("verified_launch_bundle_digest_invalid")
+    from core.learning.verified_transition_production_factory import (
+        detached_signer_broker_paths,
+    )
+
+    broker_policy: list[dict[str, Any]] = []
+    max_steps = int(contract["training"]["parameters"]["max_steps"])
+    max_attempts = int(contract["training"]["watchdog_policy"]["max_attempts"])
+    for role, invocation_limit in (
+        ("task_issuer", max_steps * 2 + max_attempts * 2 + 8),
+        ("evidence_verifier", max_steps + max_attempts + 8),
+    ):
+        signer = bundle.get("signers", {}).get(role)
+        if not isinstance(signer, Mapping):
+            _fail("verified_launch_signer_binding_invalid")
+        request_path, response_path = detached_signer_broker_paths(
+            str(signer["identity"]),
+            str(signer["release_manifest"]),
+        )
+        broker_policy.append(
+            {
+                "command": [
+                    str(signer["executable"]),
+                    *[str(value) for value in signer["arguments"]],
+                    "--request-file",
+                    str(request_path),
+                ],
+                "cwd": str(REPO_ROOT),
+                "stdout_path": str(response_path),
+                "timeout_s_max": float(signer["timeout_millis"]) / 1000.0,
+                "max_invocations": invocation_limit,
+            }
+        )
     argv = [
         "launch",
         "--run-dir",
@@ -2134,6 +2174,8 @@ def _launch_training(
         "target_checkpoint",
         "--resume-verifier-json",
         verifier,
+        "--broker-policy-json",
+        json.dumps(broker_policy, separators=(",", ":")),
     ]
     if resume:
         argv.append("--resume")

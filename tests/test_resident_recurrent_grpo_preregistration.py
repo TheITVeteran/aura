@@ -728,11 +728,30 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
 def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatch):
     contract = _contract()
     contract["paths"]["detached_training"] = "artifacts/run"
+    contract["paths"]["verified_launch_bundle"] = "bundle.json"
     contract_path = tmp_path / "contract.json"
     contract_path.write_text(json.dumps(contract), encoding="ascii")
     venv_python = tmp_path / ".venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.symlink_to(Path(__import__("sys").executable))
+    signers = {}
+    for role in ("task_issuer", "evidence_verifier"):
+        executable = tmp_path / f"{role}-client"
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="ascii")
+        executable.chmod(0o700)
+        release = tmp_path / f"{role}-release.json"
+        release.write_text("{}\n", encoding="ascii")
+        signers[role] = {
+            "identity": f"{role}-identity",
+            "executable": str(executable),
+            "arguments": ["--role", role],
+            "release_manifest": str(release),
+            "timeout_millis": 30_000,
+        }
+    (tmp_path / "bundle.json").write_text(
+        json.dumps({"bundle_sha256": "a" * 64, "signers": signers}),
+        encoding="ascii",
+    )
     captured: dict[str, object] = {}
 
     def fake_detached_main(argv):
@@ -756,7 +775,8 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     argv = captured["argv"]
     assert isinstance(argv, list)
     verifier = json.loads(argv[argv.index("--resume-verifier-json") + 1])
-    command = argv[argv.index("--resume-verifier-json") + 2 :]
+    broker_policy = json.loads(argv[argv.index("--broker-policy-json") + 1])
+    command = argv[argv.index("--broker-policy-json") + 2 :]
     assert verifier[0] == str(venv_python)
     assert command[0] == str(venv_python)
     assert str(Path(venv_python).resolve()) not in verifier
@@ -765,6 +785,9 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
         "--expected-launch-bundle-sha256",
         "a" * 64,
     ]
+    assert len(broker_policy) == 2
+    assert all("--request-file" in row["command"] for row in broker_policy)
+    assert [row["max_invocations"] for row in broker_policy] == [600, 304]
 
 
 def test_training_watchdog_retries_only_into_exact_durable_progress(

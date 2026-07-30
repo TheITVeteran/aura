@@ -31840,3 +31840,34 @@ gain occurred in this checkpoint. Next is the fresh signed update canary,
 semantics-preserving latency profiling, and then the already-authorized full
 resident campaign launch. This is total checkpoint 706. The 706-920 completion
 envelope is approximately 76.7%-100.0%, with an 88.4% midpoint.
+
+### 2026-07-30 - CP420S18 detached signer transport repair
+
+The CP420S18 production-shaped resident update canary completed its 12/12
+recurrent baseline under the frozen 320-token contract, then failed before its
+first optimizer update. The detached target correctly remained inside the
+kernel-enforced no-fork sandbox, but the production signer client still used a
+direct subprocess call. Both exact-checkpoint retries reproduced
+`signer_broker_execution_failed`. A third resident reload under Python 3.14
+then terminated on a macOS `libmalloc` reclaim assertion. No optimizer update,
+adapter mutation, reasoning gain, frontier gain, promotion, or `WOW Signal`
+occurred.
+
+The signing path now writes one canonical private request artifact and routes
+the exact digest-pinned signer client through the detached supervisor's
+authenticated subprocess broker. The supervisor policy freezes executable,
+arguments, working directory, output path, timeout, and a contract-derived
+invocation budget that includes bounded watchdog retries. The target remains
+unable to fork, signer private keys remain isolated in their long-lived role
+services, and non-detached launch materialization retains its existing direct
+client path.
+
+The next campaign will use the repository's validated Python 3.12 virtual
+environment, which contains MLX and MLX-LM, rather than the Python 3.14 process
+that crashed after repeated resident reloads. The expanded recurrent trainer,
+provider, transaction, preregistration, signer client, and detached containment
+matrix passes 558/558. Evidence:
+`artifacts/current/cp420s18_detached_signer_transport_evidence.json`.
+CP420S18 is immutable and retired. A fresh signed update canary remains required
+before the full training launch. This is total checkpoint 707. The 707-920
+completion envelope is approximately 76.8%-100.0%, with an 88.4% midpoint.

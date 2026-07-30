@@ -76,9 +76,15 @@ from core.learning.verified_transition_trainer import (
     VerifiedTransitionTrainingScheduleEntry,
 )
 from core.runtime.atomic_writer import (
+    atomic_write_bytes,
     atomic_write_bytes_if_absent,
     ensure_private_directory,
     interprocess_file_lock,
+)
+from core.runtime.detached_subprocess_broker import (
+    DetachedBrokerError,
+    broker_available,
+    run_brokered_process,
 )
 from core.runtime.file_read_gateway import read_stable_bytes
 
@@ -288,6 +294,18 @@ class ExternalRoleSignerBroker(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
+def detached_signer_broker_paths(
+    identity: str,
+    release_manifest: str | Path,
+) -> tuple[Path, Path]:
+    token = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    root = Path(release_manifest).expanduser().resolve(strict=True).parent
+    return (
+        root / f".signer-request-{token}.json",
+        root / f".signer-response-{token}.json",
+    )
+
+
 class CommandRoleSignerBroker:
     """Call an absolute, pinned external signer command without a shell.
 
@@ -417,29 +435,63 @@ class CommandRoleSignerBroker:
             **{name: os.environ[name] for name in self._environment_names if name in os.environ},
         }
         self._assert_executable_identity()
-        try:
-            with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-                completed = subprocess.run(
-                    [str(self._executable), *self._arguments],
-                    input=request_bytes,
-                    stdout=stdout,
-                    stderr=stderr,
-                    check=False,
-                    timeout=self._timeout_seconds,
-                    env=environment,
-                    shell=False,
+        if broker_available():
+            request_path, response_path = detached_signer_broker_paths(
+                self._identity,
+                self._release_manifest,
+            )
+            atomic_write_bytes(request_path, request_bytes, mode=0o600)
+            response_path.unlink(missing_ok=True)
+            try:
+                result = run_brokered_process(
+                    [
+                        str(self._executable),
+                        *self._arguments,
+                        "--request-file",
+                        str(request_path),
+                    ],
+                    cwd=Path.cwd().resolve(strict=True),
+                    stdout_path=response_path,
+                    timeout_s=self._timeout_seconds,
                 )
-                stdout.seek(0)
-                stdout_bytes = stdout.read(64 * 1024 + 1)
-                stderr.seek(0)
-                stderr_bytes = stderr.read(64 * 1024 + 1)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise VerifiedTransitionProductionFactoryError(
-                "signer_broker_execution_failed"
-            ) from exc
-        self._assert_executable_identity()
-        if completed.returncode != 0:
-            _fail("signer_broker_rejected_request")
+                stdout_bytes = read_stable_bytes(
+                    response_path,
+                    max_bytes=64 * 1024 + 1,
+                )
+            except (DetachedBrokerError, OSError) as exc:
+                raise VerifiedTransitionProductionFactoryError(
+                    "signer_broker_execution_failed"
+                ) from exc
+            finally:
+                request_path.unlink(missing_ok=True)
+            self._assert_executable_identity()
+            if result.returncode != 0:
+                _fail("signer_broker_rejected_request")
+            stderr_bytes = b""
+        else:
+            try:
+                with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+                    completed = subprocess.run(
+                        [str(self._executable), *self._arguments],
+                        input=request_bytes,
+                        stdout=stdout,
+                        stderr=stderr,
+                        check=False,
+                        timeout=self._timeout_seconds,
+                        env=environment,
+                        shell=False,
+                    )
+                    stdout.seek(0)
+                    stdout_bytes = stdout.read(64 * 1024 + 1)
+                    stderr.seek(0)
+                    stderr_bytes = stderr.read(64 * 1024 + 1)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise VerifiedTransitionProductionFactoryError(
+                    "signer_broker_execution_failed"
+                ) from exc
+            self._assert_executable_identity()
+            if completed.returncode != 0:
+                _fail("signer_broker_rejected_request")
         if len(stdout_bytes) > 64 * 1024 or len(stderr_bytes) > 64 * 1024:
             _fail("signer_broker_output_too_large")
         try:

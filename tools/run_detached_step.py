@@ -3944,7 +3944,7 @@ def _build_broker_policy(
             or not isinstance(max_invocations, int)
             or isinstance(max_invocations, bool)
             or max_invocations <= 0
-            or max_invocations > 100
+            or max_invocations > 4096
             or (worker_origin is not None and max_invocations != 1)
         ):
             raise DetachedStepError("broker policy timeout or invocation bound is invalid")

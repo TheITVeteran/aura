@@ -41,8 +41,14 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(_canonical(value)).hexdigest()
 
 
-def _strict_stdin() -> dict[str, Any]:
-    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+def _strict_input(request_file: str | None) -> dict[str, Any]:
+    if request_file:
+        path = Path(request_file).expanduser()
+        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+            raise SignerClientError("request_file_invalid")
+        raw = path.read_bytes()
+    else:
+        raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
     if len(raw) > MAX_REQUEST_BYTES:
         raise SignerClientError("request_too_large")
     try:
@@ -211,13 +217,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--protocol-sha256", required=True)
     parser.add_argument("--trust-root", required=True)
     parser.add_argument("--repo-root", required=True)
+    parser.add_argument("--request-file")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        document = _strict_stdin()
+        document = _strict_input(args.request_file)
         if document.get("schema") == COMMAND_SIGNER_REQUEST_SCHEMA:
             response = _sign_role(document, args)
         elif document.get("schema") == COMMAND_VERIFIER_REQUEST_SCHEMA:

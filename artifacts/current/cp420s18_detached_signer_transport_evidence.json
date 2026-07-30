@@ -1,0 +1,36 @@
+{
+  "campaign_id": "resident-32b-recurrent-grpo-cp420s18-update-canary",
+  "claim_boundary": "detached_signer_transport_repair_only_no_optimizer_or_gain_claim",
+  "failed_canary": {
+    "baseline_completed_tasks": 12,
+    "baseline_score": 0.3333333333333333,
+    "baseline_total_tasks": 12,
+    "detached_duration_s": 736.459686,
+    "detached_log_sha256": "29ccf2986267ab4c628442876557abc1c488dd8897433650e34e241c9a412a75",
+    "detached_receipt_file_sha256": "a3e2cf94a99b649c165a01c53dca10a2f7db9a3cca216f0b5be6403e08fa4106",
+    "launch_bundle_sha256": "099745412269187808688bae4af81b348d84a357a98802b1ef2c69ac4f2ebacd",
+    "latest_failure_pointer_sha256": "aefbb77104c7d0ef562dd90cce31d37246658659cbfe35b2b084ba79f594d502",
+    "optimizer_update_occurred": false,
+    "python_version": "3.14.3",
+    "reason": "signer_broker_execution_failed",
+    "terminal_returncode": -5,
+    "terminal_signal": "SIGTRAP"
+  },
+  "repair": {
+    "broker_invocation_policy": "exact signer commands with contract-derived bounded invocation counts",
+    "containment": "training target remains under kernel-enforced deny-process-fork sandbox",
+    "interpreter_for_next_campaign": ".venv/bin/python 3.12.13 with mlx and mlx_lm",
+    "request_transport": "canonical private request file plus authenticated detached supervisor broker",
+    "retry_budget_accounting": "nominal signed groups plus bounded watchdog retries",
+    "signer_private_key_boundary_changed": false,
+    "signer_service_protocol_changed": false
+  },
+  "schema": "aura.spark.cp420s18_detached_signer_transport_evidence.v1",
+  "tests": {
+    "expanded_recurrent_training_and_detached_matrix": {
+      "passed": 558,
+      "total": 558
+    }
+  },
+  "verdict": "source_repair_verified_fresh_source_bound_canary_required"
+}

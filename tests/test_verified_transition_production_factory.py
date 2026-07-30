@@ -26,6 +26,7 @@ from core.brain.llm.latent_cortex.campaign_trust import (
     verify_role_attestation,
 )
 from core.learning import verified_transition_launch_bundle as launch_bundle
+from core.learning import verified_transition_production_factory as production_factory
 from core.learning.recurrence_curriculum import khop_reachability
 from core.learning.recurrent_grpo import RecurrentSamplingConfig
 from core.learning.verified_token_trace import (
@@ -996,6 +997,62 @@ def test_command_signer_broker_accepts_only_pinned_canonical_response(
             signed_at_unix=BASE_SECOND + 200,
             purpose="test:manifest",
         )
+
+
+def test_command_signer_uses_authenticated_detached_broker_when_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy, _keys, broker, script = _command_signer_material(tmp_path)
+    observed: dict[str, Any] = {}
+
+    def run_brokered(command, *, cwd, stdout_path, timeout_s):
+        request_index = command.index("--request-file") + 1
+        request_path = Path(command[request_index])
+        observed.update(
+            {
+                "command": command,
+                "cwd": cwd,
+                "request_path": request_path,
+                "timeout_s": timeout_s,
+            }
+        )
+        import subprocess
+
+        completed = subprocess.run(
+            command[:request_index - 1],
+            input=request_path.read_bytes(),
+            capture_output=True,
+            check=False,
+        )
+        stdout_path.write_bytes(completed.stdout)
+        return SimpleNamespace(returncode=completed.returncode)
+
+    monkeypatch.setattr(production_factory, "broker_available", lambda: True)
+    monkeypatch.setattr(
+        production_factory,
+        "run_brokered_process",
+        run_brokered,
+    )
+    payload = {"schema": "test.payload.v1", "value": 9}
+    attestation = broker.attest(
+        policy,
+        role=TASK_ISSUER,
+        payload=payload,
+        signed_at_unix=BASE_SECOND + 200,
+        purpose="test:brokered-manifest",
+    )
+
+    assert verify_role_attestation(
+        policy,
+        attestation,
+        role=TASK_ISSUER,
+        expected_payload=payload,
+    )
+    assert observed["command"][0] == str(script)
+    assert "--request-file" in observed["command"]
+    assert not observed["request_path"].exists()
+    assert observed["cwd"] == Path.cwd().resolve()
 
 
 def test_external_verifier_broker_returns_replay_receipt(
