@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.VerifiablePreference")
@@ -165,7 +166,14 @@ class VerifiablePreferenceHarness:
                 break
 
         if new_pairs:
-            self._persist(new_pairs)
+            if not self._persist(new_pairs):
+                # Persistence is the admission boundary. Let a later verified
+                # observation retry these pairs instead of poisoning dedup with
+                # evidence that never reached durable storage.
+                with self._lock:
+                    for pair in new_pairs:
+                        self._seen.discard(pair.key())
+                return 0
             with self._lock:
                 self._pending.extend(new_pairs)
             logger.info(
@@ -174,27 +182,28 @@ class VerifiablePreferenceHarness:
             )
         return produced
 
-    def _persist(self, pairs: list[PreferencePair]) -> None:
+    def _persist(self, pairs: list[PreferencePair]) -> bool:
         try:
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             text = "".join(json.dumps(p.to_store_row(), ensure_ascii=False) + "\n" for p in pairs)
-            get_file_write_gateway().append_text(
-                str(self._store_path), text, encoding="utf-8",
-                source="verifiable_preference_harness.persist",
-            )
+            with local_internal_governed_scope(
+                "verifiable_preference_harness.persist",
+                domain="file_write",
+            ):
+                get_file_write_gateway().append_text(
+                    str(self._store_path), text, encoding="utf-8",
+                    source="verifiable_preference_harness.persist",
+                )
             self._emitted += len(pairs)
+            return True
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            # Fall back to a direct append so data is never silently lost.
-            try:
-                with self._store_path.open("a", encoding="utf-8") as fh:
-                    for p in pairs:
-                        fh.write(json.dumps(p.to_store_row(), ensure_ascii=False) + "\n")
-                self._emitted += len(pairs)
-            except OSError as exc2:
-                record_degradation("verifiable_preference_harness", exc2)
-            else:
-                record_degradation("verifiable_preference_harness", exc, severity="debug")
+            record_degradation(
+                "verifiable_preference_harness",
+                exc,
+                action="retained the verified pair for a governed persistence retry",
+            )
+            return False
 
     # ── export for the DPO trainer ───────────────────────────────────────────
     def export_dpo_rows(self, *, limit: int = 1000) -> list[dict[str, str]]:

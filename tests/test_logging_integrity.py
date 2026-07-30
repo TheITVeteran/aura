@@ -117,7 +117,6 @@ class TestLogDirResolution:
         live = Path.home() / ".aura" / "logs"
         assert Path(configured).resolve() != live.resolve()
 
-
 class TestQueueHandlerOverflow:
     """The UI broadcast buffer alarm must fire only for warning+ rotations."""
 

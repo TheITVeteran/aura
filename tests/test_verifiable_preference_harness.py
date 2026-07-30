@@ -67,6 +67,64 @@ def test_pairs_dedup(tmp_path):
     assert h.ingest("same q", attempts) == 0  # identical pair not re-emitted
 
 
+def test_persistence_uses_narrow_file_write_governance(tmp_path, monkeypatch):
+    observed_domains = []
+
+    class Gateway:
+        def append_text(self, path, text, **_kwargs):
+            from core.governance_context import get_active_governance
+
+            token = get_active_governance()
+            observed_domains.append(token.domain if token else "")
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(text)
+
+    import core.runtime.file_write_gateway as gateway_module
+
+    monkeypatch.setattr(gateway_module, "get_file_write_gateway", lambda: Gateway())
+    h = _h(tmp_path)
+    assert h.ingest(
+        "q",
+        [
+            Attempt("right", verified=True, checked=True),
+            Attempt("wrong", verified=False, checked=True),
+        ],
+    ) == 1
+    assert observed_domains == ["file_write"]
+
+
+def test_failed_governed_persistence_remains_retryable(tmp_path, monkeypatch):
+    class FailingGateway:
+        def append_text(self, *_args, **_kwargs):
+            raise RuntimeError("durability unavailable")
+
+    import core.runtime.file_write_gateway as gateway_module
+
+    monkeypatch.setattr(
+        gateway_module, "get_file_write_gateway", lambda: FailingGateway()
+    )
+    h = _h(tmp_path)
+    attempts = [
+        Attempt("right", verified=True, checked=True),
+        Attempt("wrong", verified=False, checked=True),
+    ]
+    assert h.ingest("retry me", attempts) == 0
+    assert not (tmp_path / "p.jsonl").exists()
+
+    class WorkingGateway:
+        def append_text(self, path, text, **_kwargs):
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(text)
+
+    monkeypatch.setattr(
+        gateway_module,
+        "get_file_write_gateway",
+        lambda: WorkingGateway(),
+    )
+    assert h.ingest("retry me", attempts) == 1
+    assert (tmp_path / "p.jsonl").exists()
+
+
 def test_persists_across_instances(tmp_path):
     path = tmp_path / "p.jsonl"
     h = VerifiablePreferenceHarness(store_path=path)

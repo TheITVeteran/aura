@@ -92,6 +92,32 @@ def test_successful_acquisition_clears_a_stale_notice():
     assert singleton.read_boot_blocked() == {}
 
 
+def test_notice_writes_and_deletes_use_file_write_governance(monkeypatch):
+    observed = []
+
+    class Gateway:
+        def write_text(self, path, text, **_kwargs):
+            from core.governance_context import get_active_governance
+
+            token = get_active_governance()
+            observed.append(("write", token.domain if token else ""))
+            path.write_text(text, encoding="utf-8")
+
+        def delete_file(self, path, **_kwargs):
+            from core.governance_context import get_active_governance
+
+            token = get_active_governance()
+            observed.append(("delete", token.domain if token else ""))
+            path.unlink(missing_ok=True)
+
+    monkeypatch.setattr(singleton, "get_file_write_gateway", lambda: Gateway())
+    _write_holder_meta("orchestrator", os.getpid())
+    singleton._publish_boot_blocked("orchestrator", os.getpid())
+    singleton.clear_boot_blocked()
+
+    assert observed == [("write", "file_write"), ("delete", "file_write")]
+
+
 def test_acquiring_a_free_lock_clears_the_notice_and_does_not_block(tmp_path):
     _write_holder_meta("probe_lock", 999999)
     singleton._publish_boot_blocked("probe_lock", 999999)

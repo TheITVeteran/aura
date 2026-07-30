@@ -20,10 +20,10 @@ import pytest
 # noise (test doubles, induced failures) never pollutes the running
 # instance's aura_json.log. Set before any core import can call
 # setup_logging(); PID-scoped so parallel chunk runners don't share a file.
-os.environ.setdefault(
-    "AURA_LOG_DIR",
-    str(Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"),
-)
+if not os.environ.get("AURA_LOG_DIR", "").strip():
+    os.environ["AURA_LOG_DIR"] = str(
+        Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"
+    )
 
 # Ledger hermeticity: the latent execution controller learns from live
 # episode outcomes and persists them under the real data dir. Tests running
@@ -1312,4 +1312,3 @@ def _mlx_clients_do_not_outlive_their_test(request):
                     pass
         registry.clear()
     gc.collect()
-

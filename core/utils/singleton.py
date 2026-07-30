@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
@@ -49,10 +50,14 @@ def boot_blocked_path() -> Path:
 def clear_boot_blocked() -> None:
     """Drop any stale blocked-boot notice (called once a lock is acquired)."""
     try:
-        get_file_write_gateway().delete_file(
-            boot_blocked_path(),
-            source="singleton.clear_boot_blocked",
-        )
+        with local_internal_governed_scope(
+            "singleton.clear_boot_blocked",
+            domain="file_write",
+        ):
+            get_file_write_gateway().delete_file(
+                boot_blocked_path(),
+                source="singleton.clear_boot_blocked",
+            )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
         logger.debug("Could not clear boot-blocked notice: %s", exc)
 
@@ -112,12 +117,16 @@ def _publish_boot_blocked(lock_name: str, holder_pid: int) -> None:
     }
     try:
         path = boot_blocked_path()
-        get_file_write_gateway().write_text(
-            path,
-            json.dumps(notice, indent=2, sort_keys=True),
-            encoding="utf-8",
-            source="singleton.publish_boot_blocked",
-        )
+        with local_internal_governed_scope(
+            "singleton.publish_boot_blocked",
+            domain="file_write",
+        ):
+            get_file_write_gateway().write_text(
+                path,
+                json.dumps(notice, indent=2, sort_keys=True),
+                encoding="utf-8",
+                source="singleton.publish_boot_blocked",
+            )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:  # pragma: no cover
         logger.debug("Could not publish boot-blocked notice: %s", exc)
 
