@@ -87,10 +87,22 @@ def test_artifact_shape_does_not_cap_the_reply_on_an_execution_turn():
     source = inspect.getsource(inference_gate)
     marker = 'if bool(context.get("desktop_execution_contract", False)):'
     assert marker in source
-    block = source[source.index(marker) : source.index(marker) + 1200]
-    assert "output_contract_is_user_facing = False" in block, (
+
+    # STRUCTURAL, NOT A BYTE WINDOW.
+    #
+    # This read the 1,200 characters after the marker, so the assertion broke
+    # the moment the block grew — which it did, when the plan-token floor and
+    # its comment landed inside it. The behaviour was correct the whole time;
+    # only the ruler was wrong. What actually matters is the ORDER: the flag
+    # must be cleared after the execution-turn marker and before the ceiling
+    # it would otherwise impose.
+    marker_at = source.index(marker)
+    cleared_at = source.index("output_contract_is_user_facing = False", marker_at)
+    ceiling_at = source.index("output_contract.hard_token_ceiling is not None", marker_at)
+    assert marker_at < cleared_at < ceiling_at, (
         "on an execution turn the shape phrase describes the ARTIFACT; the "
-        "executor owns it through document_body"
+        "executor owns it through document_body, so the reply must keep its "
+        "full budget"
     )
 
 
