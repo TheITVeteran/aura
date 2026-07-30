@@ -1374,6 +1374,177 @@ def _runtime_integrity_block() -> dict[str, Any]:
     return block
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# THE INTEGRITY BLOCK IS NEVER COLLECTED ON THE EVENT LOOP
+#
+# _runtime_integrity_block() is ~15 independent sub-reports, and several of
+# them reach disk: ontogeny does a full-table COUNT/GROUP BY over the
+# episodes corpus, CAA readiness np.load()s every vector file, the gateway
+# record index globs a tree. None of that is bounded by anything.
+#
+# runtime_health_report() had it inline, and runtime_health_report() is
+# called from the orchestrator's periodic pulse — which is an async task on
+# the main loop. On 2026-07-29 that produced a 103.8s event-loop stall
+# during a live demo (scheduler._run_task → _pulse_subsystem_audit →
+# emit_pulse → runtime_health_report → ontogeny stats → sqlite). The whole
+# runtime froze: health polls timed out at 6s, the GUI fell back to
+# "Connecting to runtime", and the immune system opened CRITICAL incidents
+# for lag that the health report itself had caused. It was the third stall
+# of an escalating series (5.6s → 17.6s → 103.8s) because each freeze made
+# the next collection slower.
+#
+# So: a caller on a running event loop NEVER collects. It reads the last
+# snapshot and asks a single daemon thread to refresh it. Callers that are
+# not on a loop (tests, CLI, background collectors) keep the old inline
+# semantics, now behind a TTL so a burst of them costs one collection.
+# _runtime_integrity_block() itself is untouched and still directly
+# callable — the tests that assert on its contents go straight at it.
+# ═══════════════════════════════════════════════════════════════════════
+
+_INTEGRITY_TTL_S = _float_env("AURA_HEALTH_INTEGRITY_TTL_S", 15.0)
+_INTEGRITY_LOCK = threading.Lock()
+_INTEGRITY_SNAPSHOT: dict[str, Any] | None = None
+_INTEGRITY_SNAPSHOT_AT = 0.0
+_INTEGRITY_SNAPSHOT_UNIX = 0.0
+_INTEGRITY_REFRESHING = False
+_INTEGRITY_COLLECTIONS = 0
+_INTEGRITY_LOOP_SERVES = 0
+
+
+def reset_integrity_snapshot_for_test() -> None:
+    """Drop the cached integrity snapshot so a test observes a cold collect."""
+    global _INTEGRITY_SNAPSHOT, _INTEGRITY_SNAPSHOT_AT, _INTEGRITY_SNAPSHOT_UNIX
+    global _INTEGRITY_COLLECTIONS, _INTEGRITY_LOOP_SERVES, _INTEGRITY_REFRESHING
+    with _INTEGRITY_LOCK:
+        _INTEGRITY_SNAPSHOT = None
+        _INTEGRITY_SNAPSHOT_AT = 0.0
+        _INTEGRITY_SNAPSHOT_UNIX = 0.0
+        _INTEGRITY_COLLECTIONS = 0
+        _INTEGRITY_LOOP_SERVES = 0
+        # Clear the in-flight latch too: a test that reset mid-refresh would
+        # otherwise leave it stuck True and block every later refresh.
+        _INTEGRITY_REFRESHING = False
+
+
+def _on_event_loop() -> bool:
+    """True when this thread is running an asyncio loop that we must not block."""
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+    except (RuntimeError, ImportError):
+        return False
+    return True
+
+
+def _store_integrity_snapshot(block: dict[str, Any]) -> None:
+    global _INTEGRITY_SNAPSHOT, _INTEGRITY_SNAPSHOT_AT, _INTEGRITY_SNAPSHOT_UNIX
+    global _INTEGRITY_COLLECTIONS
+    with _INTEGRITY_LOCK:
+        _INTEGRITY_SNAPSHOT = block
+        _INTEGRITY_SNAPSHOT_AT = time.monotonic()
+        _INTEGRITY_SNAPSHOT_UNIX = time.time()
+        _INTEGRITY_COLLECTIONS += 1
+
+
+def _collect_integrity_snapshot() -> dict[str, Any]:
+    """Collect and cache. Callers must already know they are off the loop."""
+    started = time.monotonic()
+    try:
+        block = _runtime_integrity_block()
+    except Exception as exc:  # noqa: BLE001 — health must never raise at its caller
+        block = {"collect_error": repr(exc)}
+    block["collect_duration_s"] = round(max(0.0, time.monotonic() - started), 3)
+    _store_integrity_snapshot(block)
+    return block
+
+
+def _refresh_integrity_snapshot_async() -> None:
+    """Ask one daemon thread to refresh. Extra requests while it runs are dropped."""
+    global _INTEGRITY_REFRESHING
+    with _INTEGRITY_LOCK:
+        if _INTEGRITY_REFRESHING:
+            return
+        _INTEGRITY_REFRESHING = True
+
+    def _run() -> None:
+        global _INTEGRITY_REFRESHING
+        try:
+            _collect_integrity_snapshot()
+        finally:
+            with _INTEGRITY_LOCK:
+                _INTEGRITY_REFRESHING = False
+
+    try:
+        threading.Thread(
+            target=_run, name="AuraHealthIntegritySnapshot", daemon=True
+        ).start()
+    except RuntimeError:
+        # Interpreter shutdown, or the thread table is exhausted. Release the
+        # latch so a later call can try again rather than wedging the snapshot
+        # as permanently "refreshing".
+        with _INTEGRITY_LOCK:
+            _INTEGRITY_REFRESHING = False
+
+
+def integrity_block_snapshot() -> dict[str, Any]:
+    """The integrity block, never at the cost of the event loop.
+
+    Off the loop this is the old behaviour behind a TTL. On the loop it is a
+    read of the last snapshot plus a background refresh request — bounded by
+    a dict copy, never by disk.
+    """
+    global _INTEGRITY_LOOP_SERVES
+    with _INTEGRITY_LOCK:
+        snapshot = _INTEGRITY_SNAPSHOT
+        age = (
+            time.monotonic() - _INTEGRITY_SNAPSHOT_AT
+            if snapshot is not None
+            else float("inf")
+        )
+        captured_at = _INTEGRITY_SNAPSHOT_UNIX
+        collections = _INTEGRITY_COLLECTIONS
+    fresh = snapshot is not None and age < _INTEGRITY_TTL_S
+
+    if not fresh and not _on_event_loop():
+        snapshot = _collect_integrity_snapshot()
+        with _INTEGRITY_LOCK:
+            age = 0.0
+            captured_at = _INTEGRITY_SNAPSHOT_UNIX
+            collections = _INTEGRITY_COLLECTIONS
+        fresh = True
+    elif not fresh:
+        _refresh_integrity_snapshot_async()
+        with _INTEGRITY_LOCK:
+            _INTEGRITY_LOOP_SERVES += 1
+
+    if snapshot is None:
+        # Cold, and we are on the loop. The refresh is already in flight; say
+        # so honestly rather than blocking or inventing a clean bill of health.
+        return {
+            "snapshot": {
+                "collected": False,
+                "warming": True,
+                "age_s": None,
+                "captured_at": None,
+                "collections": collections,
+                "ttl_s": _INTEGRITY_TTL_S,
+            }
+        }
+
+    block = dict(snapshot)
+    block["snapshot"] = {
+        "collected": True,
+        "warming": False,
+        "stale": not fresh,
+        "age_s": round(age, 3) if age != float("inf") else None,
+        "captured_at": captured_at or None,
+        "collections": collections,
+        "ttl_s": _INTEGRITY_TTL_S,
+    }
+    return block
+
+
 def runtime_health_report() -> dict[str, Any]:
     """Return Aura's canonical runtime health contract report."""
     report = evaluate_health().to_report()
@@ -1389,7 +1560,7 @@ def runtime_health_report() -> dict[str, Any]:
             "error": repr(exc),
         }
     report["shutdown"] = shutdown
-    report["integrity"] = _runtime_integrity_block()
+    report["integrity"] = integrity_block_snapshot()
     request = shutdown.get("request") if isinstance(shutdown, dict) else None
     if isinstance(request, dict) and request.get("requested") is True:
         report["pre_shutdown_status"] = report.get("status")

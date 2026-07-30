@@ -236,7 +236,10 @@ class RecoveryEngine:
         try:
             ms = ServiceContainer.get("mission_state", default=None)
             if ms:
-                result = await ms._execute_node(node)
+                # Pass the graph: a retried step still has placeholders to fill
+                # from the steps that already succeeded. Retrying without it
+                # would re-run the step with "{{generated_content}}" verbatim.
+                result = await ms._execute_node(node, mission.graph)
                 if result.get("success", False):
                     verified = await ms._verify_node(node)
                     if verified:
@@ -387,7 +390,7 @@ class RecoveryEngine:
             try:
                 ms = ServiceContainer.get("mission_state", default=None)
                 if ms:
-                    result = await ms._execute_node(node)
+                    result = await ms._execute_node(node, mission.graph)
                     if result.get("success", False):
                         verified = await ms._verify_node(node)
                         if verified and mission.graph:

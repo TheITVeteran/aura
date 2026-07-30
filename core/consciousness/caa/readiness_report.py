@@ -94,6 +94,54 @@ def _target_layers_for_active_model(active_model_path: str | None) -> list[int]:
     return [lo, lo + span // 3, lo + 2 * span // 3]
 
 
+#: Parsed provenance per vector file, keyed by path and invalidated by
+#: (mtime, size). The integrity block calls scan_vector_files() on every
+#: collection and this used to np.load() every ``.npz`` each time — a
+#: pure-Python decompression burst holding the GIL underneath a runtime whose
+#: event loop is the scarce resource (it sat in the 2026-07-29 stall dumps).
+#: A vector file's provenance is fixed at write time, so a file whose stat is
+#: unchanged cannot have new provenance to read.
+_VECTOR_PROVENANCE_CACHE: dict[str, tuple[tuple[float, int], dict[str, Any]]] = {}
+
+
+def _vector_provenance(npz: Path, dimension: Any, layer: Any) -> dict[str, Any] | None:
+    """Provenance for one vector file, re-read only when the file changes."""
+    key = str(npz)
+    try:
+        stat = npz.stat()
+        stamp = (stat.st_mtime, stat.st_size)
+    except OSError as exc:
+        record_degradation("caa_readiness_report", exc)
+        return None
+    cached = _VECTOR_PROVENANCE_CACHE.get(key)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    try:
+        d = np.load(npz, allow_pickle=True)
+        source = str(d["source"]) if "source" in d else "unknown"
+        is_extracted = bool(d["extracted"]) if "extracted" in d else False
+        derived_at = float(d["derived_at"]) if "derived_at" in d else 0.0
+        vector_dim = int(np.asarray(d["v"] if "v" in d else d[d.files[0]]).reshape(-1).shape[0]) if d.files else 0
+        recorded_model_path = str(d["model_path"]) if "model_path" in d else str(d["model"]) if "model" in d else None
+        model_config_sha256 = str(d["model_config_sha256"]) if "model_config_sha256" in d else None
+    except (OSError, ValueError, KeyError) as exc:
+        record_degradation("caa_readiness_report", exc)
+        return None
+    entry = {
+        "path": key,
+        "dimension": dimension,
+        "layer": layer,
+        "source": source,
+        "extracted": is_extracted,
+        "derived_at": derived_at,
+        "vector_dim": vector_dim,
+        "model_path": recorded_model_path,
+        "model_config_sha256": model_config_sha256,
+    }
+    _VECTOR_PROVENANCE_CACHE[key] = (stamp, entry)
+    return entry
+
+
 def scan_vector_files(vectors_dir: Path) -> dict[str, Any]:
     """Read provenance off every steering-vector ``.npz`` on disk."""
     extracted = 0
@@ -105,36 +153,20 @@ def scan_vector_files(vectors_dir: Path) -> dict[str, Any]:
     by_source: dict[str, int] = {}
     details: list[dict[str, Any]] = []
     try:
+        seen: set[str] = set()
         for npz in sorted(vectors_dir.glob("*.npz")):
             files += 1
             dimension, layer = _parse_vector_stem(npz.stem)
-            try:
-                d = np.load(npz, allow_pickle=True)
-                source = str(d["source"]) if "source" in d else "unknown"
-                is_extracted = bool(d["extracted"]) if "extracted" in d else False
-                derived_at = float(d["derived_at"]) if "derived_at" in d else 0.0
-                vector_dim = int(np.asarray(d["v"] if "v" in d else d[d.files[0]]).reshape(-1).shape[0]) if d.files else 0
-                recorded_model_path = str(d["model_path"]) if "model_path" in d else str(d["model"]) if "model" in d else None
-                model_config_sha256 = str(d["model_config_sha256"]) if "model_config_sha256" in d else None
-            except (OSError, ValueError, KeyError) as exc:
-                record_degradation("caa_readiness_report", exc)
+            entry = _vector_provenance(npz, dimension, layer)
+            if entry is None:
                 continue
-            details.append(
-                {
-                    "path": str(npz),
-                    "dimension": dimension,
-                    "layer": layer,
-                    "source": source,
-                    "extracted": is_extracted,
-                    "derived_at": derived_at,
-                    "vector_dim": vector_dim,
-                    "model_path": recorded_model_path,
-                    "model_config_sha256": model_config_sha256,
-                }
-            )
+            seen.add(entry["path"])
+            details.append(dict(entry))
+            source = entry["source"]
+            derived_at = entry["derived_at"]
             by_source[source] = by_source.get(source, 0) + 1
             newest_derived_at = max(newest_derived_at, derived_at)
-            if is_extracted:
+            if entry["extracted"]:
                 extracted += 1
             elif source == "runtime_derived_caa":
                 runtime_derived += 1
@@ -142,6 +174,8 @@ def scan_vector_files(vectors_dir: Path) -> dict[str, Any]:
                 fallback += 1
             else:
                 other += 1
+        for stale_key in _VECTOR_PROVENANCE_CACHE.keys() - seen:
+            _VECTOR_PROVENANCE_CACHE.pop(stale_key, None)
     except OSError as exc:
         record_degradation("caa_readiness_report", exc)
     return {
