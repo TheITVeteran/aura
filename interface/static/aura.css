@@ -1965,36 +1965,45 @@ main {
     main {
         grid-template-columns: 1fr;
         height: calc(100dvh - 56px);
-        overflow: hidden;
-    }
-
-    .sidebar {
-        position: fixed;
-        top: 56px;
-        left: 0;
-        width: 100%;
-        height: calc(100vh - 56px - 65px);
-        z-index: 100;
-        background: var(--bg);
-        display: none;
-        /* Controlled by JS */
-        padding-top: 20px;
+        /* Scrolls, because both panels now stack here instead of one of them
+           being hidden. `hidden` would clip the second one away. */
         overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
+    /* Both panels stay in flow and stack vertically.
+
+       They used to be `display: none` here, revealed only by `.mobile-active`
+       — which aura.js toggles from clicks on `.m-nav-btn`. There is not one
+       `.m-nav-btn` in index.html (grep: zero), and `.mobile-nav` is
+       `display: none !important` at the end of this same block. So below
+       1100px BOTH panels were hidden with nothing that could ever bring them
+       back: no chat, no messages, and none of the six side panels. Verified
+       live at 1000px before this fix — the whole interface was simply gone.
+
+       A switcher that does not exist cannot be the only way to see the
+       product, so nothing here hides either panel. `.mobile-active` is kept
+       harmless in case that navigation is ever actually built. */
+    .chat-panel,
+    .chat-panel.mobile-active,
+    .sidebar,
     .sidebar.mobile-active {
         display: flex;
         flex-direction: column;
+        position: static;
+        width: 100%;
+        z-index: auto;
     }
 
     .chat-panel {
-        display: none;
+        /* Enough height that the composer sits at the bottom of a full screen
+           rather than riding up under the first message. */
+        min-height: calc(100dvh - 56px - 24px);
     }
 
-    .chat-panel.mobile-active {
-        display: flex;
-        flex-direction: column;
+    .sidebar {
+        height: auto;
+        padding-top: 20px;
+        -webkit-overflow-scrolling: touch;
     }
 
     .sys-box {
@@ -5751,7 +5760,20 @@ header {
         width: 100%;
         max-width: 100%;
         min-width: 0;
+    }
+
+    .sidebar,
+    .sidebar.mobile-active {
         min-height: 0;
+    }
+
+    /* Not `min-height: 0`: this block is later in the file at the same
+       specificity as the stacking rule above, so a blanket 0 here collapses
+       the chat panel to the height of its own content and pulls the composer
+       up under the first message. */
+    .chat-panel,
+    .chat-panel.mobile-active {
+        min-height: calc(100dvh - 56px - 24px);
     }
 
     .chat-panel.mobile-active {
