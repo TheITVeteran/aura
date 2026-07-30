@@ -1012,7 +1012,12 @@ main {
 }
 
 .typing-dots span {
-    animation: blink 1.4s infinite both;
+    /* Visible at rest, dimmed by the blink — never the other way round.
+       `both` used to hold each dot on blink's 0% keyframe (opacity 0) through
+       its stagger delay and any time the animation was not running, so "Aura
+       is thinking..." arrived with no dots at all. */
+    opacity: 1;
+    animation: blink 1.4s infinite;
 }
 
 .typing-dots span:nth-child(2) {
@@ -1028,7 +1033,9 @@ main {
     0%,
     80%,
     100% {
-        opacity: 0;
+        /* Not 0: a dot paused on this frame must still read as a dot.
+           Matches the vm-bounce resting value in voice_mode.css. */
+        opacity: 0.45;
     }
 
     40% {
@@ -3986,7 +3993,10 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
         0 4px 30px rgba(138,43,226,0.15),
         inset 0 1px 0 rgba(255,255,255,0.08);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: btnReveal 0.6s ease-out both;
+    /* No backwards fill: btnReveal starts at opacity 0, and this is the
+       control that gets past the splash. It must not depend on an animation
+       having run to be clickable-looking. */
+    animation: btnReveal 0.6s ease-out;
 }
 .splash-btn-glow {
     position: absolute; inset: -1px;
@@ -4014,8 +4024,10 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     box-shadow: 0 2px 15px rgba(138,43,226,0.2);
 }
 @keyframes btnReveal {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
+    /* Motion only: this is the control that gets past the splash, so it may
+       not be invisible while an animation clock is stopped. */
+    from { transform: translateY(12px); }
+    to   { transform: translateY(0); }
 }
 @keyframes btnPulse {
     0%   { box-shadow: 0 4px 30px rgba(138,43,226,0.15), inset 0 1px 0 rgba(255,255,255,0.08); }
@@ -4165,13 +4177,32 @@ header { position: relative; z-index: 200; }
     background: rgba(138,43,226,0.08);
 }
 
-/* Staggered page-load animation */
-header { animation: staggerIn 0.6s ease-out both; }
-.chat-panel { animation: staggerIn 0.6s ease-out 0.1s both; }
-.sidebar { animation: staggerIn 0.6s ease-out 0.2s both; }
+/* Staggered page-load animation — MOTION ONLY, never opacity.
+
+   `header`/`.chat-panel`/`.sidebar` IS the entire product: chat, and all six
+   panels. This animation may move the shell in. It may not be the reason the
+   shell is visible.
+
+   Removing the backwards fill was not enough, and the measurement is why: an
+   animation that ramps opacity from 0 hides its element for as long as its
+   clock is stopped, whatever the fill-mode. Measured on the live instance with
+   the window not visible — `animation-fill-mode: none`, animation *running*,
+   and header/.chat-panel/.sidebar all computing to `opacity: 0`. A stopped
+   clock is not exotic: an occluded or backgrounded window does it, so does a
+   suspended compositor, so did the frame governor that paused animations
+   (d71dda1cd, reverted in e513112c6) — it tripped this trap rather than
+   creating it.
+
+   There is no CSS that both fades from fully transparent and stays visible
+   when time stops. So visibility is not animated: the slide is the entrance,
+   which is what "arrives" was ever meant to convey. Losing a fade and 200ms
+   of cascade is not a cost worth a UI that can vanish. */
+header,
+.chat-panel,
+.sidebar { animation: staggerIn 0.6s ease-out; }
 @keyframes staggerIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { transform: translateY(12px); }
+    to { transform: translateY(0); }
 }
 
 /* ══════════════════════════════════════════════════════════

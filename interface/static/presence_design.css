@@ -176,11 +176,16 @@ header {
 
 /* ── 7. Messages arrive, not appear ─────────────────────────────── */
 @keyframes aura-msg-in {
-  0%   { opacity: 0; transform: translateY(10px) scale(0.985); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+  /* Motion only — no opacity. Her reply existing and not being on screen is
+     the worst failure this file can cause. An opacity ramp from 0 hides the
+     message for as long as the animation clock is stopped (occluded window,
+     suspended compositor, paused play-state) regardless of fill-mode, so
+     visibility is not animated. The slide IS "arrives, not appears". */
+  0%   { transform: translateY(10px) scale(0.985); }
+  100% { transform: translateY(0) scale(1); }
 }
 .msg {
-  animation: aura-msg-in var(--aura-dur) var(--aura-ease-out) both;
+  animation: aura-msg-in var(--aura-dur) var(--aura-ease-out);
 }
 .msg .msg-content {
   box-shadow: var(--aura-inner-light);
@@ -249,11 +254,13 @@ header {
 
 /* ── 11. Thought cards drift in, staggered ──────────────────────── */
 @keyframes aura-card-in {
-  0%   { opacity: 0; transform: translateY(6px); }
-  100% { opacity: 1; transform: translateY(0); }
+  /* Motion only — see aura-msg-in. With an opacity ramp the live neural feed
+     "appeared for a moment and then went away again". */
+  0%   { transform: translateY(6px); }
+  100% { transform: translateY(0); }
 }
 .thought-card, .neural-line {
-  animation: aura-card-in var(--aura-dur) var(--aura-ease-out) both;
+  animation: aura-card-in var(--aura-dur) var(--aura-ease-out);
 }
 
 /* ── 12. Restraint: reduced motion and frame-budget throttle ────── */
