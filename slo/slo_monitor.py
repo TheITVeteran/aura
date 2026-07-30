@@ -57,6 +57,9 @@ class SLODefinition:
     # occurrence SLOs (error events, substrate resets) — judging a per-event
     # value of 1.0 against a count target can never trip.
     aggregation: str = "sample"
+    # A percentile/error-budget alert is not statistically meaningful from
+    # one startup sample. Count-per-window SLOs remain threshold-driven.
+    min_samples_for_alert: int = 20
 
 
 @dataclass
@@ -157,6 +160,12 @@ class SLOTracker:
         return violation_rate / budget
 
     def budget_status(self) -> BudgetStatus:
+        window = self._windowed_samples()
+        if (
+            self.definition.aggregation != "count_per_window"
+            and len(window) < max(1, int(self.definition.min_samples_for_alert))
+        ):
+            return BudgetStatus.UNKNOWN
         rate = self.burn_rate()
         remaining = self.budget_remaining_pct()
         if remaining <= 0:
@@ -255,6 +264,8 @@ class SLOMonitor:
         """Alert on state edges and sparse reminders, never every sample."""
         slo_name = tracker.definition.name
         status = tracker.budget_status()
+        if status == BudgetStatus.UNKNOWN:
+            return
         now = time.time()
         recovered = False
         notification_kind = ""
@@ -331,7 +342,7 @@ class SLOMonitor:
     def _emit_alert(self, tracker: SLOTracker, *, notification_kind: str) -> None:
         """Emit an episode transition or sparse reminder."""
         bs = tracker.budget_status()
-        if bs == BudgetStatus.OK:
+        if bs in {BudgetStatus.OK, BudgetStatus.UNKNOWN}:
             return
 
         severity = {

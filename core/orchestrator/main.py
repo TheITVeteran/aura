@@ -1594,7 +1594,8 @@ class RobustOrchestrator(
             else:
                 await asyncio.wait_for(self._register_scheduled_tasks(), timeout=10.0)
                 ServiceContainer.register_instance("scheduler", scheduler, required=False)
-                await asyncio.wait_for(scheduler.start(), timeout=5.0)
+                if not scheduler.is_alive():
+                    await asyncio.wait_for(scheduler.start(), timeout=5.0)
                 if not scheduler.is_alive():
                     raise RuntimeError("scheduler start returned without live main loop")
 
@@ -1955,6 +1956,10 @@ class RobustOrchestrator(
                 name="meta_evolution_cycle",
                 coro=meta_evolution_wrapper,
                 tick_interval=1800.0,  # Runs every 30 minutes
+                # Registration occurs during boot. Running a self-evolution
+                # audit immediately competes with resident-model warmup and
+                # then diagnoses that intentional startup load as instability.
+                last_run=time.monotonic(),
             )
         )
 

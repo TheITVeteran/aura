@@ -25,6 +25,12 @@ from typing import Any, Optional
 logger = logging.getLogger("Aura.BootProfile")
 
 SLOW_PHASE_WARN_S = 2.0
+PHASE_WARN_S = {
+    # This phase starts the full orchestrator and resident 32B worker. A
+    # healthy measured desktop boot is about 9-13 seconds here; retain a real
+    # alert at 15 seconds rather than labelling every normal launch slow.
+    "orchestrator_runtime_start": 15.0,
+}
 
 
 class BootProfiler:
@@ -44,7 +50,8 @@ class BootProfiler:
                     "offset_s": round(max(0.0, offset_s), 3),
                 }
             )
-        if duration_s >= SLOW_PHASE_WARN_S:
+        warn_s = PHASE_WARN_S.get(str(name), SLOW_PHASE_WARN_S)
+        if duration_s >= warn_s:
             logger.warning(
                 "🐢 [BOOT] phase '%s' took %.1fs (offset +%.1fs)",
                 name,
@@ -94,6 +101,7 @@ class BootProfiler:
             "started_at_unix": self._started_at,
             "total_s": round(self.total_s(), 3),
             "slow_phase_warn_s": SLOW_PHASE_WARN_S,
+            "phase_warn_s": dict(PHASE_WARN_S),
             "phases": self.phases(),
         }
 
@@ -144,6 +152,7 @@ def reset_boot_profiler() -> BootProfiler:
 
 __all__ = [
     "BootProfiler",
+    "PHASE_WARN_S",
     "SLOW_PHASE_WARN_S",
     "get_boot_profiler",
     "reset_boot_profiler",

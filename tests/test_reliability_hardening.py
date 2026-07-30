@@ -412,6 +412,7 @@ class TestSLOMonitor:
         mon = SLOMonitor()
         within = mon.record("boot_cold_p95_ms", 999999)
         assert within is False
+        assert mon.status()["recent_alerts"] == []
 
     def test_burn_rate(self):
         from slo.slo_monitor import SLOMonitor
@@ -1042,7 +1043,8 @@ class TestAuditRegressions:
         mon = SLOMonitor()
         name = "boot_cold_p95_ms"
 
-        mon.record(name, 999999.0)
+        for _ in range(20):
+            mon.record(name, 999999.0)
         mon._last_alert_at[name] -= mon.ALERT_COOLDOWN_S + 1.0
         mon.record(name, 999999.0)
 

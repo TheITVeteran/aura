@@ -228,6 +228,36 @@ class TestSpikeDumpBounding(unittest.TestCase):
         self.assertIn("spike #1", dumps[0])
         self.assertEqual(h.dog._spike_count, 6, "every spike is still counted")
 
+    def test_observer_provenance_upgrade_is_not_an_allocation_spike(self):
+        h = _Harness()
+        dumps: list[str] = []
+        h.dog._dump_thread_stacks = dumps.append
+        h.dog._last_sample = MemorySample(
+            core_rss_mb=2_000.0,
+            child_rss_mb=0.0,
+            swap_used_gb=0.0,
+            system_percent=30.0,
+            total_ram_gb=64.0,
+            sampled_at=1.0,
+            observation_source="unavailable",
+            observation_scenario_id="bootstrap",
+        )
+        h.dog._sampler = lambda: MemorySample(
+            core_rss_mb=12_000.0,
+            child_rss_mb=0.0,
+            swap_used_gb=0.0,
+            system_percent=40.0,
+            total_ram_gb=64.0,
+            sampled_at=2.0,
+            observation_source="host",
+            observation_scenario_id="live-host",
+        )
+
+        h.dog._tick()
+
+        self.assertEqual(h.dog._spike_count, 0)
+        self.assertEqual(dumps, [])
+
     def test_spike_dump_lifetime_cap(self):
         h = _Harness()
         dumps: list[str] = []

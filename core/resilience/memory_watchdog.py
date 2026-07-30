@@ -562,6 +562,12 @@ class MemoryWatchdog(threading.Thread):
         self._last_sample = sample
         if (
             previous is not None
+            # ResourceObserver can upgrade from a conservative/unavailable
+            # bootstrap estimate to the live host adapter. The resulting
+            # numerical jump is a change of instrument, not an allocation.
+            # Compare deltas only within one observation provenance.
+            and sample.observation_source == previous.observation_source
+            and sample.observation_scenario_id == previous.observation_scenario_id
             and (sample.managed_rss_mb - previous.managed_rss_mb) > 8192.0
         ):
             self._record_footprint_spike(previous, sample)

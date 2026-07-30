@@ -12,6 +12,7 @@ import logging
 import time
 
 from core.runtime.boot_profile import (
+    PHASE_WARN_S,
     SLOW_PHASE_WARN_S,
     BootProfiler,
     get_boot_profiler,
@@ -55,6 +56,16 @@ class TestMarkApi:
         slow = [r for r in caplog.records if "🐢" in r.getMessage()]
         assert len(slow) == 1
         assert "model_load" in slow[0].getMessage()
+
+    def test_resident_orchestrator_uses_its_measured_phase_budget(self, caplog):
+        prof = BootProfiler()
+        with caplog.at_level(logging.WARNING, logger="Aura.BootProfile"):
+            prof._record(
+                "orchestrator_runtime_start",
+                PHASE_WARN_S["orchestrator_runtime_start"] - 1.0,
+                0.0,
+            )
+        assert not [r for r in caplog.records if "orchestrator_runtime_start" in r.getMessage()]
 
     def test_summary_names_slowest_phases_first(self):
         prof = BootProfiler()
