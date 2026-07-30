@@ -79,3 +79,22 @@ async def test_scheduler_reports_task_freshness_without_breaking_legacy_status(
 def test_task_spec_rejects_invalid_deadline():
     with pytest.raises(ValueError, match="timeout must be positive"):
         TaskSpec(name="invalid", coro=lambda: None, timeout_s=0.0)
+
+
+@pytest.mark.parametrize(
+    "field,value,match",
+    [
+        ("tick_interval", float("nan"), "interval must be a finite number"),
+        ("tick_interval", float("inf"), "interval must be a finite number"),
+        ("timeout_s", float("nan"), "timeout must be a finite number"),
+        ("timeout_s", float("-inf"), "timeout must be a finite number"),
+    ],
+)
+def test_task_spec_rejects_non_finite_timing(field, value, match):
+    with pytest.raises(ValueError, match=match):
+        TaskSpec(name="invalid", coro=lambda: None, **{field: value})
+
+
+def test_zero_interval_remains_a_bounded_every_tick_contract():
+    spec = TaskSpec(name="every_tick", coro=lambda: None, tick_interval=0.0)
+    assert spec.tick_interval == 0.0

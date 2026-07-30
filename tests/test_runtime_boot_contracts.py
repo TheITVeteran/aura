@@ -221,6 +221,19 @@ def test_final_engines_create_persistence_dirs_without_generated_gateways(tmp_pa
     assert identity_path.exists()
 
 
+def test_world_model_confidence_is_finite_and_bounded(tmp_path):
+    from core.final_engines import WorldModelEngine
+
+    world = WorldModelEngine(tmp_path / "world" / "beliefs.json")
+    world.add_belief("NaN is not evidence", float("nan"))
+    world.add_belief("Overconfidence is bounded", 7.0)
+    world.add_belief("Negative confidence is bounded", -3.0)
+
+    assert world.beliefs["nan is not evidence"].confidence == 0.0
+    assert world.beliefs["overconfidence is bounded"].confidence == 1.0
+    assert world.beliefs["negative confidence is bounded"].confidence == 0.0
+
+
 def test_scaffolds_and_null_telemetry_are_operational():
     from core.pipeline.prompt_scaffold import PromptScaffold
     from core.runtime.telemetry_exporter import MetricSample, NullExporter

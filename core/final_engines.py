@@ -19,6 +19,7 @@ Wire these from orchestrator._init_autonomous_evolution():
     from core.final_engines import register_final_engines
     register_final_engines(orchestrator=self)
 """
+from core.runtime.numeric_safety import validated_unit
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.service_registry import register_runtime_service
@@ -78,6 +79,16 @@ class WorldModelEngine:
             logger.error("WorldModelEngine: Failed to save beliefs to %s", self.persist_path)
 
     def add_belief(self, claim: str, confidence: float, source_id: Optional[str] = None, tags: List[str] = None):
+        # CP126 (high): "Belief confidence accepts non-finite and
+        # out-of-range values." Confidence is documented as 0.0-1.0 and was
+        # stored as given, so a NaN reached get_context_injection's sort —
+        # and because every comparison with NaN is False, a corrupt belief
+        # does not merely rank badly, it wins the top-5 slot and is injected
+        # into the prompt as her most confident belief. The running average
+        # below then makes it permanent: (nan + x) / 2 is nan forever.
+        confidence = float(
+            validated_unit(confidence, name="world_model_belief_confidence")
+        )
         key = claim.lower().strip()
         if key in self.beliefs:
             self.beliefs[key].confidence = (self.beliefs[key].confidence + confidence) / 2

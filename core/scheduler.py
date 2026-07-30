@@ -1,4 +1,5 @@
 from __future__ import annotations
+from core.runtime.numeric_safety import is_usable
 
 import asyncio
 import enum
@@ -48,10 +49,29 @@ class TaskSpec:
         self.name = str(self.name).strip()
         if not self.name:
             raise ValueError("scheduled task name must be non-empty")
-        if self.tick_interval is not None and float(self.tick_interval) < 0:
-            raise ValueError("scheduled task interval must be non-negative")
-        if self.timeout_s is not None and float(self.timeout_s) <= 0:
-            raise ValueError("scheduled task timeout must be positive")
+        # CP126 (high): "Intervals accept zero and non-finite values."
+        #
+        # The non-finite half is a real defect: `float(nan) < 0` is False, so
+        # a NaN interval passed validation, and then `now - last_run >=
+        # interval` is False forever — the task was registered, reported
+        # healthy, and never ran again. Silent permanent non-execution is the
+        # worst outcome a scheduler has.
+        #
+        # Zero is NOT a defect here, and rejecting it was wrong. The run loop
+        # treats `now - last_run >= 0` as "run on every scheduler tick", which
+        # is bounded by the scheduler's own cadence rather than being a busy
+        # loop, and it is an idiom the suite relies on. Negative intervals
+        # stay rejected because they mean nothing.
+        if self.tick_interval is not None:
+            if not is_usable(self.tick_interval):
+                raise ValueError("scheduled task interval must be a finite number")
+            if float(self.tick_interval) < 0:
+                raise ValueError("scheduled task interval must be non-negative")
+        if self.timeout_s is not None:
+            if not is_usable(self.timeout_s):
+                raise ValueError("scheduled task timeout must be a finite number")
+            if float(self.timeout_s) <= 0:
+                raise ValueError("scheduled task timeout must be positive")
 
 class Scheduler:
     """
