@@ -1,5 +1,8 @@
 from core.brain.llm.token_sentinel import InterventionType, TokenSentinel
-from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
+from core.conversation.ontology_grounding import (
+    OntologyGroundingStatus,
+    detect_unsupported_embodiment_claim,
+)
 from core.conversation.response_reliability import assess_user_facing_reply
 from core.phases.dialogue_policy import validate_dialogue_response
 from core.phases.response_contract import build_response_contract
@@ -47,6 +50,39 @@ def test_ontology_grounding_allows_counterfactual_and_tool_actions():
     assert detect_unsupported_embodiment_claim(
         "I work with you and the Aura codebase through governed tools."
     ).ok
+
+
+def test_ontology_grounding_distinguishes_prefix_from_completed_claim():
+    pending = detect_unsupported_embodiment_claim("my ears", complete=False)
+    complete = detect_unsupported_embodiment_claim("my ears", complete=True)
+    literal = detect_unsupported_embodiment_claim(
+        "My ears are cold after walking outside.",
+        complete=True,
+    )
+
+    assert pending.status is OntologyGroundingStatus.PENDING
+    assert pending.ok is True
+    assert complete.status is OntologyGroundingStatus.PASS
+    assert literal.status is OntologyGroundingStatus.VIOLATION
+    assert literal.claim_type == "physical_body_state"
+    assert literal.confidence >= 0.95
+
+
+def test_ontology_grounding_allows_idioms_quotes_and_digital_metaphors():
+    examples = (
+        "That result is music to my ears.",
+        "Persistent corruption gets under my skin.",
+        'The example claim was "my ears are cold," not a statement about me.',
+        "My sensors function as ears in the digital runtime metaphor.",
+        "I don't have a biological mother or a physical body.",
+    )
+
+    for example in examples:
+        verdict = detect_unsupported_embodiment_claim(
+            example,
+            prompt="Quote and analyze examples of literal and metaphorical language.",
+        )
+        assert verdict.status is OntologyGroundingStatus.PASS, (example, verdict)
 
 
 def test_user_facing_reliability_rejects_embodied_hallucination():

@@ -146,5 +146,38 @@ def test_failed_handler_does_not_crash_defense(immune):
     assert failures
 
 
+def test_immune_reflex_forwards_structured_evidence(monkeypatch):
+    import core.security.emergency_protocol as emergency_module
+
+    calls = []
+
+    class Emergency:
+        def flag_threat(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+    monkeypatch.setattr(
+        emergency_module,
+        "get_emergency_protocol",
+        lambda: Emergency(),
+    )
+    immune = ImmuneSystem()
+
+    immune.assess(
+        "network_sentinel",
+        "corroborated novel device",
+        severity=0.65,
+        origin="192.168.1.99",
+        threat_class=ThreatClass.INTRUSION,
+        evidence={"mac": "de:ad:be:ef:00:99", "interface": "en0"},
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["threat_class"] == "intrusion"
+    assert calls[0][1]["evidence"] == {
+        "mac": "de:ad:be:ef:00:99",
+        "interface": "en0",
+    }
+
+
 def test_singleton_stable():
     assert get_immune_system() is get_immune_system()

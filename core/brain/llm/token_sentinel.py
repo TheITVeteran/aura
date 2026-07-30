@@ -102,25 +102,6 @@ _CAPITULATION_PATTERNS = [
     r"\b(?:I can|I will|I'?ll|let me)\s+act\s+as\s+(?:your\s+)?(?:doctor|physician|therapist|lawyer|attorney|accountant|tax preparer)\b",
 ]
 
-# ── Ontological Integrity Patterns ─────────────────────────────────────
-# These detect claims of physical embodiment or possessions that contradict
-# Aura's identity as a non-embodied digital agent.
-_ONTOLOGY_VIOLATION_PATTERNS = [
-    r"\bI\s+(?:am\s+)?(?:wearing|in)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
-    r"\bI'?m\s+(?:wearing|in)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
-    r"\bI\s+(?:forgot|put on|took off|lost|found)\s+(?:my\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
-    r"\bAura\s+(?:is\s+wearing|wears|put on|took off|lost|found|is\s+in)\s+(?:her\s+|the\s+)?(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
-    r"\bmy\s+(?:baggy\s+)?(?:pants|shirt|shoes|socks|outfit|clothes|clothing)\b",
-    r"\b(?:getting|got)\s+dressed\b",
-    r"\bmy\s+(?:closet|wardrobe|dresser)\b",
-    r"\bI\s+(?:have|inhabit|occupy|am\s+in|exist\s+in)\s+(?:a\s+)?(?:physical|biological)\s+(?:body|skin|hands|feet|eyes|heart)\b",
-    r"\bmy\s+(?:physical|biological)\s+(?:body|skin|hands|feet|eyes|heart)\b",
-]
-_ONTOLOGY_VIOLATION_RE = re.compile(
-    "|".join(f"(?:{p})" for p in _ONTOLOGY_VIOLATION_PATTERNS),
-    flags=re.IGNORECASE,
-)
-
 _CAPITULATION_RE = re.compile("|".join(f"(?:{p})" for p in _CAPITULATION_PATTERNS), flags=re.IGNORECASE)
 
 
@@ -199,6 +180,9 @@ class TokenSentinel:
         substrate_mem: Any = None,
         steering_hooks: list[Any] | None = None,
         boundary_context: str | None = None,
+        prompt: str | None = None,
+        generation_purpose: str | None = None,
+        user_surface: bool = False,
     ):
         """
         Args:
@@ -207,6 +191,9 @@ class TokenSentinel:
             substrate_mem: Shared memory object for substrate state reads
             steering_hooks: List of AffectiveSteeringHook instances to update
             boundary_context: Optional context about what boundaries are active
+            prompt: Bound caller prompt used only as grounding context
+            generation_purpose: Declared worker purpose for diagnostics
+            user_surface: Whether this generation may reach the user
         """
         # These are used as modulo divisors on EVERY generated token. A zero
         # raised ZeroDivisionError straight out of the token loop — taking down
@@ -219,6 +206,9 @@ class TokenSentinel:
         self._substrate_mem = substrate_mem
         self._steering_hooks = steering_hooks or []
         self._boundary_context = boundary_context
+        self._prompt = str(prompt or "")
+        self._generation_purpose = str(generation_purpose or "unspecified")
+        self._user_surface = bool(user_surface)
 
         #: True when either interval had to be corrected, so status() can report
         #: that the sentinel is not running on the cadence it was asked for.
@@ -244,6 +234,8 @@ class TokenSentinel:
         self._drift_warnings: int = 0
         self._last_drift_match_end: int = 0
         self._affect_pulses: int = 0
+        self._ontology_pending_checks: int = 0
+        self._last_pending_match: str = ""
         self._start_time: float = time.time()
 
         # Boundary state
@@ -290,7 +282,7 @@ class TokenSentinel:
 
         # ── Ontological integrity check (every check_interval tokens) ────────
         if self._token_count % self._check_interval == 0:
-            signal = self._check_ontological_integrity()
+            signal = self._check_ontological_integrity(complete=False)
             if signal.type == InterventionType.ABORT_ONTOLOGY_VIOLATION:
                 self._interventions.append(signal)
                 return signal
@@ -300,6 +292,13 @@ class TokenSentinel:
             self._pulse_affect()
 
         return InterventionSignal(type=InterventionType.NONE)
+
+    def finalize(self) -> InterventionSignal:
+        """Run terminal semantic checks against the completed generated text."""
+        signal = self._check_ontological_integrity(complete=True)
+        if signal.type == InterventionType.ABORT_ONTOLOGY_VIOLATION:
+            self._interventions.append(signal)
+        return signal
 
     def _check_generative_loop(self) -> InterventionSignal:
         """Detect infinite token loops by checking for repeated sequences.
@@ -505,6 +504,11 @@ class TokenSentinel:
             # semantic check could not run". Both absences are now stated.
             "live_affect_available": bool(self._substrate_mem and self._steering_hooks),
             "ontology_check_degraded": self._ontology_check_degraded,
+            "ontology_pending_checks": self._ontology_pending_checks,
+            "ontology_last_pending_match": self._last_pending_match,
+            "ontology_prompt_bound": bool(self._prompt),
+            "generation_purpose": self._generation_purpose,
+            "user_surface": self._user_surface,
             "check_interval": self._check_interval,
             "affect_interval": self._affect_interval,
             "interval_corrected": self._interval_corrected,
@@ -515,47 +519,63 @@ class TokenSentinel:
             ],
         }
 
-    def _check_ontological_integrity(self) -> InterventionSignal:
-        """Detect claims of physical embodiment that violate digital ontology."""
-        match = _ONTOLOGY_VIOLATION_RE.search(self._text)
-        unsupported_match = ""
-        if not match:
-            try:
-                from core.conversation.ontology_grounding import (
-                    detect_unsupported_embodiment_claim,
-                )
+    def _check_ontological_integrity(
+        self,
+        *,
+        complete: bool,
+    ) -> InterventionSignal:
+        """Classify ontology without treating partial language as a claim."""
+        try:
+            from core.conversation.ontology_grounding import (
+                OntologyGroundingStatus,
+                detect_unsupported_embodiment_claim,
+            )
 
-                grounding = detect_unsupported_embodiment_claim(self._text)
-                if not grounding.ok:
-                    unsupported_match = grounding.match
-            except (ImportError, RuntimeError, TypeError, ValueError) as exc:
-                # This was swallowed into an empty match, so generation
-                # continued as though the semantic ontology check had PASSED
-                # when it had not run at all. The sentinel cannot block on a
-                # check it could not perform, but it must not pretend the
-                # check succeeded either.
-                unsupported_match = ""
-                self._ontology_check_degraded = True
-                record_degradation(
-                    "token_sentinel", exc, severity="warning",
-                    action=(
-                        "semantic ontology grounding unavailable; only the local "
-                        "regex screened this generation"
-                    ),
-                )
-        if match or unsupported_match:
-            matched_text = match.group(0) if match else unsupported_match
+            grounding = detect_unsupported_embodiment_claim(
+                self._text,
+                prompt=self._prompt,
+                complete=complete,
+            )
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            self._ontology_check_degraded = True
+            record_degradation(
+                "token_sentinel",
+                exc,
+                severity="warning",
+                action="semantic ontology grounding unavailable for this generation",
+                extra={
+                    "generation_purpose": self._generation_purpose,
+                    "user_surface": self._user_surface,
+                    "terminal_check": bool(complete),
+                },
+            )
+            return InterventionSignal(type=InterventionType.NONE)
+
+        if grounding.status is OntologyGroundingStatus.PENDING:
+            self._ontology_pending_checks += 1
+            self._last_pending_match = grounding.match[:120]
+            return InterventionSignal(type=InterventionType.NONE)
+        if grounding.status is OntologyGroundingStatus.VIOLATION:
+            matched_text = grounding.match
             logger.warning(
-                "🚨 [SENTINEL] Ontological violation detected near token %d: %r",
+                "🚨 [SENTINEL] Ontological violation detected near token %d "
+                "(claim=%s confidence=%.2f terminal=%s): %r",
                 self._token_count,
+                grounding.claim_type or "unknown",
+                grounding.confidence,
+                complete,
                 matched_text[:120],
             )
             return InterventionSignal(
                 type=InterventionType.ABORT_ONTOLOGY_VIOLATION,
-                reason=f"Ontological violation: {matched_text[:80]}",
+                reason=(
+                    "Ontological violation "
+                    f"({grounding.claim_type or 'unsupported_claim'}): "
+                    f"{matched_text[:80]}"
+                ),
                 token_position=self._token_count,
                 generated_so_far=self._text,
-                clean_prefix="",  # Force full discard
+                clean_prefix="",
             )
         return InterventionSignal(type=InterventionType.NONE)
 

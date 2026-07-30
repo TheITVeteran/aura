@@ -1672,6 +1672,36 @@ def _surface_retry_wall_exceeded(started_monotonic: float, wall_s: float) -> boo
     return (time.monotonic() - started_monotonic) > max(10.0, wall_s)
 
 
+def _ontology_retry_permitted(
+    *,
+    internal_attempt: int,
+    max_internal_retries: int,
+    ontology_retry_count: int,
+    job_deadline_unix: float,
+    user_surface: bool,
+    surface_retry_started: float,
+    surface_retry_wall_s: float,
+    now_unix: float | None = None,
+) -> tuple[bool, bool, bool]:
+    """Allow one ontology repair only while caller time budgets remain open."""
+    now = time.time() if now_unix is None else float(now_unix)
+    deadline_open = job_deadline_unix <= 0.0 or now < job_deadline_unix
+    retry_wall_open = (
+        not user_surface
+        or not _surface_retry_wall_exceeded(
+            surface_retry_started,
+            surface_retry_wall_s,
+        )
+    )
+    allowed = (
+        int(internal_attempt) < int(max_internal_retries)
+        and int(ontology_retry_count) < 1
+        and deadline_open
+        and retry_wall_open
+    )
+    return allowed, deadline_open, retry_wall_open
+
+
 def _expand_user_surface_retry_budget(
     kwargs: dict[str, Any],
     reasons: list[str],
@@ -5139,6 +5169,7 @@ def _mlx_worker_loop(
                             surface_retry_wall_s = _safe_float(
                                 os.getenv("AURA_SURFACE_RETRY_WALL_S", "20"), 20.0
                             )
+                            ontology_retry_count = 0
                             schema_validation_failed = ""
 
                             for internal_attempt in range(max_internal_retries + 1):
@@ -5195,6 +5226,24 @@ def _mlx_worker_loop(
                                             affect_interval=16,
                                             substrate_mem=substrate_mem,
                                             steering_hooks=_active_steering_hooks(engine),
+                                            boundary_context=str(
+                                                job.get("boundary_context") or ""
+                                            ),
+                                            prompt=(
+                                                _surface_validation_prompt(job)
+                                                or original_prompt
+                                            ),
+                                            generation_purpose=str(
+                                                job.get("request_purpose")
+                                                or job.get("action")
+                                                or "generate"
+                                            ),
+                                            user_surface=bool(
+                                                job.get(
+                                                    "clean_user_surface_contract",
+                                                    False,
+                                                )
+                                            ),
                                         )
                                     except (ImportError, AttributeError, RuntimeError) as _sent_exc:
                                         if bool(job.get("clean_user_surface_contract", False)):
@@ -5634,6 +5683,20 @@ def _mlx_worker_loop(
                                         if stop_hit:
                                             break
 
+                                    if sentinel is not None and not sentinel_aborted:
+                                        terminal_signal = sentinel.finalize()
+                                        if (
+                                            terminal_signal.type
+                                            == InterventionType.ABORT_ONTOLOGY_VIOLATION
+                                        ):
+                                            logger.warning(
+                                                "🚨 [SENTINEL] Completed response failed "
+                                                "ontology grounding: %s",
+                                                terminal_signal.reason,
+                                            )
+                                            sentinel_aborted = True
+                                            sentinel_ontology_aborted = True
+
                                     # Single post-generation cache insert: the final
                                     # cache object exactly matches the final token
                                     # list, and generation has stopped mutating it.
@@ -5642,6 +5705,7 @@ def _mlx_worker_loop(
                                         and not disable_prompt_cache
                                         and final_prompt_cache is not None
                                         and tokens
+                                        and not sentinel_aborted
                                     ):
                                         prompt_cache_lru.insert_cache(
                                             model_key, list(tokens), final_prompt_cache
@@ -5710,6 +5774,8 @@ def _mlx_worker_loop(
                                             ),
                                         )
                                         response_text = sanitized_partial or ""
+                                        if sentinel_ontology_aborted:
+                                            response_text = ""
                                         if response_text:
                                             if strict_value_contract:
                                                 response_text = _normalize_strict_value_response(
@@ -5850,7 +5916,26 @@ def _mlx_worker_loop(
                                             break
 
                                     if sentinel_ontology_aborted:
-                                        if internal_attempt < max_internal_retries:
+                                        (
+                                            ontology_retry_allowed,
+                                            retry_deadline_open,
+                                            retry_wall_open,
+                                        ) = _ontology_retry_permitted(
+                                            internal_attempt=internal_attempt,
+                                            max_internal_retries=max_internal_retries,
+                                            ontology_retry_count=ontology_retry_count,
+                                            job_deadline_unix=job_deadline_unix,
+                                            user_surface=bool(
+                                                job.get(
+                                                    "clean_user_surface_contract",
+                                                    False,
+                                                )
+                                            ),
+                                            surface_retry_started=surface_retry_started,
+                                            surface_retry_wall_s=surface_retry_wall_s,
+                                        )
+                                        if ontology_retry_allowed:
+                                            ontology_retry_count += 1
                                             logger.warning("⚠️ [WORKER] Retrying generation cleanly after ontological violation (attempt %s)...", internal_attempt + 1)
                                             if prompt_cache_lru is not None:
                                                 prompt_cache_lru.clear()
@@ -5860,7 +5945,14 @@ def _mlx_worker_loop(
                                             _prepare_clean_retry_kwargs(kwargs, structured=bool(schema))
                                             continue
                                         else:
-                                            logger.warning("🚨 [WORKER] Out of retries for ontological violation. Returning refusal.")
+                                            logger.warning(
+                                                "🚨 [WORKER] Ontology repair unavailable or exhausted "
+                                                "(attempts=%d deadline_open=%s wall_open=%s). "
+                                                "Returning bounded refusal.",
+                                                ontology_retry_count,
+                                                retry_deadline_open,
+                                                retry_wall_open,
+                                            )
                                             response_text = get_refusal_fallback(seed=token_count)
                                             break
 

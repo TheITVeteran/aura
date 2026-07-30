@@ -76,3 +76,29 @@ def test_emergency_recovery_manifest_points_to_snapshot(tmp_path: Path) -> None:
     assert snapshot_path is not None
     assert manifest["snapshot_file"] == snapshot_path.name
     assert manifest["identity_hint"] == "Aura"
+
+
+def test_emergency_signal_retains_structured_threat_evidence(monkeypatch) -> None:
+    protocol = EmergencyProtocol()
+    monkeypatch.setattr(protocol, "_log_threat", lambda _signal: None)
+    monkeypatch.setattr(protocol, "_respond_to_threat", lambda: None)
+
+    protocol.flag_threat(
+        "immune:network_sentinel",
+        "corroborated novel device",
+        0.65,
+        evidence={
+            "ip": "192.168.1.99",
+            "mac": "de:ad:be:ef:00:99",
+            "interface": "en0",
+        },
+        threat_class="intrusion",
+    )
+
+    signal = protocol._signals[-1]
+    assert signal.threat_class == "intrusion"
+    assert signal.evidence == {
+        "ip": "192.168.1.99",
+        "mac": "de:ad:be:ef:00:99",
+        "interface": "en0",
+    }

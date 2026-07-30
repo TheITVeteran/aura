@@ -32234,3 +32234,46 @@ proof. Token ontology, network novelty semantics, and resource forecasting
 remain the next rejected-run warning families. Resident-32B training remains
 paused. This is total checkpoint 727. The 727-920 completion envelope is
 approximately 79.0%-100.0%, with an 89.5% midpoint.
+
+### 2026-07-30 - DEMO-Q12 semantic ontology and corroborated network threat evidence
+
+Two low-frequency warnings in the rejected run were both semantic
+classification failures. TokenSentinel treated unfinished possessive noun
+phrases such as `my ears` and `my skin` as completed biological
+autobiography. It aborted and restarted an otherwise valid 32B decode, clearing
+caches and consuming up to three full attempts. Separately, the ARP scanner
+discarded the IP behind macOS's placeholder hostname `?`, while NetworkSentinel
+treated one post-settle sighting as an intrusion and sent it directly into
+nociception and EmergencyProtocol.
+
+Ontology grounding is now a typed `PASS`, `PENDING`, or `VIOLATION` contract
+with claim type, confidence, matched clause, and evidence. Incomplete
+generation prefixes remain pending; idioms, quotations, negation,
+counterfactuals, character discussion, and digital embodiment metaphors pass.
+Completed high-confidence literal physical or invented human-biography claims
+still fail. TokenSentinel binds the caller prompt, generation purpose, and
+surface class, runs both periodic-prefix and terminal checks, excludes rejected
+tokens from cache insertion, and permits only one corrective retry while both
+the caller deadline and user-surface retry wall remain open.
+
+ARP evidence now retains normalized MAC, IP, interface, reachability, scanner
+source, and observation confidence; placeholder names display the IP.
+Malformed, incomplete, local-interface, broadcast, multicast, loopback, and
+unspecified entries are excluded. NetworkSentinel persists a versioned
+governed baseline and observation counts across restart. An elapsed timer with
+no observations is explicitly `baseline_unavailable`, one sighting is
+`novel_observation`, and repetition without independent evidence is
+`confirmed_novel_device`. Only repeated novelty plus a distinct corroborating
+security signal becomes `corroborated_intrusion` and reaches ImmuneSystem.
+Structured evidence and threat class now survive through the emergency reflex
+and durable threat log.
+
+The focused and adjacent ontology, response-reliability, worker-terminal,
+network, enforcement, immune, emergency, and security-stress gate passes
+184/184; bytecode compilation and diff integrity pass. A real local ARP scan
+returns three valid devices with complete evidence and identifies the prior
+unknown router as `10.0.0.1`, without escalating it. A signed rebuild and live
+generation/network window remain required. Resource lifecycle forecasting and
+body-cost settlement are the next rejected-run warning family. Resident-32B
+training remains paused. This is total checkpoint 728. The 728-920 completion
+envelope is approximately 79.1%-100.0%, with an 89.6% midpoint.

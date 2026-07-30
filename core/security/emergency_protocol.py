@@ -141,6 +141,8 @@ class ThreatSignal:
     source: str
     description: str
     severity: float   # 0.0–1.0
+    evidence: dict[str, Any] = field(default_factory=dict)
+    threat_class: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
@@ -162,19 +164,34 @@ class EmergencyProtocol:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def flag_threat(self, source: str, description: str, severity: float = 0.5):
+    def flag_threat(
+        self,
+        source: str,
+        description: str,
+        severity: float = 0.5,
+        *,
+        evidence: dict[str, Any] | None = None,
+        threat_class: str = "",
+    ):
         """
         Register a threat signal from any subsystem.
         Automatically evaluates and responds.
         """
-        signal = ThreatSignal(source=source, description=description, severity=severity)
+        signal = ThreatSignal(
+            source=source,
+            description=description,
+            severity=severity,
+            evidence=dict(evidence or {}),
+            threat_class=str(threat_class or ""),
+        )
         self._signals.append(signal)
         self._signals = self._signals[-50:]  # keep last 50
 
         self._recompute_threat_score()
         self._log_threat(signal)
 
-        logger.warning(
+        log = logger.warning if severity >= 0.4 else logger.info
+        log(
             "EmergencyProtocol: threat flagged by %s (severity=%.2f, score=%.2f): %s",
             source, severity, self._threat_score, description[:80]
         )
@@ -558,6 +575,8 @@ class EmergencyProtocol:
                 "source": signal.source,
                 "description": signal.description,
                 "severity": signal.severity,
+                "threat_class": signal.threat_class,
+                "evidence": signal.evidence,
                 "threat_score": self._threat_score,
             }
             with local_internal_governed_scope(

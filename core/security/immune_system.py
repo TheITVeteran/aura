@@ -224,7 +224,13 @@ class ImmuneSystem:
         # Reflex: hand it to the fast self-preservation layer (snapshot / minimal-mode).
         try:
             from core.security.emergency_protocol import get_emergency_protocol
-            get_emergency_protocol().flag_threat(f"immune:{source}", description, ev.severity)
+            get_emergency_protocol().flag_threat(
+                f"immune:{source}",
+                description,
+                ev.severity,
+                evidence=ev.evidence,
+                threat_class=ev.threat_class.value,
+            )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
 

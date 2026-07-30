@@ -88,15 +88,56 @@ def test_arp_scan_parses_devices(monkeypatch):
         "? (192.168.1.99) at (incomplete) on en0 ifscope [ethernet]\n"
     )
     import core.runtime.subprocess_gateway as sg
+    import core.security.enforcement as enforcement
     monkeypatch.setattr(
         sg, "get_subprocess_gateway",
         lambda: SimpleNamespace(run=lambda *a, **k: SimpleNamespace(stdout=sample, returncode=0)),
     )
+    monkeypatch.setattr(enforcement, "_local_interface_macs", lambda: set())
     devices = arp_scan()
-    macs = {d.fingerprint for d in devices}
+    by_mac = {d.fingerprint: d for d in devices}
+    macs = set(by_mac)
     assert "dc:eb:69:85:68:17" in macs
     assert "3a:87:3c:de:5c:7c" in macs
     assert len(devices) == 2   # the incomplete entry is skipped
+    assert by_mac["3a:87:3c:de:5c:7c"].name == "192.168.1.42"
+    assert by_mac["3a:87:3c:de:5c:7c"].ip == "192.168.1.42"
+    assert by_mac["3a:87:3c:de:5c:7c"].interface == "en0"
+    assert by_mac["3a:87:3c:de:5c:7c"].scanner_source == "arp"
+
+
+def test_arp_scan_filters_local_broadcast_multicast_and_malformed(monkeypatch):
+    from types import SimpleNamespace
+
+    sample = (
+        "? (192.168.1.2) at 02:00:00:00:00:01 on en0 ifscope [ethernet]\n"
+        "? (192.168.1.3) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]\n"
+        "? (224.0.0.1) at 02:00:00:00:00:03 on en0 ifscope [ethernet]\n"
+        "? (192.168.1.4) at 01:00:5e:00:00:01 on en0 ifscope [ethernet]\n"
+        "? (192.168.1.5) at 02:00:00:00:00:05 on en0 ifscope [ethernet]\n"
+    )
+    import core.runtime.subprocess_gateway as sg
+    import core.security.enforcement as enforcement
+
+    monkeypatch.setattr(
+        sg,
+        "get_subprocess_gateway",
+        lambda: SimpleNamespace(
+            run=lambda *args, **kwargs: SimpleNamespace(
+                stdout=sample,
+                returncode=0,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        enforcement,
+        "_local_interface_macs",
+        lambda: {"02:00:00:00:00:01"},
+    )
+
+    devices = arp_scan()
+
+    assert [device.ip for device in devices] == ["192.168.1.5"]
 
 
 def test_arp_scan_failopen(monkeypatch):

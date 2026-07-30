@@ -16,6 +16,7 @@ hers.
 from __future__ import annotations
 
 import logging
+import ipaddress
 import os
 import re
 import shutil
@@ -203,7 +204,53 @@ class ResourceMonitor:
 
 # ── network scanner (own environment) ───────────────────────────────────────
 
-_ARP_LINE = re.compile(r"^(?P<host>[^\s(]+)?\s*\((?P<ip>[0-9.]+)\)\s+at\s+(?P<mac>[0-9a-fA-F:]+)")
+_ARP_LINE = re.compile(
+    r"^(?P<host>[^\s(]+)?\s*\((?P<ip>[0-9a-fA-F:.]+)\)\s+at\s+"
+    r"(?P<mac>[0-9a-fA-F:]+)\s+on\s+(?P<interface>\S+)"
+)
+
+
+def _normalize_mac(value: str) -> str:
+    parts = str(value or "").strip().lower().replace("-", ":").split(":")
+    if len(parts) != 6:
+        return ""
+    try:
+        return ":".join(f"{int(part, 16):02x}" for part in parts)
+    except ValueError:
+        return ""
+
+
+def _local_interface_macs() -> set[str]:
+    try:
+        from core.runtime import resource_psutil as psutil
+
+        addresses = psutil.net_if_addrs()
+    except (ImportError, AttributeError, OSError, RuntimeError):
+        return set()
+    found: set[str] = set()
+    for items in addresses.values():
+        for item in items:
+            normalized = _normalize_mac(getattr(item, "address", ""))
+            if normalized:
+                found.add(normalized)
+    return found
+
+
+def _valid_arp_device(ip_text: str, mac: str, local_macs: set[str]) -> bool:
+    if not mac or mac in local_macs or mac in {"00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff"}:
+        return False
+    try:
+        if int(mac.split(":", 1)[0], 16) & 1:
+            return False
+        address = ipaddress.ip_address(ip_text)
+    except ValueError:
+        return False
+    return not (
+        address.is_multicast
+        or address.is_unspecified
+        or address.is_loopback
+        or str(address) == "255.255.255.255"
+    )
 
 
 def arp_scan() -> list[Any]:
@@ -215,14 +262,29 @@ def arp_scan() -> list[Any]:
         proc = get_subprocess_gateway().run(
             ["/usr/sbin/arp", "-a"], read_only=True, timeout=4.0, source="security.enforcement.arp",
         )
+        local_macs = _local_interface_macs()
         for line in (proc.stdout or "").splitlines():
             m = _ARP_LINE.match(line.strip())
-            if not m or "incomplete" in line:
+            if not m or "incomplete" in line.lower():
                 continue
-            mac = m.group("mac")
-            if mac and mac != "(incomplete)":
-                devices.append(Device(fingerprint=mac, name=m.group("host") or m.group("ip"),
-                                      kind="network_host"))
+            mac = _normalize_mac(m.group("mac"))
+            ip = m.group("ip")
+            if not _valid_arp_device(ip, mac, local_macs):
+                continue
+            name = str(m.group("host") or "").strip()
+            devices.append(
+                Device(
+                    fingerprint=mac,
+                    name=ip if name in {"", "?"} else name,
+                    kind="network_host",
+                    ip=ip,
+                    mac=mac,
+                    interface=m.group("interface"),
+                    arp_state="reachable",
+                    scanner_source="arp",
+                    observation_confidence=0.95,
+                )
+            )
     except subprocess.TimeoutExpired as exc:
         logger.debug("ARP scan timed out after %.1fs", float(exc.timeout or 4.0))
     except _ENFORCEMENT_ERRORS as exc:
