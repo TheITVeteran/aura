@@ -31957,3 +31957,30 @@ The installed app must be rebuilt again to prove bounded root exit, native
 permission discovery, and identify the Will slow stage live. Training remains
 paused. This is total checkpoint 710. The 710-920 completion envelope is
 approximately 77.2%-100.0%, with an 88.6% midpoint.
+
+### 2026-07-30 - DEMO-Q4 hot-path memory separation and recorder-owned sealing
+
+The second rebuilt boot produced causal stage timing for the cold Will SLO:
+three slow decisions spent 315-481 milliseconds in `memory`, while AuraNow,
+substrate, scars, state inputs, policy composition, covenant gates, and receipt
+construction together remained within a few milliseconds. The synchronous Will
+boundary had been starting vector/embedding or SQLite retrieval whenever callers
+did not supply memory evidence. Retrieval now remains in the upstream cognitive
+and memory lanes; Will consumes their explicit bounded evidence and treats the
+presence of the memory spine only as weak continuity evidence. Authority checks
+therefore retain memory causality without placing unbounded retrieval on every
+action's critical path.
+
+The same shutdown proved root finalization was bounded, but the root marker ran
+after ServiceContainer had already closed the flight recorder mmap. The recorder
+now owns an `on_stop` hook that stamps `container_shutdown` before closing its
+mapping. The root terminal receipt remains responsible for later process-only
+resources, while the flight ring truthfully records that the live mind and its
+container reached orderly shutdown.
+
+The affected Unified Will, flight-recorder, root-finalization, capability,
+lease, and orchestration gate passes 196/196; bytecode compilation and diff
+integrity pass. A newly rebuilt app must prove the Will SLO and clean-ring state
+live before demo runs count. Training remains paused. This is total checkpoint
+711. The 711-920 completion envelope is approximately 77.3%-100.0%, with an
+88.6% midpoint.

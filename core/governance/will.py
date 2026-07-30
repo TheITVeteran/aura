@@ -1062,7 +1062,13 @@ class UnifiedWill:
     def _check_memory_relevance(
         self, content: str, context: dict[str, Any]
     ) -> float:
-        """Check if memory has relevant context for this decision."""
+        """Read relevance already established by the cognition/memory lane.
+
+        Will is a synchronous hot-path authority boundary. It must not start a
+        vector search, embedding load, or SQLite retrieval while every action
+        waits for its verdict. Retrieval belongs upstream in the cognitive
+        context assembler, which passes its bounded evidence here.
+        """
         relevance = 0.0
         explicit_memories = (
             context.get("retrieved_memories")
@@ -1083,20 +1089,9 @@ class UnifiedWill:
             if memory is None:
                 memory = ServiceContainer.get("dual_memory", default=None)
             if memory is not None:
-                # Simple relevance check: does the memory system have anything?
-                if hasattr(memory, "has_relevant_context"):
-                    relevance = max(relevance, float(memory.has_relevant_context(content[:100])))
-                elif hasattr(memory, "search_sync"):
-                    results = memory.search_sync(content[:160], limit=3)
-                    relevance = max(relevance, _score_memory_results(results))
-                elif hasattr(memory, "search_similar"):
-                    results = memory.search_similar(content[:160], limit=3)
-                    relevance = max(relevance, _score_memory_results(results))
-                elif hasattr(memory, "search_memories"):
-                    results = memory.search_memories(content[:160], top_k=3)
-                    relevance = max(relevance, _score_memory_results(results))
-                else:
-                    relevance = max(relevance, 0.3)  # memory exists but no relevance API
+                # The memory spine being present is weak continuity evidence,
+                # not a claim that this action has relevant retrieved memory.
+                relevance = max(relevance, 0.3)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('will', e)
             logger.debug("Will: memory check failed (degraded): %s", e)

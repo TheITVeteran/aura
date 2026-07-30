@@ -486,6 +486,13 @@ class FlightRecorder:
             self._lock_file = None
         self._started = False
 
+    def on_stop(self) -> None:
+        """Seal the ring while its mmap still belongs to the live service."""
+
+        if self._started:
+            self.mark_clean_shutdown("container_shutdown")
+        self.close()
+
     # ── recording ──────────────────────────────────────────────────────
 
     def record_frame(

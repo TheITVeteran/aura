@@ -152,6 +152,21 @@ def test_clean_shutdown_produces_no_death_report(tmp_path):
     second.close()
 
 
+def test_container_stop_seals_ring_before_closing_mmap(tmp_path):
+    flight_dir = tmp_path / "flight"
+    recorder = FlightRecorder(flight_dir, slot_count=8)
+    recorder.start_sync()
+    recorder.record_frame(tick=1, stage="ready")
+
+    recorder.on_stop()
+
+    inspection = inspect_ring_file(flight_dir / "flight_ring.bin")
+    assert inspection is not None
+    assert inspection.clean is True
+    assert inspection.close_reason == "container_shutdown"
+    assert recorder.started is False
+
+
 def test_unclean_shutdown_yields_grounded_death_report(tmp_path):
     flight_dir = tmp_path / "flight"
     first = FlightRecorder(flight_dir, slot_count=64)

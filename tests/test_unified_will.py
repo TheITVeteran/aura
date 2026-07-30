@@ -728,6 +728,30 @@ class TestActionCoverage:
                         domain=ActionDomain.MEMORY_WRITE)
         assert d.is_approved()
 
+    def test_will_uses_supplied_memory_evidence_without_sync_retrieval(
+        self, will, monkeypatch
+    ):
+        class MemoryFacade:
+            def search_sync(self, *_args, **_kwargs):
+                raise AssertionError("Will must not perform synchronous retrieval")
+
+            def search_similar(self, *_args, **_kwargs):
+                raise AssertionError("Will must not load embeddings")
+
+        monkeypatch.setattr(
+            "core.will.ServiceContainer.get",
+            lambda name, default=None: (
+                MemoryFacade() if name == "memory_facade" else default
+            ),
+        )
+
+        relevance = will._check_memory_relevance(
+            "remember my favorite animal",
+            {"retrieved_memories": ["favorite animal: orca"]},
+        )
+
+        assert relevance >= 0.5
+
     def test_initiative_path(self, will):
         d = will.decide(content="explore quantum physics", source="curiosity",
                         domain=ActionDomain.INITIATIVE, priority=0.6)
