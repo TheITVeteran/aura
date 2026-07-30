@@ -517,6 +517,47 @@ class MemoryWatchdog(threading.Thread):
             self._record_footprint_spike(previous, sample)
         self._evaluate(sample, time.monotonic())
 
+    def _log_memory_attribution(self, why: str) -> None:
+        """Name what grew.
+
+        A thread dump says where threads ARE. It cannot say what allocated,
+        and on 2026-07-29 that distinction cost the diagnosis: 20.4GB
+        appeared in this process in ten seconds and the only thread running
+        at both samples was a MiniLM encode measured afterwards at 3.7MB per
+        two thousand calls. The stacks named a bystander.
+
+        memory-infra answers the allocation question — components declare
+        what they hold, and unattributed bytes are reported as their own
+        number. Dumps were already being taken on pressure and at boot; the
+        diff between them was never read out, so the attribution existed and
+        nobody asked for it. This asks.
+
+        Unlike the stack dump this is not throttled: BACKGROUND providers
+        self-report, which is the cheapness the module was designed around,
+        and the spike that goes unattributed is the expensive one.
+        """
+        try:
+            from core.runtime.memory_infra import DetailLevel, get_memory_infra
+
+            infra = get_memory_infra()
+            infra.dump(DetailLevel.LIGHT)
+            report = infra.leak_report()
+            if not report.get("available"):
+                logger.warning(
+                    "[MEMWATCH] %s — no attribution available (%s).",
+                    why,
+                    report.get("reason", "unknown"),
+                )
+                return
+            logger.warning(
+                "[MEMWATCH] %s — attribution: %s | unattributed %+.0fMB",
+                why,
+                report.get("narrative", ""),
+                float(report.get("unattributed_growth_bytes", 0) or 0) / 1e6,
+            )
+        except (ImportError, *_WATCHDOG_RECOVERABLE_ERRORS):
+            logger.debug("memory attribution failed", exc_info=True)
+
     def _record_footprint_spike(self, previous: MemorySample, sample: MemorySample) -> None:
         self._spike_count += 1
         why = (
@@ -524,6 +565,7 @@ class MemoryWatchdog(threading.Thread):
             f"{sample.managed_rss_mb:.0f}MB in one interval "
             f"(spike #{self._spike_count} this process)"
         )
+        self._log_memory_attribution(why)
         now = time.monotonic()
         if self._spike_dumps >= self.SPIKE_DUMP_LIFETIME_CAP:
             if self._spike_dumps == self.SPIKE_DUMP_LIFETIME_CAP:
@@ -643,12 +685,21 @@ class MemoryWatchdog(threading.Thread):
                 f"pre-abort reclaim: shed={shed_organs} organs/{shed_bytes >> 20}MB "
                 f"killed={killed} gc_collected={collected}",
             )
+            # Report all three levers, not just the kill. "Reclaimed
+            # (killed=0)" reads as "nothing was reclaimed" while hiding
+            # whether shedding and gc found anything — on 2026-07-29 that
+            # line was the operator's only view of the last action before
+            # the process exited, and it described a third of it.
             logger.critical(
                 "🚨 [MEMWATCH] LETHAL ceiling: managed RSS %.0fMB ≥ %.0fMB. "
-                "Reclaimed (killed=%d). Next confirmation aborts.",
+                "Reclaimed: shed=%d organs/%dMB killed=%d gc=%d. "
+                "Next confirmation aborts.",
                 sample.managed_rss_mb,
                 self.thresholds.lethal_mb,
+                shed_organs,
+                shed_bytes >> 20,
                 killed,
+                collected,
             )
             return "lethal_reclaim"
 
