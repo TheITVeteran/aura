@@ -122,6 +122,346 @@ def test_preregistration_binds_broad_training_and_powered_evaluation():
     assert receipt["claim_eligible"] is False
 
 
+def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
+    contract = prereg.build_contract(
+        campaign_id="resident-32b-recurrent-grpo-cp420s14-update-canary",
+        campaign_profile=prereg.UPDATE_CANARY_PROFILE,
+        artifact_root=(
+            "artifacts/closeout/latent_cortex/"
+            "cp420s14_resident_32b_recurrent_grpo_update_canary"
+        ),
+        committed_at="2026-07-29T20:00:00-07:00",
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+
+    receipt = prereg.validate_contract(contract, verify_model=False)
+    parameters = contract["training"]["parameters"]
+
+    assert receipt["campaign_profile"] == prereg.UPDATE_CANARY_PROFILE
+    assert parameters["domains"] == list(RECURRENCE_TRAINING_FAMILIES)
+    assert parameters["depths"] == [4]
+    assert parameters["train_per_cell"] == 1
+    assert parameters["holdout_per_cell"] == 1
+    assert parameters["max_steps"] == len(RECURRENCE_TRAINING_FAMILIES)
+    assert parameters["eval_every"] == len(RECURRENCE_TRAINING_FAMILIES)
+    assert parameters["group_size"] == prereg.TRAINING_PARAMETERS["group_size"]
+    assert parameters["max_tokens"] == prereg.TRAINING_PARAMETERS["max_tokens"]
+    assert parameters["lora_rank"] == prereg.TRAINING_PARAMETERS["lora_rank"]
+    assert parameters["lora_layers"] == prereg.TRAINING_PARAMETERS["lora_layers"]
+    assert parameters["lora_targets"] == prereg.TRAINING_PARAMETERS["lora_targets"]
+    assert parameters["learning_rate"] == prereg.TRAINING_PARAMETERS["learning_rate"]
+    assert parameters["fixed_update_canary"] is True
+    assert parameters["calibrate"] is False
+    assert "--fixed-update-canary" in contract["training"]["argv"]
+    assert "--calibrate" not in contract["training"]["argv"]
+    assert contract["training"]["dataset"]["train_tasks"] == 12
+    assert contract["training"]["dataset"]["holdout_tasks"] == 12
+    assert (
+        contract["training"]["completion_required"]["training_adequacy"]
+        == prereg.recurrent_training_adequacy_policy()
+    )
+    assert contract["evaluation"]["engineering_canary"]["minimum_optimizer_updates"] == 3
+    assert contract["evaluation"]["engineering_canary"]["reasoning_gain_claim_eligible"] is False
+    assert contract["claim_state"]["resident_training_complete"] is False
+    assert contract["claim_state"]["frontier_level_proven"] is False
+    assert contract["required_stage_order"][-1] == "retire_canary_adapter"
+    assert (
+        contract["training"]["resource_envelope"]["detached_timeout_s"]
+        == prereg.UPDATE_CANARY_RESOURCE_ENVELOPE["detached_timeout_s"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("campaign_profile",), prereg.FULL_TRAINING_PROFILE),
+        (("training", "campaign_profile"), prereg.FULL_TRAINING_PROFILE),
+        (("training", "parameters", "max_steps"), 1),
+        (
+            (
+                "training",
+                "completion_required",
+                "training_adequacy",
+                "minimum_optimizer_update_fraction",
+            ),
+            0.0,
+        ),
+        (("training", "resource_envelope", "detached_timeout_s"), 300),
+        (("evaluation", "engineering_canary", "reasoning_gain_claim_eligible"), True),
+    ],
+)
+def test_update_canary_rejects_profile_or_gate_rebinding(path, value):
+    contract = prereg.build_contract(
+        campaign_id="resident-32b-recurrent-grpo-cp420s14-update-canary",
+        campaign_profile=prereg.UPDATE_CANARY_PROFILE,
+        committed_at="2026-07-29T20:00:00-07:00",
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+    target = contract
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    material = dict(contract)
+    material.pop("contract_sha256")
+    contract["contract_sha256"] = prereg._document_sha(material)
+
+    with pytest.raises(prereg.PreregistrationError):
+        prereg.validate_contract(contract, verify_model=False)
+
+
+def test_update_canary_verdict_recomputes_policy_lineage_and_latency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import train_grpo as trainer
+
+    artifact_root = tmp_path / "canary"
+    training = artifact_root / "training"
+    checkpoint = training / "checkpoints" / "step-00000004-proof"
+    campaign = artifact_root / "verified-launch" / "custody" / "campaign"
+    checkpoint.mkdir(parents=True)
+    campaign.mkdir(parents=True)
+    initial = artifact_root / "verified-launch" / "initial_adapter.safetensors"
+    initial.write_bytes(b"initial")
+    final = training / "campaign_adapter" / "adapters.safetensors"
+    final.parent.mkdir(parents=True)
+    final.write_bytes(b"updated")
+    policies = [str(index) * 64 for index in range(1, 6)]
+    step_receipts = []
+    statuses = ["updated", "rejected", "rejected", "rejected"]
+    for sequence, status in enumerate(statuses):
+        before = policies[sequence] if sequence == 0 else step_receipts[-1]["policy_after_sha256"]
+        after = policies[sequence + 1] if status == "updated" else before
+        step_receipt_sha256 = f"{sequence + 5:x}" * 64
+        step_receipts.append(
+            {
+                "step": sequence + 1,
+                "task_id": f"task-{sequence + 1}",
+                "step_kind": (
+                    "verified_optimizer_update"
+                    if status == "updated"
+                    else "verified_rejected_group"
+                ),
+                "policy_before_sha256": before,
+                "policy_after_sha256": after,
+                "receipt_sha256": step_receipt_sha256,
+            }
+        )
+        (campaign / f"group-{sequence:08d}.started.json").write_text(
+            json.dumps(
+                {
+                    "sequence": sequence,
+                    "admitted_at_unix_ns": sequence * 10_000_000_000 + 1_000_000_000,
+                }
+            ),
+            encoding="ascii",
+        )
+        (campaign / f"group-{sequence:08d}.terminal.json").write_text(
+            json.dumps(
+                {
+                    "sequence": sequence,
+                    "status": status,
+                    "finished_at_unix_ns": (
+                        sequence * 10_000_000_000 + (sequence + 2) * 1_000_000_000
+                    ),
+                    "policy_before_sha256": before,
+                    "policy_after_sha256": after,
+                }
+            ),
+            encoding="ascii",
+        )
+    (campaign / "campaign.closed.json").write_text("{}\n", encoding="ascii")
+    (training / "training_completion.json").write_text(
+        json.dumps(
+            {
+                "schema": "aura.recurrent_grpo_training_completion.v1",
+                "complete": True,
+                "halt_reason": "max_steps",
+                "step": 4,
+                "adapter_sha256": "a" * 64,
+            }
+        ),
+        encoding="ascii",
+    )
+    (training / "grpo_receipt.json").write_text(
+        json.dumps(
+            {
+                "adapter_id": "resident-32b-recurrent-grpo-cp-test-canary",
+                "steps": 4,
+                "optimizer_updates": 1,
+                "termination": {
+                    "reason": "max_steps",
+                    "completed_budget": True,
+                    "signal": None,
+                },
+                "training_adequacy": {
+                    "policy": prereg.recurrent_training_adequacy_policy(),
+                    "admitted": True,
+                },
+                "step_receipts": step_receipts,
+            }
+        ),
+        encoding="ascii",
+    )
+    (training / "training_protocol.json").write_text(
+        json.dumps(
+            {
+                "personality_adapter": {"method": "none"},
+                "runtime": {"runtime": "test"},
+            }
+        ),
+        encoding="ascii",
+    )
+    protocol_sha256 = prereg._sha256(
+        (training / "training_protocol.json").read_bytes()
+    )
+    timing_root = training / "update-canary-step-timings"
+    timing_root.mkdir()
+    for sequence, step_receipt in enumerate(step_receipts):
+        step_checkpoint = (
+            training / "checkpoints" / f"step-{sequence + 1:08d}-proof"
+        )
+        step_checkpoint.mkdir(parents=True, exist_ok=True)
+        checkpoint_payload = json.dumps(
+            {"step": sequence + 1},
+            separators=(",", ":"),
+        ).encode("ascii")
+        (step_checkpoint / "complete.json").write_bytes(checkpoint_payload)
+        timing_body = {
+            "schema": "aura.recurrent_grpo.update_canary_step_timing.v1",
+            "adapter_id": "resident-32b-recurrent-grpo-cp-test-canary",
+            "protocol_sha256": protocol_sha256,
+            "step": sequence + 1,
+            "task_id": step_receipt["task_id"],
+            "step_receipt_sha256": step_receipt["receipt_sha256"],
+            "checkpoint": str(step_checkpoint.relative_to(training)),
+            "checkpoint_complete_sha256": prereg._sha256(checkpoint_payload),
+            "started_at_unix_ns": (sequence + 1) * 1_000_000_000,
+            "finished_at_unix_ns": (sequence + 2) * 1_000_000_000,
+            "elapsed_monotonic_ns": (sequence + 1) * 1_000_000_000,
+            "includes_durable_checkpoint_publication": True,
+        }
+        timing = {
+            **timing_body,
+            "receipt_sha256": prereg._sha256(
+                prereg.canonical_json_bytes(timing_body)
+            ),
+        }
+        (timing_root / f"step-{sequence + 1:08d}.json").write_bytes(
+            prereg.canonical_json_bytes(timing)
+        )
+    (training / "recurrence_adapter_manifest.json").write_text(
+        json.dumps({"adapter": {"path": "campaign_adapter/adapters.safetensors"}}),
+        encoding="ascii",
+    )
+    (training / "NON_PROMOTABLE_CANARY.json").write_text(
+        json.dumps(
+            {
+                "schema": "aura.recurrent_grpo.non_promotable_canary.v1",
+                "adapter_id": "resident-32b-recurrent-grpo-cp-test-canary",
+                "adapter_sha256": "a" * 64,
+                "runtime_promotion_allowed": False,
+                "reasoning_gain_proven": False,
+                "frontier_level_proven": False,
+            }
+        ),
+        encoding="ascii",
+    )
+    containment_body = {
+        "schema": "aura.resident_recurrent_grpo.canary_containment.v1",
+        "campaign_id": "resident-32b-recurrent-grpo-cp-test-canary",
+        "campaign_contract_sha256": "b" * 64,
+        "training_completion_sha256": "d" * 64,
+        "non_promotable_marker_sha256": "e" * 64,
+        "base_checkpoint_sha256": BASE_IDENTITY["fingerprint"],
+        "runtime_model_state_released": True,
+        "runtime_promotion_allowed": False,
+        "released_at_unix_ns": 1,
+    }
+    (training / "CANARY_CONTAINMENT.json").write_bytes(
+        prereg.canonical_json_bytes(
+            {
+                **containment_body,
+                "receipt_sha256": prereg._sha256(
+                    prereg.canonical_json_bytes(containment_body)
+                ),
+            }
+        )
+    )
+    (training / "latest.json").write_text(
+        json.dumps({"checkpoint": "checkpoints/step-00000004-proof"}),
+        encoding="ascii",
+    )
+    launch = artifact_root / "verified-launch" / "launch-bundle.json"
+    launch.write_text(
+        json.dumps({"campaign_ledger_root": str(campaign)}),
+        encoding="ascii",
+    )
+    contract = {
+        "campaign_id": "resident-32b-recurrent-grpo-cp-test-canary",
+        "campaign_profile": prereg.UPDATE_CANARY_PROFILE,
+        "contract_sha256": "b" * 64,
+        "training": {"parameters": {"max_steps": 4}},
+        "paths": {
+            "artifact_root": str(artifact_root),
+            "training_output": str(training),
+            "verified_launch_bundle": str(launch),
+        },
+        "model": {
+            "path": str(tmp_path / "model"),
+            "base_checkpoint": BASE_IDENTITY,
+            "behavior_bundle": BEHAVIOR_IDENTITY,
+        },
+    }
+    monkeypatch.setattr(
+        prereg,
+        "validate_contract",
+        lambda *_args, **_kwargs: {"claim_eligible": False},
+    )
+    monkeypatch.setattr(
+        prereg,
+        "_repo_path",
+        lambda value, **_kwargs: Path(value),
+    )
+    monkeypatch.setattr(
+        trainer,
+        "_validate_published_recurrent_bundle",
+        lambda *_args, **_kwargs: {
+            "adapter_sha256": "a" * 64,
+            "composite_identity_sha256": "c" * 64,
+        },
+    )
+
+    verdict = prereg.build_update_canary_verdict(contract, verify_model=False)
+
+    assert verdict["verdict"] == "pass"
+    assert verdict["optimizer_updates"] == 1
+    assert verdict["optimizer_update_fraction"] == 0.25
+    assert verdict["optimizer_update_fraction_wilson_95"]["low"] > 0.0
+    assert verdict["optimizer_update_fraction_wilson_95"]["high"] < 1.0
+    assert verdict["latency_s"] == {
+        "scope": "task_admission_through_durable_checkpoint_publication",
+        "count": 4,
+        "p50": 2.0,
+        "p90": 4.0,
+        "max": 4.0,
+        "total": 10.0,
+    }
+    assert verdict["campaign_execution_latency_s"] == {
+        "scope": "signed_group_admission_through_campaign_terminal",
+        "count": 4,
+        "p50": 2.0,
+        "p90": 4.0,
+        "max": 4.0,
+        "total": 10.0,
+    }
+    assert verdict["process_containment_rollback"] is True
+    assert verdict["reasoning_gain_proven"] is False
+    assert verdict["frontier_level_proven"] is False
+
+
 def test_preregistration_archives_enabled_verified_trajectory_config(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -594,6 +934,115 @@ def test_training_watchdog_resumes_zero_exit_wall_clock_until_full_dose(
     )
     assert [record["disposition"] for record in journal["records"]] == [
         "resume",
+        "complete",
+    ]
+
+
+def test_training_watchdog_pause_releases_runtime_and_waits_for_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import run_verified_recurrent_grpo_training as runner
+
+    training = tmp_path / "training"
+    bundle = tmp_path / "bundle.json"
+    digest_file = tmp_path / "bundle.sha256"
+    bundle.write_text("{}\n", encoding="ascii")
+    digest_file.write_text("a" * 64 + "\n", encoding="ascii")
+    contract = {
+        "campaign_id": "watchdog-pause-test",
+        "contract_sha256": "b" * 64,
+        "launch_not_before_unix": 0,
+        "paths": {
+            "artifact_root": "artifacts/watchdog-pause-test",
+            "verified_launch_bundle": "bundle.json",
+            "verified_launch_bundle_sha256": "bundle.sha256",
+            "training_output": "training",
+        },
+        "training": {
+            "argv": ["tools/train_grpo.py"],
+            "parameters": {"max_steps": 12},
+            "completion_required": {
+                "schema": "aura.recurrent_grpo_training_completion.v1",
+            },
+            "dataset": {"sha256": hashlib.sha256(b"dataset\n").hexdigest()},
+            "watchdog_policy": {
+                **prereg.TRAINING_WATCHDOG_POLICY,
+                "retry_backoff_s": 0.001,
+            },
+        },
+    }
+    calls = 0
+    releases = 0
+    resumes = 0
+
+    def run(_argv):
+        nonlocal calls
+        calls += 1
+        training.mkdir(exist_ok=True)
+        (training / "dataset_manifest.json").write_bytes(b"dataset\n")
+        if calls == 1:
+            checkpoint = training / "checkpoints" / "step-00000004"
+            checkpoint.mkdir(parents=True)
+            (checkpoint / "complete.json").write_bytes(
+                prereg.canonical_json_bytes({"step": 4})
+            )
+            (training / "latest.json").write_bytes(
+                prereg.canonical_json_bytes(
+                    {"checkpoint": "checkpoints/step-00000004"}
+                )
+            )
+            (training / "grpo_receipt.json").write_bytes(
+                prereg.canonical_json_bytes(
+                    {
+                        "steps": 4,
+                        "termination": {
+                            "reason": "operator_pause",
+                            "completed_budget": False,
+                        },
+                    }
+                )
+            )
+            return 0
+        (training / "training_completion.json").write_bytes(
+            prereg.canonical_json_bytes(
+                {
+                    "schema": "aura.recurrent_grpo_training_completion.v1",
+                    "complete": True,
+                    "halt_reason": "max_steps",
+                    "step": 12,
+                }
+            )
+        )
+        return 0
+
+    def release():
+        nonlocal releases
+        releases += 1
+
+    def resume(_contract):
+        nonlocal resumes
+        resumes += 1
+        return {"request_sha256": "c" * 64}
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "main", run)
+    monkeypatch.setattr(prereg, "_release_failed_training_runtime", release)
+    monkeypatch.setattr(prereg, "_wait_for_training_resume", resume)
+    monkeypatch.setattr(prereg.time, "sleep", lambda _seconds: None)
+
+    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 0
+    assert calls == 2
+    assert releases == 1
+    assert resumes == 1
+    journal = json.loads(
+        (
+            tmp_path / "artifacts/watchdog-pause-test/training-watchdog/attempts.json"
+        ).read_text(encoding="ascii")
+    )
+    assert [record["disposition"] for record in journal["records"]] == [
+        "paused",
         "complete",
     ]
 

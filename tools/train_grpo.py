@@ -788,7 +788,78 @@ def _calibration_token_budget(max_tokens: int, requested: int) -> int:
 def _verified_campaign_halt_is_resumable(halt_reason: str) -> bool:
     """Keep the verified task ledger open across bounded exact resumes."""
 
-    return halt_reason in {"wall_clock_budget", "interrupted"}
+    return halt_reason in {"wall_clock_budget", "interrupted", "operator_pause"}
+
+
+def _operator_pause_request(
+    out_dir: Path,
+    *,
+    adapter_id: str,
+    protocol_sha256: str,
+) -> dict[str, Any] | None:
+    path = out_dir / "pause.request.json"
+    if not path.exists():
+        return None
+    if path.is_symlink() or not path.is_file():
+        raise GRPOCheckpointError("operator pause request path is invalid")
+    try:
+        request = json.loads(read_stable_bytes(path, max_bytes=16 * 1024))
+    except (OSError, TypeError, ValueError) as exc:
+        raise GRPOCheckpointError("operator pause request is invalid") from exc
+    if (
+        not isinstance(request, dict)
+        or set(request)
+        != {
+            "schema",
+            "adapter_id",
+            "protocol_sha256",
+            "requested_at_unix_ns",
+            "request_sha256",
+        }
+        or request.get("schema") != "aura.grpo.operator_pause_request.v1"
+        or request.get("adapter_id") != adapter_id
+        or request.get("protocol_sha256") != protocol_sha256
+        or type(request.get("requested_at_unix_ns")) is not int
+        or int(request["requested_at_unix_ns"]) <= 0
+    ):
+        raise GRPOCheckpointError("operator pause request is invalid")
+    material = dict(request)
+    claimed = material.pop("request_sha256")
+    if claimed != sha256_bytes(canonical_json_bytes(material)):
+        raise GRPOCheckpointError("operator pause request digest is invalid")
+    return request
+
+
+def _acknowledge_operator_pause(
+    out_dir: Path,
+    *,
+    request: Mapping[str, Any],
+    step: int,
+    checkpoint_path: Path,
+    policy_sha256: str | None,
+) -> Path:
+    body = {
+        "schema": "aura.grpo.operator_pause_receipt.v1",
+        "request_sha256": request["request_sha256"],
+        "adapter_id": request["adapter_id"],
+        "protocol_sha256": request["protocol_sha256"],
+        "step": step,
+        "checkpoint": str(checkpoint_path.relative_to(out_dir)),
+        "policy_sha256": policy_sha256,
+        "acknowledged_at_unix_ns": time.time_ns(),
+    }
+    receipt = {**body, "receipt_sha256": sha256_bytes(canonical_json_bytes(body))}
+    destination = out_dir / "pause-receipts" / f"{request['request_sha256']}.json"
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _publish_immutable_bytes(
+        destination,
+        canonical_json_bytes(receipt),
+        role="operator pause receipt",
+    )
+    request_path = out_dir / "pause.request.json"
+    if request_path.exists():
+        request_path.unlink()
+    return destination
 
 
 def _task_gold_answer_text(task: Any) -> str:
@@ -1011,6 +1082,65 @@ def _publish_immutable_bytes(path: Path, payload: bytes, *, role: str) -> None:
     if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
         if path.is_symlink() or path.read_bytes() != payload:
             raise GRPOCheckpointError(f"{role} publication raced with different bytes")
+
+
+def _publish_update_canary_step_timing(
+    out_dir: Path,
+    *,
+    adapter_id: str,
+    protocol_sha256: str,
+    step_receipt: Mapping[str, Any],
+    checkpoint_path: Path,
+    started_at_unix_ns: int,
+    started_monotonic_ns: int,
+    finished_at_unix_ns: int,
+    finished_monotonic_ns: int,
+) -> Path:
+    """Seal end-to-end canary latency after the trainer checkpoint is durable."""
+
+    step = step_receipt.get("step")
+    task_id = step_receipt.get("task_id")
+    step_receipt_sha256 = step_receipt.get("receipt_sha256")
+    if (
+        type(step) is not int
+        or step <= 0
+        or not isinstance(task_id, str)
+        or not task_id
+        or not isinstance(step_receipt_sha256, str)
+        or len(step_receipt_sha256) != 64
+        or finished_monotonic_ns < started_monotonic_ns
+        or finished_at_unix_ns < started_at_unix_ns
+    ):
+        raise GRPOCheckpointError("update canary timing inputs are invalid")
+    checkpoint_complete = checkpoint_path / "complete.json"
+    if checkpoint_complete.is_symlink() or not checkpoint_complete.is_file():
+        raise GRPOCheckpointError("update canary checkpoint is not complete")
+    checkpoint_payload = checkpoint_complete.read_bytes()
+    body = {
+        "schema": "aura.recurrent_grpo.update_canary_step_timing.v1",
+        "adapter_id": adapter_id,
+        "protocol_sha256": protocol_sha256,
+        "step": step,
+        "task_id": task_id,
+        "step_receipt_sha256": step_receipt_sha256,
+        "checkpoint": str(checkpoint_path.relative_to(out_dir)),
+        "checkpoint_complete_sha256": sha256_bytes(checkpoint_payload),
+        "started_at_unix_ns": started_at_unix_ns,
+        "finished_at_unix_ns": finished_at_unix_ns,
+        "elapsed_monotonic_ns": finished_monotonic_ns - started_monotonic_ns,
+        "includes_durable_checkpoint_publication": True,
+    }
+    receipt = {**body, "receipt_sha256": sha256_bytes(canonical_json_bytes(body))}
+    destination = (
+        out_dir / "update-canary-step-timings" / f"step-{step:08d}.json"
+    )
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _publish_immutable_bytes(
+        destination,
+        canonical_json_bytes(receipt),
+        role="update canary step timing",
+    )
+    return destination
 
 
 def _artifact_binding(relative: str, payload: bytes) -> dict[str, Any]:
@@ -2054,6 +2184,15 @@ def main(
             "diagnostic, publish its receipt, and exit before optimizer construction"
         ),
     )
+    parser.add_argument(
+        "--fixed-update-canary",
+        action="store_true",
+        help=(
+            "execute the complete externally scheduled engineering canary "
+            "without adaptive early termination; reward and optimizer "
+            "admission remain unchanged"
+        ),
+    )
     args = parser.parse_args()
 
     for name in (
@@ -2128,6 +2267,22 @@ def main(
         args.initial_policy_probe or args.read_only_answer_channel_preflight
     ):
         parser.error("read-only recurrent probes cannot be combined with a training provider")
+    if args.fixed_update_canary:
+        if (
+            args.execution_mode != "recurrent"
+            or verified_group_provider_factory is None
+            or args.task_source != "recurrence_curriculum"
+            or args.calibrate
+            or not args.adapter_id.endswith("-update-canary")
+            or args.checkpoint_every != 1
+            or args.eval_every != args.max_steps
+        ):
+            parser.error(
+                "--fixed-update-canary requires the externally verified "
+                "recurrent one-pass canary contract"
+            )
+    elif args.adapter_id.endswith("-update-canary"):
+        parser.error("update-canary adapter identity requires --fixed-update-canary")
     provider_contract_sha256 = None
     if verified_group_provider_factory is not None:
         provider_contract_sha256 = getattr(verified_group_provider_factory, "contract_sha256", None)
@@ -2177,6 +2332,10 @@ def main(
         holdout_per_cell=args.holdout_per_cell,
         seed=args.seed,
     )
+    if args.fixed_update_canary and len(train_tasks) != args.max_steps:
+        parser.error(
+            "--fixed-update-canary requires exactly one complete immutable task pass"
+        )
     if verified_group_provider_factory is not None:
         train_tasks = list(verified_group_provider_factory.bind_training_tasks(train_tasks))
     print(
@@ -3434,6 +3593,31 @@ def main(
         active_recurrent_step: dict[str, Any] | None = None
         try:
             while training_allowed and step < args.max_steps:
+                pause_request = _operator_pause_request(
+                    out_dir,
+                    adapter_id=args.adapter_id,
+                    protocol_sha256=protocol_sha256,
+                )
+                if pause_request is not None:
+                    checkpoint_path = checkpoint_now()
+                    policy_sha256 = (
+                        str(step_receipts[-1]["policy_after_sha256"])
+                        if step_receipts
+                        else None
+                    )
+                    receipt_path = _acknowledge_operator_pause(
+                        out_dir,
+                        request=pause_request,
+                        step=step,
+                        checkpoint_path=checkpoint_path,
+                        policy_sha256=policy_sha256,
+                    )
+                    halt_reason = "operator_pause"
+                    print(
+                        f"[pause] durable step={step} receipt={receipt_path}",
+                        flush=True,
+                    )
+                    break
                 if requested_signal is not None:
                     halt_reason = "interrupted"
                     break
@@ -3441,6 +3625,8 @@ def main(
                     halt_reason = "wall_clock_budget"
                     break
 
+                canary_step_started_monotonic_ns = time.monotonic_ns()
+                canary_step_started_at_unix_ns = time.time_ns()
                 step_number = step + 1
                 active_transaction_coordinator = None
                 if execution_spec is None:
@@ -3693,6 +3879,18 @@ def main(
                     checkpoint_path = checkpoint_now()
                     if execution_spec is not None and active_transaction_coordinator is not None:
                         active_transaction_coordinator.record_trainer_checkpoint(checkpoint_path)
+                if args.fixed_update_canary:
+                    _publish_update_canary_step_timing(
+                        out_dir,
+                        adapter_id=args.adapter_id,
+                        protocol_sha256=protocol_sha256,
+                        step_receipt=step_receipts[-1],
+                        checkpoint_path=checkpoint_path,
+                        started_at_unix_ns=canary_step_started_at_unix_ns,
+                        started_monotonic_ns=canary_step_started_monotonic_ns,
+                        finished_at_unix_ns=time.time_ns(),
+                        finished_monotonic_ns=time.monotonic_ns(),
+                    )
                 if active_recurrent_step is not None:
                     active_recurrent_step["phase"] = "post_update_evaluation"
 
@@ -3739,7 +3937,7 @@ def main(
                         f"by_depth={report['accuracy_by_depth']}",
                         flush=True,
                     )
-                if no_signal is not None:
+                if no_signal is not None and not args.fixed_update_canary:
                     training_allowed = False
                     halt_reason = "no_learning_signal"
                     checkpoint_path = checkpoint_now()
@@ -3749,7 +3947,10 @@ def main(
                         flush=True,
                     )
                     break
-                if not curriculum.report()["has_reachable_frontier"]:
+                if (
+                    not args.fixed_update_canary
+                    and not curriculum.report()["has_reachable_frontier"]
+                ):
                     training_allowed = False
                     halt_reason = "frontier_exhausted"
                     print(
@@ -3935,6 +4136,22 @@ def main(
             transition_closure=transition_closure,
             transition_groups=tuple(transition_replay_groups),
         )
+        if args.fixed_update_canary:
+            marker = {
+                "schema": "aura.recurrent_grpo.non_promotable_canary.v1",
+                "adapter_id": args.adapter_id,
+                "adapter_sha256": identity["adapter_sha256"],
+                "composite_identity_sha256": identity["composite_identity_sha256"],
+                "reasoning_gain_proven": False,
+                "frontier_level_proven": False,
+                "runtime_promotion_allowed": False,
+                "purpose": "resident_signed_update_and_latency_engineering_canary",
+            }
+            _publish_immutable_bytes(
+                out_dir / "NON_PROMOTABLE_CANARY.json",
+                canonical_json_bytes(marker),
+                role="non-promotable canary marker",
+            )
         print(
             "[campaign-adapter] "
             f"identity={identity['composite_identity_sha256']} "

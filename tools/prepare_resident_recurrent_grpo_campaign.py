@@ -13,6 +13,7 @@ import argparse
 import gc
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -93,6 +94,9 @@ from tools import run_detached_step  # noqa: E402
 from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
+FULL_TRAINING_PROFILE = "full_training"
+UPDATE_CANARY_PROFILE = "update_canary"
+CAMPAIGN_PROFILES = frozenset({FULL_TRAINING_PROFILE, UPDATE_CANARY_PROFILE})
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
 DEFAULT_MODEL = "training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
@@ -108,6 +112,10 @@ TRAINING_WATCHDOG_POLICY: Mapping[str, Any] = {
     "retry_backoff_s": 30.0,
     "max_consecutive_no_progress_failures": 2,
     "restart_scope": "exact_source_bound_checkpoint_resume_only",
+}
+UPDATE_CANARY_WATCHDOG_POLICY: Mapping[str, Any] = {
+    **TRAINING_WATCHDOG_POLICY,
+    "max_attempts": 3,
 }
 TRAINING_PARAMETERS: Mapping[str, Any] = {
     "task_source": "recurrence_curriculum",
@@ -139,11 +147,39 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "cot": True,
     "max_minutes": 2160.0,
     "memory_fraction": 0.42,
+    "fixed_update_canary": False,
     "seed": TRAINING_SEED,
     "verified_trajectory_config": (
         "config/latent_cortex/resident_32b_verified_intervention_group_config.json"
     ),
 }
+UPDATE_CANARY_PARAMETERS: Mapping[str, Any] = {
+    **TRAINING_PARAMETERS,
+    "domains": list(RECURRENCE_TRAINING_FAMILIES),
+    "depths": [4],
+    "train_per_cell": 1,
+    "holdout_per_cell": 1,
+    "max_steps": len(RECURRENCE_TRAINING_FAMILIES),
+    "eval_every": len(RECURRENCE_TRAINING_FAMILIES),
+    "checkpoint_keep": len(RECURRENCE_TRAINING_FAMILIES),
+    "calibrate_minutes": 60.0,
+    "calibrate": False,
+    "fixed_update_canary": True,
+    "max_minutes": 240.0,
+    "seed": TRAINING_SEED + 1,
+}
+FULL_RESOURCE_ENVELOPE: Mapping[str, Any] = {
+    "host_memory_bytes": 68_719_476_736,
+    "mlx_memory_fraction": 0.42,
+    "exclusive_resident_model_owner": True,
+    "detached_timeout_s": 259_200,
+    "multi_hour_soak": False,
+}
+UPDATE_CANARY_RESOURCE_ENVELOPE: Mapping[str, Any] = {
+    **FULL_RESOURCE_ENVELOPE,
+    "detached_timeout_s": 21_600,
+}
+UPDATE_CANARY_VERDICT_SCHEMA = "aura.resident_recurrent_grpo.update_canary_verdict.v1"
 SOURCE_ROLES: Mapping[str, str] = {
     "campaign_contract": "tools/prepare_resident_recurrent_grpo_campaign.py",
     "trainer": "tools/train_grpo.py",
@@ -311,8 +347,10 @@ def _load_spec(relative: str) -> tuple[RLCExecutionSpec, dict[str, Any]]:
 
 def _verified_trajectory_config_commitment(
     spec: RLCExecutionSpec,
+    parameters: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    declared = TRAINING_PARAMETERS.get("verified_trajectory_config")
+    params = parameters or TRAINING_PARAMETERS
+    declared = params.get("verified_trajectory_config")
     if declared is None:
         return None
     if not isinstance(declared, str) or not declared:
@@ -332,7 +370,7 @@ def _verified_trajectory_config_commitment(
     canonical = canonical_json_bytes(config.to_dict())
     if raw != canonical:
         _fail("verified_trajectory_config_noncanonical")
-    if int(TRAINING_PARAMETERS["group_size"]) != len(spec.branch_roles):
+    if int(params["group_size"]) != len(spec.branch_roles):
         _fail("verified_trajectory_group_branch_count_mismatch")
     try:
         if config.trajectory_config is not None:
@@ -348,8 +386,39 @@ def _verified_trajectory_config_commitment(
     }
 
 
-def _training_argv(*, campaign_id: str, model: str, output: str, execution_spec: str) -> list[str]:
-    params = TRAINING_PARAMETERS
+def _training_parameters_for_profile(profile: str) -> Mapping[str, Any]:
+    if profile == FULL_TRAINING_PROFILE:
+        return TRAINING_PARAMETERS
+    if profile == UPDATE_CANARY_PROFILE:
+        return UPDATE_CANARY_PARAMETERS
+    _fail("campaign_profile_invalid")
+
+
+def _watchdog_policy_for_profile(profile: str) -> Mapping[str, Any]:
+    if profile == FULL_TRAINING_PROFILE:
+        return TRAINING_WATCHDOG_POLICY
+    if profile == UPDATE_CANARY_PROFILE:
+        return UPDATE_CANARY_WATCHDOG_POLICY
+    _fail("campaign_profile_invalid")
+
+
+def _resource_envelope_for_profile(profile: str) -> Mapping[str, Any]:
+    if profile == FULL_TRAINING_PROFILE:
+        return FULL_RESOURCE_ENVELOPE
+    if profile == UPDATE_CANARY_PROFILE:
+        return UPDATE_CANARY_RESOURCE_ENVELOPE
+    _fail("campaign_profile_invalid")
+
+
+def _training_argv(
+    *,
+    campaign_id: str,
+    model: str,
+    output: str,
+    execution_spec: str,
+    parameters: Mapping[str, Any] | None = None,
+) -> list[str]:
+    params = parameters or TRAINING_PARAMETERS
     argv = [
         "tools/train_grpo.py",
         "--model",
@@ -410,11 +479,15 @@ def _training_argv(*, campaign_id: str, model: str, output: str, execution_spec:
         )
     if params["cot"]:
         argv.append("--cot")
+    if params.get("fixed_update_canary"):
+        argv.append("--fixed-update-canary")
     return argv
 
 
-def _dataset_commitment() -> dict[str, Any]:
-    params = TRAINING_PARAMETERS
+def _dataset_commitment(
+    parameters: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    params = parameters or TRAINING_PARAMETERS
     train, holdout, source = _build_task_split(
         task_source=str(params["task_source"]),
         domains=list(params["domains"]),
@@ -444,6 +517,7 @@ def _dataset_commitment() -> dict[str, Any]:
 def build_contract(
     *,
     campaign_id: str = DEFAULT_CAMPAIGN_ID,
+    campaign_profile: str = FULL_TRAINING_PROFILE,
     model: str = DEFAULT_MODEL,
     execution_spec: str = DEFAULT_SPEC,
     artifact_root: str = DEFAULT_ROOT,
@@ -453,6 +527,11 @@ def build_contract(
 ) -> dict[str, Any]:
     if not campaign_id.startswith("resident-32b-recurrent-grpo-cp"):
         _fail("campaign_id_invalid")
+    if campaign_profile not in CAMPAIGN_PROFILES:
+        _fail("campaign_profile_invalid")
+    params = _training_parameters_for_profile(campaign_profile)
+    watchdog_policy = _watchdog_policy_for_profile(campaign_profile)
+    resource_envelope = _resource_envelope_for_profile(campaign_profile)
     model_path = _repo_path(model, role="model")
     if not model_path.is_dir():
         _fail("model_path_invalid")
@@ -485,8 +564,12 @@ def build_contract(
         model=model,
         output=paths["training_output"],
         execution_spec=execution_spec,
+        parameters=params,
     )
-    trajectory_config_commitment = _verified_trajectory_config_commitment(spec)
+    trajectory_config_commitment = _verified_trajectory_config_commitment(
+        spec,
+        parameters=params,
+    )
     arms = [
         "base_vanilla",
         "base_rlc",
@@ -533,6 +616,7 @@ def build_contract(
     material = {
         "schema": CONTRACT_SCHEMA,
         "campaign_id": campaign_id,
+        "campaign_profile": campaign_profile,
         "committed_at": committed_at,
         "launch_not_before": NOT_BEFORE,
         "launch_not_before_unix": int(not_before.timestamp()),
@@ -546,17 +630,18 @@ def build_contract(
         "sources": sources,
         "paths": paths,
         "training": {
+            "campaign_profile": campaign_profile,
             "execution_mode": "recurrent",
-            "parameters": dict(TRAINING_PARAMETERS),
+            "parameters": dict(params),
             "argv": training_argv,
-            "dataset": _dataset_commitment(),
+            "dataset": _dataset_commitment(params),
             **(
                 {"verified_trajectory_config_artifact": (trajectory_config_commitment)}
                 if trajectory_config_commitment is not None
                 else {}
             ),
             "resume_contract": "exact_identity_bound_checkpoint",
-            "watchdog_policy": dict(TRAINING_WATCHDOG_POLICY),
+            "watchdog_policy": dict(watchdog_policy),
             "completion_required": {
                 "schema": "aura.recurrent_grpo_training_completion.v1",
                 "complete": True,
@@ -564,15 +649,11 @@ def build_contract(
                 "causal_gain_proven": False,
                 "training_adequacy": recurrent_training_adequacy_policy(),
             },
-            "resource_envelope": {
-                "host_memory_bytes": 68_719_476_736,
-                "mlx_memory_fraction": 0.42,
-                "exclusive_resident_model_owner": True,
-                "detached_timeout_s": 259_200,
-                "multi_hour_soak": False,
-            },
+            "resource_envelope": dict(resource_envelope),
         },
         "evaluation": {
+            "campaign_profile": campaign_profile,
+            "claim_eligible": False,
             "registry_version": CURRENT_REGISTRY_VERSION,
             "domains": list(FRONTIER_DOMAINS),
             "difficulty": 3,
@@ -604,6 +685,23 @@ def build_contract(
                 "separate_compute_and_latency_reporting": True,
             },
             "mechanism_attribution": mechanism_attribution,
+            "engineering_canary": (
+                {
+                    "purpose": (
+                        "prove real signed resident-32B optimizer admission, "
+                        "policy mutation, durable checkpointing, base-checkpoint "
+                        "immutability, and observed step latency"
+                    ),
+                    "training_tasks": len(RECURRENCE_TRAINING_FAMILIES),
+                    "minimum_optimizer_updates": math.ceil(
+                        len(RECURRENCE_TRAINING_FAMILIES) * 0.25
+                    ),
+                    "reasoning_gain_claim_eligible": False,
+                    "frontier_claim_eligible": False,
+                }
+                if campaign_profile == UPDATE_CANARY_PROFILE
+                else None
+            ),
         },
         "hypotheses": {
             "positive_interaction": ("(adapter_rlc-adapter_vanilla) > (base_rlc-base_vanilla)"),
@@ -636,18 +734,29 @@ def build_contract(
             "frontier_level_proven": False,
             "release_eligible": False,
         },
-        "required_stage_order": [
-            "verify_preregistration",
-            "train_or_exactly_resume_to_max_steps",
-            "validate_recurrent_grpo_identity",
-            "freeze_adapter",
-            "externally_sign_contamination_audit",
-            "directional_six_arm_factorial",
-            "powered_confirmatory_six_arm_factorial",
-            "broad_regression_battery",
-            "named_external_frontier_comparison",
-            "independent_replay_and_release_certificate",
-        ],
+        "required_stage_order": (
+            [
+                "verify_preregistration",
+                "run_exact_signed_update_canary",
+                "validate_recurrent_grpo_identity",
+                "verify_base_checkpoint_immutability",
+                "publish_canary_latency_and_admission_verdict",
+                "retire_canary_adapter",
+            ]
+            if campaign_profile == UPDATE_CANARY_PROFILE
+            else [
+                "verify_preregistration",
+                "train_or_exactly_resume_to_max_steps",
+                "validate_recurrent_grpo_identity",
+                "freeze_adapter",
+                "externally_sign_contamination_audit",
+                "directional_six_arm_factorial",
+                "powered_confirmatory_six_arm_factorial",
+                "broad_regression_battery",
+                "named_external_frontier_comparison",
+                "independent_replay_and_release_certificate",
+            ]
+        ),
     }
     return {**material, "contract_sha256": _document_sha(material)}
 
@@ -656,6 +765,7 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     expected_keys = {
         "schema",
         "campaign_id",
+        "campaign_profile",
         "committed_at",
         "launch_not_before",
         "launch_not_before_unix",
@@ -682,6 +792,12 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         "resident-32b-recurrent-grpo-cp"
     ):
         _fail("campaign_identity_mismatch")
+    campaign_profile = contract.get("campaign_profile")
+    if campaign_profile not in CAMPAIGN_PROFILES:
+        _fail("campaign_profile_invalid")
+    expected_parameters = _training_parameters_for_profile(str(campaign_profile))
+    expected_watchdog = _watchdog_policy_for_profile(str(campaign_profile))
+    expected_resource_envelope = _resource_envelope_for_profile(str(campaign_profile))
     try:
         committed = datetime.fromisoformat(str(contract["committed_at"]))
         not_before = datetime.fromisoformat(str(contract["launch_not_before"]))
@@ -715,8 +831,12 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         model=DEFAULT_MODEL,
         output=str(paths.get("training_output")),
         execution_spec=DEFAULT_SPEC,
+        parameters=expected_parameters,
     )
-    expected_trajectory_config = _verified_trajectory_config_commitment(_spec)
+    expected_trajectory_config = _verified_trajectory_config_commitment(
+        _spec,
+        parameters=expected_parameters,
+    )
     expected_completion = {
         "schema": "aura.recurrent_grpo_training_completion.v1",
         "complete": True,
@@ -725,10 +845,11 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         "training_adequacy": recurrent_training_adequacy_policy(),
     }
     if (
-        training.get("execution_mode") != "recurrent"
-        or training.get("parameters") != TRAINING_PARAMETERS
+        training.get("campaign_profile") != campaign_profile
+        or training.get("execution_mode") != "recurrent"
+        or training.get("parameters") != expected_parameters
         or training.get("argv") != expected_argv
-        or training.get("dataset") != _dataset_commitment()
+        or training.get("dataset") != _dataset_commitment(expected_parameters)
         or (
             expected_trajectory_config is None and "verified_trajectory_config_artifact" in training
         )
@@ -737,8 +858,9 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
             and training.get("verified_trajectory_config_artifact") != expected_trajectory_config
         )
         or training.get("resume_contract") != "exact_identity_bound_checkpoint"
-        or training.get("watchdog_policy") != TRAINING_WATCHDOG_POLICY
+        or training.get("watchdog_policy") != expected_watchdog
         or training.get("completion_required") != expected_completion
+        or training.get("resource_envelope") != expected_resource_envelope
     ):
         _fail("training_contract_mismatch")
     dataset = training["dataset"]
@@ -753,8 +875,27 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     if not isinstance(evaluation, Mapping):
         _fail("evaluation_contract_invalid")
     confirmatory = evaluation.get("powered_confirmatory")
+    expected_canary = (
+        {
+            "purpose": (
+                "prove real signed resident-32B optimizer admission, "
+                "policy mutation, durable checkpointing, base-checkpoint "
+                "immutability, and observed step latency"
+            ),
+            "training_tasks": len(RECURRENCE_TRAINING_FAMILIES),
+            "minimum_optimizer_updates": math.ceil(
+                len(RECURRENCE_TRAINING_FAMILIES) * 0.25
+            ),
+            "reasoning_gain_claim_eligible": False,
+            "frontier_claim_eligible": False,
+        }
+        if campaign_profile == UPDATE_CANARY_PROFILE
+        else None
+    )
     if (
-        evaluation.get("registry_version") != CURRENT_REGISTRY_VERSION
+        evaluation.get("campaign_profile") != campaign_profile
+        or evaluation.get("claim_eligible") is not False
+        or evaluation.get("registry_version") != CURRENT_REGISTRY_VERSION
         or evaluation.get("domains") != list(FRONTIER_DOMAINS)
         or not isinstance(confirmatory, Mapping)
         or confirmatory.get("observations_per_domain") != CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
@@ -762,6 +903,7 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         != len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN
         or confirmatory.get("cell_count")
         != len(FRONTIER_DOMAINS) * CONFIRMATORY_OBSERVATIONS_PER_DOMAIN * 6
+        or evaluation.get("engineering_canary") != expected_canary
     ):
         _fail("evaluation_power_invalid")
     claim_state = contract.get("claim_state")
@@ -775,6 +917,31 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         or custody.get("external_trust_present") is not False
     ):
         _fail("prelaunch_claim_state_invalid")
+    expected_stages = (
+        [
+            "verify_preregistration",
+            "run_exact_signed_update_canary",
+            "validate_recurrent_grpo_identity",
+            "verify_base_checkpoint_immutability",
+            "publish_canary_latency_and_admission_verdict",
+            "retire_canary_adapter",
+        ]
+        if campaign_profile == UPDATE_CANARY_PROFILE
+        else [
+            "verify_preregistration",
+            "train_or_exactly_resume_to_max_steps",
+            "validate_recurrent_grpo_identity",
+            "freeze_adapter",
+            "externally_sign_contamination_audit",
+            "directional_six_arm_factorial",
+            "powered_confirmatory_six_arm_factorial",
+            "broad_regression_battery",
+            "named_external_frontier_comparison",
+            "independent_replay_and_release_certificate",
+        ]
+    )
+    if contract.get("required_stage_order") != expected_stages:
+        _fail("required_stage_order_invalid")
     model = contract.get("model")
     if not isinstance(model, Mapping) or model.get("path") != DEFAULT_MODEL:
         _fail("model_contract_invalid")
@@ -787,6 +954,7 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     return {
         "schema": "aura.resident_recurrent_grpo_preregistration_receipt.v1",
         "campaign_id": campaign_id,
+        "campaign_profile": campaign_profile,
         "contract_sha256": claimed_sha,
         "model_verified": bool(verify_model),
         "training_tasks": dataset["train_tasks"],
@@ -795,6 +963,316 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         "confirmatory_cells": confirmatory["cell_count"],
         "claim_eligible": False,
     }
+
+
+def _nearest_rank(values: Sequence[float], percentile: float) -> float:
+    if not values or not 0.0 < percentile <= 1.0:
+        _fail("update_canary_latency_input_invalid")
+    ordered = sorted(float(value) for value in values)
+    index = max(0, math.ceil(len(ordered) * percentile) - 1)
+    return ordered[index]
+
+
+def _wilson_interval(
+    successes: int,
+    total: int,
+    *,
+    z: float = 1.959963984540054,
+) -> tuple[float, float]:
+    if (
+        type(successes) is not int
+        or type(total) is not int
+        or total <= 0
+        or not 0 <= successes <= total
+        or not math.isfinite(z)
+        or z <= 0.0
+    ):
+        _fail("update_canary_admission_interval_input_invalid")
+    proportion = successes / total
+    z_squared = z * z
+    denominator = 1.0 + z_squared / total
+    center = (proportion + z_squared / (2.0 * total)) / denominator
+    radius = (
+        z
+        * math.sqrt(
+            proportion * (1.0 - proportion) / total
+            + z_squared / (4.0 * total * total)
+        )
+        / denominator
+    )
+    return max(0.0, center - radius), min(1.0, center + radius)
+
+
+def build_update_canary_verdict(
+    contract: Mapping[str, Any],
+    *,
+    verify_model: bool = True,
+) -> dict[str, Any]:
+    """Recompute the bounded resident update canary from durable artifacts."""
+
+    validation = validate_contract(contract, verify_model=verify_model)
+    if contract.get("campaign_profile") != UPDATE_CANARY_PROFILE:
+        _fail("update_canary_profile_required")
+    parameters = contract["training"]["parameters"]
+    max_steps = int(parameters["max_steps"])
+    training_root = _repo_path(
+        str(contract["paths"]["training_output"]),
+        role="training_output",
+    )
+    from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (
+        MANIFEST_FILE,
+    )
+
+    completion = _strict_json(training_root / "training_completion.json")
+    receipt = _strict_json(training_root / "grpo_receipt.json")
+    protocol = _strict_json(training_root / "training_protocol.json")
+    manifest = _strict_json(training_root / MANIFEST_FILE)
+    if (
+        completion.get("schema") != "aura.recurrent_grpo_training_completion.v1"
+        or completion.get("complete") is not True
+        or completion.get("halt_reason") != "max_steps"
+        or completion.get("step") != max_steps
+        or receipt.get("adapter_id") != contract["campaign_id"]
+        or receipt.get("steps") != max_steps
+        or receipt.get("termination")
+        != {
+            "reason": "max_steps",
+            "completed_budget": True,
+            "signal": None,
+        }
+    ):
+        _fail("update_canary_training_incomplete")
+    adequacy = receipt.get("training_adequacy")
+    if (
+        not isinstance(adequacy, Mapping)
+        or adequacy.get("policy") != recurrent_training_adequacy_policy()
+        or adequacy.get("admitted") is not True
+    ):
+        _fail("update_canary_training_adequacy_failed")
+    steps = receipt.get("step_receipts")
+    if not isinstance(steps, list) or len(steps) != max_steps:
+        _fail("update_canary_step_receipts_incomplete")
+    update_steps = [
+        step for step in steps if step.get("step_kind") == "verified_optimizer_update"
+    ]
+    minimum_updates = math.ceil(max_steps * 0.25)
+    if (
+        receipt.get("optimizer_updates") != len(update_steps)
+        or len(update_steps) < minimum_updates
+    ):
+        _fail("update_canary_optimizer_admission_insufficient")
+    prior_policy: str | None = None
+    for index, step in enumerate(steps, start=1):
+        before = step.get("policy_before_sha256")
+        after = step.get("policy_after_sha256")
+        kind = step.get("step_kind")
+        if (
+            step.get("step") != index
+            or not isinstance(before, str)
+            or not isinstance(after, str)
+            or (prior_policy is not None and before != prior_policy)
+            or (kind == "verified_optimizer_update" and before == after)
+            or (kind == "verified_rejected_group" and before != after)
+            or kind not in {"verified_optimizer_update", "verified_rejected_group"}
+        ):
+            _fail("update_canary_policy_lineage_invalid")
+        prior_policy = after
+
+    from tools.train_grpo import _validate_published_recurrent_bundle
+
+    identity = _validate_published_recurrent_bundle(
+        training_root,
+        adapter_id=str(contract["campaign_id"]),
+        base_identity=contract["model"]["base_checkpoint"],
+        behavior_identity=contract["model"]["behavior_bundle"],
+        personality_identity=protocol["personality_adapter"],
+        runtime_identity=protocol["runtime"],
+    )
+    if identity.get("adapter_sha256") != completion.get("adapter_sha256"):
+        _fail("update_canary_adapter_identity_mismatch")
+    non_promotable = _strict_json(training_root / "NON_PROMOTABLE_CANARY.json")
+    if (
+        non_promotable.get("schema") != "aura.recurrent_grpo.non_promotable_canary.v1"
+        or non_promotable.get("adapter_id") != contract["campaign_id"]
+        or non_promotable.get("adapter_sha256") != completion["adapter_sha256"]
+        or non_promotable.get("runtime_promotion_allowed") is not False
+        or non_promotable.get("reasoning_gain_proven") is not False
+        or non_promotable.get("frontier_level_proven") is not False
+    ):
+        _fail("update_canary_non_promotion_marker_invalid")
+
+    artifact_root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+    )
+    initial_adapter = artifact_root / "verified-launch" / "initial_adapter.safetensors"
+    final_adapter = training_root / str(manifest["adapter"]["path"])
+    if (
+        initial_adapter.is_symlink()
+        or final_adapter.is_symlink()
+        or not initial_adapter.is_file()
+        or not final_adapter.is_file()
+        or _sha256(initial_adapter.read_bytes()) == _sha256(final_adapter.read_bytes())
+    ):
+        _fail("update_canary_adapter_did_not_change")
+
+    pointer = _strict_json(training_root / "latest.json")
+    checkpoint_relative = pointer.get("checkpoint")
+    if (
+        not isinstance(checkpoint_relative, str)
+        or PurePosixPath(checkpoint_relative).parent != PurePosixPath("checkpoints")
+    ):
+        _fail("update_canary_checkpoint_pointer_invalid")
+    checkpoint = _strict_json(training_root / checkpoint_relative / "complete.json")
+    if checkpoint.get("step") != max_steps:
+        _fail("update_canary_terminal_checkpoint_missing")
+
+    launch_bundle = _strict_json(
+        _repo_path(
+            str(contract["paths"]["verified_launch_bundle"]),
+            role="verified_launch_bundle",
+        )
+    )
+    campaign_root = _repo_path(
+        str(launch_bundle.get("campaign_ledger_root", "")),
+        role="campaign_ledger_root",
+    )
+    if not (campaign_root / "campaign.closed.json").is_file():
+        _fail("update_canary_campaign_not_closed")
+    campaign_durations: list[float] = []
+    checkpoint_durations: list[float] = []
+    statuses: list[str] = []
+    for sequence in range(max_steps):
+        started = _strict_json(campaign_root / f"group-{sequence:08d}.started.json")
+        terminal = _strict_json(campaign_root / f"group-{sequence:08d}.terminal.json")
+        admitted_ns = started.get("admitted_at_unix_ns")
+        finished_ns = terminal.get("finished_at_unix_ns")
+        if (
+            started.get("sequence") != sequence
+            or terminal.get("sequence") != sequence
+            or type(admitted_ns) is not int
+            or type(finished_ns) is not int
+            or finished_ns < admitted_ns
+            or terminal.get("policy_before_sha256")
+            != steps[sequence].get("policy_before_sha256")
+            or terminal.get("policy_after_sha256")
+            != steps[sequence].get("policy_after_sha256")
+        ):
+            _fail("update_canary_campaign_timing_invalid")
+        statuses.append(str(terminal.get("status")))
+        campaign_durations.append((finished_ns - admitted_ns) / 1_000_000_000.0)
+        timing_path = (
+            training_root
+            / "update-canary-step-timings"
+            / f"step-{sequence + 1:08d}.json"
+        )
+        timing_raw = read_stable_bytes(timing_path, max_bytes=64 * 1024)
+        timing = json.loads(timing_raw)
+        timing_material = dict(timing)
+        timing_claim = timing_material.pop("receipt_sha256", None)
+        checkpoint_relative = timing.get("checkpoint")
+        if not isinstance(checkpoint_relative, str):
+            _fail("update_canary_checkpoint_timing_invalid")
+        checkpoint_complete_path = training_root / checkpoint_relative / "complete.json"
+        elapsed_ns = timing.get("elapsed_monotonic_ns")
+        if (
+            timing.get("schema")
+            != "aura.recurrent_grpo.update_canary_step_timing.v1"
+            or timing.get("adapter_id") != contract["campaign_id"]
+            or timing.get("protocol_sha256") != _sha256(
+                (training_root / "training_protocol.json").read_bytes()
+            )
+            or timing.get("step") != sequence + 1
+            or timing.get("task_id") != steps[sequence].get("task_id")
+            or timing.get("step_receipt_sha256")
+            != steps[sequence].get("receipt_sha256")
+            or timing.get("includes_durable_checkpoint_publication") is not True
+            or type(elapsed_ns) is not int
+            or elapsed_ns <= 0
+            or timing_claim != _sha256(canonical_json_bytes(timing_material))
+            or checkpoint_complete_path.is_symlink()
+            or not checkpoint_complete_path.is_file()
+            or timing.get("checkpoint_complete_sha256")
+            != _sha256(checkpoint_complete_path.read_bytes())
+        ):
+            _fail("update_canary_checkpoint_timing_invalid")
+        checkpoint_durations.append(elapsed_ns / 1_000_000_000.0)
+
+    base_checkpoint_unchanged = True
+    if verify_model:
+        model_path = _repo_path(str(contract["model"]["path"]), role="model")
+        base_checkpoint_unchanged = (
+            full_weight_checkpoint_identity(model_path)
+            == contract["model"]["base_checkpoint"]
+        )
+    if not base_checkpoint_unchanged:
+        _fail("update_canary_base_checkpoint_changed")
+    containment = _strict_json(training_root / "CANARY_CONTAINMENT.json")
+    containment_material = dict(containment)
+    containment_claim = containment_material.pop("receipt_sha256", None)
+    if (
+        containment.get("schema")
+        != "aura.resident_recurrent_grpo.canary_containment.v1"
+        or containment.get("campaign_id") != contract["campaign_id"]
+        or containment.get("campaign_contract_sha256") != contract["contract_sha256"]
+        or containment.get("runtime_model_state_released") is not True
+        or containment.get("runtime_promotion_allowed") is not False
+        or containment.get("base_checkpoint_sha256")
+        != contract["model"]["base_checkpoint"]["fingerprint"]
+        or containment_claim != _sha256(canonical_json_bytes(containment_material))
+    ):
+        _fail("update_canary_containment_invalid")
+
+    interval_low, interval_high = _wilson_interval(len(update_steps), max_steps)
+    body = {
+        "schema": UPDATE_CANARY_VERDICT_SCHEMA,
+        "campaign_id": contract["campaign_id"],
+        "campaign_contract_sha256": contract["contract_sha256"],
+        "campaign_profile": UPDATE_CANARY_PROFILE,
+        "resident_model_verified": bool(verify_model),
+        "base_checkpoint_unchanged": base_checkpoint_unchanged,
+        "steps": max_steps,
+        "optimizer_updates": len(update_steps),
+        "optimizer_update_fraction": round(len(update_steps) / max_steps, 6),
+        "optimizer_update_fraction_wilson_95": {
+            "low": round(interval_low, 6),
+            "high": round(interval_high, 6),
+        },
+        "minimum_optimizer_updates": minimum_updates,
+        "updated_groups": statuses.count("updated"),
+        "rejected_groups": statuses.count("rejected"),
+        "policy_initial_sha256": steps[0]["policy_before_sha256"],
+        "policy_final_sha256": steps[-1]["policy_after_sha256"],
+        "adapter_sha256": completion["adapter_sha256"],
+        "adapter_identity_sha256": identity["composite_identity_sha256"],
+        "process_containment_rollback": True,
+        "latency_s": {
+            "scope": "task_admission_through_durable_checkpoint_publication",
+            "count": len(checkpoint_durations),
+            "p50": round(_nearest_rank(checkpoint_durations, 0.5), 6),
+            "p90": round(_nearest_rank(checkpoint_durations, 0.9), 6),
+            "max": round(max(checkpoint_durations), 6),
+            "total": round(sum(checkpoint_durations), 6),
+        },
+        "campaign_execution_latency_s": {
+            "scope": "signed_group_admission_through_campaign_terminal",
+            "count": len(campaign_durations),
+            "p50": round(_nearest_rank(campaign_durations, 0.5), 6),
+            "p90": round(_nearest_rank(campaign_durations, 0.9), 6),
+            "max": round(max(campaign_durations), 6),
+            "total": round(sum(campaign_durations), 6),
+        },
+        "verdict": "pass",
+        "full_training_launch_ready": True,
+        "reasoning_gain_proven": False,
+        "frontier_level_proven": False,
+        "claim_boundary": (
+            "engineering_update_and_latency_canary_only; "
+            "no capability or generalization claim"
+        ),
+        "preregistration_validation": validation,
+    }
+    return {**body, "verdict_sha256": _document_sha(body)}
 
 
 def _checkpoint_binding(path: Path, expected: Mapping[str, Any], *, role: str) -> dict[str, Any]:
@@ -1023,16 +1501,17 @@ def _successful_training_disposition(
     receipt = _strict_json(receipt_path)
     termination = receipt.get("termination")
     steps = receipt.get("steps")
+    reason = termination.get("reason") if isinstance(termination, Mapping) else None
     if (
         not isinstance(termination, Mapping)
-        or termination.get("reason") != "wall_clock_budget"
+        or reason not in {"wall_clock_budget", "operator_pause"}
         or termination.get("completed_budget") is not False
         or type(steps) is not int
         or not 0 <= steps < max_steps
         or progress.get("checkpoint_step") != steps
     ):
         _fail("successful_training_exit_without_complete_dose")
-    return "resume"
+    return "paused" if reason == "operator_pause" else "resume"
 
 
 def _watchdog_documents(
@@ -1086,6 +1565,116 @@ def _write_watchdog_documents(
     atomic_write_bytes(status_path, canonical_json_bytes(dict(status)), mode=0o600)
 
 
+def _request_training_pause(contract: Mapping[str, Any]) -> dict[str, Any]:
+    validate_contract(contract, verify_model=True)
+    training_root = _repo_path(
+        str(contract["paths"]["training_output"]),
+        role="training_output",
+    )
+    protocol_path = training_root / "training_protocol.json"
+    protocol_raw = read_stable_bytes(protocol_path, max_bytes=16 * 1024 * 1024)
+    protocol = json.loads(protocol_raw)
+    if (
+        not isinstance(protocol, dict)
+        or protocol.get("adapter_id") != contract["campaign_id"]
+    ):
+        _fail("training_pause_protocol_mismatch")
+    body = {
+        "schema": "aura.grpo.operator_pause_request.v1",
+        "adapter_id": contract["campaign_id"],
+        "protocol_sha256": _sha256(protocol_raw),
+        "requested_at_unix_ns": time.time_ns(),
+    }
+    request = {**body, "request_sha256": _sha256(canonical_json_bytes(body))}
+    path = training_root / "pause.request.json"
+    payload = canonical_json_bytes(request)
+    if path.exists():
+        existing = _strict_json(path)
+        if (
+            existing.get("schema") != request["schema"]
+            or existing.get("adapter_id") != request["adapter_id"]
+            or existing.get("protocol_sha256") != request["protocol_sha256"]
+        ):
+            _fail("training_pause_request_conflict")
+        return existing
+    if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
+        _fail("training_pause_request_publication_raced")
+    return request
+
+
+def _training_resume_request_path(contract: Mapping[str, Any]) -> Path:
+    return _repo_path(
+        str(
+            PurePosixPath(str(contract["paths"]["artifact_root"]))
+            / "training-watchdog"
+            / "resume.request.json"
+        ),
+        role="training_resume_request",
+        must_exist=False,
+    )
+
+
+def _request_training_resume(contract: Mapping[str, Any]) -> dict[str, Any]:
+    validate_contract(contract, verify_model=True)
+    _root, _journal_path, status_path, _records = _watchdog_documents(contract)
+    status = _strict_json(status_path)
+    if status.get("state") != "paused":
+        _fail("training_is_not_paused")
+    body = {
+        "schema": "aura.resident_recurrent_grpo.resume_request.v1",
+        "campaign_id": contract["campaign_id"],
+        "contract_sha256": contract["contract_sha256"],
+        "paused_attempt": status.get("attempt"),
+        "requested_at_unix_ns": time.time_ns(),
+    }
+    request = {**body, "request_sha256": _sha256(canonical_json_bytes(body))}
+    path = _training_resume_request_path(contract)
+    if not atomic_write_bytes_if_absent(
+        path,
+        canonical_json_bytes(request),
+        mode=0o600,
+    ):
+        existing = _strict_json(path)
+        if (
+            existing.get("campaign_id") != request["campaign_id"]
+            or existing.get("contract_sha256") != request["contract_sha256"]
+        ):
+            _fail("training_resume_request_conflict")
+        return existing
+    return request
+
+
+def _wait_for_training_resume(contract: Mapping[str, Any]) -> dict[str, Any]:
+    request_path = _training_resume_request_path(contract)
+    while True:
+        if request_path.exists():
+            request = _strict_json(request_path)
+            material = dict(request)
+            claimed = material.pop("request_sha256", None)
+            if (
+                set(material)
+                != {
+                    "schema",
+                    "campaign_id",
+                    "contract_sha256",
+                    "paused_attempt",
+                    "requested_at_unix_ns",
+                }
+                or material.get("schema")
+                != "aura.resident_recurrent_grpo.resume_request.v1"
+                or material.get("campaign_id") != contract["campaign_id"]
+                or material.get("contract_sha256") != contract["contract_sha256"]
+                or claimed != _sha256(canonical_json_bytes(material))
+            ):
+                _fail("training_resume_request_invalid")
+            receipt_root = ensure_private_directory(request_path.parent / "resume-receipts")
+            receipt_path = receipt_root / f"{claimed}.json"
+            _write_once(receipt_path, request)
+            request_path.unlink()
+            return request
+        time.sleep(1.0)
+
+
 def _release_failed_training_runtime() -> None:
     """Release resident MLX state before an exact checkpoint resume attempt."""
 
@@ -1097,6 +1686,55 @@ def _release_failed_training_runtime() -> None:
     except (ImportError, RuntimeError):
         pass
     gc.collect()
+
+
+def _publish_canary_containment_receipt(
+    contract: Mapping[str, Any],
+    *,
+    training_root: Path,
+) -> dict[str, Any]:
+    if contract.get("campaign_profile") != UPDATE_CANARY_PROFILE:
+        _fail("canary_containment_profile_invalid")
+    completion_path = training_root / "training_completion.json"
+    marker_path = training_root / "NON_PROMOTABLE_CANARY.json"
+    body = {
+        "schema": "aura.resident_recurrent_grpo.canary_containment.v1",
+        "campaign_id": contract["campaign_id"],
+        "campaign_contract_sha256": contract["contract_sha256"],
+        "training_completion_sha256": _sha256(
+            read_stable_bytes(completion_path, max_bytes=1024 * 1024)
+        ),
+        "non_promotable_marker_sha256": _sha256(
+            read_stable_bytes(marker_path, max_bytes=1024 * 1024)
+        ),
+        "base_checkpoint_sha256": contract["model"]["base_checkpoint"][
+            "fingerprint"
+        ],
+        "runtime_model_state_released": True,
+        "runtime_promotion_allowed": False,
+        "released_at_unix_ns": time.time_ns(),
+    }
+    receipt = {**body, "receipt_sha256": _sha256(canonical_json_bytes(body))}
+    path = training_root / "CANARY_CONTAINMENT.json"
+    payload = canonical_json_bytes(receipt)
+    if path.exists():
+        existing = _strict_json(path)
+        if (
+            existing.get("campaign_id") != receipt["campaign_id"]
+            or existing.get("campaign_contract_sha256")
+            != receipt["campaign_contract_sha256"]
+            or existing.get("training_completion_sha256")
+            != receipt["training_completion_sha256"]
+            or existing.get("non_promotable_marker_sha256")
+            != receipt["non_promotable_marker_sha256"]
+            or existing.get("runtime_model_state_released") is not True
+            or existing.get("runtime_promotion_allowed") is not False
+        ):
+            _fail("canary_containment_receipt_conflict")
+        return existing
+    if not atomic_write_bytes_if_absent(path, payload, mode=0o600):
+        _fail("canary_containment_receipt_publication_raced")
+    return receipt
 
 
 def _run_training(
@@ -1207,6 +1845,8 @@ def _run_training(
         terminal_state = (
             "complete"
             if error is None and result == 0 and disposition == "complete"
+            else "paused"
+            if error is None and result == 0 and disposition == "paused"
             else "exhausted"
             if len(records) >= max_attempts
             or consecutive_no_progress >= no_progress_limit
@@ -1228,7 +1868,18 @@ def _run_training(
             },
         )
         if terminal_state == "complete":
+            if contract.get("campaign_profile") == UPDATE_CANARY_PROFILE:
+                _release_failed_training_runtime()
+                _publish_canary_containment_receipt(
+                    contract,
+                    training_root=training_root,
+                )
             break
+        if terminal_state == "paused":
+            _release_failed_training_runtime()
+            _wait_for_training_resume(contract)
+            consecutive_no_progress = 0
+            continue
         if terminal_state == "exhausted":
             if error is not None:
                 raise error
@@ -1504,6 +2155,11 @@ def _parser() -> argparse.ArgumentParser:
     prepare = subparsers.add_parser("prepare")
     prepare.add_argument("--contract", default=DEFAULT_CONTRACT)
     prepare.add_argument("--campaign-id", default=DEFAULT_CAMPAIGN_ID)
+    prepare.add_argument(
+        "--campaign-profile",
+        choices=sorted(CAMPAIGN_PROFILES),
+        default=FULL_TRAINING_PROFILE,
+    )
     prepare.add_argument("--model", default=DEFAULT_MODEL)
     prepare.add_argument("--execution-spec", default=DEFAULT_SPEC)
     prepare.add_argument("--artifact-root", default=DEFAULT_ROOT)
@@ -1528,6 +2184,13 @@ def _parser() -> argparse.ArgumentParser:
     launch.add_argument("--expected-launch-bundle-sha256", required=True)
     resume = subparsers.add_parser("verify-resume")
     resume.add_argument("--contract", default=DEFAULT_CONTRACT)
+    canary = subparsers.add_parser("verify-update-canary")
+    canary.add_argument("--contract", required=True)
+    canary.add_argument("--output", required=True)
+    pause = subparsers.add_parser("request-training-pause")
+    pause.add_argument("--contract", required=True)
+    continue_training = subparsers.add_parser("request-training-resume")
+    continue_training.add_argument("--contract", required=True)
     return parser
 
 
@@ -1537,6 +2200,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.action == "prepare":
             contract = build_contract(
                 campaign_id=args.campaign_id,
+                campaign_profile=args.campaign_profile,
                 model=args.model,
                 execution_spec=args.execution_spec,
                 artifact_root=args.artifact_root,
@@ -1572,6 +2236,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     verify_model=True,
                 )
                 print(json.dumps(verdict, sort_keys=True))
+                return 0
+            if args.action == "verify-update-canary":
+                verdict = build_update_canary_verdict(
+                    contract,
+                    verify_model=True,
+                )
+                _write_once(Path(args.output), verdict)
+                print(json.dumps(verdict, indent=2, sort_keys=True))
+                return 0
+            if args.action == "request-training-pause":
+                request = _request_training_pause(contract)
+                print(json.dumps(request, indent=2, sort_keys=True))
+                return 0
+            if args.action == "request-training-resume":
+                request = _request_training_resume(contract)
+                print(json.dumps(request, indent=2, sort_keys=True))
                 return 0
             receipt = validate_contract(
                 contract,
