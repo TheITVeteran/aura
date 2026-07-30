@@ -6,6 +6,7 @@ import multiprocessing.connection
 import os
 import time
 import uuid
+from dataclasses import dataclass
 import weakref
 from collections.abc import Awaitable, Callable, Hashable
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,26 @@ def _is_shutdown_commit_request(msg_type: str, payload: Any) -> bool:
         and isinstance(payload, dict)
         and str(payload.get("cause") or "").lower() == "shutdown"
     )
+
+
+@dataclass(frozen=True)
+class SendOutcome:
+    """Whether a fire-and-forget send actually reached the transport.
+
+    CP126 (critical): six drop paths in ``send`` returned None, exactly like
+    a successful write, so "the await completed" meant neither admission nor
+    delivery and drop counters lived only inside the bus.
+
+    ``delivered`` is the honest answer; ``reason`` names which path was
+    taken, because "the bus is not running" and "the writer is locked"
+    demand different responses from a caller.
+    """
+
+    delivered: bool
+    reason: str = ""
+
+    def __bool__(self) -> bool:
+        return self.delivered
 
 
 class LocalPipeBus:
@@ -564,18 +585,38 @@ class LocalPipeBus:
             logger.warning("⚠️ SHM offload failed, falling back to Pipe: %s", e)
             return payload
 
-    async def send(self, msg_type: str, payload: Any, trace_id: str | None = None):
+    async def send(
+        self, msg_type: str, payload: Any, trace_id: str | None = None,
+    ) -> "SendOutcome":
+        """Fire-and-forget send that tells the caller what happened.
+
+        CP126 (critical): "The public send API has no delivery result.
+        Not-running, closed, broken, suppression-window, and locked-writer
+        conditions all return normally without sending; RuntimeError is also
+        swallowed. A normal await completion therefore means neither
+        admission nor delivery."
+
+        Six distinct drop paths all returned None, exactly like a successful
+        write. Fire-and-forget is the right SEMANTIC — a caller should not
+        block on the bus — but that is a statement about waiting, not about
+        lying. A caller that wants to know can now ask; one that does not is
+        unaffected, since the return value was previously unused.
+        """
         try:
-            await self._run_on_transport_loop(
+            outcome = await self._run_on_transport_loop(
                 "send",
                 lambda: self._send_local(msg_type, payload, trace_id=trace_id),
             )
         except RuntimeError as e:
             if self._is_running:
                 logger.error("❌ Unexpected error in bus send: %s", e)
+            return SendOutcome(False, f"transport_loop_error:{type(e).__name__}")
+        return outcome if isinstance(outcome, SendOutcome) else SendOutcome(True, "")
 
-    async def _send_local(self, msg_type: str, payload: Any, trace_id: str | None = None):
-        """Send a fire-and-forget message."""
+    async def _send_local(
+        self, msg_type: str, payload: Any, trace_id: str | None = None,
+    ) -> "SendOutcome":
+        """Send a fire-and-forget message, reporting admission and delivery."""
         trace_id = trace_id or str(uuid.uuid4())
         msg = {
             "type": msg_type,
@@ -591,7 +632,14 @@ class LocalPipeBus:
                 or getattr(self, '_pipe_broken', False)
                 or time.monotonic() < getattr(self, "_write_suppressed_until", 0.0)
             ):
-                return  # Already closed — silently skip, no spam
+                # Was a bare `return` — indistinguishable from delivery.
+                if not self._is_running:
+                    return SendOutcome(False, "bus_not_running")
+                if self.write_conn.closed:
+                    return SendOutcome(False, "connection_closed")
+                if getattr(self, "_pipe_broken", False):
+                    return SendOutcome(False, "pipe_broken")
+                return SendOutcome(False, "write_suppression_window")
 
             write_lock = self._get_write_lock()
             if write_lock.locked():
@@ -607,7 +655,7 @@ class LocalPipeBus:
                         self._write_backpressure_drops,
                         msg_type,
                     )
-                return
+                return SendOutcome(False, "write_backpressure")
 
             msg["payload"] = await self._prepare_payload_for_transport(payload)
             raw_msg = await asyncio.to_thread(json.dumps, msg)
@@ -621,6 +669,7 @@ class LocalPipeBus:
             self._write_timeout_count = 0
             self._write_backpressure_drops = 0
             self._clear_transport_degradation()
+            return SendOutcome(True, "")
         except TimeoutError:
             self._write_timeout_count += 1
             suppress_for_s = self._pipe_suppression_window_s()
@@ -656,6 +705,7 @@ class LocalPipeBus:
                     )
                 except (ImportError, AttributeError, RuntimeError) as _exc:
                     logger.debug("Suppressed %s in core.bus.local_pipe_bus: %s", type(_exc).__name__, _exc)
+            return SendOutcome(False, "write_timeout")
         except (BrokenPipeError, EOFError, OSError, ConnectionResetError) as e:
             if not getattr(self, '_pipe_broken', False):
                 self._pipe_broken = True
@@ -666,10 +716,12 @@ class LocalPipeBus:
                     )
                 logger.info("📡 Bus pipe closed (normal shutdown): %s", str(e)[:60])
             self._safe_close_connection(self.write_conn)
+            return SendOutcome(False, f"pipe_closed:{type(e).__name__}")
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('local_pipe_bus', e)
             if self._is_running:
                 logger.error("❌ Unexpected error in bus send: %s", e)
+            return SendOutcome(False, f"send_error:{type(e).__name__}")
 
     async def request(  # noqa: ASYNC109 - timeout is part of the public bus API.
         self,
