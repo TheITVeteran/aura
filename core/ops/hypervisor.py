@@ -254,9 +254,10 @@ class Hypervisor:
 
                 if lag > self._severe_lag_threshold_s:
                     if uptime < 180.0:
-                        logger.warning(
-                            "🚨 Loop lag > %.1fs during boot/warmup grace period (uptime: %.1fs). "
-                            "Skipping severe freeze failure recording to allow model load to complete.",
+                        logger.info(
+                            "Boot/warmup work exceeded the %.1fs loop-lag threshold "
+                            "(uptime: %.1fs); retained as startup telemetry without "
+                            "opening a post-readiness freeze incident.",
                             self._severe_lag_threshold_s,
                             uptime,
                         )

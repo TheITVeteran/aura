@@ -63,3 +63,29 @@ async def test_hypervisor_uses_monotonic_clock_across_wall_clock_jump(monkeypatc
 
     assert hypervisor._last_lag == 0.0
     assert hypervisor._severe_lag_streak == 0
+
+
+@pytest.mark.asyncio
+async def test_hypervisor_classifies_boot_grace_lag_as_startup_telemetry(
+    monkeypatch, caplog
+) -> None:
+    hypervisor = Hypervisor(lag_threshold_s=1.5)
+    hypervisor._running = True
+    hypervisor._start_time = 995.0
+    monotonic_values = iter((50.0, 58.0))
+
+    async def one_sleep(_seconds):
+        hypervisor._running = False
+
+    monkeypatch.setattr(hypervisor_module.asyncio, "sleep", one_sleep)
+    monkeypatch.setattr(hypervisor_module, "_monotonic_now", lambda: next(monotonic_values))
+    monkeypatch.setattr(hypervisor_module.time, "time", lambda: 1_000.0)
+    monkeypatch.setattr(hypervisor, "_active_runtime_reason", lambda: "")
+
+    with caplog.at_level("INFO", logger="Aura.Hypervisor"):
+        await hypervisor._watchdog_loop()
+
+    assert hypervisor._last_lag == 7.0
+    assert hypervisor._severe_lag_streak == 0
+    assert "retained as startup telemetry" in caplog.text
+    assert not any(record.levelname == "WARNING" for record in caplog.records)

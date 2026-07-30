@@ -31984,3 +31984,28 @@ integrity pass. A newly rebuilt app must prove the Will SLO and clean-ring state
 live before demo runs count. Training remains paused. This is total checkpoint
 711. The 711-920 completion envelope is approximately 77.3%-100.0%, with an
 88.6% midpoint.
+
+### 2026-07-30 - DEMO-Q5 clean lifecycle proof and startup-lag semantics
+
+The rebuilt app proved the Will repair live: the same cold-start authority
+traffic produced zero violations, with p50 1.8 milliseconds and p95 4.6
+milliseconds instead of the prior p95 near 396 milliseconds. An orderly
+installed-app quit completed in nine seconds with no warning/error/critical
+events, and direct ring inspection returned `clean=true` with
+`close_reason=container_shutdown`.
+
+The next provenance-clean boot correctly produced no flight-recorder death
+report. Its sole warning was a duplicate Hypervisor message for an 8.2-second
+startup-grace observation: the first message already classified the condition
+as expected startup telemetry, while the second labeled the same non-incident
+as a severe warning even though it deliberately opened no fault. Startup-grace
+lag remains measured, exported, and visible as information; post-readiness
+severe lag retains its confirmed failure path. The semantic regression test
+proves startup grace cannot emit a warning while preserving the lag value and
+streak reset.
+
+The focused live-runtime lag gate passes 10/10; bytecode compilation and diff
+integrity pass. Another signed rebuild is required before the first complete
+demo replay counts. Training remains paused. This is total checkpoint 712. The
+712-920 completion envelope is approximately 77.4%-100.0%, with an 88.7%
+midpoint.
