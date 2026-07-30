@@ -692,7 +692,6 @@ class RuntimeHygieneManager:
 
     def audit(self) -> dict[str, Any]:
         sample = self.capture_sample()
-        self._adopt_active_child_processes()
         self._refresh_thread_records()
         self._refresh_process_records()
 

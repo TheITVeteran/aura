@@ -1204,6 +1204,15 @@ class StabilityGuardian:
                 )
 
             issues = list(report.get("issues", []) or [])
+            processes = report.get("processes", {})
+            rogue_samples = list(processes.get("rogue_samples", []) or [])
+            if rogue_samples:
+                sample = rogue_samples[0]
+                issues.append(
+                    "unregistered process sample "
+                    f"pid={sample.get('pid') or 'unknown'} "
+                    f"name={sample.get('name') or 'unknown'}"
+                )
             severity = "error" if report.get("critical") else "warning"
             return HealthCheckResult(
                 "runtime_hygiene",

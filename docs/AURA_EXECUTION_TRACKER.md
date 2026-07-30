@@ -32202,3 +32202,35 @@ requires a signed rebuild and three complete clean GUI demonstrations. Other
 warning families from the rejected run remain open. Resident-32B training
 remains paused. This is total checkpoint 726. The 726-920 completion envelope
 is approximately 78.9%-100.0%, with an 89.5% midpoint.
+
+### 2026-07-30 - DEMO-Q11 explicit browser-process ownership and fail-closed hygiene
+
+The remaining runtime-hygiene alert was a process-ownership defect rather than
+an arbitrary child-name exception. Playwright creates its long-lived Node
+driver through asyncio internals, outside Aura's `Popen` interception.
+PhantomBrowser owned and closed that driver but never registered its PID, so a
+process-census timing boundary could classify the driver or one Chromium
+descendant as unregistered. At the same time, every live hygiene audit
+blanket-adopted all children immediately before checking for rogues, which
+could hide a genuinely unowned process.
+
+PhantomBrowser now binds the exact Playwright transport process to runtime
+hygiene immediately after the driver handshake and exposes its current PID and
+registration state. Chromium descendants are recognized by actual ancestry to
+that registered owner. Close clears the owner state and resource-coordination
+state. Live audits no longer blanket-adopt late unknown children; startup and
+shutdown still adopt preexisting resources for lifecycle reconciliation, while
+an unexpected process created during normal operation remains a critical
+finding. StabilityGuardian now preserves a bounded PID/name sample in the
+incident without leaking command arguments.
+
+A real browser-process census proved one registered Playwright driver, four
+owned Chromium descendants, and zero rogues while active, followed by zero
+registered children and zero rogues after close and census-cache expiry. The
+full adjacent runtime-hygiene, Guardian, browser, Reddit, autonomy, authority,
+and desktop-runtime gate passes 473/473; bytecode compilation and diff
+integrity pass. The installed app still requires a signed rebuild and live
+proof. Token ontology, network novelty semantics, and resource forecasting
+remain the next rejected-run warning families. Resident-32B training remains
+paused. This is total checkpoint 727. The 727-920 completion envelope is
+approximately 79.0%-100.0%, with an 89.5% midpoint.

@@ -476,6 +476,26 @@ def test_runtime_hygiene_keeps_unowned_child_process_fail_closed(resource_observ
     assert "unexpected-worker" in summary["rogue_samples"][0]["name"]
 
 
+def test_runtime_hygiene_audit_does_not_auto_adopt_unknown_late_child(
+    resource_observer,
+):
+    _observe_children(resource_observer, [{
+        "pid": 62003,
+        "ppid": os.getpid(),
+        "cmdline": [sys.executable, "-m", "unexpected_late_worker"],
+        "name": "unexpected-late-worker",
+    }])
+    hygiene = RuntimeHygieneManager()
+
+    report = hygiene.audit()
+
+    assert report["healthy"] is False
+    assert report["critical"] is True
+    assert report["processes"]["active_registered"] == 0
+    assert report["processes"]["rogue_child_processes"] == 1
+    assert report["processes"]["rogue_samples"][0]["pid"] == 62003
+
+
 @pytest.mark.asyncio
 async def test_runtime_hygiene_ignores_python_resource_tracker_children():
     class _ResourceTrackerProc:

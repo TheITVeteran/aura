@@ -25,6 +25,7 @@ from core.runtime.errors import (
     Severity,
     record_degradation,
 )
+from core.runtime.runtime_hygiene import get_runtime_hygiene
 from core.utils.exceptions import capture_and_log
 
 try:
@@ -167,6 +168,8 @@ class PhantomBrowser:
         self._last_launch_attempts: list[str] = []
         self._stealth_applied = False
         self._stealth_error = _STEALTH_IMPORT_ERROR
+        self._driver_pid: int | None = None
+        self._driver_registered = False
         
         if not PLAYWRIGHT_AVAILABLE:
             return
@@ -224,6 +227,8 @@ class PhantomBrowser:
             "stealth_available": bool(STEALTH_AVAILABLE),
             "stealth_applied": bool(self._stealth_applied),
             "stealth_error": self._stealth_error[:240],
+            "driver_pid": self._driver_pid,
+            "driver_registered": bool(self._driver_registered),
             # A browser running WITHOUT resource coordination is a different
             # state from one running with it; reporting only "active" made
             # them look identical.
@@ -296,6 +301,7 @@ class PhantomBrowser:
                 self._resource_coordinated = False
 
             self.playwright = await async_playwright().start()
+            self._register_playwright_driver()
 
             # RESILIENCE: Build a fallback cascade of browser types.
             # If the configured browser (e.g. Firefox) isn't installed,
@@ -436,6 +442,40 @@ class PhantomBrowser:
             return False
         self._stealth_applied = True
         self._stealth_error = ""
+        return True
+
+    def _register_playwright_driver(self) -> bool:
+        """Bind Playwright's asyncio-owned driver to Aura's process owner."""
+        self._driver_pid = None
+        self._driver_registered = False
+        try:
+            driver = self.playwright._impl_obj._connection._transport._proc
+            pid = int(getattr(driver, "pid", 0) or 0)
+            if pid <= 0:
+                raise RuntimeError("playwright driver pid unavailable")
+            get_runtime_hygiene().register_process_handle(
+                driver,
+                kind="subprocess",
+                name="playwright.driver",
+                source="core.capabilities.phantom_browser",
+                command="playwright driver",
+            )
+        except (
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            _record_browser_degradation(
+                exc,
+                stage="driver_registration",
+                action="kept browser active but exposed missing driver ownership evidence",
+                severity="warning",
+                extra={"browser_type": self.browser_type},
+            )
+            return False
+        self._driver_pid = pid
+        self._driver_registered = True
         return True
 
     async def rotate_user_agent(self):
@@ -759,6 +799,8 @@ class PhantomBrowser:
         self.context = None
         self.browser = None
         self.playwright = None
+        self._driver_pid = None
+        self._driver_registered = False
         self.is_active = False
         self._release_resource_lock()
         logger.info("Browser closed")
@@ -769,6 +811,7 @@ class PhantomBrowser:
         if lock:
             lock.end_browser_session()
             self._resource_lock = None
+        self._resource_coordinated = False
 
     async def _human_delay(self, min_s=0.5, max_s=1.5):
         """Random delay to simulate human pause, modulated by homeostasis."""

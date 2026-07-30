@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from core.capabilities import phantom_browser as phantom_module
 from core.capabilities.phantom_browser import PhantomBrowser
@@ -44,6 +45,12 @@ class _FakePlaywright:
         self.firefox = _Launcher(fail=firefox_fail)
         self.webkit = _Launcher(fail=True)
         self.chromium = _Launcher(fail=chromium_fail)
+        self.driver = SimpleNamespace(pid=54321, returncode=None)
+        self._impl_obj = SimpleNamespace(
+            _connection=SimpleNamespace(
+                _transport=SimpleNamespace(_proc=self.driver),
+            )
+        )
         self.stopped = False
 
     async def stop(self):
@@ -59,9 +66,18 @@ class _AsyncPlaywrightFactory:
 
 
 @pytest.fixture(autouse=True)
-def _reset_tracker():
+def _reset_tracker(monkeypatch):
+    class Hygiene:
+        def __init__(self):
+            self.registrations = []
+
+        def register_process_handle(self, process, **metadata):
+            self.registrations.append((process, metadata))
+
+    hygiene = Hygiene()
+    monkeypatch.setattr(phantom_module, "get_runtime_hygiene", lambda: hygiene)
     get_degradation_tracker().reset()
-    yield
+    yield hygiene
     get_degradation_tracker().reset()
 
 
@@ -100,7 +116,10 @@ async def test_browser_startup_falls_back_to_chromium(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_browser_applies_current_stealth_api_before_page_creation(monkeypatch):
+async def test_browser_applies_current_stealth_api_before_page_creation(
+    monkeypatch,
+    _reset_tracker,
+):
     fake_playwright = _FakePlaywright(firefox_fail=False)
     observations = []
 
@@ -123,6 +142,19 @@ async def test_browser_applies_current_stealth_api_before_page_creation(monkeypa
     assert observations == [("stealth", False)]
     assert browser.get_status()["stealth_applied"] is True
     assert browser.get_status()["stealth_error"] == ""
+    assert browser.get_status()["driver_registered"] is True
+    assert browser.get_status()["driver_pid"] == 54321
+    assert _reset_tracker.registrations == [
+        (
+            fake_playwright.driver,
+            {
+                "kind": "subprocess",
+                "name": "playwright.driver",
+                "source": "core.capabilities.phantom_browser",
+                "command": "playwright driver",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

@@ -3772,6 +3772,34 @@ async def test_stability_guardian_self_probe_error_does_not_kill_fail_closed_mon
     assert failed[0].severity == "error"
 
 
+@pytest.mark.asyncio
+async def test_stability_guardian_preserves_rogue_process_identity(service_container):
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time()))
+
+    class Hygiene:
+        def audit(self):
+            return {
+                "healthy": False,
+                "critical": True,
+                "issues": ["1 unregistered child process(es) detected"],
+                "repair_actions": [],
+                "processes": {
+                    "rogue_samples": [
+                        {"pid": 4242, "name": "unexpected-helper", "command": "secret"}
+                    ]
+                },
+            }
+
+    service_container.register_instance("runtime_hygiene", Hygiene())
+
+    result = await guardian._check_runtime_hygiene()
+
+    assert result.healthy is False
+    assert result.severity == "error"
+    assert "pid=4242 name=unexpected-helper" in result.message
+    assert "secret" not in result.message
+
+
 def test_collect_liquid_state_payload_prefers_runtime_signal_over_zero_stub():
     from interface import server as server_module
 
