@@ -161,7 +161,50 @@ class DesktopTaskSkill(BaseSkill):
     input_model = DesktopTaskParams
     metabolic_cost = 2
     effect_scope = "foreground_desktop_control"
+    #: The floor: enough for the ordinary desktop steps (folders, files, an
+    #: app, a wallpaper) with room for a retry.
     timeout_seconds = 180.0
+
+    #: What one researched source costs end to end — fetch, read, and its share
+    #: of the synthesis. Measured across the evening of 2026-07-29 at roughly
+    #: 30s per source on the resident 32B, taken with margin because the
+    #: penalty for being short is losing the whole task.
+    _SECONDS_PER_RESEARCHED_SOURCE = 45.0
+
+    #: Composing the document once the sources are read, which happens whether
+    #: there are two sources or five.
+    _SECONDS_TO_COMPOSE_A_DOCUMENT = 90.0
+
+    @classmethod
+    def timeout_for(cls, params: Any) -> float:
+        """How long THIS request needs, not how long the average one takes.
+
+        A flat 180s could not describe "make a folder" and "read three
+        articles and write a synthesis" at the same time. The same research
+        objective measured 98s, 100s, 156s, 161s and 176s across one evening,
+        so the declared budget sat inside its own spread — and on 2026-07-29 it
+        lost: 93.5s of completed research was cancelled and reported to Bryan
+        as "Completed 0/0 steps".
+
+        Reading is the cost and the request says how much reading there is, so
+        the budget follows the request the same way the source count does.
+        """
+        payload = params if isinstance(params, dict) else {}
+        objective = str(payload.get("objective") or payload.get("task") or "")
+        if not objective:
+            return cls.timeout_seconds
+        if not cls._objective_requests_research_document(objective):
+            return cls.timeout_seconds
+        sources = cls._requested_research_source_count(objective)
+        if sources <= 0:
+            # Unspecified: size for what web_search's own default will return
+            # rather than inventing a number here.
+            sources = 5
+        return (
+            cls.timeout_seconds
+            + cls._SECONDS_TO_COMPOSE_A_DOCUMENT
+            + cls._SECONDS_PER_RESEARCHED_SOURCE * sources
+        )
     _DOCUMENT_BODY_TOKENS = (
         "{{document_body}}",
         "${document_body}",
