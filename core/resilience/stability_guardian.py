@@ -784,6 +784,41 @@ class StabilityGuardian:
 
         if slow_background and len(slow_background) >= 3:
             bg_mean_ms = sum(float(sample.get("duration_ms", 0.0) or 0.0) for sample in slow_background) / len(slow_background)
+
+            # A user turn in flight EXPLAINS a slow background tick.
+            #
+            # While a foreground turn holds the resident 32B, background ticks
+            # queue behind it by design — that is the deferral policy working,
+            # and the same runtime says so in its own log ("dream consolidation
+            # deferred — foreground_chat_active"). Reporting it as a TICK STALL
+            # made the guardian dump every thread's stack, which is a
+            # GIL-holding burst that slows the very turn it is complaining
+            # about. Live 2026-07-29, six demo turns produced five DEGRADED
+            # verdicts and three thread dumps, every one of them during a
+            # generation that was proceeding normally.
+            #
+            # CLAUDE.md's rule for exactly this: expected backpressure logs at
+            # info, and only a persistent or total condition is a degradation.
+            # The foreground lease is bounded, so a background tick still slow
+            # once the turn ends is a real stall and still reported below.
+            foreground_reason = ""
+            try:
+                from core.runtime.foreground_guard import foreground_activity_reason
+
+                foreground_reason = foreground_activity_reason()
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                logger.debug("Foreground activity unavailable to the tick check: %s", exc)
+            if foreground_reason == "foreground_chat_active":
+                return HealthCheckResult(
+                    "tick_rate",
+                    True,
+                    (
+                        f"Background ticks deferred behind a live user turn "
+                        f"(mean={bg_mean_ms:.0f}ms across {len(slow_background)} sample(s))"
+                    ),
+                    severity="info",
+                )
+
             attributed = [
                 sample
                 for sample in slow_background

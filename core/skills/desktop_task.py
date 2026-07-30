@@ -569,6 +569,27 @@ class DesktopTaskSkill(BaseSkill):
         return wants_research and wants_written_output
 
     @classmethod
+    def _artifact_document_title(cls, objective: str) -> str:
+        """The title printed at the top of the document.
+
+        The filename has always been derived from what the request was about
+        (`orcas_summary.pdf`); the title inside the PDF was the literal string
+        "Aura Desktop Task". So Bryan's orca synthesis opened with a heading
+        naming the machinery that produced it rather than its subject —
+        measured live 2026-07-29. The stem already carries the intent; this
+        renders the same intent for a human reader.
+        """
+        stem = cls._artifact_filename_stem(objective)
+        if stem in {"aura_desktop_summary", ""}:
+            return "Aura Desktop Task"
+        if stem == "aura_self_summary":
+            return "About Aura"
+        words = [part for part in re.split(r"[_\s]+", stem) if part]
+        if not words:
+            return "Aura Desktop Task"
+        return " ".join(word[:1].upper() + word[1:] for word in words)
+
+    @classmethod
     def _artifact_filename_stem(cls, objective: str) -> str:
         """Name an artifact from its content intent, not its destination."""
         if cls._objective_requests_self_summary(objective):
@@ -3794,7 +3815,7 @@ class DesktopTaskSkill(BaseSkill):
                         action="render_text_pdf",
                         target={
                             "path": f"{folder_path}/{filename_stem}.pdf",
-                            "title": "Aura Desktop Task",
+                            "title": self._artifact_document_title(text),
                             "body": body,
                             "overwrite": False,
                             **({"image_path": artifact_image_path} if artifact_image_path else {}),

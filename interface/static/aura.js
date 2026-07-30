@@ -1245,22 +1245,57 @@ function renderStatusFlags(flags) {
     }).join('');
 }
 
+// The bootstrap payload carries TURN PAIRS, not role-tagged messages.
+// /api/ui/bootstrap returns conversation.recent as
+//   {id, timestamp, user: "...", aura: "...", status, ...}
+// and this function only ever read {role, content}. So every entry failed the
+// role check, was skipped, and the pane was left with the initializing
+// placeholder — which the ready-path below then clears to nothing. Live
+// 2026-07-29: six demo turns, all of them still on the server and returned by
+// every bootstrap poll, and the chat pane went blank in front of Bryan.
+// Both shapes are accepted now; the pair form is what the live API sends.
+function conversationEntriesToMessages(entries) {
+    const out = [];
+    for (const entry of entries) {
+        if (!entry || typeof entry !== 'object') continue;
+        const role = entry.role === 'assistant' ? 'aura' : (entry.role === 'user' ? 'user' : null);
+        if (role) {
+            const content = entry.content || entry.message || '';
+            if (String(content).trim()) {
+                out.push({ role, text: String(content), metadata: entry.metadata || {} });
+            }
+            continue;
+        }
+        // Turn-pair form: one exchange, user first.
+        const asked = entry.user;
+        const answered = entry.aura;
+        if (typeof asked === 'string' && asked.trim()) {
+            out.push({ role: 'user', text: asked, metadata: {} });
+        }
+        if (typeof answered === 'string' && answered.trim()) {
+            out.push({ role: 'aura', text: answered, metadata: entry.metadata || {} });
+        }
+    }
+    return out;
+}
+
 function hydrateRecentConversation(entries) {
     const messages = DOM.messages || $('messages');
     if (!messages || !Array.isArray(entries) || !entries.length) return;
-    const hasOnlyPlaceholder = messages.children.length === 1 && messages.textContent.includes('Conversation lane initializing');
-    if (!hasOnlyPlaceholder) return;
+    // Re-hydrate whenever the pane is showing nothing of the conversation:
+    // the placeholder, or genuinely empty. Requiring the placeholder alone
+    // meant a pane cleared to empty could never recover its own transcript.
+    const text = messages.textContent || '';
+    const isEmpty = messages.children.length === 0 || !text.trim();
+    const hasOnlyPlaceholder = messages.children.length === 1 && text.includes('Conversation lane initializing');
+    if (!hasOnlyPlaceholder && !isEmpty) return;
+
+    const restored = conversationEntriesToMessages(entries.slice(-12));
+    if (!restored.length) return;
 
     messages.innerHTML = '';
-    const recent = entries.slice(-12);
-    for (const entry of recent) {
-        const role = entry.role === 'assistant' ? 'aura' : (entry.role === 'user' ? 'user' : null);
-        const content = entry.content || entry.message || '';
-        if (!role || !String(content).trim()) continue;
-        appendMsg(role, String(content), false, entry.metadata || {});
-    }
-    if (!messages.children.length) {
-        messages.innerHTML = '<div class="sys-box">Conversation lane initializing. Waiting for verified Aura reply path...</div>';
+    for (const item of restored) {
+        appendMsg(item.role, item.text, false, item.metadata);
     }
 }
 
@@ -1786,7 +1821,12 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     startProfileBoundFeatures();
 }
 
-async function hydrateBootstrap({ hydrateConversationHistory = false, quiet = true } = {}) {
+// Defaults to restoring the transcript. It used to default to false, so the
+// 30s bootstrap poll — the one thing that runs after the pane has been
+// cleared — was the one caller that could never put the conversation back.
+// hydrateRecentConversation only writes into an empty or placeholder pane, so
+// asking for it always is idempotent and never clobbers a live conversation.
+async function hydrateBootstrap({ hydrateConversationHistory = true, quiet = true } = {}) {
     try {
         const res = await fetch('/api/ui/bootstrap', { cache: 'no-store' });
         if (!res.ok) throw new Error(`bootstrap_http_${res.status}`);
