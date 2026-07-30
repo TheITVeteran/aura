@@ -3067,10 +3067,10 @@ async def test_process_manager_schedules_restart_on_captured_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_sleep_trigger_primes_missing_last_user_baseline():
+async def test_sleep_trigger_preserves_missing_user_anchor_and_stays_idle():
     orch = SimpleNamespace(
         status=SimpleNamespace(is_processing=False),
-        start_time=time.time(),
+        start_time=time.time() - 3600.0,
         _last_user_interaction_time=0.0,
     )
     trigger = AutonomousSleepTrigger(orchestrator=orch)
@@ -3085,8 +3085,12 @@ async def test_sleep_trigger_primes_missing_last_user_baseline():
 
     await trigger._evaluate()
 
-    assert orch._last_user_interaction_time > 0.0
+    assert orch._last_user_interaction_time == 0.0
     assert called is False
+
+    from core.runtime.background_policy import background_activity_reason
+
+    assert background_activity_reason(orch) == "no_user_anchor"
 
 
 @pytest.mark.asyncio

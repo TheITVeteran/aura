@@ -18,7 +18,6 @@ This is what makes idle time productive instead of dead time.
 import asyncio
 import logging
 import time
-from typing import Optional
 
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
@@ -40,9 +39,12 @@ class AutonomousSleepTrigger:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
+        self._boot_idle_baseline: float = float(
+            getattr(orchestrator, "start_time", 0.0) or time.time()
+        )
         self._last_sleep_time: float = 0.0
         self._sleeping: bool = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self.running = False
 
     async def start(self):
@@ -89,13 +91,10 @@ class AutonomousSleepTrigger:
         # Guard: idle threshold
         last_user = float(getattr(orch, "_last_user_interaction_time", 0.0) or 0.0)
         if last_user <= 0.0:
-            seeded = float(getattr(orch, "start_time", 0.0) or 0.0) or time.time()
-            try:
-                orch._last_user_interaction_time = seeded
-            except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
-                record_degradation('sleep_trigger', _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
-            logger.debug("SleepTrigger: Primed last-user baseline at %.3f.", seeded)
+            logger.debug(
+                "SleepTrigger: waiting for a real user anchor (boot idle %.0fs).",
+                max(0.0, time.time() - self._boot_idle_baseline),
+            )
             return
         idle_sec = time.time() - last_user
         if idle_sec < _IDLE_THRESHOLD_SEC:
@@ -214,7 +213,7 @@ class AutonomousSleepTrigger:
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
-_trigger: Optional[AutonomousSleepTrigger] = None
+_trigger: AutonomousSleepTrigger | None = None
 
 
 def get_sleep_trigger(orchestrator=None) -> AutonomousSleepTrigger:
