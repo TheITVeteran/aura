@@ -765,7 +765,10 @@ class MemoryFacade:
                 
                 # Fallback: semantic search with entity name
                 if not results and hasattr(self.vector, "search_similar"):
-                    semantic_results = self.vector.search_similar(f"about {entity_name}", limit=limit)
+                    # Dense encode + whole-vault scoring: off the loop.
+                    semantic_results = await asyncio.to_thread(
+                        self.vector.search_similar, f"about {entity_name}", limit=limit
+                    )
                     for record in list(semantic_results or []):
                         results.append(self._normalize_memory_result(
                             content=record.get("content") or record.get("text") or "",
