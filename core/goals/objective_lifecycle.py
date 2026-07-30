@@ -190,6 +190,13 @@ _TURN_SCOPED_RESPONSE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_SELF_CHECK_IN_RE = re.compile(
+    r"^(?:please\s+)?check\s+in\b"
+    r"(?=.*\b(?:yourself|your\s+(?:state|condition|feelings?|experience)|"
+    r"feel(?:ing)?|settled|strained|doing|okay|ok)\b)",
+    re.IGNORECASE,
+)
+
 _CONVERSATIONAL_STATEMENT_RE = re.compile(
     r"^(?:hey|hi|hello|thanks|thank\s+you|sorry|"
     r"i\b|i'm\b|im\b|we\b|we're\b|you\b|you're\b|"
@@ -279,6 +286,11 @@ def classify_foreground_objective(value: Any) -> ForegroundObjectiveDisposition:
     if not lowered:
         return ForegroundObjectiveDisposition.UNKNOWN
     if _TURN_SCOPED_RESPONSE_RE.search(text) or _ONE_TURN_RESPONSE_RE.search(text):
+        return ForegroundObjectiveDisposition.CHAT
+    # A self check-in is a one-turn introspective exchange even though "check"
+    # and a later "tell me" are action verbs. Evaluate the whole utterance
+    # before the imperative-start rule so it cannot become durable work.
+    if _SELF_CHECK_IN_RE.search(text):
         return ForegroundObjectiveDisposition.CHAT
     if _EXPLICIT_TASK_BINDING_RE.search(text):
         return ForegroundObjectiveDisposition.TASK

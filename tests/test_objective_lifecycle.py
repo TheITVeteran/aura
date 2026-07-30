@@ -59,8 +59,21 @@ def test_ephemeral_classifier_separates_dialogue_from_actionable_work():
     assert is_ephemeral_conversation_turn("How are you learning?")
     assert is_ephemeral_conversation_turn("What did you learn today?")
     assert is_ephemeral_conversation_turn("How can I help you build confidence?")
+    assert is_ephemeral_conversation_turn(
+        "Check in with your state and tell me right here: "
+        "more settled or more strained than an hour ago?"
+    )
+    assert is_ephemeral_conversation_turn(
+        "Check in with yourself: are you feeling okay after that?"
+    )
     assert not is_ephemeral_conversation_turn("Can you investigate runtime pressure?")
     assert is_actionable_foreground_objective("Can you update the runtime manifest?")
+    assert is_actionable_foreground_objective(
+        "Check the deployment status and report any failed replicas"
+    )
+    assert is_actionable_foreground_objective(
+        "Check in with the deployment team and document the release decision"
+    )
     for quoted_chat_action in (
         "Investigate why Aura keeps asking 'are you ok' and fix it",
         "Analyze what do you think caused the health poll failure",
@@ -268,6 +281,39 @@ def test_continuity_does_not_rehydrate_or_narrate_completed_chat_turn():
     assert obligations["pending_initiatives"] == []
     assert obligations["active_goals"] == ["Investigate runtime pressure"]
     assert state.cognition.current_objective is None
+    assert prompt not in waking_context
+
+
+def test_continuity_purges_restored_introspective_check_in_everywhere():
+    prompt = (
+        "Check in with your state and tell me right here: "
+        "more settled or more strained than an hour ago?"
+    )
+    engine = ContinuityEngine()
+    engine._record = ContinuityRecord(
+        last_shutdown=engine._boot_time - 900.0,
+        last_shutdown_reason="graceful",
+        total_uptime_seconds=10_000.0,
+        session_count=8,
+        last_conversation_summary="<answer>more settled</answer>",
+        identity_hash="identity",
+        current_objective=prompt,
+        pending_initiatives=1,
+        pending_initiative_details=[prompt],
+        active_goal_details=[prompt, "Investigate runtime pressure"],
+        subject_thread=f"Mode=sovereign | Objective={prompt} | Commitments=none",
+    )
+    engine._gap_seconds = 900.0
+
+    obligations = engine.get_obligations()
+    state = engine.apply_to_state(AuraState.default())
+    waking_context = engine.get_waking_context()
+
+    assert obligations["current_objective"] == ""
+    assert obligations["pending_initiatives"] == []
+    assert obligations["active_goals"] == ["Investigate runtime pressure"]
+    assert state.cognition.current_objective is None
+    assert prompt not in obligations["subject_thread"]
     assert prompt not in waking_context
 
 

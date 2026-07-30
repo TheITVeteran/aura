@@ -153,6 +153,29 @@ def _sanitize_restored_objective_items(values: list[Any] | None) -> list[str]:
     return sanitized[:5]
 
 
+def _sanitize_restored_subject_thread(
+    value: Any,
+    *,
+    objective_candidates: list[Any] | tuple[Any, ...] | None = None,
+) -> str:
+    """Remove rejected objective text from the restored continuity narrative."""
+
+    subject = sanitize_continuity_summary(value)[:1200]
+    if not subject:
+        return ""
+    for candidate in list(objective_candidates or []):
+        raw = _sanitize_restored_text(candidate)
+        if not raw or _sanitize_restored_objective(raw):
+            continue
+        subject = re.sub(
+            re.escape(raw),
+            "none",
+            subject,
+            flags=re.IGNORECASE,
+        )
+    return " ".join(subject.split())[:1200]
+
+
 @dataclass
 class ContinuityRecord:
     last_shutdown: float          # Unix timestamp
@@ -368,6 +391,11 @@ class ContinuityEngine:
                 logger.error("Continuity auto-capture failed: %s", e, exc_info=True)
 
         raw_current_objective = _sanitize_restored_text(current_objective)
+        raw_objective_candidates = [
+            raw_current_objective,
+            *list(pending_initiative_details or []),
+            *list(active_goal_details or []),
+        ]
         current_objective = _sanitize_restored_objective(raw_current_objective)
         active_commitments = _sanitize_restored_items(active_commitments)
         pending_initiative_details = _sanitize_restored_objective_items(
@@ -375,18 +403,10 @@ class ContinuityEngine:
         )
         active_goal_details = _sanitize_restored_objective_items(active_goal_details)
         rolling_summary = sanitize_continuity_summary(rolling_summary)
-        subject_thread = sanitize_continuity_summary(subject_thread)[:1200]
-        if (
-            raw_current_objective
-            and not current_objective
-            and raw_current_objective.casefold() in subject_thread.casefold()
-        ):
-            subject_thread = re.sub(
-                re.escape(raw_current_objective),
-                "none",
-                subject_thread,
-                flags=re.IGNORECASE,
-            )
+        subject_thread = _sanitize_restored_subject_thread(
+            subject_thread,
+            objective_candidates=raw_objective_candidates,
+        )
         pending_initiatives = min(int(pending_initiatives or 0), len(pending_initiative_details))
 
         session_count = (self._record.session_count + 1) if self._record else 1
@@ -473,6 +493,14 @@ class ContinuityEngine:
         if death_note:
             shutdown_note = death_note
 
+        restored_subject = _sanitize_restored_subject_thread(
+            self._record.subject_thread,
+            objective_candidates=[
+                self._record.current_objective,
+                *list(self._record.pending_initiative_details or []),
+                *list(self._record.active_goal_details or []),
+            ],
+        )
         return (
             f"You are waking from a gap of {gap_str}. {shutdown_note} "
             f"This is session #{self._record.session_count}. "
@@ -486,7 +514,7 @@ class ContinuityEngine:
             f"Active goals: {', '.join(_sanitize_restored_objective_items(self._record.active_goal_details)[:3]) if _sanitize_restored_objective_items(self._record.active_goal_details) else 'none recorded'}. "
             f"Coherence at shutdown: {self._record.coherence_score:.2f}. "
             f"Contradictions carried forward: {self._record.contradiction_count}. "
-            f"Subject thread: {sanitize_continuity_summary(self._record.subject_thread) or 'none recorded'}. "
+            f"Subject thread: {restored_subject or 'none recorded'}. "
             f"Continuity pressure carried into this session: {float(reentry['continuity_pressure']):.2f}. "
             f"Re-entry burden: {reentry['continuity_scar'] or 'light_trace'}."
         )
@@ -517,13 +545,21 @@ class ContinuityEngine:
         sanitized_pending = _sanitize_restored_objective_items(self._record.pending_initiative_details)
         sanitized_goals = _sanitize_restored_objective_items(self._record.active_goal_details)
         sanitized_commitments = _sanitize_restored_items(self._record.active_commitments)
+        restored_subject = _sanitize_restored_subject_thread(
+            self._record.subject_thread,
+            objective_candidates=[
+                self._record.current_objective,
+                *list(self._record.pending_initiative_details or []),
+                *list(self._record.active_goal_details or []),
+            ],
+        )
         return {
             "current_objective": _sanitize_restored_objective(self._record.current_objective),
             "active_commitments": sanitized_commitments,
             "pending_initiatives": sanitized_pending,
             "active_goals": sanitized_goals,
             "contradiction_count": int(self._record.contradiction_count or 0),
-            "subject_thread": sanitize_continuity_summary(self._record.subject_thread)[:1200],
+            "subject_thread": restored_subject,
             "identity_hash": live_identity_hash,
             "persisted_identity_hash": persisted_identity_hash,
             "identity_mismatch": identity_mismatch,
@@ -548,7 +584,7 @@ class ContinuityEngine:
         if not getattr(cognition, "current_objective", None) and restored_objective:
             cognition.current_objective = restored_objective
 
-        restored_subject = sanitize_continuity_summary(self._record.subject_thread)
+        restored_subject = str(obligations.get("subject_thread") or "")
         if not getattr(cognition, "rolling_summary", "") and restored_subject:
             cognition.rolling_summary = restored_subject
 
@@ -658,7 +694,7 @@ class ContinuityEngine:
             "pending_initiatives": restored_pending,
             "active_goals": restored_goals,
             "contradiction_count": int(self._record.contradiction_count or 0),
-            "subject_thread": self._record.subject_thread,
+            "subject_thread": restored_subject,
             "identity_hash": self._record.identity_hash,
             "live_identity_hash": self._get_live_identity_hash(),
             "identity_mismatch": obligations.get("identity_mismatch", False),
