@@ -32093,3 +32093,34 @@ demo run can count. The remaining warning groups from the rejected run stay
 open. Resident-32B training remains paused. This is total checkpoint 723. The
 723-920 completion envelope is approximately 78.6%-100.0%, with an 89.3%
 midpoint.
+
+### 2026-07-30 - DEMO-Q8 corroborated security containment and anomaly semantics
+
+The rejected live run also exposed eighteen repeated critical ICE breach
+messages without a demonstrated intrusion. The shared statistical anomaly
+detector's generic novelty score was being promoted directly into ICE threat,
+the threat never decayed, each later empathy audit retriggered the same
+critical message, and the announced neural-isolation event had no authority
+subscriber. A single unfamiliar state could therefore fabricate an indefinite
+security emergency while consequential actions remained unaffected.
+
+Statistical novelty is now retained as investigative telemetry rather than
+treated as hostile intent. ICE requires corroborating direct drift or
+executive-violation evidence inside a bounded window, decays stale threat, opens
+one incident idempotently, and clears containment only after three stable
+audits. The authority gateway blocks consequential effect scopes while the
+incident is active while preserving read-only diagnosis. The kernel publishes
+the exact loaded ICE organ instance into the service container, making that
+gate causal in the live runtime rather than dependent on a disconnected
+singleton. The anomaly detector now distinguishes isolated novelty from a
+sustained anomaly and rate-limits repeated warning transitions.
+
+The focused ICE, cognitive, kernel-organ, and adjacent authority suites pass;
+bytecode compilation and diff integrity pass. This is source evidence only.
+The signed installed app still must prove that ordinary cognition cannot create
+false breach/isolation alarms and that a synthetic corroborated incident
+actually inhibits governed effects. Mycelial root attestation, browser/social
+provider recovery, and the other rejected-run warning families remain open.
+Resident-32B training remains paused. This is total checkpoint 724. The
+724-920 completion envelope is approximately 78.7%-100.0%, with an 89.3%
+midpoint.

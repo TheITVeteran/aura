@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -74,3 +75,46 @@ async def test_organ_shutdown_records_hook_failure(monkeypatch):
     assert records
     assert "shutdown hook failed" in records[0][1]["action"]
     assert records[0][1]["extra"]["organ"] == "voice"
+
+
+@pytest.mark.asyncio
+async def test_kernel_publishes_live_ice_instance_to_authority_container(monkeypatch):
+    from core.kernel.aura_kernel import AuraKernel
+
+    live_ice = SimpleNamespace()
+    organ = SimpleNamespace(
+        name="ice_layer",
+        instance=None,
+        fallback_used=False,
+    )
+
+    async def load():
+        organ.instance = live_ice
+
+    organ.load = load
+    registrations = []
+    monkeypatch.setattr(
+        "core.kernel.aura_kernel.ServiceContainer.register_instance",
+        lambda *args, **kwargs: registrations.append((args, kwargs)),
+    )
+    kernel = AuraKernel.__new__(AuraKernel)
+    kernel._gui_queue = asyncio.Queue()
+
+    await kernel._supervise_organ_load(organ)
+
+    assert registrations == [
+        (
+            ("ice_layer", live_ice),
+            {
+                "required": True,
+                "owner": "aura_kernel",
+                "registered_by": "AuraKernel._supervise_organ_load",
+                "required_for": "authority_containment",
+                "failure_policy": "fail_closed",
+            },
+        )
+    ]
+    assert await kernel._gui_queue.get() == {
+        "type": "ORGAN_READY",
+        "name": "ice_layer",
+    }

@@ -13,6 +13,7 @@ after signing fails instead of taking effect).
 """
 from __future__ import annotations
 
+import ast
 import inspect
 
 import pytest
@@ -220,9 +221,37 @@ class TestWiring:
         from core.brain.llm import mlx_client
 
         source = inspect.getsource(mlx_client)
-        # One definition plus one call per submission path; no raw put of a
-        # job dict may bypass the choke point.
-        assert source.count("_authorize_job(") == 6
+        tree = ast.parse(source)
+        submitted_jobs = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            # Direct synchronous queue submission.
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "put"
+                and node.args
+                and ast.unparse(node.func.value).endswith(("_req_q", "request_queue"))
+            ):
+                submitted_jobs.append(node.args[0])
+            # Async paths pass queue.put and the job to run_io_bound.
+            if (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "run_io_bound"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Attribute)
+                and node.args[0].attr == "put"
+                and ast.unparse(node.args[0].value).endswith("_req_q")
+            ):
+                submitted_jobs.append(node.args[1])
+
+        assert submitted_jobs
+        assert all(
+            isinstance(job, ast.Call)
+            and isinstance(job.func, ast.Attribute)
+            and job.func.attr == "_authorize_job"
+            for job in submitted_jobs
+        ), "every MLX request-queue submission must cross _authorize_job"
 
     def test_each_principal_is_named(self):
         from core.brain.llm import mlx_client

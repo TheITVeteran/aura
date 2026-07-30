@@ -782,6 +782,39 @@ class AuthorityGateway:
         )
 
     @staticmethod
+    def _security_containment_gate(
+        *,
+        source: str,
+        effect_scope: str,
+        domain: str,
+    ) -> AuthorityDecision | None:
+        """Enforce a corroborated ICE incident at the authority waist."""
+        try:
+            ice = ServiceContainer.get("ice_layer", default=None)
+            status = ice.get_status() if ice is not None and hasattr(ice, "get_status") else {}
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+        if not isinstance(status, dict) or not bool(status.get("is_breached", False)):
+            return None
+        if str(effect_scope).strip().lower() in {"read_only", "status"}:
+            return None
+        incident = status.get("incident") if isinstance(status.get("incident"), dict) else {}
+        return AuthorityDecision(
+            approved=False,
+            outcome="rejected",
+            reason="security_containment_active",
+            constraints={
+                "blocked": True,
+                "effect_scope": effect_scope,
+                "incident_id": incident.get("incident_id"),
+                "incident_reason": incident.get("reason"),
+                "recovery_required": True,
+            },
+            domain=domain,
+            source=source,
+        )
+
+    @staticmethod
     def _runtime_confirmation_gate(
         *,
         tool_name: str,
@@ -890,6 +923,13 @@ class AuthorityGateway:
             args,
             effect_scope=effect_scope,
         )
+        containment_block = self._security_containment_gate(
+            source=source,
+            effect_scope=effect_scope,
+            domain="tool_execution",
+        )
+        if containment_block is not None:
+            return containment_block
         autonomy_block = self._runtime_autonomous_action_gate(
             source=source,
             context=runtime_context,

@@ -820,6 +820,20 @@ class AuraKernel:
         """Supervises the async loading of a hardware organ."""
         try:
             await organ.load()
+            if (
+                organ.name == "ice_layer"
+                and organ.instance is not None
+                and not organ.fallback_used
+            ):
+                ServiceContainer.register_instance(
+                    "ice_layer",
+                    organ.instance,
+                    required=True,
+                    owner="aura_kernel",
+                    registered_by="AuraKernel._supervise_organ_load",
+                    required_for="authority_containment",
+                    failure_policy="fail_closed",
+                )
             try:
                 self._gui_queue.put_nowait({"type": "ORGAN_READY", "name": organ.name})
             except asyncio.QueueFull:

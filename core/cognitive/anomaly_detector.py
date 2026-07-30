@@ -625,6 +625,9 @@ class AnomalyDetector:
 
         self._boot_time: float = time.time()
         self._total_observations: int = 0
+        self._anomaly_streak: int = 0
+        self._last_warning_at: float = 0.0
+        self._warning_interval_s: float = 60.0
 
         logger.info(
             "AnomalyDetector online (window=%d, decay_half_life=%d, "
@@ -700,11 +703,34 @@ class AnomalyDetector:
             )
 
             if is_anomaly:
-                logger.warning(
-                    "Anomaly detected: threat=%.4f distance=%.4f slope=%.4f "
-                    "event_id=%s",
-                    threat_prob, distance, slope, event_id,
+                self._anomaly_streak += 1
+                confirmed = bool(
+                    threat_prob >= 0.95
+                    or (self._anomaly_streak >= 3 and slope >= 0.0)
                 )
+                if confirmed and (ts - self._last_warning_at) >= self._warning_interval_s:
+                    logger.warning(
+                        "Sustained anomaly detected: threat=%.4f distance=%.4f "
+                        "slope=%.4f streak=%d event_id=%s",
+                        threat_prob,
+                        distance,
+                        slope,
+                        self._anomaly_streak,
+                        event_id,
+                    )
+                    self._last_warning_at = ts
+                else:
+                    logger.info(
+                        "Statistical novelty observed: threat=%.4f distance=%.4f "
+                        "slope=%.4f streak=%d event_id=%s",
+                        threat_prob,
+                        distance,
+                        slope,
+                        self._anomaly_streak,
+                        event_id,
+                    )
+            else:
+                self._anomaly_streak = 0
 
             return score
 

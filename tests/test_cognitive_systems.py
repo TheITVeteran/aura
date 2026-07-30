@@ -13,6 +13,7 @@ Tests cover:
 """
 
 import asyncio
+import logging
 import tempfile
 import time
 from pathlib import Path
@@ -95,6 +96,40 @@ class TestAnomalyDetector:
         if event_id:
             det.acknowledge_false_positive(event_id)
             # Should not crash
+
+    def test_isolated_statistical_outlier_is_telemetry_not_warning(self, caplog):
+        det = self._make_detector()
+        det._model.mahalanobis = lambda _vec: 4.0
+        det._threshold.check = lambda _score: True
+
+        with caplog.at_level(logging.INFO, logger="Aura.Cognitive.AnomalyDetector"):
+            run(det.observe({"type": "tick", "text": "isolated"}))
+
+        assert "Statistical novelty observed" in caplog.text
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == "Aura.Cognitive.AnomalyDetector"
+            and record.levelno >= logging.WARNING
+        ]
+
+    def test_sustained_outliers_escalate_once(self, caplog):
+        det = self._make_detector()
+        det._model.mahalanobis = lambda _vec: 4.0
+        det._threshold.check = lambda _score: True
+
+        with caplog.at_level(logging.INFO, logger="Aura.Cognitive.AnomalyDetector"):
+            for _ in range(4):
+                run(det.observe({"type": "tick", "text": "repeated"}))
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name == "Aura.Cognitive.AnomalyDetector"
+            and record.levelno >= logging.WARNING
+        ]
+        assert len(warnings) == 1
+        assert "Sustained anomaly detected" in warnings[0].message
 
 
 # ════════════════════════════════════════════════════════════════════════

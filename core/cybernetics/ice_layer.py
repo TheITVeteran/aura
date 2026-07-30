@@ -1,6 +1,9 @@
 import asyncio
 import logging
+import math
 import time
+import uuid
+from collections import deque
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -22,9 +25,15 @@ class ICELayer:
         self._is_breached = False
         self._event_bus = None
         self._threat_level = 0.0  # Normalized threat [0.0 - 1.0]
+        self._statistical_novelty = 0.0
         self._anomaly_detector = None  # Learned threat model (lazy-loaded)
         self._running = True
         self._task: asyncio.Task | None = None
+        self._last_threat_update = time.monotonic()
+        self._signal_times: deque[float] = deque(maxlen=16)
+        self._signal_window_s = 3600.0
+        self._stable_audits = 0
+        self._incident: dict[str, Any] | None = None
         # AWE: Anomaly Taxonomy
         self._anomaly_types = {
             "LOGIC_LOOP": {"desc": "Infinite cognitive recursion.", "containment": "FLUSH_WORKING_MEMORY"},
@@ -113,6 +122,14 @@ class ICELayer:
         """
         drift = payload.get("drift", 0.0)
         status = payload.get("status", "NORMAL")
+        try:
+            drift = float(drift)
+        except (TypeError, ValueError):
+            drift = 0.0
+        if not math.isfinite(drift):
+            drift = 0.0
+        now = time.monotonic()
+        self._decay_threat(now)
 
         # Feed the audit event into the learned anomaly detector
         detector = self._get_anomaly_detector()
@@ -125,20 +142,44 @@ class ICELayer:
                     "timestamp": time.time(),
                 })
                 learned_threat = detector.get_threat_level()
-                # Blend learned threat with legacy accumulator: learned detector
-                # provides nuance, legacy accumulator provides hard safety floor.
-                self._threat_level = max(self._threat_level, learned_threat)
+                # Statistical novelty is evidence for investigation, not proof
+                # of hostile intent. Keep it visible but do not promote a
+                # generic runtime outlier directly into a breach latch.
+                self._statistical_novelty = max(
+                    0.0,
+                    min(1.0, float(learned_threat)),
+                )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('ice_layer', exc)
                 logger.debug("[ICE] Anomaly detector observe failed: %s", exc)
 
         # Legacy safety net: hard threshold for extreme drift
-        if drift > 0.7 or status == "UNCANNY_VALLEY_DETECTED":
+        direct_signal = drift > 0.7 or status == "UNCANNY_VALLEY_DETECTED"
+        if direct_signal:
             logger.warning("🚨 [ICE] COGNITIVE ANOMALY DETECTED. Assessing threat level.")
-            self._threat_level = min(1.0, self._threat_level + 0.15)
+            self._signal_times.append(now)
+            self._stable_audits = 0
+            self._threat_level = min(
+                1.0,
+                self._threat_level + 0.35 + min(0.15, self._statistical_novelty * 0.15),
+            )
+        else:
+            self._stable_audits += 1
+            self._threat_level = max(0.0, self._threat_level - 0.12)
 
-        if self._threat_level > 0.8:
-            await self._trigger_neural_hardening()
+        self._prune_signals(now)
+        if self._threat_level > 0.8 and len(self._signal_times) >= 2:
+            await self._trigger_neural_hardening(
+                reason="corroborated_identity_drift",
+                evidence={
+                    "drift": drift,
+                    "status": status,
+                    "corroborating_signals": len(self._signal_times),
+                    "statistical_novelty": self._statistical_novelty,
+                },
+            )
+        elif self._is_breached and self._stable_audits >= 3:
+            await self._clear_neural_hardening(reason="three_stable_audits")
 
     async def _on_executive_violation(self, payload: dict[str, Any]):
         """Detect identity violations using learned + legacy assessment.
@@ -148,6 +189,8 @@ class ICELayer:
         miss a real threat even if the detector is undertrained.
         """
         label = payload.get("label", "unknown")
+        now = time.monotonic()
+        self._decay_threat(now)
         anomaly = self.classify_anomaly(label)
         description = anomaly.get("description") or anomaly.get("desc") or "Unknown anomaly."
         logger.warning(
@@ -171,9 +214,18 @@ class ICELayer:
                 logger.debug("[ICE] Anomaly detector observe failed: %s", exc)
 
         # Legacy escalation (slightly softened since detector provides continuous signal)
-        self._threat_level = min(1.0, self._threat_level + 0.25)
-        if self._threat_level > 0.8:
-            await self._trigger_neural_hardening()
+        self._signal_times.append(now)
+        self._prune_signals(now)
+        self._stable_audits = 0
+        increment = 0.65 if anomaly["type"] == "EXTERNAL_INTRUSION" else 0.25
+        self._threat_level = min(1.0, self._threat_level + increment)
+        if self._threat_level > 0.8 and (
+            anomaly["type"] == "EXTERNAL_INTRUSION" or len(self._signal_times) >= 2
+        ):
+            await self._trigger_neural_hardening(
+                reason=f"executive_violation:{anomaly['type'].lower()}",
+                evidence={"label": str(label), "anomaly": anomaly},
+            )
 
         if self._threat_level >= 1.0:
             await self._trigger_black_ice_escalation(payload)
@@ -219,22 +271,84 @@ class ICELayer:
                 "reason": "Identity Breach Attempt"
             })
 
-    async def _trigger_neural_hardening(self):
+    def _decay_threat(self, now: float) -> None:
+        elapsed = max(0.0, float(now) - float(self._last_threat_update))
+        self._last_threat_update = float(now)
+        if elapsed <= 0.0:
+            return
+        # Ten-minute half-life: stale evidence cannot hold Aura in an
+        # indefinite breach state, while repeated corroborated events still
+        # accumulate faster than they decay.
+        self._threat_level *= math.pow(0.5, elapsed / 600.0)
+        if self._threat_level < 1e-4:
+            self._threat_level = 0.0
+
+    def _prune_signals(self, now: float) -> None:
+        cutoff = float(now) - self._signal_window_s
+        while self._signal_times and self._signal_times[0] < cutoff:
+            self._signal_times.popleft()
+
+    async def _trigger_neural_hardening(
+        self,
+        *,
+        reason: str,
+        evidence: dict[str, Any],
+    ) -> None:
         """Emergency neural response to prevent state corruption."""
-        logger.critical("⛔ [ICE] CRITICAL BREACH RISK. Triggering neural isolation sequence.")
+        if self._is_breached:
+            return
+        incident_id = f"ice-{uuid.uuid4()}"
+        self._incident = {
+            "incident_id": incident_id,
+            "reason": str(reason),
+            "evidence": dict(evidence),
+            "activated_at": time.time(),
+            "state": "contained",
+        }
+        logger.critical(
+            "⛔ [ICE] CORROBORATED BREACH RISK. Neural containment active "
+            "(incident=%s reason=%s).",
+            incident_id,
+            reason,
+        )
+        self._is_breached = True
         if self._event_bus:
             await self._event_bus.publish("core/cybernetics/ice_alert", {
-                "threat": self._threat_level, 
-                "action": "Neural Hardening"
+                "threat": self._threat_level,
+                "action": "Neural Hardening",
+                **self._incident,
             })
-        
-        # In a real scenario, this would trigger a 'Safe Mode' switch in the kernel.
-        self._is_breached = True
+
+    async def _clear_neural_hardening(self, *, reason: str) -> None:
+        if not self._is_breached:
+            return
+        incident = dict(self._incident or {})
+        incident["state"] = "recovered"
+        incident["cleared_at"] = time.time()
+        incident["clear_reason"] = str(reason)
+        self._incident = incident
+        self._is_breached = False
+        self._threat_level = min(self._threat_level, 0.35)
+        self._signal_times.clear()
+        logger.info(
+            "[ICE] Neural containment cleared after verified recovery "
+            "(incident=%s reason=%s).",
+            incident.get("incident_id", "unknown"),
+            reason,
+        )
+        if self._event_bus:
+            await self._event_bus.publish(
+                "core/cybernetics/ice_recovery",
+                dict(incident),
+            )
 
     def get_status(self) -> dict[str, Any]:
         return {
             "threat_level": self._threat_level,
-            "is_breached": self._is_breached
+            "statistical_novelty": self._statistical_novelty,
+            "is_breached": self._is_breached,
+            "corroborating_signals": len(self._signal_times),
+            "incident": dict(self._incident) if self._incident else None,
         }
 
 logger = logging.getLogger("Aura.Cybernetics.ICE")
