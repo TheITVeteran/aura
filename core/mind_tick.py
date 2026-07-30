@@ -228,6 +228,9 @@ class MindTick:
         self._missing_state_streak: int = 0
         self._last_missing_state_log: float = 0.0
         self._max_missing_state_backoff: float = 5.0
+        self._objective_attempt_key = ""
+        self._objective_attempt_inflight = ""
+        self._objective_next_attempt_at = 0.0
         
         # Per-phase timeout budgets
         self.phase_timeouts = {
@@ -272,6 +275,48 @@ class MindTick:
             get_watchdog().heartbeat("mind_tick")
         except _MIND_BOUNDARY_ERRORS as exc:
             logger.debug("MindTick: watchdog heartbeat unavailable: %s", exc)
+
+    @staticmethod
+    def _objective_key(objective: str) -> str:
+        return " ".join(str(objective or "").split())[:2000]
+
+    def _objective_attempt_defer_reason(
+        self,
+        objective: str,
+        *,
+        now: float | None = None,
+    ) -> str:
+        key = self._objective_key(objective)
+        if not key:
+            return "no_objective"
+        if key != self._objective_attempt_key:
+            self._objective_attempt_key = key
+            self._objective_next_attempt_at = 0.0
+        if self._objective_attempt_inflight == key:
+            return "objective_inflight"
+        current = time.monotonic() if now is None else float(now)
+        if current < self._objective_next_attempt_at:
+            return "objective_cooldown"
+        return ""
+
+    def _begin_objective_attempt(self, objective: str) -> None:
+        key = self._objective_key(objective)
+        self._objective_attempt_key = key
+        self._objective_attempt_inflight = key
+
+    def _finish_objective_attempt(
+        self,
+        objective: str,
+        *,
+        retry_after_s: float,
+        now: float | None = None,
+    ) -> None:
+        key = self._objective_key(objective)
+        if self._objective_attempt_inflight == key:
+            self._objective_attempt_inflight = ""
+        if self._objective_attempt_key == key:
+            current = time.monotonic() if now is None else float(now)
+            self._objective_next_attempt_at = current + max(0.0, float(retry_after_s))
 
     def _bootstrap_phases(self):
         """Initialize and register the 8 core cognitive phases."""
@@ -372,7 +417,7 @@ class MindTick:
                 # active for genuine cascading failures while letting the tick
                 # survive normal transient degradation.
                 max_failure_pressure=0.70,
-                allow_no_user_anchor=True,
+                allow_no_user_anchor=False,
             )
             if reason:
                 return reason
@@ -1064,6 +1109,10 @@ class MindTick:
                                 logger.debug("💓 MindTick: Deferring background kernel tick (%s).", _bg_pause)
                             self._mark_loop_progress(f"kernel_deferred:{_bg_pause}")
                             return current_state
+                        objective_defer = self._objective_attempt_defer_reason(objective)
+                        if objective_defer:
+                            self._mark_loop_progress(f"kernel_deferred:{objective_defer}")
+                            return current_state
                         try:
                             # Bound the background kernel tick. A background
                             # cognition step must never freeze the whole tick
@@ -1080,6 +1129,7 @@ class MindTick:
                             # of contending this tick and blowing the tick SLO.
                             from core.runtime.backpressure import primary_inference_lease
 
+                            self._begin_objective_attempt(objective)
                             with primary_inference_lease():
                                 entry = await asyncio.wait_for(
                                     kernel.tick(objective, priority=False),
@@ -1093,8 +1143,16 @@ class MindTick:
                                     current_state = committed
                                     tick_metadata.phases_executed.append("kernel_sovereign_tick")
                                     logger.debug("💓 MindTick: Kernel sovereign tick completed (cycle %d).", self._tick_count)
+                                self._finish_objective_attempt(
+                                    objective,
+                                    retry_after_s=self._float_env(
+                                        "AURA_MIND_TICK_OBJECTIVE_SUCCESS_RETRY_S",
+                                        60.0,
+                                    ),
+                                )
                                 return current_state
                             else:
+                                self._finish_objective_attempt(objective, retry_after_s=10.0)
                                 logger.warning("💓 MindTick: Kernel tick returned None (lock contention?).")
                                 record_degraded_event(
                                     "mind_tick",
@@ -1106,6 +1164,7 @@ class MindTick:
                                 )
                                 return current_state
                         except TimeoutError:
+                            self._finish_objective_attempt(objective, retry_after_s=30.0)
                             # Expected backpressure: the model is contended by the
                             # foreground lane. Not a failure — yield and let the
                             # next iteration try. NO hard degradation (that would
@@ -1130,6 +1189,7 @@ class MindTick:
                             self._mark_loop_progress("kernel_tick_timeout_yield")
                             return current_state
                         except _MIND_BOUNDARY_ERRORS as _kt_err:
+                            self._finish_objective_attempt(objective, retry_after_s=60.0)
                             if is_shutdown_requested():
                                 logger.info(
                                     "💓 MindTick: Kernel tick ended during requested shutdown (%s).",
@@ -1148,6 +1208,9 @@ class MindTick:
                                 exc=_kt_err,
                             )
                             return current_state
+                        finally:
+                            if self._objective_attempt_inflight == self._objective_key(objective):
+                                self._finish_objective_attempt(objective, retry_after_s=10.0)
 
                     # Once the kernel has booted, degraded self-execution is a
                     # constitutional violation, not a convenience fallback.
