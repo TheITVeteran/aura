@@ -10,6 +10,7 @@ All within a configurable token budget to avoid exceeding
 the model's context window.
 """
 from core.runtime.errors import record_degradation
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -85,7 +86,12 @@ class ContextManager:
         memory_block = ""
         if self.vector_memory and user_query:
             try:
-                memories = self.vector_memory.search_similar(user_query, limit=max_memories)
+                # Semantic search runs a dense encode and scores the whole
+                # vault; on the loop that is unbounded foreground work, and
+                # lockdep measured 417ms of it on 2026-07-29 during chat.
+                memories = await asyncio.to_thread(
+                    self.vector_memory.search_similar, user_query, limit=max_memories
+                )
                 if memories:
                     mem_lines = ["[RELEVANT MEMORIES]"]
                     for i, mem in enumerate(memories, 1):

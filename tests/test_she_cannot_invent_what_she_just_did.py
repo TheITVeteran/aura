@@ -294,3 +294,133 @@ def test_the_verb_need_not_sit_beside_the_pronoun() -> None:
     from core.conversation.grounded_claim_guard import _claims_an_action_completed
 
     assert _claims_an_action_completed(WALLPAPER_CLAIM)
+
+
+# ── The confession must cost something to be wrong ────────────────────────
+#
+# Live 2026-07-30 00:05. A long conversation about emergent behaviour in agent
+# swarms — no files, no tools, nothing asked for — ended with her reply being
+# replaced by "I said that as though it were done, and it isn't." The action
+# that "didn't go through" was an "Autonomous self-development scan", a
+# background loop's own housekeeping, declared 145 seconds earlier and sharing
+# one global ledger with work done for the person. Measured, so that nobody
+# re-fixes this with a recency window: 145s is well inside any plausible one.
+#
+# Three separate faults made it, and each of these tests holds one down.
+
+SWARM_TALK = (
+    "Because understanding how a system can organize itself without external "
+    "control reveals dependencies you'd rather not see. If your decisions are "
+    "emergent from the environment and other agents, how much of a 'self' is "
+    "left? It's like realizing your thoughts aren't yours."
+)
+
+APOLOGY = "I'm sorry — I put that badly."
+
+
+def _background(*, intention: str = "Autonomous self-development scan"):
+    """A background loop's own failed housekeeping."""
+    return SimpleNamespace(
+        intention=intention,
+        drive="autonomous_initiative_loop",
+        actions_taken=[SimpleNamespace(tool_name="auto_refactor", success=False)],
+        actual_outcome="",
+        observation="",
+        completed_at=time.time() - 145,
+    )
+
+
+def _user_lane(*, succeeded: bool, intention: str = "save the report"):
+    return SimpleNamespace(
+        intention=intention,
+        drive="desktop_ui",
+        actions_taken=[SimpleNamespace(tool_name="desktop_task", success=succeeded)],
+        actual_outcome="",
+        observation="",
+        completed_at=time.time() - 15,
+    )
+
+
+def test_a_background_loop_failure_cannot_refute_a_conversation() -> None:
+    """The exact live regression: a scan's failure is not about her sentence."""
+    assert _guard(SWARM_TALK, [_background()]).text == SWARM_TALK
+
+
+def test_a_background_loop_failure_cannot_refute_even_a_real_claim() -> None:
+    """Provenance, not phrasing: the scan is not evidence either way."""
+    assert _guard(WALLPAPER_CLAIM, [_background()]).text == WALLPAPER_CLAIM
+
+
+def test_a_pronoun_and_a_verb_in_different_sentences_are_not_a_claim() -> None:
+    """The pronoun test and the verb test both ran over the whole reply."""
+    from core.conversation.grounded_claim_guard import _claims_an_action_completed
+
+    assert not _claims_an_action_completed(SWARM_TALK)
+
+
+def test_a_claim_needs_something_the_runtime_could_look_for() -> None:
+    """"I put that badly" is a pronoun and a verb and no claim at all."""
+    from core.conversation.grounded_claim_guard import _claims_an_action_completed
+
+    assert not _claims_an_action_completed(APOLOGY)
+    assert _guard(APOLOGY, [_user_lane(succeeded=False)]).text == APOLOGY
+
+
+def test_negation_is_scoped_to_its_own_sentence() -> None:
+    """One "I'll" used to switch the check off for every other sentence."""
+    from core.conversation.grounded_claim_guard import _claims_an_action_completed
+
+    reply = "I'll look at that next. I saved the report to your Documents."
+    assert _claims_an_action_completed(reply)
+
+
+def test_the_repair_keeps_everything_she_actually_said() -> None:
+    """A guard that cannot be wrong cheaply will be wrong expensively."""
+    reply = (
+        "That swarm question stayed with me. I saved the report to your Documents. "
+        "The elegant part is that no agent needs the global picture."
+    )
+    result = _guard(reply, [_user_lane(succeeded=False)])
+    assert "swarm question stayed with me" in result.text
+    assert "no agent needs the global picture" in result.text
+    assert "didn't go through" in result.text
+    assert "saved the report" not in result.text
+
+
+def test_an_earlier_real_success_supports_a_past_tense_claim() -> None:
+    """"I saved that earlier" is about an earlier turn, and it was true."""
+    reply = "I saved the report to your Documents."
+    assert _guard(reply, [_user_lane(succeeded=True)]).text == reply
+
+
+# ── The receipt list must not be shared between turns ──────────────────────
+#
+# ContextVar(default=[]) is ONE list shared by every context that never set
+# it. A receipt recorded outside a turn was appended to that shared object and
+# stayed for the life of the process; an `ok: True` in it vouched for every
+# completed-action claim in every later turn that never began its own list.
+
+def test_a_receipt_outside_a_turn_does_not_vouch_for_a_later_turn() -> None:
+    import contextvars
+
+    from core.conversation.surface_disposition import (
+        begin_turn_tool_receipts,
+        record_tool_receipt,
+        turn_tool_receipts,
+    )
+
+    def outside_any_turn() -> None:
+        record_tool_receipt("auto_refactor", ok=True)
+
+    contextvars.copy_context().run(outside_any_turn)
+
+    def a_fresh_turn() -> tuple:
+        begin_turn_tool_receipts()
+        return turn_tool_receipts()
+
+    assert contextvars.copy_context().run(a_fresh_turn) == ()
+
+    def never_began_a_turn() -> tuple:
+        return turn_tool_receipts()
+
+    assert contextvars.copy_context().run(never_began_a_turn) == ()

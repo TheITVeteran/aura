@@ -1012,7 +1012,12 @@ main {
 }
 
 .typing-dots span {
-    animation: blink 1.4s infinite both;
+    /* Visible at rest, dimmed by the blink — never the other way round.
+       `both` used to hold each dot on blink's 0% keyframe (opacity 0) through
+       its stagger delay and any time the animation was not running, so "Aura
+       is thinking..." arrived with no dots at all. */
+    opacity: 1;
+    animation: blink 1.4s infinite;
 }
 
 .typing-dots span:nth-child(2) {
@@ -1028,7 +1033,9 @@ main {
     0%,
     80%,
     100% {
-        opacity: 0;
+        /* Not 0: a dot paused on this frame must still read as a dot.
+           Matches the vm-bounce resting value in voice_mode.css. */
+        opacity: 0.45;
     }
 
     40% {
@@ -1958,36 +1965,45 @@ main {
     main {
         grid-template-columns: 1fr;
         height: calc(100dvh - 56px);
-        overflow: hidden;
-    }
-
-    .sidebar {
-        position: fixed;
-        top: 56px;
-        left: 0;
-        width: 100%;
-        height: calc(100vh - 56px - 65px);
-        z-index: 100;
-        background: var(--bg);
-        display: none;
-        /* Controlled by JS */
-        padding-top: 20px;
+        /* Scrolls, because both panels now stack here instead of one of them
+           being hidden. `hidden` would clip the second one away. */
         overflow-y: auto;
-        -webkit-overflow-scrolling: touch;
     }
 
+    /* Both panels stay in flow and stack vertically.
+
+       They used to be `display: none` here, revealed only by `.mobile-active`
+       — which aura.js toggles from clicks on `.m-nav-btn`. There is not one
+       `.m-nav-btn` in index.html (grep: zero), and `.mobile-nav` is
+       `display: none !important` at the end of this same block. So below
+       1100px BOTH panels were hidden with nothing that could ever bring them
+       back: no chat, no messages, and none of the six side panels. Verified
+       live at 1000px before this fix — the whole interface was simply gone.
+
+       A switcher that does not exist cannot be the only way to see the
+       product, so nothing here hides either panel. `.mobile-active` is kept
+       harmless in case that navigation is ever actually built. */
+    .chat-panel,
+    .chat-panel.mobile-active,
+    .sidebar,
     .sidebar.mobile-active {
         display: flex;
         flex-direction: column;
+        position: static;
+        width: 100%;
+        z-index: auto;
     }
 
     .chat-panel {
-        display: none;
+        /* Enough height that the composer sits at the bottom of a full screen
+           rather than riding up under the first message. */
+        min-height: calc(100dvh - 56px - 24px);
     }
 
-    .chat-panel.mobile-active {
-        display: flex;
-        flex-direction: column;
+    .sidebar {
+        height: auto;
+        padding-top: 20px;
+        -webkit-overflow-scrolling: touch;
     }
 
     .sys-box {
@@ -3986,7 +4002,10 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
         0 4px 30px rgba(138,43,226,0.15),
         inset 0 1px 0 rgba(255,255,255,0.08);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    animation: btnReveal 0.6s ease-out both;
+    /* No backwards fill: btnReveal starts at opacity 0, and this is the
+       control that gets past the splash. It must not depend on an animation
+       having run to be clickable-looking. */
+    animation: btnReveal 0.6s ease-out;
 }
 .splash-btn-glow {
     position: absolute; inset: -1px;
@@ -4014,8 +4033,10 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     box-shadow: 0 2px 15px rgba(138,43,226,0.2);
 }
 @keyframes btnReveal {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
+    /* Motion only: this is the control that gets past the splash, so it may
+       not be invisible while an animation clock is stopped. */
+    from { transform: translateY(12px); }
+    to   { transform: translateY(0); }
 }
 @keyframes btnPulse {
     0%   { box-shadow: 0 4px 30px rgba(138,43,226,0.15), inset 0 1px 0 rgba(255,255,255,0.08); }
@@ -4082,58 +4103,6 @@ body.accent-amber { --primary: #f59e0b; --primary-bright: #fbbf24; --accent: #fc
     .splash-sigil {
         order: -1;
         width: clamp(96px, 28vw, 136px);
-    }
-}
-
-/* ══════════════════════════════════════════════════════════
-   LEAN MODE — shed ambient GPU work when frames are being dropped
-   ══════════════════════════════════════════════════════════
-
-   Bryan, recording the demo: "Aura lags a bit when I do and it makes it look
-   kinda ugly."
-
-   The ambient background is three layers, each 150% of the viewport, each
-   carrying filter: blur(120px), each transformed forever. A 120px blur over
-   one-and-a-half screens is about the most expensive thing you can hand a
-   compositor, and a screen recorder is competing for the same GPU. Add 39
-   backdrop-filter rules on top and the frame budget is gone.
-
-   body.perf-lean is applied by aura.js when it measures sustained frame loss
-   and removed when the frame rate recovers, so this costs nothing when there
-   is headroom and everything it can shed when there is not. It is not a
-   recording mode — a slow machine, a busy 32B generation and a screen
-   recorder all present the same symptom, and all three deserve the same
-   response.
-   ══════════════════════════════════════════════════════════ */
-body.perf-lean .aurora-layer {
-    /* The blur is the cost, not the motion — so the motion stops AND the
-       blur drops to something the compositor can cache. */
-    animation: none !important;
-    filter: blur(48px);
-    opacity: 0.05;
-}
-
-body.perf-lean *,
-body.perf-lean *::before,
-body.perf-lean *::after {
-    /* Ambient loops only. Transitions on interaction stay, because losing
-       those makes the UI feel broken rather than calm. */
-    animation-play-state: paused !important;
-}
-
-body.perf-lean .msg,
-body.perf-lean .thought-card,
-body.perf-lean .panel,
-body.perf-lean .card {
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-}
-
-/* Someone who has asked the OS for less motion gets it unconditionally. */
-@media (prefers-reduced-motion: reduce) {
-    .aurora-layer {
-        animation: none !important;
-        filter: blur(48px);
     }
 }
 
@@ -4217,13 +4186,32 @@ header { position: relative; z-index: 200; }
     background: rgba(138,43,226,0.08);
 }
 
-/* Staggered page-load animation */
-header { animation: staggerIn 0.6s ease-out both; }
-.chat-panel { animation: staggerIn 0.6s ease-out 0.1s both; }
-.sidebar { animation: staggerIn 0.6s ease-out 0.2s both; }
+/* Staggered page-load animation — MOTION ONLY, never opacity.
+
+   `header`/`.chat-panel`/`.sidebar` IS the entire product: chat, and all six
+   panels. This animation may move the shell in. It may not be the reason the
+   shell is visible.
+
+   Removing the backwards fill was not enough, and the measurement is why: an
+   animation that ramps opacity from 0 hides its element for as long as its
+   clock is stopped, whatever the fill-mode. Measured on the live instance with
+   the window not visible — `animation-fill-mode: none`, animation *running*,
+   and header/.chat-panel/.sidebar all computing to `opacity: 0`. A stopped
+   clock is not exotic: an occluded or backgrounded window does it, so does a
+   suspended compositor, so did the frame governor that paused animations
+   (d71dda1cd, reverted in e513112c6) — it tripped this trap rather than
+   creating it.
+
+   There is no CSS that both fades from fully transparent and stays visible
+   when time stops. So visibility is not animated: the slide is the entrance,
+   which is what "arrives" was ever meant to convey. Losing a fade and 200ms
+   of cascade is not a cost worth a UI that can vanish. */
+header,
+.chat-panel,
+.sidebar { animation: staggerIn 0.6s ease-out; }
 @keyframes staggerIn {
-    from { opacity: 0; transform: translateY(12px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { transform: translateY(12px); }
+    to { transform: translateY(0); }
 }
 
 /* ══════════════════════════════════════════════════════════
@@ -5772,7 +5760,20 @@ header {
         width: 100%;
         max-width: 100%;
         min-width: 0;
+    }
+
+    .sidebar,
+    .sidebar.mobile-active {
         min-height: 0;
+    }
+
+    /* Not `min-height: 0`: this block is later in the file at the same
+       specificity as the stacking rule above, so a blanket 0 here collapses
+       the chat panel to the height of its own content and pulls the composer
+       up under the first message. */
+    .chat-panel,
+    .chat-panel.mobile-active {
+        min-height: calc(100dvh - 56px - 24px);
     }
 
     .chat-panel.mobile-active {

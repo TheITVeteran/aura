@@ -156,12 +156,22 @@ class EmbeddingEngine:
         self._lane_lease: Any | None = None
         self._lifecycle_lock = checked_lock("vector_memory_engine.lifecycle_lock", reentrant=True)
         self._closing = False
+        #: Encodes running right now, outside the lifecycle lock. Eviction
+        #: reads this to decide whether the model is idle.
+        self._inflight = 0
 
     async def _evict_model_lane(self, _owner: Any, reason: str) -> bool:
         def _close_if_idle() -> bool:
             if not self._lifecycle_lock.acquire(blocking=False):
                 return False
             try:
+                # Idle means no encode in flight. It used to mean "the lock
+                # was free", which was only the same thing because embed()
+                # held the lock across inference — the very thing that stalled
+                # the loop. Evicting under an in-flight encode would also
+                # release the lane lease while that inference still runs.
+                if self._inflight > 0:
+                    return False
                 return self._close_model(
                     reason=f"embedding_lane_eviction:{reason}",
                     keep_fallback=True,
@@ -283,34 +293,63 @@ class EmbeddingEngine:
             logger.error("Neither sentence-transformers nor sklearn available. "
                         "Memory recall will be degraded.")
 
-    def embed(self, text: str) -> np.ndarray:
-        """Convert text to a dense vector."""
+    def _checkout_model(self) -> Any:
+        """Initialize if needed and take a reference for one inference.
+
+        THE LIFECYCLE LOCK GUARDS THE LIFECYCLE, NOT THE INFERENCE.
+
+        Holding it across encode() made every embed as long as the slowest
+        encode in the process, for everyone. Live 2026-07-29 lockdep caught
+        the consequence: 'lifecycle_lock taken at vector_memory_engine.py:288
+        was held 417ms on the event loop thread (limit 50ms)' — a background
+        pool worker was mid-encode and the loop simply queued behind it.
+
+        The returned reference keeps the model alive for the duration of the
+        call even if eviction swaps self._model out underneath, and the
+        in-flight count tells eviction it is not idle — which is the question
+        the old non-blocking acquire was really trying to ask.
+        """
         with self._lifecycle_lock:
             self._initialize_locked()
+            model = self._model
+            if model is not None:
+                self._inflight += 1
+            return model
 
-            if self._model:
+    def _return_model(self) -> None:
+        with self._lifecycle_lock:
+            self._inflight = max(0, self._inflight - 1)
+
+    def embed(self, text: str) -> np.ndarray:
+        """Convert text to a dense vector."""
+        model = self._checkout_model()
+        if model is not None:
+            try:
                 # show_progress_bar=False: a daemon's log is not a terminal.
                 # These tqdm bars were 3,377 of 4,650 lines (73%) of one live
                 # hour's stdout, which is how a real signal becomes unfindable.
-                return self._model.encode(
+                return model.encode(
                     text, normalize_embeddings=True, show_progress_bar=False
                 )
+            finally:
+                self._return_model()
 
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
 
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Batch embed for efficiency."""
-        with self._lifecycle_lock:
-            self._initialize_locked()
-
-            if self._model:
-                return self._model.encode(
+        model = self._checkout_model()
+        if model is not None:
+            try:
+                return model.encode(
                     texts,
                     normalize_embeddings=True,
                     batch_size=32,
                     show_progress_bar=False,
                 )
+            finally:
+                self._return_model()
 
         return np.vstack([self.embed(t) for t in texts])
 

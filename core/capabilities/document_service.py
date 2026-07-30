@@ -25,6 +25,11 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 logger = logging.getLogger("Aura.DocumentService")
 
 
+def _escape_xml(text: str) -> str:
+    """Escape for reportlab's mini-markup, which parses paragraphs as XML."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 class DocumentService:
     """Programmatic document creation — does NOT depend on UI apps.
 
@@ -206,9 +211,31 @@ class DocumentService:
                         story.append(Paragraph(heading, styles["Heading2"]))
                     else:
                         # Escape XML special chars
-                        safe = para.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                        safe = _escape_xml(para)
                         story.append(Paragraph(safe, styles["Normal"]))
                     story.append(Spacer(1, 6))
+
+            # Sources. The fpdf2 branch above has always rendered these; this
+            # one silently dropped them, so on any host without fpdf2 a cited
+            # synthesis produced a PDF with no citations — and create_pdf still
+            # returned True, so nothing upstream could tell. A synthesis that
+            # cannot show its sources is a different document than the one that
+            # was asked for.
+            if sources:
+                story.append(Spacer(1, 12))
+                story.append(Paragraph("Sources", styles["Heading2"]))
+                for i, src in enumerate(sources, 1):
+                    source_title = _escape_xml(str(src.get("title", "") or "Untitled"))
+                    source_url = _escape_xml(str(src.get("url", "") or ""))
+                    entry = f"[{i}] {source_title}"
+                    if source_url:
+                        entry += f'<br/><font color="blue">{source_url}</font>'
+                    story.append(Paragraph(entry, styles["Normal"]))
+                    story.append(Spacer(1, 4))
+
+            story.append(Spacer(1, 12))
+            content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+            story.append(Paragraph(f"Content hash: {content_hash}", styles["Italic"]))
 
             doc.build(story)
             await get_file_write_gateway().write_bytes_async(

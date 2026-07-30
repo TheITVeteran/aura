@@ -4210,6 +4210,34 @@ def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
         return None
 
 
+def _active_steering_hooks(engine: Any = None) -> list[Any]:
+    """The steering hooks a TokenSentinel should pulse mid-generation.
+
+    TokenSentinel has always accepted `steering_hooks` and documented it as
+    "List of AffectiveSteeringHook instances to update" — and neither of the
+    two places that construct one ever passed it. So the live-affect pulse,
+    the thing that keeps affect current DURING a generation instead of frozen
+    at its start, could never run: every sentinel recorded "live affect
+    inactive: missing steering_hooks" and raised a MARGINAL runtime fault.
+    Twenty-seven of them across six turns of Bryan's demo on 2026-07-29, on a
+    worker whose own log line two thousand lines earlier says
+    "Affective Steering Engine ONLINE". The hooks were installed the whole
+    time; nothing carried them across.
+
+    Returns [] rather than raising: a sentinel with no hooks is the previous
+    behaviour, and losing the pulse must never lose the generation.
+    """
+    try:
+        if engine is None:
+            from core.consciousness.affective_steering import get_steering_engine
+
+            engine = get_steering_engine()
+        return list(engine.active_hooks() or [])
+    except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
+        logger.debug("Steering hooks unavailable for the token sentinel: %s", exc)
+        return []
+
+
 def _mlx_worker_loop(
     model_path: str,
     request_queue: mp.Queue,
@@ -5150,6 +5178,7 @@ def _mlx_worker_loop(
                                             check_interval=8,
                                             affect_interval=16,
                                             substrate_mem=substrate_mem,
+                                            steering_hooks=_active_steering_hooks(engine),
                                         )
                                     except (ImportError, AttributeError, RuntimeError) as _sent_exc:
                                         if bool(job.get("clean_user_surface_contract", False)):
@@ -6699,6 +6728,7 @@ def _mlx_worker_loop(
                                         check_interval=8,
                                         affect_interval=16,
                                         substrate_mem=substrate_mem,
+                                        steering_hooks=_active_steering_hooks(engine),
                                     )
                                 except (ImportError, AttributeError, RuntimeError) as _stream_sent_exc:
                                     if bool(job.get("clean_user_surface_contract", False)):

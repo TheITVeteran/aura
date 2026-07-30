@@ -46,3 +46,68 @@ def test_scan_failures_are_not_cached(monkeypatch):
     assert observer._process_table_cache is None, (
         "a failed scan must not be served to later callers"
     )
+
+
+# The Jul 24 pass bounded processes()/process_table(), which reach the host
+# through process_iter. memory()'s tree walk reaches it through
+# Process.children(recursive=True) — the same host-wide enumeration, and it
+# was left uncached. On Jul 29 it froze the loop for 63.5s from
+# record_degradation. Same defect, same remedy.
+
+
+def test_process_tree_walk_is_cached_within_ttl(monkeypatch):
+    import psutil
+
+    observer = HostResourceObserver()
+    calls = {"n": 0}
+    real_children = psutil.Process.children
+
+    def counting_children(self, *args, **kwargs):
+        calls["n"] += 1
+        return real_children(self, *args, **kwargs)
+
+    monkeypatch.setattr(psutil.Process, "children", counting_children)
+
+    first = observer.memory()
+    second = observer.memory()
+    assert calls["n"] == 1, "the second tree observation within the TTL must hit the cache"
+    assert second.process_tree_rss_bytes >= second.process_rss_bytes
+
+    root = next(iter(observer._tree_children_rss_cache))
+    stamp, total = observer._tree_children_rss_cache[root]
+    observer._tree_children_rss_cache[root] = (stamp - 10.0, total)
+    observer.memory()
+    assert calls["n"] == 2, "an expired cache must rescan"
+
+    # Own RSS is cheap and must stay live rather than riding the cache.
+    assert first.process_rss_bytes > 0
+
+
+def test_own_rss_never_pays_for_the_tree_walk(monkeypatch):
+    import psutil
+
+    observer = HostResourceObserver()
+
+    def forbidden(*args, **kwargs):  # pragma: no cover - only runs on regression
+        raise AssertionError("include_process_tree=False must not enumerate the host")
+
+    monkeypatch.setattr(psutil.Process, "children", forbidden)
+    monkeypatch.setattr(psutil, "pids", forbidden)
+
+    own = observer.memory(include_process_tree=False)
+    assert own.process_rss_bytes > 0
+
+
+def test_tree_walk_failures_are_not_cached(monkeypatch):
+    import psutil
+
+    observer = HostResourceObserver()
+
+    def broken_children(self, *args, **kwargs):
+        raise OSError("simulated tree walk failure")
+
+    monkeypatch.setattr(psutil.Process, "children", broken_children)
+    observer.memory()
+    assert not observer._tree_children_rss_cache, (
+        "a failed tree walk must not be served to later callers"
+    )

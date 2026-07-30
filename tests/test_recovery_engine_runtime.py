@@ -17,7 +17,9 @@ class FakeMissionState:
         self.execute_calls = 0
         self.verify_calls = 0
 
-    async def _execute_node(self, _node: TaskNode) -> dict:
+    async def _execute_node(self, _node: TaskNode, _graph=None) -> dict:
+        # Mirrors the real signature: a retry receives the graph so the step's
+        # placeholders resolve from the steps that already succeeded.
         self.execute_calls += 1
         return {"success": self.execute_success, "receipt_id": f"r-{self.execute_calls}"}
 

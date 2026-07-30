@@ -69,6 +69,22 @@ MEMORY_ABORT_EXIT_CODE = 70
 # killing them loses no durable state.
 _HEAVY_WORKER_MARKERS = ("mlx_worker.py", "MTLCompilerService")
 
+#: How a multiprocessing child announces itself. The heavy inference workers
+#: are started this way, so their command line carries no name of their own —
+#: this is the only thing that identifies them as ours and respawnable.
+_SPAWNED_WORKER_MARKERS = ("multiprocessing.spawn", "multiprocessing.forkserver")
+
+#: Children that are NOT respawnable inference workers and must survive a
+#: reclaim: the out-of-process guard that would otherwise die with the thing
+#: it guards.
+_PROTECTED_CHILD_MARKERS = ("memory_sentinel.py",)
+
+
+def _is_spawned_worker(cmd: str) -> bool:
+    if any(marker in cmd for marker in _PROTECTED_CHILD_MARKERS):
+        return False
+    return any(marker in cmd for marker in _SPAWNED_WORKER_MARKERS)
+
 _TOMBSTONE_DIR = Path("data/error_logs/memory")
 _DARWIN_CHILD_LIBPROC: Any | None = None
 _DARWIN_CHILD_LIBPROC_UNAVAILABLE = False
@@ -348,32 +364,66 @@ def _shed_registered_organs() -> tuple[int, int]:
         return 0, 0
 
 
-def terminate_heavy_child_workers(grace_s: float = 2.0) -> int:
-    """Terminate inference child workers out-of-band. Returns count killed."""
-    killed = 0
+def terminate_heavy_child_workers(
+    grace_s: float = 2.0, *, free_at_least_bytes: int | None = None
+) -> int:
+    """Terminate inference child workers out-of-band. Returns count killed.
+
+    A WORKER IS FOUND BY ITS FOOTPRINT, NOT BY ITS COMMAND LINE.
+
+    This matched cmdline against ("mlx_worker.py", "MTLCompilerService"), but
+    the resident 32B is started through multiprocessing, so its command line
+    is the generic ``-c from multiprocessing.spawn import spawn_main; ...``
+    and no marker can ever appear in it. On 2026-07-29 that made the last rung
+    before the process killed itself a no-op: the log read "LETHAL ceiling ...
+    Reclaimed (killed=0)" while 18.3GB, 5.0GB and 1.6GB of respawnable child
+    sat directly underneath, and the runtime exited rather than drop any of it.
+
+    ``free_at_least_bytes`` kills largest-first and stops as soon as that much
+    has been given back, so getting under the ceiling costs the fewest workers
+    it can — a reload of one model instead of every child in the tree.
+    """
     try:
         children = _child_processes(os.getpid(), recursive=True)
     except _WATCHDOG_RECOVERABLE_ERRORS as exc:
         logger.debug("MemoryWatchdog: child scan failed: %s", exc)
         return 0
-    doomed: list[psutil.Process] = []
+
+    candidates: list[tuple[int, Any, str]] = []
     for child in children:
         try:
             cmd = " ".join(child.cmdline())
+            rss = int(getattr(child.memory_info(), "rss", 0) or 0)
         except _WATCHDOG_RECOVERABLE_ERRORS:
             continue
-        if any(marker in cmd for marker in _HEAVY_WORKER_MARKERS):
-            try:
-                child.terminate()
-                doomed.append(child)
-                killed += 1
-                logger.warning(
-                    "🛑 [MEMWATCH] Terminated heavy worker pid=%s cmd=%s",
-                    child.pid,
-                    cmd[:160],
-                )
-            except _WATCHDOG_RECOVERABLE_ERRORS:
-                continue
+        if not (
+            any(marker in cmd for marker in _HEAVY_WORKER_MARKERS)
+            or _is_spawned_worker(cmd)
+        ):
+            continue
+        candidates.append((rss, child, cmd))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    killed = 0
+    freed = 0
+    doomed: list[Any] = []
+    for rss, child, cmd in candidates:
+        if free_at_least_bytes is not None and freed >= free_at_least_bytes:
+            break
+        try:
+            child.terminate()
+        except _WATCHDOG_RECOVERABLE_ERRORS:
+            continue
+        doomed.append(child)
+        killed += 1
+        freed += rss
+        logger.warning(
+            "🛑 [MEMWATCH] Terminated heavy worker pid=%s rss=%dMB cmd=%s",
+            child.pid,
+            rss >> 20,
+            cmd[:160],
+        )
     if doomed:
         _, alive = psutil.wait_procs(doomed, timeout=grace_s)
         for child in alive:
@@ -517,6 +567,47 @@ class MemoryWatchdog(threading.Thread):
             self._record_footprint_spike(previous, sample)
         self._evaluate(sample, time.monotonic())
 
+    def _log_memory_attribution(self, why: str) -> None:
+        """Name what grew.
+
+        A thread dump says where threads ARE. It cannot say what allocated,
+        and on 2026-07-29 that distinction cost the diagnosis: 20.4GB
+        appeared in this process in ten seconds and the only thread running
+        at both samples was a MiniLM encode measured afterwards at 3.7MB per
+        two thousand calls. The stacks named a bystander.
+
+        memory-infra answers the allocation question — components declare
+        what they hold, and unattributed bytes are reported as their own
+        number. Dumps were already being taken on pressure and at boot; the
+        diff between them was never read out, so the attribution existed and
+        nobody asked for it. This asks.
+
+        Unlike the stack dump this is not throttled: BACKGROUND providers
+        self-report, which is the cheapness the module was designed around,
+        and the spike that goes unattributed is the expensive one.
+        """
+        try:
+            from core.runtime.memory_infra import DetailLevel, get_memory_infra
+
+            infra = get_memory_infra()
+            infra.dump(DetailLevel.LIGHT)
+            report = infra.leak_report()
+            if not report.get("available"):
+                logger.warning(
+                    "[MEMWATCH] %s — no attribution available (%s).",
+                    why,
+                    report.get("reason", "unknown"),
+                )
+                return
+            logger.warning(
+                "[MEMWATCH] %s — attribution: %s | unattributed %+.0fMB",
+                why,
+                report.get("narrative", ""),
+                float(report.get("unattributed_growth_bytes", 0) or 0) / 1e6,
+            )
+        except (ImportError, *_WATCHDOG_RECOVERABLE_ERRORS):
+            logger.debug("memory attribution failed", exc_info=True)
+
     def _record_footprint_spike(self, previous: MemorySample, sample: MemorySample) -> None:
         self._spike_count += 1
         why = (
@@ -524,6 +615,7 @@ class MemoryWatchdog(threading.Thread):
             f"{sample.managed_rss_mb:.0f}MB in one interval "
             f"(spike #{self._spike_count} this process)"
         )
+        self._log_memory_attribution(why)
         now = time.monotonic()
         if self._spike_dumps >= self.SPIKE_DUMP_LIFETIME_CAP:
             if self._spike_dumps == self.SPIKE_DUMP_LIFETIME_CAP:
@@ -602,7 +694,7 @@ class MemoryWatchdog(threading.Thread):
         # rung. Killing a worker costs a model reload; dropping a cache costs a
         # re-prefill.
         shed_organs, shed_bytes = self._ladder_shed()
-        killed = self._worker_terminator()
+        killed = self._terminate_workers(sample, already_freed=shed_bytes)
         collected = self._gc_collect()
         self._remember(
             "hard",
@@ -626,6 +718,28 @@ class MemoryWatchdog(threading.Thread):
         self._schedule_governor_sweep()
         return "hard"
 
+    def _terminate_workers(self, sample: MemorySample, *, already_freed: int = 0) -> int:
+        """Kill workers, preferring the fewest that clear the RSS breach.
+
+        Only an RSS breach can say how many bytes are wanted. The hard tier
+        also fires on swap exhaustion, where RSS sits under the ceiling and
+        the shortfall is meaningless — asking for zero bytes there would kill
+        nothing and leave the rung as empty as the bug this replaced. When
+        there is no number to aim at, shed every eligible worker, which is
+        what this tier did before.
+        """
+        shortfall = int(
+            (sample.managed_rss_mb - self.thresholds.hard_mb) * (1024 * 1024)
+        ) - int(already_freed)
+        try:
+            if shortfall > 0:
+                return self._worker_terminator(free_at_least_bytes=shortfall)
+            return self._worker_terminator()
+        except TypeError:
+            # An injected terminator (tests, older callers) that does not take
+            # a budget still gets to run — it just sheds everything it knows.
+            return self._worker_terminator()
+
     def _handle_lethal(self, sample: MemorySample, now: float) -> str:
         self._lethal_streak += 1
         in_boot_grace = (now - self._started_at) < self.thresholds.boot_grace_s
@@ -635,7 +749,7 @@ class MemoryWatchdog(threading.Thread):
             self._hard_attempted_in_streak = True
             self._last_hard_action_at = now
             shed_organs, shed_bytes = self._ladder_shed()
-            killed = self._worker_terminator()
+            killed = self._terminate_workers(sample, already_freed=shed_bytes)
             collected = self._gc_collect()
             self._remember(
                 "lethal_reclaim",
@@ -643,12 +757,21 @@ class MemoryWatchdog(threading.Thread):
                 f"pre-abort reclaim: shed={shed_organs} organs/{shed_bytes >> 20}MB "
                 f"killed={killed} gc_collected={collected}",
             )
+            # Report all three levers, not just the kill. "Reclaimed
+            # (killed=0)" reads as "nothing was reclaimed" while hiding
+            # whether shedding and gc found anything — on 2026-07-29 that
+            # line was the operator's only view of the last action before
+            # the process exited, and it described a third of it.
             logger.critical(
                 "🚨 [MEMWATCH] LETHAL ceiling: managed RSS %.0fMB ≥ %.0fMB. "
-                "Reclaimed (killed=%d). Next confirmation aborts.",
+                "Reclaimed: shed=%d organs/%dMB killed=%d gc=%d. "
+                "Next confirmation aborts.",
                 sample.managed_rss_mb,
                 self.thresholds.lethal_mb,
+                shed_organs,
+                shed_bytes >> 20,
                 killed,
+                collected,
             )
             return "lethal_reclaim"
 

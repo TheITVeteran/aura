@@ -326,3 +326,82 @@ def test_a_runaway_actually_records_its_critical_degradation(monkeypatch):
         "the RUNAWAY verdict must reach record_degradation"
     )
     assert captured.get("severity") == "critical"
+
+
+# ── A level shift is not a trend ───────────────────────────────────────────
+#
+# Live 2026-07-30 00:29, and this is why the Orca demo produced nothing. Six
+# minutes after boot, managed RSS had gone 3GB → 33.7GB — the 32B cortex
+# loading itself, the largest one-time level shift this process ever makes —
+# and then stopped. The least-squares fit over that window read 87,280 MB/h,
+# projected a ceiling breach in 24 minutes, and returned RUNAWAY, whose
+# contract is "new consequential work stops". The consequential work it
+# stopped was the folder and the PDF the person had just asked for, on a
+# runtime that was not leaking at all.
+#
+# A refusal now requires the growth to be STILL happening — the question this
+# module set out to ask. These tests hold both directions: the settled step
+# must never refuse, and a leak that is still climbing must still refuse.
+
+def _settled_boot_ramp(peak: float = 40000.0):
+    """3GB → peak over 200s, then flat. The tail slope is exactly zero."""
+    return [(float(t), 3000.0 + (peak - 3000.0) * min(1.0, t / 200.0))
+            for t in range(0, 341, 5)]
+
+
+def _still_climbing(start: float, per_hour: float, span_s: int = 3600):
+    return [(float(t), start + per_hour * (t / 3600.0))
+            for t in range(0, span_s + 1, 30)]
+
+
+def _memory_detector():
+    from core.resilience.runaway_budget import RunawayDetector, RunawayPolicy
+
+    return RunawayDetector("managed_rss_mb", RunawayPolicy.for_memory_mb())
+
+
+def _assess(samples, mitigations: int = 0):
+    detector = _memory_detector()
+    for stamp, value in samples:
+        detector.observe(value, now=stamp)
+    for index in range(mitigations):
+        detector.record_mitigation(now=samples[0][0] + index)
+    return detector.assess(now=samples[-1][0])
+
+
+def test_a_settled_level_shift_is_not_a_runaway() -> None:
+    """The exact live regression: a loaded model is not a leak."""
+    verdict = _assess(_settled_boot_ramp())
+    assert not verdict.is_runaway(), verdict.reason
+    assert "settled" in verdict.reason
+
+
+def test_a_settled_level_shift_survives_repeated_mitigation() -> None:
+    """Mitigation firing during boot must not convert the step into a refusal."""
+    verdict = _assess(_settled_boot_ramp(), mitigations=4)
+    assert not verdict.is_runaway(), verdict.reason
+
+
+def test_the_projection_uses_the_rate_that_is_still_happening() -> None:
+    """A projection is a claim about the current rate, not a window average."""
+    verdict = _assess(_settled_boot_ramp())
+    # The whole-window fit is astronomical; the projection must not inherit it.
+    assert verdict.slope_per_hour > 100_000
+    assert verdict.projected_breach_s is None or verdict.projected_breach_s > 3600
+
+
+def test_a_leak_still_climbing_into_the_ceiling_still_refuses() -> None:
+    """The guard must keep working — this is what it is for."""
+    verdict = _assess(_still_climbing(46_000.0, 4_000.0))
+    assert verdict.is_runaway(), verdict.reason
+
+
+def test_a_leak_that_outlived_its_mitigations_still_refuses() -> None:
+    verdict = _assess(_still_climbing(30_000.0, 3_000.0), mitigations=4)
+    assert verdict.is_runaway(), verdict.reason
+
+
+def test_recovery_after_a_spike_reads_nominal() -> None:
+    falling = [(float(t), 40_000.0 - 3_000.0 * (t / 3600.0))
+               for t in range(0, 3601, 30)]
+    assert _assess(falling).state.value == "nominal"

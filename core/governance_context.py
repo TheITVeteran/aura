@@ -280,19 +280,30 @@ def _extract_source(decision: Any) -> str:
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def governed_scope(decision: Any):
+async def governed_scope(decision: Any, *, ttl: float | None = None):
     """Create a governed execution context from a WillDecision.
 
     Usage:
         decision = will.decide(...)
         async with governed_scope(decision):
             await do_governed_work()
+
+    ``ttl`` sizes the lease to the operation being authorized. The default is
+    GovernanceToken's 30s, which is right for a short tool call and wrong for
+    anything a person watches happen: live 2026-07-29, "open Notes and write a
+    note" ran its sanctioned 101s budget and lost governance at exactly 30s
+    mid-write — "run_applescript:computer_use called outside governed context"
+    — after the document had already been created and filled. A lease that
+    expires while the work it authorized is still running does not make the
+    system safer; it makes a governed operation fail halfway and leaves the
+    half behind. Callers that know the budget pass it.
     """
     token = GovernanceToken(
         receipt_id=_extract_receipt_id(decision) or ("degraded_mode" if not governance_runtime_active() else ""),
         domain=_extract_domain(decision),
         source=_extract_source(decision),
         constraints=list(_decision_constraints(decision).items()),
+        **_ttl_kwargs(ttl),
     )
     reset_token = _active_receipt.set(token)
     try:
@@ -301,14 +312,30 @@ async def governed_scope(decision: Any):
         _active_receipt.reset(reset_token)
 
 
+def _ttl_kwargs(ttl: float | None) -> dict[str, float]:
+    """A lease length, when the caller knows one. Never shorter than default."""
+    if ttl is None:
+        return {}
+    try:
+        requested = float(ttl)
+    except (TypeError, ValueError):
+        return {}
+    if requested <= 0.0:
+        return {}
+    # Only ever lengthen: a caller must not be able to shorten the window and
+    # strand a sibling operation sharing this scope.
+    return {"ttl": max(requested, GovernanceToken.ttl)}
+
+
 @contextmanager
-def governed_scope_sync(decision: Any):
+def governed_scope_sync(decision: Any, *, ttl: float | None = None):
     """Synchronous version of governed_scope."""
     token = GovernanceToken(
         receipt_id=_extract_receipt_id(decision) or ("degraded_mode" if not governance_runtime_active() else ""),
         domain=_extract_domain(decision),
         source=_extract_source(decision),
         constraints=list(_decision_constraints(decision).items()),
+        **_ttl_kwargs(ttl),
     )
     reset_token = _active_receipt.set(token)
     try:
@@ -324,6 +351,7 @@ def local_internal_governed_scope(
     domain: str = "state_mutation",
     receipt_prefix: str | None = None,
     constraints: Mapping[str, Any] | None = None,
+    ttl: float | None = None,
 ):
     """Create a governed scope for local runtime maintenance work."""
     decision = local_internal_decision(
@@ -332,7 +360,7 @@ def local_internal_governed_scope(
         receipt_prefix=receipt_prefix,
         constraints=constraints,
     )
-    with governed_scope_sync(decision) as token:
+    with governed_scope_sync(decision, ttl=ttl) as token:
         yield token
 
 

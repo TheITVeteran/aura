@@ -139,6 +139,66 @@ class ComputerUseSkill(BaseSkill):
     )
     input_model = ComputerUseParams
     metabolic_cost = 2
+
+    # ═══════════════════════════════════════════════════════════════════
+    # THE STEP BUDGET MUST COVER THE BUDGETS THE STEP ITSELF ENFORCES
+    #
+    # This skill declared nothing, so it inherited BaseSkill's 30s. But
+    # write_in_app's own enforced sub-budgets sum past that before it starts:
+    # hold_focus 12s, open a document, hold_focus again 12s, type for up to
+    # 25s, then finish through the app's dictionary. It could not win, and the
+    # way it lost was the worst kind — live 2026-07-29 "open Notes and write a
+    # note" TYPED THE WHOLE NOTE, was cancelled at 30s, retried, typed it
+    # AGAIN, and reported "write_in_app failed: Operation took too long" after
+    # 61.2s. Bryan got two notes and an error, having watched it work twice.
+    #
+    # So the budget is summed from the sub-budgets rather than guessed: if
+    # someone widens the typing window, this follows. A skill whose declared
+    # timeout is shorter than the clocks inside it is not configured, it is
+    # broken.
+    # ═══════════════════════════════════════════════════════════════════
+
+    #: The floor: ordinary steps (a click, a hotkey, a folder) with room to retry.
+    timeout_seconds = 30.0
+
+    #: Actions whose cost is dominated by driving another application's UI.
+    _WRITE_ACTIONS = frozenset({"write_in_app", "create_note"})
+
+    #: Headroom over the summed sub-budgets. Without it the worst case lands
+    #: EXACTLY on the ceiling (12+12+2+25+50 = 101s against a 101s budget), so
+    #: any real-world jitter — a slow osascript, a busy app — puts the step
+    #: back over the line and we are debugging the same failure again. The
+    #: skill's own clocks are what should stop this work, not the outer budget.
+    _WRITE_BUDGET_GRACE_S = 30.0
+
+    @classmethod
+    def _write_in_app_budget_s(cls) -> float:
+        """What the write path can legitimately take, from its own clocks."""
+        return (
+            cls._HOLD_FOCUS_BUDGET_S * 2   # front before the new doc, and before typing
+            + 2.0                          # opening the document and letting it settle
+            + cls._TYPING_BUDGET_S         # the visible typing window
+            + cls._DICTIONARY_WRITE_BUDGET_S  # finishing through the app's own model
+            + cls._WRITE_BUDGET_GRACE_S
+        )
+
+    @classmethod
+    def timeout_for(cls, params: Any) -> float:
+        """How long THIS action needs, not how long the average one takes."""
+        payload = params if isinstance(params, dict) else None
+        if payload is None:
+            action = str(getattr(params, "action", "") or "")
+        else:
+            action = str(payload.get("action") or "")
+        action = action.strip().lower()
+        if action in cls._WRITE_ACTIONS:
+            return max(cls.timeout_seconds, cls._write_in_app_budget_s())
+        if action in {"open_app", "fetch_topic_image", "render_text_pdf"}:
+            # Launching or fetching waits on something outside this process;
+            # hold_focus alone can spend the whole declared budget.
+            return max(cls.timeout_seconds, cls._HOLD_FOCUS_BUDGET_S * 2 + 30.0)
+        return cls.timeout_seconds
+
     PERMISSION_CHECK_TIMEOUT_S = 3.0
     MAX_APPLESCRIPT_CHARS = 4000
     APPLESCRIPT_DENYLIST = tuple(
@@ -553,6 +613,17 @@ class ComputerUseSkill(BaseSkill):
     #: The whole visible write is bounded: past this it finishes in one call.
     _NOTE_STREAM_BUDGET_S = 9.0
 
+    #: How long hold_focus() will wait for an app to come to the front.
+    #: Named because the write budget below is summed from it — an inline
+    #: literal here and a guess there is how the two drifted apart.
+    _HOLD_FOCUS_BUDGET_S = 12.0
+
+    #: Worst case for finishing a document through the app's own scripting
+    #: dictionary: make the document (20s), write the body (15s), read it
+    #: back (15s). These are the AppleScript timeouts _write_through_dictionary
+    #: actually passes.
+    _DICTIONARY_WRITE_BUDGET_S = 50.0
+
     async def _write_in_app(self, target: Any) -> dict[str, Any]:
         """Put text into whatever application was named, generally.
 
@@ -620,10 +691,18 @@ class ComputerUseSkill(BaseSkill):
                 "app": resolved,
                 "requires_keystrokes": True,
             }
-        written = await self._write_through_dictionary(recipe, payload)
+        written = await self._write_through_dictionary(
+            recipe, payload, into_existing=bool(typed.get("document_open"))
+        )
         if written.get("ok"):
             written["typing_fallback_reason"] = str(
                 typed.get("error") or "the app did not hold focus for typing"
+            )
+            written["typed_characters"] = int(typed.get("typed_characters") or 0)
+            written["wrote_by"] = (
+                "keystrokes, finished through the app's dictionary"
+                if typed.get("document_open")
+                else "the app's dictionary"
             )
         return written
 
@@ -646,9 +725,16 @@ class ComputerUseSkill(BaseSkill):
             await self._run_hotkey_for_app(app, "command+n")
         except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
             return {"ok": False, "error": f"could not open a new document: {exc}"}
+        # From here on a document EXISTS in the app. Every failure below has to
+        # say so, or the dictionary fallback makes a second one and the person
+        # is left with two half-written documents instead of one finished one.
         await asyncio.sleep(0.6)
         if not await self.hold_focus(app):
-            return {"ok": False, "error": f"{app} lost the front before typing"}
+            return {
+                "ok": False,
+                "error": f"{app} lost the front before typing",
+                "document_open": True,
+            }
 
         # The title goes in first, because in a document the first line IS
         # the title — typed live, the whole opening paragraph became the
@@ -665,6 +751,7 @@ class ComputerUseSkill(BaseSkill):
                     "ok": False,
                     "error": "typing budget reached with the document unfinished",
                     "typed_characters": typed_chars,
+                    "document_open": True,
                 }
             if not self._frontmost_app_matches(
                 await asyncio.to_thread(self._frontmost_app_name), app
@@ -673,6 +760,7 @@ class ComputerUseSkill(BaseSkill):
                     "ok": False,
                     "error": f"{app} lost the front mid-sentence",
                     "typed_characters": typed_chars,
+                    "document_open": True,
                 }
             # A newline is a key, not a character. `keystroke "a\nb"` types
             # "ab" — measured live: a three-paragraph note arrived as one
@@ -691,6 +779,7 @@ class ComputerUseSkill(BaseSkill):
                     "ok": False,
                     "error": f"keystroke refused: {exc}",
                     "typed_characters": typed_chars,
+                    "document_open": True,
                 }
             typed_chars += len(chunk)
             await asyncio.sleep(float(self._TYPING_PAUSE_S))
@@ -838,12 +927,22 @@ class ComputerUseSkill(BaseSkill):
         }
 
     async def _write_through_dictionary(
-        self, recipe: Any, payload: dict[str, Any]
+        self, recipe: Any, payload: dict[str, Any], *, into_existing: bool = False
     ) -> dict[str, Any]:
         """Make a document in an app and fill it, using the app's own model.
 
         The Notes path is this path with recipe = note/body; nothing here is
         about Notes.
+
+        ``into_existing`` finishes the document the typing pass already
+        opened instead of making another one. Without it the two paths each
+        made their own: live 2026-07-29 "open Notes and write a note" left
+        Bryan TWO notes called "ABOUT AURA", because typing opened one with
+        cmd+N, ran out of budget partway, and the fallback then created a
+        second from scratch. The docstring on _type_into_app has always said a
+        long document "types its opening and then finishes through the
+        dictionary" — this is the part that makes that true rather than
+        aspirational.
         """
         title = str(payload.get("title") or payload.get("name") or "").strip()
         body = str(payload.get("body") or payload.get("text") or "").strip()
@@ -862,31 +961,37 @@ class ComputerUseSkill(BaseSkill):
                 f"{recipe.name_property}:{self._applescript_string(title)}"
             )
         properties.append(f'{recipe.text_property}:""')
-        create = (
-            f"tell application {app}\n"
-            "    activate\n"
-            f"    set theDoc to make new {recipe.klass} with properties "
-            f"{{{', '.join(properties)}}}\n"
-            "    return 1\n"
-            "end tell"
-        )
-        try:
-            await asyncio.to_thread(self._run_applescript, create, timeout=20)
-        except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
-            return {
-                "ok": False,
-                "error": f"{recipe.app} refused to make a new {recipe.klass}: {exc}",
-                "app": recipe.app,
-                "title": title,
-            }
+        if not into_existing:
+            create = (
+                f"tell application {app}\n"
+                "    activate\n"
+                f"    set theDoc to make new {recipe.klass} with properties "
+                f"{{{', '.join(properties)}}}\n"
+                "    return 1\n"
+                "end tell"
+            )
+            try:
+                await asyncio.to_thread(self._run_applescript, create, timeout=20)
+            except _COMPUTER_USE_RECOVERABLE_ERRORS as exc:
+                return {
+                    "ok": False,
+                    "error": f"{recipe.app} refused to make a new {recipe.klass}: {exc}",
+                    "app": recipe.app,
+                    "title": title,
+                }
 
         # Address the document we just made: the newest one is document 1 in
         # every app that orders them front-first, and by name where the class
         # has one, which is more robust when the user has others open.
-        if recipe.name_property:
-            selector = f"{recipe.klass} {self._applescript_string(title)}"
-        else:
+        #
+        # Continuing a typed document is the exception: its name came from
+        # whatever text reached the first line before the budget ran out, so
+        # it cannot be addressed by the title we intended. The front document
+        # is the one that was just being typed into.
+        if into_existing or not recipe.name_property:
             selector = f"{recipe.klass} 1"
+        else:
+            selector = f"{recipe.klass} {self._applescript_string(title)}"
 
         wrote = await self._stream_document_text(
             recipe.app, selector, recipe.text_property, body, render
@@ -1112,7 +1217,7 @@ class ComputerUseSkill(BaseSkill):
         # budget outright — "open_app failed: Operation took too long".
         # Polling is cheap and re-asking is expensive, so they get separate
         # budgets.
-        deadline = time.monotonic() + 12.0
+        deadline = time.monotonic() + float(self._HOLD_FOCUS_BUDGET_S)
         last_activation = 0.0
         last_seen = ""
         while time.monotonic() < deadline:

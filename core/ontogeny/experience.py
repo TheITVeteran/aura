@@ -88,6 +88,13 @@ _DEDUP_PRECISION = 2
 #: dropped. The corpus is bounded; the learning is not.
 _RETENTION_ROWS = 500_000
 
+#: How long a corpus-count scan is reused. stats() runs three unindexed
+#: aggregates over the whole episodes table and the health report calls it
+#: once per control point; without this, one report scanned the corpus N
+#: times and the flush lock served it. Writes invalidate, so the only
+#: staleness this can show is a count that lags by under a flush interval.
+_STATS_TTL_S = 10.0
+
 
 class OutcomeKind(StrEnum):
     """What actually happened — with 'we do not know' as a real answer.
@@ -285,6 +292,13 @@ class ExperienceSpine:
         self._refused = 0
         self._stopped = threading.Event()
         self._flusher: threading.Thread | None = None
+        # stats() is three unindexed aggregates over the whole episodes table,
+        # and ontogeny_report() calls it once per control point — so a single
+        # health report used to scan the corpus N times. Under demo load that
+        # was the leaf of a 103.8s event-loop stall (2026-07-29). Counts move
+        # slowly and nothing reads them for control, so serve them from a
+        # short TTL and let a write invalidate.
+        self._stats_cache: dict[str | None, tuple[float, dict[str, Any]]] = {}
         self._init_schema()
         if autoflush:
             self._start_flusher()
@@ -512,6 +526,7 @@ class ExperienceSpine:
                         (episode_id,),
                     )
             self._written += len(batch)
+            self._stats_cache.clear()
             return len(batch)
         except sqlite3.Error as exc:
             record_degradation(
@@ -618,7 +633,16 @@ class ExperienceSpine:
         return [_episode_from_row(r) for r in rows]
 
     def stats(self, control_point: str | None = None) -> dict[str, Any]:
-        """Counts by outcome kind — the honest denominator for every claim above."""
+        """Counts by outcome kind — the honest denominator for every claim above.
+
+        Served from a short TTL cache: the aggregates are full-table scans and
+        the health report asks for them once per control point. The live
+        counters (queued/dropped/written) are always read fresh, so the
+        cache never makes the queue look emptier than it is.
+        """
+        cached = self._stats_cache.get(control_point)
+        if cached is not None and (time.time() - cached[0]) < _STATS_TTL_S:
+            return self._stats_with_live_counters(cached[1])
         clause, params = ("WHERE control_point = ?", [control_point]) if control_point else ("", [])
         try:
             with self._connect() as conn:
@@ -640,7 +664,7 @@ class ExperienceSpine:
                                action="experience stats unavailable")
             return {"available": False}
         evidence = int(by_kind.get(str(OutcomeKind.SUCCESS), 0)) + int(by_kind.get(str(OutcomeKind.FAILURE), 0))
-        return {
+        scanned = {
             "available": True,
             "store_kind": self._store_kind,
             "rows": int(total or 0),
@@ -648,6 +672,14 @@ class ExperienceSpine:
             "by_outcome": {k: int(v) for k, v in by_kind.items()},
             "evidence_rows": evidence,
             "exploration_rows": int(explored or 0),
+        }
+        self._stats_cache[control_point] = (time.time(), scanned)
+        return self._stats_with_live_counters(scanned)
+
+    def _stats_with_live_counters(self, scanned: dict[str, Any]) -> dict[str, Any]:
+        """Cached aggregates plus the in-memory counters, which are always current."""
+        return {
+            **scanned,
             "queued": len(self._queue),
             "dropped": self._dropped,
             "collapsed": self._collapsed,
@@ -669,6 +701,7 @@ class ExperienceSpine:
                     "  ORDER BY decided_at ASC LIMIT ?)",
                     (excess,),
                 )
+                self._stats_cache.clear()
                 return int(cur.rowcount or 0)
         except sqlite3.Error as exc:
             record_degradation("ontogeny_experience", exc, severity="warning",

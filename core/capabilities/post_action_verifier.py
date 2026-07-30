@@ -179,7 +179,7 @@ class PostActionVerifier:
 
     async def _verify_file_exists(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a file exists and has content."""
-        path = Path(str(args.get("path", "")))
+        path = Path(str(args.get("path", ""))).expanduser()
         if not path.is_absolute():
             # Try common roots
             for root in [Path.home() / "Documents" / "Aura",
@@ -201,7 +201,7 @@ class PostActionVerifier:
 
     async def _verify_file_has_content(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a file contains expected content or matches expected hash."""
-        path = Path(str(args.get("path", "")))
+        path = Path(str(args.get("path", ""))).expanduser()
         expected_hash = str(args.get("hash", ""))
         expected_text = str(args.get("contains", ""))
         min_size = int(args.get("min_size", 1))
@@ -252,7 +252,7 @@ class PostActionVerifier:
 
     async def _verify_folder_exists(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a folder exists."""
-        path = Path(str(args.get("path", "")))
+        path = Path(str(args.get("path", ""))).expanduser()
         exists = path.exists() and path.is_dir()
         return VerificationResult(
             predicate="folder_exists", args=args,
@@ -262,7 +262,7 @@ class PostActionVerifier:
 
     async def _verify_file_is_pdf(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a file is a valid PDF."""
-        path = Path(str(args.get("path", "")))
+        path = Path(str(args.get("path", ""))).expanduser()
         if not path.exists():
             return VerificationResult(
                 predicate="file_is_pdf", args=args,
@@ -288,7 +288,7 @@ class PostActionVerifier:
 
     async def _verify_file_is_image(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a file is a valid image."""
-        path = Path(str(args.get("path", "")))
+        path = Path(str(args.get("path", ""))).expanduser()
         if not path.exists():
             return VerificationResult(
                 predicate="file_is_image", args=args,
@@ -322,7 +322,7 @@ class PostActionVerifier:
     async def _verify_file_in_folder(self, args: Dict[str, Any]) -> VerificationResult:
         """Check if a file exists inside a specific folder."""
         file_name = str(args.get("file", ""))
-        folder_path = Path(str(args.get("folder", "")))
+        folder_path = Path(str(args.get("folder", ""))).expanduser()
 
         if not folder_path.exists():
             return VerificationResult(

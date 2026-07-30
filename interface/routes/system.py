@@ -91,6 +91,12 @@ _RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
 _RUNTIME_REVISION_INVALIDATION_PENDING = False
 _RUNTIME_REVISION_VERIFIED_TTL_S = 30.0
 _RUNTIME_REVISION_UNVERIFIED_TTL_S = 2.0
+# Consecutive unverified captures, for the retry backoff below. A recollection
+# is two full provenance captures plus three SHA256 walks of the shell asset
+# tree, so a permanently-unverified launch retrying every 2s is a permanent
+# background cost with no possible payoff.
+_RUNTIME_REVISION_UNVERIFIED_STREAK = 0
+_RUNTIME_REVISION_FAST_RETRIES = 3
 
 
 def _shutdown_health_status() -> dict[str, object]:
@@ -1250,10 +1256,30 @@ def invalidate_runtime_revision_cache() -> None:
         _RUNTIME_REVISION_LOCK.release()
 
 
+def _runtime_revision_unverified_ttl_s() -> float:
+    """Back off the unverified retry so it stops being a treadmill.
+
+    An unverified revision retries every 2s so that identity is picked up the
+    moment it becomes verifiable. But when a launch is *permanently*
+    unverified — running from source rather than the signed app, the ordinary
+    development case — that 2s never stops costing two provenance captures and
+    three SHA256 walks of the shell asset tree, forever. That is a steady GIL
+    burn underneath a runtime whose event loop is already the scarce resource.
+    The first few retries keep the fast cadence; after that the interval
+    doubles to the verified TTL, and any verified result resets it.
+    """
+    if _RUNTIME_REVISION_UNVERIFIED_STREAK <= _RUNTIME_REVISION_FAST_RETRIES:
+        return _RUNTIME_REVISION_UNVERIFIED_TTL_S
+    backed_off = _RUNTIME_REVISION_UNVERIFIED_TTL_S * (
+        2 ** (_RUNTIME_REVISION_UNVERIFIED_STREAK - _RUNTIME_REVISION_FAST_RETRIES)
+    )
+    return min(backed_off, _RUNTIME_REVISION_VERIFIED_TTL_S)
+
+
 def _runtime_revision_contract() -> dict[str, Any]:
     """Collect launch identity on the health worker with bounded cache TTLs."""
     global _RUNTIME_REVISION_CACHE, _RUNTIME_REVISION_CACHE_COLLECTED_AT
-    global _RUNTIME_REVISION_INVALIDATION_PENDING
+    global _RUNTIME_REVISION_INVALIDATION_PENDING, _RUNTIME_REVISION_UNVERIFIED_STREAK
 
     now = time.monotonic()
     with _RUNTIME_REVISION_LOCK:
@@ -1261,12 +1287,13 @@ def _runtime_revision_contract() -> dict[str, Any]:
             _RUNTIME_REVISION_CACHE = None
             _RUNTIME_REVISION_CACHE_COLLECTED_AT = 0.0
             _RUNTIME_REVISION_INVALIDATION_PENDING = False
+            _RUNTIME_REVISION_UNVERIFIED_STREAK = 0
         cache_age = max(0.0, now - _RUNTIME_REVISION_CACHE_COLLECTED_AT)
         cache_ttl = (
             _RUNTIME_REVISION_VERIFIED_TTL_S
             if _RUNTIME_REVISION_CACHE is not None
             and _RUNTIME_REVISION_CACHE.get("verified") is True
-            else _RUNTIME_REVISION_UNVERIFIED_TTL_S
+            else _runtime_revision_unverified_ttl_s()
         )
         cache_expired = bool(
             _RUNTIME_REVISION_CACHE is not None
@@ -1281,6 +1308,10 @@ def _runtime_revision_contract() -> dict[str, Any]:
                     required=_launched_from_app_flag(),
                 )
             _RUNTIME_REVISION_CACHE_COLLECTED_AT = now
+            if _RUNTIME_REVISION_CACHE.get("verified") is True:
+                _RUNTIME_REVISION_UNVERIFIED_STREAK = 0
+            else:
+                _RUNTIME_REVISION_UNVERIFIED_STREAK += 1
         return _runtime_revision_copy(_RUNTIME_REVISION_CACHE)
 
 

@@ -1259,3 +1259,57 @@ def _global_state_contamination_guard(request):
             if str(os.environ.get("AURA_TEST_STATE_GUARD", "")).strip().lower() == "fail":
                 pytest.fail(message, pytrace=False)
             print(f"\n[state-guard] {message}")
+
+
+@pytest.fixture(autouse=True)
+def _mlx_clients_do_not_outlive_their_test(request):
+    """Close MLX clients a test created, inside that test.
+
+    An MLXLocalClient's finalizer releases its durable lane. A client left for
+    the garbage collector releases whenever the collector happens to run —
+    which is inside some LATER test, into whatever recorder that test
+    installed. Measured: test_forced_abort_releases_exact_durable_lane_owner
+    saw an extra release from a previous test's client,
+
+        ('mlx:8733:/private/var/.../Qwen2.5-32B-Instruct-8bit', 1, 'client_close')
+
+    and both it and test_mlx_force_abort_kills_worker_before_lifecycle_lock_
+    cleanup passed alone and failed together — the pass-alone / fail-together
+    shape that makes an aggregate green untrustworthy.
+
+    Closing here, then collecting, keeps every finalizer inside the test that
+    created the object.
+    """
+    yield
+    # SCOPED BY WHO CAN CREATE ONE, not by what happens to be in the registry.
+    #
+    # The leaking client is built directly — MLXLocalClient(...) — so it never
+    # enters _CLIENTS, which means gating on that registry skipped the very
+    # case this exists for (measured: the failure came straight back). The
+    # collect is what does the work.
+    #
+    # But an unconditional collect after every test costs real minutes across
+    # ~7,400 of them: this sweep went from ~14 to 20+ when the fixture landed.
+    # Only modules that can build one need paying for.
+    module = str(getattr(request.node, "fspath", "") or "")
+    if "mlx" not in module.lower() and "cortex" not in module.lower():
+        return
+
+    import gc
+
+    try:
+        from core.brain.llm import mlx_client as _mlx
+    except Exception:  # noqa: BLE001 - the module may not be importable here
+        return
+    registry = getattr(_mlx, "_CLIENTS", None)
+    if isinstance(registry, dict) and registry:
+        for client in list(registry.values()):
+            close = getattr(client, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:  # noqa: BLE001 - teardown may never fail a test
+                    pass
+        registry.clear()
+    gc.collect()
+

@@ -254,6 +254,65 @@ class TestSpikeDumpBounding(unittest.TestCase):
         self.assertEqual(len(dumps), 2)
 
 
+class TestSpikeAttribution(unittest.TestCase):
+    """A stack dump names where threads ARE; it cannot name what allocated.
+
+    On 2026-07-29 this process gained 20.4GB in ten seconds. The only
+    thread running at both stack samples was a MiniLM encode, measured
+    afterwards at 3.7MB per two thousand calls — the stacks named a
+    bystander, and the spike that mattered was throttled to a one-line
+    'stack dump throttled' with no attribution at all.
+    """
+
+    def test_every_spike_is_attributed_even_when_the_stack_dump_is_throttled(self):
+        h = _Harness()
+        h.dog._dump_thread_stacks = lambda why: None
+        attributed: list[str] = []
+        h.dog._log_memory_attribution = attributed.append
+
+        h.dog._record_footprint_spike(_sample(core_mb=1000.0), _sample(core_mb=21_000.0))
+        # Second spike inside the throttle window: no stack dump, but the
+        # attribution must still be recorded.
+        h.dog._record_footprint_spike(_sample(core_mb=1000.0), _sample(core_mb=21_000.0))
+
+        self.assertEqual(len(attributed), 2, "a throttled spike must still be attributed")
+        self.assertIn("spike #2", attributed[1])
+
+    def test_attribution_is_recorded_past_the_stack_dump_lifetime_cap(self):
+        h = _Harness()
+        h.dog._spike_dumps = h.dog.SPIKE_DUMP_LIFETIME_CAP + 1
+        attributed: list[str] = []
+        h.dog._log_memory_attribution = attributed.append
+
+        h.dog._record_footprint_spike(_sample(core_mb=1000.0), _sample(core_mb=21_000.0))
+
+        self.assertEqual(len(attributed), 1)
+
+    def test_attribution_never_raises_when_the_infra_is_unavailable(self):
+        h = _Harness()
+        with patch.dict(sys.modules, {"core.runtime.memory_infra": None}):
+            h.dog._log_memory_attribution("spike #1")  # must not raise
+
+
+class TestLethalReclaimReporting(unittest.TestCase):
+    def test_the_critical_line_reports_all_three_reclaim_levers(self):
+        """'Reclaimed (killed=0)' hid whether shedding or gc found anything.
+
+        It was the operator's last view of the runtime before it exited,
+        and it described one of the three levers actually pulled.
+        """
+        h = _Harness()
+        h.dog._ladder_shed = lambda: (3, 512 << 20)
+
+        with self.assertLogs("Aura.Resilience.MemoryWatchdog", level="CRITICAL") as caught:
+            h.dog._handle_lethal(_sample(core_mb=99_000.0), 0.0)
+
+        line = "\n".join(caught.output)
+        self.assertIn("shed=3 organs/512MB", line)
+        self.assertIn("killed=1", line)
+        self.assertIn("gc=42", line)
+
+
 class TestRuntimeSurface(unittest.TestCase):
     def test_tick_survives_sampler_failure(self):
         import time

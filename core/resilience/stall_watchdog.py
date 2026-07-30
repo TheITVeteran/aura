@@ -151,6 +151,12 @@ class StallWatchdog(threading.Thread):
         # for 19 stalls whose real culprit was on-loop SQLite.
         self._loop_thread_id: int | None = None
 
+        # Dump-rate state: composing a dump is GIL-expensive, so during a
+        # sustained wedge we keep the first and suppress its near-duplicates.
+        self._last_stall_dump_at: float = 0.0
+        self._last_stall_dump_path: str = ""
+        self._suppressed_stall_dumps: int = 0
+
     @staticmethod
     def _resolve_heartbeat_file() -> Path | None:
         raw = os.getenv("AURA_LIVENESS_HEARTBEAT_FILE", "data/runtime/liveness_heartbeat.json")
@@ -537,6 +543,19 @@ class StallWatchdog(threading.Thread):
     _STALL_DUMP_KEEP = 500
     _STALL_DUMP_PRUNE_BATCH = 200
 
+    #: Minimum gap between full all-thread dumps.
+    #:
+    #: Composing one walks sys._current_frames() and formats a stack for every
+    #: thread — ~80 of them live, 85KB of output — as a pure-Python burst that
+    #: holds the GIL. Under an ongoing stall that starves the loop further, so
+    #: the dump taken to explain the freeze helps cause the next one. On
+    #: 2026-07-29 three fired inside three minutes as the stalls escalated
+    #: 5.6s → 17.6s → 103.8s, and back-to-back dumps of the same wedge are
+    #: near-identical anyway: the second one buys pressure, not evidence.
+    #: This is the same defect record_degradation had (fixed 2026-07-29,
+    #: 00c65528) — the act of recording a freeze cost enough to cause the next.
+    _STALL_DUMP_MIN_INTERVAL_S = 60.0
+
     def _drain_stall_dump_backlog(self, dump_dir: Path, *, budget_s: float = 3.0) -> None:
         """Fully drain the stall-dump backlog to the retention target, bounded
         by a wall-clock budget. Runs on the watchdog thread at startup."""
@@ -608,11 +627,32 @@ class StallWatchdog(threading.Thread):
     def _report_stall(self, elapsed: float):
         logger.error("🚨 [WATCHDOG] EVENT LOOP STALL DETECTED! (Elapsed: %.1fs)", elapsed)
 
+        # A dump costs real GIL time; during an ongoing stall that is time
+        # taken from the loop we are trying to rescue. Keep the first dump of
+        # a wedge — that one carries the evidence — and skip its near-identical
+        # successors, saying so rather than dropping them silently.
+        now = time.monotonic()
+        since_last = now - self._last_stall_dump_at
+        if self._last_stall_dump_at > 0.0 and since_last < self._STALL_DUMP_MIN_INTERVAL_S:
+            self._suppressed_stall_dumps += 1
+            logger.warning(
+                "[WATCHDOG] Stall dump suppressed (%.0fs since the last of this "
+                "wedge, %d suppressed): composing one costs the GIL the stalled "
+                "loop needs. Evidence is in %s",
+                since_last,
+                self._suppressed_stall_dumps,
+                self._last_stall_dump_path or "the previous dump",
+            )
+            self._notify_diagnostics(elapsed)
+            return
+
         # Dump tracebacks of all threads
         dump_dir = _forensics_root() / "stalls"
         dump_dir.mkdir(parents=True, exist_ok=True)
         self._prune_stall_dumps(dump_dir)
         dump_file = dump_dir / f"stall_{int(time.time())}.txt"
+        self._last_stall_dump_at = now
+        self._last_stall_dump_path = str(dump_file)
 
         dump_text = self._compose_dump_text(elapsed)
         try:
@@ -635,7 +675,14 @@ class StallWatchdog(threading.Thread):
 
         logger.info("💉 [IMMUNE] Stall traceback dumped to: %s", dump_file)
 
-        # Proactively trigger Neuro-Surgeon analysis
+        self._notify_diagnostics(elapsed)
+
+    def _notify_diagnostics(self, elapsed: float) -> None:
+        """Proactively trigger Neuro-Surgeon analysis.
+
+        Runs for a suppressed dump too: the stall is just as real, only its
+        traceback is redundant.
+        """
         try:
             from core.resilience.diagnostic_hub import get_diagnostic_hub
             get_diagnostic_hub()

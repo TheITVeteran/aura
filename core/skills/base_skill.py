@@ -39,6 +39,15 @@ _SKILL_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
+#: Where a caller that has already sized THIS request puts the budget it
+#: negotiated. The capability engine asks a skill's ``timeout_for`` what a
+#: particular objective will cost; without somewhere to put the answer, the
+#: engine held the larger number and the skill went on enforcing its flat
+#: declared default, which is smaller by construction and therefore always
+#: fired first. Live 2026-07-29: a research task sized at 405s was killed at
+#: 180s by the class attribute and reported as "Completed 0/0 steps".
+SKILL_TIMEOUT_CONTEXT_KEY = "_skill_timeout_s"
+
 
 def _record_skill_degradation(
     exc: BaseException,
@@ -199,6 +208,24 @@ class BaseSkill(ABC):
         """
         pass  # no-op: intentional
 
+    def _effective_timeout_seconds(self, context: dict[str, Any] | None) -> float:
+        """The budget for THIS request, falling back to the declared default.
+
+        A caller that sized the request (capability engine, via ``timeout_for``)
+        publishes its number under SKILL_TIMEOUT_CONTEXT_KEY. Only a larger
+        budget is honoured: the declared value is a floor the skill author
+        chose, and a caller must not quietly shorten it here — callers that
+        need to constrain a skill do it with their own outer wait.
+        """
+        declared = float(self.timeout_seconds)
+        if not isinstance(context, dict):
+            return declared
+        try:
+            negotiated = float(context.get(SKILL_TIMEOUT_CONTEXT_KEY) or 0.0)
+        except (TypeError, ValueError):
+            return declared
+        return max(declared, negotiated)
+
     async def safe_execute(
         self,
         params: Any,
@@ -285,11 +312,12 @@ class BaseSkill(ABC):
         base_delay = 1.0
         result: Any = None
         last_err: Exception = RuntimeError("skill execution did not start")
+        effective_timeout = self._effective_timeout_seconds(context)
 
         for attempt in range(max_attempts):
             try:
                 # Execute with timeout
-                async with asyncio.timeout(self.timeout_seconds):
+                async with asyncio.timeout(effective_timeout):
                     if inspect.iscoroutinefunction(self.execute):
                         result = await self.execute(params, context)
                     else:

@@ -603,6 +603,16 @@ class HostResourceObserver:
         # tolerance — the scan itself takes that long.
         self._process_table_cache: tuple[float, ProcessTableObservation] | None = None
         self._process_table_cache_ttl_s = 2.0
+        # The same treatment for the process-TREE walk in memory(), which the
+        # Jul 24 pass missed because it reaches the host through
+        # Process.children(recursive=True) rather than process_iter. It is the
+        # same host-wide enumeration and it kept the same habit of running on
+        # the event loop: on Jul 29 it turned a 5.2s lag into a 63.5s freeze,
+        # because record_degradation sampled RSS and every record bought the
+        # next one. Only the children's total is cached — this process's own
+        # RSS is one cheap call and stays live.
+        self._tree_children_rss_cache: dict[int, tuple[float, int]] = {}
+        self._tree_children_rss_ttl_s = 2.0
 
     @property
     def provenance(self) -> ObservationProvenance:
@@ -933,6 +943,26 @@ class HostResourceObserver:
     def open_files(self, *, pid: int | None = None) -> tuple[str, ...]:
         return self.open_file_table(pid=pid).paths
 
+    def _children_rss_bytes(self, process: Any, root: int) -> int:
+        """Summed RSS of this process's descendants, at most once per TTL.
+
+        The walk is the expensive half of a tree observation and several
+        subsystems ask for one per tick. Failures are never cached, so the
+        next caller retries the scan rather than inheriting a zero.
+        """
+        now = time.monotonic()
+        cached = self._tree_children_rss_cache.get(root)
+        if cached is not None and now - cached[0] < self._tree_children_rss_ttl_s:
+            return cached[1]
+        total = 0
+        for child in process.children(recursive=True):
+            try:
+                total += int(getattr(child.memory_info(), "rss", 0) or 0)
+            except (psutil.Error, OSError, RuntimeError, ValueError):
+                continue
+        self._tree_children_rss_cache[root] = (now, total)
+        return total
+
     def memory(
         self,
         *,
@@ -965,21 +995,30 @@ class HostResourceObserver:
                 error=f"{type(exc).__name__}:{exc}",
             )
 
+        # OUR OWN RSS IS CHEAP. THE TREE'S IS THE WHOLE MACHINE'S.
+        #
+        # One memory_info() is a single mach call (~3us). children(recursive)
+        # is not a walk of our children — psutil reaches it through
+        # _ppid_map(), which enumerates EVERY pid on the host and builds a
+        # Process for each. Measured here at 7ms against 751 pids while idle,
+        # and far worse while a 32B worker is spawning, because the pid
+        # enumeration contends with process creation.
+        #
+        # include_process_tree=False used to skip both and report an RSS of
+        # zero, so a caller that wanted only this process either paid the
+        # machine's bill or was told it occupied no memory. Sample the cheap
+        # one always; gate only the scan.
         process_rss = 0
         tree_rss = 0
-        if include_process_tree:
-            root = os.getpid() if root_pid is None else int(root_pid)
-            try:
-                process = psutil.Process(root)
-                process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
-                tree_rss = process_rss
-                for child in process.children(recursive=True):
-                    try:
-                        tree_rss += int(getattr(child.memory_info(), "rss", 0) or 0)
-                    except (psutil.Error, OSError, RuntimeError, ValueError):
-                        continue
-            except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
-                pass
+        root = os.getpid() if root_pid is None else int(root_pid)
+        try:
+            process = psutil.Process(root)
+            process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
+            tree_rss = process_rss
+            if include_process_tree:
+                tree_rss += self._children_rss_bytes(process, root)
+        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+            pass
         swap_total = 0
         swap_used = 0
         swap_free = 0

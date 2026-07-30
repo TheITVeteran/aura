@@ -1862,6 +1862,19 @@ class AffectiveSteeringEngine:
         """Returns True if steering vectors are attached and alpha > 0."""
         return self._model_attached and self._alpha > 0.0 and len(self._hooks) > 0
 
+    def active_hooks(self) -> list["AffectiveSteeringHook"]:
+        """The installed hooks, for anything that steers them mid-generation.
+
+        TokenSentinel._pulse_affect is the reason this is public: it is the
+        thing that makes affect LIVE during a generation rather than frozen at
+        its start, and it was being constructed with no hooks at all — so on
+        every single generation it recorded "live affect inactive: missing
+        steering_hooks" and raised a MARGINAL fault (27 of them across six
+        demo turns on 2026-07-29). The hooks existed and were installed; there
+        was simply no way to hand them over.
+        """
+        return list(self._hooks)
+
     def set_active(self, active: bool):
         """Enable or disable all steering without removing hooks."""
         for hook in self._hooks:

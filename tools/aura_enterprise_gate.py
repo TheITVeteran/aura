@@ -418,6 +418,12 @@ class AstGate(ast.NodeVisitor):
         self.async_depth = 0
         self.source_lines = source_lines or []
 
+    def _line_has_marker(self, node: ast.AST, marker: str) -> bool:
+        lineno = int(getattr(node, "lineno", 0) or 0)
+        if 0 < lineno <= len(self.source_lines):
+            return marker in self.source_lines[lineno - 1]
+        return False
+
     def _line_has_reviewed_broad_except(self, node: ast.AST) -> bool:
         """True when the handler line carries an explicit BLE001 review marker.
 
@@ -425,10 +431,20 @@ class AstGate(ast.NodeVisitor):
         except that a human reviewed and justified (last-resort floors,
         liveness paths). The gate's job is surfacing UNREVIEWED debt.
         """
-        lineno = int(getattr(node, "lineno", 0) or 0)
-        if 0 < lineno <= len(self.source_lines):
-            return "noqa: BLE001" in self.source_lines[lineno - 1]
-        return False
+        return self._line_has_marker(node, "noqa: BLE001")
+
+    def _line_has_reviewed_dynamic_exec(self, node: ast.AST) -> bool:
+        """True when the call line carries an explicit S102 review marker.
+
+        Same principle as BLE001 above, for the same reason: the gate exists to
+        surface UNREVIEWED debt, and `# noqa: S102` is the ecosystem-standard
+        annotation for an exec/eval/compile a human reviewed.
+
+        This is deliberately per-line rather than another ALLOW_DYNAMIC_CODE
+        entry: allowlisting a whole file also blesses every exec added to it
+        later, which is precisely the debt this gate is meant to catch.
+        """
+        return self._line_has_marker(node, "noqa: S102")
 
     def add(self, severity: str, kind: str, node: ast.AST, detail: str = "") -> None:
         self.report.findings.append(
@@ -528,7 +544,11 @@ class AstGate(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = dotted_call_name(node)
-        if name in {"compile", "eval", "exec"} and self.rel not in ALLOW_DYNAMIC_CODE:
+        if (
+            name in {"compile", "eval", "exec"}
+            and self.rel not in ALLOW_DYNAMIC_CODE
+            and not self._line_has_reviewed_dynamic_exec(node)
+        ):
             self.add(
                 "critical" if is_production(self.rel) else "medium",
                 "dynamic_code_execution",
@@ -865,13 +885,41 @@ def main(argv: list[str] | None = None) -> int:
         print(output)
 
     failed_gate = any(finding.kind in FAILURE_KINDS for finding in report.findings)
-    if args.fail_on_regression and any(
-        finding.kind == "baseline_regression" for finding in report.findings
-    ):
+    regressions = [
+        finding for finding in report.findings if finding.kind == "baseline_regression"
+    ]
+
+    def explain(reason: str, shown: list[Finding]) -> None:
+        """Say why the gate failed.
+
+        With --out the report goes to a file and this used to print nothing at
+        all, so `aura_enterprise_gate.py ... --out x.json` exited 1 in silence
+        and test_enterprise_static_contracts asserted with an empty message.
+        A gate whose failure carries no reason does not get acted on.
+        """
+        print(f"enterprise gate FAILED: {reason}", file=sys.stderr)
+        for finding in shown:
+            location = (
+                f"{finding.file}:{finding.line}" if finding.file not in {"", "."} else "repo"
+            )
+            print(f"  [{finding.severity}] {location} {finding.detail}", file=sys.stderr)
+        if args.out:
+            print(f"  full report: {args.out}", file=sys.stderr)
+
+    if args.fail_on_regression and regressions:
+        explain(f"{len(regressions)} count(s) above the debt baseline", regressions)
         return 1
     if args.strict and (failed_gate or report.high_or_critical_count() > 0):
+        explain(
+            f"strict mode: {report.high_or_critical_count()} high/critical finding(s)",
+            [f for f in report.findings if f.kind in FAILURE_KINDS][:40],
+        )
         return 1
     if failed_gate:
+        explain(
+            "blocking finding kind(s) present",
+            [f for f in report.findings if f.kind in FAILURE_KINDS][:40],
+        )
         return 1
     return 0
 
