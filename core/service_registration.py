@@ -5,6 +5,7 @@ Refactored into a modular provider system for Digital Metabolism.
 
 import logging
 import threading
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -30,6 +31,61 @@ logger = logging.getLogger(__name__)
 # Serializes concurrent boot-time registration passes (RLock so the body can
 # call container operations that may re-enter).
 _REGISTRATION_LOCK = threading.RLock()
+
+
+def install_immune_enforcement(immune: Any) -> Any:
+    """Install the real enforcement backends and record it if they do not.
+
+    CP126 (critical): "Immune system silently ignores enforcement backend
+    failure. Firewall, quarantine, process, resource, and ARP backend
+    activation errors are swallowed while the immune decision layer is
+    returned as available."
+
+    The whole defect was ``except (...): pass``. An immune system that can
+    DECIDE to quarantine but cannot ENFORCE it is not a degraded immune
+    system, it is a reporting one — and every surface asking the container
+    for "immune_system" received an object that looked fully armed.
+    Detection without enforcement is the most dangerous shape a security
+    control can take, precisely because it is trusted.
+
+    The decision layer genuinely works without the backends, so activation
+    stays best-effort and the immune system is still returned. What changed
+    is that the gap is recorded and readable off the object.
+
+    Module-level rather than a closure inside the registration body, so the
+    behaviour can be exercised without booting the whole container.
+    """
+    enforcement_active = False
+    enforcement_error = ""
+    try:
+        from core.security.defensive_runtime import ensure_defensive_runtime_active
+
+        ensure_defensive_runtime_active()
+        enforcement_active = True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+        enforcement_error = f"{type(exc).__name__}: {exc}"
+        record_degradation(
+            "service_registration.immune_enforcement",
+            exc,
+            severity="warning",
+            action=(
+                "returned the immune DECISION layer without enforcement "
+                "backends; quarantine and firewall actions will not reach the host"
+            ),
+        )
+    try:
+        immune.enforcement_backends_active = enforcement_active
+        immune.enforcement_backends_error = enforcement_error
+    except (AttributeError, TypeError) as exc:
+        record_degradation(
+            "service_registration.immune_enforcement",
+            exc,
+            severity="info",
+            action="could not annotate the immune system with its enforcement state",
+            enforce_failure_policy=False,
+        )
+    return immune
+
 
 def register_all_services(is_proxy: bool = False):
     """Register all services via modular providers.
@@ -296,17 +352,8 @@ def _register_all_services_body(container, is_proxy: bool):
     def _create_immune_system():
         from core.security.immune_system import get_immune_system
 
-        immune = get_immune_system()
-        # Install the real enforcement backends (firewall/quarantine/process/resource/arp) so the
-        # immune system's decisions actually act on the host. Best-effort; the decision layer
-        # works regardless.
-        try:
-            from core.security.defensive_runtime import ensure_defensive_runtime_active
+        return install_immune_enforcement(get_immune_system())
 
-            ensure_defensive_runtime_active()
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            pass
-        return immune
 
     try:
         from core.resilience.fault_taxonomy import get_fault_registry
