@@ -583,8 +583,11 @@ async def prepare_runtime_payload(
             prepared_messages = _merge_system_prompt(
                 prepared_messages, contract.to_prompt_block().strip()
             )
-        prompt, inferred_system = _coerce_prompt_from_messages(prepared_messages)
-        system_prompt = inferred_system or system_prompt
+        prompt, _inferred_system = _coerce_prompt_from_messages(prepared_messages)
+        # Structured messages are authoritative. Returning the same system
+        # content again as a scalar causes chat clients to prepend it a second
+        # time at their transport boundary.
+        system_prompt = None
     elif contract and contract.reason != "ordinary_dialogue":
         block = contract.to_prompt_block().strip()
         system_prompt = f"{system_prompt}\n\n{block}".strip() if system_prompt else block

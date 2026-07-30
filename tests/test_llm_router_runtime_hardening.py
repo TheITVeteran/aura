@@ -57,6 +57,15 @@ class _NonAgenticClient:
         return True, "ungrounded tool-shaped answer", {}
 
 
+class _CapturingTextClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def generate_text_async(self, prompt: str, **kwargs):
+        self.calls.append((prompt, kwargs))
+        return "captured"
+
+
 def test_legacy_llm_router_degradation_audit_is_clean():
     assert analyze_file(Path("core/brain/llm/llm_router.py")) == []
 
@@ -126,3 +135,37 @@ async def test_tool_required_route_blocks_plain_llm_fallback_without_agentic_end
     assert result["error"] == "no_agentic_endpoint"
     assert result["content"] == ""
     assert non_agentic.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_structured_system_messages_reach_client_once_with_persona():
+    router = IntelligentLLMRouter()
+    client = _CapturingTextClient()
+    router.register_endpoint(
+        LLMEndpoint(
+            name="Primary-Test",
+            tier=LLMTier.PRIMARY,
+            model_name="primary",
+            client=client,
+        )
+    )
+    messages = [
+        {"role": "system", "content": "SYSTEM_MARKER_ALPHA"},
+        {"role": "system", "content": "SYSTEM_MARKER_BETA"},
+        {"role": "user", "content": "Summarize the two markers."},
+    ]
+
+    result = await router.think(messages=messages, origin="user")
+
+    assert result == "captured"
+    assert len(client.calls) == 1
+    _, kwargs = client.calls[0]
+    assert not kwargs.get("system_prompt")
+    serialized = "\n".join(
+        str(message.get("content") or "")
+        for message in kwargs["messages"]
+        if isinstance(message, dict)
+    )
+    assert serialized.count("SYSTEM_MARKER_ALPHA") == 1
+    assert serialized.count("SYSTEM_MARKER_BETA") == 1
+    assert serialized.count("You are Aura") == 1

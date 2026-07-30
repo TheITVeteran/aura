@@ -4283,7 +4283,9 @@ class InferenceGate:
         gen_kwargs: dict = {
             "prompt": local_prompt,
             "messages": llm_messages,
-            "system_prompt": system_prompt,
+            # The structured messages already carry the system policy. Passing
+            # the scalar copy makes chat clients prepend it a second time.
+            "system_prompt": "",
             "deadline": deadline,
             "max_tokens": max_tokens,
             "origin": origin,
@@ -6056,6 +6058,20 @@ class InferenceGate:
                 "user": min(14000, max(5000, int(prompt_budget_chars * 0.46))),
                 "assistant": min(6000, max(3000, int(prompt_budget_chars * 0.20))),
             }
+        elif profile == "curriculum":
+            prompt_budget_chars = 12_000
+            limits = {
+                "system": 6_500,
+                "user": 4_500,
+                "assistant": 2_000,
+            }
+        elif profile == "background":
+            prompt_budget_chars = 16_000
+            limits = {
+                "system": 9_000,
+                "user": 5_000,
+                "assistant": 2_500,
+            }
         else:
             prompt_budget_chars = max(12000, int(max(4096, context_window - 1536) * 1.05))
             limits = {
@@ -6318,6 +6334,10 @@ class InferenceGate:
             )
         elif profile == "extended":
             total_budget_chars = max(18000, int(max(4096, context_window - 1536) * 1.75))
+        elif profile == "curriculum":
+            total_budget_chars = 12_000
+        elif profile == "background":
+            total_budget_chars = 16_000
         else:
             total_budget_chars = max(12000, int(max(4096, context_window - 1536) * 1.05))
         if deep_probe:
@@ -8333,12 +8353,30 @@ class InferenceGate:
                 if use_rich_context
                 else self._build_compact_messages(prompt, system_prompt, history)
             )
-        if provided_messages is not None and (use_compact_foreground_context or use_rich_context):
+        if isinstance(messages, list) and (
+            is_background
+            or (
+                provided_messages is not None
+                and (use_compact_foreground_context or use_rich_context)
+            )
+        ):
             short_output_contract = self._has_short_live_output_contract(context)
             deep_probe_context = bool(context.get("deep_mind_probe", False)) and not (
                 short_output_contract
             )
-            if use_compact_foreground_context:
+            if is_background:
+                requested_background_profile = str(
+                    context.get("background_prompt_profile") or ""
+                ).strip().lower()
+                if requested_background_profile not in {"background", "curriculum"}:
+                    requested_background_profile = (
+                        "curriculum"
+                        if str(context.get("purpose") or "").strip().lower()
+                        == "curriculum_practice"
+                        else "background"
+                    )
+                foreground_profile = requested_background_profile
+            elif use_compact_foreground_context:
                 foreground_profile = (
                     "contract"
                     if short_output_contract
@@ -8359,10 +8397,14 @@ class InferenceGate:
                 foreground_profile = "extended"
             messages = self._compact_prebuilt_messages(
                 messages,
-                history_limit=self._foreground_prebuilt_history_limit(
-                    visible_user_prompt,
-                    context,
-                    deep_probe=deep_probe_context,
+                history_limit=(
+                    4
+                    if is_background
+                    else self._foreground_prebuilt_history_limit(
+                        visible_user_prompt,
+                        context,
+                        deep_probe=deep_probe_context,
+                    )
                 ),
                 deep_probe=deep_probe_context,
                 budget_profile=foreground_profile,
@@ -8383,15 +8425,10 @@ class InferenceGate:
             # it was visible, because the prompt plan logs the compacted
             # messages and the re-inflation happens after that.
             #
-            # Bound it through the SAME budget rather than dropping it: policy
-            # and safety instructions stay present, just no longer unbounded.
-            if system_prompt:
-                system_prompt = self._compact_prebuilt_message_content(
-                    "system",
-                    system_prompt,
-                    budget_profile=foreground_profile,
-                    visible_request_chars=len(str(visible_user_prompt or "")),
-                )
+            # The compacted structured messages now carry all system policy.
+            # Passing a scalar copy would let the client merge the unbounded
+            # pre-compaction prompt back into the first system message.
+            system_prompt = ""
         # Volatile grounding rides LAST, behind the conversation, so the KV
         # prefix covering the history survives from one turn to the next.
         # Appended after compaction on purpose: compaction rewrites the history

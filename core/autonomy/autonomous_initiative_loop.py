@@ -1,5 +1,4 @@
 import asyncio
-import html
 import logging
 import os
 import time
@@ -414,7 +413,7 @@ class AutonomousInitiativeLoop:
                     async def _pursue_bg(goal: str = node_goal, agency=pa) -> None:
                         try:
                             await asyncio.wait_for(agency.pursue_goal(goal), timeout=90.0)
-                        except (asyncio.TimeoutError, *_INITIATIVE_RECOVERABLE_ERRORS) as bg_exc:
+                        except (TimeoutError, *_INITIATIVE_RECOVERABLE_ERRORS) as bg_exc:
                             _record_initiative_degradation(
                                 bg_exc, action="bounded background proactive pursuit ended"
                             )
@@ -510,9 +509,12 @@ class AutonomousInitiativeLoop:
             async def _solve(prompt: str, task_type: str) -> str:
                 out = await gate.generate(
                     prompt,
-                    context={"purpose": "curriculum_practice",
-                             "origin": "curriculum_loop",
-                             "is_background": True},
+                    context={
+                        "purpose": "curriculum_practice",
+                        "origin": "curriculum_loop",
+                        "is_background": True,
+                        "background_prompt_profile": "curriculum",
+                    },
                     timeout=30.0,
                 )
                 return str(getattr(out, "text", out) or "")

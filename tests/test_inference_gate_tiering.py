@@ -1982,6 +1982,34 @@ def test_compact_prebuilt_messages_respects_runtime_context_budget(monkeypatch):
     assert compact[-1]["content"].endswith("what I just said.")
 
 
+@pytest.mark.parametrize(
+    ("profile", "maximum"),
+    [("curriculum", 12_000), ("background", 16_000)],
+)
+def test_background_prompt_profiles_bound_full_system_scaffolds(profile, maximum):
+    gate = InferenceGate.__new__(InferenceGate)
+    messages = [
+        {
+            "role": "system",
+            "content": "SYSTEM-HEAD\n" + ("S" * 120_000) + "\nSYSTEM-TAIL",
+        },
+        {"role": "assistant", "content": "A" * 20_000},
+        {"role": "user", "content": "Generate one bounded practice problem."},
+    ]
+
+    compact = gate._compact_prebuilt_messages(
+        messages,
+        history_limit=4,
+        budget_profile=profile,
+        current_user_content=messages[-1]["content"],
+    )
+
+    assert sum(len(message["content"]) for message in compact) <= maximum
+    assert compact[0]["content"].startswith("SYSTEM-HEAD")
+    assert compact[0]["content"].endswith("SYSTEM-TAIL")
+    assert compact[-1] == messages[-1]
+
+
 def test_compact_prebuilt_message_preserves_large_user_request_edges(monkeypatch):
     gate = InferenceGate.__new__(InferenceGate)
     monkeypatch.setenv("AURA_CORTEX_CTX", "8192")

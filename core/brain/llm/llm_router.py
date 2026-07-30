@@ -817,6 +817,27 @@ class IntelligentLLMRouter:
         persona = cls._core_persona_prompt()
         return f"{persona}\n\n{prompt}".strip() if prompt else persona
 
+    @classmethod
+    def _apply_core_persona_to_messages(
+        cls,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Place the persona once in the authoritative structured message set."""
+
+        prepared = [dict(message) if isinstance(message, dict) else message for message in messages]
+        for index, message in enumerate(prepared):
+            if not isinstance(message, dict) or message.get("role") != "system":
+                continue
+            content = str(message.get("content", "") or "").strip()
+            message["content"] = cls._apply_core_persona(content)
+            if index:
+                prepared.insert(0, prepared.pop(index))
+            return prepared
+        return [
+            {"role": "system", "content": cls._core_persona_prompt()},
+            *prepared,
+        ]
+
     # Backend-safe ranges for every sampling field the router will forward.
     # NaN/inf/out-of-range values from callers or substrate overrides must
     # never reach an inference backend.
@@ -1400,7 +1421,6 @@ class IntelligentLLMRouter:
         if prompt is None and "messages" in kwargs:
             messages = kwargs.get("messages", [])
             if messages and isinstance(messages, list):
-                system_parts = []
                 convo_parts = []
                 last_user_content = ""
                 last_non_system_content = ""
@@ -1413,7 +1433,7 @@ class IntelligentLLMRouter:
                     if not content:
                         continue
                     if role == "system":
-                        system_parts.append(content)
+                        continue
                     elif role in ("user", "human"):
                         convo_parts.append(f"User: {content}")
                         last_user_content = str(content)
@@ -1426,10 +1446,6 @@ class IntelligentLLMRouter:
                         convo_parts.append(f"[{role}]: {content}")
                         if not last_non_system_content:
                             last_non_system_content = str(content)
-
-                # Inject system context as system_prompt kwarg if not already set
-                if system_parts and not kwargs.get("system_prompt"):
-                    kwargs["system_prompt"] = "\n\n".join(system_parts)
 
                 # Route on the actual latest user intent, not the entire serialized
                 # conversation transcript. The full chat context still rides along
@@ -1487,11 +1503,20 @@ class IntelligentLLMRouter:
                 is_background=is_background,
             ),
         )
-        kwargs["system_prompt"] = system_prompt_from_payload or kwargs.get("system_prompt", "")
         if _messages is not None:
-            kwargs["messages"] = _messages
+            kwargs["messages"] = (
+                self._apply_core_persona_to_messages(_messages)
+                if origin != "benchmark"
+                else _messages
+            )
+            kwargs["system_prompt"] = ""
         else:
             kwargs.pop("messages", None)
+            kwargs["system_prompt"] = (
+                self._apply_core_persona(system_prompt_from_payload or kwargs.get("system_prompt", ""))
+                if origin != "benchmark"
+                else system_prompt_from_payload or kwargs.get("system_prompt", "")
+            )
 
         substrate_text = await self._try_substrate_primary(prompt, kwargs, is_background=is_background)
         if substrate_text:
@@ -1559,9 +1584,6 @@ class IntelligentLLMRouter:
         
         # Resolve tier
         resolved_tier = self._resolve_tier(prefer_tier)
-
-        if origin != "benchmark":
-            kwargs["system_prompt"] = self._apply_core_persona(kwargs.get("system_prompt", ""))
 
         # Autonomic Routing (Exhaustion Reflex)
         soma = kwargs.get("soma", {})
@@ -1879,15 +1901,21 @@ class IntelligentLLMRouter:
                 is_background=is_background,
             ),
         )
-        if origin != "benchmark":
-            system_prompt = self._apply_core_persona(system_prompt_from_payload or system_prompt or "")
-        else:
-            system_prompt = system_prompt_from_payload or system_prompt or ""
         kwargs.pop("system_prompt", None)
         if prepared_messages is not None:
-            kwargs["messages"] = prepared_messages
+            kwargs["messages"] = (
+                self._apply_core_persona_to_messages(prepared_messages)
+                if origin != "benchmark"
+                else prepared_messages
+            )
+            system_prompt = ""
         else:
             kwargs.pop("messages", None)
+            system_prompt = (
+                self._apply_core_persona(system_prompt_from_payload or system_prompt or "")
+                if origin != "benchmark"
+                else system_prompt_from_payload or system_prompt or ""
+            )
 
         if origin != "benchmark" and should_force_tool_handoff(contract, is_background=is_background) and not _contract_tool_handoff_val:
             tools = build_agentic_tool_map(
@@ -2252,9 +2280,17 @@ class IntelligentLLMRouter:
             ),
         )
         if prepared_messages is not None:
+            prepared_messages = (
+                self._apply_core_persona_to_messages(prepared_messages)
+                if origin != "benchmark"
+                else prepared_messages
+            )
             kwargs["messages"] = prepared_messages
+            system_prompt = ""
         else:
             kwargs.pop("messages", None)
+            if origin != "benchmark":
+                system_prompt = self._apply_core_persona(system_prompt)
 
         agent_context = dict(context or {})
         if contract:

@@ -710,7 +710,7 @@ async def test_prepare_runtime_payload_hydrates_memory_from_memory_facade(monkey
     )
 
     assert prompt
-    assert system_prompt
+    assert system_prompt is None
     assert messages is not None
     assert contract is not None
     assert contract.requires_memory_grounding is True
