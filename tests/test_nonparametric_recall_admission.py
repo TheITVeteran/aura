@@ -10,6 +10,7 @@ blended into the model's top-64 logits at a weight reaching 0.87.
 import pytest
 
 from core.brain.nonparametric_worker import (
+    _MIN_ENTRIES_TO_STEER_GENERATION,
     _MIN_USABLE_ENTRIES,
     _unusable_datastore_reason,
     make_tapped_nonparametric_processor,
@@ -29,21 +30,57 @@ class _Store:
 class TestDatastoreAdmission:
     def test_the_live_store_shape_is_refused(self):
         """1,677 empty of 1,689 — the exact shape that was steering replies."""
-        reason = _unusable_datastore_reason(_Store([""] * 1677 + ["tok"] * 12))
+        assert _unusable_datastore_reason(_Store([""] * 1677 + ["tok"] * 12))
+
+    def test_the_same_store_is_still_refused_once_it_decodes(self):
+        """DECODABLE IS NOT APPLICABLE, and this is the measured proof.
+
+        Decoding that store's token ids from the resident tokenizer took it
+        from 12 usable entries to 1,488 — genuinely correct per-token text —
+        and the ratio guard passed. The store then steered live generation and
+        two conversation turns degraded immediately:
+
+            "dopamine, serotonin and norepagephrine like apes"
+            "the inner core could prefer crystallishing iron alloys"
+
+        Those 1,689 keys came from a CODING corpus. At that count over a
+        5120-wide space the nearest neighbour of "octopus cognition" is
+        whichever coding token is least far away, which is noise wearing the
+        shape of grammar. Density is a separate requirement from decodability
+        and it has to be checked first.
+        """
+        reason = _unusable_datastore_reason(_Store(["tok"] * 1488 + [""] * 201))
         assert reason
-        assert "12 of 1689" in reason
+        assert "too sparse" in reason
 
-    def test_a_healthy_store_is_admitted(self):
-        assert _unusable_datastore_reason(_Store(["tok"] * 100)) == ""
+    def test_a_dense_healthy_store_is_admitted(self):
+        assert _unusable_datastore_reason(
+            _Store(["tok"] * _MIN_ENTRIES_TO_STEER_GENERATION)
+        ) == ""
 
-    def test_a_mostly_empty_store_is_refused(self):
-        reason = _unusable_datastore_reason(_Store(["tok"] * 40 + [""] * 60))
+    def test_a_mostly_empty_store_is_refused_even_when_dense(self):
+        """The ratio check still matters once a store is big enough to reach
+        it — a million empty slots are not a million neighbours."""
+        usable = int(_MIN_ENTRIES_TO_STEER_GENERATION * 0.4)
+        empty = _MIN_ENTRIES_TO_STEER_GENERATION - usable
+        reason = _unusable_datastore_reason(_Store(["tok"] * usable + [""] * empty))
         assert "40.0% usable" in reason
 
-    def test_a_small_but_wholly_usable_store_is_still_refused(self):
-        """Too few entries to recall from is its own failure, not a ratio."""
-        assert _unusable_datastore_reason(_Store(["tok"] * (_MIN_USABLE_ENTRIES - 1)))
-        assert _unusable_datastore_reason(_Store(["tok"] * _MIN_USABLE_ENTRIES)) == ""
+    def test_a_sparse_store_is_declined_but_never_quarantined(self):
+        """A small store has not grown yet; it is not broken. Quarantining it
+        would throw away the beginning of a good one."""
+        reason = _unusable_datastore_reason(_Store(["tok"] * _MIN_USABLE_ENTRIES))
+        assert "too sparse" in reason
+        import inspect
+
+        import core.brain.nonparametric_worker as worker
+
+        source = inspect.getsource(worker._unusable_datastore_reason)
+        sparse_return = source.index("too sparse")
+        quarantine = source.index("_quarantine_unusable_datastore")
+        assert sparse_return < quarantine, (
+            "the sparse path must return before anything can quarantine"
+        )
 
     def test_an_empty_store_is_left_to_the_existing_empty_path(self):
         assert _unusable_datastore_reason(_Store([])) == ""

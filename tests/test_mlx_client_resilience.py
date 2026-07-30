@@ -1986,9 +1986,32 @@ class TestMLXWorkerProgress(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client._cancel_seq.value, 7)
         self.assertEqual(client._deferred_reboot_reason, "recoverable_token_progress_stalled")
 
-    def test_prompt_cache_budget_disables_deep_solver_retention(self):
+    def test_prompt_cache_budget_is_bounded_by_size_not_by_entry_count(self):
+        """The 72B still retains nothing; the 32B is no longer starved.
+
+        This asserted 2 entries for the 32B. While the entry count was the only
+        memory bound it had to stay tiny — but 2 entries meant the internal
+        lane held exactly one, so its several distinct prompt families evicted
+        each other every tick, measured live and repeatedly as
+        "trimmed hit — reused 3/792 tokens". Retained KV is now capped directly
+        by _prompt_cache_total_token_budget_for_model, so entries can be
+        generous and the eviction that matters is by total size.
+        """
         self.assertEqual(_prompt_cache_entry_budget_for_model("/models/Qwen2.5-72B-Instruct-4bit"), 0)
-        self.assertEqual(_prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit"), 2)
+        thirty_two = _prompt_cache_entry_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit")
+        self.assertGreaterEqual(
+            thirty_two, 4, "two entries starved the internal lane to one"
+        )
+        # And the real ceiling is the token budget, which must exist for it.
+        from core.brain.llm.mlx_worker import (
+            _prompt_cache_total_token_budget_for_model,
+        )
+
+        self.assertGreater(
+            _prompt_cache_total_token_budget_for_model("/models/Qwen2.5-32B-Instruct-8bit"),
+            0,
+            "a generous entry count is only safe because total KV is bounded",
+        )
 
     def test_generation_progress_emits_on_first_token(self):
         self.assertTrue(

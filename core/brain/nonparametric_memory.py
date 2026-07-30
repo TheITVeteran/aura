@@ -689,27 +689,56 @@ class NonParametricMemory:
             return False
 
 
-_singleton: NonParametricMemory | None = None
+#: ONE STORE PER EMBEDDING SPACE, not one store per process.
+#
+# This was a single global bound to whichever dimension asked first. If that
+# was a 32-wide probe, every later 64-wide request from the actual model was
+# refused for the life of the process:
+#
+#   Non-parametric memory dimension mismatch (64 requested, 32 active);
+#   refusing cross-model reuse.        x517 in one session
+#
+# Refusing to MIX the spaces is right — vectors from different models are not
+# comparable and averaging them is nonsense. Refusing to HOLD both is the
+# defect. They are two datastores, and the first caller through the door
+# should not decide which one exists.
+_stores: dict[int, NonParametricMemory] = {}
+_active_dim: int = 0
 _lock = threading.Lock()
 
 
 def get_nonparametric_memory(dim: int = 0) -> NonParametricMemory | None:
-    """Process-wide datastore (created on first call with a real model dim)."""
-    global _singleton
-    if _singleton is None:
-        if dim <= 0:
-            return None
+    """The datastore for one embedding space, created on demand.
+
+    ``dim=0`` means "whatever the active model is using" — the space most
+    recently asked for by name — so callers that do not know the width still
+    reach the right store instead of the oldest one.
+    """
+    global _active_dim
+    width = int(dim or 0)
+    if width <= 0:
         with _lock:
-            if _singleton is None:
-                _singleton = NonParametricMemory(dim)
-    elif dim > 0 and _singleton._dim != int(dim):
-        logger.warning(
-            "Non-parametric memory dimension mismatch (%d requested, %d active); refusing cross-model reuse.",
-            int(dim),
-            _singleton._dim,
-        )
-        return None
-    return _singleton
+            return _stores.get(_active_dim) if _active_dim else None
+    with _lock:
+        store = _stores.get(width)
+        if store is None:
+            store = NonParametricMemory(width)
+            _stores[width] = store
+            logger.info(
+                "Non-parametric memory: opened the %d-wide space (%d space(s) held).",
+                width,
+                len(_stores),
+            )
+        _active_dim = width
+        return store
+
+
+def reset_nonparametric_memory_for_test() -> None:
+    """Drop every held embedding space."""
+    global _active_dim
+    with _lock:
+        _stores.clear()
+        _active_dim = 0
 
 
 def validate_nonparametric_memory_identity(value: Any) -> dict[str, Any]:
@@ -746,6 +775,5 @@ def validate_nonparametric_memory_identity(value: Any) -> dict[str, Any]:
 
 
 def reset_nonparametric_memory() -> None:
-    global _singleton
-    with _lock:
-        _singleton = None
+    """Drop every held embedding space."""
+    reset_nonparametric_memory_for_test()

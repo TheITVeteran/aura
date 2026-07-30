@@ -224,11 +224,29 @@ def test_apply_to_logits_preserves_relative_mass_for_unrecalled_tokens(mem, monk
     assert np.isclose(after[1] / after[2], before[1] / before[2], rtol=1e-5)
 
 
-def test_singleton_refuses_cross_model_hidden_dimension():
+def test_each_hidden_dimension_gets_its_own_store():
+    """Refusing to MIX embedding spaces is right; refusing to HOLD both was
+    the defect.
+
+    This asserted that the second width returned None. Measured live, that
+    meant a 32-wide probe arriving first locked out every 64-wide request from
+    the actual model for the life of the process — "dimension mismatch (64
+    requested, 32 active); refusing cross-model reuse", 517 times in one
+    session, with non-parametric memory dark the whole time. The first caller
+    through the door should not decide which space exists.
+    """
     reset_nonparametric_memory()
     try:
-        assert get_nonparametric_memory(4) is not None
-        assert get_nonparametric_memory(8) is None
+        narrow = get_nonparametric_memory(4)
+        wide = get_nonparametric_memory(8)
+        assert narrow is not None and wide is not None
+        # Separate stores, so nothing can average across the two spaces.
+        assert narrow is not wide
+        assert narrow._dim == 4 and wide._dim == 8
+        # Asking again by width returns the same store, never a new one.
+        assert get_nonparametric_memory(4) is narrow
+        # And dim=0 means "the space the active model is using".
+        assert get_nonparametric_memory(0) is narrow
     finally:
         reset_nonparametric_memory()
 

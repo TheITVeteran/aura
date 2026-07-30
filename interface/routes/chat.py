@@ -11680,6 +11680,30 @@ def _apply_aura_voice_shaping(text: str, user_message: str = "") -> str:
 
     try:
         personality = ServiceContainer.get("personality_engine", default=None)
+        if personality is None:
+            # A REGISTRATION RACE MUST NOT SILENCE HER VOICE.
+            #
+            # The container entry is written during boot_identity, and the chat
+            # route can serve a turn before that lands — so early turns shipped
+            # the base model's register with a warning nobody reads. 2,270 of
+            # them in one log, and the last arrived 79 seconds before a restart
+            # after which there were none: the shape of a race, not of a
+            # missing organ.
+            #
+            # The engine is a module singleton and does not need the container
+            # to exist. Asking it directly removes the ordering dependency
+            # rather than tolerating it, and the result is registered so the
+            # next turn takes the fast path.
+            try:
+                from core.brain.personality_engine import get_personality_engine
+
+                personality = get_personality_engine()
+                if personality is not None:
+                    ServiceContainer.register_instance(
+                        "personality_engine", personality
+                    )
+            except _CHAT_RECOVERABLE_ERRORS as exc:
+                logger.debug("Persona singleton unavailable: %s", exc)
         if personality:
             # Presence is not engagement. A persona pass that runs and returns
             # its input unchanged has had no causal effect on her voice, and is

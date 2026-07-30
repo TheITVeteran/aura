@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+import pathlib
+import time
 from typing import Any
 
 import numpy as np
@@ -143,6 +145,74 @@ def last_recall_outcome() -> dict[str, Any]:
 _MIN_USABLE_ENTRY_FRACTION = 0.5
 _MIN_USABLE_ENTRIES = 32
 
+#: DECODABLE IS NOT THE SAME AS APPLICABLE.
+#:
+#: Measured 2026-07-29, and I caused it. The 2026-07-13 store was refused for
+#: carrying no token text; decoding its ids from the resident tokenizer took it
+#: from 12 usable entries to 1,488, the guard above passed, and the store began
+#: steering live generation. Two demo turns immediately degraded:
+#:
+#:   "Neurotransmitter profile actually includes dopamine, serotonin and
+#:    norepagephrine like apes"
+#:   "the inner core could prefer crystallishing iron alloys ... beneath a
+#:    potential 'lagging' crust"
+#:
+#: Garbled words and a fabricated premise — exactly the "grammatically shaped
+#: and says nothing" failure the original guard was written for. The reason is
+#: not the decode: those 1,689 keys were ingested from a CODING corpus ("Here
+#: is the fix:", "def add(a, b)"), and blending a narrow domain into open
+#: conversation at a weight reaching 0.87 corrupts it.
+#:
+#: A kNN store is only safe to blend when it is large enough that its
+#: neighbours are actually near the query. At 1,689 keys over a 5120-wide
+#: space the nearest neighbour of "octopus cognition" is whatever coding token
+#: happens to be least far away, which is noise wearing the shape of grammar.
+#: This floor is what that costs; it is a density requirement, not a taste.
+_MIN_ENTRIES_TO_STEER_GENERATION = 50_000
+
+
+#: Refusals already reported, so a permanently-unusable store is named once
+#: per process rather than once per turn. The 2026-07-13 store produced 591
+#: identical warnings in a single session — the guard was working and the log
+#: was the only thing that suffered.
+_REPORTED_UNUSABLE: set[str] = set()
+
+
+def _quarantine_unusable_datastore(memory: Any, reason: str) -> str:
+    """Move a provably-unusable store aside so a good one can be built.
+
+    Renamed, never deleted: the files are evidence of how the store went wrong
+    and they are the user's data. What matters is that they stop being loaded,
+    because the guard below is permanent — nothing else retires the store, so
+    without this the faculty is dark for every future session too.
+    """
+    raw_path = str(getattr(memory, "_path", "") or "")
+    if not raw_path:
+        return ""
+    base = pathlib.Path(raw_path).expanduser()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    moved: list[str] = []
+    for suffix in (".keys.npy", ".meta.json"):
+        source = base.with_name(base.name + suffix)
+        if not source.exists():
+            continue
+        target = source.with_name(f"{source.name}.unusable-{stamp}")
+        try:
+            source.rename(target)
+            moved.append(target.name)
+        except OSError as exc:
+            logger.warning("Could not quarantine %s: %s", source, exc)
+            return ""
+    if not moved:
+        return ""
+    logger.warning(
+        "Non-parametric memory: quarantined an unusable datastore (%s). "
+        "Renamed to %s; a fresh store will build from this session onward.",
+        reason,
+        ", ".join(moved),
+    )
+    return ", ".join(moved)
+
 
 def _unusable_datastore_reason(memory: Any) -> str:
     """Why this datastore may not steer live generation, or "" if it may."""
@@ -154,17 +224,40 @@ def _unusable_datastore_reason(memory: Any) -> str:
     if total == 0:
         return ""
     usable = sum(1 for token in tokens if str(token or "").strip())
-    if usable < _MIN_USABLE_ENTRIES:
+    reason = ""
+    if total < _MIN_ENTRIES_TO_STEER_GENERATION:
+        # Sparse: report and decline, but do NOT quarantine. A small store is
+        # a store that has not grown yet, not a broken one, and deleting it
+        # would throw away the beginning of a good one.
         return (
+            f"{total} entries is too sparse to steer a {getattr(memory, '_dim', '?')}"
+            f"-wide space (need {_MIN_ENTRIES_TO_STEER_GENERATION:,}); "
+            "recall stays off until the store is dense enough for its "
+            "neighbours to be near"
+        )
+    if usable < _MIN_USABLE_ENTRIES:
+        reason = (
             f"only {usable} of {total} entries carry a recallable token "
             f"(need at least {_MIN_USABLE_ENTRIES})"
         )
-    if usable < total * _MIN_USABLE_ENTRY_FRACTION:
-        return (
+    elif usable < total * _MIN_USABLE_ENTRY_FRACTION:
+        reason = (
             f"{total - usable} of {total} entries carry no recallable token "
             f"({100.0 * usable / total:.1f}% usable)"
         )
-    return ""
+    if not reason:
+        return ""
+    # SAY IT ONCE, AND THEN DO SOMETHING ABOUT IT.
+    #
+    # This condition cannot improve on its own — the store on disk is what it
+    # is — so repeating the verdict every turn is noise and leaving the store
+    # in place keeps the faculty dark forever. Quarantine it once and let a
+    # fresh one accumulate.
+    key = f"{str(getattr(memory, '_path', '') or '?')}:{total}:{usable}"
+    if key not in _REPORTED_UNUSABLE:
+        _REPORTED_UNUSABLE.add(key)
+        _quarantine_unusable_datastore(memory, reason)
+    return reason
 
 
 def maybe_build_foreground(

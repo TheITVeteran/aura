@@ -4675,6 +4675,36 @@ class CapabilityEngine(AuraBaseModule):
                 float(getattr(meta, "timeout_seconds", 30) or 30),
                 float(getattr(skill_instance, "timeout_seconds", 30) or 30),
             )
+            # A SKILL MAY COST DIFFERENT AMOUNTS FOR DIFFERENT REQUESTS.
+            #
+            # A flat per-skill number cannot describe "make a folder" and
+            # "read three articles and write a synthesis" at once. desktop_task
+            # declared 180s; the same objective measured 98s, 100s, 156s, 161s
+            # and 176s across one evening, so the budget sat inside its own
+            # spread and the outcome was a coin flip. Live 2026-07-29 it lost:
+            # 93.5s of successful research was cancelled and reported as
+            # "Completed 0/0 steps".
+            #
+            # Any skill that can say what a particular request will cost is
+            # asked. Nothing is required to implement it, and a skill that
+            # declines keeps its declared number.
+            budget_for = getattr(skill_instance, "timeout_for", None)
+            if callable(budget_for):
+                try:
+                    requested_budget = float(budget_for(exec_params) or 0.0)
+                except (AttributeError, TypeError, ValueError) as exc:
+                    self.logger.debug(
+                        "%s could not size its own budget: %s", skill_name, exc
+                    )
+                else:
+                    if requested_budget > timeout_budget:
+                        self.logger.info(
+                            "⏱️ %s sized this request at %.0fs (declared %.0fs).",
+                            skill_name,
+                            requested_budget,
+                            timeout_budget,
+                        )
+                        timeout_budget = requested_budget
             background_preflight_deferred = False
             if skill_name == "sovereign_network" and exec_source not in {
                 "user",
