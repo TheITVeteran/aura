@@ -128,6 +128,21 @@ def _test_antigen(subsystem="runtime_engine"):
     )
 
 
+def test_legacy_runtime_antigen_domain_migrates_to_substrate_without_alarm(caplog):
+    payload = _test_antigen().to_dict()
+    payload["source_domain"] = "runtime"
+
+    with caplog.at_level(logging.WARNING, logger="Aura.AdaptiveImmunity"):
+        restored = Antigen.from_dict(payload)
+
+    assert restored.source_domain == "substrate"
+    assert not [
+        record
+        for record in caplog.records
+        if "unknown source_domain" in record.getMessage()
+    ]
+
+
 def _test_artifact(kind=EffectorKind.PATCH_PROPOSAL, component="runtime_engine"):
     return EffectorArtifact(
         artifact_id="eff_test",

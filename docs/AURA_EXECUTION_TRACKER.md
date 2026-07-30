@@ -32009,3 +32009,48 @@ integrity pass. Another signed rebuild is required before the first complete
 demo replay counts. Training remains paused. This is total checkpoint 712. The
 712-920 completion envelope is approximately 77.4%-100.0%, with an 88.7%
 midpoint.
+
+### 2026-07-30 - DEMO-Q6 runtime-convergence rollup and diagnostic warning repair
+
+The repository advanced through nine pushed demo-hardening checkpoints after
+DEMO-Q5 that had not yet been reconciled into this ledger. Checkpoints 713-721
+are, in order: purge introspective check-ins from continuity
+(`104cd0845`), bound background inference context once (`6767d4b75`), keep
+internal telemetry out of reply shaping (`7bda7dfd7`), keep boot idle distinct
+from user activity (`8460cb4ae`), remove duplicate legacy inference from the
+kernel (`372eda4d2`), bound recurring background objectives (`5089aad02`), keep
+healthy generation-deadline misses out of failure circuits (`71ca0d6cf`), move
+eternal-growth inference off the kernel lock (`7816f5080`), and keep expected
+boot convergence out of neural noise (`cd2c0b4cd`). The last rebuilt diagnostic
+boot reached conversation-ready in 28 seconds with zero warning/error/critical
+records through readiness, exact signed source/app provenance, closed Cortex,
+Solver, Brainstem, and Reflex circuits, and live recurrent depth two.
+
+The first post-readiness GUI diagnostic then exposed four distinct contract
+faults before a valid user turn could be submitted. The autonomous social loop
+called connected-account adapters without identifying its authenticated
+autonomous origin, so an existing bounded read-only standing grant could never
+match. Email and Reddit reads now carry the canonical
+`autonomous_initiative_loop` origin through CapabilityEngine; send/post/write
+modes remain outside that grant. Ontogeny no longer emits a flight alarm while
+historical backlog is swept with every learned head below authority; the same
+zero observation rate remains visible in the organ report and becomes an alarm
+the moment an authority-stage head can affect decisions. Runtime degradation
+events now use the valid internal `substrate` antigen domain, and persisted
+pre-migration `runtime` records deterministically migrate without being
+mistaken for unknown external evidence. Mycelial inactivity monitoring now
+applies only to actual hardware-bound `NeuralRoot` edges; event and source
+topology edges remain causally measured when used but no longer acquire a
+fictional five-minute heartbeat obligation merely because they once carried
+traffic.
+
+The focused autonomy, mycelium, immunity, ontogeny, standing-authority, and
+capability-policy gate passes 176/176. The broader adjacent ontogeny, immune
+state, authority propagation, capability-chain, and runtime-stability gate
+passes 285/285 plus its subtest; bytecode compilation and diff integrity pass.
+These are source and test results only. The installed app must be rebuilt, the
+native GUI submission path must be proven, and all three complete nine-step
+desktop demo runs must pass with clean neural/terminal streams and verified
+external artifacts before demo certification closes. Resident-32B training
+remains paused. This is total checkpoint 722. The 722-920 completion envelope
+is approximately 78.5%-100.0%, with an 89.2% midpoint.

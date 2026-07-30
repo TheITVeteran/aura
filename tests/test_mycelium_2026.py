@@ -63,7 +63,7 @@ def test_hypha_pydantic(network):
     assert h.strength > 1.0
 
 
-def test_dormant_hyphae_are_not_monitored_until_they_carry_traffic(network):
+def test_logical_hyphae_do_not_invent_a_continuous_liveness_contract(network):
     network.establish_connection("Dormant", "Edge", priority=2.0)
     h = network.hyphae["Dormant->Edge"]
 
@@ -75,7 +75,13 @@ def test_dormant_hyphae_are_not_monitored_until_they_carry_traffic(network):
     assert network._should_monitor_hypha(h) is False
 
     h.pulse(success=True)
-    assert network._should_monitor_hypha(h) is True
+    assert network._should_monitor_hypha(h) is False
+
+    h.is_physical = True
+    assert network._should_monitor_hypha(h) is False
+
+    root = network.establish_neural_root("monitor-test", hardware_id="test-device")
+    assert network._should_monitor_hypha(root) is True
 
 
 def test_route_signal_deduplicates_unchanged_feed_logs(network, caplog):
@@ -1241,16 +1247,16 @@ async def test_rooted_flow_failure_rebinds_to_replacement_owner(network):
 
 @pytest.mark.asyncio
 async def test_maintenance_heartbeat_advances_topology_revision(network):
-    network.establish_connection("heartbeat", "revision", priority=2.0)
-    network.pulse_hypha("heartbeat", "revision", success=True)
+    network.establish_neural_root("heartbeat", hardware_id="revision")
+    network.pulse_hypha("heartbeat", "hardware:revision", success=True)
     with MycelialNetwork._lock:
-        network.hyphae["heartbeat->revision"].last_pulse = time.monotonic() - 301.0
+        network.hyphae["heartbeat->hardware:revision"].last_pulse = time.monotonic() - 301.0
         before_revision = network._topology_revision
         before_structure_revision = network._topology_structure_revision
 
     await network._pulse_once()
 
-    refreshed = network.get_hypha("heartbeat", "revision")
+    refreshed = network.get_hypha("heartbeat", "hardware:revision")
     assert refreshed is not None
     assert refreshed.last_pulse > time.monotonic() - 5.0
     assert network._topology_revision == before_revision + 1

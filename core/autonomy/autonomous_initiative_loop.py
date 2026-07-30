@@ -1251,7 +1251,16 @@ class AutonomousInitiativeLoop:
     ) -> dict[str, Any]:
         cap_engine = cap_engine or optional_service("capability_engine", default=None)
         if cap_engine is not None and hasattr(cap_engine, "execute"):
-            return await cap_engine.execute("email_adapter", payload)
+            return await cap_engine.execute(
+                "email_adapter",
+                payload,
+                {
+                    "origin": "autonomous_initiative_loop",
+                    "intent_source": "autonomous_initiative_loop",
+                    "objective": "Read connected email state for bounded autonomous triage.",
+                    "user_facing": False,
+                },
+            )
 
         from core.skills.email_adapter import EmailAdapterSkill, EmailInput
 
@@ -1263,7 +1272,16 @@ class AutonomousInitiativeLoop:
     ) -> dict[str, Any]:
         cap_engine = cap_engine or optional_service("capability_engine", default=None)
         if cap_engine is not None and hasattr(cap_engine, "execute"):
-            return await cap_engine.execute("reddit_adapter", payload)
+            return await cap_engine.execute(
+                "reddit_adapter",
+                payload,
+                {
+                    "origin": "autonomous_initiative_loop",
+                    "intent_source": "autonomous_initiative_loop",
+                    "objective": "Read connected Reddit state for bounded autonomous social awareness.",
+                    "user_facing": False,
+                },
+            )
 
         from core.skills.reddit_adapter import RedditAdapterSkill, RedditInput
 

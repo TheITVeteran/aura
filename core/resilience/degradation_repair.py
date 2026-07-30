@@ -223,7 +223,10 @@ class DegradationRepairRouter:
                 return
             event = {
                 "source": "runtime_degradation",
-                "source_domain": "runtime",
+                # Runtime degradations originate inside Aura's own substrate.
+                # "runtime" was never a valid antigen domain and poisoned
+                # persisted replay with an ambiguous origin on every boot.
+                "source_domain": "substrate",
                 "subsystem": getattr(record, "subsystem", "unknown"),
                 "component": getattr(record, "subsystem", "unknown"),
                 "severity": getattr(record, "severity", "degraded"),

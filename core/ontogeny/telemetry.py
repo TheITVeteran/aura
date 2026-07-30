@@ -59,6 +59,17 @@ _declared = False
 _deferred_done: set[str] = set()
 
 
+def _authority_rank(report: dict[str, Any]) -> int:
+    ranks = {"observe": 0, "shadow": 1, "advisory": 2, "authority": 3}
+    return max(
+        (
+            ranks.get(str(detail.get("stage")), 0)
+            for detail in (report.get("control_points") or {}).values()
+        ),
+        default=0,
+    )
+
+
 def declare() -> list[str]:
     """Declare the organ's channels and events. Idempotent."""
     global _declared
@@ -196,19 +207,15 @@ def sample(report: dict[str, Any]) -> None:
     _put(CHANNEL_EPISODES, int(report.get("episodes_seen") or 0))
     _put(CHANNEL_NOVELTY, float(report.get("novelty") or 0.0))
     resolution = report.get("resolution") or {}
-    # Only report an observation rate once something has actually been swept.
-    # A fresh process legitimately has none, and publishing 0.0 would trip the
-    # red-low limit on every boot — an alarm that always fires is an alarm
-    # nobody reads.
-    if resolution.get("swept"):
+    authority_rank = _authority_rank(report)
+    # A low observation rate is operationally dangerous when a learned head
+    # is making decisions. Historical backlog sweeps while every head remains
+    # observe/shadow/advisory are still visible in the report, but must not
+    # manufacture an alarm for a surface that has no authority.
+    if resolution.get("swept") and authority_rank >= 3:
         _put(CHANNEL_OBSERVATION_RATE, float(resolution.get("observation_rate") or 0.0))
 
-    ranks = {"observe": 0, "shadow": 1, "advisory": 2, "authority": 3}
-    stages = [
-        ranks.get(str(detail.get("stage")), 0)
-        for detail in (report.get("control_points") or {}).values()
-    ]
-    _put(CHANNEL_AUTHORITY_STAGE, max(stages) if stages else 0)
+    _put(CHANNEL_AUTHORITY_STAGE, authority_rank)
 
     calibration = report.get("calibration") or {}
     if calibration:

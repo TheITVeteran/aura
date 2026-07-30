@@ -1123,8 +1123,14 @@ class MycelialNetwork:
         return payload
 
     def _should_monitor_hypha(self, hypha: Hypha) -> bool:
-        """Only alarm on edges that have actually carried traffic or map to hardware."""
-        return bool(hypha.is_physical or hypha.pulse_count > 0 or hypha.trace)
+        """Alarm only on edges with a real continuous-liveness contract.
+
+        Logical/event edges are expected to go quiet when their event does not
+        occur. Prior traffic is evidence of use, not evidence that an edge
+        must carry traffic every five minutes. Physical roots are the only
+        current hyphae with an independently maintained heartbeat.
+        """
+        return isinstance(hypha, NeuralRoot)
 
     def establish_neural_root(self, source: str, hardware_id: str = "gpu_metal") -> NeuralRoot:
         """Builds a direct, pinned connection between a subsystem and hardware."""

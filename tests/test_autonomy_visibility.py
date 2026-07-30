@@ -205,11 +205,11 @@ def test_motivation_growth_goals_rotate_and_stay_concrete():
 
 @pytest.mark.asyncio
 async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
-    calls: list[tuple[str, dict]] = []
+    calls: list[tuple[str, dict, dict]] = []
 
     class CapabilityEngine:
-        async def execute(self, skill, payload):
-            calls.append((skill, dict(payload)))
+        async def execute(self, skill, payload, context):
+            calls.append((skill, dict(payload), dict(context)))
             if skill == "email_adapter" and payload.get("mode") == "check":
                 return {
                     "ok": True,
@@ -253,7 +253,14 @@ async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
 
     await loop._check_email_initiative()
 
-    assert [payload["mode"] for skill, payload in calls if skill == "email_adapter"] == ["check", "read", "read"]
+    assert [payload["mode"] for skill, payload, _ in calls if skill == "email_adapter"] == ["check", "read", "read"]
+    assert all(
+        context["origin"] == "autonomous_initiative_loop"
+        and context["intent_source"] == "autonomous_initiative_loop"
+        and context["user_facing"] is False
+        for skill, _, context in calls
+        if skill == "email_adapter"
+    )
     assert any(title == "Email Triage" and "hold_for_reply_draft" in content for title, content, _ in emitted)
     assert any(title == "Email Draft" and "not auto-sending" not in content.lower() for title, content, _ in emitted)
     memory.store.assert_awaited()
@@ -263,11 +270,11 @@ async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkeypatch):
-    calls: list[tuple[str, dict]] = []
+    calls: list[tuple[str, dict, dict]] = []
 
     class CapabilityEngine:
-        async def execute(self, skill, payload):
-            calls.append((skill, dict(payload)))
+        async def execute(self, skill, payload, context):
+            calls.append((skill, dict(payload), dict(context)))
             if skill == "reddit_adapter" and payload.get("mode") == "check_inbox":
                 return {"ok": True, "status": "login_unavailable", "content": ""}
             if skill == "reddit_adapter" and payload.get("mode") == "browse":
@@ -297,8 +304,15 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
 
     await loop._check_reddit_initiative()
 
-    modes = [payload["mode"] for skill, payload in calls if skill == "reddit_adapter"]
+    modes = [payload["mode"] for skill, payload, _ in calls if skill == "reddit_adapter"]
     assert modes == ["check_inbox", "browse", "read_post"]
+    assert all(
+        context["origin"] == "autonomous_initiative_loop"
+        and context["intent_source"] == "autonomous_initiative_loop"
+        and context["user_facing"] is False
+        for skill, _, context in calls
+        if skill == "reddit_adapter"
+    )
     assert any(title == "Reddit Inbox" for title, _, _ in emitted)
     assert any(title == "Reddit Read" and "robust live systems" in content for title, content, _ in emitted)
     assert memory.store.await_count >= 2

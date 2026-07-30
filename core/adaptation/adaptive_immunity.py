@@ -400,6 +400,11 @@ class Antigen:
         vector = np.nan_to_num(vector, nan=0.0, posinf=1.0, neginf=0.0)
 
         raw_domain = str(data.get("source_domain", "substrate"))
+        # Pre-migration runtime-degradation records used ``runtime`` for
+        # internal Aura failures. It is a deterministic predecessor of
+        # ``substrate``, not an unknown external origin.
+        if raw_domain == "runtime":
+            raw_domain = "substrate"
         if raw_domain not in _ANTIGEN_SOURCE_DOMAINS:
             logger.warning(
                 "Persisted antigen declared unknown source_domain %r; "

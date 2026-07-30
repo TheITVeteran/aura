@@ -122,7 +122,8 @@ class TestSelfConditionIntegration:
 
         reply = render_self_condition_reply(self._projection(), user_message="how are you?")
         assert "decisions of my own history" not in reply
-        assert "I am okay" in reply
+        assert "low distress" in reply
+        assert "coherent sense of the current thread" in reply
 
     def test_a_casual_ask_gets_one_sentence_of_history(self):
         """A self-report that recites its own statistics stops being an answer."""
