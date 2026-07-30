@@ -410,7 +410,11 @@ async def run_deep_research(
             state.loop_count, len(state.search_queries), len(state.all_sources), duration
         )
     else:
-        logger.warning(
+        # Background admission may intentionally defer autonomous synthesis.
+        # Its sources remain durable, so only a missing user-requested
+        # deliverable is operator-actionable.
+        log = logger.warning if state.requested_by_user else logger.info
+        log(
             "Deep research gathered %d source(s) over %d quer(ies) in %.1fs but "
             "could not synthesize them (%s) — reporting unsynthesized, not complete.",
             len(state.all_sources), len(state.search_queries), duration,

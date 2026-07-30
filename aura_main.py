@@ -1069,8 +1069,7 @@ async def _boot_runtime_orchestrator(
     _mark_runtime_boot_phase("service_ownership_manifest")
     await _enforce_boot_probes(ready_label)
     _mark_runtime_boot_phase("boot_probe_enforcement")
-    readiness_snapshot = await asyncio.to_thread(
-        _refresh_orchestrator_health_before_manifest,
+    readiness_snapshot = await _settle_orchestrator_health_before_manifest(
         orchestrator,
         ready_label,
     )
@@ -1937,7 +1936,12 @@ def _mark_runtime_boot_phase(name: str) -> float:
         return 0.0
 
 
-def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label: str) -> dict[str, Any]:
+def _refresh_orchestrator_health_before_manifest(
+    orchestrator: Any,
+    ready_label: str,
+    *,
+    log_unready: bool = True,
+) -> dict[str, Any]:
     """Refresh live runtime health immediately before writing proof/desktop manifests."""
 
     try:
@@ -2004,7 +2008,7 @@ def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label:
             ready_label,
             (0.0, ((), (), ())),
         )
-        if (
+        if log_unready and (
             signature != last_signature
             or (now - last_logged_at) >= _MANIFEST_UNREADY_LOG_INTERVAL_S
         ):
@@ -2040,6 +2044,45 @@ def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label:
             "required_probe_blockers": ["runtime_health_refresh_failed"],
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+async def _settle_orchestrator_health_before_manifest(
+    orchestrator: Any,
+    ready_label: str,
+) -> dict[str, Any]:
+    """Boundedly wait for asynchronous model warmup before sealing the manifest."""
+
+    try:
+        timeout_s = max(
+            0.0,
+            float(os.environ.get("AURA_MANIFEST_HEALTH_SETTLE_SECONDS", "12")),
+        )
+        interval_s = max(
+            0.1,
+            float(os.environ.get("AURA_MANIFEST_HEALTH_SETTLE_INTERVAL_SECONDS", "0.25")),
+        )
+    except (TypeError, ValueError):
+        timeout_s = 12.0
+        interval_s = 0.25
+
+    deadline = time.monotonic() + timeout_s
+    while True:
+        snapshot = await asyncio.to_thread(
+            _refresh_orchestrator_health_before_manifest,
+            orchestrator,
+            ready_label,
+            log_unready=False,
+        )
+        if bool(snapshot.get("ready")):
+            return snapshot
+        if time.monotonic() >= deadline or is_shutdown_requested():
+            return await asyncio.to_thread(
+                _refresh_orchestrator_health_before_manifest,
+                orchestrator,
+                ready_label,
+                log_unready=True,
+            )
+        await asyncio.sleep(min(interval_s, max(0.0, deadline - time.monotonic())))
 
 
 def _write_runtime_manifest(

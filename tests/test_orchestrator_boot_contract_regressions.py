@@ -75,13 +75,13 @@ def test_canonical_boot_refreshes_health_before_manifest():
     assert boot_slice.index("await _activate_ulysses_covenant_for_boot()") < boot_slice.index(
         "ServiceContainer.lock_registration()"
     )
-    assert "readiness_snapshot = await asyncio.to_thread(" in boot_slice
+    assert "readiness_snapshot = await _settle_orchestrator_health_before_manifest(" in boot_slice
     assert "ServiceContainer.write_service_ownership_manifest," in boot_slice
     assert "await asyncio.to_thread(\n        _write_runtime_manifest," in boot_slice
     assert "readiness_snapshot=readiness_snapshot" in boot_slice
     assert "_schedule_runtime_manifest_ready_refresh(" in boot_slice
     assert "initial_readiness=readiness_snapshot" in boot_slice
-    assert boot_slice.index("_refresh_orchestrator_health_before_manifest") < boot_slice.index(
+    assert boot_slice.index("_settle_orchestrator_health_before_manifest") < boot_slice.index(
         "_write_runtime_manifest,"
     )
 
@@ -254,6 +254,55 @@ def test_runtime_manifest_reuses_fresh_successful_health_receipt(monkeypatch):
     assert result["ready"] is True
     assert result["source"] == "fresh_orchestrator_health_receipt"
     assert result["receipt_age_s"] < 0.05
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_settle_waits_for_transient_inference_warmup(monkeypatch):
+    import aura_main
+
+    snapshots = iter(
+        [
+            {"ready": False, "status": "warming", "required_probe_blockers": ["probe:inference"]},
+            {"ready": True, "status": "healthy", "required_probe_blockers": []},
+        ]
+    )
+    calls = []
+
+    def refresh(orchestrator, ready_label, *, log_unready=True):
+        calls.append(log_unready)
+        return next(snapshots)
+
+    monkeypatch.setattr(aura_main, "_refresh_orchestrator_health_before_manifest", refresh)
+    monkeypatch.setenv("AURA_MANIFEST_HEALTH_SETTLE_SECONDS", "1")
+    monkeypatch.setenv("AURA_MANIFEST_HEALTH_SETTLE_INTERVAL_SECONDS", "0.001")
+
+    result = await aura_main._settle_orchestrator_health_before_manifest(object(), "Desktop")
+
+    assert result["ready"] is True
+    assert calls == [False, False]
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_settle_logs_only_final_persistent_failure(monkeypatch):
+    import aura_main
+
+    calls = []
+
+    def refresh(orchestrator, ready_label, *, log_unready=True):
+        calls.append(log_unready)
+        return {
+            "ready": False,
+            "status": "critical",
+            "required_probe_blockers": ["probe:inference"],
+        }
+
+    monkeypatch.setattr(aura_main, "_refresh_orchestrator_health_before_manifest", refresh)
+    monkeypatch.setenv("AURA_MANIFEST_HEALTH_SETTLE_SECONDS", "0")
+
+    result = await aura_main._settle_orchestrator_health_before_manifest(object(), "Desktop")
+
+    assert result["ready"] is False
+    assert calls == [False, True]
 
 
 def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):

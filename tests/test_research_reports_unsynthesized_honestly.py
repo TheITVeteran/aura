@@ -90,13 +90,36 @@ class TestPipelineReporting:
         """5 sources gathered, model unavailable — must not claim completion."""
         with caplog.at_level("WARNING"):
             result = await run_deep_research(
-                "what changed?", Brain(""), _search_fn, max_loops=1
+                "what changed?",
+                Brain(""),
+                _search_fn,
+                max_loops=1,
+                requested_by_user=True,
             )
 
         assert result["synthesis_status"] == "no_text"
         assert result["answer"] == ""
         assert result["sources"], "evidence gathered must still be returned"
         assert "could not synthesize" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_autonomous_admission_deferral_is_not_reported_as_runtime_fault(self, caplog):
+        with caplog.at_level("INFO"):
+            result = await run_deep_research(
+                "background curiosity",
+                Brain(""),
+                _search_fn,
+                max_loops=1,
+                requested_by_user=False,
+            )
+
+        assert result["synthesis_status"] == "no_text"
+        assert "could not synthesize" in caplog.text
+        assert not [
+            record
+            for record in caplog.records
+            if record.levelno >= 30 and "could not synthesize" in record.getMessage()
+        ]
         assert "Deep research complete" not in caplog.text
 
     @pytest.mark.asyncio
