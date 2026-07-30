@@ -811,7 +811,7 @@ def simulation_isolation_active() -> bool:
 _VOCABULARY_UNSET: Any = object()
 
 
-def _live_rule_vocabulary() -> dict[str, list[str]] | None:
+def _live_rule_vocabulary() -> dict[str, Any] | None:
     """Sensors and actuators that ACTUALLY exist in this runtime.
 
     CP126 956ba926: rule generation drew from a hardcoded maritime vocabulary
@@ -826,22 +826,49 @@ def _live_rule_vocabulary() -> dict[str, list[str]] | None:
     toy.
     """
     sensors: list[str] = []
+    sensor_values: dict[str, float] = {}
     actuators: list[str] = []
+    action_templates: dict[str, dict[str, Any]] = {}
     try:
         from core.sensors.sensor_registry import get_sensor_registry
 
-        sensors = sorted(str(name) for name in get_sensor_registry().read_all())
+        readings = get_sensor_registry().read_all()
+        sensors = sorted(str(name) for name in readings)
+        for name, value in readings.items():
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                sensor_values[str(name)] = number
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.debug("Immune rule vocabulary: sensors unavailable: %s", exc)
     try:
         from core.actuators.actuator_registry import get_actuator_registry
 
-        actuators = sorted(str(name) for name in get_actuator_registry().actuators)
+        registry = get_actuator_registry()
+        for name, actuator in registry.actuators.items():
+            if not bool(getattr(actuator, "immune_rule_compatible", False)):
+                continue
+            if bool(getattr(actuator, "requires_authority", True)):
+                continue
+            params = actuator.immune_rule_seed_params()
+            if not isinstance(params, dict) or not actuator.validate_params(params):
+                continue
+            normalized_name = str(name)
+            actuators.append(normalized_name)
+            action_templates[normalized_name] = copy.deepcopy(params)
+        actuators.sort()
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         logger.debug("Immune rule vocabulary: actuators unavailable: %s", exc)
     if not sensors or not actuators:
         return None
-    return {"sensors": sensors, "actuators": actuators}
+    return {
+        "sensors": sensors,
+        "sensor_values": sensor_values,
+        "actuators": actuators,
+        "action_templates": action_templates,
+    }
 
 
 def _system_pressure(model: Any) -> float | None:
@@ -912,29 +939,47 @@ def _mutate_behavioral_rule(
             return None
         sensor = str(rng.choice(vocab["sensors"]))
         actuator = str(rng.choice(vocab["actuators"]))
-        return {
-            "conditions": [
+        templates = dict(vocab.get("action_templates") or {})
+        params = copy.deepcopy(templates.get(actuator, {}))
+        sensor_values = dict(vocab.get("sensor_values") or {})
+        baseline = sensor_values.get(sensor)
+        condition = {
+            "sensor": sensor,
+            "operator": ">",
+            "value": float(rng.uniform(0.80, 1.10)),
+        }
+        if isinstance(baseline, (int, float)) and math.isfinite(float(baseline)):
+            condition.update(
                 {
-                    "sensor": sensor,
-                    "operator": ">",
-                    # Relative to the sensor's own reading, since sensors now
-                    # span every subsystem and share no common scale.
-                    "value": float(rng.uniform(0.5, 0.95)),
-                    "relative_to_reading": True,
+                    "baseline": float(baseline),
+                    "relative_to_baseline": True,
                 }
-            ],
+            )
+        return {
+            "conditions": [condition],
             "actions": [
                 {
                     "actuator": actuator,
-                    "params": {
-                        # Partial relief is still relief (CP126 e2148790); the
-                        # receipt reports what actually moved, which is what
-                        # the 2026-07-25 idle-window incident needed.
-                        "allow_partial": True,
-                    },
+                    "params": params,
                 }
             ],
         }
+
+    allowed_actuators = {
+        str(item) for item in list((vocab or {}).get("actuators") or [])
+    }
+    current_actions = list(rule.get("actions", []) or [])
+    if (
+        vocab
+        and (
+            not current_actions
+            or any(
+                str(action.get("actuator") or "") not in allowed_actuators
+                for action in current_actions
+            )
+        )
+    ):
+        return _mutate_behavioral_rule(None, rng, vocabulary=vocab)
 
     new_rule = copy.deepcopy(rule)
     choice = rng.choice(["value", "operator", "multiplier", "sensor"])
@@ -944,8 +989,12 @@ def _mutate_behavioral_rule(
 
     if choice == "value" and conditions:
         cond = rng.choice(conditions)
-        if isinstance(cond.get("value"), (int, float)):
-            cond["value"] = float(cond["value"] + rng.normal(0.0, 20.0))
+        if isinstance(cond.get("value"), (int, float)) and not isinstance(
+            cond.get("value"), bool
+        ):
+            cond["value"] = float(
+                np.clip(float(cond["value"]) + rng.normal(0.0, 0.08), 0.05, 2.0)
+            )
     elif choice == "operator" and conditions:
         cond = rng.choice(conditions)
         cond["operator"] = rng.choice([">", "<", ">=", "<=", "==", "!="])
@@ -961,7 +1010,7 @@ def _mutate_behavioral_rule(
                     return f"{new_val:.2f}"
 
                 params[k] = re.sub(r"\d+\.\d+", repl, v)
-            elif isinstance(v, (int, float)):
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
                 params[k] = float(v + rng.normal(0.0, 5.0))
     elif choice == "sensor" and conditions:
         cond = rng.choice(conditions)
@@ -971,7 +1020,85 @@ def _mutate_behavioral_rule(
         # hardcoded maritime name is what this finding is about, and inventing
         # one would be worse than leaving the rule as it is.
 
+    templates = dict((vocab or {}).get("action_templates") or {})
+    if templates:
+        try:
+            from core.actuators.actuator_registry import get_actuator_registry
+
+            registry = get_actuator_registry()
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            registry = None
+        for action in actions:
+            name = str(action.get("actuator") or "")
+            template = templates.get(name)
+            if not isinstance(template, dict):
+                continue
+            params = action.get("params")
+            actuator = registry.get_actuator(name) if registry is not None else None
+            structurally_valid = isinstance(params, dict) and all(
+                key in params for key in template
+            )
+            if structurally_valid and actuator is not None:
+                structurally_valid = bool(actuator.validate_params(params))
+            if not structurally_valid:
+                action["params"] = copy.deepcopy(template)
+
     return new_rule
+
+
+def _normalize_behavioral_rule(
+    rule: dict[str, Any] | None,
+    rng: np.random.Generator,
+    *,
+    vocabulary: Any = _VOCABULARY_UNSET,
+) -> tuple[dict[str, Any] | None, bool]:
+    """Validate a persisted rule against the current executable grammar."""
+    vocab = (
+        _live_rule_vocabulary() if vocabulary is _VOCABULARY_UNSET else vocabulary
+    )
+    if rule is None:
+        return None, False
+    if not vocab:
+        return None, True
+    actions = list(rule.get("actions", []) or []) if isinstance(rule, dict) else []
+    conditions = list(rule.get("conditions", []) or []) if isinstance(rule, dict) else []
+    allowed = {str(item) for item in list(vocab.get("actuators") or [])}
+    templates = dict(vocab.get("action_templates") or {})
+    valid = bool(actions and conditions) and all(
+        str(action.get("actuator") or "") in allowed for action in actions
+    )
+    if valid:
+        for condition in conditions:
+            if condition.get("relative_to_reading"):
+                valid = False
+                break
+            if condition.get("relative_to_baseline") and not isinstance(
+                condition.get("baseline"), (int, float)
+            ):
+                valid = False
+                break
+    if valid:
+        for action in actions:
+            name = str(action.get("actuator") or "")
+            params = action.get("params")
+            template = templates.get(name)
+            if not isinstance(params, dict):
+                valid = False
+                break
+            if isinstance(template, dict):
+                if any(key not in params for key in template):
+                    valid = False
+                    break
+                if any(
+                    isinstance(expected, bool)
+                    and not isinstance(params.get(key), bool)
+                    for key, expected in template.items()
+                ):
+                    valid = False
+                    break
+    if valid:
+        return copy.deepcopy(rule), False
+    return _mutate_behavioral_rule(None, rng, vocabulary=vocab), True
 
 
 def _clone_world(model: Any) -> Any:
@@ -1323,6 +1450,7 @@ class AdaptiveImmuneSystem:
         self._state_dir = self._resolve_state_dir(state_dir)
         self._state_dir.mkdir(parents=True, exist_ok=True)
         self._state_path = self._state_dir / "adaptive_immune_state.json"
+        self._migrated_behavioral_rules = 0
         self._lab = OfflineCoevolutionLab(rng=self._rng)
 
         from core.adaptation.dimensional_expansion import DimensionalExpansionEngine
@@ -1343,6 +1471,8 @@ class AdaptiveImmuneSystem:
         if not self._load_state():
             self._cells = self._seed_population()
             self._assign_species()
+            self._save_state(force=True)
+        elif self._migrated_behavioral_rules:
             self._save_state(force=True)
 
         logger.info(
@@ -2313,60 +2443,12 @@ class AdaptiveImmuneSystem:
                 notes=artifact.notes,
             )
 
-        acting_cell = self._find_cell(artifact.source_cell_id)
-        if acting_cell and getattr(acting_cell, "behavioral_rule", None) is not None:
-            from core.adaptation.immune_executor import get_immune_executor
-
-            executor = get_immune_executor()
-            exec_res = await executor.execute_rule_async(
-                acting_cell.behavioral_rule,
-                context={
-                    "source": "adaptive_immune_system",
-                    "artifact_id": artifact.artifact_id,
-                    "artifact_kind": artifact.kind.value,
-                    "antigen_id": antigen.antigen_id,
-                    "subsystem": antigen.subsystem,
-                    "priority": min(0.95, 0.45 + 0.35 * antigen.danger),
-                },
-            )
-
-            status = str(exec_res.get("status") or "")
-            artifact.executed = bool(exec_res.get("actions_executed"))
-            artifact.success = bool(exec_res.get("success", False) and artifact.executed)
-            artifact.notes = str(exec_res.get("message", ""))
-            if status == "governance_denied":
-                artifact.governance_denied = True
-            if status in {"deferred", "governance_denied"}:
-                return self._default_verification_report(
-                    status=status,
-                    coverage_ratio=coverage_ratio,
-                    notes=artifact.notes,
-                )
-
-            if artifact.success:
-                self._tissue.mark_repair(artifact.component, 0.40)
-
-            # An actuator success boolean is a CLAIM, not verification: no
-            # component health was sampled and no durability was tested, so
-            # verified_success stays False and no health gain is fabricated.
-            return {
-                "status": "actuated_unverified" if artifact.success else "failed",
-                "raw_success": artifact.success,
-                "verified_success": False,
-                "health_before": None,
-                "health_after": None,
-                "health_delta": 0.0,
-                "health_samples": [],
-                "coverage_ratio": coverage_ratio,
-                "recurrence_risk": round(
-                    max(
-                        0.0,
-                        min(1.0, antigen.recurrence_pressure * (0.80 if artifact.success else 1.0)),
-                    ),
-                    4,
-                ),
-                "notes": artifact.notes,
-            }
+        # Behavioral rules are learned in cloned, effect-free world models.
+        # They influence lineage fitness and therefore which cell proposes this
+        # artifact; they are not a second actuator lane. The former design let
+        # speculative persisted rules replace the concrete governed repair.
+        # Real repair continues through the bounded patch or autopoiesis path
+        # below, where the resulting health change can be measured.
 
         if artifact.kind == EffectorKind.PATCH_PROPOSAL:
             resilience_mesh = self._get_service("autonomous_resilience_mesh")
@@ -3461,6 +3543,27 @@ class AdaptiveImmuneSystem:
                 )
 
             self._cells = [ImmuneCell.from_dict(item) for item in payload.get("cells", [])]
+            vocabulary = _live_rule_vocabulary()
+            migrated_rules = 0
+            for cell in self._cells:
+                if cell.kind not in {CellKind.B, CellKind.MEMORY}:
+                    if cell.behavioral_rule is not None:
+                        cell.behavioral_rule = None
+                        migrated_rules += 1
+                    continue
+                normalized, migrated = _normalize_behavioral_rule(
+                    cell.behavioral_rule,
+                    self._rng,
+                    vocabulary=vocabulary,
+                )
+                cell.behavioral_rule = normalized
+                migrated_rules += int(migrated)
+            self._migrated_behavioral_rules = migrated_rules
+            if migrated_rules:
+                logger.info(
+                    "Migrated %d persisted immune behavioral rule(s) to the bounded grammar",
+                    migrated_rules,
+                )
 
             # Reconcile receptor vectors of loaded cells with system current_dim
             target_dim = self.expansion_engine.current_dim

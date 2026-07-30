@@ -130,7 +130,18 @@ class TestMeasuredEffect:
         rule = adaptive_immunity._mutate_behavioral_rule(
             None,
             np.random.default_rng(0),
-            vocabulary={"sensors": ["s"], "actuators": ["reallocate_flow"]},
+            vocabulary={
+                "sensors": ["s"],
+                "actuators": ["reallocate_flow"],
+                "action_templates": {
+                    "reallocate_flow": {
+                        "source_id": "A",
+                        "target_id": "B",
+                        "amount": 1.0,
+                        "allow_partial": True,
+                    }
+                },
+            },
         )
         assert rule["actions"][0]["params"]["allow_partial"] is True
 

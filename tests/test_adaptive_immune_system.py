@@ -556,15 +556,7 @@ def test_patch_artifact_failure_returns_execution_report(tmp_path, monkeypatch):
     )
 
 
-def test_behavioral_rule_artifact_defers_during_foreground_turn(tmp_path, monkeypatch):
-    from core.runtime import foreground_guard
-
-    # Pin the maintenance environment so desktop-safe-boot (set via setdefault at import by
-    # core/architect/safe_boot_harness.py, which leaks across a broad run) can't mask the
-    # foreground-deferral reason this test asserts.
-    monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "0")
-    monkeypatch.setenv("AURA_ENABLE_BACKGROUND_COGNITION", "1")
-
+def test_behavioral_rule_cannot_replace_real_repair_artifact(tmp_path, monkeypatch):
     immune = AdaptiveImmuneSystem(state_dir=tmp_path, rng_seed=21)
     antigen = _test_antigen(subsystem="runtime_engine")
     behavioral_cell = ImmuneCell(
@@ -599,25 +591,33 @@ def test_behavioral_rule_artifact_defers_during_foreground_turn(tmp_path, monkey
         bounded_payload={},
     )
 
-    foreground_guard._reset_for_tests()
-    lease = foreground_guard.begin_foreground_turn(owner="test", source="chat_api")
-    try:
-        report = run(
-            immune._maybe_execute_artifact(
-                artifact,
-                antigen,
-                coverage_report={"coverage_ratio": 0.9},
-            )
-        )
-    finally:
-        lease.close()
-        foreground_guard._reset_for_tests()
+    calls = []
 
-    assert report["status"] == "deferred"
+    class _RepairResult:
+        success = False
+        health_before = 0.4
+        health_after = 0.4
+
+    class _Autopoiesis:
+        async def request_repair(self, component, strategy):
+            calls.append((component, strategy))
+            return _RepairResult()
+
+    immune._authorize_protected_action = lambda *_args: True
+    immune._get_service = lambda name: _Autopoiesis() if name == "autopoiesis" else None
+    report = run(
+        immune._maybe_execute_artifact(
+            artifact,
+            antigen,
+            coverage_report={"coverage_ratio": 0.9},
+        )
+    )
+
+    assert calls and calls[0][0] == "runtime_engine"
+    assert report["status"] == "failed"
     assert report["verified_success"] is False
-    assert artifact.executed is False
+    assert artifact.executed is True
     assert artifact.success is False
-    assert "foreground_chat_active" in artifact.notes
 
 
 def test_autopoiesis_failure_returns_execution_report(tmp_path, monkeypatch):

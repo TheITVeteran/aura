@@ -25,6 +25,17 @@ if not os.environ.get("AURA_LOG_DIR", "").strip():
         Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"
     )
 
+# State hermeticity: redirect the central Aura home before core.config can
+# construct its process-global settings object. Report-only detection was not
+# enough: immune singleton tests wrote evolved cells into the user's live
+# ~/.aura/data store while still passing. Tests that intentionally exercise a
+# caller-supplied path continue to pass that path directly.
+if not os.environ.get("AURA_PATHS__HOME_DIR", "").strip():
+    os.environ["AURA_PATHS__HOME_DIR"] = str(
+        Path(tempfile.gettempdir()) / f"aura-test-home-{os.getpid()}"
+    )
+os.environ.setdefault("AURA_TEST_LIVE_DATA_GUARD", "fail")
+
 # Ledger hermeticity: the latent execution controller learns from live
 # episode outcomes and persists them under the real data dir. Tests running
 # fake episodes must never pollute that evidence; tests that exercise the

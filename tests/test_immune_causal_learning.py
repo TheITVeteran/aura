@@ -71,6 +71,57 @@ def test_mutation_without_vocabulary_keeps_the_existing_sensor(rng):
     assert rule["conditions"][0]["sensor"] == "real.sensor"
 
 
+def test_legacy_consequential_rule_is_replaced_from_bounded_grammar(rng):
+    vocabulary = {
+        "sensors": ["runtime_event_loop_lag"],
+        "sensor_values": {"runtime_event_loop_lag": 0.2},
+        "actuators": ["reallocate_flow"],
+        "action_templates": {
+            "reallocate_flow": {
+                "source_id": "A",
+                "target_id": "B",
+                "amount": 10.0,
+                "allow_partial": True,
+            }
+        },
+    }
+    legacy = {
+        "conditions": [{"sensor": "runtime_event_loop_lag", "operator": ">", "value": 0.1}],
+        "actions": [{"actuator": "git_operation", "params": {"allow_partial": -4.1}}],
+    }
+
+    normalized, migrated = mod._normalize_behavioral_rule(
+        legacy,
+        rng,
+        vocabulary=vocabulary,
+    )
+
+    assert migrated is True
+    assert normalized["actions"][0]["actuator"] == "reallocate_flow"
+    assert normalized["actions"][0]["params"]["allow_partial"] is True
+
+
+def test_boolean_action_parameters_are_not_numerically_mutated(rng):
+    vocabulary = {
+        "sensors": ["runtime_event_loop_lag"],
+        "actuators": ["reallocate_flow"],
+        "action_templates": {
+            "reallocate_flow": {
+                "source_id": "A",
+                "target_id": "B",
+                "amount": 10.0,
+                "allow_partial": True,
+            }
+        },
+    }
+    rule = mod._mutate_behavioral_rule(None, rng, vocabulary=vocabulary)
+
+    for _ in range(100):
+        rule = mod._mutate_behavioral_rule(rule, rng, vocabulary=vocabulary)
+
+    assert rule["actions"][0]["params"]["allow_partial"] is True
+
+
 def test_the_hardcoded_maritime_vocabulary_is_gone():
     import inspect
 

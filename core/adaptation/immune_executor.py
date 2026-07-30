@@ -119,6 +119,11 @@ class ImmuneHeuristicExecutor:
         try:
             target_val = float(target_value)
             sensor_val = float(sensor_val)
+            if condition.get("relative_to_baseline"):
+                baseline = float(condition.get("baseline"))
+                if not math.isfinite(baseline):
+                    return False
+                target_val = baseline * target_val
             if not math.isfinite(target_val) or not math.isfinite(sensor_val):
                 return False
 
@@ -202,6 +207,34 @@ class ImmuneHeuristicExecutor:
         if isinstance(node, ast.UnaryOp) and type(node.op) in _ALLOWED_UNARYOPS:
             return float(_ALLOWED_UNARYOPS[type(node.op)](self._eval_ast_node(node.operand)))
         raise ValueError(f"unsupported expression node: {type(node).__name__}")
+
+    @staticmethod
+    def _rule_action_contract(
+        actions: list[dict[str, Any]],
+        context: dict[str, Any],
+    ) -> tuple[bool, str]:
+        """Reject evolved actions outside the explicit immune contract."""
+        source = str(context.get("source") or "").strip().lower()
+        governed_immune_source = source in (
+            ImmuneHeuristicExecutor._SIMULATION_SOURCES
+            | ImmuneHeuristicExecutor._MAINTENANCE_SOURCES
+        )
+        if not governed_immune_source:
+            return True, ""
+        registry = get_actuator_registry()
+        for action in actions:
+            name = str(action.get("actuator") or "").strip()
+            actuator = registry.get_actuator(name) if name else None
+            if actuator is None:
+                return False, f"immune rule actuator '{name or '<missing>'}' is not registered"
+            if not bool(getattr(actuator, "immune_rule_compatible", False)):
+                return False, f"actuator '{name}' has no immune-rule simulation contract"
+            if bool(getattr(actuator, "requires_authority", True)):
+                return (
+                    False,
+                    f"actuator '{name}' is consequential and cannot be evolved as an immune rule",
+                )
+        return True, ""
 
     def _authorization_preflight(
         self,
@@ -405,6 +438,16 @@ class ImmuneHeuristicExecutor:
         }
         """
         context = dict(context or {})
+        actions = list(rule.get("actions", []) or [])
+        contract_ok, contract_message = self._rule_action_contract(actions, context)
+        if not contract_ok:
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": False,
+                "status": "unsupported_rule",
+                "message": contract_message,
+            }
         authorized, status, message = self._authorize_execution(context)
         if not authorized:
             return {
@@ -422,8 +465,6 @@ class ImmuneHeuristicExecutor:
         sensors_data = registry.read_all()
 
         conditions = rule.get("conditions", [])
-        actions = rule.get("actions", [])
-
         if not actions:
             return {
                 "conditions_met": False,
@@ -517,6 +558,16 @@ class ImmuneHeuristicExecutor:
     ) -> dict[str, Any]:
         """Async runtime path for immune actions and their authority lifecycle."""
         context = dict(context or {})
+        actions = list(rule.get("actions", []) or [])
+        contract_ok, contract_message = self._rule_action_contract(actions, context)
+        if not contract_ok:
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": False,
+                "status": "unsupported_rule",
+                "message": contract_message,
+            }
         authorized, status, message = await self._authorize_execution_async(context)
         if not authorized:
             return {
@@ -532,8 +583,6 @@ class ImmuneHeuristicExecutor:
         registry.sync_from_world_model()
         sensors_data = registry.read_all()
         conditions = list(rule.get("conditions", []) or [])
-        actions = list(rule.get("actions", []) or [])
-
         if not actions:
             return {
                 "conditions_met": False,

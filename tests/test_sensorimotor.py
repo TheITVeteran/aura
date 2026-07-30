@@ -642,3 +642,27 @@ def test_immune_executor_defers_maintenance_rule_during_foreground_turn(monkeypa
     assert result["status"] == "deferred"
     assert result["deferred"] is True
     assert "foreground_chat_active" in result["message"]
+
+
+def test_immune_executor_rejects_consequential_legacy_rule_before_will(monkeypatch):
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: (_ for _ in ()).throw(AssertionError("Will must not be consulted")),
+    )
+
+    result = ImmuneHeuristicExecutor().execute_rule(
+        {
+            "conditions": [],
+            "actions": [
+                {
+                    "actuator": "git_operation",
+                    "params": {"operation": "status"},
+                }
+            ],
+        },
+        context={"source": "adaptive_immune_system"},
+    )
+
+    assert result["success"] is False
+    assert result["status"] == "unsupported_rule"
+    assert "no immune-rule simulation contract" in result["message"]

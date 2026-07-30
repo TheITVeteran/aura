@@ -32054,3 +32054,42 @@ desktop demo runs must pass with clean neural/terminal streams and verified
 external artifacts before demo certification closes. Resident-32B training
 remains paused. This is total checkpoint 722. The 722-920 completion envelope
 is approximately 78.5%-100.0%, with an 89.2% midpoint.
+
+### 2026-07-30 - DEMO-Q7 bounded adaptive-immunity grammar and repair-path separation
+
+The first long installed-app certification window was rejected after 5h44m:
+it accumulated 5,572 warning/error/critical records in 47 normalized groups.
+The dominant root was not a missing blanket grant. Persisted B-cell rules had
+all converged on `git_operation` with a malformed generic
+`{"allow_partial": -4.158...}` payload. The rule generator had treated every
+registered actuator as interchangeable, mutated Python booleans as numbers,
+and let each speculative rule replace the concrete repair artifact after the
+artifact passed governance. The causal-fitness lab and live adaptive system
+therefore asked Will thousands of times for Git, code, and network authority
+that neither should possess.
+
+Actuators now default out of immune evolution and must declare an explicit,
+effect-free immune simulation contract plus an actuator-owned valid parameter
+seed. The initial bounded grammar contains only in-memory flow reallocation;
+consequential and synthesized actuators cannot enter it. Rule thresholds are
+bound to captured sensor baselines, numeric mutation is bounded, booleans are
+not numerically mutated, and invalid persisted rules are replaced and
+re-signed before activation. Both sync and async executors reject unsupported
+legacy rules before consulting Will. Learned rules still causally affect cell
+fitness and lineage selection, but real repair artifacts now continue through
+the governed patch/autopoiesis path where post-effect health is measured,
+rather than being hijacked by a second speculative actuator lane.
+
+The test runtime now redirects the central Aura home before configuration
+loads and makes live-data writes a hard failure. This closes a separate
+hermeticity defect discovered during verification: singleton immune tests
+could previously mutate `~/.aura/data` while passing. The focused and adjacent
+immunity, actuator, authority, morphogenesis, persistence, and repair gates
+pass 230/230; an additional isolated singleton sweep passes 119/119 without
+changing the live immune-state timestamp. Bytecode compilation and diff
+integrity pass. This is source evidence only: a signed rebuild and long enough
+live window must prove the adaptive/causal refusal storm is absent before the
+demo run can count. The remaining warning groups from the rejected run stay
+open. Resident-32B training remains paused. This is total checkpoint 723. The
+723-920 completion envelope is approximately 78.6%-100.0%, with an 89.3%
+midpoint.

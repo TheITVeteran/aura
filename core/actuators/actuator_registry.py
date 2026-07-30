@@ -169,6 +169,9 @@ class BaseActuator(ABC):
     #: Where this actuator came from and whether anything validated it.
     #: Empty for built-ins, populated by :meth:`ActuatorRegistry.register_synthesized`.
     provenance: dict[str, Any] | None = None
+    # Evolved immune rules run repeatedly in cloned world models. They may
+    # only target actuators that explicitly opt into that narrower contract.
+    immune_rule_compatible: bool = False
 
     @property
     @abstractmethod
@@ -191,6 +194,10 @@ class BaseActuator(ABC):
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
         """Executes the action on the PhysicsWorldModel."""
         pass
+
+    def immune_rule_seed_params(self) -> dict[str, Any] | None:
+        """Return a valid bounded parameter seed for immune simulation."""
+        return None
 
 
 class SandboxedSynthesizedActuator(BaseActuator):
@@ -573,6 +580,7 @@ class ReallocateFlowActuator(BaseActuator):
     # In-memory simulation only — explicitly opts out of governed-by-default.
     requires_authority = False
     blocking_execution = False
+    immune_rule_compatible = True
 
     @property
     def name(self) -> str:
@@ -596,6 +604,47 @@ class ReallocateFlowActuator(BaseActuator):
         if amount_f is None:
             return False
         return True
+
+    def immune_rule_seed_params(self) -> dict[str, Any] | None:
+        """Construct a valid transfer from the current cloned world."""
+        try:
+            from core.world.world_model import get_physics_world_model
+
+            entities = list(get_physics_world_model().entities.values())
+            nodes = [
+                entity
+                for entity in entities
+                if str(getattr(entity, "kind", "")) == "node"
+                and _finite_float(getattr(entity, "capacity", None), minimum=1e-9)
+                is not None
+                and _finite_float(getattr(entity, "load", None), minimum=0.0)
+                is not None
+            ]
+            if len(nodes) < 2:
+                return None
+            source = max(
+                nodes,
+                key=lambda entity: float(entity.load) / max(float(entity.capacity), 1e-9),
+            )
+            target = min(
+                (entity for entity in nodes if entity.entity_id != source.entity_id),
+                key=lambda entity: float(entity.load) / max(float(entity.capacity), 1e-9),
+            )
+            transferable = min(
+                float(source.load) * 0.20,
+                max(0.0, float(target.capacity) - float(target.load)),
+            )
+            if transferable <= 1e-9:
+                return None
+            params = {
+                "source_id": str(source.entity_id),
+                "target_id": str(target.entity_id),
+                "amount": float(transferable),
+                "allow_partial": True,
+            }
+            return params if self.validate_params(params) else None
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
 
     def execute(self, params: dict[str, Any]) -> ActuatorResult:
         if not self.validate_params(params):
