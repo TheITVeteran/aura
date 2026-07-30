@@ -171,7 +171,7 @@ class ConceptVectorBridge:
         self._concept_cache[concept] = vector
         self._concept_sources[concept] = "deterministic_lexical_fallback"
         if not self._fallback_notice_emitted:
-            logger.warning(
+            logger.info(
                 "Embedding provider not yet available; using stable lexical concept projection."
             )
             self._fallback_notice_emitted = True

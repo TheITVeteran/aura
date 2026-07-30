@@ -257,7 +257,8 @@ class EnhancedWebSearchSkill(BaseSkill):
                 # could not synthesize it — on 2026-07-25, because background
                 # inference was queued behind foreground headroom. Those are
                 # different failures and only one of them is about the web.
-                logger.warning(
+                log = logger.warning if _requested_by_user else logger.info
+                log(
                     "Deep Research produced no answer for '%s' (%s; %d source(s) "
                     "gathered); falling back to retrieval pipeline.",
                     query,

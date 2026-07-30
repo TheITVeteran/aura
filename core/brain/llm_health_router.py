@@ -3401,7 +3401,7 @@ class HealthAwareLLMRouter:
 
         if is_bg:
             if prefer_tier in ("primary", "secondary"):
-                logger.warning("🛡️ Tier Lock: Background task attempted to use '%s' tier. Demoting to 'tertiary'.", prefer_tier)
+                logger.info("🛡️ Tier Lock: Background task requested '%s'; using the governed tertiary tier.", prefer_tier)
             prefer_tier = "tertiary"
             deep_handoff = False
             # Allow explicit cloud fallback requests to bypass demotion lock

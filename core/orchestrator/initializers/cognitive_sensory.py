@@ -129,7 +129,9 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
             _register(report, "identity_service", identity_service)
         orchestrator.identity_service = identity_service
 
-        orchestrator.soul = Soul(orchestrator)
+        orchestrator.soul = ServiceContainer.get("soul", default=None)
+        if orchestrator.soul is None:
+            orchestrator.soul = Soul(orchestrator)
         _register(report, "soul", orchestrator.soul)
 
         orchestrator.fictional_engines = register_all_fictional_engines(orchestrator)

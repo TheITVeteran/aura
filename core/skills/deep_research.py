@@ -329,7 +329,8 @@ async def synthesize_answer(
             or "the model returned no text"
         )
         state.final_answer = ""
-        logger.warning(
+        log = logger.warning if state.requested_by_user else logger.info
+        log(
             "Synthesis produced no text (%s); %d source(s) retained unsynthesized.",
             state.synthesis_detail, len(state.all_sources),
         )

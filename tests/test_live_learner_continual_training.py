@@ -287,3 +287,14 @@ def test_live_learner_load_buffer_skips_contaminated_rows(tmp_path):
 
     assert len(learner._buffer) == 1
     assert learner._buffer[0]["messages"][1]["content"] == "question 1"
+    assert learner._buffer_path.read_text(encoding="utf-8") == json.dumps(good) + "\n"
+
+    quarantine = tmp_path / "experience_buffer.quarantine.jsonl"
+    quarantined = [json.loads(line) for line in quarantine.read_text(encoding="utf-8").splitlines()]
+    assert len(quarantined) == 1
+    assert "silent_autofix_prompt" in quarantined[0]["reasons"]
+
+    learner._buffer.clear()
+    learner._load_buffer()
+    assert len(learner._buffer) == 1
+    assert len(quarantine.read_text(encoding="utf-8").splitlines()) == 1

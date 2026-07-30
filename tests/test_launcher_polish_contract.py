@@ -109,6 +109,12 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env.removeValue(forKey: "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR")' in swift
     assert 'env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"' in swift
     assert 'env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"' in swift
+    assert 'env["AURA_ALLOW_RUNTIME_SELF_MODIFICATION"] = "1"' in swift
+    assert 'env["AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION"] = "1"' in swift
+    assert 'env["AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"] = "1"' in swift
+    assert 'env["HF_HUB_OFFLINE"] = "1"' in swift
+    assert 'env["HF_HUB_DISABLE_TELEMETRY"] = "1"' in swift
+    assert 'env["TRANSFORMERS_OFFLINE"] = "1"' in swift
     assert 'env["AURA_BACKGROUND_BOOT_GRACE_S"] = "60"' in swift
     assert 'env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"' in swift
     assert 'env.removeValue(forKey: "AURA_AUTO_LISTEN")' in swift

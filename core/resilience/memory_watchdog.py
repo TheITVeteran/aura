@@ -570,7 +570,20 @@ class MemoryWatchdog(threading.Thread):
             and sample.observation_scenario_id == previous.observation_scenario_id
             and (sample.managed_rss_mb - previous.managed_rss_mb) > 8192.0
         ):
-            self._record_footprint_spike(previous, sample)
+            in_boot_grace = (
+                time.monotonic() - self._started_at
+            ) < self.thresholds.boot_grace_s
+            if in_boot_grace and sample.managed_rss_mb < self.thresholds.soft_mb:
+                logger.info(
+                    "[MEMWATCH] Planned boot footprint growth %.0f→%.0fMB remained "
+                    "below the %.0fMB soft ceiling; retaining samples without "
+                    "incident diagnostics.",
+                    previous.managed_rss_mb,
+                    sample.managed_rss_mb,
+                    self.thresholds.soft_mb,
+                )
+            else:
+                self._record_footprint_spike(previous, sample)
         self._evaluate(sample, time.monotonic())
 
     def _log_memory_attribution(self, why: str) -> None:

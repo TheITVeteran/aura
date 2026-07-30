@@ -629,7 +629,7 @@ def kill_port(port: int, pattern: str = "aura"):
     shared_ports = {8000}
     force_all = port in force_all_ports
     if port in shared_ports:
-        logger.warning(
+        logger.info(
             "Port %s is a shared development port; cleanup is limited to processes matching pattern '%s'.",
             port,
             pattern,

@@ -723,6 +723,10 @@ async def _activate_middleware(*, foreground_only: bool) -> ActivationResult:
 
     analyzers = install_default_analyzers()
     tasks = install_runtime_diagnostics()
+    # Registration creates diagnostic tasks with no sample yet. The cognition
+    # validation wave runs in this same boot pass, so give every task its first
+    # real observation instead of classifying new diagnostics as STALE.
+    _safe_diagnostics_update()
 
     qos_topics = _declare_standard_topics()
 

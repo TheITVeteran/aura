@@ -181,7 +181,9 @@ class BootIdentityMixin:
             except ImportError:
                 integrate_complete_moral_and_sensory_systems = None
 
-            self.soul = Soul(self)
+            self.soul = ServiceContainer.get(ServiceNames.SOUL, default=None)
+            if self.soul is None:
+                self.soul = Soul(self)
             # LIVE DEFECT, 2026-07-27. The Soul was constructed here and never
             # published to the service spine, so ServiceContainer.get("soul")
             # answered None for the whole life of the process.

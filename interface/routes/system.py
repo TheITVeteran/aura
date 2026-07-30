@@ -2152,19 +2152,26 @@ async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dic
         return _attach_health_probe_state(result)
     except TimeoutError:
         probe_state, timeout_recorded = _record_health_probe_wait_timeout(generation)
+        fallback = _cached_boot_health_payload(
+            "health_probe_timeout",
+            is_gui_proxy=is_gui_proxy,
+        )
         if timeout_recorded:
-            logger.warning(
+            fallback_payload = fallback[0]
+            log = (
+                logger.info
+                if generation == 1
+                and not bool(fallback_payload.get("ready"))
+                and not bool(fallback_payload.get("conversation_ready"))
+                else logger.warning
+            )
+            log(
                 "Boot-health probe generation %d exceeded the %.1fs HTTP wait budget; "
                 "the singleflight remains active and later polls will reuse its result.",
                 generation,
                 _HEALTH_PROBE_TIMEOUT_S,
             )
-        return _attach_health_probe_state(
-            _cached_boot_health_payload(
-                "health_probe_timeout",
-                is_gui_proxy=is_gui_proxy,
-            )
-        )
+        return _attach_health_probe_state(fallback)
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         logger.warning(
             "Boot-health probe generation %d ended before returning a payload: %s",

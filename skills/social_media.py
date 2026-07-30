@@ -453,7 +453,7 @@ class RedditAdapter(PlatformAdapter):
         user_agent = _env("user_agent") or "Aura/1.0 autonomous mind"
 
         if not all([client_id, client_sec, username, password]):
-            logger.warning("RedditAdapter: incomplete credentials — adapter disabled.")
+            logger.info("RedditAdapter idle: credentials are not configured.")
             return
 
         try:

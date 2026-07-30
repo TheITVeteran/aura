@@ -1193,6 +1193,28 @@ class FileWriteGateway:
         durable_replace(src, dst)
         return str(dst)
 
+    def move_path(
+        self,
+        path: PathLike,
+        destination: PathLike,
+        *,
+        source: str = "unknown",
+    ) -> str:
+        """Durably move a file or directory through the synchronous lane."""
+
+        src = _coerce_path_allow_dir(path)
+        dst = _coerce_path_allow_dir(destination)
+        if src.is_symlink() or dst.is_symlink():
+            raise OSError("refusing durable move involving a symlink")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.move_path:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        durable_replace(src, dst)
+        return str(dst)
+
     async def append_text_async(
         self, path: PathLike, text: str, *, encoding: str = "utf-8", source: str = "unknown"
     ) -> None:

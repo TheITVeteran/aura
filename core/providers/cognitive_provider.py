@@ -204,9 +204,34 @@ def register_cognitive_services(container, is_proxy: bool = False):
     container.register('capability_engine', create_capability_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
     container.register('skill_registry', lambda: container.get("capability_engine"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
-    # 4.5 Personality Engine
+    # 4.5 Identity drive system and Personality Engine. PersonalityKernel
+    # resolves the Soul during construction, so this provider must materialize
+    # the real singleton before constructing the required personality service.
+    def create_soul():
+        from core.soul import Soul
+
+        orchestrator = container.get("orchestrator", default=None)
+        if orchestrator is None:
+            raise RuntimeError("orchestrator is required before constructing the Soul")
+        soul = getattr(orchestrator, "soul", None)
+        if soul is None:
+            soul = Soul(orchestrator)
+            orchestrator.soul = soul
+        return soul
+
+    container.register(
+        "soul",
+        create_soul,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=True,
+    )
+
     def create_personality_engine():
         from core.brain.personality_engine import PersonalityEngine
+
+        soul = container.get("soul", default=None)
+        if soul is None:
+            raise RuntimeError("personality engine requires the registered Soul")
         return PersonalityEngine()
     container.register('personality_engine', create_personality_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 

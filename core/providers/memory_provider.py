@@ -2,7 +2,10 @@
 """
 
 import logging
+import os
 
+from core.governance_context import local_internal_governed_scope
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
 from core.runtime.errors import record_degradation
 
@@ -77,11 +80,51 @@ def register_memory_services(container):
             from core.memory.knowledge_graph import PersistentKnowledgeGraph
             kg_dir = config.paths.data_dir / "knowledge_graph"
             if kg_dir.exists() and not kg_dir.is_dir():
-                logger.warning("Knowledge graph path is a legacy file; using it directly: %s", kg_dir)
-                db_path = kg_dir
+                staging_dir = kg_dir.with_name(f".{kg_dir.name}.migration-{os.getpid()}")
+                staging_db = staging_dir / "knowledge.db"
+                gateway = get_file_write_gateway()
+                with local_internal_governed_scope(
+                    "memory_provider.knowledge_graph_migration",
+                    domain="file_write",
+                    constraints={"artifact": "knowledge_graph"},
+                ):
+                    gateway.ensure_directory(
+                        staging_dir,
+                        source="memory_provider.knowledge_graph_migration.stage",
+                    )
+                    gateway.replace_file(
+                        kg_dir,
+                        staging_db,
+                        source="memory_provider.knowledge_graph_migration.database",
+                    )
+                    try:
+                        gateway.move_path(
+                            staging_dir,
+                            kg_dir,
+                            source="memory_provider.knowledge_graph_migration.publish",
+                        )
+                    except (OSError, RuntimeError, TypeError, ValueError):
+                        gateway.replace_file(
+                            staging_db,
+                            kg_dir,
+                            source="memory_provider.knowledge_graph_migration.rollback",
+                        )
+                        raise
+                logger.info(
+                    "Migrated legacy knowledge graph database into canonical directory: %s",
+                    kg_dir,
+                )
             else:
-                kg_dir.mkdir(parents=True, exist_ok=True)
-                db_path = kg_dir / "knowledge.db"
+                with local_internal_governed_scope(
+                    "memory_provider.knowledge_graph_directory",
+                    domain="file_write",
+                    constraints={"artifact": "knowledge_graph"},
+                ):
+                    get_file_write_gateway().ensure_directory(
+                        kg_dir,
+                        source="memory_provider.knowledge_graph_directory",
+                    )
+            db_path = kg_dir / "knowledge.db"
             return PersistentKnowledgeGraph(str(db_path))
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("memory_provider", exc)

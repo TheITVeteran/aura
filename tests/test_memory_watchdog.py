@@ -209,6 +209,19 @@ class TestSpikeDumpBounding(unittest.TestCase):
     one afternoon, one per MLX generation.
     """
 
+    def test_planned_boot_growth_below_soft_ceiling_is_not_an_incident(self):
+        h = _Harness(boot_grace_s=300.0)
+        h.dog._started_at = 0.0
+        h.dog._sampler = iter(
+            [_sample(core_mb=1_000.0), _sample(core_mb=9_500.0)]
+        ).__next__
+
+        with patch("core.resilience.memory_watchdog.time.monotonic", return_value=20.0):
+            h.dog._tick()
+            h.dog._tick()
+
+        self.assertEqual(h.dog._spike_count, 0)
+
     def test_spike_dumps_are_throttled(self):
         h = _Harness()
         dumps: list[str] = []

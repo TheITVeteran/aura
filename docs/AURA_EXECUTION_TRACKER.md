@@ -31871,3 +31871,35 @@ matrix passes 558/558. Evidence:
 CP420S18 is immutable and retired. A fresh signed update canary remains required
 before the full training launch. This is total checkpoint 707. The 707-920
 completion envelope is approximately 76.8%-100.0%, with an 88.4% midpoint.
+
+### 2026-07-30 - DEMO-Q1 deterministic startup and durable state migration
+
+The installed-app qualification pass repaired the first clean-boot warning
+cluster before replaying the user demo. The cognitive provider now constructs
+and publishes the real Soul before the required personality engine can capture
+a metadata proxy. Engineering-foundation validation samples newly registered
+diagnostics before testing their liveness. A first cold boot-health timeout is
+classified as expected bounded startup work while repeated or post-readiness
+timeouts remain warnings. Planned resident-model footprint growth during the
+boot grace window remains measured without being misreported as an allocation
+incident below the soft ceiling.
+
+The legacy knowledge-graph database is migrated once into the canonical
+directory through governed, durable moves with rollback. Rejected live-learning
+rows are transactionally removed from the active corpus and preserved in a
+private quarantine ledger, so the same 276 contaminated rows cannot warn on
+every boot. The signed desktop profile is deterministic/offline for local model
+assets and enables tested autonomous repair promotion while retaining the
+existing quarantine, holdout, rollback, and promotion gates. Optional missing
+social credentials and correctly governed background-tier selection now report
+their actual idle/selection state instead of presenting expected operation as
+damage.
+
+The focused startup, health-route, memory-provider, live-learner, memory
+watchdog, cognitive-provider, and launcher contract gate passes 136/136;
+bytecode compilation and diff integrity pass. This is source and focused-test
+evidence only: the installed app still must be rebuilt and pass three complete
+live user-desktop demo runs with clean neural and terminal streams. No resident
+training or reasoning-gain claim follows. This is total checkpoint 708. The
+708-920 completion envelope is approximately 77.0%-100.0%, with an 88.5%
+midpoint.

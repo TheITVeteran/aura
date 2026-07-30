@@ -139,14 +139,18 @@ def test_memory_provider_registers_usable_knowledge_graph_and_dreamer(tmp_path, 
         ServiceContainer.clear()
 
 
-def test_memory_provider_accepts_legacy_knowledge_graph_file(tmp_path, monkeypatch):
+def test_memory_provider_migrates_legacy_knowledge_graph_file(tmp_path, monkeypatch):
+    import sqlite3
+
     from core.config import Paths
     from core.container import ServiceContainer
     from core.providers.memory_provider import register_memory_services
 
     legacy_path = tmp_path / "data" / "knowledge_graph"
     legacy_path.parent.mkdir(parents=True)
-    legacy_path.touch()
+    with sqlite3.connect(legacy_path) as conn:
+        conn.execute("CREATE TABLE migration_marker (value TEXT NOT NULL)")
+        conn.execute("INSERT INTO migration_marker(value) VALUES ('preserved')")
 
     ServiceContainer.clear()
     monkeypatch.setattr(Paths, "_runtime_home_cache", tmp_path)
@@ -157,9 +161,30 @@ def test_memory_provider_accepts_legacy_knowledge_graph_file(tmp_path, monkeypat
 
         kg = ServiceContainer.require("knowledge_graph")
 
-        assert kg.db_path == str(legacy_path)
+        canonical_db = legacy_path / "knowledge.db"
+        assert kg.db_path == str(canonical_db)
+        assert legacy_path.is_dir()
+        with sqlite3.connect(canonical_db) as conn:
+            assert conn.execute("SELECT value FROM migration_marker").fetchone() == (
+                "preserved",
+            )
+        assert not list(legacy_path.parent.glob(".knowledge_graph.migration-*"))
     finally:
         ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_foundation_cognition_validation_samples_new_diagnostics_first():
+    import core.runtime.foundations as foundations
+    from core.organism.model_validation import reset_validation_for_test
+
+    reset_validation_for_test()
+    middleware = await foundations._activate_middleware(foreground_only=True)
+    cognition = await foundations._activate_cognition(foreground_only=True)
+
+    assert middleware.ok is True
+    assert cognition.ok is True
+    assert cognition.data["suite_outcome"]["failed"] == 0
 
 
 @pytest.mark.asyncio

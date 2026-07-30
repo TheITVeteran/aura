@@ -1349,17 +1349,46 @@ class LiveLearner:
         try:
             malformed = 0
             contaminated = 0
+            invalid_shape = 0
+            clean_lines: list[str] = []
+            quarantined_rows: list[dict[str, Any]] = []
             with open(self._buffer_path, encoding="utf-8") as f:
                 for line_number, line in enumerate(f, start=1):
                     try:
                         row = json.loads(line)
-                        if isinstance(row, dict) and self._example_contamination_reasons(row):
+                        if not isinstance(row, dict):
+                            invalid_shape += 1
+                            quarantined_rows.append(
+                                {
+                                    "source_line": line_number,
+                                    "reasons": ["invalid_row_shape"],
+                                    "raw": line.rstrip("\n"),
+                                }
+                            )
+                            continue
+                        reasons = self._example_contamination_reasons(row)
+                        if reasons:
                             contaminated += 1
+                            quarantined_rows.append(
+                                {
+                                    "source_line": line_number,
+                                    "reasons": reasons,
+                                    "row": row,
+                                }
+                            )
                             continue
                         self._buffer.append(row)
+                        clean_lines.append(json.dumps(row, ensure_ascii=False))
                         count += 1
                     except json.JSONDecodeError as exc:
                         malformed += 1
+                        quarantined_rows.append(
+                            {
+                                "source_line": line_number,
+                                "reasons": ["malformed_json"],
+                                "raw": line.rstrip("\n"),
+                            }
+                        )
                         if malformed == 1:
                             _record_live_learning_degradation(
                                 "live_learner",
@@ -1367,10 +1396,66 @@ class LiveLearner:
                                 action="skipped malformed live learner buffer row during startup load",
                                 extra={"buffer_path": str(self._buffer_path), "line": line_number},
                             )
-            if malformed:
-                logger.warning("LiveLearner: skipped %d malformed buffer rows", malformed)
-            if contaminated:
-                logger.warning("LiveLearner: skipped %d contaminated buffer rows", contaminated)
+            if quarantined_rows:
+                from core.governance_context import local_internal_governed_scope
+                from core.runtime.file_write_gateway import (
+                    FileWriteBatchEntry,
+                    get_file_write_gateway,
+                )
+
+                quarantine_path = self._buffer_path.with_name(
+                    f"{self._buffer_path.stem}.quarantine.jsonl"
+                )
+                existing_quarantine = ""
+                if quarantine_path.exists():
+                    existing_quarantine = quarantine_path.read_text(
+                        encoding="utf-8"
+                    )
+                    if existing_quarantine and not existing_quarantine.endswith("\n"):
+                        existing_quarantine += "\n"
+                quarantine_text = existing_quarantine + "".join(
+                    json.dumps(
+                        {
+                            "schema": "aura.live_learner.quarantine.v1",
+                            "buffer": str(self._buffer_path),
+                            **entry,
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    + "\n"
+                    for entry in quarantined_rows
+                )
+                clean_text = "\n".join(clean_lines)
+                if clean_text:
+                    clean_text += "\n"
+                with local_internal_governed_scope(
+                    "live_learner.quarantine_buffer",
+                    domain="memory_write",
+                    constraints={"artifact": "experience_buffer"},
+                ):
+                    get_file_write_gateway().write_bytes_batch(
+                        (
+                            FileWriteBatchEntry(
+                                path=self._buffer_path,
+                                payload=clean_text.encode("utf-8"),
+                            ),
+                            FileWriteBatchEntry(
+                                path=quarantine_path,
+                                payload=quarantine_text.encode("utf-8"),
+                            ),
+                        ),
+                        source="live_learner.quarantine_buffer",
+                    )
+                logger.info(
+                    "LiveLearner: quarantined %d rejected buffer row(s) "
+                    "(contaminated=%d malformed=%d invalid_shape=%d); "
+                    "the active buffer was rewritten clean.",
+                    len(quarantined_rows),
+                    contaminated,
+                    malformed,
+                    invalid_shape,
+                )
             logger.debug("LiveLearner: loaded %d buffered examples from disk.", count)
         except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
             _record_live_learning_degradation(
