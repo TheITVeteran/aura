@@ -21,7 +21,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from core.brain.llm_health_router import _consume_deliberate_no_text_reason
+import pytest
+
+from core.brain.llm.mlx_client import MLXLocalClient
+from core.brain.llm_health_router import (
+    CircuitState,
+    EndpointHealth,
+    HealthAwareLLMRouter,
+    _consume_deliberate_no_text_reason,
+)
 
 
 class _ClientWithDeliberateCancel:
@@ -105,3 +113,64 @@ def test_router_does_not_trip_the_circuit_on_a_deliberate_cancel() -> None:
     )
     # The ordinary broken-client path must still be able to open it.
     assert 'ep.trip_temporarily("client_returned_no_text")' in tail
+
+
+def test_general_healthy_deadline_publishes_reason_and_preserves_worker() -> None:
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client._deliberate_no_text_reason = None
+    client._deferred_reboot_reason = None
+    cancellations = []
+    client.soft_cancel_active_generation = cancellations.append
+
+    client._mark_healthy_generation_deadline(foreground_request=True)
+
+    assert cancellations == ["abandoned_generation_deadline"]
+    assert client._deferred_reboot_reason is None
+    assert (
+        client.consume_deliberate_no_text_reason()
+        == "generation_deadline_worker_healthy"
+    )
+
+
+@pytest.mark.asyncio
+async def test_router_keeps_circuit_closed_for_general_healthy_deadline() -> None:
+    class _HealthyDeadlineClient:
+        def __init__(self):
+            self._reason = "generation_deadline_worker_healthy"
+
+        def is_available(self):
+            return True
+
+        async def think(self, *_args, **_kwargs):
+            return None
+
+        def consume_deliberate_no_text_reason(self):
+            reason = self._reason
+            self._reason = ""
+            return reason
+
+    endpoint = EndpointHealth(
+        name="Cortex",
+        url="local://cortex",
+        model="Aura-32B",
+        is_local=True,
+        client=_HealthyDeadlineClient(),
+    )
+    router = HealthAwareLLMRouter()
+
+    result = await router._call_endpoint(
+        endpoint,
+        "reason about this",
+        None,
+        5.0,
+        origin="user",
+    )
+
+    assert result == {
+        "ok": False,
+        "error": "deliberate_no_text:generation_deadline_worker_healthy",
+    }
+    assert endpoint.state is CircuitState.CLOSED
+    assert endpoint.failure_count == 0
+    assert endpoint.lifetime_failure_count == 0
+    assert endpoint.transient_trip_count == 0

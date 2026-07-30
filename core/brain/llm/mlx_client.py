@@ -6126,6 +6126,12 @@ class MLXLocalClient:
         self._deliberate_no_text_reason = None
         return reason
 
+    def _mark_healthy_generation_deadline(self, *, foreground_request: bool) -> None:
+        """Publish a non-damaging no-text outcome and fence abandoned output."""
+        self._deliberate_no_text_reason = "generation_deadline_worker_healthy"
+        if foreground_request:
+            self.soft_cancel_active_generation("abandoned_generation_deadline")
+
     def soft_cancel_active_generation(
         self, reason: str = "foreground_preemption"
     ) -> dict[str, Any]:
@@ -8642,6 +8648,9 @@ class MLXLocalClient:
         **kwargs,
     ) -> str | None:
         """Core generation logic, extracted for retry support."""
+        # This reason belongs to exactly one generation attempt. Clear any
+        # unconsumed prior outcome before a new request can publish its own.
+        self._deliberate_no_text_reason = None
         if request_is_background and _foreground_owner_active():
             logger.info(
                 "⏸️ [MLX] Skipping queued background generation for %s during foreground ownership.",
@@ -9206,18 +9215,16 @@ class MLXLocalClient:
             )
             if self._worker_unhealthy(stale_after=self._stale_after(during_generation=True)):
                 self._deferred_reboot_reason = "generation_timeout_unhealthy"
-            elif foreground_request:
-                # Ask the worker to drop the orphaned generation between
-                # tokens; if it acknowledges, the warm lane survives (see
-                # _resolve_deferred_reboot). Only an unacknowledged cancel
-                # still costs a recycle.
-                self.soft_cancel_active_generation("abandoned_generation_deadline")
-                self._deferred_reboot_reason = "recoverable_generation_deadline_reached"
+            else:
+                self._mark_healthy_generation_deadline(
+                    foreground_request=foreground_request,
+                )
+            if foreground_request and self._deliberate_no_text_reason:
                 logger.warning(
                     "⏳ [MLX] Deadline reached while worker still looks healthy; "
-                    "soft-cancelling the abandoned generation and preserving the warm lane if acknowledged."
+                    "soft-cancelling the abandoned generation and preserving the warm lane."
                 )
-            else:
+            elif self._deliberate_no_text_reason:
                 logger.warning(
                     "⏳ [MLX] Deadline reached but worker still looks healthy; leaving lane warm."
                 )
