@@ -677,6 +677,12 @@ async def test_voice_local_playback_uses_gateways_on_calling_loop(monkeypatch, t
     monkeypatch.setattr(voice_module, "get_subprocess_gateway", lambda: SubprocessGateway())
 
     engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+    attestations = []
+    engine._get_mycelium = lambda: SimpleNamespace(
+        attest_neural_root=lambda source, **kwargs: attestations.append(
+            (source, kwargs)
+        )
+    )
 
     class ForeignOwnerLoop:
         def run_in_executor(self, *_args, **_kwargs):
@@ -699,6 +705,14 @@ async def test_voice_local_playback_uses_gateways_on_calling_loop(monkeypatch, t
             "core.senses.voice_engine.play_locally",
         )
     ]
+    assert [item[0] for item in attestations] == [
+        "voice_engine",
+        "service:afplay",
+    ]
+    assert all(
+        item[1]["liveness_contract"] == "on_demand"
+        for item in attestations
+    )
 
 
 def test_sensory_capabilities_require_capture_and_stt() -> None:

@@ -712,7 +712,6 @@ def _finalize_wiring(container):
         if mycelial:
             # Link major layers
             from core.cognition.meta_cognition import MetaEvolutionEngine
-            from core.runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
             mycelial.link_layer("meta_cognition", MetaEvolutionEngine)
             
             # Establish base hyphae
@@ -721,12 +720,6 @@ def _finalize_wiring(container):
             
             mycelial.establish_connection("cognition", "llm", priority=1.0)
             mycelial.establish_connection("memory", "cognition", priority=0.9)
-            
-            # Phase 10: Neural Root for Metal persistence
-            if hasattr(mycelial, 'establish_neural_root'):
-                metal_enabled, reason = inprocess_mlx_metal_enabled()
-                hardware_id = "gpu_metal" if metal_enabled else f"cpu_safe:{reason}"
-                mycelial.establish_neural_root("llm", hardware_id=hardware_id)
             
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('service_registration', e)

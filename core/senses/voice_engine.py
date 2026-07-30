@@ -309,6 +309,7 @@ class SovereignVoiceEngine:
         self._mycelium = None
         self._homeostasis = None
         self._substrate = None
+        self._voice_owner_generation = f"voice-engine:{os.getpid()}:{id(self)}"
         
         self._init_remaining()
 
@@ -425,7 +426,7 @@ class SovereignVoiceEngine:
 
     def _get_mycelium(self):
         """Lazy-resolve the Mycelial Network from the container."""
-        if self._mycelium is None:
+        if getattr(self, "_mycelium", None) is None:
             try:
                 from core.container import ServiceContainer
                 self._mycelium = ServiceContainer.get("mycelial_network", default=None)
@@ -2025,7 +2026,7 @@ class SovereignVoiceEngine:
     async def _play_locally(self, audio_data: bytes):
         """Play PCM/WAV audio data locally on macOS using afplay."""
         if not audio_data:
-            return
+            return False
 
         def _play():
             try:
@@ -2054,11 +2055,46 @@ class SovereignVoiceEngine:
                         self._current_afplay.wait(timeout=0.05)
                     except subprocess.TimeoutExpired:
                         continue
+                return self._current_afplay.poll() == 0
             except (subprocess.SubprocessError, OSError, RuntimeError, ValueError) as e:
                 record_degradation('voice_engine', e)
                 logger.error("Local playback failed: %s", e)
+                return False
 
-        await asyncio.to_thread(_play)
+        played = bool(await asyncio.to_thread(_play))
+        if played:
+            mycelium = self._get_mycelium()
+            if mycelium is not None and hasattr(mycelium, "attest_neural_root"):
+                evidence = {
+                    "service": "afplay",
+                    "audio_route": "coreaudio_default_output",
+                    "playback_completed": True,
+                }
+                mycelium.attest_neural_root(
+                    "voice_engine",
+                    root_kind="service",
+                    target_id="afplay",
+                    owner_generation=getattr(
+                        self,
+                        "_voice_owner_generation",
+                        f"voice-engine:{os.getpid()}:{id(self)}",
+                    ),
+                    evidence=evidence,
+                    liveness_contract="on_demand",
+                )
+                mycelium.attest_neural_root(
+                    "service:afplay",
+                    root_kind="hardware",
+                    target_id="coreaudio:default_output",
+                    owner_generation=getattr(
+                        self,
+                        "_voice_owner_generation",
+                        f"voice-engine:{os.getpid()}:{id(self)}",
+                    ),
+                    evidence=evidence,
+                    liveness_contract="on_demand",
+                )
+        return played
 
     async def _emit_tts_audio(self, audio_data: bytes):
         """Mirror generated audio to browser subscribers and optional callbacks."""

@@ -32124,3 +32124,41 @@ provider recovery, and the other rejected-run warning families remain open.
 Resident-32B training remains paused. This is total checkpoint 724. The
 724-920 completion envelope is approximately 78.7%-100.0%, with an 89.3%
 midpoint.
+
+### 2026-07-30 - DEMO-Q9 owner-attested Mycelium runtime roots
+
+The rejected certification run emitted paired five-minute warnings for
+`voice_presence->hardware:macos_say` and
+`llm->hardware:cpu_safe:desktop_resource_guard`. Neither edge described the
+live runtime. Mycelium constructed the voice root even though production uses
+SovereignVoiceEngine rather than VoicePresence, encoded an in-process resource
+policy as LLM hardware, and refreshed every overdue root timestamp without
+probing anything. The monitor therefore fabricated recovery, persisted that
+fiction across process generations, and repeated the warning indefinitely.
+
+Mycelium now separates historical topology from owner-attested runtime
+evidence. A root records endpoint kind, current owner generation, bounded
+canonical evidence, liveness contract, activity/probe/success times, and
+explicit `unbound`, `ready_idle`, `stale`, or `error` state. Construction
+creates no platform roots. Maintenance can transition an overdue
+heartbeat-owned root to stale exactly once but can never refresh it. A matching
+owner heartbeat is the only recovery path; stale or mismatched generations are
+rejected. Vault snapshots strip current ownership and operational timestamps,
+and restored roots remain historical and unbound until a live owner re-attests.
+
+The validated MLX initialization receipt now binds `llm` to the exact worker
+boot ID and PID and binds that worker to the device named by its accepted
+receipt. Worker heartbeats carry boot ID and PID, refresh only that generation,
+and retire both roots on reboot or close. Voice creates service and CoreAudio
+roots only after `afplay` returns success, using an on-demand rather than
+continuous-heartbeat contract. The obsolete startup root based on
+`desktop_resource_guard` is removed.
+
+The Mycelium, MLX lifecycle/identity, voice, and service-registration gate
+passes 349/349; bytecode compilation, source-contract, and diff integrity
+checks pass. A signed rebuild must still prove the resident worker roots stay
+fresh and the two old five-minute warnings do not recur in the installed app.
+Browser/social provider recovery and the other rejected-run warning families
+remain open. Resident-32B training remains paused. This is total checkpoint
+725. The 725-920 completion envelope is approximately 78.8%-100.0%, with an
+89.4% midpoint.

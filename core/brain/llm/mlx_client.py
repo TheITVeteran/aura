@@ -2688,6 +2688,7 @@ class MLXLocalClient:
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
         self._worker_identity: dict[str, Any] = {}
+        self._mycelial_root_refs: list[dict[str, str]] = []
         self._last_surface_control_receipt: dict[str, Any] = {}
         self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = ContextVar(
             f"aura_mlx_surface_receipt_{id(self)}",
@@ -5089,6 +5090,119 @@ class MLXLocalClient:
         identity = getattr(self, "_worker_identity", None)
         return dict(identity) if isinstance(identity, dict) else {}
 
+    def _attest_mycelial_worker(self, init_receipt: Mapping[str, Any]) -> None:
+        """Publish the accepted worker identity to Mycelium after READY validation."""
+        identity = self.get_worker_identity_snapshot()
+        boot_id = str(identity.get("worker_boot_id") or "").strip()
+        worker_pid = identity.get("worker_pid")
+        device = str(init_receipt.get("device") or "").strip().lower()
+        if not boot_id or not isinstance(worker_pid, int) or worker_pid <= 0 or not device:
+            raise ValueError("validated worker receipt lacks root attestation identity")
+        from core.container import ServiceContainer
+
+        mycelium = ServiceContainer.get("mycelial_network", default=None)
+        if mycelium is None or not hasattr(mycelium, "attest_neural_root"):
+            return
+        worker_target = f"{boot_id}:{worker_pid}"
+        hardware_target = f"mlx:{device}"
+        shared_evidence = {
+            "worker_boot_id": boot_id,
+            "worker_pid": worker_pid,
+            "worker_model_path": str(identity.get("worker_model_path") or self.model_path),
+            "worker_device": device,
+            "worker_source_sha256": str(identity.get("worker_source_sha256") or ""),
+        }
+        mycelium.attest_neural_root(
+            "llm",
+            root_kind="worker",
+            target_id=worker_target,
+            owner_generation=boot_id,
+            evidence=shared_evidence,
+            liveness_contract="heartbeat",
+            stale_after_s=10.0,
+        )
+        mycelium.attest_neural_root(
+            f"worker:{worker_target}",
+            root_kind="hardware",
+            target_id=hardware_target,
+            owner_generation=boot_id,
+            evidence=shared_evidence,
+            liveness_contract="heartbeat",
+            stale_after_s=10.0,
+        )
+        self._mycelial_root_refs = [
+            {
+                "source": "llm",
+                "root_kind": "worker",
+                "target_id": worker_target,
+                "owner_generation": boot_id,
+            },
+            {
+                "source": f"worker:{worker_target}",
+                "root_kind": "hardware",
+                "target_id": hardware_target,
+                "owner_generation": boot_id,
+            },
+        ]
+
+    def _pulse_mycelial_worker(self, heartbeat: Mapping[str, Any]) -> None:
+        refs = list(getattr(self, "_mycelial_root_refs", ()) or ())
+        if not refs:
+            return
+        identity = self.get_worker_identity_snapshot()
+        if (
+            str(heartbeat.get("worker_boot_id") or "")
+            != str(identity.get("worker_boot_id") or "")
+            or heartbeat.get("worker_pid") != identity.get("worker_pid")
+        ):
+            return
+        from core.container import ServiceContainer
+
+        mycelium = ServiceContainer.get("mycelial_network", default=None)
+        if mycelium is None or not hasattr(mycelium, "pulse_neural_root"):
+            return
+        evidence = {
+            "active_job": bool(heartbeat.get("active_job")),
+            "ipc_backlog": int(heartbeat.get("ipc_backlog") or 0),
+            "ipc_broken": bool(heartbeat.get("ipc_broken")),
+            "loop_stalled": bool(heartbeat.get("loop_stalled")),
+        }
+        # A heartbeat with a generation-progress alarm still proves this
+        # process and its IPC path are live. Generation health is handled by
+        # the request watchdog; only broken IPC invalidates the root probe.
+        success = not evidence["ipc_broken"]
+        for ref in refs:
+            mycelium.pulse_neural_root(
+                ref["source"],
+                root_kind=ref["root_kind"],
+                target_id=ref["target_id"],
+                owner_generation=ref["owner_generation"],
+                success=success,
+                evidence=evidence,
+            )
+
+    def _unbind_mycelial_worker(self) -> None:
+        refs = list(getattr(self, "_mycelial_root_refs", ()) or ())
+        self._mycelial_root_refs = []
+        if not refs:
+            return
+        try:
+            from core.container import ServiceContainer
+
+            mycelium = ServiceContainer.get("mycelial_network", default=None)
+            if mycelium is None or not hasattr(mycelium, "unbind_neural_roots"):
+                return
+            for ref in refs:
+                mycelium.unbind_neural_roots(
+                    ref["source"],
+                    owner_generation=ref["owner_generation"],
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            logger.debug(
+                "Mycelial worker-root retirement unavailable for %s.",
+                os.path.basename(self.model_path),
+            )
+
     def _clean_latent_cancel_ack(
         self,
         response: Any,
@@ -6763,6 +6877,19 @@ class MLXLocalClient:
                 if status == "heartbeat":
                     self._last_heartbeat = time.time()
                     self._mark_progress()
+                    try:
+                        self._pulse_mycelial_worker(res)
+                    except (
+                        ImportError,
+                        AttributeError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ) as root_exc:
+                        logger.debug(
+                            "MLX worker heartbeat root publication failed: %s",
+                            root_exc,
+                        )
                     # Worker-reported progress evidence: the heartbeat now
                     # carries the inference-loop's own stall verdict, so a
                     # wedged decode loop is visible BEFORE the worker-side
@@ -7600,6 +7727,23 @@ class MLXLocalClient:
                                 action="cleared stale recurrence status after init receipt omitted it",
                             )
                         self._worker_identity = attested_worker_identity
+                        try:
+                            self._attest_mycelial_worker(res)
+                        except (
+                            ImportError,
+                            AttributeError,
+                            RuntimeError,
+                            TypeError,
+                            ValueError,
+                        ) as root_exc:
+                            _record_mlx_degradation(
+                                root_exc,
+                                action=(
+                                    "kept validated worker ready while Mycelium "
+                                    "root attestation failed"
+                                ),
+                                severity="warning",
+                            )
                         raw_steering = res.get("steering_active")
                         if raw_steering is not None:
                             try:
@@ -9807,6 +9951,7 @@ class MLXLocalClient:
         else:
             self._reboot_lock_failures = 0
         try:
+            self._unbind_mycelial_worker()
             if self._process is not None:
                 # K4 accounting: the breaker classifies this death by reason
                 # (deliberate yields never count; young crashes do).
@@ -10133,6 +10278,7 @@ class MLXLocalClient:
                 severity="error",
             )
         try:
+            self._unbind_mycelial_worker()
             for future in pending_futures.values():
                 _cancel_shared_future(future)
             self._pending_generations.clear()

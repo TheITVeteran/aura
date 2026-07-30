@@ -240,6 +240,77 @@ def test_expert_adapter_identity_transition_is_narrow_and_reattested():
         client._accept_worker_identity_transition(tokenizer_swap)
 
 
+def test_validated_worker_identity_owns_generation_bound_mycelial_roots(monkeypatch):
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client.model_path = TEST_MODEL
+    client._worker_identity = {
+        "worker_boot_id": "boot-1",
+        "worker_pid": 4242,
+        "worker_model_path": TEST_MODEL,
+        "worker_source_sha256": "a" * 64,
+    }
+    client._mycelial_root_refs = []
+
+    class MyceliumRecorder:
+        def __init__(self):
+            self.attestations = []
+            self.pulses = []
+            self.unbound = []
+
+        def attest_neural_root(self, source, **kwargs):
+            self.attestations.append((source, kwargs))
+
+        def pulse_neural_root(self, source, **kwargs):
+            self.pulses.append((source, kwargs))
+            return True
+
+        def unbind_neural_roots(self, source, **kwargs):
+            self.unbound.append((source, kwargs))
+            return 1
+
+    mycelium = MyceliumRecorder()
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: mycelium if name == "mycelial_network" else default,
+    )
+
+    client._attest_mycelial_worker({"device": "gpu"})
+    assert [item[0] for item in mycelium.attestations] == [
+        "llm",
+        "worker:boot-1:4242",
+    ]
+    assert all(
+        item[1]["owner_generation"] == "boot-1"
+        for item in mycelium.attestations
+    )
+    assert mycelium.attestations[1][1]["target_id"] == "mlx:gpu"
+
+    client._pulse_mycelial_worker(
+        {
+            "worker_boot_id": "boot-1",
+            "worker_pid": 4242,
+            "active_job": False,
+            "ipc_backlog": 0,
+            "ipc_broken": False,
+        }
+    )
+    assert len(mycelium.pulses) == 2
+    assert all(item[1]["success"] is True for item in mycelium.pulses)
+
+    client._pulse_mycelial_worker(
+        {
+            "worker_boot_id": "retired-worker",
+            "worker_pid": 9999,
+            "ipc_broken": False,
+        }
+    )
+    assert len(mycelium.pulses) == 2
+
+    client._unbind_mycelial_worker()
+    assert len(mycelium.unbound) == 2
+    assert client._mycelial_root_refs == []
+
+
 @pytest.fixture(autouse=True)
 def _isolated_model_lane_controller(monkeypatch, tmp_path):
     """Give synthetic worker processes a hermetic durable-lane identity."""

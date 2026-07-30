@@ -30,6 +30,7 @@ Architecture:
 
 import ast
 import asyncio
+import json
 import logging
 import math
 import os
@@ -263,19 +264,19 @@ class Hypha(BaseModel):
 
 
 class NeuralRoot(Hypha):
-    """A specialized, sub-conductive hypha that binds directly to hardware.
-    Used for pinning critical platform services (like Metal) to the network.
-    """
+    """Owner-attested binding to a worker, service, or hardware endpoint."""
     hardware_id: str = "metal_default"
     pinned: bool = True
-    
-    def subsurface_ping(self) -> bool:
-        """Probe the underlying hardware; network ownership records the pulse."""
-        from core.container import ServiceContainer
-        platform = ServiceContainer.get("platform_root", default=None)
-        if platform:
-            return bool(platform.pulse())
-        return False
+    root_kind: str = "hardware"
+    liveness_contract: str = "on_demand"
+    state: str = "unbound"
+    owner_generation: str = ""
+    attested_identity: Dict[str, Any] = Field(default_factory=dict)
+    last_activity_at: float = 0.0
+    last_probe_at: float = 0.0
+    last_probe_success_at: float = 0.0
+    stale_after_s: float = 30.0
+    last_error: str = ""
 
 
 class RootedFlowHandle:
@@ -489,9 +490,6 @@ class MycelialNetwork:
             MycelialNetwork._initialized = True
             object.__setattr__(self, "_aegis_locked", True)
             self._setup_default_pathways()
-            
-            # Phase 27: Rooting Hardware Voice
-            self.establish_neural_root("voice_presence", hardware_id="macos_say")
             
             logger.info("🍄 [MYCELIUM] Network Online v4.0 (Hardened) — Enterprise Grade.")
 
@@ -1130,60 +1128,261 @@ class MycelialNetwork:
         must carry traffic every five minutes. Physical roots are the only
         current hyphae with an independently maintained heartbeat.
         """
-        return isinstance(hypha, NeuralRoot)
+        return bool(
+            isinstance(hypha, NeuralRoot)
+            and hypha.liveness_contract == "heartbeat"
+            and hypha.state in {"ready_idle", "stale", "error"}
+        )
 
     def establish_neural_root(self, source: str, hardware_id: str = "gpu_metal") -> NeuralRoot:
-        """Builds a direct, pinned connection between a subsystem and hardware."""
+        """Record historical topology without claiming current liveness.
+
+        Live owners must call :meth:`attest_neural_root` after validating the
+        endpoint they actually own. This compatibility method deliberately
+        creates an unbound root.
+        """
         hypha_id = f"{source}->hardware:{hardware_id}"
-        nr = NeuralRoot(
-            name=hypha_id,
-            source=source,
-            target=f"hardware:{hardware_id}",
-            hardware_id=hardware_id,
-            pinned=True,
-            priority=5.0 # Highest priority unblockable root
-        )
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
             if owner is None:
                 raise RuntimeError("retired mycelium instance has no active owner")
             if owner is not self:
                 return owner.establish_neural_root(source, hardware_id=hardware_id)
+            existing = self.hyphae.get(hypha_id)
+            if isinstance(existing, NeuralRoot):
+                return existing.model_copy(deep=True)
+            nr = NeuralRoot(
+                name=hypha_id,
+                source=source,
+                target=f"hardware:{hardware_id}",
+                hardware_id=hardware_id,
+                root_kind="hardware",
+                liveness_contract="on_demand",
+                state="unbound",
+                pinned=True,
+                priority=5.0,
+            )
             self.hyphae[hypha_id] = nr
-            self._neural_roots.append(nr)
+            self._neural_roots = [
+                hypha
+                for hypha in self.hyphae.values()
+                if isinstance(hypha, NeuralRoot)
+            ]
             self._mark_topology_mutated_locked(structure_changed=True)
-        logger.info("🍄 [MYCELIUM] 🌿 Neural Root ESTABLISHED: %s", hypha_id)
+        logger.info("🍄 [MYCELIUM] 🌿 Neural Root topology recorded: %s (unbound)", hypha_id)
         return nr.model_copy(deep=True)
 
-    async def hardware_pulse(self):
-        """Maintain global hardware connectivity for all neural roots."""
-        owner = self._active_owner()
-        if owner is None:
-            return
-        if owner is not self:
-            await owner.hardware_pulse()
-            return
+    @staticmethod
+    def _neural_root_id(source: str, root_kind: str, target_id: str) -> str:
+        source = str(source or "").strip()
+        root_kind = str(root_kind or "").strip().lower()
+        target_id = str(target_id or "").strip()
+        if not source or root_kind not in {"worker", "service", "hardware"} or not target_id:
+            raise ValueError("neural root requires source, supported kind, and target identity")
+        return f"{source}->{root_kind}:{target_id}"
+
+    @staticmethod
+    def _canonical_root_evidence(evidence: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(evidence, dict):
+            raise TypeError("neural root evidence must be a dictionary")
+        try:
+            encoded = json.dumps(
+                evidence,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("neural root evidence must be finite JSON data") from exc
+        if len(encoded.encode("utf-8")) > 16_384:
+            raise ValueError("neural root evidence exceeds 16 KiB")
+        decoded = json.loads(encoded)
+        if not isinstance(decoded, dict):
+            raise ValueError("neural root evidence must decode to an object")
+        return decoded
+
+    def attest_neural_root(
+        self,
+        source: str,
+        *,
+        root_kind: str,
+        target_id: str,
+        owner_generation: str,
+        evidence: Dict[str, Any],
+        liveness_contract: str = "heartbeat",
+        stale_after_s: float = 30.0,
+    ) -> NeuralRoot:
+        """Bind one endpoint to current, owner-supplied runtime evidence."""
+        hypha_id = self._neural_root_id(source, root_kind, target_id)
+        generation = str(owner_generation or "").strip()
+        if not generation:
+            raise ValueError("neural root attestation requires owner generation")
+        contract = str(liveness_contract or "").strip().lower()
+        if contract not in {"heartbeat", "on_demand"}:
+            raise ValueError("unsupported neural root liveness contract")
+        stale_after = float(stale_after_s)
+        if not math.isfinite(stale_after) or stale_after <= 0.0:
+            raise ValueError("neural root stale_after_s must be positive and finite")
+        canonical_evidence = self._canonical_root_evidence(evidence)
+        now = time.monotonic()
+        recovered = False
         with MycelialNetwork._lock:
             owner = self._active_owner_locked()
             if owner is None:
-                return
+                raise RuntimeError("retired mycelium instance has no active owner")
             if owner is not self:
-                neural_roots = ()
+                return owner.attest_neural_root(
+                    source,
+                    root_kind=root_kind,
+                    target_id=target_id,
+                    owner_generation=generation,
+                    evidence=canonical_evidence,
+                    liveness_contract=contract,
+                    stale_after_s=stale_after,
+                )
+            existing = self.hyphae.get(hypha_id)
+            structure_changed = not isinstance(existing, NeuralRoot)
+            if isinstance(existing, NeuralRoot):
+                root = existing
+                recovered = root.state in {"stale", "error"}
             else:
-                neural_roots = tuple(self._neural_roots)
-        if owner is not self:
-            await owner.hardware_pulse()
-            return
-        for nr in neural_roots:
-            try:
-                # Use run_io_bound for the blocking hardware pulse
-                success = await run_io_bound(nr.subsurface_ping)
-                self.pulse_hypha(nr.name, success=success)
-                if not success:
-                    logger.warning("🍄 [MYCELIUM] Neural Root pulse drop: %s", nr.name)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('mycelium', e)
-                logger.error("🍄 [MYCELIUM] Neural Root pulse failure: %s", e)
+                root = NeuralRoot(
+                    name=hypha_id,
+                    source=str(source).strip(),
+                    target=f"{str(root_kind).strip().lower()}:{str(target_id).strip()}",
+                    hardware_id=str(target_id).strip(),
+                    root_kind=str(root_kind).strip().lower(),
+                    priority=5.0,
+                    pinned=True,
+                )
+                self.hyphae[hypha_id] = root
+            root.liveness_contract = contract
+            root.state = "ready_idle"
+            root.owner_generation = generation
+            root.attested_identity = canonical_evidence
+            root.last_activity_at = now
+            root.last_probe_at = now
+            root.last_probe_success_at = now
+            root.last_pulse = now
+            root.stale_after_s = stale_after
+            root.last_error = ""
+            root.active = True
+            root.pulse_count += 1
+            self._neural_roots = [
+                hypha
+                for hypha in self.hyphae.values()
+                if isinstance(hypha, NeuralRoot)
+            ]
+            self._mark_topology_mutated_locked(structure_changed=structure_changed)
+        if recovered:
+            logger.info(
+                "🍄 [MYCELIUM] Neural Root recovered from owner attestation: %s",
+                hypha_id,
+            )
+        elif structure_changed:
+            logger.info(
+                "🍄 [MYCELIUM] 🌿 Neural Root owner-attested: %s",
+                hypha_id,
+            )
+        return root.model_copy(deep=True)
+
+    def pulse_neural_root(
+        self,
+        source: str,
+        *,
+        root_kind: str,
+        target_id: str,
+        owner_generation: str,
+        success: bool = True,
+        evidence: Dict[str, Any] | None = None,
+    ) -> bool:
+        """Refresh only the root owned by the matching live generation."""
+        hypha_id = self._neural_root_id(source, root_kind, target_id)
+        now = time.monotonic()
+        recovered = False
+        failed = False
+        with MycelialNetwork._lock:
+            owner = self._active_owner_locked()
+            if owner is None:
+                return False
+            if owner is not self:
+                return owner.pulse_neural_root(
+                    source,
+                    root_kind=root_kind,
+                    target_id=target_id,
+                    owner_generation=owner_generation,
+                    success=success,
+                    evidence=evidence,
+                )
+            root = self.hyphae.get(hypha_id)
+            if (
+                not isinstance(root, NeuralRoot)
+                or root.owner_generation != str(owner_generation or "").strip()
+            ):
+                return False
+            previous_state = root.state
+            root.last_activity_at = now
+            root.last_probe_at = now
+            root.last_pulse = now
+            root.pulse_count += 1
+            if evidence:
+                root.attested_identity.update(
+                    self._canonical_root_evidence(evidence)
+                )
+            if success:
+                root.last_probe_success_at = now
+                root.last_error = ""
+                root.state = "ready_idle"
+                root.active = True
+                recovered = previous_state in {"stale", "error"}
+            else:
+                root.state = "error"
+                root.active = False
+                root.last_error = str((evidence or {}).get("error") or "owner probe failed")
+                failed = previous_state != "error"
+            self._mark_topology_mutated_locked()
+        if recovered:
+            logger.info("🍄 [MYCELIUM] Neural Root recovered: %s", hypha_id)
+        elif failed:
+            logger.warning(
+                "🍄 [MYCELIUM] Neural Root owner probe failed: %s (%s)",
+                hypha_id,
+                root.last_error,
+            )
+        return True
+
+    def unbind_neural_roots(self, source: str, *, owner_generation: str = "") -> int:
+        """Invalidate current evidence without deleting historical topology."""
+        changed = 0
+        with MycelialNetwork._lock:
+            owner = self._active_owner_locked()
+            if owner is None:
+                return 0
+            if owner is not self:
+                return owner.unbind_neural_roots(
+                    source,
+                    owner_generation=owner_generation,
+                )
+            generation = str(owner_generation or "").strip()
+            for root in self._neural_roots:
+                if root.source != str(source).strip():
+                    continue
+                if generation and root.owner_generation != generation:
+                    continue
+                if root.state == "unbound":
+                    continue
+                root.state = "unbound"
+                root.active = False
+                root.owner_generation = ""
+                root.last_error = "owner_generation_retired"
+                changed += 1
+            if changed:
+                self._mark_topology_mutated_locked()
+        return changed
+
+    async def hardware_pulse(self):
+        """Compatibility hook: evaluate owner heartbeats; never invent one."""
+        await self._pulse_once()
 
     def reinforce(self, pathway_id: str, success: bool):
         """Physarum-inspired conductivity update after skill execution.
@@ -2292,25 +2491,35 @@ class MycelialNetwork:
                     reroute = owner
                 else:
                     reroute = None
-                heartbeat_changed = False
+                root_state_changed = False
                 if reroute is not None:
                     weak_pathways = []
                 else:
                     for name, hypha in self.hyphae.items():
                         if (
-                            now - hypha.last_pulse > 300
-                            and hypha.priority >= 1.0
-                            and self._should_monitor_hypha(hypha)
+                            self._should_monitor_hypha(hypha)
+                            and isinstance(hypha, NeuralRoot)
+                            and hypha.state == "ready_idle"
+                            and (
+                                hypha.last_probe_success_at <= 0.0
+                                or now - hypha.last_probe_success_at > hypha.stale_after_s
+                            )
                         ):
-                            last_alert = self._hypha_alert_times.get(name, 0.0)
-                            if now - last_alert > 300:
-                                logger.warning(
-                                    "🍄 [MYCELIUM] Hypha inactive: %s. Auto-pulsing.",
-                                    name,
-                                )
-                                self._hypha_alert_times[name] = now
-                            hypha.refresh_heartbeat()
-                            heartbeat_changed = True
+                            hypha.state = "stale"
+                            hypha.active = False
+                            hypha.last_error = "owner_heartbeat_stale"
+                            logger.warning(
+                                "🍄 [MYCELIUM] Neural Root stale: %s "
+                                "(last verified %.1fs ago; contract %.1fs).",
+                                name,
+                                (
+                                    now - hypha.last_probe_success_at
+                                    if hypha.last_probe_success_at > 0.0
+                                    else float("inf")
+                                ),
+                                hypha.stale_after_s,
+                            )
+                            root_state_changed = True
 
                     weak_pathways = [
                         (pathway_id, pathway.confidence)
@@ -2318,7 +2527,7 @@ class MycelialNetwork:
                         if pathway.is_weak
                         and pathway.hit_count + pathway.miss_count > 5
                     ]
-                    if heartbeat_changed:
+                    if root_state_changed:
                         self._mark_topology_mutated_locked()
             if reroute is not None:
                 await reroute._pulse_once()
@@ -2534,6 +2743,20 @@ class MycelialNetwork:
         hyphae: Dict[str, Dict[str, Any]] = {}
         for key, hypha in self.hyphae.items():
             data = hypha.model_dump()
+            if isinstance(hypha, NeuralRoot):
+                data.update(
+                    {
+                        "active": False,
+                        "state": "unbound",
+                        "owner_generation": "",
+                        "last_activity_at": 0.0,
+                        "last_probe_at": 0.0,
+                        "last_probe_success_at": 0.0,
+                        "last_error": (
+                            "persisted_historical_topology_requires_owner_attestation"
+                        ),
+                    }
+                )
             created_at = self._vault_number(
                 hypha.created_at,
                 f"live hypha creation timestamp: {key}",
@@ -2739,7 +2962,9 @@ class MycelialNetwork:
             "name", "source", "target", "priority", "strength", "created_age_s",
             "last_pulse_age_s", "pulse_count", "active", "is_physical", "source_file",
             "target_file", "color", "description", "size", "trace",
-            "hardware_id", "pinned",
+            "hardware_id", "pinned", "root_kind", "liveness_contract", "state",
+            "owner_generation", "attested_identity", "last_activity_at",
+            "last_probe_at", "last_probe_success_at", "stale_after_s", "last_error",
         }
         restored: Dict[str, Hypha] = {}
         for key, value in raw.items():
@@ -2812,8 +3037,52 @@ class MycelialNetwork:
                     raise ValueError(f"vault neural-root hardware id is malformed: {key}")
                 if not isinstance(fields.get("pinned"), bool):
                     raise ValueError(f"vault neural-root pinned flag is malformed: {key}")
-                if fields["target"] != f"hardware:{hardware_id}":
+                root_kind = fields.get("root_kind", "hardware")
+                if root_kind not in {"worker", "service", "hardware"}:
+                    raise ValueError(f"vault neural-root kind is malformed: {key}")
+                if fields["target"] != f"{root_kind}:{hardware_id}":
                     raise ValueError(f"vault neural-root target is malformed: {key}")
+                contract = fields.get("liveness_contract", "on_demand")
+                if contract not in {"heartbeat", "on_demand"}:
+                    raise ValueError(f"vault neural-root contract is malformed: {key}")
+                identity = fields.get("attested_identity", {})
+                if not isinstance(identity, dict):
+                    raise ValueError(f"vault neural-root identity is malformed: {key}")
+                identity = cls._canonical_root_evidence(identity)
+                for string_field in ("state", "owner_generation", "last_error"):
+                    if not isinstance(fields.get(string_field, ""), str):
+                        raise ValueError(
+                            f"vault neural-root {string_field} is malformed: {key}"
+                        )
+                stale_after = cls._vault_number(
+                    fields.get("stale_after_s", 30.0),
+                    f"vault neural-root stale interval: {key}",
+                    minimum=0.001,
+                )
+                for timestamp_name in (
+                    "last_activity_at",
+                    "last_probe_at",
+                    "last_probe_success_at",
+                ):
+                    cls._vault_number(
+                        fields.get(timestamp_name, 0.0),
+                        f"vault neural-root {timestamp_name}: {key}",
+                        minimum=0.0,
+                    )
+                # Operational evidence belongs to the process generation that
+                # produced it. Preserve identity as history, but require the
+                # current owner to re-attest before this root can be live.
+                fields["root_kind"] = root_kind
+                fields["liveness_contract"] = contract
+                fields["state"] = "unbound"
+                fields["owner_generation"] = ""
+                fields["attested_identity"] = dict(identity)
+                fields["last_activity_at"] = 0.0
+                fields["last_probe_at"] = 0.0
+                fields["last_probe_success_at"] = 0.0
+                fields["stale_after_s"] = stale_after
+                fields["last_error"] = "restored_historical_topology_requires_owner_attestation"
+                fields["active"] = False
             model = NeuralRoot if is_neural_root else Hypha
             restored[key] = model(**fields)
         return restored

@@ -2943,10 +2943,19 @@ class HeartbeatThread(threading.Thread):
     # evidence, not just prove the process exists.
     LOOP_STALL_REPORT_S = 30.0
 
-    def __init__(self, writer: IPCWriterThread, watchdog: "JobWatchdog | None" = None):
+    def __init__(
+        self,
+        writer: IPCWriterThread,
+        watchdog: "JobWatchdog | None" = None,
+        *,
+        worker_boot_id: str,
+        worker_pid: int,
+    ):
         super().__init__(name="MLX-Heartbeat", daemon=True)
         self.writer = writer
         self.watchdog = watchdog
+        self.worker_boot_id = str(worker_boot_id)
+        self.worker_pid = int(worker_pid)
         self._stop_event = threading.Event()
         self._parent_pid = os.getppid()
 
@@ -2971,6 +2980,8 @@ class HeartbeatThread(threading.Thread):
                 "status": "heartbeat",
                 "timestamp": time.time(),
                 "type": "mlx_worker",
+                "worker_boot_id": self.worker_boot_id,
+                "worker_pid": self.worker_pid,
             }
             # Inference-loop progress evidence: a wedged decode loop must not
             # keep advertising unqualified worker liveness (a heartbeat that
@@ -4300,7 +4311,12 @@ def _mlx_worker_loop(
     watchdog = JobWatchdog(timeout=360.0, writer=ipc_writer)  # Align with the protected foreground solver envelope.
     watchdog.start()
 
-    heartbeat = HeartbeatThread(ipc_writer, watchdog=watchdog)
+    heartbeat = HeartbeatThread(
+        ipc_writer,
+        watchdog=watchdog,
+        worker_boot_id=worker_boot_id,
+        worker_pid=os.getpid(),
+    )
     heartbeat.start()
 
     memory_sentinel = WorkerMemorySentinel(

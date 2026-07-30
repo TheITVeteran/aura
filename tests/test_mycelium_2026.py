@@ -11,6 +11,8 @@ import pytest
 
 from core.mycelium import HardwiredPathway, Hypha, MycelialNetwork
 
+_TEST_ROOT_KEY = "root-test->hardware:test-device"
+
 
 @pytest.fixture
 def network():
@@ -18,6 +20,55 @@ def network():
     MycelialNetwork._instance = None
     MycelialNetwork._initialized = False
     return MycelialNetwork()
+
+
+def _attest_test_root(
+    network: MycelialNetwork,
+    *,
+    source: str = "root-test",
+    target_id: str = "test-device",
+    generation: str = "test-generation",
+    contract: str = "heartbeat",
+    stale_after_s: float = 30.0,
+):
+    return network.attest_neural_root(
+        source,
+        root_kind="hardware",
+        target_id=target_id,
+        owner_generation=generation,
+        evidence={"test": True},
+        liveness_contract=contract,
+        stale_after_s=stale_after_s,
+    )
+
+
+def test_construction_does_not_invent_platform_roots(network):
+    assert network._neural_roots == []
+    assert not [
+        name
+        for name in network.hyphae
+        if name.startswith("voice_presence->") or name.startswith("llm->hardware:")
+    ]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        {"not_finite": float("nan")},
+        {"not_json": object()},
+        {"too_large": "x" * 20_000},
+    ),
+)
+def test_root_attestation_rejects_unpersistable_evidence(network, evidence):
+    with pytest.raises(ValueError, match="neural root evidence"):
+        network.attest_neural_root(
+            "llm",
+            root_kind="worker",
+            target_id="worker-1",
+            owner_generation="generation-1",
+            evidence=evidence,
+        )
+
 
 def test_singleton_safety():
     net1 = MycelialNetwork()
@@ -80,7 +131,14 @@ def test_logical_hyphae_do_not_invent_a_continuous_liveness_contract(network):
     h.is_physical = True
     assert network._should_monitor_hypha(h) is False
 
-    root = network.establish_neural_root("monitor-test", hardware_id="test-device")
+    root = network.attest_neural_root(
+        "monitor-test",
+        root_kind="hardware",
+        target_id="test-device",
+        owner_generation="generation-1",
+        evidence={"probe": "ok"},
+        liveness_contract="heartbeat",
+    )
     assert network._should_monitor_hypha(root) is True
 
 
@@ -758,6 +816,7 @@ async def test_vault_rebases_monotonic_ages_instead_of_persisting_process_clock(
     tmp_path,
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    _attest_test_root(network)
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
 
@@ -769,7 +828,7 @@ async def test_vault_rebases_monotonic_ages_instead_of_persisting_process_clock(
         assert row is not None
         payload = json.loads(row[0])
         pathway = payload["pathways"]["direct_web_search"]
-        root = payload["hyphae"]["voice_presence->hardware:macos_say"]
+        root = payload["hyphae"][_TEST_ROOT_KEY]
         assert "last_matched" not in pathway
         assert "created_at" not in root
         assert "last_pulse" not in root
@@ -788,10 +847,13 @@ async def test_vault_rebases_monotonic_ages_instead_of_persisting_process_clock(
 
     assert await MycelialNetwork.restore_from_vault() is True
     restored_at = time.monotonic()
-    restored_root = network.get_hypha("voice_presence", "hardware:macos_say")
+    restored_root = network.get_hypha("root-test", "hardware:test-device")
     assert restored_root is not None
     assert restored_at - restored_root.created_at == pytest.approx(90.0, abs=1.0)
     assert restored_at - restored_root.last_pulse == pytest.approx(45.0, abs=1.0)
+    assert restored_root.state == "unbound"
+    assert restored_root.owner_generation == ""
+    assert restored_root.last_probe_success_at == 0.0
     assert (
         restored_at - network.pathways["direct_web_search"].last_matched
         == pytest.approx(30.0, abs=1.0)
@@ -1246,21 +1308,49 @@ async def test_rooted_flow_failure_rebinds_to_replacement_owner(network):
 
 
 @pytest.mark.asyncio
-async def test_maintenance_heartbeat_advances_topology_revision(network):
-    network.establish_neural_root("heartbeat", hardware_id="revision")
-    network.pulse_hypha("heartbeat", "hardware:revision", success=True)
+async def test_maintenance_marks_stale_without_fabricating_recovery(network):
+    network.attest_neural_root(
+        "heartbeat",
+        root_kind="hardware",
+        target_id="revision",
+        owner_generation="generation-1",
+        evidence={"probe": "ok"},
+        liveness_contract="heartbeat",
+        stale_after_s=300.0,
+    )
     with MycelialNetwork._lock:
-        network.hyphae["heartbeat->hardware:revision"].last_pulse = time.monotonic() - 301.0
+        network.hyphae["heartbeat->hardware:revision"].last_probe_success_at = (
+            time.monotonic() - 301.0
+        )
         before_revision = network._topology_revision
         before_structure_revision = network._topology_structure_revision
 
     await network._pulse_once()
 
-    refreshed = network.get_hypha("heartbeat", "hardware:revision")
-    assert refreshed is not None
-    assert refreshed.last_pulse > time.monotonic() - 5.0
+    stale = network.get_hypha("heartbeat", "hardware:revision")
+    assert stale is not None
+    assert stale.state == "stale"
+    assert stale.last_probe_success_at < time.monotonic() - 300.0
     assert network._topology_revision == before_revision + 1
     assert network._topology_structure_revision == before_structure_revision
+
+    assert network.pulse_neural_root(
+        "heartbeat",
+        root_kind="hardware",
+        target_id="revision",
+        owner_generation="wrong-generation",
+    ) is False
+    assert network.get_hypha("heartbeat", "hardware:revision").state == "stale"
+
+    assert network.pulse_neural_root(
+        "heartbeat",
+        root_kind="hardware",
+        target_id="revision",
+        owner_generation="generation-1",
+    ) is True
+    recovered = network.get_hypha("heartbeat", "hardware:revision")
+    assert recovered.state == "ready_idle"
+    assert recovered.last_probe_success_at > time.monotonic() - 5.0
 
 
 def test_route_cache_token_changes_only_for_structural_topology_mutation(network):
@@ -1639,6 +1729,7 @@ async def test_vault_serialization_rejects_nonfinite_if_decoder_is_bypassed(
     network, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    _attest_test_root(network)
     with MycelialNetwork._lock:
         next(iter(network.hyphae.values())).strength = float("nan")
         network._mark_topology_mutated_locked()
@@ -1670,8 +1761,9 @@ async def test_vault_sync_rejects_invalid_live_event_timestamps(
     network, monkeypatch, tmp_path, surface, value_kind
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    _attest_test_root(network)
     with MycelialNetwork._lock:
-        root = network.hyphae["voice_presence->hardware:macos_say"]
+        root = network.hyphae[_TEST_ROOT_KEY]
         pathway = network.pathways["direct_web_search"]
         if value_kind == "nan":
             value = float("nan")
@@ -1721,6 +1813,7 @@ async def test_vault_rejects_nonfinite_negative_and_cross_surface_corruption(
     network, monkeypatch, tmp_path, corruption
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    _attest_test_root(network)
     core_dir = tmp_path / "core"
     core_dir.mkdir()
     (core_dir / "alpha.py").write_text("import core.beta\n", encoding="utf-8")
@@ -1736,11 +1829,11 @@ async def test_vault_rejects_nonfinite_negative_and_cross_surface_corruption(
         assert row is not None
         payload = json.loads(row[0])
         if corruption == "nan_strength":
-            payload["hyphae"]["voice_presence->hardware:macos_say"]["strength"] = float("nan")
+            payload["hyphae"][_TEST_ROOT_KEY]["strength"] = float("nan")
         elif corruption == "infinite_priority":
             payload["pathways"]["direct_web_search"]["priority"] = float("inf")
         elif corruption == "negative_pulse_count":
-            payload["hyphae"]["voice_presence->hardware:macos_say"]["pulse_count"] = -1
+            payload["hyphae"][_TEST_ROOT_KEY]["pulse_count"] = -1
         elif corruption == "centrality_mismatch":
             payload["centrality"]["core.beta"] = 99
             payload["mapped_files"]["core.beta"]["centrality"] = 99
@@ -1763,11 +1856,11 @@ async def test_vault_rejects_nonfinite_negative_and_cross_surface_corruption(
                 payload["captured_at_unix"] + 2.0
             )
         elif corruption == "nan_last_pulse_age":
-            payload["hyphae"]["voice_presence->hardware:macos_say"][
+            payload["hyphae"][_TEST_ROOT_KEY][
                 "last_pulse_age_s"
             ] = float("nan")
         elif corruption == "hypha_reversed_chronology":
-            root = payload["hyphae"]["voice_presence->hardware:macos_say"]
+            root = payload["hyphae"][_TEST_ROOT_KEY]
             root["created_age_s"] = 1.0
             root["last_pulse_age_s"] = 5.0
         elif corruption == "pathway_reversed_chronology":
@@ -1792,6 +1885,7 @@ async def test_vault_restored_ages_include_time_elapsed_since_capture(
     network, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
+    _attest_test_root(network)
     assert await network.vault_sync() is True
     vault_path = tmp_path / "data" / "mycelium_vault.db"
     elapsed_offline = 86_400.0
@@ -1813,7 +1907,7 @@ async def test_vault_restored_ages_include_time_elapsed_since_capture(
             payload["pathways"]["direct_web_search"]["created_at"],
             payload["captured_at_unix"] - 31.0,
         )
-        root = payload["hyphae"]["voice_presence->hardware:macos_say"]
+        root = payload["hyphae"][_TEST_ROOT_KEY]
         root["created_age_s"] = max(float(root["created_age_s"]), 46.0)
         root["last_pulse_age_s"] = 45.0
         connection.execute(
@@ -1825,7 +1919,7 @@ async def test_vault_restored_ages_include_time_elapsed_since_capture(
     assert await MycelialNetwork.restore_from_vault() is True
     restored_at = time.monotonic()
     pathway_age = restored_at - network.pathways["direct_web_search"].last_matched
-    root = network.get_hypha("voice_presence", "hardware:macos_say")
+    root = network.get_hypha("root-test", "hardware:test-device")
     assert root is not None
     root_age = restored_at - root.last_pulse
     assert pathway_age == pytest.approx(elapsed_offline + 30.0, abs=2.0)
