@@ -77,6 +77,23 @@ def test_text_genuinely_lost_by_shaping_is_still_recorded(engine) -> None:
     assert rec.called, "losing a non-empty reply is a real degradation"
 
 
+@pytest.mark.parametrize(
+    "internal_text",
+    [
+        "Goal: audit one runtime bottleneck",
+        "MOOD: focused",
+        "[Thought]",
+        "### INTERNAL STATE\nfocused",
+    ],
+)
+def test_internal_artifacts_bypass_user_reply_shaping(engine, internal_text: str) -> None:
+    with patch("core.brain.personality_engine._record_personality_degradation") as rec:
+        result = engine.filter_response(internal_text, user_facing=False)
+
+    assert result == internal_text
+    assert not rec.called
+
+
 def test_the_record_says_which_stage_lost_the_text(engine) -> None:
     with patch("core.synthesis.cure_personality_leak", return_value=""), patch(
         "core.brain.personality_engine._record_personality_degradation"

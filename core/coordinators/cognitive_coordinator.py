@@ -207,7 +207,8 @@ class CognitiveCoordinator:
                 tracker=task_tracker,
                 name="cognitive_coordinator.voice_tts",
             )
-        response = orch._filter_output(response)
+        if origin in ("user", "voice", "admin", "impulse"):
+            response = orch._filter_output(response)
         return response
 
     def check_reflexes(self, message: str) -> str | None:

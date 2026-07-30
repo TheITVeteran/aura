@@ -34,8 +34,9 @@ def test_fail_closed_degradation_records_before_optional_raise(monkeypatch):
 
     health = registry.get("event_bus")
     assert health is not None
-    assert health.status == "failed_closed"
-    assert get_degradation_tracker().count("event_bus", "critical") == 1
+    assert health.status == "degraded"
+    assert get_degradation_tracker().count("event_bus", "critical") == 0
+    assert get_degradation_tracker().count("event_bus", "degraded") == 1
 
     with pytest.raises(RuntimeError, match="CRITICAL SERVICE FAILURE"):
         record_degradation(
@@ -44,10 +45,10 @@ def test_fail_closed_degradation_records_before_optional_raise(monkeypatch):
             severity="degraded",
             action="fail closed after recording",
         )
-    assert get_degradation_tracker().count("event_bus", "critical") == 2
+    assert get_degradation_tracker().count("event_bus", "critical") == 1
 
 
-def test_fail_closed_warning_degradation_still_marks_failed_closed(monkeypatch):
+def test_expected_background_warning_opt_out_keeps_service_healthy(monkeypatch):
     from core.runtime.errors import get_degradation_tracker, record_degradation
 
     registry = _install_fail_closed_event_bus(monkeypatch)
@@ -63,8 +64,9 @@ def test_fail_closed_warning_degradation_still_marks_failed_closed(monkeypatch):
 
     health = registry.get("event_bus")
     assert health is not None
-    assert health.status == "failed_closed"
-    assert get_degradation_tracker().count("event_bus", "critical") == 1
+    assert health.status == "healthy"
+    assert get_degradation_tracker().count("event_bus", "critical") == 0
+    assert get_degradation_tracker().count("event_bus", "debug") == 1
 
 
 def test_event_bus_records_degraded_health_without_callback_raise(monkeypatch):

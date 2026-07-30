@@ -310,8 +310,10 @@ class ResponseProcessingMixin:
                 name="voice_synthesis",
             )
 
-        # Final Architectural Personality Lock
-        response = self._filter_output(response)
+        # Final Architectural Personality Lock applies only to speech. Internal
+        # artifacts use structural headings that user-reply shaping removes.
+        if origin in ("user", "voice", "admin", "impulse"):
+            response = self._filter_output(response)
 
         # ── SUBSTRATE VOICE: Execute follow-ups and queued messages ──────
         # The SubstrateVoiceEngine may have decided on:

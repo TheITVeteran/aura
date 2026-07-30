@@ -34,7 +34,7 @@ import threading
 import time
 import traceback
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -495,7 +495,7 @@ def record_degradation(
     # threatened by her own correct backpressure. These stay VISIBLE
     # (recorded, counted, narratable) but are demoted out of the
     # fault/escalation path, exactly like the bare-timeout demotion above.
-    _BACKPRESSURE_MARKERS = (
+    backpressure_markers = (
         "warmup_deferred",
         "warmup_backoff",
         "model_load_admission_denied",
@@ -521,7 +521,7 @@ def record_degradation(
     # regression for exactly that case is what caught the first, looser
     # version of this rule. A timeout that was handled is the one shape
     # where the error itself carries no finding.
-    _HANDLED_FALLBACK_MARKERS = (
+    handled_fallback_markers = (
         "fell back",
         "fall back",
         "fell through",
@@ -545,7 +545,7 @@ def record_degradation(
     # also encode it in an exception message it does not control.
     _is_admission_backpressure = any(
         marker in _error_text or marker in _action_text
-        for marker in _BACKPRESSURE_MARKERS
+        for marker in backpressure_markers
     )
     if _is_admission_backpressure and severity in ("degraded", "critical"):
         severity = "warning"
@@ -553,7 +553,7 @@ def record_degradation(
         severity == "degraded"
         and _is_timeout
         and any(
-            marker in _action_text.lower() for marker in _HANDLED_FALLBACK_MARKERS
+            marker in _action_text.lower() for marker in handled_fallback_markers
         )
     ):
         # Degraded-but-handled. Still recorded, still visible, but it is not an
@@ -565,7 +565,11 @@ def record_degradation(
     failure_policy_error = ""
     try:
         from core.runtime.mode import AuraMode, get_mode
-        if not _shutting_down and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
+        if (
+            enforce_failure_policy
+            and not _shutting_down
+            and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE)
+        ):
             from core.runtime.service_registry import get_service_failure_policy
 
             if get_service_failure_policy(subsystem) == "fail-closed" and not _is_timeout:

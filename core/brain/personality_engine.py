@@ -912,13 +912,19 @@ class PersonalityEngine:
         self.emotions["curiosity"].trigger(12 * difficulty, "interesting_challenge")
         self.emotions["frustration"].trigger(8 * difficulty, "difficult_task")
     
-    def filter_response(self, text: str) -> str:
+    def filter_response(self, text: str, *, user_facing: bool = True) -> str:
         """Final output filter for personality integrity.
         
         Uses synthesis layer to scrub robotic leaks and enforce Aura's voice, then
         applies the Data honesty floor so personality shaping cannot preserve
         deceptive overclaiming.
         """
+        # Internal artifacts use headings such as "Goal:" and "Internal state:"
+        # that the user-reply scrubber deliberately removes. They are evidence,
+        # not replies, so preserve them byte-for-byte.
+        if not user_facing:
+            return text
+
         # Nothing to shape is not a failure to shape. Blank text in means blank
         # text out of both the shaper and the honesty guard, and that path
         # recorded a degradation on a module that is fail-closed — so every

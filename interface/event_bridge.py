@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -29,7 +29,7 @@ _EVENT_BRIDGE_RECOVERABLE_ERRORS = (
 _SPOKEN_WS_TYPES = frozenset({"aura_message", "chat_response"})
 
 
-def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
+def _suppress_internal_leak(ws_msg: dict[str, Any]) -> bool:
     """Drop an unsolicited message that is internal machinery, not speech.
 
     The chat route runs the reliability gate against the user's question.
@@ -87,7 +87,7 @@ def _suppress_internal_leak(ws_msg: Dict[str, Any]) -> bool:
         return False
 
 
-def _complete_spoken_tail(ws_msg: Dict[str, Any]) -> None:
+def _complete_spoken_tail(ws_msg: dict[str, Any]) -> None:
     """Finish a sentence that a token budget cut off, in place.
 
     The chat route repairs a mid-clause cutoff before serving. The kernel's
@@ -160,6 +160,40 @@ async def broadcast_telemetry(data: dict):
     await ws_manager.broadcast(data)
 
 
+def _shape_user_facing_ws_message(
+    ws_msg: dict[str, Any],
+    *,
+    is_gui_proxy: bool = False,
+) -> dict[str, Any]:
+    """Shape complete spoken replies without mutating internal event payloads."""
+
+    if (
+        is_gui_proxy
+        or not isinstance(ws_msg, dict)
+        or str(ws_msg.get("type") or "") not in _SPOKEN_WS_TYPES
+    ):
+        return ws_msg
+    shaped = dict(ws_msg)
+    try:
+        from core.brain.personality_engine import get_personality_engine
+
+        personality = get_personality_engine()
+        for key in ("message", "content", "text"):
+            value = shaped.get(key)
+            if isinstance(value, str) and value:
+                shaped[key] = personality.filter_response(value, user_facing=True)
+    except _EVENT_BRIDGE_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "event_bridge",
+            exc,
+            severity="warning",
+            action="broadcast the unshaped spoken reply after personality filtering failed",
+        )
+        logger.debug("Personality filtering failed: %s", exc)
+        return ws_msg
+    return shaped
+
+
 async def run_event_bridge(is_gui_proxy: bool = False) -> None:
     """Bridge EventBus events to the WebSocket broadcast bus.
 
@@ -197,19 +231,6 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                 "EventBus Redis connection missing – HUD may be limited to local events."
             )
 
-        def _filter_msg(text):
-            if is_gui_proxy:
-                return text
-            if not text or not isinstance(text, str):
-                return text
-            try:
-                from core.brain.personality_engine import get_personality_engine
-                return get_personality_engine().filter_response(text)
-            except _EVENT_BRIDGE_RECOVERABLE_ERRORS as e:
-                record_degradation('event_bridge', e)
-                logger.debug("Personality filtering failed: %s", e)
-                return text
-
         while not is_shutdown_requested():
             _priority, _seq, event = await q.get()
             try:
@@ -221,14 +242,10 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                 if ws_manager.count() == 0 and broadcast_bus.subscriber_count() <= 1:
                     continue
 
-                # Apply personality filtering to any broadcasted text
                 if isinstance(data, dict):
                     data = dict(data)
-                    for key in ["content", "message", "text", "thought", "chunk"]:
-                        if key in data:
-                            data[key] = _filter_msg(data[key])
                 else:
-                    data = {"content": _filter_msg(str(data))}
+                    data = {"content": str(data)}
 
                 ws_msg = _map_event_to_ws_message(
                     topic, data,
@@ -245,6 +262,10 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                 if ws_msg is not None and _suppress_internal_leak(ws_msg):
                     ws_msg = None
                 if ws_msg is not None:
+                    ws_msg = _shape_user_facing_ws_message(
+                        ws_msg,
+                        is_gui_proxy=is_gui_proxy,
+                    )
                     p_val = 10
                     msg_type = ws_msg.get("type", "")
                     if msg_type in ("aura_message", "chat_response", "chat_stream_chunk"):
@@ -256,7 +277,7 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
                         await asyncio.wait_for(
                             broadcast_bus.publish(ws_msg, priority=p_val), timeout=2.0
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(
                             "EventBridge: dropped %s event (broadcast bus timeout)",
                             ws_msg.get("type", "unknown"),
@@ -294,16 +315,16 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
 
 def _map_event_to_ws_message(
     topic: str,
-    data: Dict[str, Any],
+    data: dict[str, Any],
     **schema_classes,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Convert an EventBus event into a WebSocket-deliverable message dict."""
-    CognitiveThoughtPayload = schema_classes["CognitiveThoughtPayload"]
-    WebsocketMessage = schema_classes["WebsocketMessage"]
-    ChatStreamChunkPayload = schema_classes["ChatStreamChunkPayload"]
-    ChatThoughtChunkPayload = schema_classes["ChatThoughtChunkPayload"]
-    AuraMessagePayload = schema_classes["AuraMessagePayload"]
-    ActionResultPayload = schema_classes["ActionResultPayload"]
+    cognitive_thought_payload_cls = schema_classes["CognitiveThoughtPayload"]
+    websocket_message_cls = schema_classes["WebsocketMessage"]
+    chat_stream_chunk_payload_cls = schema_classes["ChatStreamChunkPayload"]
+    chat_thought_chunk_payload_cls = schema_classes["ChatThoughtChunkPayload"]
+    aura_message_payload_cls = schema_classes["AuraMessagePayload"]
+    action_result_payload_cls = schema_classes["ActionResultPayload"]
 
     def _model_dict(instance):
         model_dump = getattr(instance, "model_dump", None)
@@ -327,7 +348,7 @@ def _map_event_to_ws_message(
                 "type",
             }
         }
-        return _model_dict(CognitiveThoughtPayload(
+        return _model_dict(cognitive_thought_payload_cls(
             type="thought",
             content=data.get("content", data.get("message", "...")),
             urgency=data.get("urgency", "NORMAL"),
@@ -342,30 +363,30 @@ def _map_event_to_ws_message(
             enrich_telemetry(data)
             return data
         elif msg_type == "chat_stream_chunk":
-            return _model_dict(ChatStreamChunkPayload(**data))
+            return _model_dict(chat_stream_chunk_payload_cls(**data))
         elif msg_type == "chat_thought_chunk":
-            return _model_dict(ChatThoughtChunkPayload(**data))
+            return _model_dict(chat_thought_chunk_payload_cls(**data))
         elif msg_type in ("aura_message", "chat_response"):
             safe_data = data.copy() if isinstance(data, dict) else {"message": str(data)}
             if "content" in safe_data and "message" not in safe_data:
                 safe_data["message"] = safe_data.pop("content")
-            return _model_dict(AuraMessagePayload(**safe_data))
+            return _model_dict(aura_message_payload_cls(**safe_data))
         elif msg_type == "action_result":
-            return _model_dict(ActionResultPayload(**data))
+            return _model_dict(action_result_payload_cls(**data))
         else:
             safe_data = data.copy() if isinstance(data, dict) else {"content": str(data)}
             safe_data.pop("type", None)
-            return _model_dict(WebsocketMessage(type=msg_type, **safe_data))
+            return _model_dict(websocket_message_cls(type=msg_type, **safe_data))
 
     # Topic-level schema mapping
     if topic == "chat_stream_chunk":
-        return _model_dict(ChatStreamChunkPayload(**data))
+        return _model_dict(chat_stream_chunk_payload_cls(**data))
     elif topic in ("aura_message", "chat_response"):
         safe_data = data.copy() if isinstance(data, dict) else {"message": str(data)}
         if "content" in safe_data and "message" not in safe_data:
             safe_data["message"] = safe_data.pop("content")
-        return _model_dict(AuraMessagePayload(**safe_data))
+        return _model_dict(aura_message_payload_cls(**safe_data))
     else:
         safe_data = data.copy() if isinstance(data, dict) else {"content": str(data)}
         safe_data.pop("type", None)
-        return _model_dict(WebsocketMessage(type=topic, **safe_data))
+        return _model_dict(websocket_message_cls(type=topic, **safe_data))
