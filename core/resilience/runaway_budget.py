@@ -120,6 +120,11 @@ class RunawayPolicy:
     # a runaway even if mitigation has not yet had its three chances — because
     # by then it will be too late to matter.
     projection_horizon_s: float = 3600.0
+    # The most recent fraction of the window, used to ask whether the growth is
+    # STILL happening. See _recent_slope_per_hour for why this has to exist.
+    confirm_fraction: float = 1.0 / 3.0
+    # Below this many samples in the tail there is nothing to confirm against.
+    confirm_min_samples: int = 3
 
     @classmethod
     def for_memory_mb(cls) -> RunawayPolicy:
@@ -136,6 +141,8 @@ class RunawayPolicy:
             ineffective_after_mitigations=_env_int("AURA_RUNAWAY_MITIGATIONS", 3),
             ceiling=_env_float("AURA_RUNAWAY_CEILING_MB", total_mb * 0.75),
             projection_horizon_s=_env_float("AURA_RUNAWAY_HORIZON_S", 3600.0),
+            confirm_fraction=_env_float("AURA_RUNAWAY_CONFIRM_FRACTION", 1.0 / 3.0),
+            confirm_min_samples=_env_int("AURA_RUNAWAY_CONFIRM_SAMPLES", 3),
         )
 
 
@@ -214,15 +221,37 @@ class RunawayDetector:
                 f"slope {slope_per_hour:.1f}/h below {self.policy.min_slope_per_hour:.1f}/h",
             )
 
-        # Growth is real. Two independent ways it becomes a refusal.
+        # Growth is real over the window. But "is it still happening" is a
+        # different question, and only the second one licenses a refusal.
+        recent_slope = _recent_slope_per_hour(
+            samples,
+            self.policy.confirm_fraction,
+            self.policy.confirm_min_samples,
+        )
+        still_growing = (
+            recent_slope is None
+            or recent_slope >= self.policy.min_slope_per_hour
+        )
+        # A projection is a statement about the CURRENT rate, so it is computed
+        # from the recent slope when there is one. Using the whole-window slope
+        # was the defect: see _recent_slope_per_hour.
         projected = _projected_breach_s(
-            samples[-1][1], slope_per_hour, self.policy.ceiling
+            samples[-1][1],
+            slope_per_hour if recent_slope is None else recent_slope,
+            self.policy.ceiling,
+        )
+
+        settled = (
+            "" if still_growing
+            else f"; but the last {window * self.policy.confirm_fraction / 60:.0f}min "
+                 f"reads {recent_slope:.1f}/h — the level shifted once and settled"
         )
 
         # 1. Mitigation has had its chances and growth continued.
         if (
             mitigations_in_window >= self.policy.ineffective_after_mitigations
             and net_change > 0
+            and still_growing
         ):
             return self._verdict(
                 RunawayState.RUNAWAY, slope_per_hour, len(samples), window,
@@ -234,12 +263,23 @@ class RunawayDetector:
 
         # 2. The projection says we run out of room before mitigation could
         #    plausibly get its chances.
-        if projected is not None and projected <= self.policy.projection_horizon_s:
+        if (
+            still_growing
+            and projected is not None
+            and projected <= self.policy.projection_horizon_s
+        ):
             return self._verdict(
                 RunawayState.RUNAWAY, slope_per_hour, len(samples), window,
                 net_change, mitigations_in_window, projected,
                 f"growing {slope_per_hour:.1f}/h — projected to breach ceiling "
                 f"{self.policy.ceiling:.0f} in {projected / 60:.0f}min",
+            )
+
+        if not still_growing:
+            return self._verdict(
+                RunawayState.DRIFT, slope_per_hour, len(samples), window,
+                net_change, mitigations_in_window, projected,
+                f"rose {slope_per_hour:.1f}/h across the window{settled}",
             )
 
         return self._verdict(
@@ -296,6 +336,49 @@ class RunawayDetector:
             logger.warning("📈 DRIFT [%s]: %s", self.name, verdict.reason)
         else:
             logger.info("✅ [%s] trend back to nominal: %s", self.name, verdict.reason)
+
+
+def _recent_slope_per_hour(
+    samples: list[tuple[float, float]],
+    fraction: float,
+    min_samples: int,
+) -> float | None:
+    """Slope over the most recent `fraction` of the window, or None if unjudgeable.
+
+    Why this has to exist, measured live 2026-07-30 00:29. A least-squares fit
+    cannot tell a one-time level shift from a trend, and the biggest level shift
+    this process ever makes is loading its own 32B cortex. Six minutes after
+    boot, managed RSS had gone 3GB → 33.7GB and then stopped; the fit over that
+    window read 87,280 MB/h, projected a ceiling breach in 24 minutes, and
+    declared a RUNAWAY — whose contract is to refuse new consequential work.
+    The work it refused was the thing the person had just asked for: a folder
+    and a PDF that were never written, on a runtime that was not leaking at all.
+    Reproduced offline from the logged numbers: the settled tail reads 0 MB/h
+    while the whole-window fit reads 347,434 MB/h.
+
+    So a refusal now requires the growth to be STILL happening, which is the
+    question the module set out to ask in the first place — "is it getting
+    worse" — rather than "did it ever get worse". A step's tail is flat; a real
+    leak's tail has the leak's slope in it, so the 242MB/h soak drift this
+    module was built for survives the extra condition.
+
+    Returning None means "cannot judge, do not block on my account". That is
+    safe because this detector is the TREND layer only: MemoryGovernor's level
+    triggers (prune 28GB, unload 34GB, emergency 40GB) are untouched and still
+    the thing standing between the host and a real runaway.
+    """
+    if not samples or len(samples) < 2:
+        return None
+    span = samples[-1][0] - samples[0][0]
+    if span <= 0:
+        return None
+    cutoff = samples[-1][0] - span * max(0.0, min(1.0, fraction))
+    tail = [point for point in samples if point[0] >= cutoff]
+    if len(tail) < max(2, min_samples):
+        return None
+    if tail[-1][0] - tail[0][0] <= 0:
+        return None
+    return _linear_slope(tail) * 3600.0
 
 
 def _linear_slope(samples: list[tuple[float, float]]) -> float:
