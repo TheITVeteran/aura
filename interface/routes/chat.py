@@ -17333,18 +17333,52 @@ def _desktop_task_research_response(
             source_bits.append(f"{title} ({url})")
         elif title or url:
             source_bits.append(title or url)
-    source_sentence = (
-        " Sources: " + "; ".join(source_bits) + "."
-        if source_bits
-        else " No source URL was available in the receipt."
-    )
+    # The synthesis usually ends with its own "Sources opened or consulted"
+    # list, and this function appended a second one regardless. Live
+    # 2026-07-30 00:33 Bryan's reply carried all three sources twice, the
+    # second copy introduced by a sentence fragment. Only add the sentence when
+    # the sources are not already in the text — checked against the URLs
+    # themselves rather than a heading, so a reworded heading cannot
+    # reintroduce the duplicate.
+    already_cited = [
+        bit for bit in source_bits
+        if (url := bit.rpartition("(")[2].rstrip(")")) and url in synthesis
+    ]
+    if source_bits and len(already_cited) == len(source_bits):
+        source_sentence = ""
+    elif source_bits:
+        source_sentence = " Sources: " + "; ".join(source_bits) + "."
+    else:
+        source_sentence = " No source URL was available in the receipt."
     step_sentence = f" Completed {completed}/{requested} governed desktop steps."
+    # Clipped at a sentence, not a character count. The 1200-char cut landed
+    # mid-clause — "where they differ I should" — and then ran a "Sources:"
+    # fragment onto the stump.
+    body = _clip_reply_to_sentence(synthesis, 1200)
     return (
         f"I completed the research-backed desktop task for {query}. "
-        f"{synthesis[:1200].rstrip()}"
+        f"{body}"
         f"{source_sentence}"
         f"{step_sentence}"
     )
+
+
+def _clip_reply_to_sentence(text: str, limit: int) -> str:
+    """Clip to a sentence boundary, falling back to a word boundary."""
+    try:
+        from core.skills.desktop_task import DesktopTaskSkill
+
+        return DesktopTaskSkill._clip_to_sentence(text, limit)
+    except _CHAT_RECOVERABLE_ERRORS:
+        body = " ".join(str(text or "").split())
+        if len(body) <= limit:
+            return body
+        window = body[:limit]
+        cut = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+        if cut >= limit // 2:
+            return window[: cut + 1].strip()
+        cut = window.rfind(" ")
+        return (window[:cut] if cut >= limit // 2 else window).rstrip(" ,;:-—") + "…"
 
 
 def _desktop_task_observation(result: dict[str, Any]) -> str:
