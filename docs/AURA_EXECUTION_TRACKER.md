@@ -31806,3 +31806,37 @@ update canary measuring real admission frequency and step latency, then a fresh
 CP420S14 contract, signers, resident preflights, and launch bundle before the
 explicit green-light boundary. This is total checkpoint 705. The 705-920
 completion envelope is approximately 76.6%-100.0%, with an 88.3% midpoint.
+
+### 2026-07-30 - CP420S15 resident update canary and operator-safe training control
+
+The retired CP420S13 bundle remains forbidden. Before spending the complete
+resident training dose, the source-bound campaign tool now supports a
+non-promotable 12-group resident-32B update canary that preserves the full
+production model, recurrent execution, branch count, token budget, LoRA
+topology, optimizer, signed trajectory provider, and natural admission policy.
+It fixes the sample count in advance across all twelve recurrence curriculum
+families and cannot make a reasoning-gain or frontier-level claim.
+
+Every canary group now publishes an immutable timing receipt from task
+selection through the durable trainer checkpoint and transaction seal. The
+verdict independently checks policy lineage, adapter mutation, base-checkpoint
+immutability, non-promotion, process-local MLX containment, all checkpoint
+bindings, the observed optimizer-admission fraction, its 95% Wilson interval,
+and both campaign-only and checkpoint-inclusive latency distributions.
+
+Long training can now honor a source- and protocol-bound operator pause at the
+next step boundary. The trainer checkpoints adapter, optimizer, curriculum,
+telemetry, evaluation history, signed task receipts, and elapsed budget before
+acknowledging the pause; the watchdog releases resident MLX state and waits for
+an explicit resume receipt before exact continuation. This permits temporary
+desktop use without killing or silently restarting the scientific campaign.
+
+The merged adaptive-curriculum, recurrent-GRPO, adapter-identity,
+preregistration, materialization, scope, policy-replay, signed-transition,
+provider, transaction, and trainer matrix passes 509/509. The focused
+preregistration/trainer contract gate passes 72/72; bytecode compilation and
+diff integrity pass. No resident model was loaded and no optimizer update or
+gain occurred in this checkpoint. Next is the fresh signed update canary,
+semantics-preserving latency profiling, and then the already-authorized full
+resident campaign launch. This is total checkpoint 706. The 706-920 completion
+envelope is approximately 76.7%-100.0%, with an 88.4% midpoint.
