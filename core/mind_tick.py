@@ -1130,6 +1130,12 @@ class MindTick:
                             self._mark_loop_progress("kernel_tick_timeout_yield")
                             return current_state
                         except _MIND_BOUNDARY_ERRORS as _kt_err:
+                            if is_shutdown_requested():
+                                logger.info(
+                                    "💓 MindTick: Kernel tick ended during requested shutdown (%s).",
+                                    _kt_err,
+                                )
+                                return current_state
                             _record_mind_degradation(_kt_err)
                             logger.warning("💓 MindTick: Kernel tick failed (%s).", _kt_err)
                             record_degraded_event(

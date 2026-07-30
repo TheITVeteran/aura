@@ -1,12 +1,13 @@
-"""A telemetry pulse must never freeze the mind.
+"""A telemetry pulse must never freeze the mind or lose edge evidence.
 
 Measured live: the event loop sat in ``pulse_hypha`` -> ``MycelialNetwork._lock``
 during a desktop task, and the hypervisor reported
 
     severe event-loop lag 97.192s
 
-Ninety-seven seconds of a frozen runtime, waiting to increment a counter. A
-dropped pulse costs one edge statistic; waiting for the lock costs everything.
+Ninety-seven seconds of a frozen runtime, waiting to increment a counter.
+Contended evidence is buffered for the next owned update; waiting for the lock
+costs everything.
 """
 
 from __future__ import annotations
@@ -52,11 +53,39 @@ def test_an_uncontended_pulse_still_works():
     assert mycelium.pulse_hypha("test_pulse_source", "test_pulse_target") is True
 
 
-def test_dropped_pulses_are_counted_not_silent():
-    from core.mycelium import _DROPPED_PULSES, _note_dropped_pulse
+def test_contended_pulse_is_merged_into_next_owned_update():
+    mycelium = MycelialNetwork()
+    mycelium.establish_connection("retained_source", "retained_target")
+    released = threading.Event()
+    holding = threading.Event()
 
-    before = _DROPPED_PULSES.get("a->b", 0)
-    _note_dropped_pulse("a", "b")
-    assert _DROPPED_PULSES.get("a->b", 0) == before + 1, (
-        "sustained contention must be visible, not swallowed"
+    def _hold():
+        with MycelialNetwork._lock:
+            holding.set()
+            released.wait(timeout=5.0)
+
+    holder = threading.Thread(target=_hold, daemon=True)
+    holder.start()
+    assert holding.wait(timeout=5.0), "fixture failed to take the lock"
+    try:
+        assert (
+            mycelium.pulse_hypha(
+                "retained_source", "retained_target", success=True
+            )
+            is False
+        )
+    finally:
+        released.set()
+        holder.join(timeout=5.0)
+
+    assert mycelium._deferred_pulses["retained_source->retained_target"] == (1, 0)
+    assert (
+        mycelium.pulse_hypha("retained_source", "retained_target", success=True)
+        is True
     )
+
+    hypha = mycelium.get_hypha("retained_source", "retained_target")
+    assert hypha is not None
+    assert hypha.pulse_count == 2
+    assert hypha.strength == 2.0
+    assert "retained_source->retained_target" not in mycelium._deferred_pulses

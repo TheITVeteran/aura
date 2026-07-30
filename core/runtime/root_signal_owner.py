@@ -159,7 +159,7 @@ class RootShutdownSignalOwner:
             self._first_reason = reason
         snapshot = request_shutdown(reason)
         self._event.set()
-        logger.warning(
+        logger.info(
             "Root shutdown signal observed: scope=%s signal=%s request_count=%s first_reason=%s",
             self._scope,
             sig.name,

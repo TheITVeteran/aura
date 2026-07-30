@@ -225,7 +225,7 @@ class MemoryGovernor:
         
         # v8.1.0: Ensure total cleanup of any leaked worker handles (ORPHAN-05/07)
         try:
-            await self._critical_cleanup()
+            await self._critical_cleanup(reason="shutdown")
             logger.info("🛡️ Memory Governor shutdown complete. All worker handles purged.")
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             self._record_degradation(
@@ -603,9 +603,12 @@ class MemoryGovernor:
             )
             logger.error("Periodic vector prune failed: %s", e)
 
-    async def _critical_cleanup(self):
+    async def _critical_cleanup(self, *, reason: str = "pressure"):
         """Maximum effort cleanup."""
-        logger.critical("🚨 NEURAL PURGE: Killing heavy MLX runtime workers to recover system RAM.")
+        if reason == "shutdown":
+            logger.info("Releasing heavy MLX runtime workers during orderly shutdown.")
+        else:
+            logger.critical("🚨 NEURAL PURGE: Killing heavy MLX runtime workers to recover system RAM.")
         
         unload_result = await self._unload_models()
 
@@ -617,11 +620,12 @@ class MemoryGovernor:
                     cmdline = proc.info.get('cmdline') or []
                     cmd_str = " ".join(cmdline)
                     if "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
-                        logger.warning(
-                            "🚨 NEURAL PURGE: Forcible termination of heavy MLX/Metal process "
-                            "(PID: %d, Name: %s)",
-                            proc.info['pid'],
-                            proc.info['name'],
+                        log = logger.info if reason == "shutdown" else logger.warning
+                        log(
+                            "%s heavy MLX/Metal process (PID: %d, Name: %s)",
+                            "Stopping" if reason == "shutdown" else "🚨 NEURAL PURGE: Forcibly terminating",
+                            proc.info["pid"],
+                            proc.info["name"],
                         )
                         proc.kill()
                         killed += 1
@@ -640,18 +644,19 @@ class MemoryGovernor:
             logger.error("Failed to kill heavy processes: %s", e)
 
         # Integrated Adrenaline Surge: Signal distress to AffectEngine
-        try:
-            from core.container import ServiceContainer
-            affect = ServiceContainer.get("affect", default=None)
-            if affect and hasattr(affect, "react"):
-                get_task_tracker().create_task(affect.react("critical_resource_exhaustion", {"intensity": 1.0}))
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
-            self._record_degradation(
-                e,
-                severity="warning",
-                action="continued critical cleanup without affect distress signal",
-            )
-            logger.debug("Failed to trigger adrenaline surcharge: %s", e)
+        if reason != "shutdown":
+            try:
+                from core.container import ServiceContainer
+                affect = ServiceContainer.get("affect", default=None)
+                if affect and hasattr(affect, "react"):
+                    get_task_tracker().create_task(affect.react("critical_resource_exhaustion", {"intensity": 1.0}))
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                self._record_degradation(
+                    e,
+                    severity="warning",
+                    action="continued critical cleanup without affect distress signal",
+                )
+                logger.debug("Failed to trigger adrenaline surcharge: %s", e)
 
         prune_result = await self._prune_memory()
 

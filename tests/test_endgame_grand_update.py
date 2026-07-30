@@ -329,6 +329,7 @@ def test_root_runtime_hard_exit_predicate_excludes_cli_and_spawn(monkeypatch):
 
 def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
     import aura_main
+    from core.runtime import flight_recorder
 
     calls = []
     args = SimpleNamespace(cli=False, watchdog=False, gui_window=False, philosophy=False)
@@ -338,6 +339,16 @@ def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
         aura_main,
         "_run_multiprocessing_finalizers_before_hard_exit",
         lambda: calls.append("mp_finalizers"),
+    )
+    monkeypatch.setattr(
+        flight_recorder,
+        "get_flight_recorder",
+        lambda: SimpleNamespace(
+            mark_clean_shutdown=lambda reason: calls.append(
+                ("flight_marker", reason)
+            )
+            or True
+        ),
     )
 
     def fake_exit(code: int):
@@ -350,7 +361,11 @@ def test_root_runtime_hard_exit_runs_multiprocessing_finalizers(monkeypatch):
         aura_main._finalize_root_runtime_process_exit(args, exit_code=0)
 
     assert exc_info.value.code == 0
-    assert calls == ["mp_finalizers", ("exit", 0)]
+    assert calls == [
+        "mp_finalizers",
+        ("flight_marker", "root_finalization"),
+        ("exit", 0),
+    ]
 
 
 def test_output_gate_routes_background_self_talk_to_secondary():

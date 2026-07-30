@@ -115,7 +115,7 @@ class GracefulShutdown:
         request_shutdown(reason)
 
         prefix = f"Received signal {sig}: " if sig else ""
-        logger.warning("Shutdown: %sinitiating graceful teardown", prefix)
+        logger.info("Shutdown: %sinitiating graceful teardown", prefix)
         coordinator_report: ShutdownReport | dict[str, object] | None = None
         container_report: dict[str, object] | None = None
         try:

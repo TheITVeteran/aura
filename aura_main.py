@@ -413,6 +413,27 @@ def _finalize_root_runtime_process_exit(
     )
     if signal_owner is not None:
         signal_owner.close()
+    try:
+        from core.runtime.flight_recorder import get_flight_recorder
+
+        reason = (
+            signal_owner.first_reason
+            if signal_owner is not None and signal_owner.first_reason
+            else "root_finalization"
+        )
+        if get_flight_recorder().mark_clean_shutdown(reason):
+            print("Flight ring marked clean before root process exit.", flush=True)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            "aura_main",
+            exc,
+            action="continued root process exit without clean flight-ring marker",
+        )
+        print(
+            f"Flight ring clean marker failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
     os._exit(int(exit_code))
 
 

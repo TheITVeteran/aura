@@ -345,20 +345,59 @@ class RootedFlowHandle:
 #: How long a telemetry pulse may wait for the topology lock. Short on purpose:
 #: the pulse is worth far less than the latency of waiting for it.
 _PULSE_LOCK_TIMEOUT_S = 0.05
-_DROPPED_PULSES: dict[str, int] = {}
+_DEFERRED_PULSE_LOCK = threading.Lock()
 
 
-def _note_dropped_pulse(source: str, target: Optional[str]) -> None:
-    """Count dropped pulses so sustained contention is visible, not silent."""
+def _defer_pulse(
+    network: "MycelialNetwork",
+    source: str,
+    target: Optional[str],
+    *,
+    success: bool,
+) -> None:
+    """Retain a contended pulse without making its caller wait on topology."""
     key = f"{source}->{target or '*'}"
-    _DROPPED_PULSES[key] = _DROPPED_PULSES.get(key, 0) + 1
-    count = _DROPPED_PULSES[key]
-    if count in (1, 100) or count % 1000 == 0:
-        logger.warning(
-            "Mycelial pulse dropped under lock contention (%s, %d so far); the "
-            "edge statistic is lost, the caller is not blocked.",
+    with _DEFERRED_PULSE_LOCK:
+        pending = network._deferred_pulses
+        successes, failures = pending.get(key, (0, 0))
+        if success:
+            successes += 1
+        else:
+            failures += 1
+        pending[key] = (successes, failures)
+        count = successes + failures
+    if count == 1:
+        logger.info(
+            "Mycelial pulse deferred under topology contention (%s); it will "
+            "be merged into the next owned edge update without blocking the caller.",
             key,
-            count,
+        )
+
+
+def _take_deferred_pulses(
+    network: "MycelialNetwork",
+    source: str,
+    target: Optional[str],
+) -> tuple[int, int]:
+    key = f"{source}->{target or '*'}"
+    with _DEFERRED_PULSE_LOCK:
+        return network._deferred_pulses.pop(key, (0, 0))
+
+
+def _merge_deferred_pulses(
+    network: "MycelialNetwork",
+    source: str,
+    target: Optional[str],
+    counts: tuple[int, int],
+) -> None:
+    if counts == (0, 0):
+        return
+    key = f"{source}->{target or '*'}"
+    with _DEFERRED_PULSE_LOCK:
+        successes, failures = network._deferred_pulses.get(key, (0, 0))
+        network._deferred_pulses[key] = (
+            successes + counts[0],
+            failures + counts[1],
         )
 
 
@@ -401,6 +440,7 @@ class MycelialNetwork:
             self._discovery_candidates: Dict[str, int] = defaultdict(int)
             self._route_signal_log_state: Dict[str, Tuple[str, float, int]] = {}
             self._hypha_alert_times: Dict[str, float] = {}
+            self._deferred_pulses: Dict[str, Tuple[int, int]] = {}
 
             # --- Props ---
             self.ui_callback: Optional[Callable[[str], Coroutine]] = None
@@ -854,9 +894,10 @@ class MycelialNetwork:
     ) -> bool:
         """Pulse the current owned edge without leaking a mutable object.
 
-        NEVER blocks the caller waiting for the topology lock. A pulse is
-        telemetry: one dropped under contention costs a single edge statistic,
-        while waiting for the lock on the event loop costs the whole mind.
+        NEVER blocks the caller waiting for the topology lock. A contended
+        pulse is retained in a side buffer and merged into the next owned edge
+        update, while waiting for the topology lock on the event loop would
+        cost the whole mind.
 
         Measured live: the loop sat in ``pulse_hypha`` -> ``MycelialNetwork._lock``
         during a desktop task and the hypervisor reported "severe event-loop lag
@@ -864,17 +905,38 @@ class MycelialNetwork:
         """
         hypha_id = self._hypha_id(source, target)
         if not MycelialNetwork._lock.acquire(timeout=_PULSE_LOCK_TIMEOUT_S):
-            _note_dropped_pulse(source, target)
+            _defer_pulse(self, source, target, success=success)
             return False
         try:
             owner = self._active_owner_locked()
             if owner is None:
                 return False
             if owner is not self:
+                _merge_deferred_pulses(
+                    owner,
+                    source,
+                    target,
+                    _take_deferred_pulses(self, source, target),
+                )
                 return owner.pulse_hypha(source, target, success=success)
             hypha = self.hyphae.get(hypha_id)
             if hypha is None:
                 return False
+            deferred_successes, deferred_failures = _take_deferred_pulses(
+                self, source, target
+            )
+            if deferred_successes or deferred_failures:
+                hypha.pulse_count += deferred_successes + deferred_failures
+                hypha.last_pulse = time.monotonic()
+                hypha.strength = min(
+                    10.0,
+                    max(
+                        0.1,
+                        hypha.strength
+                        + (0.5 * deferred_successes)
+                        - float(deferred_failures),
+                    ),
+                )
             hypha.pulse(success=success)
             self._mark_topology_mutated_locked()
             return True
@@ -1407,6 +1469,8 @@ class MycelialNetwork:
             self._discovery_candidates.clear()
             self._route_signal_log_state.clear()
             self._hypha_alert_times.clear()
+            with _DEFERRED_PULSE_LOCK:
+                self._deferred_pulses.clear()
             self.pathways.clear()
             object.__setattr__(self, "_pathway_order", [])
             self.direct_roots.clear()

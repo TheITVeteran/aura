@@ -31903,3 +31903,30 @@ live user-desktop demo runs with clean neural and terminal streams. No resident
 training or reasoning-gain claim follows. This is total checkpoint 708. The
 708-920 completion envelope is approximately 77.0%-100.0%, with an 88.5%
 midpoint.
+
+### 2026-07-30 - DEMO-Q2 truthful lifecycle and lossless pulse shutdown
+
+The live qualification shutdown exposed three false alarms and one real
+continuity defect after otherwise orderly teardown. Root finalization now
+stamps the crash-survivable flight ring as its final successful act immediately
+before process exit, after bounded multiprocessing finalization, persistence
+closure, root-resource accounting, and signal-owner cleanup. A later teardown
+failure therefore cannot be mislabeled as a clean shutdown. Expected root
+signals, graceful-shutdown admission, MindTick cancellation, and
+memory-governor worker release retain their receipts without being reported as
+runtime damage or a critical memory purge.
+
+Mycelial edge pulses no longer choose between freezing the event loop and
+discarding causal evidence. A contended pulse returns within the bounded
+50-millisecond topology-lock budget, is retained in a separately locked
+per-generation buffer, follows a retired network reference to its live
+replacement, and merges its exact success/failure effect into the next owned
+edge update. Per-generation ownership prevents deferred evidence from leaking
+across replacement networks or tests.
+
+The expanded mycelial lifecycle, shutdown coordinator, root signal, MindTick,
+memory watchdog, and root-finalization gate passes 172/172; bytecode compilation
+and diff integrity pass. Installed-app rebuild and live clean-shutdown proof
+remain next, followed by three complete desktop demo runs. Training remains
+paused. This is total checkpoint 709. The 709-920 completion envelope is
+approximately 77.1%-100.0%, with an 88.5% midpoint.
