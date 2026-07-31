@@ -39,6 +39,7 @@ from tools.train_grpo import (
     _dataset_payload,
     _load_execution_spec,
     _point_estimate_delta,
+    _process_rotation_due,
     _publish_adapter_snapshot,
     _publish_immutable_bytes,
     _publish_immutable_tensor_snapshot,
@@ -343,8 +344,36 @@ def test_calibration_replay_preserves_group_outcome_counts():
 def test_bounded_halts_leave_verified_campaign_open_for_exact_resume():
     assert _verified_campaign_halt_is_resumable("wall_clock_budget")
     assert _verified_campaign_halt_is_resumable("interrupted")
+    assert _verified_campaign_halt_is_resumable("process_rotation")
     assert not _verified_campaign_halt_is_resumable("max_steps")
     assert not _verified_campaign_halt_is_resumable("training_adequacy_failed")
+
+
+def test_process_rotation_only_occurs_between_durable_nonterminal_steps():
+    assert _process_rotation_due(
+        step=4,
+        invocation_start_step=0,
+        max_steps=12,
+        max_invocation_steps=4,
+    )
+    assert not _process_rotation_due(
+        step=3,
+        invocation_start_step=0,
+        max_steps=12,
+        max_invocation_steps=4,
+    )
+    assert not _process_rotation_due(
+        step=12,
+        invocation_start_step=8,
+        max_steps=12,
+        max_invocation_steps=4,
+    )
+    assert not _process_rotation_due(
+        step=8,
+        invocation_start_step=0,
+        max_steps=12,
+        max_invocation_steps=0,
+    )
 
 
 def test_calibration_progress_replays_exact_prefix_and_remaining_budget(

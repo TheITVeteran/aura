@@ -791,7 +791,28 @@ def _calibration_token_budget(max_tokens: int, requested: int) -> int:
 def _verified_campaign_halt_is_resumable(halt_reason: str) -> bool:
     """Keep the verified task ledger open across bounded exact resumes."""
 
-    return halt_reason in {"wall_clock_budget", "interrupted", "operator_pause"}
+    return halt_reason in {
+        "wall_clock_budget",
+        "interrupted",
+        "operator_pause",
+        "process_rotation",
+    }
+
+
+def _process_rotation_due(
+    *,
+    step: int,
+    invocation_start_step: int,
+    max_steps: int,
+    max_invocation_steps: int,
+) -> bool:
+    """Rotate only between durable nonterminal steps."""
+
+    return bool(
+        max_invocation_steps > 0
+        and step < max_steps
+        and step - invocation_start_step >= max_invocation_steps
+    )
 
 
 def _operator_pause_request(
@@ -2173,6 +2194,15 @@ def main(
         "--cot", action="store_true", help="invite step-by-step reasoning before the answer"
     )
     parser.add_argument("--max-minutes", type=float, default=600.0)
+    parser.add_argument(
+        "--max-invocation-steps",
+        type=int,
+        default=0,
+        help=(
+            "exit for an exact checkpoint-bound process rotation after this "
+            "many newly committed steps; 0 disables rotation"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260721)
     parser.add_argument("--memory-fraction", type=float, default=0.55)
     parser.add_argument(
@@ -2221,6 +2251,8 @@ def main(
             parser.error(f"--{name.replace('_', '-')} must be positive")
     if args.max_minutes <= 0.0 or args.calibrate_minutes <= 0.0:
         parser.error("time budgets must be positive")
+    if args.max_invocation_steps < 0:
+        parser.error("--max-invocation-steps must be non-negative")
     if not 0.0 < args.memory_fraction <= 0.9:
         parser.error("--memory-fraction must be inside (0, 0.9]")
     try:
@@ -2427,6 +2459,7 @@ def main(
             "cot": args.cot,
             "seed": args.seed,
             "memory_fraction": args.memory_fraction,
+            "max_invocation_steps": args.max_invocation_steps,
             "rng_strategy": RNG_STRATEGY,
         },
     }
@@ -2470,7 +2503,10 @@ def main(
             preemptible=False,
             metadata={"tool": "train_grpo", "operator_launched": True},
         ),
-        mlx_memory_envelope(fraction=args.memory_fraction) as envelope,
+        mlx_memory_envelope(
+            fraction=args.memory_fraction,
+            restore_limits_on_exit=False,
+        ) as envelope,
     ):
         print(f"[envelope] {envelope.to_receipt()}", flush=True)
         model, tokenizer = load(model_path)
@@ -3571,6 +3607,7 @@ def main(
         checkpoint_path = checkpoint_now()
 
         requested_signal: int | None = None
+        invocation_start_step = step
 
         def request_stop(signum: int, _frame: Any) -> None:
             nonlocal requested_signal
@@ -3964,6 +4001,20 @@ def main(
                         "[halt] every measured curriculum cell is saturated or hopeless",
                         flush=True,
                     )
+                if _process_rotation_due(
+                    step=step,
+                    invocation_start_step=invocation_start_step,
+                    max_steps=args.max_steps,
+                    max_invocation_steps=args.max_invocation_steps,
+                ):
+                    halt_reason = "process_rotation"
+                    print(
+                        f"[process-rotation] durable step={step} "
+                        f"invocation_start_step={invocation_start_step}",
+                        flush=True,
+                    )
+                    active_recurrent_step = None
+                    break
                 active_recurrent_step = None
 
             if step >= args.max_steps:
@@ -3971,6 +4022,7 @@ def main(
             if (
                 requested_signal is None
                 and training_allowed
+                and halt_reason != "process_rotation"
                 and (not history or history[-1].get("step") != step)
             ):
                 if execution_spec is None:

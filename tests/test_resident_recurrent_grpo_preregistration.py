@@ -153,6 +153,9 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     assert parameters["learning_rate"] == prereg.TRAINING_PARAMETERS["learning_rate"]
     assert parameters["fixed_update_canary"] is True
     assert parameters["calibrate"] is False
+    assert parameters["max_invocation_steps"] == prereg.MAX_INVOCATION_STEPS
+    assert contract["training"]["watchdog_policy"]["max_attempts"] >= 5
+    assert "--max-invocation-steps" in contract["training"]["argv"]
     assert "--fixed-update-canary" in contract["training"]["argv"]
     assert "--calibrate" not in contract["training"]["argv"]
     probe_argv = prereg._policy_probe_argv(contract)
@@ -725,6 +728,38 @@ def test_resume_verdict_binds_one_complete_checkpoint(tmp_path, monkeypatch):
     assert json.loads(evidence.read_text(encoding="ascii")) == verdict["evidence"]
 
 
+def test_training_progress_accepts_full_campaign_sized_checkpoint_metadata(
+    tmp_path: Path,
+):
+    training = tmp_path / "training"
+    checkpoint = training / "checkpoints" / "step-00000006-proof"
+    checkpoint.mkdir(parents=True)
+    complete = prereg.canonical_json_bytes(
+        {
+            "schema": "aura.grpo_checkpoint.v2",
+            "step": 6,
+            "evidence_padding": "x" * (1024 * 1024 + 32),
+        }
+    )
+    (checkpoint / "complete.json").write_bytes(complete)
+    (training / "latest.json").write_bytes(
+        prereg.canonical_json_bytes(
+            {
+                "schema": "aura.grpo_checkpoint_pointer.v1",
+                "checkpoint": f"checkpoints/{checkpoint.name}",
+                "complete_sha256": hashlib.sha256(complete).hexdigest(),
+            }
+        )
+    )
+
+    progress = prereg._training_progress_snapshot(training)
+
+    assert progress["checkpoint_step"] == 6
+    assert progress["files"][f"checkpoints/{checkpoint.name}/complete.json"] == (
+        hashlib.sha256(complete).hexdigest()
+    )
+
+
 def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatch):
     contract = _contract()
     contract["paths"]["detached_training"] = "artifacts/run"
@@ -791,7 +826,12 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     ]
     assert len(broker_policy) == 2
     assert all("--request-file" in row["command"] for row in broker_policy)
-    assert [row["max_invocations"] for row in broker_policy] == [600, 304]
+    max_steps = contract["training"]["parameters"]["max_steps"]
+    max_attempts = contract["training"]["watchdog_policy"]["max_attempts"]
+    assert [row["max_invocations"] for row in broker_policy] == [
+        max_steps * 2 + max_attempts * 2 + 8,
+        max_steps + max_attempts + 8,
+    ]
 
 
 def test_training_watchdog_retries_only_into_exact_durable_progress(
@@ -957,6 +997,13 @@ def test_training_watchdog_resumes_zero_exit_wall_clock_until_full_dose(
     monkeypatch.setattr(prereg, "_release_failed_training_runtime", lambda: None)
     monkeypatch.setattr(prereg.time, "sleep", lambda _seconds: None)
 
+    assert (
+        prereg._run_training(
+            contract,
+            expected_launch_bundle_sha256="a" * 64,
+        )
+        == prereg.RESUMABLE_PROCESS_ROTATION_EXIT_CODE
+    )
     assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 0
     assert calls == 2
     journal = json.loads(

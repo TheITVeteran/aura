@@ -108,16 +108,22 @@ DEFAULT_ROOT = "artifacts/closeout/latent_cortex/cp259_resident_32b_recurrent_gr
 NOT_BEFORE = "2026-07-21T17:00:00-07:00"
 TRAINING_SEED = 2026072102
 CONFIRMATORY_OBSERVATIONS_PER_DOMAIN = 411
+MAX_INVOCATION_STEPS = 4
+RESUMABLE_PROCESS_ROTATION_EXIT_CODE = 75
+MAX_CHECKPOINT_COMPLETION_BYTES = 256 * 1024 * 1024
 TRAINING_WATCHDOG_POLICY: Mapping[str, Any] = {
     "schema": "aura.resident_recurrent_grpo.training_watchdog.v1",
-    "max_attempts": 8,
+    "max_attempts": math.ceil(288 / MAX_INVOCATION_STEPS) + 4,
     "retry_backoff_s": 30.0,
     "max_consecutive_no_progress_failures": 2,
     "restart_scope": "exact_source_bound_checkpoint_resume_only",
 }
 UPDATE_CANARY_WATCHDOG_POLICY: Mapping[str, Any] = {
     **TRAINING_WATCHDOG_POLICY,
-    "max_attempts": 3,
+    "max_attempts": math.ceil(
+        len(RECURRENCE_TRAINING_FAMILIES) / MAX_INVOCATION_STEPS
+    )
+    + 2,
 }
 TRAINING_PARAMETERS: Mapping[str, Any] = {
     "task_source": "recurrence_curriculum",
@@ -148,6 +154,7 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
     "calibrate_minutes": 60.0,
     "cot": True,
     "max_minutes": 2160.0,
+    "max_invocation_steps": MAX_INVOCATION_STEPS,
     "memory_fraction": 0.42,
     "fixed_update_canary": False,
     "seed": TRAINING_SEED,
@@ -493,6 +500,7 @@ def _training_argv(
         ("calibrate_tokens", "--calibrate-tokens"),
         ("calibrate_minutes", "--calibrate-minutes"),
         ("max_minutes", "--max-minutes"),
+        ("max_invocation_steps", "--max-invocation-steps"),
         ("memory_fraction", "--memory-fraction"),
         ("seed", "--seed"),
     )
@@ -1529,7 +1537,10 @@ def _training_progress_snapshot(training_root: Path) -> dict[str, Any]:
                 if type(complete.get("step")) is int:
                     checkpoint_step = int(complete["step"])
                 files[f"{relative}/complete.json"] = _sha256(
-                    read_stable_bytes(complete_path, max_bytes=1024 * 1024)
+                    read_stable_bytes(
+                        complete_path,
+                        max_bytes=MAX_CHECKPOINT_COMPLETION_BYTES,
+                    )
                 )
     document = {
         "schema": "aura.resident_recurrent_grpo.training_progress.v1",
@@ -1570,7 +1581,11 @@ def _successful_training_disposition(
     reason = termination.get("reason") if isinstance(termination, Mapping) else None
     if (
         not isinstance(termination, Mapping)
-        or reason not in {"wall_clock_budget", "operator_pause"}
+        or reason not in {
+            "wall_clock_budget",
+            "operator_pause",
+            "process_rotation",
+        }
         or termination.get("completed_budget") is not False
         or type(steps) is not int
         or not 0 <= steps < max_steps
@@ -1952,6 +1967,11 @@ def _run_training(
             if disposition == "resume":
                 _fail("training_watchdog_attempt_budget_exhausted")
             return int(result)
+        if disposition == "resume":
+            # The outer launchd controller owns process-level retries. Exit
+            # this model-owning process so the next exact resume starts with a
+            # fresh native allocator instead of reloading MLX in-process.
+            return RESUMABLE_PROCESS_ROTATION_EXIT_CODE
         _release_failed_training_runtime()
         time.sleep(float(policy["retry_backoff_s"]))
 

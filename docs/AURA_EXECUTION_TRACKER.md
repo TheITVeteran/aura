@@ -32812,3 +32812,53 @@ detached execution, and a strict update-canary verdict remain required. The
 canary is ineligible for reasoning-gain, frontier, promotion, or `WOW Signal`
 claims. This is total checkpoint 745. The 745-920 completion envelope is
 approximately 81.0%-100.0%, with a 90.5% midpoint.
+
+### 2026-07-31 - CP420S25 allocator horizon and exact process rotation
+
+CP420S25 passed its real resident initial-policy and answer-channel preflights;
+the latter was 6/6 parseable and 6/6 correct. Four fresh process-isolated
+signers materialized and reopened the signed production launch bundle. The
+launchd controller, detached supervisor, resident-32B child, sleep inhibitor,
+moving heartbeat, and durable step-zero checkpoint were all independently
+observable before training was considered started.
+
+The recurrent baseline reproduced at 4/12 correct. Six signed causal groups
+then reproduced CP420S24 exactly: modular and premise-audit had no initially
+correct control; boolean and k-hop had no verified wrong-to-right transition;
+causal-intervention and stack-trace each regressed one of two initially correct
+controls. All six groups were rejected, the adapter hash remained unchanged,
+and no optimizer update or gain claim occurred.
+
+MLX 0.32 again terminated with SIGTRAP immediately after the sixth durable
+group. The new crash report is `Python-2026-07-31-085402.ips` and retains the
+macOS allocator failure class, so the dependency upgrade and synchronized
+cache reclamation alone do not retire the defect. The external controller
+survived, but its recovery reader then rejected the valid 1.2 MB checkpoint
+metadata because a stale 1 MB read bound contradicted the 288-step format's
+roughly 200 KB-per-step growth. Launchd correctly restarted the controller,
+which exposed the same deterministic bound instead of losing evidence.
+
+Checkpoint metadata now has a 256 MB audited bound, sufficient for the frozen
+full campaign while still rejecting unbounded input. More importantly, the
+trainer now preregisters a four-committed-step process horizon. At each horizon
+it publishes the same full adapter, optimizer, curriculum, telemetry, RNG,
+transition, and evidence checkpoint used for crash recovery, leaves the signed
+campaign ledger open, exits with a distinct resumable disposition, and lets
+the PID-1 controller validate the checkpoint before starting a fresh native
+process. Final held-out evaluation is not spuriously repeated at a rotation.
+The training process does not clear MLX allocator caches during its final
+process-owned envelope teardown; it synchronizes queued Metal work and lets
+OS process teardown reclaim the address space. The full campaign budgets 76
+bounded invocations and the canary budgets five, while retaining the
+two-consecutive-no-progress fail-closed gate.
+
+The focused contract matrix passes 100/100. The complete MLX, trainer,
+preregistration, materialization, production runner, detached supervisor, and
+launchd-controller matrix passes 170/170 in 101.65 seconds; bytecode
+compilation, lint, and diff integrity pass. These tests prove rotation and
+recovery contracts, not resident success. CP420S25 remains immutable negative
+evidence. A fresh CP420S26 contract, probes, signers, signed bundle, and live
+rotation canary are required before full training. No reasoning-gain,
+frontier, promotion, or `WOW Signal` claim is made. This is total checkpoint
+746. The 746-920 completion envelope is approximately 81.1%-100.0%, with a
+90.5% midpoint.

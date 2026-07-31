@@ -57,6 +57,9 @@ def test_unusable_and_out_of_range_settings_are_refused():
     with pytest.raises(ValueError, match="cache limit cannot exceed"):
         with mlx_memory_envelope(memory_gb=4.0, cache_gb=8.0):
             pass
+    with pytest.raises(ValueError, match="restore_limits_on_exit"):
+        with mlx_memory_envelope(restore_limits_on_exit=1):
+            pass
 
 
 def test_limits_are_restored_on_exit_and_on_error():
@@ -99,6 +102,23 @@ def test_reclaim_synchronizes_around_cache_release(monkeypatch):
 
     assert envelope.reclaim(force=True) is True
     assert calls == ["synchronize", "clear_cache", "synchronize"]
+
+
+def test_process_owned_envelope_skips_allocator_reclaim_on_exit(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(mx, "set_memory_limit", lambda _value: 8 * 1024**3)
+    monkeypatch.setattr(mx, "set_cache_limit", lambda _value: 2 * 1024**3)
+    monkeypatch.setattr(mx, "set_wired_limit", lambda _value: 8 * 1024**3)
+    monkeypatch.setattr(mx, "synchronize", lambda: calls.append("synchronize"))
+    monkeypatch.setattr(mx, "clear_cache", lambda: calls.append("clear_cache"))
+
+    with mlx_memory_envelope(
+        memory_gb=4.0,
+        restore_limits_on_exit=False,
+    ):
+        pass
+
+    assert calls == ["synchronize"]
 
 
 def test_receipt_is_complete_enough_to_audit_a_run():

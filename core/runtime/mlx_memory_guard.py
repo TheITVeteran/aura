@@ -219,6 +219,7 @@ def mlx_memory_envelope(
     cache_gb: float | None = 2.0,
     wired_gb: float | None = None,
     reclaim_every: int = DEFAULT_RECLAIM_EVERY,
+    restore_limits_on_exit: bool = True,
 ) -> Iterator[MemoryEnvelope]:
     """Bound MLX memory for the duration of the block.
 
@@ -226,6 +227,8 @@ def mlx_memory_envelope(
     gigabyte values override it and are validated against the host, so a
     typo cannot silently authorize an unbounded run.
     """
+    if not isinstance(restore_limits_on_exit, bool):
+        raise ValueError("restore_limits_on_exit must be boolean")
     if not 0.05 <= float(fraction) <= 0.9:
         raise ValueError("fraction must be inside [0.05, 0.9]")
     host = host_memory_bytes()
@@ -259,10 +262,16 @@ def mlx_memory_envelope(
         yield envelope
     finally:
         try:
-            _synchronize_and_reclaim()
-            mx.set_memory_limit(previous["memory"])
-            mx.set_cache_limit(previous["cache"])
-            mx.set_wired_limit(previous["wired"])
+            if restore_limits_on_exit:
+                _synchronize_and_reclaim()
+                mx.set_memory_limit(previous["memory"])
+                mx.set_cache_limit(previous["cache"])
+                mx.set_wired_limit(previous["wired"])
+            else:
+                # A process-isolated model owner can let process teardown
+                # reclaim Metal buffers. Avoid exercising allocator cache
+                # reclamation immediately before the process exits.
+                mx.synchronize()
         except (RuntimeError, ValueError) as exc:  # pragma: no cover
             logger.warning("Could not restore MLX memory limits: %s", exc)
 
