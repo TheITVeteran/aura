@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sqlite3
 import threading
 import time
 from collections import OrderedDict
@@ -44,7 +46,14 @@ import numpy as np
 
 from core.ontogeny import telemetry
 from core.ontogeny.authority import AuthorityLedger, AuthorityStage, get_authority_ledger
-from core.ontogeny.calibration import CalibrationMonitor, TrackRecord, TrackRecordIndex
+from core.ontogeny.calibration import (
+    CANDIDATE_VALIDATION,
+    OPERATIONAL_SHADOW,
+    CalibrationMonitor,
+    CalibrationObservation,
+    TrackRecord,
+    TrackRecordIndex,
+)
 from core.ontogeny.experience import (
     Episode,
     ExperienceSpine,
@@ -83,6 +92,19 @@ CHECKPOINT_INTERVAL_S = 300.0
 #: tally. Bounded: an outcome that lands after this many decisions have gone
 #: by is folded in by the next rehydration instead.
 _BUCKET_MEMORY = 20_000
+
+
+@dataclass(frozen=True)
+class _PendingEpisode:
+    """Decision-time evidence retained until its outcome lands."""
+
+    control_point: str
+    bucket: str
+    confidence: float | None
+    predicted_success: bool | None
+    decided_at: float
+    runtime_revision: str
+    head_version: int
 
 
 @dataclass
@@ -213,17 +235,25 @@ class OntogenyCore:
         self._authority = authority or get_authority_ledger()
         self._reservation = reservation or get_reservation()
         self._resolvers = resolvers or get_resolvers()
-        self._calibration = CalibrationMonitor()
-        # One monitor, shared: the gate must judge honesty from the same
-        # measurements the trainer records.
-        self._authority.attach_calibration(self._calibration)
+        self._candidate_calibration = CalibrationMonitor(provenance=CANDIDATE_VALIDATION)
+        self._operational_calibration = CalibrationMonitor(provenance=OPERATIONAL_SHADOW)
+        # Compatibility name for internal callers. Authority deliberately sees
+        # only candidate validation; deployed drift is a separate evidence
+        # plane and must not be contaminated by post-fit rescoring.
+        self._calibration = self._candidate_calibration
+        self._authority.attach_calibration(self._candidate_calibration)
+        self._runtime_revision = _runtime_revision()
         self._units = int(units)
         self._seed = int(seed)
         self._lock = checked_lock("ontogeny.core", rank=LockRank.LEAF, reentrant=True)
         self._control_points: dict[str, ControlPoint] = {}
         self._state: OntogeneticState | None = None
         self._trainer = Trainer(
-            self._spine, self._authority, self._calibration, units=self._units, seed=self._seed
+            self._spine,
+            self._authority,
+            self._candidate_calibration,
+            units=self._units,
+            seed=self._seed,
         )
         self._last_reading: StateReading | None = None
         self._last_train = 0.0
@@ -236,7 +266,7 @@ class OntogenyCore:
         self._track = TrackRecordIndex()
         #: The VRNN, or ``False`` once it has proved unavailable.
         self._world_model: Any = None
-        self._episode_buckets: OrderedDict[str, tuple[str, str]] = OrderedDict()
+        self._episode_buckets: OrderedDict[str, _PendingEpisode] = OrderedDict()
         self._spine.on_resolve(self._note_resolution)
 
         self.register(
@@ -252,6 +282,7 @@ class OntogenyCore:
             )
         )
         self._load_heads()
+        self._activate_operational_cohorts()
         if autostart:
             self.start()
 
@@ -416,6 +447,10 @@ class OntogenyCore:
 
         track = self.track_record(control_point, choice)
 
+        head_version = self._head_version(cp)
+        episode_context = dict(context or {})
+        episode_context.setdefault("runtime_revision", self._runtime_revision)
+        episode_context.setdefault("ontogeny_head_version", head_version)
         episode = Episode(
             control_point=control_point,
             features=dict(features),
@@ -424,16 +459,16 @@ class OntogenyCore:
             decider=decider,
             exploration=reservation.reserved,
             shadow=dict(scores) if scores else None,
-            shadow_version=self._head_version(cp) if cp.ready else None,
+            shadow_version=head_version if cp.ready else None,
             stakes=float(stakes),
             horizon_s=cp.horizon_s,
             provenance=provenance,
             feature_schema=cp.schema.schema_id,
-            context=dict(context or {}),
+            context=episode_context,
         )
         episode_id = self._spine.record(episode)
-        if episode_id:
-            self._remember_bucket(episode_id, control_point, choice)
+        if episode_id == episode.episode_id:
+            self._remember_episode(episode)
         surprise = self._feed_world_model(base, cp.actions, choice)
 
         return Verdict(
@@ -527,18 +562,53 @@ class OntogenyCore:
         return self._track.get(control_point, decision)
 
     def _note_resolution(self, episode_id: str, outcome: Outcome) -> None:
-        """Fold a landed outcome into the live tallies."""
-        located = self._episode_buckets.pop(episode_id, None)
+        """Fold a landed outcome into tallies and decision-time calibration."""
+        with self._lock:
+            located = self._episode_buckets.pop(episode_id, None)
         if located is None:
             return
-        control_point, bucket = located
-        self._track.observe(control_point, bucket, outcome.kind)
+        self._track.observe(located.control_point, located.bucket, outcome.kind)
+        if (
+            outcome.kind.is_evidence
+            and located.confidence is not None
+            and located.predicted_success is not None
+        ):
+            actual_success = outcome.kind is OutcomeKind.SUCCESS
+            self._operational_calibration.observe(
+                located.control_point,
+                episode_id=episode_id,
+                confidence=located.confidence,
+                correct=located.predicted_success == actual_success,
+                decided_at=located.decided_at,
+                observed_at=outcome.resolved_at,
+                runtime_revision=located.runtime_revision,
+                head_version=located.head_version,
+                action=located.bucket,
+                provenance=OPERATIONAL_SHADOW,
+            )
 
-    def _remember_bucket(self, episode_id: str, control_point: str, bucket: str) -> None:
-        """Keep a bounded map from episode to bucket so a resolution can find its cell."""
-        self._episode_buckets[episode_id] = (control_point, bucket)
-        while len(self._episode_buckets) > _BUCKET_MEMORY:
-            self._episode_buckets.popitem(last=False)
+    def _remember_episode(self, episode: Episode) -> None:
+        """Keep the immutable decision-time claim until resolution."""
+        probability = None
+        if episode.shadow is not None:
+            candidate = episode.shadow.get(episode.decision)
+            if candidate is not None:
+                probability = min(1.0, max(0.0, float(candidate)))
+        pending = _PendingEpisode(
+            control_point=episode.control_point,
+            bucket=episode.decision,
+            confidence=(max(probability, 1.0 - probability) if probability is not None else None),
+            predicted_success=(probability >= 0.5 if probability is not None else None),
+            decided_at=episode.decided_at,
+            runtime_revision=str(
+                (episode.context or {}).get("runtime_revision") or self._runtime_revision
+            ),
+            head_version=int(episode.shadow_version or 0),
+        )
+        with self._lock:
+            self._episode_buckets[episode.episode_id] = pending
+            while len(self._episode_buckets) > _BUCKET_MEMORY:
+                self._episode_buckets.popitem(last=False)
 
     def rehydrate_track_records(self, limit: int = 6000) -> dict[str, int]:
         """Rebuild the tallies from the corpus. Slow, so it runs on maintenance."""
@@ -554,6 +624,84 @@ class OntogenyCore:
                 continue
             rebuilt[name] = self._track.hydrate(name, episodes)
         return rebuilt
+
+    def rehydrate_operational_calibration(self, limit: int = _BUCKET_MEMORY) -> dict[str, int]:
+        """Rebuild operational cohorts from immutable decision-time shadows.
+
+        The episode reader intentionally exposes a narrow projection and older
+        versions omitted ``context_json`` from that projection. Read only that
+        provenance column here so restart recovery remains source-bound without
+        rewriting or deleting historical incidents.
+        """
+        rebuilt: dict[str, int] = {}
+        with self._lock:
+            control_points = list(self._control_points.values())
+        for cp in control_points:
+            try:
+                episodes = self._spine.episodes(cp.name, evidence_only=True, limit=limit)
+                contexts = self._episode_contexts([episode.episode_id for episode in episodes])
+            except (RuntimeError, OSError, ValueError, sqlite3.Error) as exc:
+                record_degradation(
+                    "ontogeny", exc, severity="debug",
+                    action=f"operational calibration rehydration skipped for {cp.name}",
+                )
+                continue
+            observations: list[CalibrationObservation] = []
+            for episode in episodes:
+                if episode.outcome is None or not episode.outcome.kind.is_evidence:
+                    continue
+                probability = (episode.shadow or {}).get(episode.decision)
+                if probability is None or episode.shadow_version is None:
+                    continue
+                probability = min(1.0, max(0.0, float(probability)))
+                context = contexts.get(episode.episode_id, episode.context or {})
+                revision = str(context.get("runtime_revision") or "legacy-unbound")
+                predicted_success = probability >= 0.5
+                observations.append(CalibrationObservation(
+                    episode_id=episode.episode_id,
+                    control_point=episode.control_point,
+                    confidence=max(probability, 1.0 - probability),
+                    correct=predicted_success == (episode.outcome.kind is OutcomeKind.SUCCESS),
+                    decided_at=episode.decided_at,
+                    observed_at=episode.outcome.resolved_at,
+                    runtime_revision=revision,
+                    head_version=int(episode.shadow_version),
+                    action=episode.decision,
+                    provenance=OPERATIONAL_SHADOW,
+                ))
+            rebuilt[cp.name] = self._operational_calibration.replace_observations(
+                cp.name,
+                observations,
+                provenance=OPERATIONAL_SHADOW,
+            )
+            self._operational_calibration.activate(
+                cp.name,
+                runtime_revision=self._runtime_revision,
+                head_version=self._head_version(cp),
+                provenance=OPERATIONAL_SHADOW,
+            )
+        return rebuilt
+
+    def _episode_contexts(self, episode_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Read persisted provenance for restart rehydration, in bounded chunks."""
+        if not episode_ids:
+            return {}
+        contexts: dict[str, dict[str, Any]] = {}
+        uri = f"file:{self._spine.db_path}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+            for offset in range(0, len(episode_ids), 500):
+                chunk = list(episode_ids[offset:offset + 500])
+                placeholders = ",".join("?" for _ in chunk)
+                for episode_id, raw in conn.execute(
+                    f"SELECT episode_id, context_json FROM episodes WHERE episode_id IN ({placeholders})",
+                    chunk,
+                ):
+                    try:
+                        value = json.loads(raw or "{}")
+                    except (TypeError, ValueError):
+                        value = {}
+                    contexts[str(episode_id)] = value if isinstance(value, dict) else {}
+        return contexts
 
     def grounded_confidence(self, control_point: str, decision: str) -> str | None:
         """Her track record as a sentence, or nothing when she has no standing to speak.
@@ -590,8 +738,16 @@ class OntogenyCore:
                 continue
             results[cp.name] = result
             if result.fitted:
-                cp.evidence_at_last_fit = result.samples + result.holdout_samples
+                cp.evidence_at_last_fit = (
+                    result.samples + result.temperature_samples + result.holdout_samples
+                )
                 self._save_head(cp)
+                self._operational_calibration.activate(
+                    cp.name,
+                    runtime_revision=self._runtime_revision,
+                    head_version=self._head_version(cp),
+                    provenance=OPERATIONAL_SHADOW,
+                )
         self._last_train = time.time()
         return results
 
@@ -627,6 +783,8 @@ class OntogenyCore:
                 if self._state is not None and now - self._last_checkpoint >= CHECKPOINT_INTERVAL_S:
                     self._state.save()
                     self._last_checkpoint = now
+                if cycles == 1:
+                    self.rehydrate_operational_calibration()
                 telemetry.sample(self.report())
                 if cycles % 10 == 0:
                     # Slow, authoritative rebuild of the tallies from the
@@ -724,6 +882,17 @@ class OntogenyCore:
                 cp.moments.load_state(payload.get("moments", {}))
             logger.info("ontogeny: restored %d/%d heads for %s", restored, len(heads), cp.name)
 
+    def _activate_operational_cohorts(self) -> None:
+        with self._lock:
+            control_points = list(self._control_points.values())
+        for cp in control_points:
+            self._operational_calibration.activate(
+                cp.name,
+                runtime_revision=self._runtime_revision,
+                head_version=self._head_version(cp),
+                provenance=OPERATIONAL_SHADOW,
+            )
+
     # ── reporting ────────────────────────────────────────────────────────
 
     def report(self) -> dict[str, Any]:
@@ -759,10 +928,12 @@ class OntogenyCore:
             "reservation": self._reservation.report(),
             "resolution": self._resolvers.report(),
             "sweeper": self._sweeper.report() if self._sweeper else None,
-            "calibration": self._calibration.all_reports(),
+            "calibration": self._candidate_calibration.all_reports(),
+            "candidate_validation": self._candidate_calibration.all_reports(),
+            "operational_calibration": self._operational_calibration.all_reports(),
+            "operational_calibration_history": self._operational_calibration.cohort_reports(),
             "track_records": self._track.report(),
         }
-
     def summary(self) -> str:
         """One line, for a log or a status pane."""
         state = self._state
@@ -789,6 +960,19 @@ class OntogenyCore:
             f"{incumbent} ({scores.get(incumbent, 0.0):.2f})"
             + ("" if chosen == best else "; incumbent stands")
         )
+
+
+def _runtime_revision() -> str:
+    """Stable source identity supplied by the signed launcher, without git I/O."""
+    for name in (
+        "AURA_LAUNCH_EXPECTED_COMMIT",
+        "AURA_RUNTIME_SOURCE_COMMIT",
+        "AURA_SOURCE_COMMIT",
+    ):
+        value = str(os.environ.get(name) or "").strip().lower()
+        if value:
+            return value
+    return "runtime-unbound"
 
 
 def _stable_index(seed: str, modulus: int) -> int:

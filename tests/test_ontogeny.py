@@ -620,6 +620,34 @@ class TestOrganEndToEnd:
         assert verdict.decider == "incumbent"
         core.stop()
 
+    def test_collapsed_episode_keeps_original_pending_calibration(
+        self,
+        sandbox: Path,
+        monkeypatch,
+    ):
+        core = self._core(sandbox)
+        rng = np.random.default_rng(5)
+        remembered: list[str] = []
+        monkeypatch.setattr(core._spine, "record", lambda _episode: "original-episode")
+        monkeypatch.setattr(
+            core,
+            "_remember_episode",
+            lambda episode: remembered.append(episode.episode_id),
+        )
+
+        verdict = core.consider(
+            "executive.admission",
+            self._features(rng),
+            incumbent_choice="approved",
+            seed="collapsed",
+            stakes=0.4,
+            provenance=Provenance.TEST,
+        )
+
+        assert verdict.episode_id == "original-episode"
+        assert remembered == []
+        core.stop()
+
     def test_the_organ_beats_a_beatable_incumbent_on_held_out_evidence(self, sandbox: Path):
         """The end-to-end claim: it learns, and it is only promoted on evidence."""
         core = self._core(sandbox)

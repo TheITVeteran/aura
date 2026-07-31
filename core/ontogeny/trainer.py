@@ -35,7 +35,11 @@ from typing import Any
 import numpy as np
 
 from core.ontogeny.authority import AuthorityLedger
-from core.ontogeny.calibration import CalibrationMonitor
+from core.ontogeny.calibration import (
+    CANDIDATE_VALIDATION,
+    CalibrationMonitor,
+    CalibrationObservation,
+)
 from core.ontogeny.experience import Episode, ExperienceSpine, OutcomeKind
 from core.ontogeny.features import FeatureSchema, RunningMoments, design_row, row_names
 from core.ontogeny.heads import MIN_FIT_SAMPLES, PredictionHead
@@ -43,8 +47,12 @@ from core.ontogeny.state import OntogeneticState
 
 logger = logging.getLogger("Aura.Ontogeny.Trainer")
 
-#: Fraction of the (time-ordered) corpus held out as "the future".
-HOLDOUT_FRACTION = 0.25
+#: Disjoint future cohorts. Temperature fitting must not see the episodes used
+#: to estimate candidate lift or calibration; doing both on one holdout reports
+#: in-sample confidence as if it were independent evidence.
+TEMPERATURE_FRACTION = 0.10
+EVALUATION_FRACTION = 0.15
+HOLDOUT_FRACTION = TEMPERATURE_FRACTION + EVALUATION_FRACTION
 
 #: Recency half-life. An episode from a fortnight ago counts half as much as
 #: one from today.
@@ -62,6 +70,7 @@ class TrainingResult:
     fitted: bool
     reason: str = ""
     samples: int = 0
+    temperature_samples: int = 0
     holdout_samples: int = 0
     holdout_accuracy: float | None = None
     holdout_base_rate: float | None = None
@@ -79,6 +88,7 @@ class TrainingResult:
             "fitted": self.fitted,
             "reason": self.reason,
             "samples": self.samples,
+            "temperature_samples": self.temperature_samples,
             "holdout_samples": self.holdout_samples,
             "holdout_accuracy": round(self.holdout_accuracy, 4) if self.holdout_accuracy is not None else None,
             "holdout_base_rate": round(self.holdout_base_rate, 4) if self.holdout_base_rate is not None else None,
@@ -193,20 +203,26 @@ class Trainer:
             return result
 
         labels = [_label_of(ep) for ep in kept]
-        split = max(1, int(len(kept) * (1.0 - HOLDOUT_FRACTION)))
+        train_end = max(1, int(len(kept) * (1.0 - HOLDOUT_FRACTION)))
+        temperature_end = max(train_end, int(len(kept) * (1.0 - EVALUATION_FRACTION)))
+        temperature_end = min(len(kept), temperature_end)
         now = time.time()
         per_action: dict[str, dict[str, Any]] = {}
         fitted_any = False
-        total_train = total_holdout = 0
+        total_train = total_temperature = total_holdout = 0
         weighted_accuracy = weighted_base = 0.0
+        weighted_temperature = 0.0
+        candidate_observations: list[CalibrationObservation] = []
+        candidate_generation = max((head.version for head in heads.values()), default=0) + 1
 
         for action in actions:
             head = heads.get(action)
             if head is None:
                 continue
             taken = [i for i, ep in enumerate(kept) if ep.decision == action]
-            train_idx = [i for i in taken if i < split]
-            holdout_idx = [i for i in taken if i >= split]
+            train_idx = [i for i in taken if i < train_end]
+            temperature_idx = [i for i in taken if train_end <= i < temperature_end]
+            holdout_idx = [i for i in taken if i >= temperature_end]
             if len(train_idx) < MIN_FIT_SAMPLES:
                 per_action[action] = {
                     "fitted": False,
@@ -230,35 +246,57 @@ class Trainer:
                 learning_rate=head.learning_rate,
                 l2=head.l2,
             )
+            # A fresh candidate starts at version zero. Carry the deployed
+            # generation forward so every successful refit creates a distinct
+            # head cohort instead of repeatedly calling itself version one.
+            candidate.version = candidate_generation - 1
             evidence = candidate.fit(train_rows, train_labels, weights=weights)
             if not evidence.get("fitted"):
                 per_action[action] = {"fitted": False, "reason": evidence.get("reason", "fit refused")}
                 continue
 
+            temperature_rows = (
+                rows[temperature_idx]
+                if temperature_idx else np.zeros((0, rows.shape[1]))
+            )
+            temperature_labels = [labels[i] for i in temperature_idx]
             holdout_rows = rows[holdout_idx] if holdout_idx else np.zeros((0, rows.shape[1]))
             holdout_labels = [labels[i] for i in holdout_idx]
-            temperature = candidate.calibrate(holdout_rows, holdout_labels)
+            temperature = candidate.calibrate(temperature_rows, temperature_labels)
             accuracy, base_rate = _score(candidate, holdout_rows, holdout_labels)
 
             head.load_state(candidate.state_dict())
             head.input_names = candidate.input_names
             fitted_any = True
             total_train += len(train_idx)
+            total_temperature += len(temperature_idx)
             total_holdout += len(holdout_idx)
+            weighted_temperature += temperature * len(temperature_idx)
             if accuracy is not None and base_rate is not None:
                 weighted_accuracy += accuracy * len(holdout_idx)
                 weighted_base += base_rate * len(holdout_idx)
 
             for i in holdout_idx:
                 prediction = head.predict(rows[i])
-                self._calibration.observe(
-                    control_point,
+                episode = kept[i]
+                candidate_observations.append(CalibrationObservation(
+                    episode_id=f"candidate:{head.version}:{episode.episode_id}",
+                    control_point=control_point,
                     confidence=prediction.confidence,
                     correct=prediction.choice == labels[i],
-                )
+                    decided_at=episode.decided_at,
+                    observed_at=now,
+                    runtime_revision=str(
+                        (episode.context or {}).get("runtime_revision") or "training-corpus"
+                    ),
+                    head_version=head.version,
+                    action=action,
+                    provenance=CANDIDATE_VALIDATION,
+                ))
             per_action[action] = {
                 "fitted": True,
                 "train_samples": len(train_idx),
+                "temperature_samples": len(temperature_idx),
                 "holdout_samples": len(holdout_idx),
                 "holdout_accuracy": round(accuracy, 4) if accuracy is not None else None,
                 "holdout_base_rate": round(base_rate, 4) if base_rate is not None else None,
@@ -277,6 +315,14 @@ class Trainer:
             self._authority.evaluate(control_point, kept, head_ready=False)
             return result
 
+        # Candidate validation is a frozen evaluation plane. Replace it
+        # atomically so a repeated fit cannot append duplicate observations or
+        # retain a previous model's verdict when the new cohort has no support.
+        self._calibration.replace_observations(
+            control_point,
+            candidate_observations,
+            provenance=CANDIDATE_VALIDATION,
+        )
         accuracy = weighted_accuracy / total_holdout if total_holdout else None
         base_rate = weighted_base / total_holdout if total_holdout else None
         ready = sum(1 for a in actions if heads.get(a) is not None and heads[a].ready) >= 2
@@ -287,11 +333,21 @@ class Trainer:
             control_point=control_point,
             fitted=True,
             samples=total_train,
+            temperature_samples=total_temperature,
             holdout_samples=total_holdout,
             holdout_accuracy=accuracy,
             holdout_base_rate=base_rate,
             lift=(accuracy - base_rate) if accuracy is not None and base_rate is not None else None,
-            fit_evidence={"per_action": per_action, "corpus": len(kept)},
+            temperature=(weighted_temperature / total_temperature if total_temperature else 1.0),
+            fit_evidence={
+                "per_action": per_action,
+                "corpus": len(kept),
+                "temporal_cohorts": {
+                    "training": _cohort_receipt(kept[:train_end]),
+                    "temperature": _cohort_receipt(kept[train_end:temperature_end]),
+                    "evaluation": _cohort_receipt(kept[temperature_end:]),
+                },
+            },
             authority=verdict,
         )
         self.last_result[control_point] = result
@@ -316,6 +372,19 @@ def _label_of(episode: Episode) -> str:
     return "success" if outcome.kind is OutcomeKind.SUCCESS else "failure"
 
 
+def _cohort_receipt(episodes: Sequence[Episode]) -> dict[str, Any]:
+    """Auditable temporal extent without copying episode payloads into reports."""
+    if not episodes:
+        return {"samples": 0, "first_decided_at": None, "last_decided_at": None}
+    return {
+        "samples": len(episodes),
+        "first_decided_at": episodes[0].decided_at,
+        "last_decided_at": episodes[-1].decided_at,
+        "first_episode_id": episodes[0].episode_id,
+        "last_episode_id": episodes[-1].episode_id,
+    }
+
+
 def _score(
     head: PredictionHead, rows: np.ndarray, labels: Sequence[str]
 ) -> tuple[float | None, float | None]:
@@ -331,8 +400,10 @@ def _score(
 
 
 __all__ = [
+    "EVALUATION_FRACTION",
     "HOLDOUT_FRACTION",
     "RECENCY_HALF_LIFE_S",
+    "TEMPERATURE_FRACTION",
     "WASHOUT_STEPS",
     "Trainer",
     "TrainingResult",

@@ -32442,3 +32442,38 @@ certification. Ontogeny calibration closeout and a signed installed-app rebuild
 remain before the resident-32B campaign preflight. Training remains paused.
 This is total checkpoint 733. The 733-920 completion envelope is approximately
 79.7%-100.0%, with an 89.8% midpoint.
+
+### 2026-07-30 - DEMO-Q18 operational calibration is causal and cohort-bound
+
+The rejected launch's `0.2266` ontogeny overconfidence signal mixed evidence
+planes and depended on append order. Candidate-head validation, historical
+episodes from older source revisions, and current deployed decisions shared one
+rolling monitor. Replaying a corpus in action groups could therefore select a
+different tail than chronological decision order, and old failures remained
+capable of presenting as the active runtime's current condition.
+
+Ontogeny now maintains separate candidate-validation and lived operational
+calibration planes. Every operational observation is captured at decision time
+and bound to episode ID, source revision, head generation, chosen action,
+confidence, and decision timestamp before its outcome exists. Resolution adds
+the observed result idempotently. Windows are chronological, restart
+rehydration reconstructs source/head cohorts from the persisted ledger without
+deleting historical incidents, and a deduplicated episode cannot replace the
+original pending decision-time record.
+
+Candidate fitting now uses disjoint chronological training, temperature, and
+evaluation cohorts. Repeated evaluation replaces the candidate cohort
+atomically rather than appending duplicate outcomes. A new or repaired live
+cohort reports `recovery_pending` until at least 50 outcomes support an
+uncertainty estimate. Overconfidence warnings require a positive one-sided
+confidence bound; unsupported or historical cohorts remain inspectable but
+cannot drive the active alarm. Telemetry includes cohort identity, provenance,
+sample support, interval evidence, and status transitions.
+
+The ontogeny organ, surfaces, telemetry contracts, provenance repair, restart
+rehydration, temporal-split, and deduplication gates pass 129/129; bytecode
+compilation, lint, and diff integrity pass. The owner completed the live
+desktop demonstration cleanly. A signed installed-app rebuild and the full
+resident-32B campaign admission gate remain next. Training remains paused.
+This is total checkpoint 734. The 734-920 completion envelope is approximately
+79.8%-100.0%, with an 89.9% midpoint.

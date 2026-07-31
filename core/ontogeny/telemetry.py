@@ -34,10 +34,13 @@ CHANNEL_AUTHORITY_STAGE = "ontogeny.authority_rank"
 CHANNEL_OVERCONFIDENCE = "ontogeny.overconfidence"
 CHANNEL_WORLD_SURPRISE = "ontogeny.world_surprise"
 CHANNEL_EVIDENCE_ROWS = "ontogeny.evidence_rows"
+CHANNEL_CALIBRATION_SAMPLES = "ontogeny.calibration_samples"
+CHANNEL_CALIBRATION_SUPPORT = "ontogeny.calibration_support"
 
 EVENT_STAGE_CHANGE = "ontogeny_stage_change"
 EVENT_REVOKED = "ontogeny_authority_revoked"
 EVENT_ERA = "ontogeny_state_era"
+EVENT_CALIBRATION_STATUS = "ontogeny_calibration_status"
 
 #: Channels that only exist once there is something real to put in them.
 #:
@@ -57,6 +60,7 @@ _DEFERRED_SPECS: dict[str, dict[str, Any]] = {}
 
 _declared = False
 _deferred_done: set[str] = set()
+_last_calibration_status: dict[str, tuple[str, str]] = {}
 
 
 def _authority_rank(report: dict[str, Any]) -> int:
@@ -106,6 +110,17 @@ def declare() -> list[str]:
             description="episodes in the corpus carrying a real outcome label",
             owner="core/ontogeny/experience.py", group="ontogeny", stale_after_s=600.0,
         ),
+        dict(
+            identifier=0x0508, name=CHANNEL_CALIBRATION_SAMPLES, type=ChannelType.INT, unit="count",
+            description="least operational calibration support among active runtime/head cohorts",
+            owner="core/ontogeny/calibration.py", group="ontogeny", stale_after_s=600.0,
+        ),
+        dict(
+            identifier=0x0509, name=CHANNEL_CALIBRATION_SUPPORT, type=ChannelType.INT, unit="rank",
+            description="operational calibration state (0 recovery, 1 nominal, 2 warning, 3 red)",
+            owner="core/ontogeny/calibration.py", group="ontogeny",
+            enum_labels=("recovery_pending", "nominal", "warning", "red"), stale_after_s=600.0,
+        ),
     ):
         try:
             channel(**spec)
@@ -132,6 +147,15 @@ def declare() -> list[str]:
             format_string="ontogenetic state entered era {era} ({reason})",
             description="the persistent state was reset because its input space changed",
             owner="core/ontogeny/state.py",
+        ),
+        dict(
+            identifier=0x1104, name=EVENT_CALIBRATION_STATUS, severity=EventSeverity.ACTIVITY_HI,
+            format_string=(
+                "{control_point} calibration {status}; samples={samples} "
+                "supported={statistically_supported} cohort={cohort_id} provenance={provenance}"
+            ),
+            description="a deployed runtime/head calibration cohort changed evidence state",
+            owner="core/ontogeny/calibration.py",
         ),
     ):
         try:
@@ -217,12 +241,31 @@ def sample(report: dict[str, Any]) -> None:
 
     _put(CHANNEL_AUTHORITY_STAGE, authority_rank)
 
-    calibration = report.get("calibration") or {}
-    if calibration:
+    # Operational telemetry is based only on predictions captured before the
+    # outcome existed. Candidate evaluation remains visible in the report but
+    # is never allowed to drive a live overconfidence alarm.
+    calibration = report.get("operational_calibration") or {}
+    supported = [
+        rep for rep in calibration.values()
+        if rep.get("statistically_supported") is True
+    ]
+    if supported:
         _put(
             CHANNEL_OVERCONFIDENCE,
-            max(float(rep.get("overconfidence") or 0.0) for rep in calibration.values()),
+            max(float(rep.get("overconfidence") or 0.0) for rep in supported),
         )
+    if calibration:
+        _put(
+            CHANNEL_CALIBRATION_SAMPLES,
+            min(int(rep.get("samples") or 0) for rep in calibration.values()),
+        )
+        ranks = {"recovery_pending": 0, "insufficient_evidence": 0, "nominal": 1,
+                 "warning": 2, "red": 3}
+        _put(
+            CHANNEL_CALIBRATION_SUPPORT,
+            max(ranks.get(str(rep.get("status")), 0) for rep in calibration.values()),
+        )
+        _emit_calibration_transitions(calibration)
 
     world = report.get("world_model") or {}
     _put(CHANNEL_WORLD_SURPRISE, world.get("mean_surprise"))
@@ -234,8 +277,47 @@ def sample(report: dict[str, Any]) -> None:
     _put(CHANNEL_EVIDENCE_ROWS, evidence)
 
 
+def _emit_calibration_transitions(calibration: dict[str, dict[str, Any]]) -> None:
+    try:
+        from core.fsw.telemetry_dictionary import EventSeverity, emit_event
+    except ImportError:
+        return
+    severities = {
+        "red": EventSeverity.WARNING_HI,
+        "warning": EventSeverity.WARNING_LO,
+        "nominal": EventSeverity.ACTIVITY_HI,
+        "recovery_pending": EventSeverity.ACTIVITY_HI,
+        "insufficient_evidence": EventSeverity.ACTIVITY_HI,
+    }
+    for control_point, payload in sorted(calibration.items()):
+        cohort_id = str(payload.get("cohort_id") or "unbound")
+        status = str(payload.get("status") or "recovery_pending")
+        marker = (cohort_id, status)
+        if _last_calibration_status.get(control_point) == marker:
+            continue
+        _last_calibration_status[control_point] = marker
+        try:
+            emit_event(
+                EVENT_CALIBRATION_STATUS,
+                severity=severities.get(status, EventSeverity.ACTIVITY_HI),
+                control_point=control_point,
+                status=status,
+                samples=int(payload.get("samples") or 0),
+                statistically_supported=payload.get("statistically_supported") is True,
+                cohort_id=cohort_id,
+                provenance=str(payload.get("provenance") or "unknown"),
+            )
+        except (ValueError, TypeError, KeyError) as exc:
+            record_degradation(
+                "ontogeny_telemetry", exc, severity="debug",
+                action=f"calibration event for {control_point} not emitted",
+            )
+
+
 __all__ = [
     "CHANNEL_AUTHORITY_STAGE",
+    "CHANNEL_CALIBRATION_SAMPLES",
+    "CHANNEL_CALIBRATION_SUPPORT",
     "CHANNEL_EPISODES",
     "CHANNEL_EVIDENCE_ROWS",
     "CHANNEL_NOVELTY",
@@ -243,6 +325,7 @@ __all__ = [
     "CHANNEL_OVERCONFIDENCE",
     "CHANNEL_WORLD_SURPRISE",
     "EVENT_ERA",
+    "EVENT_CALIBRATION_STATUS",
     "EVENT_REVOKED",
     "EVENT_STAGE_CHANGE",
     "declare",

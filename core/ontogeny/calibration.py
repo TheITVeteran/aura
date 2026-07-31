@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
-from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +39,7 @@ from core.ontogeny.experience import Episode, OutcomeKind
 logger = logging.getLogger("Aura.Ontogeny.Calibration")
 
 _Z95 = 1.959963984540054
+_Z95_ONE_SIDED = 1.6448536269514722
 
 #: Rolling window per control point. Long enough for a stable estimate, short
 #: enough that a head going bad this week is visible this week.
@@ -50,6 +51,16 @@ _BINS = 10
 #: A head whose ECE exceeds its grant-time baseline by this much has stopped
 #: being honest about itself and loses authority.
 ECE_DRIFT_LIMIT = 0.12
+
+#: Calibration is an operational claim only after enough independent episodes
+#: exist to estimate its uncertainty. Until then, a new runtime/head cohort is
+#: recovering evidence rather than healthy or unhealthy.
+MIN_CALIBRATION_SUPPORT = 50
+
+#: Provenance names are contracts used by reports, telemetry and tests.
+CANDIDATE_VALIDATION = "candidate_validation"
+OPERATIONAL_SHADOW = "operational_shadow"
+LEGACY_CALIBRATION = "legacy"
 
 #: Below this many graded episodes a track record states its ignorance rather
 #: than a rate. Three coin flips are not a base rate.
@@ -74,6 +85,51 @@ def wilson(successes: float, total: float, *, upper: bool, z: float = _Z95) -> f
 
 
 @dataclass(frozen=True)
+class CalibrationObservation:
+    """One prediction made before its outcome was known.
+
+    ``episode_id`` is the idempotency key. Runtime revision and head version
+    are deliberately both present: a source repair with an unchanged head and
+    a refit on unchanged source are different experimental regimes.
+    """
+
+    episode_id: str
+    control_point: str
+    confidence: float
+    correct: bool
+    decided_at: float
+    observed_at: float
+    runtime_revision: str = "unbound"
+    head_version: int = 0
+    action: str = "unknown"
+    provenance: str = LEGACY_CALIBRATION
+
+    def __post_init__(self) -> None:
+        if not self.episode_id or not self.control_point:
+            raise ValueError("calibration observations require episode and control-point identity")
+        confidence = float(self.confidence)
+        if not math.isfinite(confidence):
+            raise ValueError("calibration confidence must be finite")
+        object.__setattr__(self, "confidence", min(1.0, max(0.0, confidence)))
+        for field_name in ("decided_at", "observed_at"):
+            value = float(getattr(self, field_name))
+            if not math.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
+            object.__setattr__(self, field_name, value)
+        object.__setattr__(self, "runtime_revision", str(self.runtime_revision or "unbound"))
+        object.__setattr__(self, "head_version", max(0, int(self.head_version)))
+        object.__setattr__(self, "action", str(self.action or "unknown"))
+        object.__setattr__(self, "provenance", str(self.provenance or LEGACY_CALIBRATION))
+
+    @property
+    def cohort_id(self) -> str:
+        return (
+            f"{self.provenance}:runtime={self.runtime_revision}:"
+            f"head={self.head_version}"
+        )
+
+
+@dataclass(frozen=True)
 class CalibrationReport:
     """How honest a head's confidence has been lately."""
 
@@ -87,6 +143,18 @@ class CalibrationReport:
     #: direction that hurts.
     overconfidence: float
     reliability: tuple[tuple[float, float, int], ...] = ()
+    cohort_id: str = ""
+    runtime_revision: str = "unbound"
+    head_version: int = 0
+    provenance: str = LEGACY_CALIBRATION
+    oldest_decision_at: float | None = None
+    newest_decision_at: float | None = None
+    standard_error: float | None = None
+    overconfidence_lower95: float | None = None
+    overconfidence_upper95: float | None = None
+    statistically_supported: bool = False
+    overconfidence_supported: bool = False
+    status: str = "insufficient_evidence"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +165,25 @@ class CalibrationReport:
             "ece": round(self.ece, 4),
             "mean_confidence": round(self.mean_confidence, 4),
             "overconfidence": round(self.overconfidence, 4),
+            "cohort_id": self.cohort_id,
+            "runtime_revision": self.runtime_revision,
+            "head_version": self.head_version,
+            "provenance": self.provenance,
+            "oldest_decision_at": self.oldest_decision_at,
+            "newest_decision_at": self.newest_decision_at,
+            "standard_error": round(self.standard_error, 6) if self.standard_error is not None else None,
+            "overconfidence_lower95": (
+                round(self.overconfidence_lower95, 4)
+                if self.overconfidence_lower95 is not None else None
+            ),
+            "overconfidence_upper95": (
+                round(self.overconfidence_upper95, 4)
+                if self.overconfidence_upper95 is not None else None
+            ),
+            "statistically_supported": self.statistically_supported,
+            "overconfidence_supported": self.overconfidence_supported,
+            "minimum_samples": MIN_CALIBRATION_SUPPORT,
+            "status": self.status,
             "reliability": [
                 {"confidence": round(c, 3), "accuracy": round(a, 3), "n": n}
                 for c, a, n in self.reliability
@@ -105,23 +192,165 @@ class CalibrationReport:
 
 
 class CalibrationMonitor:
-    """Rolling calibration per control point, with a drift verdict."""
+    """Chronological, idempotent calibration partitioned by provenance.
 
-    def __init__(self, window: int = _WINDOW) -> None:
+    Candidate evaluation and lived operational shadows must never share a
+    window. The former validates a proposed head on a frozen future cohort;
+    the latter asks whether the exact deployed runtime/head regime remains
+    honest after real decisions resolve.
+    """
+
+    def __init__(self, window: int = _WINDOW, *, provenance: str = LEGACY_CALIBRATION) -> None:
         self._window = int(window)
-        self._samples: dict[str, deque[tuple[float, bool, float]]] = {}
+        self._provenance = str(provenance)
+        self._samples: dict[str, dict[str, dict[str, CalibrationObservation]]] = {}
+        self._active: dict[str, str] = {}
         self._baselines: dict[str, float] = {}
+        self._legacy_sequence = 0
+        self._lock = threading.RLock()
 
-    def observe(self, control_point: str, *, confidence: float, correct: bool) -> None:
-        series = self._samples.setdefault(control_point, deque(maxlen=self._window))
-        series.append((float(confidence), bool(correct), time.time()))
+    @staticmethod
+    def cohort_id(*, provenance: str, runtime_revision: str, head_version: int) -> str:
+        return f"{provenance}:runtime={runtime_revision or 'unbound'}:head={max(0, int(head_version))}"
+
+    def activate(
+        self,
+        control_point: str,
+        *,
+        runtime_revision: str,
+        head_version: int,
+        provenance: str | None = None,
+    ) -> str:
+        cohort = self.cohort_id(
+            provenance=provenance or self._provenance,
+            runtime_revision=runtime_revision,
+            head_version=head_version,
+        )
+        with self._lock:
+            self._active[control_point] = cohort
+        return cohort
+
+    def observe(
+        self,
+        control_point: str,
+        *,
+        confidence: float,
+        correct: bool,
+        episode_id: str | None = None,
+        decided_at: float | None = None,
+        observed_at: float | None = None,
+        runtime_revision: str = "unbound",
+        head_version: int = 0,
+        action: str = "unknown",
+        provenance: str | None = None,
+    ) -> bool:
+        now = time.time()
+        with self._lock:
+            if episode_id is None:
+                self._legacy_sequence += 1
+                episode_id = f"legacy:{self._legacy_sequence}"
+            observation = CalibrationObservation(
+                episode_id=str(episode_id),
+                control_point=control_point,
+                confidence=confidence,
+                correct=correct,
+                decided_at=now if decided_at is None else decided_at,
+                observed_at=now if observed_at is None else observed_at,
+                runtime_revision=runtime_revision,
+                head_version=head_version,
+                action=action,
+                provenance=provenance or self._provenance,
+            )
+            cohorts = self._samples.setdefault(control_point, {})
+            series = cohorts.setdefault(observation.cohort_id, {})
+            if observation.episode_id in series:
+                return False
+            series[observation.episode_id] = observation
+            self._trim(series)
+            return True
+
+    def replace_observations(
+        self,
+        control_point: str,
+        observations: Iterable[CalibrationObservation],
+        *,
+        provenance: str | None = None,
+    ) -> int:
+        """Atomically replace one provenance plane from a replay or evaluation.
+
+        Re-running the same replay produces the same set, rather than changing
+        the answer through append order or duplicating episodes.
+        """
+        target_provenance = provenance or self._provenance
+        grouped: dict[str, dict[str, CalibrationObservation]] = {}
+        for observation in observations:
+            if observation.control_point != control_point:
+                raise ValueError("calibration replacement crossed control points")
+            if observation.provenance != target_provenance:
+                raise ValueError("calibration replacement crossed provenance planes")
+            grouped.setdefault(observation.cohort_id, {})[observation.episode_id] = observation
+        with self._lock:
+            cohorts = self._samples.setdefault(control_point, {})
+            for cohort in [name for name in cohorts if name.startswith(f"{target_provenance}:")]:
+                cohorts.pop(cohort, None)
+            for cohort, series in grouped.items():
+                self._trim(series)
+                cohorts[cohort] = series
+            if grouped and (
+                control_point not in self._active
+                or self._active[control_point].startswith(f"{target_provenance}:")
+            ):
+                self._active[control_point] = max(
+                    grouped,
+                    key=lambda name: max(o.decided_at for o in grouped[name].values()),
+                )
+        return sum(len(series) for series in grouped.values())
+
+    def _trim(self, series: dict[str, CalibrationObservation]) -> None:
+        if len(series) <= self._window:
+            return
+        keep = {
+            obs.episode_id
+            for obs in sorted(series.values(), key=lambda o: (o.decided_at, o.episode_id))[-self._window:]
+        }
+        for episode_id in tuple(series):
+            if episode_id not in keep:
+                series.pop(episode_id, None)
 
     def report(self, control_point: str) -> CalibrationReport | None:
-        series = self._samples.get(control_point)
+        with self._lock:
+            cohorts = self._samples.get(control_point, {})
+            cohort = self._active.get(control_point)
+            if cohort is None and cohorts:
+                cohort = max(
+                    cohorts,
+                    key=lambda name: max(
+                        (o.decided_at for o in cohorts[name].values()), default=0.0
+                    ),
+                )
+            series = list(cohorts.get(cohort, {}).values()) if cohort else []
         if not series:
-            return None
-        confidences = [c for c, _, _ in series]
-        corrects = [1.0 if ok else 0.0 for _, ok, _ in series]
+            if cohort is None:
+                return None
+            provenance, runtime_revision, head_version = _parse_cohort(cohort)
+            return CalibrationReport(
+                control_point=control_point,
+                samples=0,
+                accuracy=0.0,
+                brier=0.0,
+                ece=0.0,
+                mean_confidence=0.0,
+                overconfidence=0.0,
+                cohort_id=cohort,
+                runtime_revision=runtime_revision,
+                head_version=head_version,
+                provenance=provenance,
+                status=("recovery_pending" if provenance == OPERATIONAL_SHADOW else "insufficient_evidence"),
+            )
+        series.sort(key=lambda observation: (observation.decided_at, observation.episode_id))
+        series = series[-self._window:]
+        confidences = [observation.confidence for observation in series]
+        corrects = [1.0 if observation.correct else 0.0 for observation in series]
         n = len(series)
         accuracy = sum(corrects) / n
         brier = sum((c - ok) ** 2 for c, ok in zip(confidences, corrects, strict=True)) / n
@@ -142,6 +371,28 @@ class CalibrationMonitor:
             buckets.append((bin_conf, bin_acc, len(members)))
             ece += (len(members) / n) * abs(bin_conf - bin_acc)
 
+        deltas = [confidence - correct for confidence, correct in zip(confidences, corrects, strict=True)]
+        standard_error = None
+        lower95 = upper95 = None
+        if n > 1:
+            variance = sum((delta - (mean_conf - accuracy)) ** 2 for delta in deltas) / (n - 1)
+            standard_error = math.sqrt(max(0.0, variance) / n)
+            lower95 = (mean_conf - accuracy) - _Z95_ONE_SIDED * standard_error
+            upper95 = (mean_conf - accuracy) + _Z95_ONE_SIDED * standard_error
+        supported = n >= MIN_CALIBRATION_SUPPORT and standard_error is not None
+        overconfidence_supported = bool(supported and lower95 is not None and lower95 > 0.0)
+        provenance = series[-1].provenance
+        if provenance == OPERATIONAL_SHADOW and not supported:
+            status = "recovery_pending"
+        elif not supported:
+            status = "insufficient_evidence"
+        elif lower95 is not None and lower95 > 0.15:
+            status = "red"
+        elif lower95 is not None and lower95 > 0.08:
+            status = "warning"
+        else:
+            status = "nominal"
+
         return CalibrationReport(
             control_point=control_point,
             samples=n,
@@ -151,6 +402,18 @@ class CalibrationMonitor:
             mean_confidence=mean_conf,
             overconfidence=mean_conf - accuracy,
             reliability=tuple(buckets),
+            cohort_id=series[-1].cohort_id,
+            runtime_revision=series[-1].runtime_revision,
+            head_version=series[-1].head_version,
+            provenance=provenance,
+            oldest_decision_at=series[0].decided_at,
+            newest_decision_at=series[-1].decided_at,
+            standard_error=standard_error,
+            overconfidence_lower95=lower95,
+            overconfidence_upper95=upper95,
+            statistically_supported=supported,
+            overconfidence_supported=overconfidence_supported,
+            status=status,
         )
 
     def set_baseline(self, control_point: str) -> float | None:
@@ -176,11 +439,51 @@ class CalibrationMonitor:
 
     def all_reports(self) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
-        for control_point in self._samples:
+        with self._lock:
+            control_points = set(self._samples) | set(self._active)
+        for control_point in sorted(control_points):
             report = self.report(control_point)
             if report is not None:
                 out[control_point] = report.as_dict()
         return out
+
+    def cohort_reports(self, control_point: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        """Return current and historical regimes without changing the active one."""
+        with self._lock:
+            snapshot = {
+                cp: {cohort: dict(series) for cohort, series in cohorts.items()}
+                for cp, cohorts in self._samples.items()
+                if control_point is None or cp == control_point
+            }
+            active = dict(self._active)
+        reports: dict[str, list[dict[str, Any]]] = {}
+        for cp, cohorts in snapshot.items():
+            rows: list[dict[str, Any]] = []
+            for cohort, series in cohorts.items():
+                temporary = CalibrationMonitor(window=self._window, provenance=self._provenance)
+                temporary._samples = {cp: {cohort: series}}
+                temporary._active = {cp: cohort}
+                report = temporary.report(cp)
+                if report is not None:
+                    payload = report.as_dict()
+                    payload["active"] = active.get(cp) == cohort
+                    rows.append(payload)
+            reports[cp] = sorted(
+                rows,
+                key=lambda payload: float(payload.get("newest_decision_at") or 0.0),
+                reverse=True,
+            )
+        return reports
+
+
+def _parse_cohort(cohort_id: str) -> tuple[str, str, int]:
+    provenance, _, remainder = cohort_id.partition(":runtime=")
+    runtime_revision, _, head = remainder.rpartition(":head=")
+    try:
+        head_version = int(head)
+    except ValueError:
+        head_version = 0
+    return provenance or LEGACY_CALIBRATION, runtime_revision or "unbound", head_version
 
 
 @dataclass(frozen=True)
@@ -367,9 +670,14 @@ def track_records(
 
 
 __all__ = [
+    "CANDIDATE_VALIDATION",
     "ECE_DRIFT_LIMIT",
+    "LEGACY_CALIBRATION",
+    "MIN_CALIBRATION_SUPPORT",
     "MIN_TRACK_RECORD",
+    "OPERATIONAL_SHADOW",
     "CalibrationMonitor",
+    "CalibrationObservation",
     "CalibrationReport",
     "TrackRecord",
     "TrackRecordIndex",
