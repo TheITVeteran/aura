@@ -16,15 +16,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 756 makes a fresh
-  canary seed an explicit immutable preregistration input while fixing every
-  other profile parameter. This prevents S29 from reusing S28 task and answer
-  identities; clean-source S29 contract generation and disjointness proof are
-  next. No policy update or gain claim exists.**
-- Previous implementation milestone: **Checkpoint 755 repaired the exact S28
-  optimization-prefix receipt failure while preserving historical replay. S28
-  is retired after five safe rejections and one pre-mutation objective
-  failure.**
+- Current active implementation milestone: **Checkpoint 757 freezes S29 from
+  clean CP756 source with 12 fresh train tasks and three fresh holdouts. Their
+  task/prompt identities are disjoint from S28 and internally disjoint. The
+  resident policy and answer-channel preflights remain next; no policy update
+  or gain claim exists.**
+- Previous implementation milestone: **Checkpoint 756 made a fresh canary seed
+  an explicit immutable preregistration input while fixing every other profile
+  parameter.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33231,3 +33230,32 @@ provisioning fresh signers and a new PID-1 controller. No reasoning-gain,
 frontier, promotion, release, or `WOW Signal` claim is made. This is total
 checkpoint 756. The 756-920 completion envelope is approximately 82.2%-100.0%,
 with a 91.1% midpoint.
+
+### 2026-07-31 - CP420S29 fresh targeted canary preregistration
+
+CP420S29 is frozen from clean pushed CP756 source with training seed
+`2026073101`. Its immutable semantic contract SHA-256 is
+`9506827376f58d89c776b677382f153ae508ef34f03789c57c3b59a706541035`;
+the serialized contract file SHA-256 is
+`a9597defd3be0d04ec2c8040b9f37b0a8f9a5fcb4a2a5a183d1f62ce8ab7dafa`.
+The contract independently verifies the resident model and behavior bundle,
+all executable source bindings including the v3 optimization-prefix repair,
+the exact recurrent graph and intervention objective, the targeted update-
+canary profile, process rotation, checkpoint cadence, watchdog policy, and
+nonpromotable claim boundary.
+
+The S29 split contains 12 register-trace training tasks and three holdouts
+across depths two, four, and eight. Reconstructing both frozen datasets found
+zero task/prompt identity overlap between all 15 S29 items and all 15 S28
+items, plus zero S29 train/holdout overlap. No observed S28 answer or transition
+is reused as S29 training evidence.
+
+No resident model process ran in this checkpoint. The next actions are the
+initial-policy and answer-channel preflights, fresh process-isolated signer
+custody, verified launch materialization, and a new PID-1 controller. The
+canary still requires at least three independently replayed updates, distinct
+policy digests, exact checkpoint recovery, base-weight immutability, terminal
+closure, and retirement; it cannot establish broad reasoning gain or frontier
+performance. No reasoning-gain, frontier, promotion, release, or `WOW Signal`
+claim is made. This is total checkpoint 757. The 757-920 completion envelope is
+approximately 82.3%-100.0%, with a 91.1% midpoint.
