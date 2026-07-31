@@ -32534,3 +32534,20 @@ update or gain claim because its frozen launcher source is now superseded. A
 fresh CP420S21 canary contract, probes, signers, bundle, and launch are required.
 This is total checkpoint 736. The 736-920 completion envelope is approximately
 80.0%-100.0%, with a 90.0% midpoint.
+
+### 2026-07-30 - CP420S21 repaired resident canary preregistration
+
+CP420S21 is freshly preregistered from clean commit `b65d8a7fb` after the
+external launch-digest repair. It retains CP420S20's exact non-promotable
+12-step scientific design, disjoint 12/12 task corpus, production recurrent
+execution, resource envelope, checkpoint-per-step persistence, exact resume,
+watchdog policy, and verified trajectory objectives. Only the frozen executable
+source identity and campaign-specific cryptographic material change.
+
+The contract verifies against the resident model, behavior bundle, execution
+specification, curriculum, and complete training source inventory. No resident
+measurement or optimizer update has occurred under CP420S21 yet. Its
+initial-policy and answer-channel probes, fresh signer services, launch bundle,
+and detached update canary remain the immediate admission sequence. This is
+total checkpoint 737. The 737-920 completion envelope is approximately
+80.1%-100.0%, with a 90.1% midpoint.
