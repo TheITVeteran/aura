@@ -36,6 +36,7 @@ from tools.train_grpo import (
     _calibration_admission_report,
     _calibration_reward_observations,
     _calibration_token_budget,
+    _causal_learnability_summary,
     _dataset_payload,
     _load_execution_spec,
     _point_estimate_delta,
@@ -79,6 +80,113 @@ class _Task:
 def test_stable_seed_has_a_fixed_process_independent_value():
     assert _stable_seed(7, "cell", 4) == 3478236081
     assert _stable_seed(7, "cell", 4) != _stable_seed(7, "cell", 5)
+
+
+@pytest.mark.parametrize(
+    ("transitions", "verdict", "strict", "safe"),
+    (
+        (
+            {
+                "wrong_to_right": 1,
+                "right_to_wrong": 0,
+                "right_to_right": 1,
+                "wrong_to_wrong": 0,
+            },
+            "strict_learnable_cell_observed",
+            1,
+            1,
+        ),
+        (
+            {
+                "wrong_to_right": 1,
+                "right_to_wrong": 0,
+                "right_to_right": 0,
+                "wrong_to_wrong": 1,
+            },
+            "causal_signal_without_same_group_control",
+            0,
+            1,
+        ),
+        (
+            {
+                "wrong_to_right": 1,
+                "right_to_wrong": 1,
+                "right_to_right": 0,
+                "wrong_to_wrong": 0,
+            },
+            "causal_signal_with_regression",
+            0,
+            0,
+        ),
+        (
+            {
+                "wrong_to_right": 0,
+                "right_to_wrong": 1,
+                "right_to_right": 1,
+                "wrong_to_wrong": 0,
+            },
+            "regression_without_learning_signal",
+            0,
+            0,
+        ),
+        (
+            {
+                "wrong_to_right": 0,
+                "right_to_wrong": 0,
+                "right_to_right": 2,
+                "wrong_to_wrong": 0,
+            },
+            "no_causal_learning_signal_observed",
+            0,
+            0,
+        ),
+    ),
+)
+def test_causal_learnability_summary_preserves_nonclaiming_signal_boundaries(
+    transitions,
+    verdict,
+    strict,
+    safe,
+):
+    row = {
+        "transitions": transitions,
+        "causal_signal": transitions["wrong_to_right"] > 0,
+        "regression_free_signal": (
+            transitions["wrong_to_right"] > 0
+            and transitions["right_to_wrong"] == 0
+        ),
+        "strict_group_admission_reachable": (
+            transitions["wrong_to_right"] > 0
+            and transitions["right_to_wrong"] == 0
+            and transitions["right_to_right"] > 0
+        ),
+    }
+
+    report = _causal_learnability_summary([row])
+
+    assert report["verdict"] == verdict
+    assert report["strict_group_admission_reachable_cells"] == strict
+    assert report["regression_free_signal_cells"] == safe
+    assert report["transition_counts"] == transitions
+
+
+def test_causal_learnability_summary_rejects_inconsistent_derived_flags():
+    with pytest.raises(ValueError, match="signal flag differs"):
+        _causal_learnability_summary(
+            [
+                {
+                    "transitions": {
+                        "wrong_to_right": 1,
+                        "right_to_wrong": 0,
+                        "right_to_right": 1,
+                        "wrong_to_wrong": 0,
+                    },
+                    "causal_signal": False,
+                    "regression_free_signal": True,
+                    "strict_group_admission_reachable": True,
+                }
+            ]
+        )
 
 
 def test_model_path_resolves_from_authenticated_main_checkout(

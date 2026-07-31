@@ -1244,6 +1244,48 @@ def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
     assert "--read-only-answer-channel-preflight" in argv
 
 
+def test_causal_learnability_preflight_matches_training_object_and_budget():
+    contract = _contract()
+
+    argv = prereg._causal_learnability_preflight_argv(contract)
+
+    assert argv[0] == "tools/train_grpo.py"
+    assert argv[argv.index("--model") + 1] == contract["model"]["path"]
+    assert argv[argv.index("--execution-spec") + 1] == contract["execution_spec"]["path"]
+    assert argv[argv.index("--task-source") + 1] == "recurrence_curriculum"
+    assert argv[argv.index("--domains") + 1] == "register_trace"
+    assert argv[argv.index("--depths") + 1] == "2,4,8"
+    assert argv[argv.index("--train-per-cell") + 1] == "2"
+    assert argv[argv.index("--group-size") + 1] == str(
+        contract["training"]["parameters"]["group_size"]
+    )
+    assert argv[argv.index("--max-tokens") + 1] == str(
+        contract["training"]["parameters"]["max_tokens"]
+    )
+    assert "--calibrate" not in argv
+    assert "--read-only-causal-learnability-preflight" in argv
+
+
+def test_causal_learnability_preflight_invokes_trainer_without_provider(monkeypatch):
+    contract = _contract()
+    captured: dict[str, object] = {}
+
+    def fake_train_main():
+        captured["argv"] = list(prereg.sys.argv)
+        return 3
+
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    from tools import train_grpo
+
+    monkeypatch.setattr(train_grpo, "main", fake_train_main)
+
+    assert prereg._run_causal_learnability_preflight(contract) == 3
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert "register_trace" in argv
+    assert "--read-only-causal-learnability-preflight" in argv
+
+
 def test_launch_initial_policy_probe_is_detached_and_nonresumable(tmp_path, monkeypatch):
     contract = _contract()
     contract["paths"]["artifact_root"] = "artifacts/probe"
@@ -1316,4 +1358,50 @@ def test_launch_answer_channel_preflight_is_detached_and_source_bound(tmp_path, 
     assert command[0] == str(venv_python)
     assert command[1] == str(Path(prereg.__file__).resolve(strict=True))
     assert command[2:4] == ["run-answer-channel-preflight", "--contract"]
+    assert command[4] == str(contract_path.resolve(strict=True))
+
+
+def test_launch_causal_learnability_preflight_is_detached_and_source_bound(
+    tmp_path,
+    monkeypatch,
+):
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "artifacts/causal-preflight"
+    contract_path = tmp_path / "config" / "causal-preflight-contract.json"
+    contract_path.parent.mkdir(parents=True)
+    contract_path.write_text(json.dumps(contract), encoding="ascii")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.symlink_to(Path(__import__("sys").executable))
+    captured: dict[str, object] = {}
+
+    def fake_detached_main(argv):
+        captured["argv"] = list(argv)
+        return 17
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg.sys, "executable", str(venv_python))
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(prereg.run_detached_step, "main", fake_detached_main)
+
+    assert prereg._launch_causal_learnability_preflight(contract_path) == 17
+
+    argv = captured["argv"]
+    assert isinstance(argv, list)
+    assert argv[0] == "launch"
+    assert argv[argv.index("--run-dir") + 1] == str(
+        tmp_path
+        / "artifacts"
+        / "causal-preflight"
+        / "detached-causal-learnability-preflight"
+    )
+    assert argv[argv.index("--name") + 1].endswith(
+        "-causal-learnability-preflight"
+    )
+    assert argv[argv.index("--timeout") + 1] == "14400"
+    resume_index = argv.index("--resume-contract")
+    assert argv[resume_index + 1] == "none"
+    command = argv[resume_index + 2 :]
+    assert command[0] == str(venv_python)
+    assert command[2:4] == ["run-causal-learnability-preflight", "--contract"]
     assert command[4] == str(contract_path.resolve(strict=True))

@@ -32942,3 +32942,44 @@ the causal curriculum/admission object must be redesigned and shown to produce
 safe wrong-to-right transitions before a full launch. This is total checkpoint
 748. The 748-920 completion envelope is approximately 81.3%-100.0%, with a
 90.6% midpoint.
+
+### 2026-07-31 - Causal learnability preflight before another resident canary
+
+S26's negative result was decomposed at the exact verified transition layer.
+Eight of 12 groups had two wrong depth-three controls, two groups were already
+right-to-right saturated, and two groups regressed. The register-trace group is
+the important exception: one branch made a verified wrong-to-right transition
+at the final recurrent edge while the other remained wrong. This is genuine
+task-and-seed-specific causal learning signal, but the existing two-member
+optimizer gate correctly rejected it because the same group contained no
+right-to-right control with which to establish a zero empirical intervention
+regression rate. It is not yet an optimizer update or a reasoning-gain result.
+
+The trainer now has an immutable read-only causal-learnability preflight. On
+fresh recurrence-curriculum tasks it samples the same matched-noise final
+parent/child edge, branch roles, resident execution graph, initialized adapter
+scope, and full 320-token budget consumed by proof-grade training. It grades
+both endpoints with the task verifier, records only receipt hashes and compact
+wrong-to-right/right-to-wrong/right-to-right/wrong-to-wrong outcomes, proves
+the policy digest is unchanged, and exits before optimizer construction. Its
+nonclaiming verdict distinguishes strict same-group reachability, safe signal
+without a control, signal accompanied by regression, regression without any
+learning signal, and no observed transition signal.
+
+The campaign utility exposes this as a source-bound detached preflight with a
+four-hour hard timeout, private artifact root, stable logs, and no resume or
+mutation path. The bounded default covers six fresh register-trace tasks across
+difficulties 2, 4, and 8, two branches each, using a seed separated from both
+the S26 evidence and the next training schedule. The causal admission and
+reasoning-gain gates are unchanged. Focused classification and detached-launch
+tests pass 9/9; the broader trainer, preregistration, post-training, causal
+campaign, provider, policy replay, rejection, transaction, and measurement
+matrix is green, as are bytecode compilation, lint, and diff integrity.
+
+The next action is a clean-source resident preflight. Its receipt will decide
+the next canary curriculum rather than reusing observed answers or launching
+another all-domain zero-update dose blindly. Full training remains blocked
+until a fresh canary admits safe updates and passes held-out, replay, terminal,
+and regression gates. No reasoning-gain, frontier, promotion, or `WOW Signal`
+claim is made. This is total checkpoint 749. The 749-920 completion envelope
+is approximately 81.4%-100.0%, with a 90.7% midpoint.

@@ -1580,6 +1580,67 @@ def _grade_reason(verdict: Mapping[str, Any]) -> str:
     return "correct" if bool(verdict.get("correct")) else "incorrect"
 
 
+def _causal_learnability_summary(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Summarize exact recurrent-edge outcomes without turning them into a claim."""
+
+    transition_kinds = (
+        "wrong_to_right",
+        "right_to_wrong",
+        "right_to_right",
+        "wrong_to_wrong",
+    )
+    aggregate = Counter()
+    signal_cells = 0
+    safe_signal_cells = 0
+    strict_cells = 0
+    regression_cells = 0
+    for row in rows:
+        transitions = row.get("transitions")
+        if not isinstance(transitions, Mapping) or set(transitions) != set(transition_kinds):
+            raise ValueError("causal learnability row transition schema is invalid")
+        counts = {}
+        for kind in transition_kinds:
+            value = transitions.get(kind)
+            if type(value) is not int or value < 0:
+                raise ValueError("causal learnability transition count is invalid")
+            counts[kind] = value
+            aggregate[kind] += value
+        causal_signal = counts["wrong_to_right"] > 0
+        regression_free_signal = causal_signal and counts["right_to_wrong"] == 0
+        strict_reachable = regression_free_signal and counts["right_to_right"] > 0
+        if row.get("causal_signal") is not causal_signal:
+            raise ValueError("causal learnability signal flag differs")
+        if row.get("regression_free_signal") is not regression_free_signal:
+            raise ValueError("causal learnability safe-signal flag differs")
+        if row.get("strict_group_admission_reachable") is not strict_reachable:
+            raise ValueError("causal learnability strict-reachability flag differs")
+        signal_cells += int(causal_signal)
+        safe_signal_cells += int(regression_free_signal)
+        strict_cells += int(strict_reachable)
+        regression_cells += int(counts["right_to_wrong"] > 0)
+    verdict = (
+        "strict_learnable_cell_observed"
+        if strict_cells
+        else "causal_signal_without_same_group_control"
+        if safe_signal_cells
+        else "causal_signal_with_regression"
+        if signal_cells
+        else "regression_without_learning_signal"
+        if regression_cells
+        else "no_causal_learning_signal_observed"
+    )
+    return {
+        "transition_counts": {kind: aggregate[kind] for kind in transition_kinds},
+        "causal_signal_cells": signal_cells,
+        "regression_free_signal_cells": safe_signal_cells,
+        "strict_group_admission_reachable_cells": strict_cells,
+        "regression_cells": regression_cells,
+        "verdict": verdict,
+    }
+
+
 def sample_recurrent_group(
     model,
     tokenizer,
@@ -2222,6 +2283,15 @@ def main(
         ),
     )
     parser.add_argument(
+        "--read-only-causal-learnability-preflight",
+        action="store_true",
+        help=(
+            "load the recurrent checkpoint, measure matched-noise parent/child "
+            "correctness transitions on the selected fresh tasks, publish an "
+            "immutable nonclaiming receipt, and exit before optimizer construction"
+        ),
+    )
+    parser.add_argument(
         "--fixed-update-canary",
         action="store_true",
         help=(
@@ -2286,6 +2356,7 @@ def main(
         and verified_group_provider_factory is None
         and not args.initial_policy_probe
         and not args.read_only_answer_channel_preflight
+        and not args.read_only_causal_learnability_preflight
     ):
         parser.error(
             "recurrent mode requires a post-load verified transition provider "
@@ -2297,13 +2368,24 @@ def main(
     if trajectory_group_config is not None and verified_group_provider_factory is None:
         parser.error("--verified-trajectory-config requires a verified transition provider")
     if args.execution_mode == "standard" and (
-        args.initial_policy_probe or args.read_only_answer_channel_preflight
+        args.initial_policy_probe
+        or args.read_only_answer_channel_preflight
+        or args.read_only_causal_learnability_preflight
     ):
         parser.error("recurrent probes only apply to recurrent mode")
-    if args.initial_policy_probe and args.read_only_answer_channel_preflight:
+    recurrent_probe_modes = sum(
+        (
+            bool(args.initial_policy_probe),
+            bool(args.read_only_answer_channel_preflight),
+            bool(args.read_only_causal_learnability_preflight),
+        )
+    )
+    if recurrent_probe_modes > 1:
         parser.error("select exactly one recurrent probe mode")
     if verified_group_provider_factory is not None and (
-        args.initial_policy_probe or args.read_only_answer_channel_preflight
+        args.initial_policy_probe
+        or args.read_only_answer_channel_preflight
+        or args.read_only_causal_learnability_preflight
     ):
         parser.error("read-only recurrent probes cannot be combined with a training provider")
     if args.fixed_update_canary:
@@ -2749,6 +2831,163 @@ def main(
                 flush=True,
             )
             return 0 if valid_fraction >= 0.5 else 3
+
+        if args.read_only_causal_learnability_preflight:
+            from core.learning.recurrent_grpo import (
+                recurrent_policy_sha256,
+                sample_final_recurrent_transition_completion,
+            )
+
+            assert execution_spec is not None
+            assert token_trace_adapter is not None
+            policy_before = recurrent_policy_sha256(model, execution_spec)
+            rows: list[dict[str, Any]] = []
+            for task_index, task in enumerate(train_tasks):
+                _prompt_text, prompt_tokens = _rendered_task_prompt(tokenizer, task)
+                transitions = Counter()
+                sample_rows = []
+                for branch_index in range(len(execution_spec.branch_roles)):
+                    sample_seed = _stable_seed(
+                        args.seed,
+                        "causal-learnability-preflight",
+                        task.task_id,
+                        branch_index,
+                    )
+                    sample = sample_final_recurrent_transition_completion(
+                        model,
+                        prompt_tokens,
+                        spec=execution_spec,
+                        branch_index=branch_index,
+                        seed=sample_seed,
+                        episode_id=(
+                            f"{args.adapter_id}:causal-preflight:"
+                            f"t{task_index}:b{branch_index}"
+                        ),
+                        tokenizer=tokenizer,
+                        model_path=model_path,
+                    )
+                    pair = sample.causal_transition_pair
+                    if not isinstance(pair, Mapping):
+                        raise RuntimeError("causal preflight sample omitted its transition pair")
+                    parent = pair.get("parent")
+                    child = pair.get("child")
+                    if not isinstance(parent, Mapping) or not isinstance(child, Mapping):
+                        raise RuntimeError("causal preflight transition pair is incomplete")
+                    parent_observable = observable_completion_from_adapter(
+                        token_trace_adapter,
+                        parent.get("tokens", ()),
+                    )
+                    child_observable = observable_completion_from_adapter(
+                        token_trace_adapter,
+                        child.get("tokens", ()),
+                    )
+                    parent_verdict = task.grade(parent_observable["response_text"])
+                    child_verdict = task.grade(child_observable["response_text"])
+                    parent_correct = bool(parent_verdict.get("correct"))
+                    child_correct = bool(child_verdict.get("correct"))
+                    transition_kind = (
+                        "right_to_right"
+                        if parent_correct and child_correct
+                        else "right_to_wrong"
+                        if parent_correct
+                        else "wrong_to_right"
+                        if child_correct
+                        else "wrong_to_wrong"
+                    )
+                    transitions[transition_kind] += 1
+                    sample_rows.append(
+                        {
+                            "branch_index": branch_index,
+                            "sample_seed": sample_seed,
+                            "episode_id": sample.episode_id,
+                            "causal_transition_pair_sha256": pair["receipt_sha256"],
+                            "parent_correct": parent_correct,
+                            "parent_grade_reason": _grade_reason(parent_verdict),
+                            "child_correct": child_correct,
+                            "child_grade_reason": _grade_reason(child_verdict),
+                            "transition_kind": transition_kind,
+                        }
+                    )
+                row_counts = {
+                    kind: transitions[kind]
+                    for kind in (
+                        "wrong_to_right",
+                        "right_to_wrong",
+                        "right_to_right",
+                        "wrong_to_wrong",
+                    )
+                }
+                rows.append(
+                    {
+                        "task_id": task.task_id,
+                        "domain": task.domain,
+                        "depth": task.depth,
+                        "transitions": row_counts,
+                        "causal_signal": row_counts["wrong_to_right"] > 0,
+                        "regression_free_signal": (
+                            row_counts["wrong_to_right"] > 0
+                            and row_counts["right_to_wrong"] == 0
+                        ),
+                        "strict_group_admission_reachable": (
+                            row_counts["wrong_to_right"] > 0
+                            and row_counts["right_to_wrong"] == 0
+                            and row_counts["right_to_right"] > 0
+                        ),
+                        "samples": sample_rows,
+                    }
+                )
+                print(
+                    "[causal-learnability-preflight] "
+                    f"{task.domain}@{task.depth} {dict(row_counts)}",
+                    flush=True,
+                )
+            policy_after = recurrent_policy_sha256(model, execution_spec)
+            if policy_after != policy_before:
+                raise RuntimeError("causal learnability preflight mutated the recurrent policy")
+            summary = _causal_learnability_summary(rows)
+            verdict = str(summary["verdict"])
+            body = {
+                "schema": "aura.recurrent_causal_learnability_preflight.v1",
+                "campaign_id": args.adapter_id,
+                "dataset_sha256": dataset_sha256,
+                "execution_spec_sha256": execution_spec.sha256,
+                "base_checkpoint": base_identity,
+                "model_behavior_bundle": behavior_identity,
+                "tokenizer_bundle": token_trace_adapter.bundle_identity,
+                "source_bindings": sources,
+                "policy_before_sha256": policy_before,
+                "policy_after_sha256": policy_after,
+                "policy_unchanged": True,
+                "task_count": len(rows),
+                "sample_count": sum(len(row["samples"]) for row in rows),
+                **summary,
+                "cells": rows,
+                "claim_boundary": (
+                    "read_only_task_seed_specific_calibration_not_training_evidence_"
+                    "and_not_reasoning_gain_proof"
+                ),
+                "created_at_unix_ns": time.time_ns(),
+                "verdict": verdict,
+            }
+            receipt = {
+                **body,
+                "receipt_sha256": sha256_bytes(canonical_json_bytes(body)),
+            }
+            receipt_path = out_dir / "causal_learnability_preflight.json"
+            _publish_immutable_bytes(
+                receipt_path,
+                canonical_json_bytes(receipt),
+                role="recurrent causal learnability preflight",
+            )
+            print(
+                "[causal-learnability-preflight] "
+                f"verdict={verdict} "
+                f"strict_cells={summary['strict_group_admission_reachable_cells']} "
+                f"safe_signal_cells={summary['regression_free_signal_cells']} "
+                f"path={receipt_path}",
+                flush=True,
+            )
+            return 0 if summary["strict_group_admission_reachable_cells"] else 3
 
         from mlx.utils import tree_flatten, tree_unflatten
 

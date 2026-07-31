@@ -2103,6 +2103,129 @@ def _run_answer_channel_preflight(contract: Mapping[str, Any]) -> int:
         sys.argv = previous
 
 
+def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
+    """Measure the exact optimizer transition object on fresh task seeds."""
+
+    root = PurePosixPath(str(contract["paths"]["artifact_root"]))
+    output = str(root / "causal-learnability-preflight")
+    params = contract["training"]["parameters"]
+    return [
+        "tools/train_grpo.py",
+        "--model",
+        str(contract["model"]["path"]),
+        "--out-dir",
+        output,
+        "--adapter-id",
+        f"{contract['campaign_id']}-causal-learnability-preflight",
+        "--execution-mode",
+        "recurrent",
+        "--execution-spec",
+        str(contract["execution_spec"]["path"]),
+        "--task-source",
+        "recurrence_curriculum",
+        "--domains",
+        "register_trace",
+        "--depths",
+        "2,4,8",
+        "--train-per-cell",
+        "2",
+        "--holdout-per-cell",
+        "1",
+        "--group-size",
+        str(params["group_size"]),
+        "--temperature",
+        "1.0",
+        "--max-tokens",
+        str(params["max_tokens"]),
+        "--kl-coefficient",
+        str(params["kl_coefficient"]),
+        "--format-credit",
+        "0.0",
+        "--lora-rank",
+        str(params["lora_rank"]),
+        "--lora-targets",
+        str(params["lora_targets"]),
+        "--lora-layers",
+        str(params["lora_layers"]),
+        "--learning-rate",
+        str(params["learning_rate"]),
+        "--max-steps",
+        "1",
+        "--eval-every",
+        "1",
+        "--checkpoint-every",
+        "1",
+        "--checkpoint-keep",
+        "1",
+        "--calibrate-samples",
+        "1",
+        "--calibrate-group",
+        str(params["calibrate_group"]),
+        "--calibrate-tokens",
+        str(params["max_tokens"]),
+        "--calibrate-minutes",
+        "10.0",
+        "--max-minutes",
+        "180.0",
+        "--memory-fraction",
+        str(params["memory_fraction"]),
+        "--seed",
+        str(int(params["seed"]) + 733),
+        "--cot",
+        "--read-only-causal-learnability-preflight",
+    ]
+
+
+def _run_causal_learnability_preflight(contract: Mapping[str, Any]) -> int:
+    validate_contract(contract, verify_model=True)
+    from tools import train_grpo
+
+    argv = _causal_learnability_preflight_argv(contract)
+    previous = list(sys.argv)
+    try:
+        sys.argv = [argv[0], *argv[1:]]
+        return int(train_grpo.main())
+    finally:
+        sys.argv = previous
+
+
+def _launch_causal_learnability_preflight(contract_path: Path) -> int:
+    contract = _strict_json(contract_path)
+    validate_contract(contract, verify_model=True)
+    python = str(Path(sys.executable))
+    if not Path(python).exists():
+        _fail("python_launcher_missing")
+    tool = str(Path(__file__).resolve(strict=True))
+    supplied = contract_path.expanduser()
+    if not supplied.is_absolute():
+        supplied = REPO_ROOT / supplied
+    contract_absolute = str(supplied.resolve(strict=True))
+    root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+        must_exist=False,
+    )
+    argv = [
+        "launch",
+        "--run-dir",
+        str(root / "detached-causal-learnability-preflight"),
+        "--name",
+        f"{contract['campaign_id']}-causal-learnability-preflight",
+        "--cwd",
+        str(REPO_ROOT),
+        "--timeout",
+        "14400",
+        "--resume-contract",
+        "none",
+        python,
+        tool,
+        "run-causal-learnability-preflight",
+        "--contract",
+        contract_absolute,
+    ]
+    return run_detached_step.main(argv)
+
+
 def _launch_answer_channel_preflight(contract_path: Path) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
@@ -2336,6 +2459,12 @@ def _parser() -> argparse.ArgumentParser:
     preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
     preflight_launch = subparsers.add_parser("launch-answer-channel-preflight")
     preflight_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
+    causal_preflight = subparsers.add_parser("run-causal-learnability-preflight")
+    causal_preflight.add_argument("--contract", default=DEFAULT_CONTRACT)
+    causal_preflight_launch = subparsers.add_parser(
+        "launch-causal-learnability-preflight"
+    )
+    causal_preflight_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch = subparsers.add_parser("launch-training")
     launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch.add_argument("--resume", action="store_true")
@@ -2381,6 +2510,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _run_answer_channel_preflight(contract)
             if args.action == "launch-answer-channel-preflight":
                 return _launch_answer_channel_preflight(Path(args.contract))
+            if args.action == "run-causal-learnability-preflight":
+                return _run_causal_learnability_preflight(contract)
+            if args.action == "launch-causal-learnability-preflight":
+                return _launch_causal_learnability_preflight(Path(args.contract))
             if args.action == "launch-training":
                 return _launch_training(
                     Path(args.contract),
