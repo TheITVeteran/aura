@@ -32610,3 +32610,38 @@ with contract SHA-256
 No CP420S22 resident probe or optimizer update has run yet. This is total
 checkpoint 739. The 739-920 completion envelope is approximately
 80.3%-100.0%, with a 90.2% midpoint.
+
+### 2026-07-30 - CP420S22 UTF-8 transition-evidence canonicalization
+
+CP420S22 passed both resident preflights, including 6/6 structurally valid and
+correct recurrent answer-channel tasks, then launched with four fresh
+process-isolated signers. Its detached source/output boundary remained stable
+after generated `.py` snapshots appeared, and its 12-task recurrent baseline
+completed at 4/12 correct. The watchdog made two exact step-zero retries before
+the bounded canary attempt budget ended. No optimizer update occurred.
+
+Both signed failure receipts report
+`recurrent_evidence_noncanonical_value`. Offline reconstruction against the
+captured resident token traces isolated the cause to a stochastic parent branch
+that generated the valid UTF-8 text `江山`. The token-trace protocol explicitly
+supports UTF-8 response text and carries its byte-exact base64 mirror, but the
+outer transition artifact canonicalizer still rejected all non-ASCII string
+values. The retry was deterministic because the same captured branch reached
+the same contradictory schema boundary.
+
+Canonical transition JSON now accepts valid UTF-8 values and emits one
+deterministic ASCII wire representation through JSON `\uXXXX` escaping. It
+continues to reject invalid UTF-8 surrogates, NULs, floating-point values,
+out-of-range integers, oversized strings, excessive nesting, and excessive
+node counts. Keys and all role-specific identifiers retain their independent
+strict validators. A resident-regression test now builds, stores, reloads,
+scores, and tampers with a recurrent causal transition whose decoded output is
+Unicode. Both captured CP420S22 samples also reconstruct successfully through
+the repaired evidence builder without model weights.
+
+The canonical transition/evidence gate passes 106/106, and the tokenizer,
+production-factory, and external-replay gate passes 48/48. Bytecode
+compilation, lint, and diff integrity pass. CP420S22 remains an immutable
+rejected canary with no update or gain claim. A fresh source-bound CP420S23 is
+required. This is total checkpoint 740. The 740-920 completion envelope is
+approximately 80.4%-100.0%, with a 90.2% midpoint.

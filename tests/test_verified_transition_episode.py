@@ -3590,6 +3590,15 @@ def test_strict_parser_rejects_ambiguous_or_noncanonical_json(
         strict_canonical_json_loads(payload)
 
 
+def test_canonical_json_escapes_utf8_values_and_rejects_surrogates() -> None:
+    encoded = canonical_json_bytes({"text": "江山"})
+
+    assert encoded == b'{"text":"\\u6c5f\\u5c71"}'
+    assert strict_canonical_json_loads(encoded) == {"text": "江山"}
+    with pytest.raises(VerifiedTransitionError, match="json_string_utf8_invalid"):
+        canonical_json_bytes({"text": "\ud800"})
+
+
 def test_strict_parser_rejects_excessive_depth_and_nodes() -> None:
     too_deep: Any = 0
     for _ in range(20):

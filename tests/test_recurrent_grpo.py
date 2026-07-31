@@ -538,7 +538,7 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
 
         @staticmethod
         def decode_output(tokens):
-            return " ".join(str(token) for token in tokens)
+            return "江山 " + " ".join(str(token) for token in tokens)
 
         @classmethod
         def stream_decode_deltas(cls, tokens):
@@ -584,6 +584,9 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
         campaign_trust_policy=policy,
     )
     assert replayed.document["episode_id"] == "causal-evidence-43"
+    assert replayed.document["child_token_trace"]["generation"]["response_text"].startswith(
+        "江山 "
+    )
     stored_sample = json.loads(replayed.document["sample_receipt_json"])
     assert stored_sample["tokens"] == list(pair.child.tokens)
     reward = build_verified_transition_reward_batch(

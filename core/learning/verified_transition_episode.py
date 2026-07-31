@@ -537,9 +537,9 @@ def _validate_json_tree(
         _fail("json_floating_point_forbidden")
     if isinstance(value, str):
         try:
-            encoded = value.encode("ascii")
+            encoded = value.encode("utf-8")
         except UnicodeEncodeError:
-            _fail("json_non_ascii_string")
+            _fail("json_string_utf8_invalid")
         if len(encoded) > MAX_JSON_STRING_BYTES or "\x00" in value:
             _fail("json_string_invalid")
         return
