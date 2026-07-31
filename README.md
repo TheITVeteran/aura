@@ -1,5 +1,7 @@
 # Aura
 
+DEMO: https://youtu.be/iTyxeugcZtI?si=B91No0Hjz3eKLMwz
+
 A local cognitive-architecture research runtime for testing continuous-state
 agency, receipt-based governance, memory persistence, activation steering, and
 long-run self-maintenance.
