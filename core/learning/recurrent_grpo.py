@@ -3320,9 +3320,10 @@ def exact_adjoint_verified_transition_group_value_and_grad(
 ) -> ExactAdjointRecurrentGRPOResult:
     """Admit only independently replayed CP419 transitions to the adjoint.
 
-    Validation, EIR admission, and exact sample/trace binding all happen before
-    recurrent policy hashing or gradient construction.  A caller-supplied
-    scalar reward therefore has no path into this proof-grade objective.
+    Validation, optimizer admission, and exact sample/trace binding all happen
+    before recurrent policy hashing or gradient construction. Claim-level
+    regression control remains an independently receipted downstream gate; a
+    caller-supplied scalar reward has no path into this proof-grade objective.
     """
 
     from core.learning.verified_recurrent_transition_evidence import (

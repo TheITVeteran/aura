@@ -23,6 +23,8 @@ from core.learning.verified_transition_episode import (
     canonical_json_bytes,
 )
 from core.learning.verified_transition_reward import (
+    VERIFIED_TRANSITION_REWARD_SCHEMA,
+    VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
     VerifiedTransitionEvidence,
     require_optimizer_admission,
     rewards_for_recurrent_samples,
@@ -30,7 +32,11 @@ from core.learning.verified_transition_reward import (
 )
 
 TRANSITION_GROUP_MANIFEST_SCHEMA = "aura.verified_transition.group_manifest.v1"
-TRANSITION_GROUP_ADMISSION_SCHEMA = "aura.verified_transition.group_admission.v1"
+TRANSITION_GROUP_ADMISSION_SCHEMA_V1 = "aura.verified_transition.group_admission.v1"
+TRANSITION_GROUP_ADMISSION_SCHEMA = "aura.verified_transition.group_admission.v2"
+_SUPPORTED_ADMISSION_SCHEMAS = frozenset(
+    {TRANSITION_GROUP_ADMISSION_SCHEMA_V1, TRANSITION_GROUP_ADMISSION_SCHEMA}
+)
 _SHA256_LENGTH = 64
 _MAX_GROUP_SIZE = 1_024
 
@@ -427,6 +433,7 @@ def build_verified_transition_group_admission(
     token_encoder: Callable[[bytes], Sequence[int]],
     token_decoder: Callable[[Sequence[int]], bytes],
     created_at_unix_ns: int,
+    _schema: str = TRANSITION_GROUP_ADMISSION_SCHEMA,
 ) -> dict[str, Any]:
     """Prove exact planned membership before exposing an optimizer admission."""
 
@@ -441,6 +448,15 @@ def build_verified_transition_group_admission(
         token_decoder=token_decoder,
     )
     require_optimizer_admission(reward)
+    if _schema not in _SUPPORTED_ADMISSION_SCHEMAS:
+        _fail("group_admission_schema_invalid")
+    expected_reward_schema = (
+        VERIFIED_TRANSITION_REWARD_SCHEMA_V1
+        if _schema == TRANSITION_GROUP_ADMISSION_SCHEMA_V1
+        else VERIFIED_TRANSITION_REWARD_SCHEMA
+    )
+    if reward.get("schema") != expected_reward_schema:
+        _fail("group_admission_reward_schema_mismatch")
     manifest = validate_transition_group_manifest(group_manifest)
     reward_config_sha256 = hashlib.sha256(
         canonical_json_bytes(cast(Mapping[str, Any], reward["reward_config"]))
@@ -536,42 +552,50 @@ def build_verified_transition_group_admission(
     rewards_for_recurrent_samples(reward, samples, prompt_tokens)
     prompt_payload = canonical_json_bytes(list(prompt_tokens))
     sample_bindings = [_sample_receipt(sample) for sample in samples]
-    return _seal(
-        {
-            "schema": TRANSITION_GROUP_ADMISSION_SCHEMA,
-            "group_id": manifest["group_id"],
-            "task_id": manifest["task_id"],
-            "group_size": len(actual_entries),
-            "policy_sha256": actual_entries[0]["policy_sha256"],
-            "recurrent_execution_spec_sha256": actual_entries[0][
-                "recurrent_execution_spec_sha256"
-            ],
-            "prompt_tokens_sha256": hashlib.sha256(prompt_payload).hexdigest(),
-            "reward_receipt_artifact": store.put_json(reward),
-            "reward_receipt_sha256": reward["receipt_sha256"],
-            "group_manifest_artifact": store.put_json(manifest),
-            "group_manifest_sha256": manifest["manifest_sha256"],
-            "group_manifest_attestation_artifact": store.put_json(
-                cast(Mapping[str, Any], group_manifest_attestation)
-            ),
-            "trust_policy_sha256": policy_sha256,
-            "entries": actual_entries,
-            "sample_bindings": sample_bindings,
-            "wrong_to_right": reward["wrong_to_right"],
-            "right_to_wrong": reward["right_to_wrong"],
-            "eir_defined": reward["eir_defined"],
-            "eir_numerator": reward["eir_numerator"],
-            "eir_denominator": reward["eir_denominator"],
-            "eir_micros": reward["eir_micros"],
-            "optimizer_admitted": True,
-            "created_at_unix_ns": _require_int(
-                created_at_unix_ns,
-                role="group_admission_created_at",
-                minimum=1,
-            ),
-        },
-        field="receipt_sha256",
-    )
+    document: dict[str, Any] = {
+        "schema": _schema,
+        "group_id": manifest["group_id"],
+        "task_id": manifest["task_id"],
+        "group_size": len(actual_entries),
+        "policy_sha256": actual_entries[0]["policy_sha256"],
+        "recurrent_execution_spec_sha256": actual_entries[0][
+            "recurrent_execution_spec_sha256"
+        ],
+        "prompt_tokens_sha256": hashlib.sha256(prompt_payload).hexdigest(),
+        "reward_receipt_artifact": store.put_json(reward),
+        "reward_receipt_sha256": reward["receipt_sha256"],
+        "group_manifest_artifact": store.put_json(manifest),
+        "group_manifest_sha256": manifest["manifest_sha256"],
+        "group_manifest_attestation_artifact": store.put_json(
+            cast(Mapping[str, Any], group_manifest_attestation)
+        ),
+        "trust_policy_sha256": policy_sha256,
+        "entries": actual_entries,
+        "sample_bindings": sample_bindings,
+        "wrong_to_right": reward["wrong_to_right"],
+        "right_to_wrong": reward["right_to_wrong"],
+        "eir_defined": reward["eir_defined"],
+        "eir_numerator": reward["eir_numerator"],
+        "eir_denominator": reward["eir_denominator"],
+        "eir_micros": reward["eir_micros"],
+        "optimizer_admitted": True,
+        "created_at_unix_ns": _require_int(
+            created_at_unix_ns,
+            role="group_admission_created_at",
+            minimum=1,
+        ),
+    }
+    if _schema == TRANSITION_GROUP_ADMISSION_SCHEMA:
+        document.update(
+            {
+                "optimizer_admission_reason": reward[
+                    "optimizer_admission_reason"
+                ],
+                "claim_control_satisfied": reward["claim_control_satisfied"],
+                "claim_control_reason": reward["claim_control_reason"],
+            }
+        )
+    return _seal(document, field="receipt_sha256")
 
 
 def validate_verified_transition_group_admission(
@@ -593,7 +617,8 @@ def validate_verified_transition_group_admission(
     if not isinstance(receipt, Mapping):
         _fail("group_admission_receipt_invalid")
     _validate_seal(receipt, field="receipt_sha256", role="group_admission")
-    if receipt.get("schema") != TRANSITION_GROUP_ADMISSION_SCHEMA:
+    schema = receipt.get("schema")
+    if schema not in _SUPPORTED_ADMISSION_SCHEMAS:
         _fail("group_admission_schema_invalid")
     expected = build_verified_transition_group_admission(
         store,
@@ -611,6 +636,7 @@ def validate_verified_transition_group_admission(
             role="group_admission_created_at",
             minimum=1,
         ),
+        _schema=cast(str, schema),
     )
     if expected != dict(receipt):
         _fail("group_admission_reconstruction_mismatch")
@@ -619,6 +645,7 @@ def validate_verified_transition_group_admission(
 
 __all__ = [
     "TRANSITION_GROUP_ADMISSION_SCHEMA",
+    "TRANSITION_GROUP_ADMISSION_SCHEMA_V1",
     "TRANSITION_GROUP_MANIFEST_SCHEMA",
     "TransitionGroupPlanEntry",
     "VerifiedTransitionGroupError",

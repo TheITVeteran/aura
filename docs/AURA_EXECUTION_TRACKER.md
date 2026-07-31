@@ -16,7 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 189 is the current
+- Current active implementation milestone: **Checkpoint 752 implements the
+  backward-compatible verified-transition dual gate identified by the live
+  resident causal preflight. A fresh source-bound update canary remains the
+  next gate; optimizer training has not restarted and no gain claim exists.**
+- Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
   resident-32B partial, but its resume was intentionally stopped before a
@@ -33049,3 +33053,42 @@ separate powered control cohort, held-out evaluation, external replay, and the
 full factorial gates pass. No reasoning-gain, frontier, promotion, or
 `WOW Signal` claim is made. This is total checkpoint 751. The 751-920
 completion envelope is approximately 81.6%-100.0%, with a 90.8% midpoint.
+
+### 2026-07-31 - Verified optimizer and claim-control admission split
+
+The resident result exposed a category error in the v1 reward contract. A
+group containing one independently verified wrong-to-right transition, one
+wrong-to-wrong transition, nondegenerate structured rewards, and no regression
+has a valid preference gradient even though its empirical intervention
+regression rate is undefined. Requiring a same-prompt right-to-right sample
+before constructing that gradient conflated permission to optimize a bounded
+nonpromotable canary with permission to claim causal reasoning gains.
+
+Fresh reward and group-admission evidence now use backward-compatible v2
+schemas. They carry two independent decisions: `optimizer_admitted` authorizes
+an exact source-bound update only when the group has a verified improvement,
+zero right-to-wrong transitions, and nondegenerate rewards;
+`claim_control_satisfied` remains false unless the same group also contains an
+initially correct zero-regression control. Control-pending groups are sealed as
+`admitted_verified_improvement_control_pending` and explicitly require an
+external powered regression-control cohort. Any regression still rejects the
+group before gradient construction, a one-sample reward remains degenerate,
+and all causal-gain, reasoning-gain, frontier, promotion, and `WOW Signal`
+claims remain false.
+
+Historical v1 reward and group receipts replay under their original stricter
+semantics rather than being reinterpreted. A complete signed v2
+wrong-to-right/wrong-to-wrong group now reconstructs through the task issuer,
+reward, group manifest, sample bindings, and exact-adjoint boundary; a resealed
+claim-control forgery fails closed. The full signed episode suite passed 84/84,
+the focused v1/v2 admission suite passed 10/10, and the provider, trainer,
+transaction, rejection, external replay, recurrent-GRPO, and adapter-identity
+matrix passed 131/131. Bytecode compilation, lint, and diff integrity pass.
+
+No resident optimizer campaign ran in this checkpoint. The next checkpoint
+must preregister a fresh, nonclaiming canary around the independently observed
+register-trace signal, re-run resident preflights from clean source, launch
+through the PID-1 controller, prove durable policy updates and external replay,
+and retain separate powered controls before any scientific conclusion. This is
+total checkpoint 752. The 752-920 completion envelope is approximately
+81.7%-100.0%, with a 90.9% midpoint.

@@ -731,11 +731,16 @@ def _correct_response(task: Any, *, prefix: str) -> bytes:
     return f"{prefix}\n{FINAL_ANSWER_MARKER} {answer}".encode()
 
 
-def _wrong_response(task: Any) -> bytes:
+def _wrong_response(
+    task: Any,
+    *,
+    count_offset: int = 1,
+    prefix: str = "Initial attempt.",
+) -> bytes:
     expected = copy.deepcopy(task.reveal_for_verifier()["expected"])
-    expected["count"] += 1
+    expected["count"] += count_offset
     answer = json.dumps(expected, sort_keys=True, separators=(",", ":"))
-    return f"Initial attempt.\n{FINAL_ANSWER_MARKER} {answer}".encode()
+    return f"{prefix}\n{FINAL_ANSWER_MARKER} {answer}".encode()
 
 
 def _reseal(document: dict[str, Any]) -> dict[str, Any]:
@@ -1145,6 +1150,8 @@ def _build_complete_episode(
     episode_id: str = "spark-060-episode-0001",
     pass_0_correct: bool = False,
     pass_1_correct: bool = True,
+    pass_0_wrong_offset: int = 1,
+    pass_1_wrong_offset: int = 1,
     shared_policy_case: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     tmp_path = tmp_path_factory.mktemp(f"verified-transition-{episode_id[-4:]}")
@@ -1233,12 +1240,16 @@ def _build_complete_episode(
     pass_0_response = (
         _correct_response(task, prefix="Initial independently checked answer.")
         if pass_0_correct
-        else _wrong_response(task)
+        else _wrong_response(task, count_offset=pass_0_wrong_offset)
     )
     pass_1_response = (
         _correct_response(task, prefix="Rechecked independently.")
         if pass_1_correct
-        else _wrong_response(task)
+        else _wrong_response(
+            task,
+            count_offset=pass_1_wrong_offset,
+            prefix="Rechecked attempt.",
+        )
     )
     context_0 = _pass_context(
         store,
@@ -1633,6 +1644,16 @@ def transition_outcome_episodes(
             pass_1_correct=False,
             shared_policy_case=complete_episode,
         ),
+        "wrong_to_wrong": _build_complete_episode(
+            tmp_path_factory,
+            request,
+            episode_id="spark-060-episode-still-wrong",
+            pass_0_correct=False,
+            pass_1_correct=False,
+            pass_0_wrong_offset=2,
+            pass_1_wrong_offset=3,
+            shared_policy_case=complete_episode,
+        ),
     }
 
 
@@ -1900,7 +1921,9 @@ def test_verified_transition_reward_reconstructs_only_from_sealed_authorities(
     assert batch["eir_defined"] is False
     assert batch["eir_micros"] is None
     assert batch["optimizer_admitted"] is False
-    assert batch["optimizer_admission_reason"] == ("eir_undefined_no_initially_correct_control")
+    assert batch["optimizer_admission_reason"] == "degenerate_structured_reward_group"
+    assert batch["claim_control_satisfied"] is False
+    assert batch["claim_control_reason"] == "optimizer_group_rejected"
     transition = batch["transitions"][0]
     assert transition["transition_kind"] == "wrong_to_right"
     expected_resource = len(case["pass_1"]["output_token_ids"]) * 1_000_000 // 1024
@@ -1927,7 +1950,7 @@ def test_verified_transition_reward_reconstructs_only_from_sealed_authorities(
     )
     with pytest.raises(
         VerifiedTransitionRewardAdmissionError,
-        match="eir_undefined_no_initially_correct_control",
+        match="degenerate_structured_reward_group",
     ):
         require_optimizer_admission(batch)
 
@@ -1971,6 +1994,41 @@ def test_verified_transition_reward_rejects_rehashed_scalar_reward_forgery(
             token_encoder=_byte_encode,
             token_decoder=_byte_decode,
         )
+
+
+def test_legacy_v1_reward_replays_under_original_strict_admission(
+    complete_episode: dict[str, Any],
+) -> None:
+    case = complete_episode
+    evidence = (_transition_evidence(case),)
+    batch = build_verified_transition_reward_batch(
+        case["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+        _schema=reward_runtime.VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
+    )
+
+    assert batch["schema"] == "aura.verified_transition.reward_batch.v1"
+    assert batch["optimizer_admitted"] is False
+    assert batch["optimizer_admission_reason"] == (
+        "eir_undefined_no_initially_correct_control"
+    )
+    assert "claim_control_satisfied" not in batch
+    assert "claim_control_reason" not in batch
+    assert (
+        validate_verified_transition_reward_batch(
+            case["store"],
+            batch,
+            evidence,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+        )
+        == batch
+    )
 
 
 def test_transition_reward_config_makes_correctness_lexicographically_dominant() -> None:
@@ -2092,12 +2150,53 @@ def test_transition_reward_aggregate_admits_improvement_with_clean_anchor() -> N
     )
 
     assert batch["optimizer_admitted"] is True
+    assert batch["optimizer_admission_reason"] == "admitted"
     assert batch["eir_defined"] is True
     assert batch["eir_micros"] == 0
+    assert batch["claim_control_satisfied"] is True
+    assert batch["claim_control_reason"] == "same_group_zero_regression_control"
     assert reward_runtime.rewards_for_recurrent_samples(batch, samples, prompt_tokens) == (
         0.975,
         -0.025,
     )
+
+
+def test_transition_reward_aggregate_admits_verified_improvement_pending_control() -> None:
+    records = (
+        {"transition_kind": "wrong_to_right", "reward_micros": 975_000},
+        {"transition_kind": "wrong_to_wrong", "reward_micros": -25_000},
+    )
+    batch = reward_runtime._assemble_reward_batch(
+        records=records,
+        episode_artifacts=({"row": 0}, {"row": 1}),
+        task_id="aggregate-test",
+        config=TransitionRewardConfig(),
+        created_at_unix_ns=1,
+    )
+
+    assert batch["wrong_to_right"] == 1
+    assert batch["right_to_wrong"] == 0
+    assert batch["eir_defined"] is False
+    assert batch["eir_micros"] is None
+    assert batch["optimizer_admitted"] is True
+    assert batch["optimizer_admission_reason"] == (
+        "admitted_verified_improvement_control_pending"
+    )
+    assert batch["claim_control_satisfied"] is False
+    assert batch["claim_control_reason"] == (
+        "external_powered_regression_control_required"
+    )
+    require_optimizer_admission(batch)
+
+    forged = copy.deepcopy(batch)
+    forged["claim_control_satisfied"] = True
+    forged["claim_control_reason"] = "same_group_zero_regression_control"
+    forged = _reseal(forged)
+    with pytest.raises(
+        VerifiedTransitionRewardError,
+        match="transition_reward_admission_invariant_invalid",
+    ):
+        require_optimizer_admission(forged)
 
 
 def test_signed_transition_group_replays_and_reaches_gradient_only_after_admission(
@@ -2192,6 +2291,162 @@ def test_signed_transition_group_replays_and_reaches_gradient_only_after_admissi
         )
         == batch
     )
+    assert (
+        validate_verified_transition_group_admission(
+            improved["store"],
+            admission,
+            batch,
+            evidence,
+            samples,
+            prompt_tokens,
+            group_manifest=manifest,
+            group_manifest_attestation=manifest_attestation,
+            independent_scorer=score_frontier_response_independently,
+            token_encoder=_byte_encode,
+            token_decoder=_byte_decode,
+        )
+        == admission
+    )
+
+
+def test_signed_control_pending_group_reaches_gradient_without_claim_control(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    still_wrong = transition_outcome_episodes["wrong_to_wrong"]
+    evidence = (_transition_evidence(improved), _transition_evidence(still_wrong))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    assert prompt_tokens == tuple(still_wrong["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(still_wrong, prompt_sha256),
+    )
+    manifest, manifest_attestation = _signed_group_manifest(
+        (improved, still_wrong), samples, batch
+    )
+    admission = build_verified_transition_group_admission(
+        improved["store"],
+        batch,
+        evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+    )
+    observed: dict[str, Any] = {}
+    sentinel = object()
+
+    def _capture_gradient(
+        _model: Any,
+        _prompt: Any,
+        _samples: Any,
+        rewards: Any,
+        **_kwargs: Any,
+    ) -> object:
+        observed["rewards"] = tuple(rewards)
+        return sentinel
+
+    monkeypatch.setattr(
+        recurrent_grpo_runtime,
+        "exact_adjoint_sampled_group_value_and_grad",
+        _capture_gradient,
+    )
+    result = recurrent_grpo_runtime.exact_adjoint_verified_transition_group_value_and_grad(
+        None,
+        prompt_tokens,
+        samples,
+        admission,
+        batch,
+        evidence,
+        transition_store=improved["store"],
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        spec=None,
+    )
+
+    assert result is sentinel
+    assert batch["optimizer_admitted"] is True
+    assert batch["optimizer_admission_reason"] == (
+        "admitted_verified_improvement_control_pending"
+    )
+    assert batch["claim_control_satisfied"] is False
+    assert admission["optimizer_admitted"] is True
+    assert admission["optimizer_admission_reason"] == (
+        "admitted_verified_improvement_control_pending"
+    )
+    assert admission["claim_control_satisfied"] is False
+    assert admission["claim_control_reason"] == (
+        "external_powered_regression_control_required"
+    )
+    assert observed["rewards"] == tuple(
+        transition["reward_micros"] / 1_000_000
+        for transition in batch["transitions"]
+    )
+
+
+def test_legacy_v1_group_admission_replays_with_v1_reward(
+    transition_outcome_episodes: dict[str, dict[str, Any]],
+) -> None:
+    improved = transition_outcome_episodes["wrong_to_right"]
+    anchor = transition_outcome_episodes["right_to_right"]
+    evidence = (_transition_evidence(improved), _transition_evidence(anchor))
+    batch = build_verified_transition_reward_batch(
+        improved["store"],
+        evidence,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+        _schema=reward_runtime.VERIFIED_TRANSITION_REWARD_SCHEMA_V1,
+    )
+    prompt_tokens = tuple(improved["pass_1"]["input_token_ids"])
+    prompt_sha256 = hashlib.sha256(
+        json.dumps(list(prompt_tokens), separators=(",", ":")).encode("ascii")
+    ).hexdigest()
+    samples = (
+        _transition_sample(improved, prompt_sha256),
+        _transition_sample(anchor, prompt_sha256),
+    )
+    manifest, manifest_attestation = _signed_group_manifest(
+        (improved, anchor), samples, batch
+    )
+    admission = build_verified_transition_group_admission(
+        improved["store"],
+        batch,
+        evidence,
+        samples,
+        prompt_tokens,
+        group_manifest=manifest,
+        group_manifest_attestation=manifest_attestation,
+        independent_scorer=score_frontier_response_independently,
+        token_encoder=_byte_encode,
+        token_decoder=_byte_decode,
+        created_at_unix_ns=1_800_000_224_000_000_000,
+        _schema="aura.verified_transition.group_admission.v1",
+    )
+
+    assert admission["schema"] == "aura.verified_transition.group_admission.v1"
+    assert "claim_control_satisfied" not in admission
+    assert "optimizer_admission_reason" not in admission
     assert (
         validate_verified_transition_group_admission(
             improved["store"],
