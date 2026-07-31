@@ -32645,3 +32645,19 @@ compilation, lint, and diff integrity pass. CP420S22 remains an immutable
 rejected canary with no update or gain claim. A fresh source-bound CP420S23 is
 required. This is total checkpoint 740. The 740-920 completion envelope is
 approximately 80.4%-100.0%, with a 90.2% midpoint.
+
+### 2026-07-30 - CP420S23 UTF-8-capable resident canary preregistration
+
+CP420S23 is freshly preregistered from clean commit `a338e182c`. It contains
+both failure-derived repairs: campaign-generated executable evidence is
+separated from frozen source, and valid UTF-8 recurrent traces are encoded into
+deterministic ASCII canonical JSON. The scientific dose and all negative claim
+boundaries remain unchanged from CP420S22.
+
+The contract verifies against the resident model, behavior bundle, execution
+specification, disjoint 12/12 task corpus, and repaired executable-source
+inventory with contract SHA-256
+`a024b9f1a80c66a9b6b5e8ce01821689d23f498ad50b55eb437d5e7f597f2ec0`.
+No CP420S23 resident probe or optimizer update has run yet. This is total
+checkpoint 741. The 741-920 completion envelope is approximately
+80.5%-100.0%, with a 90.3% midpoint.
