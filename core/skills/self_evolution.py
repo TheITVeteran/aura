@@ -18,6 +18,12 @@ class EvolutionInput(BaseModel):
     action: str = Field("propose", description="Action: 'propose' | 'apply' | 'scramble'")
     objective: str = Field(..., description="The feature or improvement to implement.")
     files: list[str] | None = Field(None, description="Specific files to target.")
+    read_only: bool = Field(
+        False,
+        description=(
+            "Inspect and return a proposal without writing proposal or source artifacts."
+        ),
+    )
 
 class SelfEvolutionSkill(BaseSkill):
     """Skill for autonomous self-improvement. Performs the Research -> Synthesize -> Propose loop for code updates."""
@@ -238,7 +244,7 @@ class SelfEvolutionSkill(BaseSkill):
 
         action = params.action
         objective = params.objective
-        read_only = self._is_read_only(context)
+        read_only = bool(params.read_only or self._is_read_only(context))
 
         if action == "scramble":
             return self._perform_scrambling()

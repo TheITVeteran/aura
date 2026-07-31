@@ -585,7 +585,10 @@ async def test_test_generator_read_only_avoids_writing_into_repo(monkeypatch, tm
     )
 
     skill = TestGeneratorSkill(brain=None)
-    result = await skill.safe_execute({"target_file": str(target)}, {"read_only": True})
+    result = await skill.safe_execute(
+        {"target_file": str(target), "read_only": True},
+        {},
+    )
 
     assert result["ok"] is True
     assert await asyncio.to_thread(Path(result["test_file"]).exists)
@@ -738,8 +741,12 @@ async def test_self_evolution_propose_read_only_skips_proposal_file(monkeypatch,
 
     skill = SelfEvolutionSkill()
     result = await skill.safe_execute(
-        {"action": "propose", "objective": "Draft a safe refactor plan."},
-        {"read_only": True},
+        {
+            "action": "propose",
+            "objective": "Draft a safe refactor plan.",
+            "read_only": True,
+        },
+        {},
     )
 
     assert result["ok"] is True

@@ -32409,3 +32409,36 @@ and three complete clean GUI demonstrations. Ontogeny calibration and bounded
 self-development authority repairs remain in progress. Resident-32B training
 remains paused. This is total checkpoint 732. The 732-920 completion envelope
 is approximately 79.6%-100.0%, with an 89.8% midpoint.
+
+### 2026-07-30 - DEMO-Q17 bounded self-development receives causal authority
+
+The live autonomous initiative cycle could complete its read-only
+`auto_refactor` scan but then refused both `test_generator` and
+`self_evolution` because those operation-specific effects had no matching
+standing grant. The failure repeated as a Will and CapabilityEngine warning on
+every eligible cycle even though the intended work was analysis, ephemeral
+testing, and proposal generation rather than live source mutation.
+
+Execution policy now classifies a read-only test-generation request as
+`sandboxed_compute`, a read-only proposal as `read_only`, and any
+self-evolution apply as `privileged_mutation`. Aura has built-in standing
+authority for a rate-limited deterministic test of one existing Python file in
+her own source tree and for a proposal-only inspection of explicit Aura source
+paths. External paths, additional test arguments, repository writes, and live
+apply remain rejected.
+
+The `read_only` declaration is part of each skill's typed input contract, so it
+survives CapabilityEngine normalization and binds the same canonical arguments
+seen by Constitution, AuthorityGateway, Will, the capability token, and the
+effect sink. Both skills also enforce that declaration at execution time:
+generated tests live in an ephemeral sandbox and proposal-only evolution writes
+no source or proposal artifact.
+
+The standing-authority, autonomy-visibility, skill-surface, CapabilityEngine,
+constitutional-core, and runtime-settings authority gates pass 243/243;
+bytecode compilation, lint, and diff integrity pass. The owner completed the
+requested live desktop demonstration cleanly and waived repeat demo
+certification. Ontogeny calibration closeout and a signed installed-app rebuild
+remain before the resident-32B campaign preflight. Training remains paused.
+This is total checkpoint 733. The 733-920 completion envelope is approximately
+79.7%-100.0%, with an 89.8% midpoint.

@@ -171,6 +171,26 @@ def _auto_refactor_scope(params: dict[str, Any]) -> str:
     return "sandboxed_compute" if bool(params.get("run_tests")) else "read_only"
 
 
+def _test_generator_scope(params: dict[str, Any]) -> str:
+    """A read-only request writes only to an ephemeral sandbox."""
+
+    return (
+        "sandboxed_compute"
+        if bool((params or {}).get("read_only"))
+        else "read_write_artifacts"
+    )
+
+
+def _self_evolution_scope(params: dict[str, Any]) -> str:
+    """Proposal-only inspection is distinct from applying a code mutation."""
+
+    arguments = params or {}
+    action = str(arguments.get("action") or "propose").strip().lower()
+    if action in {"", "propose"} and bool(arguments.get("read_only")):
+        return "read_only"
+    return "privileged_mutation"
+
+
 
 # Effect scope belongs to what an invocation actually does, not to what its
 # skill is capable of. desktop_task is the composite case: it can write files,
@@ -261,6 +281,10 @@ def resolve_execution_effect_scope(
             return scoped
     elif name == "auto_refactor":
         return _auto_refactor_scope(arguments)
+    elif name == "test_generator":
+        return _test_generator_scope(arguments)
+    elif name == "self_evolution":
+        return _self_evolution_scope(arguments)
     elif name == "web_search":
         # Autonomous web research is READ-ONLY by contract: fetching and
         # summarizing never writes artifacts or posts. A broader scope
@@ -310,6 +334,10 @@ def classify_execution_risk(
         if scope == "privileged_mutation":
             return "critical"
         return "high" if scope == "sandboxed_compute" else "low"
+    if name == "test_generator" and scope == "sandboxed_compute":
+        return "high"
+    if name == "self_evolution" and scope == "read_only":
+        return "low"
     if name in _CRITICAL_TOOLS:
         if name == "computer_use" and scope == "read_only":
             return "low"

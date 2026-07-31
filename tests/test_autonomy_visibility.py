@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
-from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
 from core.autonomy.proactive_presence import ProactivePresence
+from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
 from core.self_modification.growth_ladder import GrowthLadder, ModificationLevel
 
 PROPOSAL_PATH = str(Path(tempfile.gettempdir()) / "evolution" / "proposal.md")
@@ -358,6 +358,8 @@ async def test_self_development_cycle_runs_scan_tests_and_proposal(monkeypatch):
 
     calls = capability_engine.execute.await_args_list
     assert [call.args[0] for call in calls] == ["auto_refactor", "test_generator", "self_evolution"]
+    assert calls[1].args[1]["read_only"] is True
+    assert calls[2].args[1]["read_only"] is True
     assert any("sandbox tests" in content.lower() for _, content, _ in emitted)
     assert any("proposal" in content.lower() or "saved to" in content.lower() for _, content, _ in emitted)
 

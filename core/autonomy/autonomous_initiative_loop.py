@@ -880,7 +880,7 @@ class AutonomousInitiativeLoop:
 
         test_result = await capability_engine.execute(
             "test_generator",
-            {"target_file": file_name},
+            {"target_file": file_name, "read_only": True},
             context={
                 "origin": "autonomous_initiative_loop",
                 "objective": f"Generate sandbox tests for {file_name}",
@@ -923,6 +923,7 @@ class AutonomousInitiativeLoop:
                 "action": "propose",
                 "objective": objective,
                 "files": [file_name],
+                "read_only": True,
             },
             context=proposal_context,
         )

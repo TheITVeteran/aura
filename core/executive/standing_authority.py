@@ -135,7 +135,8 @@ LOCAL_OBSERVATION_TOOLS = frozenset(
 )
 
 CONNECTED_ACCOUNT_READ_TOOLS = frozenset({"email_adapter", "reddit_adapter"})
-READ_ONLY_MAINTENANCE_TOOLS = frozenset({"auto_refactor"})
+READ_ONLY_MAINTENANCE_TOOLS = frozenset({"auto_refactor", "self_evolution"})
+BOUNDED_MAINTENANCE_TEST_TOOLS = frozenset({"test_generator"})
 BOUNDED_SANDBOX_TOOLS = frozenset({"subconscious_sandbox_probe"})
 BACKGROUND_REFLECTION_TOOLS = frozenset({"swarm_debate"})
 BACKGROUND_REFLECTION_ROLES = frozenset({"architect", "critic", "philosopher"})
@@ -170,6 +171,7 @@ _SUPPORTED_ARGUMENT_POLICIES = frozenset(
         "aura_local_read",
         "bounded_sandbox_probe",
         "bounded_background_reflection",
+        "bounded_maintenance_test",
         "connected_account_read",
         "foreground_user_request",
         "local_introspection",
@@ -451,6 +453,23 @@ def _builtin_grants() -> tuple[StandingAuthorityGrant, ...]:
             built_in=True,
         ),
         StandingAuthorityGrant(
+            grant_id="aura.autonomous-bounded-maintenance-test",
+            issuer="owner_policy",
+            description=(
+                "Aura may generate and execute a deterministic test for one of "
+                "her own source files inside an ephemeral no-network sandbox."
+            ),
+            allowed_origins=autonomous_origins,
+            allowed_tools=tuple(sorted(BOUNDED_MAINTENANCE_TEST_TOOLS)),
+            allowed_effect_scopes=("sandboxed_compute",),
+            max_risk="high",
+            max_actions=6,
+            window_seconds=3600.0,
+            lease_ttl_seconds=180.0,
+            argument_policy="bounded_maintenance_test",
+            built_in=True,
+        ),
+        StandingAuthorityGrant(
             grant_id="aura.autonomous-bounded-sandbox-probe",
             issuer="owner_policy",
             description=(
@@ -674,6 +693,41 @@ class StandingAuthorityManager:
     def _matches(values: tuple[str, ...], candidate: str) -> bool:
         return "*" in values or candidate in values
 
+    @staticmethod
+    def _validate_aura_source_paths(
+        raw_paths: Any,
+        *,
+        require_file: bool = False,
+        require_python: bool = False,
+    ) -> tuple[bool, str]:
+        """Confine autonomous maintenance to the checked-out Aura source."""
+
+        if not isinstance(raw_paths, (list, tuple)) or not raw_paths:
+            return False, "maintenance_target_missing"
+        repo_root = Path(__file__).resolve().parents[2]
+        resolved_root = repo_root.resolve()
+        for raw_path in raw_paths:
+            if not isinstance(raw_path, (str, os.PathLike)) or not str(raw_path).strip():
+                return False, "maintenance_target_invalid"
+            candidate = Path(raw_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = repo_root / candidate
+            try:
+                resolved = candidate.resolve()
+                within_repo = (
+                    os.path.commonpath([str(resolved_root), str(resolved)])
+                    == str(resolved_root)
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                return False, "maintenance_target_unresolvable"
+            if not within_repo or not resolved.exists():
+                return False, "maintenance_target_outside_aura_source"
+            if require_file and not resolved.is_file():
+                return False, "maintenance_target_is_not_file"
+            if require_python and resolved.suffix != ".py":
+                return False, "maintenance_target_is_not_python"
+        return True, "maintenance_targets_valid"
+
     def _argument_policy_allows(
         self,
         grant: StandingAuthorityGrant,
@@ -755,9 +809,39 @@ class StandingAuthorityManager:
                 or arguments.get("run_tests")
                 or mode in {"apply", "commit", "promote", "rewrite", "write"}
             )
-            return (True, "read_only_maintenance") if not mutating else (
-                False,
-                "maintenance_operation_is_not_read_only",
+            if mutating:
+                return False, "maintenance_operation_is_not_read_only"
+            if tool_name == "self_evolution":
+                if mode not in {"", "propose"} or not bool(arguments.get("read_only")):
+                    return False, "self_evolution_is_not_read_only_proposal"
+                objective = str(arguments.get("objective") or "").strip()
+                if not objective or len(objective) > 4_096:
+                    return False, "self_evolution_objective_invalid"
+                raw_paths = arguments.get("files") or []
+            elif tool_name == "auto_refactor":
+                if mode not in {"", "scan"}:
+                    return False, "auto_refactor_is_not_read_only_scan"
+                raw_paths = [arguments.get("path") or "."]
+            else:
+                return False, "maintenance_tool_mismatch"
+            valid, reason = self._validate_aura_source_paths(raw_paths)
+            return (True, "read_only_maintenance") if valid else (False, reason)
+        if policy == "bounded_maintenance_test":
+            if tool_name not in BOUNDED_MAINTENANCE_TEST_TOOLS:
+                return False, "bounded_maintenance_test_tool_mismatch"
+            if not bool(arguments.get("read_only")):
+                return False, "bounded_maintenance_test_requires_read_only"
+            if set(arguments) - {"target_file", "read_only"}:
+                return False, "bounded_maintenance_test_arguments_unsupported"
+            valid, reason = self._validate_aura_source_paths(
+                [arguments.get("target_file")],
+                require_file=True,
+                require_python=True,
+            )
+            return (
+                (True, "bounded_maintenance_test")
+                if valid
+                else (False, reason)
             )
         if policy == "aura_local_read":
             if tool_name not in LOCAL_OBSERVATION_TOOLS:

@@ -68,6 +68,13 @@ class TestGeneratorParams(BaseModel):
     target_file: str = Field(
         ..., description="The path to the Python file or module to generate tests for."
     )
+    read_only: bool = Field(
+        False,
+        description=(
+            "Confine generated tests and execution to an ephemeral sandbox without "
+            "writing into Aura's source tree."
+        ),
+    )
 
 
 class TestGeneratorSkill(BaseSkill):
@@ -142,7 +149,7 @@ class TestGeneratorSkill(BaseSkill):
                 return {"ok": False, "error": f"Invalid input: {e}"}
 
         target_file = params.target_file
-        read_only = self._is_read_only(context)
+        read_only = bool(params.read_only or self._is_read_only(context))
         timeout_s = self._effective_timeout(context)
         llm_timeout = max(5.0, min(12.0, timeout_s * 0.35))
         command_timeout = max(5, min(45, int(timeout_s)))

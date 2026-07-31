@@ -82,6 +82,60 @@ def _manager(
     )
 
 
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "scope", "risk"),
+    [
+        (
+            "test_generator",
+            {
+                "target_file": "core/executive/standing_authority.py",
+                "read_only": True,
+            },
+            "sandboxed_compute",
+            "high",
+        ),
+        (
+            "self_evolution",
+            {
+                "action": "propose",
+                "objective": "Inspect one target.",
+                "files": ["core/executive/standing_authority.py"],
+                "read_only": True,
+            },
+            "read_only",
+            "low",
+        ),
+        (
+            "self_evolution",
+            {
+                "action": "apply",
+                "objective": "Change one target.",
+                "files": ["core/executive/standing_authority.py"],
+            },
+            "privileged_mutation",
+            "critical",
+        ),
+    ],
+)
+def test_maintenance_invocation_scope_is_operation_specific(
+    tool_name,
+    arguments,
+    scope,
+    risk,
+):
+    actual_scope = resolve_execution_effect_scope(tool_name, arguments)
+
+    assert actual_scope == scope
+    assert (
+        classify_execution_risk(
+            tool_name,
+            arguments,
+            effect_scope=actual_scope,
+        )
+        == risk
+    )
+
+
 @pytest.mark.asyncio
 async def test_autonomous_research_lease_is_bound_receipted_and_closed():
     gateway = _StateGateway()
@@ -225,6 +279,39 @@ async def test_autonomous_private_observation_and_maintenance_are_mode_bound():
         {"mode": "apply", "apply": True},
         origin="autonomous_initiative",
     )
+    maintenance_test = await manager.issue_child_lease(
+        "test_generator",
+        {
+            "target_file": "core/executive/standing_authority.py",
+            "read_only": True,
+        },
+        origin="autonomous_initiative",
+    )
+    maintenance_test_write = await manager.issue_child_lease(
+        "test_generator",
+        {"target_file": "core/executive/standing_authority.py"},
+        origin="autonomous_initiative",
+    )
+    maintenance_proposal = await manager.issue_child_lease(
+        "self_evolution",
+        {
+            "action": "propose",
+            "objective": "Narrow one long function without changing behavior.",
+            "files": ["core/executive/standing_authority.py"],
+            "read_only": True,
+        },
+        origin="autonomous_initiative",
+    )
+    maintenance_live_apply = await manager.issue_child_lease(
+        "self_evolution",
+        {
+            "action": "apply",
+            "objective": "Rewrite authority.",
+            "files": ["core/executive/standing_authority.py"],
+            "read_only": True,
+        },
+        origin="autonomous_initiative",
+    )
 
     assert inbox_read.approved is True
     assert inbox_read.grant_id == "aura.autonomous-connected-account-read"
@@ -232,6 +319,52 @@ async def test_autonomous_private_observation_and_maintenance_are_mode_bound():
     assert maintenance_scan.approved is True
     assert maintenance_scan.grant_id == "aura.autonomous-read-only-maintenance"
     assert maintenance_apply.approved is False
+    assert maintenance_test.approved is True
+    assert maintenance_test.grant_id == "aura.autonomous-bounded-maintenance-test"
+    assert maintenance_test_write.approved is False
+    assert maintenance_proposal.approved is True
+    assert maintenance_proposal.grant_id == "aura.autonomous-read-only-maintenance"
+    assert maintenance_live_apply.approved is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "test_generator",
+            {"target_file": "/tmp/not-aura.py", "read_only": True},
+        ),
+        (
+            "test_generator",
+            {
+                "target_file": "core/executive/standing_authority.py",
+                "read_only": True,
+                "network": True,
+            },
+        ),
+        (
+            "self_evolution",
+            {
+                "action": "propose",
+                "objective": "Inspect an external file.",
+                "files": ["/tmp/not-aura.py"],
+                "read_only": True,
+            },
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_autonomous_maintenance_grants_reject_broader_effects(
+    tool_name,
+    arguments,
+):
+    decision = await _manager().issue_child_lease(
+        tool_name,
+        arguments,
+        origin="autonomous_initiative_loop",
+    )
+
+    assert decision.approved is False
 
 
 @pytest.mark.asyncio
