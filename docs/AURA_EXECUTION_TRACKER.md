@@ -32983,3 +32983,23 @@ until a fresh canary admits safe updates and passes held-out, replay, terminal,
 and regression gates. No reasoning-gain, frontier, promotion, or `WOW Signal`
 claim is made. This is total checkpoint 749. The 749-920 completion envelope
 is approximately 81.4%-100.0%, with a 90.7% midpoint.
+
+### 2026-07-31 - CP420S27 resident learnability-probe preregistration
+
+CP420S27 is preregistered from pushed clean source commit `8b88ed66e` with
+contract SHA-256
+`dc46be21c33a030b80ed2f746e25d5f8a68e9d8a2e0ad56b5db6fa165a6d1a14`.
+The contract verifies the resident 32B checkpoint and behavior bundle, host and
+MLX runtime, recurrent execution graph, task split, source inventory, initial
+adapter construction, signed-transition machinery, process-rotation policy,
+and nonpromotable update-canary claim boundary.
+
+This contract is being used first as the immutable source root for the new
+read-only causal-learnability preflight. The probe has not yet loaded the model,
+sampled a transition, mutated a policy, or established a gain. Its fresh task
+seeds are separate from S26 and from S27's frozen training schedule. The
+preflight receipt must determine whether the canary curriculum has a reachable
+strict admission cell before signed training material is created. No
+reasoning-gain, frontier, promotion, or `WOW Signal` claim is made. This is
+total checkpoint 750. The 750-920 completion envelope is approximately
+81.5%-100.0%, with a 90.8% midpoint.
