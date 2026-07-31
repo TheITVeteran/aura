@@ -32862,3 +32862,28 @@ rotation canary are required before full training. No reasoning-gain,
 frontier, promotion, or `WOW Signal` claim is made. This is total checkpoint
 746. The 746-920 completion envelope is approximately 81.1%-100.0%, with a
 90.5% midpoint.
+
+### 2026-07-31 - CP420S26 process-rotated resident canary preregistration
+
+CP420S26 is freshly preregistered from pushed clean commit `5854b2c2e`. It
+retains the same non-promotable 12-task depth-four scientific dose, signed
+causal intervention admission, observable answer/gradient boundary, complete
+320-token evidence traces, final-eight-layer rank-eight adapter scope, and
+checkpoint-per-step durability as CP420S25.
+
+The changed execution contract binds a maximum of four newly committed steps
+per native model process, exact full-state checkpoint validation between
+processes, five bounded canary attempts, two-consecutive-no-progress
+termination, process-owned MLX teardown, and a 256 MB checkpoint-metadata
+bound. It verifies against the resident model, behavior bundle, execution
+graph, curriculum, CPython/host/MLX runtime, dependencies, and repaired source
+inventory with contract SHA-256
+`69eab6e1d8f2246921b6ad46585c3b74ea09da3072783c6587e6820fed19e860`.
+
+No CP420S26 resident probe, model process, or optimizer update has run yet.
+Both resident preflights, fresh signer custody, signed launch materialization,
+launchd controller installation, live process rotation, complete canary dose,
+and strict update verdict remain required. No reasoning-gain, frontier,
+promotion, or `WOW Signal` claim follows. This is total checkpoint 747. The
+747-920 completion envelope is approximately 81.2%-100.0%, with a 90.6%
+midpoint.
