@@ -32585,3 +32585,28 @@ The complete detached-supervisor and resident-preregistration gate passes
 source-bound canary, probes, signers, bundle, and launch are required before
 full training admission. This is total checkpoint 738. The 738-920 completion
 envelope is approximately 80.2%-100.0%, with a 90.1% midpoint.
+
+### 2026-07-30 - CP420S22 output-bound resident canary preregistration
+
+CP420S22 is freshly preregistered from clean commit `b031d7653` after the
+generated-evidence/source-integrity repair. It preserves the production
+recurrent graph, 320-token answer budget, rank-eight adapters over the final
+eight layers, verified transition objectives, disjoint 12/12 depth-four task
+corpus across all twelve recurrence families, checkpoint-per-step persistence,
+and exact-resume watchdog policy.
+
+The campaign-specific training-output directory is now declared as mutable
+evidence in the detached plan. That declaration does not cover the contract,
+launcher, repository source, signer clients, signed launch bundle, or any
+unrelated untracked executable file. CP420S22 remains a fixed 12-step
+engineering canary: it may prove that the production optimizer path performs
+real contained updates, but it is ineligible for reasoning-gain, frontier,
+promotion, or `WOW Signal` claims.
+
+The contract verifies against the live resident model fingerprint, behavior
+bundle, execution specification, curriculum, and executable source inventory
+with contract SHA-256
+`59da346365120a05530d97c1ae2464ac8862361da87c6adee58cd68e92d87baa`.
+No CP420S22 resident probe or optimizer update has run yet. This is total
+checkpoint 739. The 739-920 completion envelope is approximately
+80.3%-100.0%, with a 90.2% midpoint.
