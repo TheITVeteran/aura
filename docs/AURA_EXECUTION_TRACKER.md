@@ -16,10 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 752 implements the
-  backward-compatible verified-transition dual gate identified by the live
-  resident causal preflight. A fresh source-bound update canary remains the
-  next gate; optimizer training has not restarted and no gain claim exists.**
+- Current active implementation milestone: **Checkpoint 753 binds the next
+  engineering canary to twelve fresh register-trace tasks across depths 2, 4,
+  and 8, the only family with independently reproduced safe recurrent signal.
+  A fresh source-bound contract remains the next gate; optimizer training has
+  not restarted and no gain claim exists.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33092,3 +33093,38 @@ through the PID-1 controller, prove durable policy updates and external replay,
 and retain separate powered controls before any scientific conclusion. This is
 total checkpoint 752. The 752-920 completion envelope is approximately
 81.7%-100.0%, with a 90.9% midpoint.
+
+### 2026-07-31 - Signal-targeted resident update-canary profile
+
+The generic canary profile spent one task in each of twelve families even
+after two independent resident observations showed its only safe
+wrong-to-right transition in `register_trace`. That profile was useful as a
+broad negative diagnostic, but repeating it would knowingly allocate most of
+the resident budget to inert or regressive cells and make the three-update
+engineering gate unlikely to measure the repaired optimizer path.
+
+The nonpromotable canary now contains twelve fresh, unique register-trace
+training tasks: four each at depths 2, 4, and 8, plus one disjoint holdout per
+depth. Its model, tokenizer, branch count, recurrent execution graph, complete
+320-token budget, exact-adjoint objective, intervention measurement chain,
+rank-eight final-eight-layer adapter scope, checkpoint cadence, process
+rotation, and three-update adequacy floor are unchanged. Probe seeds remain
+separate from both training and holdout seeds. The full claim campaign remains
+broad across every recurrence family and is not narrowed by this engineering
+profile.
+
+The contract now receipts why the canary family was selected, the exact
+optimizer-admission rule, and the still-open claim-control requirement. The
+dataset validator accepts only the exact preregistered family list and proves
+that every selected family belongs to the frozen evaluation-exclusion
+registry; it no longer incorrectly requires a targeted canary to contain that
+entire registry. Preregistration tests pass 36/36, and the trainer,
+post-training controller, launch materializer, and production-runner matrix
+passes 90/90. Lint, compilation, and diff integrity pass.
+
+No contract or resident process was launched in this checkpoint. The next
+checkpoint must freeze this profile against clean pushed source, verify the
+resident model and behavior identities, and only then run fresh policy and
+answer-channel preflights. No reasoning-gain, frontier, promotion, or
+`WOW Signal` claim is made. This is total checkpoint 753. The 753-920
+completion envelope is approximately 81.8%-100.0%, with a 90.9% midpoint.

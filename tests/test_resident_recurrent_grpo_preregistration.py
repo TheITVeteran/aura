@@ -140,12 +140,12 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     parameters = contract["training"]["parameters"]
 
     assert receipt["campaign_profile"] == prereg.UPDATE_CANARY_PROFILE
-    assert parameters["domains"] == list(RECURRENCE_TRAINING_FAMILIES)
-    assert parameters["depths"] == [4]
-    assert parameters["train_per_cell"] == 1
+    assert parameters["domains"] == ["register_trace"]
+    assert parameters["depths"] == [2, 4, 8]
+    assert parameters["train_per_cell"] == 4
     assert parameters["holdout_per_cell"] == 1
-    assert parameters["max_steps"] == len(RECURRENCE_TRAINING_FAMILIES)
-    assert parameters["eval_every"] == len(RECURRENCE_TRAINING_FAMILIES)
+    assert parameters["max_steps"] == 12
+    assert parameters["eval_every"] == 12
     assert parameters["group_size"] == prereg.TRAINING_PARAMETERS["group_size"]
     assert parameters["max_tokens"] == prereg.TRAINING_PARAMETERS["max_tokens"]
     assert parameters["lora_rank"] == prereg.TRAINING_PARAMETERS["lora_rank"]
@@ -166,12 +166,18 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
         == contract["campaign_id"]
     )
     assert contract["training"]["dataset"]["train_tasks"] == 12
-    assert contract["training"]["dataset"]["holdout_tasks"] == 12
+    assert contract["training"]["dataset"]["holdout_tasks"] == 3
     assert (
         contract["training"]["completion_required"]["training_adequacy"]
         == prereg.recurrent_training_adequacy_policy()
     )
     assert contract["evaluation"]["engineering_canary"]["minimum_optimizer_updates"] == 3
+    assert contract["evaluation"]["engineering_canary"]["selection_basis"] == (
+        "fresh_disjoint_tasks_from_resident_preflight_verified_signal_family"
+    )
+    assert contract["evaluation"]["engineering_canary"]["claim_control_policy"] == (
+        "same_group_or_external_powered_regression_control_required"
+    )
     assert contract["evaluation"]["engineering_canary"]["reasoning_gain_claim_eligible"] is False
     assert contract["claim_state"]["resident_training_complete"] is False
     assert contract["claim_state"]["frontier_level_proven"] is False

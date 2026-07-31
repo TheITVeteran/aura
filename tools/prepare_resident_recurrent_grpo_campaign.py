@@ -165,15 +165,26 @@ TRAINING_PARAMETERS: Mapping[str, Any] = {
         "config/latent_cortex/resident_32b_verified_intervention_group_config.json"
     ),
 }
+_UPDATE_CANARY_DOMAINS = ("register_trace",)
+_UPDATE_CANARY_DEPTHS = (2, 4, 8)
+_UPDATE_CANARY_TRAIN_PER_CELL = 4
+_UPDATE_CANARY_STEPS = (
+    len(_UPDATE_CANARY_DOMAINS)
+    * len(_UPDATE_CANARY_DEPTHS)
+    * _UPDATE_CANARY_TRAIN_PER_CELL
+)
 UPDATE_CANARY_PARAMETERS: Mapping[str, Any] = {
     **TRAINING_PARAMETERS,
-    "domains": list(RECURRENCE_TRAINING_FAMILIES),
-    "depths": [4],
-    "train_per_cell": 1,
+    # The resident preflight reproduced safe final-edge improvement only in
+    # register_trace. This engineering canary uses fresh disjoint tasks from
+    # that family; the later claim campaign remains broad and unchanged.
+    "domains": list(_UPDATE_CANARY_DOMAINS),
+    "depths": list(_UPDATE_CANARY_DEPTHS),
+    "train_per_cell": _UPDATE_CANARY_TRAIN_PER_CELL,
     "holdout_per_cell": 1,
-    "max_steps": len(RECURRENCE_TRAINING_FAMILIES),
-    "eval_every": len(RECURRENCE_TRAINING_FAMILIES),
-    "checkpoint_keep": len(RECURRENCE_TRAINING_FAMILIES),
+    "max_steps": _UPDATE_CANARY_STEPS,
+    "eval_every": _UPDATE_CANARY_STEPS,
+    "checkpoint_keep": _UPDATE_CANARY_STEPS,
     "calibrate_minutes": 60.0,
     "calibrate": False,
     "fixed_update_canary": True,
@@ -573,6 +584,11 @@ def build_contract(
     if campaign_profile not in CAMPAIGN_PROFILES:
         _fail("campaign_profile_invalid")
     params = _training_parameters_for_profile(campaign_profile)
+    training_task_count = (
+        len(params["domains"])
+        * len(params["depths"])
+        * int(params["train_per_cell"])
+    )
     watchdog_policy = _watchdog_policy_for_profile(campaign_profile)
     resource_envelope = _resource_envelope_for_profile(campaign_profile)
     model_path = _repo_path(model, role="model")
@@ -736,9 +752,20 @@ def build_contract(
                         "policy mutation, durable checkpointing, base-checkpoint "
                         "immutability, and observed step latency"
                     ),
-                    "training_tasks": len(RECURRENCE_TRAINING_FAMILIES),
+                    "training_tasks": training_task_count,
                     "minimum_optimizer_updates": math.ceil(
-                        len(RECURRENCE_TRAINING_FAMILIES) * 0.25
+                        training_task_count * 0.25
+                    ),
+                    "selection_basis": (
+                        "fresh_disjoint_tasks_from_resident_preflight_"
+                        "verified_signal_family"
+                    ),
+                    "optimizer_admission_policy": (
+                        "verified_wrong_to_right_zero_right_to_wrong_"
+                        "nondegenerate_reward"
+                    ),
+                    "claim_control_policy": (
+                        "same_group_or_external_powered_regression_control_required"
                     ),
                     "reasoning_gain_claim_eligible": False,
                     "frontier_claim_eligible": False,
@@ -910,8 +937,11 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
         _fail("training_contract_mismatch")
     dataset = training["dataset"]
     if (
-        dataset.get("families") != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
+        dataset.get("families") != list(expected_parameters["domains"])
         or dataset.get("excluded_evaluation_families") != list(CURRENT_EXCLUDED_TRAINING_FAMILIES)
+        or not set(dataset.get("families", ())).issubset(
+            CURRENT_EXCLUDED_TRAINING_FAMILIES
+        )
         or dataset.get("train_holdout_id_overlap") != 0
         or dataset.get("train_holdout_prompt_overlap") != 0
     ):
@@ -927,9 +957,27 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
                 "policy mutation, durable checkpointing, base-checkpoint "
                 "immutability, and observed step latency"
             ),
-            "training_tasks": len(RECURRENCE_TRAINING_FAMILIES),
+            "training_tasks": (
+                len(expected_parameters["domains"])
+                * len(expected_parameters["depths"])
+                * int(expected_parameters["train_per_cell"])
+            ),
             "minimum_optimizer_updates": math.ceil(
-                len(RECURRENCE_TRAINING_FAMILIES) * 0.25
+                len(expected_parameters["domains"])
+                * len(expected_parameters["depths"])
+                * int(expected_parameters["train_per_cell"])
+                * 0.25
+            ),
+            "selection_basis": (
+                "fresh_disjoint_tasks_from_resident_preflight_"
+                "verified_signal_family"
+            ),
+            "optimizer_admission_policy": (
+                "verified_wrong_to_right_zero_right_to_wrong_"
+                "nondegenerate_reward"
+            ),
+            "claim_control_policy": (
+                "same_group_or_external_powered_regression_control_required"
             ),
             "reasoning_gain_claim_eligible": False,
             "frontier_claim_eligible": False,
