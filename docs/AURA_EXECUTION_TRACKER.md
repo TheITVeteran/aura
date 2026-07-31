@@ -32477,3 +32477,30 @@ desktop demonstration cleanly. A signed installed-app rebuild and the full
 resident-32B campaign admission gate remain next. Training remains paused.
 This is total checkpoint 734. The 734-920 completion envelope is approximately
 79.8%-100.0%, with an 89.9% midpoint.
+
+### 2026-07-30 - CP420S20 fresh resident update-canary preregistration
+
+The owner accepted the live desktop demonstration and authorized training.
+The previously prepared CP420S19 contract was not launched: its verifier
+correctly detected that a later `file_write_gateway` repair changed one of the
+frozen training-source bindings. CP420S19 remains immutable and retired with no
+optimizer update or gain claim.
+
+CP420S20 is a fresh source-bound, non-promotable resident-32B update canary
+created from clean `main` commit `a2a548a55c005c3753bbbae358488e34eee967b5`.
+It preregisters 12 training and 12 prompt- and identity-disjoint held-out tasks
+across all twelve recurrence curriculum families at depth four. The canary
+retains the production recurrent execution graph, 320-token reasoning budget,
+two-sample groups, eight-layer rank-eight `q_proj`/`v_proj`/`o_proj` LoRA,
+verified trajectory objectives, checkpoint-per-step persistence, exact resume,
+and the external signer trust boundary. Its fixed 12-step dose is explicitly
+ineligible for reasoning-gain, frontier, promotion, or `WOW Signal` claims.
+
+The contract verifies against the current model fingerprint, behavior bundle,
+execution specification, task corpus, and executable source inventory. The
+installed `/Applications/Aura.app` is strictly signed and bound to the same
+clean commit, and the interactive Aura/MLX runtime is stopped for exclusive
+resident ownership. Resident initial-policy and answer-channel probes, external
+signer provisioning, signed launch materialization, and the detached canary
+remain next. This is total checkpoint 735. The 735-920 completion envelope is
+approximately 79.9%-100.0%, with a 89.9% midpoint.
