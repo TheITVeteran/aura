@@ -3367,6 +3367,19 @@ class InferenceGate:
         if not force and (now - self._last_background_memory_shed_at) < 20.0:
             return
 
+        protected_foreground = str(reason or "") == "protected_foreground_shed"
+        if protected_foreground and self._primary_lane_ready():
+            # A load reserve answers whether a cold model may be admitted. It is
+            # not capacity that an already-resident model needs again. Applying
+            # the load threshold to every protected turn fabricated a warning
+            # and could evict the fallback ladder while the 32B was serving.
+            self._last_background_memory_shed_at = now
+            logger.debug(
+                "InferenceGate: primary lane is resident; protected foreground "
+                "shed is unnecessary."
+            )
+            return
+
         # Never shed the small fallback models when memory is abundant. They
         # are the guaranteed fast-answer path while the 32B cortex warms; with
         # the router now routing AROUND a not-ready cortex, shedding them left
@@ -3380,7 +3393,7 @@ class InferenceGate:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
 
             available_gb = float(get_memory_pressure_snapshot().available_gb)
-            cortex_reserve_gb = self._env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0)
+            cortex_reserve_gb = self._primary_load_required_gb()
             fallback_reserve_gb = self._env_float("AURA_FALLBACK_RESIDENT_RESERVE_GB", 8.0)
             if available_gb >= cortex_reserve_gb + fallback_reserve_gb:
                 logger.info(
@@ -3434,16 +3447,14 @@ class InferenceGate:
         # enough that the cortex cannot load at all. Then the ladder is the
         # thing to spend — one turn served by a lower lane costs a turn; a
         # cortex that can never load costs the session.
-        preserve_ladder = str(reason or "") == "protected_foreground_shed"
-        if preserve_ladder and self._memory_blocks_primary_load():
-            logger.warning(
-                "🪂 InferenceGate: memory is too short for the primary lane to "
-                "load; shedding the fallback ladder so the cortex can come back."
-            )
+        preserve_ladder = protected_foreground
+        primary_load_blocked = preserve_ladder and self._memory_blocks_primary_load()
+        if primary_load_blocked:
             preserve_ladder = False
-        ladder_paths = self._fallback_ladder_paths() if preserve_ladder else frozenset()
+        configured_ladder_paths = self._fallback_ladder_paths()
+        ladder_paths = configured_ladder_paths if preserve_ladder else frozenset()
 
-        shed_count = 0
+        eligible: list[tuple[str, Any]] = []
         for client_path, client in list(client_registry.items()):
             if client is None or client is self._mlx_client:
                 continue
@@ -3455,27 +3466,58 @@ class InferenceGate:
                 )
                 continue
             try:
-                if not hasattr(client, "is_alive") or not client.is_alive():
+                if (
+                    not hasattr(client, "is_alive")
+                    or not client.is_alive()
+                    or not hasattr(client, "reboot_worker")
+                ):
                     continue
+                eligible.append((client_path, client))
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                _record_inference_degradation(
+                    exc,
+                    action="continued memory-pressure shedding with remaining available workers",
+                )
+                logger.debug(
+                    "Background worker eligibility probe failed for %s: %s",
+                    client_path,
+                    exc,
+                )
+
+        if not eligible:
+            return
+
+        shed_count = 0
+        shed_ladder_count = 0
+        for client_path, client in eligible:
+            try:
+                await client.reboot_worker(
+                    reason=reason,
+                    mark_failed=False,
+                )
+                shed_count += 1
+                if client_path in configured_ladder_paths:
+                    shed_ladder_count += 1
                 logger.warning(
-                    "🧹 InferenceGate: unloading %s to protect the foreground lane (%s).",
+                    "🧹 InferenceGate: unloaded %s to protect the foreground lane (%s).",
                     os.path.basename(client_path),
                     reason,
                 )
-                if hasattr(client, "reboot_worker"):
-                    await client.reboot_worker(
-                        reason=reason,
-                        mark_failed=False,
-                    )
-                else:
-                    continue
-                shed_count += 1
             except _INFERENCE_RECOVERABLE_ERRORS as exc:
                 _record_inference_degradation(
                     exc,
                     action="continued memory-pressure shedding with remaining available workers",
                 )
                 logger.debug("Background worker shed failed for %s: %s", client_path, exc)
+
+        if primary_load_blocked and shed_ladder_count:
+            # This warning describes a completed action, not merely a low-memory
+            # guess or an unload attempt that may have failed.
+            logger.warning(
+                "🪂 InferenceGate: memory was too short for the cold primary lane "
+                "to load; shed %d live fallback worker(s) so the cortex can come back.",
+                shed_ladder_count,
+            )
 
         if shed_count:
             logger.info(
@@ -3484,6 +3526,16 @@ class InferenceGate:
                 reason,
             )
 
+    def _primary_lane_ready(self) -> bool:
+        """Whether the primary worker is initialized and available now."""
+        client = getattr(self, "_mlx_client", None)
+        if client is None or not hasattr(client, "is_alive"):
+            return False
+        try:
+            return bool(client.is_alive())
+        except _INFERENCE_RECOVERABLE_ERRORS:
+            return False
+
     def _memory_blocks_primary_load(self) -> bool:
         """Whether free memory is below what the primary lane needs to load.
 
@@ -3491,6 +3543,8 @@ class InferenceGate:
         ladder. Shedding the fallback on a guess is the failure this whole
         branch exists to prevent.
         """
+        if self._primary_lane_ready():
+            return False
         try:
             from core.utils.memory_monitor import get_memory_pressure_snapshot
 
@@ -3498,8 +3552,24 @@ class InferenceGate:
         except _INFERENCE_RECOVERABLE_ERRORS as exc:
             logger.debug("Primary-load memory probe unavailable: %s", exc)
             return False
-        cortex_reserve_gb = self._env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0)
+        cortex_reserve_gb = self._primary_load_required_gb()
         return available_gb < cortex_reserve_gb
+
+    def _primary_load_required_gb(self) -> float:
+        """Return the admission threshold for the configured primary model."""
+        client = getattr(self, "_mlx_client", None)
+        model_path = str(getattr(client, "model_path", "") or "")
+        if model_path:
+            try:
+                from core.brain.llm.mlx_client import _model_load_min_available_gb
+
+                return float(_model_load_min_available_gb(model_path))
+            except _INFERENCE_RECOVERABLE_ERRORS as exc:
+                logger.debug("Primary model-derived load threshold unavailable: %s", exc)
+                return self._env_float(
+                    "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0
+                )
+        return self._env_float("AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB", 24.0)
 
     def _fallback_ladder_paths(self) -> frozenset[str]:
         """Model paths that form the escalation ladder below the cortex.
@@ -6690,10 +6760,11 @@ class InferenceGate:
 
         if protected_foreground_lane and not is_background:
             self._extend_startup_quiet_window(180.0)
-            await self._shed_background_workers_for_memory_pressure(
-                force=True,
-                reason="protected_foreground_shed",
-            )
+            if not self._primary_lane_ready():
+                await self._shed_background_workers_for_memory_pressure(
+                    force=True,
+                    reason="protected_foreground_shed",
+                )
 
         # ── Morphogenesis routing advice ──────────────────────────────────
         # If the morphogenetic metabolism reports very high system pressure,

@@ -346,7 +346,7 @@ def test_a_runaway_actually_records_its_critical_degradation(monkeypatch):
 def _settled_boot_ramp(peak: float = 40000.0):
     """3GB → peak over 200s, then flat. The tail slope is exactly zero."""
     return [(float(t), 3000.0 + (peak - 3000.0) * min(1.0, t / 200.0))
-            for t in range(0, 341, 5)]
+            for t in range(0, 901, 5)]
 
 
 def _still_climbing(start: float, per_hour: float, span_s: int = 3600):
@@ -387,7 +387,7 @@ def test_the_projection_uses_the_rate_that_is_still_happening() -> None:
     """A projection is a claim about the current rate, not a window average."""
     verdict = _assess(_settled_boot_ramp())
     # The whole-window fit is astronomical; the projection must not inherit it.
-    assert verdict.slope_per_hour > 100_000
+    assert verdict.slope_per_hour > 80_000
     assert verdict.projected_breach_s is None or verdict.projected_breach_s > 3600
 
 
@@ -420,3 +420,47 @@ def test_unjudgeable_recent_tail_is_unknown_not_confirmed_growth() -> None:
     assert verdict.state is RunawayState.UNKNOWN
     assert not verdict.is_runaway()
     assert verdict.projected_breach_s is None
+
+
+def test_memory_drift_requires_a_five_minute_recent_tail() -> None:
+    detector = RunawayDetector("managed_rss_mb", RunawayPolicy.for_memory_mb())
+    _feed(detector, 8000.0, 10_000.0, minutes=8, step_s=60.0)
+
+    verdict = detector.assess(now=1000.0 + 8 * 60)
+
+    assert verdict.state is RunawayState.UNKNOWN
+    assert "insufficient evidence" in verdict.reason
+
+
+def test_alternating_noisy_tail_is_not_confirmed_drift() -> None:
+    detector = RunawayDetector(
+        "managed_rss_mb",
+        _policy(
+            min_slope_per_hour=200.0,
+            confirm_fraction=0.5,
+            confirm_min_samples=6,
+            confirm_min_window_s=300.0,
+            confirm_positive_fraction=0.7,
+        ),
+    )
+    t0 = 1000.0
+    for minute in range(31):
+        trend = 300.0 * (minute / 60.0)
+        noise = 30.0 if minute % 2 else -30.0
+        detector.observe(8000.0 + trend + noise, now=t0 + minute * 60.0)
+
+    verdict = detector.assess(now=t0 + 30 * 60.0)
+
+    assert verdict.state is RunawayState.LEVEL_SHIFT
+    assert not verdict.is_runaway()
+    assert "noisy growth is not confirmed" in verdict.reason
+
+
+def test_production_memory_policy_keeps_the_observed_slow_leak() -> None:
+    detector = RunawayDetector("managed_rss_mb", RunawayPolicy.for_memory_mb())
+    _feed(detector, 8000.0, 242.0, minutes=60, step_s=60.0)
+
+    verdict = detector.assess(now=1000.0 + 60 * 60.0)
+
+    assert verdict.state is RunawayState.DRIFT
+    assert verdict.slope_per_hour == pytest.approx(242.0, rel=0.05)

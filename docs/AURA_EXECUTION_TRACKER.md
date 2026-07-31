@@ -32376,3 +32376,36 @@ clean GUI demonstrations. Resource accounting and ontogeny calibration repairs
 from the rejected launch remain in progress. Resident-32B training remains
 paused. This is total checkpoint 731. The 731-920 completion envelope is
 approximately 79.5%-100.0%, with an 89.7% midpoint.
+
+### 2026-07-30 - DEMO-Q16 model-aware resource lifecycle and leak evidence
+
+The rejected checkpoint-730 launch emitted two resource warnings that did not
+describe defects: a protected foreground turn tried to reserve memory for a
+32B cortex that was already resident, and RunawayBudget interpreted the
+cortex's normal allocation ramp as steady-state growth. MemoryGovernor also
+combined overlapping root and process-tree samples, so the policy could count
+the same resident allocation twice.
+
+Protected foreground shedding now distinguishes cold admission from a live
+primary lane. A resident primary cannot trigger fallback eviction, while a cold
+primary uses the configured model's actual load requirement. Shedding warnings
+are emitted only after an eligible live worker has been unloaded. The memory
+governor now samples one canonical Aura process tree, recognizes registered
+`spawn_main` MLX workers by PID, and derives managed runtime memory as the
+tree's residual rather than adding a second overlapping total.
+
+Model lifecycle and resident-allocation identity changes now begin a fresh
+trend epoch. Model loading and the configurable post-allocation settling window
+remain provisional for trend classification, while absolute critical cleanup
+stays active. Steady-state drift requires at least five minutes of recent
+evidence, a robust median pairwise slope, and predominantly positive
+increments. Tests retain detection of the observed sustained 242 MB/hour leak
+and reject one-time allocation ramps and alternating noisy tails.
+
+The focused inference, memory-governor, runtime-pressure, MLX-memory, protected
+ladder, and runaway-budget gate passes 130/130; bytecode compilation, lint, and
+diff integrity pass. The installed application still requires a signed rebuild
+and three complete clean GUI demonstrations. Ontogeny calibration and bounded
+self-development authority repairs remain in progress. Resident-32B training
+remains paused. This is total checkpoint 732. The 732-920 completion envelope
+is approximately 79.6%-100.0%, with an 89.8% midpoint.

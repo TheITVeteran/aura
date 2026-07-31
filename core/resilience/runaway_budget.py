@@ -127,6 +127,11 @@ class RunawayPolicy:
     confirm_fraction: float = 1.0 / 3.0
     # Below this many samples in the tail there is nothing to confirm against.
     confirm_min_samples: int = 3
+    # A few one-minute samples can describe a cache step, not a durable trend.
+    confirm_min_window_s: float = 60.0
+    # Real sustained growth has mostly positive intervals. Requiring that
+    # structure rejects alternating/noisy tails whose fitted slope is positive.
+    confirm_positive_fraction: float = 0.7
 
     @classmethod
     def for_memory_mb(cls) -> RunawayPolicy:
@@ -145,6 +150,10 @@ class RunawayPolicy:
             projection_horizon_s=_env_float("AURA_RUNAWAY_HORIZON_S", 3600.0),
             confirm_fraction=_env_float("AURA_RUNAWAY_CONFIRM_FRACTION", 1.0 / 3.0),
             confirm_min_samples=_env_int("AURA_RUNAWAY_CONFIRM_SAMPLES", 3),
+            confirm_min_window_s=_env_float("AURA_RUNAWAY_CONFIRM_WINDOW_S", 300.0),
+            confirm_positive_fraction=_env_float(
+                "AURA_RUNAWAY_CONFIRM_POSITIVE_FRACTION", 0.7
+            ),
         )
 
 
@@ -229,25 +238,45 @@ class RunawayDetector:
             samples,
             self.policy.confirm_fraction,
             self.policy.confirm_min_samples,
+            self.policy.confirm_min_window_s,
+        )
+        recent_positive_fraction = _recent_positive_delta_fraction(
+            samples,
+            self.policy.confirm_fraction,
+            self.policy.confirm_min_samples,
+            self.policy.confirm_min_window_s,
         )
         still_growing = (
             recent_slope is not None
             and recent_slope >= self.policy.min_slope_per_hour
+            and recent_positive_fraction is not None
+            and recent_positive_fraction >= self.policy.confirm_positive_fraction
         )
         # A projection is a statement about the CURRENT rate, so it is computed
         # from the recent slope when there is one. Using the whole-window slope
         # was the defect: see _recent_slope_per_hour.
         projected = _projected_breach_s(
             samples[-1][1],
-            recent_slope if recent_slope is not None else 0.0,
+            recent_slope if still_growing and recent_slope is not None else 0.0,
             self.policy.ceiling,
         )
 
-        settled = (
-            "" if still_growing or recent_slope is None
-            else f"; but the last {window * self.policy.confirm_fraction / 60:.0f}min "
-                 f"reads {recent_slope:.1f}/h — the level shifted once and settled"
-        )
+        if still_growing or recent_slope is None:
+            settled = ""
+        elif (
+            recent_positive_fraction is not None
+            and recent_slope >= self.policy.min_slope_per_hour
+        ):
+            settled = (
+                f"; the recent tail reads {recent_slope:.1f}/h but only "
+                f"{recent_positive_fraction:.0%} of intervals rise — noisy growth "
+                "is not confirmed"
+            )
+        else:
+            settled = (
+                f"; but the last {window * self.policy.confirm_fraction / 60:.0f}min "
+                f"reads {recent_slope:.1f}/h — the level shifted once and settled"
+            )
 
         # 1. Mitigation has had its chances and growth continued.
         if (
@@ -353,6 +382,7 @@ def _recent_slope_per_hour(
     samples: list[tuple[float, float]],
     fraction: float,
     min_samples: int,
+    min_window_s: float = 0.0,
 ) -> float | None:
     """Slope over the most recent `fraction` of the window, or None if unjudgeable.
 
@@ -383,13 +413,60 @@ def _recent_slope_per_hour(
     span = samples[-1][0] - samples[0][0]
     if span <= 0:
         return None
-    cutoff = samples[-1][0] - span * max(0.0, min(1.0, fraction))
-    tail = [point for point in samples if point[0] >= cutoff]
+    tail = _recent_tail(samples, fraction)
     if len(tail) < max(2, min_samples):
         return None
-    if tail[-1][0] - tail[0][0] <= 0:
+    if tail[-1][0] - tail[0][0] < max(0.0, min_window_s):
         return None
-    return _linear_slope(tail) * 3600.0
+    return _median_pairwise_slope(tail) * 3600.0
+
+
+def _recent_positive_delta_fraction(
+    samples: list[tuple[float, float]],
+    fraction: float,
+    min_samples: int,
+    min_window_s: float,
+) -> float | None:
+    tail = _recent_tail(samples, fraction)
+    if len(tail) < max(2, min_samples):
+        return None
+    if tail[-1][0] - tail[0][0] < max(0.0, min_window_s):
+        return None
+    deltas = [
+        right[1] - left[1]
+        for left, right in zip(tail, tail[1:], strict=False)
+    ]
+    if not deltas:
+        return None
+    return sum(1 for delta in deltas if delta > 0.0) / len(deltas)
+
+
+def _recent_tail(
+    samples: list[tuple[float, float]], fraction: float
+) -> list[tuple[float, float]]:
+    if not samples:
+        return []
+    span = samples[-1][0] - samples[0][0]
+    if span <= 0.0:
+        return []
+    cutoff = samples[-1][0] - span * max(0.0, min(1.0, fraction))
+    return [point for point in samples if point[0] >= cutoff]
+
+
+def _median_pairwise_slope(samples: list[tuple[float, float]]) -> float:
+    slopes: list[float] = []
+    for index, (left_t, left_value) in enumerate(samples[:-1]):
+        for right_t, right_value in samples[index + 1 :]:
+            elapsed = right_t - left_t
+            if elapsed > 0.0:
+                slopes.append((right_value - left_value) / elapsed)
+    if not slopes:
+        return 0.0
+    slopes.sort()
+    middle = len(slopes) // 2
+    if len(slopes) % 2:
+        return slopes[middle]
+    return (slopes[middle - 1] + slopes[middle]) / 2.0
 
 
 def _linear_slope(samples: list[tuple[float, float]]) -> float:

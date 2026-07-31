@@ -3,6 +3,7 @@ import gc
 import logging
 import os
 import sqlite3
+import sys
 import time
 from typing import Any
 
@@ -11,7 +12,7 @@ from core.resilience.runaway_budget import RunawayPolicy, get_runaway_budget
 from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
-from core.utils.memory_monitor import process_memory_bytes
+from core.utils.memory_monitor import get_memory_pressure_snapshot, process_memory_bytes
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Resilience.MemoryGovernor")
@@ -33,6 +34,7 @@ _MODEL_UNLOAD_ERRORS = (
 )
 _RSS_SAMPLE_ERRORS = (
     AttributeError,
+    OSError,
     RuntimeError,
     TypeError,
     ValueError,
@@ -94,6 +96,13 @@ class MemoryGovernor:
         self._loop_failure_count = 0
         self._last_policy_sample: dict[str, Any] = {}
         self._cleanup_events: list[dict[str, Any]] = []
+        self._model_resource_state = "boot"
+        self._model_allocation_identity: tuple[tuple[str, int, str, bool], ...] = ()
+        self._model_settle_until = 0.0
+        self._model_settling_s = max(
+            0.0, _env_float("AURA_RUNAWAY_MODEL_SETTLING_S", 180.0)
+        )
+        self._trend_provisional = True
 
         # Watches the RSS *trend* and whether our own cleanup is achieving
         # anything. The thresholds above answer "how bad is it now"; this
@@ -115,6 +124,14 @@ class MemoryGovernor:
                 "critical": self.threshold_critical,
             },
             "last_policy_sample": dict(self._last_policy_sample),
+            "resource_lifecycle": {
+                "state": self._model_resource_state,
+                "trend_provisional": self._trend_provisional,
+                "settle_remaining_s": round(
+                    max(0.0, self._model_settle_until - time.monotonic()), 3
+                ),
+                "allocation_identity": [list(item) for item in self._model_allocation_identity],
+            },
             "recent_cleanup_events": list(self._cleanup_events[-10:]),
         }
 
@@ -157,6 +174,25 @@ class MemoryGovernor:
             action=action,
         )
 
+    @staticmethod
+    def _registered_mlx_worker_pids() -> set[int]:
+        """Return worker PIDs from the authoritative in-process client registry."""
+        module = sys.modules.get("core.brain.llm.mlx_client")
+        clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+        if not isinstance(clients, dict):
+            return set()
+        pids: set[int] = set()
+        for client in list(clients.values()):
+            process = getattr(client, "_process", None)
+            try:
+                pid = int(getattr(process, "pid", 0) or 0)
+                alive = bool(process is not None and process.is_alive())
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                continue
+            if pid > 0 and alive:
+                pids.add(pid)
+        return pids
+
     def _iter_managed_runtime_processes(self):
         """Yield heavyweight MLX runtime processes owned by Aura.
 
@@ -175,14 +211,20 @@ class MemoryGovernor:
             logger.debug("Memory Governor: could not inspect child process tree: %s", exc)
             return
 
+        registered_pids = self._registered_mlx_worker_pids()
+        seen: set[int] = set()
         for proc in children:
             try:
                 info = proc.as_dict(attrs=['pid', 'name', 'cmdline', 'memory_info'])
+                pid = int(info.get("pid", getattr(proc, "pid", 0)) or 0)
+                if pid <= 0 or pid in seen:
+                    continue
                 cmd_str = " ".join(info.get('cmdline') or [])
-                if "mlx_worker.py" in cmd_str or "MTLCompilerService" in cmd_str:
+                if pid in registered_pids or "mlx_worker.py" in cmd_str:
+                    seen.add(pid)
                     proc.info = info  # match the process_iter contract callers rely on
                     yield proc
-            except _PROCESS_INSPECTION_ERRORS:
+            except _RSS_SAMPLE_ERRORS:
                 continue
 
     def _managed_runtime_rss_mb(self) -> float:
@@ -190,11 +232,94 @@ class MemoryGovernor:
         for proc in self._iter_managed_runtime_processes():
             try:
                 mem_info = proc.info.get('memory_info')
-                rss = getattr(mem_info, 'rss', 0) if mem_info is not None else proc.memory_info().rss
-                total_mb += rss / (1024 * 1024)
+                pid = int(proc.info.get("pid", getattr(proc, "pid", 0)) or 0)
+                if pid > 0:
+                    total_mb += process_memory_bytes(pid) / (1024 * 1024)
+                else:
+                    rss = (
+                        getattr(mem_info, 'rss', 0)
+                        if mem_info is not None
+                        else proc.memory_info().rss
+                    )
+                    total_mb += rss / (1024 * 1024)
             except _PROCESS_INSPECTION_ERRORS:
                 continue
         return total_mb
+
+    @staticmethod
+    def _model_lifecycle_snapshot() -> dict[str, Any]:
+        """Read passive model lifecycle plus a stable resident-allocation identity."""
+        try:
+            from core.runtime.runtime_pressure import _model_resource_lifecycle_snapshot
+
+            snapshot = dict(_model_resource_lifecycle_snapshot())
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            snapshot = {"state": "cold", "load_active": False}
+
+        module = sys.modules.get("core.brain.llm.mlx_client")
+        clients = getattr(module, "_CLIENTS", {}) if module is not None else {}
+        identity: list[tuple[str, int, str, bool]] = []
+        if isinstance(clients, dict):
+            for path, client in list(clients.items()):
+                process = getattr(client, "_process", None)
+                try:
+                    pid = int(getattr(process, "pid", 0) or 0)
+                    alive = bool(process is not None and process.is_alive())
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                    pid = 0
+                    alive = False
+                if not alive:
+                    continue
+                identity.append(
+                    (
+                        str(path),
+                        pid,
+                        str(getattr(client, "_lane_state", "cold") or "cold").lower(),
+                        bool(getattr(client, "_init_done", False)),
+                    )
+                )
+        snapshot["allocation_identity"] = tuple(sorted(identity))
+        return snapshot
+
+    def _update_runaway_lifecycle(self, now: float) -> tuple[str, bool]:
+        snapshot = self._model_lifecycle_snapshot()
+        reported = str(snapshot.get("state") or "cold").lower()
+        identity = tuple(snapshot.get("allocation_identity") or ())
+        previous_state = self._model_resource_state
+        boundary = reported != previous_state or identity != self._model_allocation_identity
+
+        if boundary:
+            self._runaway.reset()
+            self._model_resource_state = reported
+            self._model_allocation_identity = identity
+            if reported == "model_loading":
+                self._model_settle_until = 0.0
+            elif previous_state == "model_loading" or identity:
+                self._model_settle_until = now + self._model_settling_s
+            else:
+                self._model_settle_until = 0.0
+            logger.info(
+                "Memory Governor resource lifecycle %s → %s; trend baseline reset.",
+                previous_state,
+                reported,
+            )
+
+        if reported == "model_loading":
+            state = "model_loading"
+            provisional = True
+        elif now < self._model_settle_until:
+            state = "settling"
+            provisional = True
+        else:
+            state = reported
+            provisional = False
+
+        if provisional:
+            # Keep allocation ramps out of the next steady-state epoch. Absolute
+            # critical cleanup below remains active on the current measurement.
+            self._runaway.reset()
+        self._trend_provisional = provisional
+        return state, provisional
 
     async def start(self):
         """Start the governor loop."""
@@ -265,7 +390,7 @@ class MemoryGovernor:
                 await asyncio.sleep(10)
 
     def _sample_rss_sync(self) -> tuple[float, float]:
-        """Sample core and managed-runtime RSS. Runs off-loop via to_thread."""
+        """Sample the canonical process tree exactly once, off the event loop."""
         try:
             rss_mb = process_memory_bytes(self._proc.pid) / (1024 * 1024)
         except _RSS_SAMPLE_ERRORS as exc:
@@ -275,7 +400,22 @@ class MemoryGovernor:
                 action="continued memory policy with zero core RSS after process sample failed",
             )
             rss_mb = 0.0
-        return rss_mb, self._managed_runtime_rss_mb()
+        try:
+            snapshot = get_memory_pressure_snapshot(force_refresh=True)
+            process_tree_mb = max(
+                rss_mb,
+                float(snapshot.process_rss_gb) * 1024.0,
+            )
+        except _RSS_SAMPLE_ERRORS as exc:
+            self._record_degradation(
+                exc,
+                severity="warning",
+                action="continued memory policy with core-only RSS after canonical tree sample failed",
+            )
+            process_tree_mb = rss_mb
+        # The canonical tree already includes the root. Runtime is the residual,
+        # not another tree total to add on top of it.
+        return rss_mb, max(0.0, process_tree_mb - rss_mb)
 
     async def _enforce_policy(self):
         """Check RSS memory and system-wide RAM to trigger cleanup actions."""
@@ -307,6 +447,10 @@ class MemoryGovernor:
             "sampled_at": time.time(),
         }
 
+        lifecycle_state, trend_provisional = self._update_runaway_lifecycle(now)
+        self._last_policy_sample["resource_lifecycle"] = lifecycle_state
+        self._last_policy_sample["trend_provisional"] = trend_provisional
+
         # Trend, not just level. The thresholds below are level-triggered: at
         # the ~242MB/h growth the 4h soak measured, the 28GB prune trigger is
         # DAYS away — the trend is unmistakable the whole time and nothing looks
@@ -314,9 +458,20 @@ class MemoryGovernor:
         # just prunes again forever, emitting a receipt each time saying it
         # handled things. This is what turns "the mitigation is not working"
         # into an actual hard failure instead of a nicer log line.
-        self._runaway.observe(managed_rss_mb)
-        verdict = self._runaway.assess()
-        self._last_policy_sample["runaway"] = verdict.to_dict()
+        if trend_provisional:
+            verdict = self._runaway.assess()
+            runaway_status = verdict.to_dict()
+            runaway_status.update(
+                {
+                    "state": "provisional",
+                    "reason": f"resource_lifecycle:{lifecycle_state}",
+                }
+            )
+        else:
+            self._runaway.observe(managed_rss_mb)
+            verdict = self._runaway.assess()
+            runaway_status = verdict.to_dict()
+        self._last_policy_sample["runaway"] = runaway_status
 
         if sys_percent > 98.0 or managed_rss_mb > self.threshold_critical:
             # The managed-RSS condition must live at this level: the old

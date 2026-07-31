@@ -25,12 +25,13 @@ pytestmark = pytest.mark.unit
 
 
 class FakeClient:
-    def __init__(self, path):
+    def __init__(self, path, *, alive=True):
         self.model_path = path
+        self.alive = alive
         self.rebooted = False
 
     def is_alive(self):
-        return True
+        return self.alive
 
     async def reboot_worker(self, reason="", mark_failed=False):
         self.rebooted = True
@@ -188,3 +189,94 @@ class TestTheLadderYieldsWhenItBlocksTheCortex:
             raising=False,
         )
         assert gate._memory_blocks_primary_load() is False
+
+    def test_ready_primary_never_sheds_or_warns(self, gate, monkeypatch, caplog):
+        primary = FakeClient("/models/Aura-32B-cortex", alive=True)
+        fallback = gate._brainstem_client
+        gate._mlx_client = primary
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 10.0})(),
+            raising=False,
+        )
+
+        with caplog.at_level("WARNING", logger="Aura.InferenceGate"):
+            _run_shed(
+                gate,
+                {
+                    primary.model_path: primary,
+                    fallback.model_path: fallback,
+                },
+                "protected_foreground_shed",
+            )
+
+        assert not fallback.rebooted
+        assert "memory was too short" not in caplog.text
+        assert "unloading" not in caplog.text
+
+    def test_cold_primary_uses_model_derived_threshold(self, gate, monkeypatch):
+        gate._mlx_client = FakeClient("/models/Aura-32B-cortex", alive=False)
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 19.0})(),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            "core.brain.llm.mlx_client._model_load_min_available_gb",
+            lambda _path: 18.0,
+        )
+
+        assert gate._memory_blocks_primary_load() is False
+
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 17.0})(),
+            raising=False,
+        )
+        assert gate._memory_blocks_primary_load() is True
+
+    def test_no_action_warning_without_an_eligible_live_worker(
+        self, gate, monkeypatch, caplog
+    ):
+        gate._mlx_client = FakeClient("/models/Aura-32B-cortex", alive=False)
+        dead_fallback = FakeClient(
+            "/models/Qwen2.5-7B-Instruct-4bit", alive=False
+        )
+        gate._brainstem_client = dead_fallback
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 10.0})(),
+            raising=False,
+        )
+
+        with caplog.at_level("WARNING", logger="Aura.InferenceGate"):
+            _run_shed(
+                gate,
+                {dead_fallback.model_path: dead_fallback},
+                "protected_foreground_shed",
+            )
+
+        assert "memory was too short" not in caplog.text
+        assert "unloading" not in caplog.text
+
+    def test_successful_ladder_unload_emits_completed_action_warning(
+        self, gate, monkeypatch, caplog
+    ):
+        gate._mlx_client = FakeClient("/models/Aura-32B-cortex", alive=False)
+        fallback = gate._brainstem_client
+        monkeypatch.setattr(
+            "core.utils.memory_monitor.get_memory_pressure_snapshot",
+            lambda: type("S", (), {"available_gb": 10.0})(),
+            raising=False,
+        )
+
+        with caplog.at_level("WARNING", logger="Aura.InferenceGate"):
+            _run_shed(
+                gate,
+                {fallback.model_path: fallback},
+                "protected_foreground_shed",
+            )
+
+        assert fallback.rebooted
+        assert "memory was too short" in caplog.text
+        assert "shed 1 live fallback worker" in caplog.text
