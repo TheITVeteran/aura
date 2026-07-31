@@ -2987,7 +2987,10 @@ def main(
                 f"path={receipt_path}",
                 flush=True,
             )
-            return 0 if summary["strict_group_admission_reachable_cells"] else 3
+            # This mode is a diagnostic producer, not the training gate itself.
+            # A non-strict scientific verdict is valid completed evidence and
+            # must not be confused with process or infrastructure failure.
+            return 0
 
         from mlx.utils import tree_flatten, tree_unflatten
 

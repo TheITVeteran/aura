@@ -33003,3 +33003,49 @@ strict admission cell before signed training material is created. No
 reasoning-gain, frontier, promotion, or `WOW Signal` claim is made. This is
 total checkpoint 750. The 750-920 completion envelope is approximately
 81.5%-100.0%, with a 90.8% midpoint.
+
+### 2026-07-31 - Resident causal learnability result and independent verifier
+
+The CP420S27 read-only resident preflight completed six fresh register-trace
+tasks across difficulties 2, 4, and 8, with two matched-noise branch samples
+per task and the full 320-token training budget. Its immutable receipt
+`df674ada52cf4bf32bd04d413f3aba0a7123f777e204c80bd8313d5b138244a2`
+records one wrong-to-right transition, one right-to-right transition, zero
+right-to-wrong transitions, and ten wrong-to-wrong transitions. The policy
+digest was identical before and after the run.
+
+The final fresh difficulty-two task reproduced S26's important result: one
+branch moved from a verifier-wrong parent to a verifier-correct child while the
+other remained wrong, with no regression. A separate fresh difficulty-four
+task supplied one right-to-right control. Therefore the resident recurrent
+architecture has now reproduced safe task-specific final-edge improvement on
+independent task seeds, but the current group-size-two gate cannot use it
+because it requires the improvement and control to occur inside the same
+prompt's two-sample minibatch. This is evidence of a reachable gradient, not a
+trained gain or a broad reasoning improvement.
+
+The new independent verifier reconstructs the calibration task corpus and
+seed schedule, proves all probe identities are disjoint from S27 training and
+holdout identities, validates the full tokenizer identity, compares model,
+execution-spec, and source bindings to the preregistration, checks every sample
+and transition identity, recomputes all cell and aggregate counts, and rejects
+resealed summary drift. The real receipt passed this verifier. Its contract
+tests and tamper regression pass 5/5; the combined preregistration and trainer
+contract matrix passes 86/86, with bytecode compilation, lint, and diff
+integrity green.
+
+The detached supervisor reported process failure only because the completed
+non-strict diagnostic returned code 3. Diagnostic completion now returns zero
+regardless of positive or negative scientific verdict; downstream launch gates
+must inspect the immutable verdict and cannot mistake a negative result for
+permission to train. The existing artifact remains honest historical evidence
+of that classification defect.
+
+The next implementation separates verified optimizer learning signal from
+claim-level regression controls. A wrong-to-right plus wrong-to-wrong group has
+nondegenerate externally verified rewards and no harmful transition, so it can
+train a nonpromotable canary; reasoning-gain claims will remain blocked until a
+separate powered control cohort, held-out evaluation, external replay, and the
+full factorial gates pass. No reasoning-gain, frontier, promotion, or
+`WOW Signal` claim is made. This is total checkpoint 751. The 751-920
+completion envelope is approximately 81.6%-100.0%, with a 90.8% midpoint.

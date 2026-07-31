@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.learning.recurrence_curriculum import RECURRENCE_TRAINING_FAMILIES
+from core.learning.verified_token_trace import build_tokenizer_bundle_identity
 from tools import prepare_resident_recurrent_grpo_campaign as prereg
 
 BASE_IDENTITY = {"method": "sha256", "fingerprint": "1" * 64, "files": 4}
@@ -1284,6 +1285,141 @@ def test_causal_learnability_preflight_invokes_trainer_without_provider(monkeypa
     assert isinstance(argv, list)
     assert "register_trace" in argv
     assert "--read-only-causal-learnability-preflight" in argv
+
+
+def _causal_learnability_receipt(contract):
+    params = contract["training"]["parameters"]
+    tokenizer_files = list(contract["model"]["behavior_bundle"]["files"])
+    if not tokenizer_files:
+        tokenizer_files = [
+            {"path": "tokenizer.json", "sha256": "9" * 64, "size_bytes": 1}
+        ]
+        contract["model"]["behavior_bundle"] = {
+            "bundle_sha256": "8" * 64,
+            "file_count": 1,
+            "files": tokenizer_files,
+        }
+    seed = int(params["seed"]) + 733
+    tasks, holdout, _ = prereg._build_task_split(
+        task_source="recurrence_curriculum",
+        domains=["register_trace"],
+        depths=[2, 4, 8],
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=seed,
+    )
+    dataset = prereg._dataset_payload(tasks, holdout, seed=seed)
+    cells = []
+    for task_index, task in enumerate(tasks):
+        samples = []
+        for branch_index in range(2):
+            samples.append(
+                {
+                    "branch_index": branch_index,
+                    "sample_seed": prereg._stable_seed(
+                        seed,
+                        "causal-learnability-preflight",
+                        task.task_id,
+                        branch_index,
+                    ),
+                    "episode_id": (
+                        f"{contract['campaign_id']}-causal-learnability-preflight:"
+                        f"causal-preflight:t{task_index}:b{branch_index}"
+                    ),
+                    "causal_transition_pair_sha256": f"{branch_index + 1:064x}",
+                    "parent_correct": False,
+                    "parent_grade_reason": "wrong_answer",
+                    "child_correct": False,
+                    "child_grade_reason": "wrong_answer",
+                    "transition_kind": "wrong_to_wrong",
+                }
+            )
+        cells.append(
+            {
+                "task_id": task.task_id,
+                "domain": task.domain,
+                "depth": task.depth,
+                "transitions": {
+                    "wrong_to_right": 0,
+                    "right_to_wrong": 0,
+                    "right_to_right": 0,
+                    "wrong_to_wrong": 2,
+                },
+                "causal_signal": False,
+                "regression_free_signal": False,
+                "strict_group_admission_reachable": False,
+                "samples": samples,
+            }
+        )
+    body = {
+        "schema": "aura.recurrent_causal_learnability_preflight.v1",
+        "campaign_id": f"{contract['campaign_id']}-causal-learnability-preflight",
+        "dataset_sha256": prereg._sha256(prereg.canonical_json_bytes(dataset)),
+        "execution_spec_sha256": contract["execution_spec"]["semantic_sha256"],
+        "base_checkpoint": contract["model"]["base_checkpoint"],
+        "model_behavior_bundle": contract["model"]["behavior_bundle"],
+        "tokenizer_bundle": build_tokenizer_bundle_identity(
+            tokenizer_class="tests.FakeTokenizer",
+            tokenizer_files=tokenizer_files,
+            chat_template=None,
+            special_token_map={
+                "bos_token_id": None,
+                "eos_token_id": 2,
+                "pad_token_id": 0,
+                "unk_token_id": None,
+            },
+            encode_options={},
+            decode_options={},
+            implementation_source_sha256="a" * 64,
+        ),
+        "source_bindings": {"trainer": contract["sources"]["trainer"]},
+        "policy_before_sha256": "b" * 64,
+        "policy_after_sha256": "b" * 64,
+        "policy_unchanged": True,
+        "task_count": 6,
+        "sample_count": 12,
+        "transition_counts": {
+            "wrong_to_right": 0,
+            "right_to_wrong": 0,
+            "right_to_right": 0,
+            "wrong_to_wrong": 12,
+        },
+        "causal_signal_cells": 0,
+        "regression_free_signal_cells": 0,
+        "strict_group_admission_reachable_cells": 0,
+        "regression_cells": 0,
+        "cells": cells,
+        "claim_boundary": (
+            "read_only_task_seed_specific_calibration_not_training_evidence_"
+            "and_not_reasoning_gain_proof"
+        ),
+        "created_at_unix_ns": 1,
+        "verdict": "no_causal_learning_signal_observed",
+    }
+    return {**body, "receipt_sha256": prereg._document_sha(body)}
+
+
+def test_causal_learnability_preflight_verifier_reconstructs_disjoint_probe():
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+
+    verified = prereg.validate_causal_learnability_preflight(contract, receipt)
+
+    assert verified == receipt
+    assert verified["task_count"] == 6
+    assert verified["policy_unchanged"] is True
+
+
+def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+    receipt["transition_counts"]["wrong_to_wrong"] = 11
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    with pytest.raises(prereg.PreregistrationError, match="summary_mismatch"):
+        prereg.validate_causal_learnability_preflight(contract, receipt)
 
 
 def test_launch_initial_policy_probe_is_detached_and_nonresumable(tmp_path, monkeypatch):

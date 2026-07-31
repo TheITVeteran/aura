@@ -86,6 +86,9 @@ from core.learning.recurrent_grpo import (  # noqa: E402
 from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     recurrent_training_adequacy_policy,
 )
+from core.learning.verified_token_trace import (  # noqa: E402
+    validate_tokenizer_bundle_identity,
+)
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_bytes_if_absent,
@@ -93,7 +96,7 @@ from core.runtime.atomic_writer import (  # noqa: E402
 )
 from core.runtime.file_read_gateway import read_stable_bytes  # noqa: E402
 from tools import run_detached_step  # noqa: E402
-from tools.train_grpo import _build_task_split, _dataset_payload  # noqa: E402
+from tools.train_grpo import _build_task_split, _dataset_payload, _stable_seed  # noqa: E402
 
 CONTRACT_SCHEMA = "aura.resident_recurrent_grpo_preregistration.v1"
 FULL_TRAINING_PROFILE = "full_training"
@@ -2189,6 +2192,251 @@ def _run_causal_learnability_preflight(contract: Mapping[str, Any]) -> int:
         sys.argv = previous
 
 
+def validate_causal_learnability_preflight(
+    contract: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reconstruct the bounded probe and validate its nonclaiming receipt."""
+
+    required = {
+        "schema",
+        "campaign_id",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "base_checkpoint",
+        "model_behavior_bundle",
+        "tokenizer_bundle",
+        "source_bindings",
+        "policy_before_sha256",
+        "policy_after_sha256",
+        "policy_unchanged",
+        "task_count",
+        "sample_count",
+        "transition_counts",
+        "causal_signal_cells",
+        "regression_free_signal_cells",
+        "strict_group_admission_reachable_cells",
+        "regression_cells",
+        "cells",
+        "claim_boundary",
+        "created_at_unix_ns",
+        "verdict",
+        "receipt_sha256",
+    }
+    normalized = dict(receipt)
+    if set(normalized) != required:
+        _fail("causal_learnability_preflight_schema_invalid")
+    observed_sha256 = normalized.pop("receipt_sha256", None)
+    if observed_sha256 != _document_sha(normalized):
+        _fail("causal_learnability_preflight_receipt_mismatch")
+    normalized["receipt_sha256"] = observed_sha256
+    if (
+        normalized["schema"] != "aura.recurrent_causal_learnability_preflight.v1"
+        or normalized["campaign_id"]
+        != f"{contract['campaign_id']}-causal-learnability-preflight"
+        or normalized["execution_spec_sha256"]
+        != contract["execution_spec"]["semantic_sha256"]
+        or normalized["model_behavior_bundle"] != contract["model"]["behavior_bundle"]
+        or normalized["policy_unchanged"] is not True
+        or normalized["policy_before_sha256"] != normalized["policy_after_sha256"]
+        or not isinstance(normalized["policy_before_sha256"], str)
+        or len(normalized["policy_before_sha256"]) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in normalized["policy_before_sha256"]
+        )
+        or normalized["claim_boundary"]
+        != (
+            "read_only_task_seed_specific_calibration_not_training_evidence_"
+            "and_not_reasoning_gain_proof"
+        )
+        or type(normalized["created_at_unix_ns"]) is not int
+        or normalized["created_at_unix_ns"] <= 0
+        or type(normalized["task_count"]) is not int
+        or type(normalized["sample_count"]) is not int
+    ):
+        _fail("causal_learnability_preflight_identity_mismatch")
+    base = normalized["base_checkpoint"]
+    expected_base = contract["model"]["base_checkpoint"]
+    if not isinstance(base, Mapping) or any(
+        base.get(key) != expected_base[key] for key in ("fingerprint", "method", "files")
+    ):
+        _fail("causal_learnability_preflight_model_mismatch")
+    sources = normalized["source_bindings"]
+    if not isinstance(sources, Mapping) or not sources:
+        _fail("causal_learnability_preflight_sources_invalid")
+    contract_sources = contract["sources"]
+    if any(
+        role not in contract_sources or binding != contract_sources[role]
+        for role, binding in sources.items()
+    ):
+        _fail("causal_learnability_preflight_source_mismatch")
+    try:
+        tokenizer = validate_tokenizer_bundle_identity(normalized["tokenizer_bundle"])
+    except (TypeError, ValueError) as exc:
+        raise PreregistrationError(
+            "causal_learnability_preflight_tokenizer_invalid"
+        ) from exc
+    if tokenizer["tokenizer_files"] != contract["model"]["behavior_bundle"]["files"]:
+        _fail("causal_learnability_preflight_tokenizer_mismatch")
+
+    params = contract["training"]["parameters"]
+    probe_seed = int(params["seed"]) + 733
+    probe_train, probe_holdout, _ = _build_task_split(
+        task_source="recurrence_curriculum",
+        domains=["register_trace"],
+        depths=[2, 4, 8],
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=probe_seed,
+    )
+    probe_payload = _dataset_payload(probe_train, probe_holdout, seed=probe_seed)
+    if normalized["dataset_sha256"] != _sha256(canonical_json_bytes(probe_payload)):
+        _fail("causal_learnability_preflight_dataset_mismatch")
+    training_tasks, training_holdout, _ = _build_task_split(
+        task_source=str(params["task_source"]),
+        domains=list(params["domains"]),
+        depths=list(params["depths"]),
+        train_per_cell=int(params["train_per_cell"]),
+        holdout_per_cell=int(params["holdout_per_cell"]),
+        seed=int(params["seed"]),
+    )
+    training_ids = {task.task_id for task in (*training_tasks, *training_holdout)}
+    expected_probe_ids = [task.task_id for task in probe_train]
+    if training_ids & set(expected_probe_ids):
+        _fail("causal_learnability_preflight_training_overlap")
+
+    cells = normalized["cells"]
+    transition_kinds = (
+        "wrong_to_right",
+        "right_to_wrong",
+        "right_to_right",
+        "wrong_to_wrong",
+    )
+    branch_count = len(_load_spec(str(contract["execution_spec"]["path"]))[0].branch_roles)
+    if (
+        not isinstance(cells, list)
+        or len(cells) != len(expected_probe_ids)
+        or normalized["task_count"] != len(cells)
+        or normalized["sample_count"] != len(cells) * branch_count
+        or any(not isinstance(cell, Mapping) for cell in cells)
+        or [cell.get("task_id") for cell in cells] != expected_probe_ids
+    ):
+        _fail("causal_learnability_preflight_cell_coverage_invalid")
+    aggregate = {kind: 0 for kind in transition_kinds}
+    signal_cells = 0
+    safe_cells = 0
+    strict_cells = 0
+    regression_cells = 0
+    for task_index, (cell, expected_task) in enumerate(
+        zip(cells, probe_train, strict=True)
+    ):
+        counts = cell.get("transitions")
+        samples = cell.get("samples")
+        if (
+            cell.get("domain") != expected_task.domain
+            or cell.get("depth") != expected_task.depth
+            or not isinstance(counts, Mapping)
+            or set(counts) != set(transition_kinds)
+            or any(type(counts[kind]) is not int or counts[kind] < 0 for kind in transition_kinds)
+            or sum(counts[kind] for kind in transition_kinds) != branch_count
+            or not isinstance(samples, list)
+            or len(samples) != branch_count
+            or any(not isinstance(sample, Mapping) for sample in samples)
+            or {sample.get("branch_index") for sample in samples} != set(range(branch_count))
+        ):
+            _fail("causal_learnability_preflight_cell_invalid")
+        for sample in samples:
+            pair_sha256 = sample.get("causal_transition_pair_sha256")
+            branch_index = sample.get("branch_index")
+            if (
+                not isinstance(sample.get("episode_id"), str)
+                or not sample["episode_id"]
+                or type(sample.get("sample_seed")) is not int
+                or type(branch_index) is not int
+                or not isinstance(pair_sha256, str)
+                or len(pair_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in pair_sha256)
+                or type(sample.get("parent_correct")) is not bool
+                or type(sample.get("child_correct")) is not bool
+                or not isinstance(sample.get("parent_grade_reason"), str)
+                or not sample["parent_grade_reason"]
+                or not isinstance(sample.get("child_grade_reason"), str)
+                or not sample["child_grade_reason"]
+                or sample.get("transition_kind") not in transition_kinds
+            ):
+                _fail("causal_learnability_preflight_sample_invalid")
+            expected_seed = _stable_seed(
+                int(params["seed"]) + 733,
+                "causal-learnability-preflight",
+                expected_task.task_id,
+                branch_index,
+            )
+            expected_episode_id = (
+                f"{contract['campaign_id']}-causal-learnability-preflight:"
+                f"causal-preflight:t{task_index}:b{branch_index}"
+            )
+            if (
+                sample["sample_seed"] != expected_seed
+                or sample["episode_id"] != expected_episode_id
+            ):
+                _fail("causal_learnability_preflight_sample_identity_mismatch")
+            expected_kind = (
+                "right_to_right"
+                if sample["parent_correct"] and sample["child_correct"]
+                else "right_to_wrong"
+                if sample["parent_correct"]
+                else "wrong_to_right"
+                if sample["child_correct"]
+                else "wrong_to_wrong"
+            )
+            if sample["transition_kind"] != expected_kind:
+                _fail("causal_learnability_preflight_sample_transition_mismatch")
+        observed_counts = {
+            kind: sum(sample["transition_kind"] == kind for sample in samples)
+            for kind in transition_kinds
+        }
+        if dict(counts) != observed_counts:
+            _fail("causal_learnability_preflight_transition_count_mismatch")
+        for kind in transition_kinds:
+            aggregate[kind] += counts[kind]
+        signal = counts["wrong_to_right"] > 0
+        safe = signal and counts["right_to_wrong"] == 0
+        strict = safe and counts["right_to_right"] > 0
+        regression = counts["right_to_wrong"] > 0
+        if (
+            cell.get("causal_signal") is not signal
+            or cell.get("regression_free_signal") is not safe
+            or cell.get("strict_group_admission_reachable") is not strict
+        ):
+            _fail("causal_learnability_preflight_cell_verdict_mismatch")
+        signal_cells += int(signal)
+        safe_cells += int(safe)
+        strict_cells += int(strict)
+        regression_cells += int(regression)
+    verdict = (
+        "strict_learnable_cell_observed"
+        if strict_cells
+        else "causal_signal_without_same_group_control"
+        if safe_cells
+        else "causal_signal_with_regression"
+        if signal_cells
+        else "regression_without_learning_signal"
+        if regression_cells
+        else "no_causal_learning_signal_observed"
+    )
+    if (
+        normalized["transition_counts"] != aggregate
+        or normalized["causal_signal_cells"] != signal_cells
+        or normalized["regression_free_signal_cells"] != safe_cells
+        or normalized["strict_group_admission_reachable_cells"] != strict_cells
+        or normalized["regression_cells"] != regression_cells
+        or normalized["verdict"] != verdict
+    ):
+        _fail("causal_learnability_preflight_summary_mismatch")
+    return normalized
+
+
 def _launch_causal_learnability_preflight(contract_path: Path) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
@@ -2465,6 +2713,11 @@ def _parser() -> argparse.ArgumentParser:
         "launch-causal-learnability-preflight"
     )
     causal_preflight_launch.add_argument("--contract", default=DEFAULT_CONTRACT)
+    causal_preflight_verify = subparsers.add_parser(
+        "verify-causal-learnability-preflight"
+    )
+    causal_preflight_verify.add_argument("--contract", default=DEFAULT_CONTRACT)
+    causal_preflight_verify.add_argument("--receipt", required=True)
     launch = subparsers.add_parser("launch-training")
     launch.add_argument("--contract", default=DEFAULT_CONTRACT)
     launch.add_argument("--resume", action="store_true")
@@ -2514,6 +2767,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return _run_causal_learnability_preflight(contract)
             if args.action == "launch-causal-learnability-preflight":
                 return _launch_causal_learnability_preflight(Path(args.contract))
+            if args.action == "verify-causal-learnability-preflight":
+                validate_contract(contract, verify_model=True)
+                receipt = validate_causal_learnability_preflight(
+                    contract,
+                    _strict_json(Path(args.receipt)),
+                )
+                print(json.dumps(receipt, indent=2, sort_keys=True))
+                return 0
             if args.action == "launch-training":
                 return _launch_training(
                     Path(args.contract),
