@@ -22,6 +22,7 @@ from core.learning.recurrent_grpo import (
     recurrent_policy_sha256,
     validate_verified_trajectory_group_receipt,
     validate_verified_trajectory_group_source_binding,
+    verified_optimization_token_counts,
 )
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
@@ -922,6 +923,10 @@ def apply_verified_transition_group_update(
     resolved_config = config or RecurrentGRPOConfig()
     trajectory_source_binding: dict[str, Any] | None = None
     if trajectory_group_config is not None:
+        optimization_token_counts = verified_optimization_token_counts(
+            samples,
+            transition_evidence,
+        )
         trajectory_source_binding = build_verified_trajectory_group_source_binding(
             admission,
             reward_receipt,
@@ -930,6 +935,7 @@ def apply_verified_transition_group_update(
             spec=spec,
             trajectory_group_config=trajectory_group_config,
             advantage_clip=resolved_config.advantage_clip,
+            optimization_token_counts=optimization_token_counts,
         )
     pre_measurement: dict[str, Any] | None = None
     if intervention_required:

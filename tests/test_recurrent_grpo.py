@@ -1204,6 +1204,10 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
         for branch, seed in ((0, 71), (1, 73))
     ]
     rewards = (1.0, 0.0)
+    optimization_token_counts = (
+        len(samples[0].tokens) - 1,
+        len(samples[1].tokens) - 1,
+    )
     base = exact_adjoint_sampled_group_value_and_grad(
         model,
         prompt,
@@ -1215,6 +1219,7 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
             max_initial_clip_fraction=1.0,
             max_initial_old_policy_approx_kl=1.0,
         ),
+        optimization_token_counts=optimization_token_counts,
     )
     trajectory_config = VerifiedTrajectoryGroupConfig(
         trajectory_config=ExactAdjointTrajectoryConfig(
@@ -1269,6 +1274,7 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
         spec=spec,
         trajectory_group_config=trajectory_config,
         advantage_clip=4.0,
+        optimization_token_counts=optimization_token_counts,
     )
     result = recurrent_grpo_runtime._with_verified_trajectory_group_objective(
         model,
@@ -1282,6 +1288,7 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
         bridge_tokens=(),
         trajectory_group_config=trajectory_config,
         advantage_clip=4.0,
+        optimization_token_counts=optimization_token_counts,
     )
     objective_receipt = result.receipt()
     trajectory_receipt = objective_receipt["trajectory_receipt"]
@@ -1292,6 +1299,17 @@ def test_verified_trajectory_composite_assigns_credit_and_structural_terms_once(
     )
 
     assert objective_receipt["mode"] == ("exact_adjoint_trajectory_composite_single_update")
+    assert (
+        source_binding["schema"]
+        == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
+    )
+    assert (
+        trajectory_receipt["schema"]
+        == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3
+    )
+    assert trajectory_receipt["optimization_token_counts"] == list(
+        optimization_token_counts
+    )
     assert objective_receipt["trajectory_objective_value"] > 0.0
     assert objective_receipt["composite_objective_at_sampling"] == pytest.approx(
         objective_receipt["objective_at_sampling"] + objective_receipt["trajectory_objective_value"]
@@ -1486,6 +1504,10 @@ def test_verified_intervention_composite_is_quality_weighted_and_replayable(
         for branch, seed in ((0, 79), (1, 83))
     ]
     rewards = (1.0, 0.0)
+    optimization_token_counts = (
+        len(samples[0].tokens) - 1,
+        len(samples[1].tokens) - 1,
+    )
     base = exact_adjoint_sampled_group_value_and_grad(
         model,
         prompt,
@@ -1551,6 +1573,7 @@ def test_verified_intervention_composite_is_quality_weighted_and_replayable(
         spec=spec,
         trajectory_group_config=group_config,
         advantage_clip=4.0,
+        optimization_token_counts=optimization_token_counts,
     )
     result = recurrent_grpo_runtime._with_verified_trajectory_group_objective(
         model,
@@ -1564,6 +1587,7 @@ def test_verified_intervention_composite_is_quality_weighted_and_replayable(
         bridge_tokens=(),
         trajectory_group_config=group_config,
         advantage_clip=4.0,
+        optimization_token_counts=optimization_token_counts,
     )
     receipt = result.receipt()["trajectory_receipt"]
     validated = validate_verified_trajectory_group_receipt(
@@ -1572,8 +1596,18 @@ def test_verified_intervention_composite_is_quality_weighted_and_replayable(
         expected_source_binding=source,
     )
 
-    assert source["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
-    assert receipt["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    assert source["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
+    assert receipt["schema"] == recurrent_grpo_runtime.VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3
+    assert source["optimization_token_counts"] == list(optimization_token_counts)
+    assert receipt["optimization_token_counts"] == list(optimization_token_counts)
+    assert source["completion_tokens_sha256s"] == [
+        recurrent_grpo_runtime._tokens_sha256(sample.tokens[:count])
+        for sample, count in zip(
+            samples,
+            optimization_token_counts,
+            strict=True,
+        )
+    ]
     assert validated["positive_completion_indices"] == [0]
     assert validated["positive_advantage_weights"] == [1.0]
     assert len(validated["quality_receipts"]) == 1
@@ -1597,6 +1631,14 @@ def test_verified_intervention_composite_is_quality_weighted_and_replayable(
             ).encode("ascii")
         ).hexdigest()
         return document
+
+    attacked = copy.deepcopy(receipt)
+    attacked["optimization_token_counts"][0] += 1
+    with pytest.raises(ValueError, match="optimization_token_counts differs"):
+        validate_verified_trajectory_group_receipt(
+            reseal(attacked),
+            expected_source_binding=source,
+        )
 
     attacked = copy.deepcopy(receipt)
     attacked_child = attacked["quality_receipts"][0]["objective_receipt"]

@@ -23,6 +23,7 @@ from typing import Any, Never, cast
 
 from core.learning.recurrent_grpo import (
     VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2,
+    VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3,
     RecurrentGRPOConfig,
     recurrent_policy_tensor_map_sha256,
     validate_verified_trajectory_group_source_binding,
@@ -580,7 +581,11 @@ def validate_pre_measurement_intent(value: Any) -> dict[str, Any]:
             "pre_measurement_trajectory_source_binding_invalid"
         ) from exc
     if (
-        source_binding["schema"] != VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+        source_binding["schema"]
+        not in {
+            VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2,
+            VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3,
+        }
         or source_binding["group_admission_sha256"] != document["group_admission_sha256"]
         or source_binding["policy_sha256"] != document["policy_before_sha256"]
         or source_binding["execution_spec_sha256"] != document["execution_spec_sha256"]

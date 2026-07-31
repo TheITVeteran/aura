@@ -16,15 +16,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 754 freezes CP420S28
-  from clean CP753 source with twelve targeted training tasks and three
-  disjoint holdouts. Resident policy and answer-channel preflights remain next;
-  optimizer training has not restarted and no gain claim exists.**
-- Previous implementation milestone: **Checkpoint 753 bound the next
-  engineering canary to twelve fresh register-trace tasks across depths 2, 4,
-  and 8, the only family with independently reproduced safe recurrent signal.
-  A fresh source-bound contract remains the next gate; optimizer training has
-  not restarted and no gain claim exists.**
+- Current active implementation milestone: **Checkpoint 755 repairs the exact
+  S28 failure that appeared only after its first admissible resident-32B group:
+  verified trajectory receipts now bind the externally observed optimization
+  prefix while retaining the complete sampled-sequence identity. S28 is
+  retired after five safe rejections and one pre-mutation objective failure;
+  a fresh source-bound S29 contract and canary remain next. No policy update or
+  gain claim exists.**
+- Previous implementation milestone: **Checkpoint 754 froze CP420S28 from
+  clean CP753 source with twelve targeted register-trace training tasks and
+  three disjoint holdouts.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33156,3 +33157,51 @@ bundle, PID-1 controller, detached supervisor, sleep inhibitor, moving
 heartbeat, step-zero checkpoint, and process-rotated training remain required.
 This is total checkpoint 754. The 754-920 completion envelope is approximately
 82.0%-100.0%, with a 91.0% midpoint.
+
+### 2026-07-31 - S28 controlled launch and optimization-prefix receipt repair
+
+CP420S28 did start under the PID-1 launchd controller. The controller owned the
+detached supervisor, resident trainer, and sleep inhibitor; moving logs,
+heartbeats, step-zero durability, exact checkpoint resume, and process rotation
+were observed. The resident vanilla baseline scored one of three holdouts. The
+depth-two holdout passed while depths four and eight failed. Training groups
+one through five were independently rejected without mutation. After the
+planned process rotation at step four, the controller validated checkpoint
+four and launched a fresh native process that resumed exactly from it.
+
+Step six produced the first optimizer-admissible group in this campaign. One
+branch changed from verifier-wrong to verifier-correct, the second remained
+wrong without regression, and the externally verified rewards were `1.1` and
+`-0.330468`. The intervention premeasurement intent was durably sealed against
+the unchanged initial policy. Exact-adjoint construction then failed before
+the optimizer with `verified trajectory quality binding differs`. The last
+clean durable state is step five, `optimizer_updates` remains zero, and no
+adapter tensor or policy digest changed.
+
+The failure was a deterministic receipt-model mismatch, not an MLX crash or an
+insufficient learning signal. Each sampled branch retained a 320-token buffer,
+while independently replayed answer-channel evidence bounded the actual
+optimization prefixes to 286 and 27 tokens. The adjoint and child objective
+correctly used those prefixes, but the admitted trajectory source still hashed
+the full buffers. The objective therefore rejected its own otherwise valid
+quality receipt before mutation.
+
+Verified trajectory source and composite receipts now have a backward-
+compatible v3 form for prefix-bounded objectives. It explicitly commits the
+optimization token counts and prefix hashes while preserving the complete
+sample receipts as independent full-sequence identity. Premeasurement,
+objective construction, update replay, and terminal training-evidence replay
+derive the same boundaries from externally verified transition evidence.
+Historical non-causal samples and v1/v2 receipts retain their original full-
+token semantics. A resealed boundary substitution fails against the admitted
+source, and schema/config relabeling remains fail-closed.
+
+S28 is retired because its immutable source binding predates this repair. Its
+historical artifacts remain evidence of controller ownership, exact resume,
+safe rejection, a reachable optimizer-admissible resident signal, and the
+pre-mutation defect; they are not training-gain evidence. The next action is a
+fresh S29 preregistration from clean pushed CP755 source, fresh task identities
+and signer custody, followed by the same controller-owned canary. No reasoning-
+gain, frontier, promotion, release, or `WOW Signal` claim is made. This is total
+checkpoint 755. The 755-920 completion envelope is approximately 82.1%-100.0%,
+with a 91.0% midpoint.

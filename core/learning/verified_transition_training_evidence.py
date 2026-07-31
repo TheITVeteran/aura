@@ -15,6 +15,7 @@ from core.learning.recurrence_native_objective_v2 import (
 from core.learning.recurrent_grpo import (
     VerifiedTrajectoryGroupConfig,
     build_verified_trajectory_group_source_binding,
+    verified_optimization_token_counts,
 )
 from core.learning.verified_transition_campaign import (
     VerifiedTransitionCampaignLedger,
@@ -274,6 +275,10 @@ def validate_verified_transition_training_evidence(
                     spec=execution_spec,
                     trajectory_group_config=trajectory_group_config,
                     advantage_clip=float(advantage_clip),
+                    optimization_token_counts=verified_optimization_token_counts(
+                        group.samples,
+                        group.transition_evidence,
+                    ),
                 )
             except (TypeError, ValueError) as exc:
                 raise VerifiedTransitionTrainingEvidenceError(

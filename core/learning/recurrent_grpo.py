@@ -47,6 +47,8 @@ VERIFIED_TRAJECTORY_GROUP_SCHEMA = "aura.recurrent_grpo.verified_trajectory_comp
 VERIFIED_TRAJECTORY_SOURCE_SCHEMA = "aura.recurrent_grpo.verified_trajectory_source.v1"
 VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2 = "aura.recurrent_grpo.verified_trajectory_composite.v2"
 VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2 = "aura.recurrent_grpo.verified_trajectory_source.v2"
+VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3 = "aura.recurrent_grpo.verified_trajectory_composite.v3"
+VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3 = "aura.recurrent_grpo.verified_trajectory_source.v3"
 RECURRENT_SAMPLING_SCHEMA = "aura.recurrent_sampling_behavior.v4"
 CAUSAL_RECURRENT_DECODE_SCHEMA = "aura.causal_recurrent_decode.v1"
 CAUSAL_RECURRENT_PAIR_SCHEMA = "aura.causal_recurrent_transition_pair.v2"
@@ -1950,6 +1952,7 @@ def build_verified_trajectory_group_source_binding(
     spec: RLCExecutionSpec,
     trajectory_group_config: VerifiedTrajectoryGroupConfig,
     advantage_clip: float,
+    optimization_token_counts: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Derive the trajectory source binding from independently admitted inputs."""
 
@@ -1973,7 +1976,29 @@ def build_verified_trajectory_group_source_binding(
         raise ValueError("verified trajectory requires one canonical sample per execution branch")
     prompt_sha256 = _tokens_sha256(prompt_tokens)
     sample_receipts = [_seal_receipt(sample.receipt()) for sample in samples]
-    completion_receipts = [_tokens_sha256(sample.tokens) for sample in samples]
+    full_token_counts = tuple(len(sample.tokens) for sample in samples)
+    bounded_token_counts = (
+        full_token_counts
+        if optimization_token_counts is None
+        else tuple(optimization_token_counts)
+    )
+    if (
+        len(bounded_token_counts) != branch_count
+        or any(
+            type(count) is not int or not 1 <= count <= full_count
+            for count, full_count in zip(
+                bounded_token_counts,
+                full_token_counts,
+                strict=True,
+            )
+        )
+    ):
+        raise ValueError("verified trajectory optimization boundaries are invalid")
+    prefix_bounded = bounded_token_counts != full_token_counts
+    completion_receipts = [
+        _tokens_sha256(sample.tokens[:count])
+        for sample, count in zip(samples, bounded_token_counts, strict=True)
+    ]
     policies = {sample.policy_sha256 for sample in samples}
     if len(policies) != 1:
         raise ValueError("verified trajectory source mixes policy identities")
@@ -2003,12 +2028,14 @@ def build_verified_trajectory_group_source_binding(
         or any(sample.prompt_tokens_sha256 != prompt_sha256 for sample in samples)
     ):
         raise ValueError("verified trajectory source differs from group admission")
+    if prefix_bounded:
+        source_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
+    elif trajectory_group_config.intervention_config is not None:
+        source_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+    else:
+        source_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA
     payload = {
-        "schema": (
-            VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
-            if trajectory_group_config.intervention_config is not None
-            else VERIFIED_TRAJECTORY_SOURCE_SCHEMA
-        ),
+        "schema": source_schema,
         "group_admission_sha256": admission_sha256,
         "reward_receipt_sha256": reward_sha256,
         "policy_sha256": policy_sha256,
@@ -2022,12 +2049,18 @@ def build_verified_trajectory_group_source_binding(
         "advantage_clip": clip,
         "config": trajectory_group_config.to_dict(),
     }
+    if prefix_bounded:
+        payload["optimization_token_counts"] = list(bounded_token_counts)
     return {**payload, "source_sha256": _seal_receipt(payload)}
 
 
 def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, Any]:
     """Validate model-independent inputs sealed beside a trajectory objective."""
 
+    if not isinstance(value, Mapping):
+        raise ValueError("verified trajectory source binding fields do not match")
+    schema = value.get("schema")
+    prefix_bounded = schema == VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
     required = {
         "schema",
         "group_admission_sha256",
@@ -2044,7 +2077,9 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
         "config",
         "source_sha256",
     }
-    if not isinstance(value, Mapping) or set(value) != required:
+    if prefix_bounded:
+        required.add("optimization_token_counts")
+    if set(value) != required:
         raise ValueError("verified trajectory source binding fields do not match")
     binding = dict(value)
     observed_source_sha256 = binding.pop("source_sha256")
@@ -2055,6 +2090,7 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
     if binding["schema"] not in {
         VERIFIED_TRAJECTORY_SOURCE_SCHEMA,
         VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2,
+        VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3,
     }:
         raise ValueError("verified trajectory source binding schema is unsupported")
     for role in (
@@ -2072,6 +2108,7 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
     branch_count = binding["execution_branch_count"]
     rewards = binding["verified_rewards"]
     clip = binding["advantage_clip"]
+    optimization_token_counts = binding.get("optimization_token_counts")
     if (
         type(branch_count) is not int
         or branch_count < 2
@@ -2095,14 +2132,26 @@ def validate_verified_trajectory_group_source_binding(value: Any) -> dict[str, A
         or not isinstance(clip, (int, float))
         or not math.isfinite(float(clip))
         or not 0.0 < float(clip) <= 100.0
+        or (
+            prefix_bounded
+            and (
+                not isinstance(optimization_token_counts, list)
+                or len(optimization_token_counts) != branch_count
+                or any(
+                    type(count) is not int or count < 1
+                    for count in optimization_token_counts
+                )
+            )
+        )
     ):
         raise ValueError("verified trajectory source binding values are invalid")
     config = VerifiedTrajectoryGroupConfig.from_dict(binding["config"])
-    expected_schema = (
-        VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
-        if config.intervention_config is not None
-        else VERIFIED_TRAJECTORY_SOURCE_SCHEMA
-    )
+    if prefix_bounded:
+        expected_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
+    elif config.intervention_config is not None:
+        expected_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2
+    else:
+        expected_schema = VERIFIED_TRAJECTORY_SOURCE_SCHEMA
     if binding["schema"] != expected_schema:
         raise ValueError("verified trajectory source schema/config mismatch")
     return dict(value)
@@ -2117,7 +2166,12 @@ def validate_verified_trajectory_group_receipt(
     """Replay the policy and arithmetic of one verified trajectory composite."""
 
     schema = value.get("schema") if isinstance(value, Mapping) else None
-    intervention_group = schema == VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    prefix_bounded = schema == VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3
+    raw_config = value.get("config") if isinstance(value, Mapping) else None
+    intervention_group = bool(
+        isinstance(raw_config, Mapping)
+        and raw_config.get("intervention_config") is not None
+    )
     required = {
         "schema",
         "group_admission_sha256",
@@ -2142,6 +2196,8 @@ def validate_verified_trajectory_group_receipt(
         "trajectory_objective_value",
         "receipt_sha256",
     }
+    if prefix_bounded:
+        required.add("optimization_token_counts")
     if not isinstance(value, Mapping) or set(value) != required:
         raise ValueError("verified trajectory group receipt fields do not match")
     receipt = dict(value)
@@ -2151,6 +2207,7 @@ def validate_verified_trajectory_group_receipt(
     if receipt["schema"] not in {
         VERIFIED_TRAJECTORY_GROUP_SCHEMA,
         VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2,
+        VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3,
     }:
         raise ValueError("verified trajectory group receipt schema is unsupported")
     for role in (
@@ -2178,6 +2235,7 @@ def validate_verified_trajectory_group_receipt(
     rewards = receipt["verified_rewards"]
     advantages = receipt["advantages"]
     branch_count = receipt["execution_branch_count"]
+    optimization_token_counts = receipt.get("optimization_token_counts")
     if (
         not isinstance(sample_receipts, list)
         or len(sample_receipts) < 2
@@ -2193,6 +2251,17 @@ def validate_verified_trajectory_group_receipt(
         or len(sample_receipts) != branch_count
         or not isinstance(rewards, list)
         or len(rewards) != len(sample_receipts)
+        or (
+            prefix_bounded
+            and (
+                not isinstance(optimization_token_counts, list)
+                or len(optimization_token_counts) != len(sample_receipts)
+                or any(
+                    type(count) is not int or count < 1
+                    for count in optimization_token_counts
+                )
+            )
+        )
         or not isinstance(advantages, list)
         or len(advantages) != len(sample_receipts)
     ):
@@ -2220,7 +2289,7 @@ def validate_verified_trajectory_group_receipt(
 
     if expected_source_binding is not None:
         source = validate_verified_trajectory_group_source_binding(expected_source_binding)
-        for field in (
+        source_fields = [
             "group_admission_sha256",
             "reward_receipt_sha256",
             "policy_sha256",
@@ -2233,12 +2302,24 @@ def validate_verified_trajectory_group_receipt(
             "verified_rewards",
             "advantage_clip",
             "config",
-        ):
+        ]
+        if source["schema"] == VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3:
+            source_fields.append("optimization_token_counts")
+        for field in source_fields:
             if receipt[field] != source[field]:
                 raise ValueError(f"verified trajectory {field} differs from admitted source")
 
     config = VerifiedTrajectoryGroupConfig.from_dict(receipt["config"])
-    if intervention_group is not (config.intervention_config is not None):
+    if prefix_bounded:
+        expected_group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3
+    elif config.intervention_config is not None:
+        expected_group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    else:
+        expected_group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA
+    if (
+        intervention_group is not (config.intervention_config is not None)
+        or receipt["schema"] != expected_group_schema
+    ):
         raise ValueError("verified trajectory group schema/config mismatch")
     trajectory = config.trajectory_config
     intervention = config.intervention_config
@@ -3247,13 +3328,19 @@ def _with_verified_trajectory_group_objective(
         spec=spec,
         trajectory_group_config=trajectory_group_config,
         advantage_clip=advantage_clip,
+        optimization_token_counts=token_counts,
     )
+    prefix_bounded = (
+        source_binding["schema"] == VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3
+    )
+    if prefix_bounded:
+        group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3
+    elif intervention_enabled:
+        group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
+    else:
+        group_schema = VERIFIED_TRAJECTORY_GROUP_SCHEMA
     payload = {
-        "schema": (
-            VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2
-            if intervention_enabled
-            else VERIFIED_TRAJECTORY_GROUP_SCHEMA
-        ),
+        "schema": group_schema,
         **{
             field: source_binding[field]
             for field in (
@@ -3279,6 +3366,8 @@ def _with_verified_trajectory_group_objective(
         "structural_receipt": structural_receipt,
         "trajectory_objective_value": trajectory_value,
     }
+    if prefix_bounded:
+        payload["optimization_token_counts"] = list(token_counts)
     payload["quality_receipts" if intervention_enabled else "improvement_receipts"] = (
         quality_receipts
     )
@@ -3326,9 +3415,6 @@ def exact_adjoint_verified_transition_group_value_and_grad(
     caller-supplied scalar reward has no path into this proof-grade objective.
     """
 
-    from core.learning.verified_recurrent_transition_evidence import (
-        optimization_token_counts_from_evidence,
-    )
     from core.learning.verified_transition_group_admission import (
         validate_verified_transition_group_admission,
     )
@@ -3352,14 +3438,9 @@ def exact_adjoint_verified_transition_group_value_and_grad(
         samples,
         prompt_tokens,
     )
-    optimization_token_counts = (
-        optimization_token_counts_from_evidence(transition_evidence)
-        if all(
-            isinstance(sample, RecurrentPolicySample)
-            and sample.sample_kind == "causal_final_transition"
-            for sample in samples
-        )
-        else tuple(len(sample.tokens) for sample in samples)
+    optimization_token_counts = verified_optimization_token_counts(
+        samples,
+        transition_evidence,
     )
     if len(optimization_token_counts) != len(samples):
         raise ValueError("verified transition optimization boundaries differ")
@@ -3411,6 +3492,25 @@ def exact_adjoint_verified_transition_group_value_and_grad(
     )
 
 
+def verified_optimization_token_counts(
+    samples: Sequence[Any],
+    transition_evidence: Sequence[Any],
+) -> tuple[int, ...]:
+    """Resolve evidence-bounded prefixes without changing legacy sample replay."""
+
+    if all(
+        isinstance(sample, RecurrentPolicySample)
+        and sample.sample_kind == "causal_final_transition"
+        for sample in samples
+    ):
+        from core.learning.verified_recurrent_transition_evidence import (
+            optimization_token_counts_from_evidence,
+        )
+
+        return optimization_token_counts_from_evidence(transition_evidence)
+    return tuple(len(sample.tokens) for sample in samples)
+
+
 __all__ = [
     "CAUSAL_RECURRENT_DECODE_SCHEMA",
     "CAUSAL_RECURRENT_PAIR_SCHEMA",
@@ -3420,8 +3520,10 @@ __all__ = [
     "RECURRENT_SAMPLING_SCHEMA",
     "VERIFIED_TRAJECTORY_GROUP_SCHEMA",
     "VERIFIED_TRAJECTORY_GROUP_SCHEMA_V2",
+    "VERIFIED_TRAJECTORY_GROUP_SCHEMA_V3",
     "VERIFIED_TRAJECTORY_SOURCE_SCHEMA",
     "VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V2",
+    "VERIFIED_TRAJECTORY_SOURCE_SCHEMA_V3",
     "ExactAdjointRecurrentGRPOResult",
     "RecurrentGRPOConfig",
     "RecurrentGRPOObjective",
@@ -3454,5 +3556,6 @@ __all__ = [
     "validate_recurrent_policy_sample_receipt",
     "validate_verified_trajectory_group_receipt",
     "validate_verified_trajectory_group_source_binding",
+    "verified_optimization_token_counts",
     "verifier_group_objective",
 ]
