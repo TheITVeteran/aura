@@ -12,9 +12,11 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import importlib.metadata
 import json
 import math
 import os
+import platform
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -237,6 +239,11 @@ SOURCE_ROLES: Mapping[str, str] = {
     "independent_scorer": "tools/independent_paired_campaign_scoring.py",
     "contamination_auditor": "tools/produce_contamination_audit.py",
     "detached_supervisor": "tools/run_detached_step.py",
+    "training_controller": "tools/run_resident_recurrent_grpo_post_training.py",
+    "mlx_memory_guard": "core/runtime/mlx_memory_guard.py",
+    "dependency_project": "pyproject.toml",
+    "dependency_requirements": "requirements.txt",
+    "dependency_lock": "requirements_lock.txt",
 }
 
 
@@ -408,6 +415,31 @@ def _resource_envelope_for_profile(profile: str) -> Mapping[str, Any]:
     if profile == UPDATE_CANARY_PROFILE:
         return UPDATE_CANARY_RESOURCE_ENVELOPE
     _fail("campaign_profile_invalid")
+
+
+def _training_runtime_identity() -> dict[str, Any]:
+    packages = {}
+    for distribution in ("mlx", "mlx-lm", "mlx-metal", "numpy"):
+        try:
+            packages[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError as exc:
+            raise PreregistrationError(
+                f"training_runtime_dependency_missing:{distribution}"
+            ) from exc
+    material = {
+        "schema": "aura.resident_recurrent_grpo.training_runtime.v1",
+        "python": {
+            "implementation": platform.python_implementation(),
+            "version": ".".join(str(value) for value in sys.version_info[:3]),
+        },
+        "host": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+        "packages": packages,
+    }
+    return {**material, "runtime_sha256": _document_sha(material)}
 
 
 def _training_argv(
@@ -632,6 +664,7 @@ def build_contract(
         "training": {
             "campaign_profile": campaign_profile,
             "execution_mode": "recurrent",
+            "runtime": _training_runtime_identity(),
             "parameters": dict(params),
             "argv": training_argv,
             "dataset": _dataset_commitment(params),
@@ -847,6 +880,7 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     if (
         training.get("campaign_profile") != campaign_profile
         or training.get("execution_mode") != "recurrent"
+        or training.get("runtime") != _training_runtime_identity()
         or training.get("parameters") != expected_parameters
         or training.get("argv") != expected_argv
         or training.get("dataset") != _dataset_commitment(expected_parameters)
@@ -1293,29 +1327,14 @@ def _checkpoint_binding(path: Path, expected: Mapping[str, Any], *, role: str) -
     }
 
 
-def build_resume_verdict(
+def validated_training_resume_checkpoint(
     contract: Mapping[str, Any],
     *,
-    environment: Mapping[str, str],
     verify_model: bool = True,
 ) -> dict[str, Any]:
-    """Prove one committed trainer generation is safe to resume."""
+    """Validate and bind the one durable generation eligible for replay."""
+
     validate_contract(contract, verify_model=verify_model)
-    required_environment = {
-        "AURA_DETACHED_PLAN_SHA256",
-        "AURA_DETACHED_COMMAND_SHA256",
-        "AURA_DETACHED_PRIOR_ATTEMPT",
-        "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256",
-        "AURA_DETACHED_RESUME_EVIDENCE_PATH",
-    }
-    if any(not environment.get(key) for key in required_environment):
-        _fail("resume_environment_incomplete")
-    try:
-        prior_attempt = int(environment["AURA_DETACHED_PRIOR_ATTEMPT"])
-    except ValueError as exc:
-        raise PreregistrationError("resume_attempt_invalid") from exc
-    if prior_attempt < 1:
-        _fail("resume_attempt_invalid")
     training_root = _repo_path(
         str(contract["paths"]["training_output"]),
         role="training_output",
@@ -1354,7 +1373,8 @@ def build_resume_verdict(
         or complete.get("protocol_sha256") != _sha256(protocol_raw)
         or complete.get("dataset_sha256") != _sha256(dataset_raw)
         or complete.get("execution_mode") != "recurrent"
-        or complete.get("execution_spec_sha256") != contract["execution_spec"]["semantic_sha256"]
+        or complete.get("execution_spec_sha256")
+        != contract["execution_spec"]["semantic_sha256"]
     ):
         _fail("resume_checkpoint_state_invalid")
     adapter = _checkpoint_binding(
@@ -1367,6 +1387,46 @@ def build_resume_verdict(
         complete.get("optimizer", {}),
         role="optimizer",
     )
+    body = {
+        "schema": "aura.resident_recurrent_grpo.resume_checkpoint.v1",
+        "campaign_contract_sha256": contract["contract_sha256"],
+        "checkpoint_sequence": step,
+        "training_protocol_sha256": _sha256(protocol_raw),
+        "dataset_sha256": _sha256(dataset_raw),
+        "checkpoint_complete_sha256": _sha256(complete_raw),
+        "adapter": adapter,
+        "optimizer": optimizer,
+    }
+    return {**body, "checkpoint_evidence_sha256": _document_sha(body)}
+
+
+def build_resume_verdict(
+    contract: Mapping[str, Any],
+    *,
+    environment: Mapping[str, str],
+    verify_model: bool = True,
+) -> dict[str, Any]:
+    """Prove one committed trainer generation is safe to resume."""
+    required_environment = {
+        "AURA_DETACHED_PLAN_SHA256",
+        "AURA_DETACHED_COMMAND_SHA256",
+        "AURA_DETACHED_PRIOR_ATTEMPT",
+        "AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256",
+        "AURA_DETACHED_RESUME_EVIDENCE_PATH",
+    }
+    if any(not environment.get(key) for key in required_environment):
+        _fail("resume_environment_incomplete")
+    try:
+        prior_attempt = int(environment["AURA_DETACHED_PRIOR_ATTEMPT"])
+    except ValueError as exc:
+        raise PreregistrationError("resume_attempt_invalid") from exc
+    if prior_attempt < 1:
+        _fail("resume_attempt_invalid")
+    checkpoint_evidence = validated_training_resume_checkpoint(
+        contract,
+        verify_model=verify_model,
+    )
+    step = int(checkpoint_evidence["checkpoint_sequence"])
     plan_sha = environment["AURA_DETACHED_PLAN_SHA256"]
     command_sha = environment["AURA_DETACHED_COMMAND_SHA256"]
     journal_head = environment["AURA_DETACHED_PRIOR_JOURNAL_HEAD_SHA256"]
@@ -1385,12 +1445,18 @@ def build_resume_verdict(
         "prior_attempt": prior_attempt,
         "prior_journal_head_sha256": journal_head,
         "checkpoint_sequence": step,
-        "campaign_contract_sha256": contract["contract_sha256"],
-        "training_protocol_sha256": _sha256(protocol_raw),
-        "dataset_sha256": _sha256(dataset_raw),
-        "checkpoint_complete_sha256": _sha256(complete_raw),
-        "adapter": adapter,
-        "optimizer": optimizer,
+        "campaign_contract_sha256": checkpoint_evidence[
+            "campaign_contract_sha256"
+        ],
+        "training_protocol_sha256": checkpoint_evidence[
+            "training_protocol_sha256"
+        ],
+        "dataset_sha256": checkpoint_evidence["dataset_sha256"],
+        "checkpoint_complete_sha256": checkpoint_evidence[
+            "checkpoint_complete_sha256"
+        ],
+        "adapter": checkpoint_evidence["adapter"],
+        "optimizer": checkpoint_evidence["optimizer"],
     }
     evidence_raw = canonical_json_bytes(evidence)
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1680,9 +1746,9 @@ def _release_failed_training_runtime() -> None:
 
     gc.collect()
     try:
-        import mlx.core as mx
+        from core.runtime.mlx_memory_guard import _synchronize_and_reclaim
 
-        mx.clear_cache()
+        _synchronize_and_reclaim()
     except (ImportError, RuntimeError):
         pass
     gc.collect()
@@ -2091,6 +2157,7 @@ def _launch_training(
     *,
     resume: bool,
     expected_launch_bundle_sha256: str,
+    run_dir_override: Path | None = None,
 ) -> int:
     contract = _strict_json(contract_path)
     validate_contract(contract, verify_model=True)
@@ -2109,13 +2176,23 @@ def _launch_training(
     if not supplied.is_absolute():
         supplied = REPO_ROOT / supplied
     contract_absolute = str(supplied.resolve(strict=True))
-    run_dir = str(
-        _repo_path(
-            str(contract["paths"]["detached_training"]),
-            role="detached_training",
-            must_exist=False,
-        )
+    detached_root = _repo_path(
+        str(contract["paths"]["detached_training"]),
+        role="detached_training",
+        must_exist=False,
     )
+    if run_dir_override is None:
+        run_dir_path = detached_root
+    else:
+        supplied_run_dir = run_dir_override.expanduser()
+        if not supplied_run_dir.is_absolute():
+            supplied_run_dir = REPO_ROOT / supplied_run_dir
+        run_dir_path = supplied_run_dir.resolve(strict=False)
+        if run_dir_path.parent != detached_root:
+            _fail("detached_training_attempt_path_invalid")
+        if resume:
+            _fail("detached_training_attempt_may_not_reuse_plan")
+    run_dir = str(run_dir_path)
     training_output = str(
         _repo_path(
             str(contract["paths"]["training_output"]),

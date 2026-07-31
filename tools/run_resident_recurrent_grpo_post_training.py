@@ -222,6 +222,9 @@ def build_config(
         "controller_source": _binding(Path(SOURCE_RELATIVE)),
         "contract": _binding(contract_path),
         "contract_sha256": contract["contract_sha256"],
+        "verified_launch_bundle": _binding(
+            Path(str(contract["paths"]["verified_launch_bundle"]))
+        ),
         "campaign_id": contract["campaign_id"],
         "launch_label": label,
         "output_root": str(root.relative_to(REPO_ROOT)),
@@ -303,6 +306,7 @@ def validate_config(
         "controller_source",
         "contract",
         "contract_sha256",
+        "verified_launch_bundle",
         "campaign_id",
         "launch_label",
         "output_root",
@@ -343,6 +347,13 @@ def validate_config(
         or contract.get("campaign_id") != config.get("campaign_id")
     ):
         _fail("contract_identity_invalid")
+    launch_bundle = config.get("verified_launch_bundle")
+    if (
+        not isinstance(launch_bundle, Mapping)
+        or dict(launch_bundle)
+        != _binding(Path(str(contract["paths"]["verified_launch_bundle"])))
+    ):
+        _fail("verified_launch_bundle_binding_changed")
     if require_live_preregistration:
         prereg.validate_contract(contract, verify_model=True)
     claim_policy = config.get("claim_policy")
@@ -581,26 +592,145 @@ class ControllerRun:
             self._state("waiting", {"remaining_seconds": remaining})
             time.sleep(min(float(self.config["wait"]["poll_seconds"]), remaining))
 
-    def ensure_training_launched(self) -> None:
-        run_dir = _resolved(Path(str(self.config["training_run_dir"])), must_exist=False)
+    def _training_attempt_root(self) -> Path:
+        return _resolved(
+            Path(str(self.config["training_run_dir"])),
+            must_exist=False,
+        )
+
+    def _training_attempt_result(self, attempt: int) -> dict[str, Any] | None:
+        path = self.root / f"training_attempt_{attempt:04d}.json"
+        return _strict_json(path) if path.is_file() else None
+
+    def _launch_or_attach_training_attempt(
+        self,
+        attempt: int,
+    ) -> tuple[Path, dict[str, Any]]:
+        attempt_root = self._training_attempt_root()
+        ensure_private_directory(attempt_root)
+        run_dir = attempt_root / f"attempt-{attempt:04d}"
+        start_path = self.root / f"training_attempt_{attempt:04d}_start.json"
+        training_output = _resolved(
+            Path(str(self.config["training_output"])),
+            must_exist=False,
+        )
+        if not start_path.exists():
+            _write_once(
+                start_path,
+                {
+                    "schema": "aura.resident_recurrent_grpo.training_attempt_start.v1",
+                    "attempt": attempt,
+                    "campaign_id": self.contract["campaign_id"],
+                    "contract_sha256": self.contract["contract_sha256"],
+                    "run_dir": str(run_dir.relative_to(REPO_ROOT)),
+                    "progress_before": prereg._training_progress_snapshot(  # noqa: SLF001
+                        training_output
+                    ),
+                },
+            )
+        start = _strict_json(start_path)
         if not (run_dir / detached.PLAN_FILE).exists():
             result = prereg._launch_training(  # noqa: SLF001
                 _resolved(Path(str(self.config["contract"]["path"]))),
                 resume=False,
+                expected_launch_bundle_sha256=str(
+                    self.config["verified_launch_bundle"]["sha256"]
+                ),
+                run_dir_override=run_dir,
             )
             if result != 0:
-                _fail(f"training_launch_failed:{result}")
-            self.event("launched")
-            return
-        status = detached._status(run_dir)  # noqa: SLF001
-        if status.get("terminal") is not True and status.get("supervisor_alive") is not True:
-            result = prereg._launch_training(  # noqa: SLF001
-                _resolved(Path(str(self.config["contract"]["path"]))),
-                resume=True,
+                _fail(f"training_launch_failed:{attempt}:{result}")
+            self.event("launched", {"attempt": attempt, "run_dir": str(run_dir)})
+        return run_dir, start
+
+    def run_training_with_recovery(self) -> dict[str, Any]:
+        """Run isolated attempts under launchd and resume only sealed progress."""
+
+        policy = self.contract["training"]["watchdog_policy"]
+        max_attempts = int(policy["max_attempts"])
+        no_progress_limit = int(policy["max_consecutive_no_progress_failures"])
+        no_progress_failures = 0
+        for attempt in range(1, max_attempts + 1):
+            existing = self._training_attempt_result(attempt)
+            if existing is not None:
+                if existing.get("terminal_success") is True:
+                    return dict(existing["detached_status"])
+                no_progress_failures = int(
+                    existing.get("consecutive_no_progress_failures") or 0
+                )
+                continue
+
+            run_dir, start = self._launch_or_attach_training_attempt(attempt)
+            status = self.wait_detached(
+                run_dir,
+                timeout_s=float(self.config["wait"]["training_terminal_timeout_s"]),
+                role=f"training_attempt_{attempt}",
             )
-            if result != 0:
-                _fail(f"training_resume_failed:{result}")
-            self.event("resumed")
+            receipt = status.get("receipt")
+            if not isinstance(receipt, Mapping):
+                _fail(f"training_attempt_{attempt}_receipt_missing")
+            returncode = receipt.get("returncode")
+            if not isinstance(returncode, int) or isinstance(returncode, bool):
+                _fail(f"training_attempt_{attempt}_returncode_invalid")
+            _validate_detached_terminal(
+                status,
+                role=f"training_attempt_{attempt}",
+                allowed_returncodes=frozenset({returncode}),
+            )
+            training_output = _resolved(
+                Path(str(self.config["training_output"])),
+                must_exist=False,
+            )
+            after = prereg._training_progress_snapshot(training_output)  # noqa: SLF001
+            before = start.get("progress_before")
+            if not isinstance(before, Mapping):
+                _fail(f"training_attempt_{attempt}_start_invalid")
+            progressed = after.get("sha256") != before.get("sha256")
+            terminal_success = returncode in {0, 3}
+            checkpoint_evidence: dict[str, Any] | None = None
+            if not terminal_success:
+                no_progress_failures = 0 if progressed else no_progress_failures + 1
+                if no_progress_failures < no_progress_limit and attempt < max_attempts:
+                    checkpoint_evidence = prereg.validated_training_resume_checkpoint(
+                        self.contract,
+                        verify_model=True,
+                    )
+            result = {
+                "schema": "aura.resident_recurrent_grpo.training_attempt.v1",
+                "attempt": attempt,
+                "campaign_id": self.contract["campaign_id"],
+                "contract_sha256": self.contract["contract_sha256"],
+                "detached_status": status,
+                "progress_before": dict(before),
+                "progress_after": after,
+                "durable_progress": progressed,
+                "terminal_success": terminal_success,
+                "consecutive_no_progress_failures": no_progress_failures,
+                "resume_checkpoint": checkpoint_evidence,
+            }
+            _write_once(self.root / f"training_attempt_{attempt:04d}.json", result)
+            self.event(
+                "completed" if terminal_success else "failed",
+                {
+                    "attempt": attempt,
+                    "returncode": returncode,
+                    "receipt_sha256": receipt["receipt_sha256"],
+                    "durable_progress": progressed,
+                    "checkpoint_sequence": (
+                        checkpoint_evidence.get("checkpoint_sequence")
+                        if checkpoint_evidence is not None
+                        else None
+                    ),
+                },
+            )
+            if terminal_success:
+                return status
+            if no_progress_failures >= no_progress_limit:
+                _fail("training_no_progress_failure_limit_exhausted")
+            if attempt >= max_attempts:
+                _fail("training_attempt_budget_exhausted")
+            time.sleep(float(policy["retry_backoff_s"]))
+        _fail("training_attempt_budget_exhausted")
 
     def wait_for_exclusive_model_owner(self) -> dict[str, Any]:
         deadline = time.monotonic() + float(
@@ -995,12 +1125,7 @@ class ControllerRun:
             },
         )
         self.set_stage("detached_training")
-        self.ensure_training_launched()
-        training_status = self.wait_detached(
-            _resolved(Path(str(self.config["training_run_dir"])), must_exist=False),
-            timeout_s=float(self.config["wait"]["training_terminal_timeout_s"]),
-            role="training",
-        )
+        training_status = self.run_training_with_recovery()
         training_receipt = _validate_detached_terminal(
             training_status, role="training", allowed_returncodes=frozenset({0, 3})
         )
@@ -1023,6 +1148,30 @@ class ControllerRun:
                 directional_evidence=None,
                 failure_points=failure_points,
             )
+
+        if self.contract.get("campaign_profile") == prereg.UPDATE_CANARY_PROFILE:
+            self.set_stage("update_canary_verification")
+            canary = prereg.build_update_canary_verdict(
+                self.contract,
+                verify_model=True,
+            )
+            _write_once(self.root / "update_canary_verdict.json", canary)
+            self.event("completed", {"verdict_sha256": canary["verdict_sha256"]})
+            material = {
+                "schema": "aura.resident_recurrent_grpo.canary_controller_verdict.v1",
+                "campaign_id": self.contract["campaign_id"],
+                "contract_sha256": self.contract["contract_sha256"],
+                "training_receipt_sha256": training_receipt["receipt_sha256"],
+                "canary_verdict_sha256": canary["verdict_sha256"],
+                "canary_passed": True,
+                "reasoning_gain_proven": False,
+                "frontier_level_proven": False,
+                "config_sha256": self.config["config_sha256"],
+                "finished_at": time.time(),
+            }
+            verdict = {**material, "verdict_sha256": _document_sha(material)}
+            _write_once(self.verdict_path, verdict)
+            return verdict
 
         self.set_stage("training_admission")
         admission = self.admit_training(training_receipt)

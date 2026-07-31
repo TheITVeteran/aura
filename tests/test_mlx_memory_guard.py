@@ -87,6 +87,20 @@ def test_reclaim_honours_cadence_and_force():
     assert envelope.reclaim(None, force=True) is True
 
 
+def test_reclaim_synchronizes_around_cache_release(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(mx, "synchronize", lambda: calls.append("synchronize"))
+    monkeypatch.setattr(mx, "clear_cache", lambda: calls.append("clear_cache"))
+    envelope = MemoryEnvelope(
+        memory_bytes=4 * 1024**3,
+        cache_bytes=1024**3,
+        wired_bytes=4 * 1024**3,
+    )
+
+    assert envelope.reclaim(force=True) is True
+    assert calls == ["synchronize", "clear_cache", "synchronize"]
+
+
 def test_receipt_is_complete_enough_to_audit_a_run():
     with mlx_memory_envelope(memory_gb=4.0, cache_gb=1.0) as envelope:
         receipt = envelope.to_receipt()

@@ -27,11 +27,17 @@ def _contract(root: Path) -> dict:
             "artifact_root": artifact,
             "training_output": f"{artifact}/training",
             "detached_training": f"{artifact}/detached-training",
+            "verified_launch_bundle": f"{artifact}/verified-launch/launch-bundle.json",
             "frozen_adapter": f"{artifact}/frozen-adapter",
             "directional_campaign": f"{artifact}/directional-campaign",
         },
         "training": {
             "parameters": {"max_steps": 288},
+            "watchdog_policy": {
+                "max_attempts": 3,
+                "max_consecutive_no_progress_failures": 2,
+                "retry_backoff_s": 0.0,
+            },
             "dataset": {"sha256": "4" * 64},
             "completion_required": {
                 "schema": "aura.recurrent_grpo_training_completion.v1",
@@ -53,6 +59,9 @@ def isolated_repo(tmp_path, monkeypatch):
     source.write_text("# controller\n", encoding="ascii")
     (tmp_path / "model").mkdir()
     contract = _contract(tmp_path)
+    launch_bundle = tmp_path / contract["paths"]["verified_launch_bundle"]
+    launch_bundle.parent.mkdir(parents=True)
+    launch_bundle.write_text("{}\n", encoding="ascii")
     contract_path = tmp_path / "contract.json"
     contract_path.write_bytes(canonical_json_bytes(contract))
     monkeypatch.setattr(
@@ -290,6 +299,128 @@ def test_launchd_contract_restarts_only_unexpected_nonzero_exit(
     assert payload["ThrottleInterval"] == 30
     assert payload["ProgramArguments"][0:2] == ["/usr/bin/caffeinate", "-i"]
     assert payload["ProgramArguments"][2] == str(venv_python)
+
+
+def _detached_status(returncode: int) -> dict:
+    receipt = {
+        "returncode": returncode,
+        "containment_verified": True,
+        "process_group_empty": True,
+        "lineage_empty": True,
+        "timed_out": False,
+        "receipt_sha256": f"{abs(returncode):064x}"[-64:],
+    }
+    return {
+        "terminal": True,
+        "completion_indeterminate": False,
+        "supervisor_alive": False,
+        "child_state": "dead",
+        "receipt": receipt,
+    }
+
+
+def test_training_controller_recovers_native_crash_from_verified_checkpoint(
+    isolated_repo,
+    monkeypatch,
+):
+    root, contract_path, contract = isolated_repo
+    config = post.build_config(
+        contract_path=contract_path,
+        output_root=root / "artifacts/cp259/post-training",
+        source_commit="a" * 40,
+        seeds=[(1 << 62) + index for index in range(8)],
+    )
+    run = post.ControllerRun(config, contract)
+    snapshots = iter(
+        [
+            {"sha256": "1" * 64, "checkpoint_step": 0},
+            {"sha256": "2" * 64, "checkpoint_step": 6},
+            {"sha256": "2" * 64, "checkpoint_step": 6},
+            {"sha256": "3" * 64, "checkpoint_step": 288},
+        ]
+    )
+    statuses = iter([_detached_status(-5), _detached_status(0)])
+    launched: list[int] = []
+
+    def launch_or_attach(attempt):
+        launched.append(attempt)
+        return root / f"attempt-{attempt}", {
+            "progress_before": next(snapshots),
+        }
+
+    monkeypatch.setattr(run, "_launch_or_attach_training_attempt", launch_or_attach)
+    monkeypatch.setattr(run, "wait_detached", lambda *_args, **_kwargs: next(statuses))
+    monkeypatch.setattr(
+        post.prereg,
+        "_training_progress_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(
+        post.prereg,
+        "validated_training_resume_checkpoint",
+        lambda *_args, **_kwargs: {
+            "checkpoint_sequence": 6,
+            "checkpoint_evidence_sha256": "4" * 64,
+        },
+    )
+
+    terminal = run.run_training_with_recovery()
+
+    assert terminal["receipt"]["returncode"] == 0
+    assert launched == [1, 2]
+    failed = post._strict_json(run.root / "training_attempt_0001.json")
+    assert failed["terminal_success"] is False
+    assert failed["durable_progress"] is True
+    assert failed["resume_checkpoint"]["checkpoint_sequence"] == 6
+    succeeded = post._strict_json(run.root / "training_attempt_0002.json")
+    assert succeeded["terminal_success"] is True
+
+
+def test_training_controller_stops_after_repeated_no_progress(
+    isolated_repo,
+    monkeypatch,
+):
+    root, contract_path, contract = isolated_repo
+    config = post.build_config(
+        contract_path=contract_path,
+        output_root=root / "artifacts/cp259/post-training",
+        source_commit="a" * 40,
+        seeds=[(1 << 62) + index for index in range(8)],
+    )
+    run = post.ControllerRun(config, contract)
+    unchanged = {"sha256": "1" * 64, "checkpoint_step": 0}
+    monkeypatch.setattr(
+        run,
+        "_launch_or_attach_training_attempt",
+        lambda attempt: (root / f"attempt-{attempt}", {"progress_before": unchanged}),
+    )
+    monkeypatch.setattr(
+        run,
+        "wait_detached",
+        lambda *_args, **_kwargs: _detached_status(-5),
+    )
+    monkeypatch.setattr(
+        post.prereg,
+        "_training_progress_snapshot",
+        lambda *_args, **_kwargs: unchanged,
+    )
+    monkeypatch.setattr(
+        post.prereg,
+        "validated_training_resume_checkpoint",
+        lambda *_args, **_kwargs: {
+            "checkpoint_sequence": 0,
+            "checkpoint_evidence_sha256": "4" * 64,
+        },
+    )
+
+    with pytest.raises(
+        post.PostTrainingError,
+        match="training_no_progress_failure_limit_exhausted",
+    ):
+        run.run_training_with_recovery()
+
+    assert (run.root / "training_attempt_0001.json").is_file()
+    assert (run.root / "training_attempt_0002.json").is_file()
 
 
 def test_external_custody_request_cannot_self_certify(isolated_repo):

@@ -24,10 +24,10 @@ machine to death: a failed run is recoverable, a wedged host is not.
 from __future__ import annotations
 
 import logging
-import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger("Aura.MLXMemoryGuard")
 
@@ -40,6 +40,21 @@ DEFAULT_FRACTION = 0.5
 MIN_LIMIT_BYTES = 2 * 1024**3
 # Reclaim cadence for generation loops. Cheap relative to a forward pass.
 DEFAULT_RECLAIM_EVERY = 16
+
+
+def _synchronize_and_reclaim() -> None:
+    """Finish queued Metal work before releasing allocator buffers.
+
+    MLX execution is asynchronous. Clearing its allocator cache while a stream
+    can still reference a buffer creates a native lifetime race that Python
+    cannot catch. The second barrier makes the reclaim itself observable before
+    a caller starts the next generation.
+    """
+    import mlx.core as mx
+
+    mx.synchronize()
+    mx.clear_cache()
+    mx.synchronize()
 
 
 def host_memory_bytes() -> int:
@@ -150,9 +165,7 @@ class MemoryEnvelope:
             if step % self.reclaim_every != 0:
                 return False
         try:
-            import mlx.core as mx
-
-            mx.clear_cache()
+            _synchronize_and_reclaim()
             return True
         except (ImportError, RuntimeError):
             return False
@@ -246,7 +259,7 @@ def mlx_memory_envelope(
         yield envelope
     finally:
         try:
-            mx.clear_cache()
+            _synchronize_and_reclaim()
             mx.set_memory_limit(previous["memory"])
             mx.set_cache_limit(previous["cache"])
             mx.set_wired_limit(previous["wired"])
@@ -258,6 +271,7 @@ __all__ = [
     "DEFAULT_FRACTION",
     "MLX_MEMORY_GUARD_SCHEMA",
     "MemoryEnvelope",
+    "_synchronize_and_reclaim",
     "host_memory_bytes",
     "host_pressure",
     "mlx_memory_envelope",

@@ -32729,3 +32729,61 @@ fresh signer trust root, signed launch materialization, detached execution,
 and post-run update-canary verdict remain required before the full campaign
 may launch. This is total checkpoint 743. The 743-920 completion envelope is
 approximately 80.8%-100.0%, with a 90.4% midpoint.
+
+### 2026-07-31 - CP420S24 native-crash evidence and process-external recovery
+
+CP420S24 passed both resident preflights and completed its 12-task recurrent
+baseline at 4/12 correct. Six signed depth-four causal groups then became
+durable. Modular and premise-audit had no initially correct control and could
+not define a wrong-to-right intervention. Boolean, k-hop, and stack-trace
+produced no verified wrong-to-right improvement. Causal-intervention and
+stack-trace each converted one of two initially correct controls to an
+incorrect recurrent answer. No group met the frozen admission rule, no
+optimizer update occurred, and the adapter remained unchanged. This is
+negative causal evidence at the tested grain, not a parser or signer failure.
+
+Before group seven, the Python process terminated with SIGTRAP inside the macOS
+`xzm` allocator while MLX objects were being freed. The diagnostic report is
+`Python-2026-07-31-073719.ips`; the earlier CP420S22 process has the same
+`_xzm_reclaim_mark_used_locked` signature in
+`Python-2026-07-30-202829.ips`. The old watchdog did not recover because it
+called the trainer in its own process: the native crash killed both the model
+work and the component responsible for retrying it, leaving its watchdog
+status stale at `running`.
+
+The MLX runtime is now pinned consistently to `mlx==0.32.0`,
+`mlx-metal==0.32.0`, and `mlx-lm==0.31.3` across project metadata, direct
+requirements, and the generated hash lock. Reclamation now synchronizes all
+queued Metal work before clearing cached allocator buffers and synchronizes
+again before the next generation. Reusable contexts deliberately do not call
+`clear_streams`, because testing proved that doing so invalidates the thread's
+default GPU stream.
+
+Long training ownership is moved outside the model process. The existing
+launchd train-to-proof controller now launches each model attempt in a fresh,
+immutable detached run directory, preserves the failed terminal receipt,
+compares durable progress, validates the complete adapter and optimizer
+checkpoint before replay, bounds both total and no-progress retries, and
+attaches to an already running attempt after its own launchd restart. Canary
+profiles stop after the non-promotable update verdict instead of entering the
+full freeze and evaluation pipeline. The preregistration now binds the exact
+Python/host/MLX runtime and all dependency manifests in addition to executable
+source.
+
+The focused MLX, preregistration, launchd-controller, and detached-containment
+gate passes 100/100. It includes a simulated native `-5` terminal followed by
+verified exact-checkpoint recovery and an independently contained successor,
+plus repeated-no-progress exhaustion. No fresh resident process has run under
+MLX 0.32 yet, so native-crash retirement remains unproven until CP420S25.
+
+One scientific launch blocker is now explicit. The full profile's built-in
+calibration measures ordinary recurrent answer-rate variance, while optimizer
+admission measures signed causal wrong-to-right transitions with no
+right-to-wrong regression. Those are different objects. The full 288-step
+campaign must not launch until calibration is replaced or gated by a passed
+same-object resident update canary. CP420S24 is immutable negative evidence and
+cannot be resumed under changed source or runtime identity. A fresh CP420S25
+contract, preflights, trust services, launch bundle, launchd controller, and
+resident canary are required. No reasoning-gain, frontier, promotion, or
+`WOW Signal` claim is made. This is total checkpoint 744. The 744-920
+completion envelope is approximately 80.9%-100.0%, with a 90.4% midpoint.
