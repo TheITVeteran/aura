@@ -1654,6 +1654,135 @@ def test_production_finalizer_closes_unstarted_tail_with_external_verifier(
     )
 
 
+def test_production_finalizer_records_zero_updates_without_invoking_policy_replay(
+    material: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replay_contract = _policy_state_replay_contract(
+        material["root"].parent / "zero-update-finalizer-replay-contract",
+        initial_policy=material["initial_policy"],
+    )
+
+    class Broker:
+        identity = "fixture-evidence-verifier"
+        replay_calls = 0
+        verify_calls = 0
+        attest_calls = 0
+
+        @classmethod
+        def replay_policy_states(cls, **_kwargs):
+            cls.replay_calls += 1
+            raise AssertionError("zero-update campaign has no policy state to replay")
+
+        @classmethod
+        def verify_evidence_manifest(cls, _policy, **kwargs):
+            cls.verify_calls += 1
+            return _verification_receipt(
+                kwargs["evidence_manifest"],
+                verifier_identity=cls.identity,
+                verified_at_unix=kwargs["verified_at_unix"],
+            )
+
+        @classmethod
+        def attest(cls, policy, **kwargs):
+            cls.attest_calls += 1
+            return build_role_attestation(
+                policy,
+                role=kwargs["role"],
+                payload=kwargs["payload"],
+                signed_at_unix=kwargs["signed_at_unix"],
+                private_key=material["role_keys"][EVIDENCE_VERIFIER],
+            )
+
+    _start, group = _admit(
+        material,
+        sequence=0,
+        policy_before=material["initial_policy"],
+    )
+    terminal = material["ledger"].finish_group(
+        sequence=0,
+        status="rejected",
+        reward_receipt_sha256=_sha("zero-update-reward"),
+        group_admission_sha256=None,
+        update_receipt_sha256=None,
+        terminal_reason="eir_undefined_no_initially_correct_control",
+        finished_at_unix_ns=(BASE_SECOND + 162) * 1_000_000_000,
+    )
+    step = {
+        "step_kind": "verified_rejected_group",
+        "campaign_sequence": 0,
+        "group_manifest_sha256": terminal["group_manifest_sha256"],
+        "reward_receipt_sha256": terminal["reward_receipt_sha256"],
+        "group_admission_sha256": None,
+        "update_receipt_sha256": None,
+        "receipt_sha256": _sha("zero-update-trainer-step"),
+    }
+    package = {
+        "sequence": 0,
+        "contract_sha256": _sha("provider-contract"),
+        "campaign_schedule_root_sha256": material["schedule_root"],
+        "group_manifest": {"manifest_sha256": group["manifest"]["manifest_sha256"]},
+        "reward_receipt_sha256": terminal["reward_receipt_sha256"],
+        "group_admission_sha256": None,
+        "receipt_sha256": _sha("zero-update-package"),
+        "sample_receipt_sha256s": [_sha("zero-update-sample")],
+        "evidence_receipt_sha256s": [_sha("zero-update-evidence")],
+    }
+    monkeypatch.setattr(
+        "core.learning.verified_recurrent_transition_repository._read_package",
+        lambda *_args, **_kwargs: package,
+    )
+    monkeypatch.setattr(
+        "core.learning.verified_recurrent_transition_repository._package_artifact_binding",
+        lambda *_args, **_kwargs: {
+            "path": "/private/replay/group-00000000.json",
+            "sha256": _sha("zero-update-package-bytes"),
+            "size_bytes": 128,
+        },
+    )
+
+    request = type(
+        "Request",
+        (),
+        {
+            "schema": "aura.verified_transition.finalize_request.v2",
+            "contract_sha256": _sha("provider-contract"),
+            "campaign_schedule_root_sha256": material["schedule_root"],
+            "completed_groups": 1,
+            "halt_reason": "training_adequacy_failed",
+            "step_receipts": (step,),
+            "replay_artifact_root": str(material["ledger"].root.parent / "replay"),
+            "campaign_ledger_root": str(material["ledger"].root),
+            "transition_artifact_root": str(
+                material["ledger"].root.parent / "transition-artifacts"
+            ),
+            "update_journal_root": str(material["ledger"].root.parent / "updates"),
+            "transaction_root": str(material["ledger"].root.parent / "transactions"),
+            "replay_groups": (),
+            "campaign_ledger": material["ledger"],
+            "campaign_trust_policy": material["policy"],
+            "evidence_verifier_signer": Broker(),
+            "policy_state_replay_contract": replay_contract,
+        },
+    )()
+
+    closure = finalize_verified_recurrent_transition_campaign(request)
+    recovered = finalize_verified_recurrent_transition_campaign(request)
+
+    assert recovered.campaign_ledger is closure.campaign_ledger
+    assert Broker.replay_calls == 0
+    assert Broker.verify_calls == 1
+    assert Broker.attest_calls == 1
+    payload = closure.campaign_ledger.validate_closed(policy=material["policy"])[
+        "close_payload"
+    ]
+    assert payload["group_statuses"] == ["rejected", "aborted"]
+    assert payload["evidence_manifest"]["schema"] == (
+        CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA
+    )
+    assert payload["evidence_manifest"]["updated_replay_sequences"] == []
+
+
 def test_close_requires_external_evidence_verifier_signature(
     material: dict[str, Any],
 ) -> None:

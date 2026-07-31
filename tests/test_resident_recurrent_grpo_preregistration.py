@@ -915,6 +915,82 @@ def test_training_watchdog_retries_only_into_exact_durable_progress(
     assert status["state"] == "complete"
 
 
+def test_training_watchdog_propagates_diagnostic_terminal_without_retry_or_reclaim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tools import run_verified_recurrent_grpo_training as runner
+
+    training = tmp_path / "training"
+    bundle = tmp_path / "bundle.json"
+    digest_file = tmp_path / "bundle.sha256"
+    bundle.write_text("{}\n", encoding="ascii")
+    digest_file.write_text("a" * 64 + "\n", encoding="ascii")
+    dataset = b"dataset\n"
+    contract = {
+        "campaign_id": "watchdog-diagnostic-test",
+        "contract_sha256": "b" * 64,
+        "launch_not_before_unix": 0,
+        "paths": {
+            "artifact_root": "artifacts/watchdog-diagnostic-test",
+            "verified_launch_bundle": "bundle.json",
+            "verified_launch_bundle_sha256": "bundle.sha256",
+            "training_output": "training",
+        },
+        "training": {
+            "argv": ["tools/train_grpo.py"],
+            "parameters": {"max_steps": 12},
+            "completion_required": {
+                "schema": "aura.recurrent_grpo_training_completion.v1",
+            },
+            "dataset": {"sha256": hashlib.sha256(dataset).hexdigest()},
+            "watchdog_policy": {
+                **prereg.TRAINING_WATCHDOG_POLICY,
+                "retry_backoff_s": 0.001,
+            },
+        },
+    }
+    calls = 0
+    releases = 0
+
+    def run(_argv):
+        nonlocal calls
+        calls += 1
+        training.mkdir(exist_ok=True)
+        (training / "dataset_manifest.json").write_bytes(dataset)
+        (training / "grpo_receipt.json").write_bytes(
+            prereg.canonical_json_bytes(
+                {
+                    "termination": {
+                        "reason": "training_adequacy_failed",
+                        "completed_budget": True,
+                    }
+                }
+            )
+        )
+        return 3
+
+    def release():
+        nonlocal releases
+        releases += 1
+
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(prereg, "validate_contract", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(runner, "main", run)
+    monkeypatch.setattr(prereg, "_release_failed_training_runtime", release)
+
+    assert prereg._run_training(contract, expected_launch_bundle_sha256="a" * 64) == 3
+    assert calls == 1
+    assert releases == 0
+    status = json.loads(
+        (
+            tmp_path
+            / "artifacts/watchdog-diagnostic-test/training-watchdog/status.json"
+        ).read_text(encoding="ascii")
+    )
+    assert status["state"] == "diagnostic_terminal"
+
+
 def test_training_watchdog_resumes_zero_exit_wall_clock_until_full_dose(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

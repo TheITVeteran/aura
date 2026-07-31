@@ -1869,6 +1869,7 @@ def _run_training(
         str(contract["contract_sha256"]),
         *argv[1:],
     ]
+    terminal_result = 0
     while len(records) < max_attempts:
         attempt = len(records) + 1
         before = _training_progress_snapshot(training_root)
@@ -1926,6 +1927,8 @@ def _run_training(
         terminal_state = (
             "complete"
             if error is None and result == 0 and disposition == "complete"
+            else "diagnostic_terminal"
+            if error is None and result == 3
             else "paused"
             if error is None and result == 0 and disposition == "paused"
             else "exhausted"
@@ -1956,6 +1959,9 @@ def _run_training(
                     training_root=training_root,
                 )
             break
+        if terminal_state == "diagnostic_terminal":
+            terminal_result = 3
+            break
         if terminal_state == "paused":
             _release_failed_training_runtime()
             _wait_for_training_resume(contract)
@@ -1978,7 +1984,7 @@ def _run_training(
     produced_dataset = (training_root / "dataset_manifest.json").read_bytes()
     if _sha256(produced_dataset) != contract["training"]["dataset"]["sha256"]:
         _fail("produced_dataset_commitment_mismatch")
-    return 0
+    return terminal_result
 
 
 def _policy_probe_argv(contract: Mapping[str, Any]) -> list[str]:

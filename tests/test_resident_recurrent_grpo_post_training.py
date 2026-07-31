@@ -223,6 +223,47 @@ def test_training_no_signal_stop_is_a_diagnostic_not_claim():
         post._training_diagnostic_failure(claimed)
 
 
+def test_training_adequacy_stop_is_a_terminal_diagnostic_not_claim():
+    receipt = {
+        "termination": {
+            "reason": "training_adequacy_failed",
+            "completed_budget": True,
+        },
+        "training_adequacy": {
+            "admitted": False,
+            "failed_checks": [
+                "distributed_update_activity",
+                "learning_signal",
+                "minimum_optimizer_updates",
+            ],
+        },
+        "learning_signal": {
+            "learning_signal": False,
+            "diagnosis": "all_verified_transition_groups_rejected",
+        },
+        "verdict": {
+            "had_signal": False,
+            "causal_gain_proven": False,
+        },
+    }
+
+    assert post._training_diagnostic_failure(receipt) == [
+        "training:training_adequacy_failed",
+        "diagnosis:all_verified_transition_groups_rejected",
+        "training_adequacy:distributed_update_activity",
+        "training_adequacy:learning_signal",
+        "training_adequacy:minimum_optimizer_updates",
+    ]
+
+    incomplete = dict(receipt)
+    incomplete["termination"] = {
+        "reason": "training_adequacy_failed",
+        "completed_budget": False,
+    }
+    with pytest.raises(post.PostTrainingError, match="diagnostic_claims"):
+        post._training_diagnostic_failure(incomplete)
+
+
 def test_detached_terminal_requires_empty_contained_lineage():
     receipt = {
         "returncode": 0,

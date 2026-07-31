@@ -32887,3 +32887,58 @@ and strict update verdict remain required. No reasoning-gain, frontier,
 promotion, or `WOW Signal` claim follows. This is total checkpoint 747. The
 747-920 completion envelope is approximately 81.2%-100.0%, with a 90.6%
 midpoint.
+
+### 2026-07-31 - CP420S26 live rotation proof and negative-terminal repair
+
+CP420S26 passed the resident initial-policy probe and the independent
+answer-channel preflight, which was 6/6 parseable and 6/6 correct. Four fresh
+process-isolated signer services materialized the signed launch bundle. The
+launchd controller was owned by PID 1, its detached supervisor and model child
+were independently observable, `caffeinate` inhibited idle sleep, and the
+resident process loaded the 26.88 GiB MLX envelope, wired all 24 expected
+projections, and published a durable step-zero checkpoint before the launch
+was counted as training.
+
+The recurrent baseline was 4/12 correct. The 12 signed causal groups completed
+in three native model processes. Attempt one durably committed steps 1-4 and
+exited with the reserved process-rotation code 75. Attempt two loaded the exact
+step-four adapter, optimizer, curriculum, telemetry, RNG, and transition state,
+committed steps 5-8, and exited with code 75. Attempt three loaded exact step
+eight and committed steps 9-12. Both fresh resumes preserved zero optimizer
+updates and the unchanged policy digest. This retired the deterministic
+post-step-six allocator horizon seen in S24 and S25: S26 crossed it without a
+native failure, replay, or lost group. Final recurrent evaluation was again
+4/12, exactly equal to baseline. Every transition group was rejected, training
+adequacy failed its minimum-update, distributed-update, and learning-signal
+checks, and no reasoning gain, frontier gain, promotion, or `WOW Signal` claim
+is admissible.
+
+The negative terminal exposed a separate closure defect. The preregistration
+correctly required external policy-state replay for any admitted update, but
+the finalizer incorrectly tried to apply that requirement when all 12 groups
+were rejected and no changed policy state existed. It raised
+`recurrent_campaign_policy_state_replay_not_applicable`; the exceptional MLX
+teardown then reproduced SIGTRAP after all scientific work was durable, and the
+watchdog prepared an unnecessary fourth attempt.
+
+Zero-update campaigns now validate the bound replay contract and initial policy
+identity, close their signed causal evidence as an explicit no-update result,
+and never fabricate or invoke policy replay. Any admitted update still requires
+the full externally verified replay path. A completed but inadequate training
+dose now exits once as diagnostic code 3, records `completed_budget=true`, and
+is propagated by both watchdog layers without retrying or calling in-process
+MLX reclamation. The post-training controller accepts only a nonclaiming
+diagnostic with failed adequacy checks, no learning signal, and no causal-gain
+claim.
+
+Bytecode compilation, lint, diff integrity, the exact zero-update closure
+regression, the diagnostic watchdog regression, and the broader causal
+campaign, preregistration, launchd-controller, trainer-contract, production
+runner, and MLX-memory suites pass 158/158. S26 remains immutable source-bound
+negative evidence and cannot be finalized with changed code. A fresh S27
+contract must prove the repaired terminal live. The full 288-step campaign
+remains blocked because the same-object canary admitted zero optimizer updates;
+the causal curriculum/admission object must be redesigned and shown to produce
+safe wrong-to-right transitions before a full launch. This is total checkpoint
+748. The 748-920 completion envelope is approximately 81.3%-100.0%, with a
+90.6% midpoint.

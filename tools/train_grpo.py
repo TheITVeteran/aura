@@ -4127,7 +4127,7 @@ def main(
     )
     final = history[-1] if history else None
     delta = _point_estimate_delta(baseline_eval, final)
-    completed = halt_reason == "max_steps"
+    completed = step >= args.max_steps and requested_signal is None
     receipt = {
         "schema": GRPO_TRAIN_SCHEMA,
         "adapter_id": args.adapter_id,

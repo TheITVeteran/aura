@@ -444,17 +444,32 @@ def _training_diagnostic_failure(
     ):
         return None
     reason = str(termination.get("reason") or "")
-    if reason != "no_learning_signal":
+    if reason == "no_learning_signal":
+        if termination.get("completed_budget") is not False:
+            _fail("training_diagnostic_claims_invalid")
+    elif reason == "training_adequacy_failed":
+        adequacy = grpo_receipt.get("training_adequacy")
+        failed_checks = adequacy.get("failed_checks") if isinstance(adequacy, Mapping) else None
+        if (
+            termination.get("completed_budget") is not True
+            or not isinstance(failed_checks, list)
+            or not failed_checks
+            or adequacy.get("admitted") is not False
+        ):
+            _fail("training_diagnostic_claims_invalid")
+    else:
         return None
     if (
-        termination.get("completed_budget") is not False
-        or verdict.get("had_signal") is not False
+        verdict.get("had_signal") is not False
         or verdict.get("causal_gain_proven") is not False
         or learning_signal.get("learning_signal") is not False
     ):
         _fail("training_diagnostic_claims_invalid")
     diagnosis = str(learning_signal.get("diagnosis") or "unknown")
-    return [f"training:{reason}", f"diagnosis:{diagnosis}"]
+    failures = [f"training:{reason}", f"diagnosis:{diagnosis}"]
+    if reason == "training_adequacy_failed":
+        failures.extend(f"training_adequacy:{check}" for check in failed_checks)
+    return failures
 
 
 def _cmdline_script(cmdline: Sequence[str]) -> str:

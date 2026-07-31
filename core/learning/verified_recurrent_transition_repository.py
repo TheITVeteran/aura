@@ -1806,6 +1806,17 @@ def finalize_verified_recurrent_transition_campaign(
         "policy_state_replay_contract",
         None,
     )
+    if replay_contract_value is not None and not updated_sequences:
+        inactive_replay_contract = validate_policy_state_replay_contract(
+            replay_contract_value,
+            verify_files=False,
+            verify_model=False,
+        )
+        if (
+            inactive_replay_contract["initial_policy_sha256"]
+            != request.campaign_ledger.campaign_manifest()["initial_policy_sha256"]
+        ):
+            _fail("recurrent_campaign_policy_state_replay_contract_mismatch")
     if existing_close is not None:
         existing_payload = existing_close.get("close_payload")
         existing_evidence = (
@@ -1853,7 +1864,7 @@ def finalize_verified_recurrent_transition_campaign(
                 campaign_ledger=request.campaign_ledger,
                 campaign_trust_policy=request.campaign_trust_policy,
             )
-        if replay_contract_value is not None:
+        if replay_contract_value is not None and updated_sequences:
             _fail("recurrent_campaign_existing_close_missing_policy_replay")
         existing_created_at = existing_evidence.get("created_at_unix_ns")
         replay_body = {
@@ -1906,8 +1917,8 @@ def finalize_verified_recurrent_transition_campaign(
         }
     )
     signed_at = (completed_at + 999_999_999) // 1_000_000_000
-    if replay_contract_value is not None:
-        if evidence_schema != CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4 or not updated_sequences:
+    if replay_contract_value is not None and updated_sequences:
+        if evidence_schema != CAUSAL_CAMPAIGN_EVIDENCE_MANIFEST_SCHEMA_V4:
             _fail("recurrent_campaign_policy_state_replay_not_applicable")
         replay_contract = validate_policy_state_replay_contract(
             replay_contract_value,
