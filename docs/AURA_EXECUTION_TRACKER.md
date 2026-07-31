@@ -32347,3 +32347,32 @@ warning and does not count toward the required three demonstrations. A second
 signed rebuild and clean boot are required before counted run 1. Resident-32B
 training remains paused. This is total checkpoint 730. The 730-920 completion
 envelope is approximately 79.3%-100.0%, with an 89.7% midpoint.
+
+### 2026-07-30 - DEMO-Q15 autonomy is an intrinsic runtime invariant
+
+The primary desktop settings surface already displayed autonomous agency as
+always active, and the authority gateway already ignored the retired
+`autonomy.actions_enabled=false` value. A second settings surface and the
+canonical schema still exposed `autonomy.level=paused`, however, and that value
+entered the safe-mode bridge. Aura's agency could therefore still be
+represented and applied as an operator-selected operating level even though the
+main UI claimed otherwise.
+
+Both autonomy keys are now protected runtime invariants. Legacy autonomy-level
+values remain parseable only so old state can be audited and atomically
+reconciled to `full`; new non-default mutations are rejected. The runtime-mode
+bridge responds only to the explicit emergency `safety.safe_mode` control.
+Safe mode continues to contain external effects, but no longer redefines
+thought, identity, learning, initiative, or agency as a user preference. The
+alternate controls surface now presents emergency containment and sensory
+permissions as boundaries and shows autonomous agency as intrinsic and active.
+Consequential external actions still traverse Constitution, Will, standing
+authority, scoped capability tokens, Conscience, and effect receipts.
+
+The focused runtime-settings, control-plane, settings-UI, safe-mode, and
+authority-control gate passes 98/98; bytecode compilation and diff integrity
+pass. The signed installed app still requires a rebuild and three complete
+clean GUI demonstrations. Resource accounting and ontogeny calibration repairs
+from the rejected launch remain in progress. Resident-32B training remains
+paused. This is total checkpoint 731. The 731-920 completion envelope is
+approximately 79.5%-100.0%, with an 89.7% midpoint.

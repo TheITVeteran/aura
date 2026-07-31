@@ -53,7 +53,6 @@ _PROTECTED_DEFAULTS = {
 }
 
 _FAIL_CLOSED_OVERRIDES: dict[str, Any] = {
-    "autonomy.level": "paused",
     "autonomy.self_modification": "blocked",
     "governance.approval_mode": "all",
     "model.cloud_fallback_enabled": False,

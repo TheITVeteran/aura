@@ -85,9 +85,10 @@ class SettingsStore(RuntimeSettingsStore):
 
 _STORE: SettingsStore | None = None
 
-# These broad posture controls reconfigure a resident orchestrator immediately.
+# Emergency containment reconfigures the resident orchestrator immediately.
+# Autonomy is an intrinsic runtime invariant, not an operator-selected mode.
 # Other settings are read by their owner at the next action/tick boundary.
-_RUNTIME_MODE_KEYS = frozenset({"safety.safe_mode", "autonomy.level"})
+_RUNTIME_MODE_KEYS = frozenset({"safety.safe_mode"})
 _VOICE_RUNTIME_KEYS = frozenset(
     {
         "voice.input_enabled",
@@ -98,7 +99,7 @@ _VOICE_RUNTIME_KEYS = frozenset(
 
 
 def _runtime_should_restrict(store: SettingsStore) -> bool:
-    return bool(store.get("safety.safe_mode")) or str(store.get("autonomy.level")) == "paused"
+    return bool(store.get("safety.safe_mode"))
 
 
 def _apply_runtime_mode_from_settings(

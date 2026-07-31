@@ -107,6 +107,23 @@ def test_autonomous_agency_is_a_protected_runtime_invariant(tmp_path):
     assert not (tmp_path / "runtime.json").exists()
 
 
+def test_autonomy_level_is_a_protected_runtime_invariant(tmp_path):
+    store = _store(tmp_path)
+
+    with pytest.raises(
+        ValueError,
+        match="protected_runtime_invariant:autonomy.level",
+    ):
+        store.patch(
+            {"autonomy.level": "paused"},
+            expected_revision=0,
+            request_id="pause-agency",
+        )
+
+    assert store.snapshot().revision == 0
+    assert store.get("autonomy.level") == "full"
+
+
 def test_legacy_disabled_agency_value_is_audited_and_reconciled(tmp_path):
     path = tmp_path / "runtime.json"
     path.write_text(

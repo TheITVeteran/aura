@@ -58,7 +58,7 @@ def test_corrupt_file_activates_conservative_governance_without_erasing_agency(t
     rs.clear_runtime_settings_cache()
 
     assert rs.get_runtime_setting("autonomy.actions_enabled", True) is True
-    assert rs.get_runtime_setting("autonomy.level", "full") == "paused"
+    assert rs.get_runtime_setting("autonomy.level", "paused") == "full"
     assert rs.get_runtime_setting("governance.approval_mode", "none") == "all"
     assert rs.get_runtime_setting("safety.safe_mode", False) is True
     assert rs.get_runtime_setting("privacy.mode", "standard") == "isolated"

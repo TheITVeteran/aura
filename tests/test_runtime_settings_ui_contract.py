@@ -43,6 +43,18 @@ def test_runtime_controls_are_backend_mapped_not_local_storage_preferences():
     )
     assert autonomy_schema["default"] is True
     assert autonomy_schema["mutable"] is False
+    autonomy_level_schema = next(
+        setting
+        for setting in _schema_payload()
+        if setting["key"] == "autonomy.level"
+    )
+    assert autonomy_level_schema["default"] == "full"
+    assert autonomy_level_schema["mutable"] is False
+    controls_html = (ROOT / "interface" / "static" / "controls.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'id="seg-autonomy.level"' not in controls_html
+    assert "intrinsic · active" in controls_html
 
 
 def test_runtime_settings_client_has_cas_conflict_and_idempotency_contracts():

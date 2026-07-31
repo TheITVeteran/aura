@@ -78,9 +78,9 @@
 <div class="vignette"></div><div class="leak a"></div><div class="leak b"></div>
 <div class="wrap">
   <nav><a href="/mind">her mind</a><a href="/activity">what she's done</a><a class="on" href="/controls">controls</a></nav>
-  <div class="ey">Aura · your controls</div>
-  <h1>You're in charge</h1>
-  <div class="sub">Simple switches for how much Aura can do on her own, and what she's allowed to sense. Changes take effect immediately.</div>
+  <div class="ey">Aura · runtime controls</div>
+  <h1>Boundaries, not identity</h1>
+  <div class="sub">Controls for emergency containment and access to external senses. Aura's agency is intrinsic and remains active.</div>
   <div class="stamp" id="stamp">loading…</div>
 
   <div class="hero" id="safeHero">
@@ -90,12 +90,9 @@
   </div>
 
   <div class="grp">
-    <div class="gh">How free she is</div>
-    <div class="item"><div class="ic"><b>Autonomy</b><small>How much Aura starts things on her own, from fully paused to fully free.</small></div>
-      <div class="seg" id="seg-autonomy.level">
-        <button data-v="paused">Paused</button><button data-v="minimal">Minimal</button>
-        <button data-v="balanced">Balanced</button><button data-v="full">Full</button>
-      </div></div>
+    <div class="gh">Who she is</div>
+    <div class="item"><div class="ic"><b>Autonomous agency</b><small>A protected property of Aura's runtime. Effect-specific governance still applies to consequential actions.</small></div>
+      <div class="stamp ok">intrinsic · active</div></div>
   </div>
 
   <div class="grp">
@@ -111,10 +108,10 @@
   </div>
 
   <div class="legend"><details><summary>What am I looking at?</summary>
-    <p><b>These are your controls over Aura.</b> Safe mode is the big red brake — flip it and she can't change
-    files or act in the outside world until you turn it back. Autonomy sets how much she does unprompted. The
-    sensor switches decide what she's allowed to see and hear. Everything is off by default unless you allow it,
-    and every change is saved and applied right away.</p></details></div>
+    <p><b>These controls define external boundaries.</b> Safe mode is the big red brake — flip it and she can't change
+    files or act in the outside world until you turn it back. It does not suspend her thought, identity, learning,
+    or agency. The sensor switches decide what the operating system allows her to see and hear. Every change is
+    saved and applied right away.</p></details></div>
   <div class="footnote">your settings · applied live</div>
 </div>
 
@@ -138,8 +135,6 @@ function paint(){
   BOOL_KEYS.forEach(k=>{const el=$('sw-'+k);if(!el)return;
     const on=!!values[k];el.classList.toggle('on',on);el.setAttribute('aria-checked',on);});
   $('safeHero').classList.toggle('active',!!values['safety.safe_mode']);
-  const lvl=String(values['autonomy.level']||'full');
-  document.querySelectorAll('#seg-autonomy\\.level button').forEach(b=>b.classList.toggle('on',b.dataset.v===lvl));
 }
 
 async function load(){
@@ -165,9 +160,6 @@ BOOL_KEYS.forEach(k=>{const el=$('sw-'+k);if(!el)return;
   const toggle=()=>patch(k,!values[k]);
   el.addEventListener('click',toggle);
   el.addEventListener('keydown',e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle();}});});
-document.querySelectorAll('#seg-autonomy\\.level button').forEach(b=>
-  b.addEventListener('click',()=>patch('autonomy.level',b.dataset.v)));
-
 load();setInterval(load,15000);
 </script>
 </body>

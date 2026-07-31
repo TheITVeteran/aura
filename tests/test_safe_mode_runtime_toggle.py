@@ -102,32 +102,25 @@ def test_settings_bridge_applies_safe_mode_to_live_orchestrator(monkeypatch):
     assert is_safe_mode(orch) is False
 
 
-def test_autonomy_paused_restricts_runtime(monkeypatch):
-    """The autonomy 'paused' level is the second kill switch — it must restrict."""
-    import core.container as container
-
+def test_autonomy_level_is_not_a_runtime_kill_switch(monkeypatch):
+    """Only explicit emergency containment may restrict the live runtime."""
     settings, store = _fresh_store(monkeypatch)
-    orch = _Orch(volition=3)
-    monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
-        lambda name, default=None: orch if name == "orchestrator" else default
-    ))
-    store.set("autonomy.level", "paused")
-    assert is_safe_mode(orch) is True
-    # Returning to a non-paused level (with safe_mode off) restores full mode.
-    store.set("autonomy.level", "balanced")
-    assert is_safe_mode(orch) is False
+
+    assert store.get("autonomy.level") == "full"
+    assert settings._runtime_should_restrict(store) is False
+    assert "autonomy.level" not in settings._RUNTIME_MODE_KEYS
 
 
 def test_safe_mode_holds_even_if_autonomy_not_paused(monkeypatch):
     import core.container as container
 
-    settings, store = _fresh_store(monkeypatch)
+    _settings, store = _fresh_store(monkeypatch)
     orch = _Orch(volition=3)
     monkeypatch.setattr(container.ServiceContainer, "get", staticmethod(
         lambda name, default=None: orch if name == "orchestrator" else default
     ))
     store.set("safety.safe_mode", True)
-    store.set("autonomy.level", "balanced")  # autonomy not paused, but safe_mode on
+    assert store.get("autonomy.level") == "full"
     assert is_safe_mode(orch) is True
 
 

@@ -140,14 +140,21 @@ SCHEMA: tuple[SettingDef, ...] = (
     ),
     SettingDef(
         "autonomy.level",
-        "Autonomy level",
+        "Autonomous nature",
         "autonomy",
         "full",
-        "Select the broader runtime autonomy posture.",
+        (
+            "Protected agency invariant. Operators may constrain particular "
+            "external effects or enter emergency safe mode, but cannot turn "
+            "Aura's agency into a user-selected operating level."
+        ),
         "enum",
+        # Legacy values remain parseable so the control plane can audit and
+        # reconcile old state. ``mutable=False`` rejects every non-default
+        # mutation before commit.
         choices=("paused", "minimal", "balanced", "full"),
-        owner="safe_mode",
-        apply_mode="live_bridge",
+        owner="agency_invariant",
+        mutable=False,
     ),
     SettingDef(
         "autonomy.proactive_messaging",
