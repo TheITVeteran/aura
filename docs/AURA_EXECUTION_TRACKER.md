@@ -32787,3 +32787,28 @@ contract, preflights, trust services, launch bundle, launchd controller, and
 resident canary are required. No reasoning-gain, frontier, promotion, or
 `WOW Signal` claim is made. This is total checkpoint 744. The 744-920
 completion envelope is approximately 80.9%-100.0%, with a 90.4% midpoint.
+
+### 2026-07-31 - CP420S25 MLX-0.32 resident canary preregistration
+
+CP420S25 is freshly preregistered from pushed clean commit `4abf70d61`. It
+retains CP420S24's 12-task depth-four curriculum, complete 320-token causal
+traces, observable answer and gradient boundary, rank-eight final-eight-layer
+adapter scope, signed transition admission, checkpoint-per-step persistence,
+and non-promotable claim boundary.
+
+The changed engineering object is now part of the frozen contract. The runtime
+identity binds CPython 3.12.13 on Darwin arm64, MLX 0.32.0, MLX Metal 0.32.0,
+MLX-LM 0.31.3, and NumPy 2.4.4. Project metadata, direct requirements, the
+generated hash lock, synchronized MLX reclamation, and the launchd-owned
+training controller are all in the executable source inventory. The contract
+verifies against the resident model, behavior bundle, execution graph,
+curriculum, runtime, dependency manifests, and repaired source with SHA-256
+`f9fd2c415128e0cc475dcfecd1522cdec38dfecef307d1579a7ecc88eb41c5c6`.
+
+No CP420S25 resident model, probe, optimizer update, or scientific test has run
+yet. Initial-policy and answer-channel preflights, fresh isolated signer trust
+services, signed launch materialization, launchd controller installation,
+detached execution, and a strict update-canary verdict remain required. The
+canary is ineligible for reasoning-gain, frontier, promotion, or `WOW Signal`
+claims. This is total checkpoint 745. The 745-920 completion envelope is
+approximately 81.0%-100.0%, with a 90.5% midpoint.
