@@ -414,12 +414,22 @@ def _verified_trajectory_config_commitment(
     }
 
 
-def _training_parameters_for_profile(profile: str) -> Mapping[str, Any]:
+def _training_parameters_for_profile(
+    profile: str,
+    *,
+    seed: int | None = None,
+) -> Mapping[str, Any]:
     if profile == FULL_TRAINING_PROFILE:
-        return TRAINING_PARAMETERS
-    if profile == UPDATE_CANARY_PROFILE:
-        return UPDATE_CANARY_PARAMETERS
-    _fail("campaign_profile_invalid")
+        parameters = TRAINING_PARAMETERS
+    elif profile == UPDATE_CANARY_PROFILE:
+        parameters = UPDATE_CANARY_PARAMETERS
+    else:
+        _fail("campaign_profile_invalid")
+    if seed is None:
+        return parameters
+    if type(seed) is not int or not 0 <= seed < 2**63:
+        _fail("training_seed_invalid")
+    return {**parameters, "seed": seed}
 
 
 def _watchdog_policy_for_profile(profile: str) -> Mapping[str, Any]:
@@ -576,6 +586,7 @@ def build_contract(
     execution_spec: str = DEFAULT_SPEC,
     artifact_root: str = DEFAULT_ROOT,
     committed_at: str,
+    training_seed: int | None = None,
     model_identity: Mapping[str, Any] | None = None,
     behavior_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -583,7 +594,10 @@ def build_contract(
         _fail("campaign_id_invalid")
     if campaign_profile not in CAMPAIGN_PROFILES:
         _fail("campaign_profile_invalid")
-    params = _training_parameters_for_profile(campaign_profile)
+    params = _training_parameters_for_profile(
+        campaign_profile,
+        seed=training_seed,
+    )
     training_task_count = (
         len(params["domains"])
         * len(params["depths"])
@@ -866,7 +880,17 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     campaign_profile = contract.get("campaign_profile")
     if campaign_profile not in CAMPAIGN_PROFILES:
         _fail("campaign_profile_invalid")
-    expected_parameters = _training_parameters_for_profile(str(campaign_profile))
+    training = contract.get("training")
+    if not isinstance(training, Mapping):
+        _fail("training_contract_invalid")
+    observed_parameters = training.get("parameters")
+    if not isinstance(observed_parameters, Mapping):
+        _fail("training_contract_invalid")
+    training_seed = observed_parameters.get("seed")
+    expected_parameters = _training_parameters_for_profile(
+        str(campaign_profile),
+        seed=training_seed,
+    )
     expected_watchdog = _watchdog_policy_for_profile(str(campaign_profile))
     expected_resource_envelope = _resource_envelope_for_profile(str(campaign_profile))
     try:
@@ -894,8 +918,7 @@ def validate_contract(contract: Mapping[str, Any], *, verify_model: bool = True)
     if dict(spec_record) != expected_spec:
         _fail("execution_spec_binding_mismatch")
     paths = contract.get("paths")
-    training = contract.get("training")
-    if not isinstance(paths, Mapping) or not isinstance(training, Mapping):
+    if not isinstance(paths, Mapping):
         _fail("training_contract_invalid")
     expected_argv = _training_argv(
         campaign_id=campaign_id,
@@ -2741,6 +2764,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--execution-spec", default=DEFAULT_SPEC)
     prepare.add_argument("--artifact-root", default=DEFAULT_ROOT)
     prepare.add_argument("--committed-at", required=True)
+    prepare.add_argument("--training-seed", type=int)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--contract", default=DEFAULT_CONTRACT)
     verify.add_argument("--skip-model", action="store_true")
@@ -2793,6 +2817,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 execution_spec=args.execution_spec,
                 artifact_root=args.artifact_root,
                 committed_at=args.committed_at,
+                training_seed=args.training_seed,
             )
             _write_once(Path(args.contract), contract)
             receipt = validate_contract(contract, verify_model=True)

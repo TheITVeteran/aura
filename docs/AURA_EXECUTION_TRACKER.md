@@ -16,16 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 755 repairs the exact
-  S28 failure that appeared only after its first admissible resident-32B group:
-  verified trajectory receipts now bind the externally observed optimization
-  prefix while retaining the complete sampled-sequence identity. S28 is
-  retired after five safe rejections and one pre-mutation objective failure;
-  a fresh source-bound S29 contract and canary remain next. No policy update or
-  gain claim exists.**
-- Previous implementation milestone: **Checkpoint 754 froze CP420S28 from
-  clean CP753 source with twelve targeted register-trace training tasks and
-  three disjoint holdouts.**
+- Current active implementation milestone: **Checkpoint 756 makes a fresh
+  canary seed an explicit immutable preregistration input while fixing every
+  other profile parameter. This prevents S29 from reusing S28 task and answer
+  identities; clean-source S29 contract generation and disjointness proof are
+  next. No policy update or gain claim exists.**
+- Previous implementation milestone: **Checkpoint 755 repaired the exact S28
+  optimization-prefix receipt failure while preserving historical replay. S28
+  is retired after five safe rejections and one pre-mutation objective
+  failure.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33205,3 +33204,30 @@ and signer custody, followed by the same controller-owned canary. No reasoning-
 gain, frontier, promotion, release, or `WOW Signal` claim is made. This is total
 checkpoint 755. The 755-920 completion envelope is approximately 82.1%-100.0%,
 with a 91.0% midpoint.
+
+### 2026-07-31 - Fresh canary seed preregistration control
+
+The update-canary profile previously carried one source-level seed. Reusing it
+for S29 would reproduce S28's already observed task and answer identities,
+invalidating the new campaign's freshness even though the source digest and
+campaign identifier changed. Preregistration now accepts an explicit
+`--training-seed` only at contract creation. The seed is range-checked, sealed
+inside the contract, and independently reconstructs the exact training argv
+and complete train/holdout dataset commitment during every later validation.
+All other profile parameters remain fixed.
+
+Historical contracts remain replayable under their original default seeds. A
+resealed seed-only substitution fails because its argv and dataset commitment
+no longer reconstruct, and negative, Boolean, or out-of-range seeds fail before
+contract creation. Fresh-seed, tamper, and invalid-input regressions pass 5/5;
+the complete preregistration, launch materialization, production runner,
+post-training controller, and trainer-contract matrix passes 130/130. Lint,
+bytecode compilation, and diff integrity pass.
+
+No resident process ran in this checkpoint. The next action is to create S29
+from clean pushed CP756 source with a new seed, prove zero task/prompt overlap
+against S28, then run the clean policy and answer-channel preflights before
+provisioning fresh signers and a new PID-1 controller. No reasoning-gain,
+frontier, promotion, release, or `WOW Signal` claim is made. This is total
+checkpoint 756. The 756-920 completion envelope is approximately 82.2%-100.0%,
+with a 91.1% midpoint.

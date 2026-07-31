@@ -188,6 +188,56 @@ def test_update_canary_uses_exact_full_stack_with_bounded_nonclaim_dose():
     )
 
 
+def test_update_canary_accepts_only_a_contract_bound_fresh_training_seed():
+    default = prereg.build_contract(
+        campaign_id="resident-32b-recurrent-grpo-cp420s28-update-canary",
+        campaign_profile=prereg.UPDATE_CANARY_PROFILE,
+        committed_at="2026-07-31T11:55:00-07:00",
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+    fresh = prereg.build_contract(
+        campaign_id="resident-32b-recurrent-grpo-cp420s29-update-canary",
+        campaign_profile=prereg.UPDATE_CANARY_PROFILE,
+        committed_at="2026-07-31T13:30:00-07:00",
+        training_seed=2026073101,
+        model_identity=BASE_IDENTITY,
+        behavior_identity=BEHAVIOR_IDENTITY,
+    )
+
+    receipt = prereg.validate_contract(fresh, verify_model=False)
+    parameters = fresh["training"]["parameters"]
+    argv = fresh["training"]["argv"]
+    assert receipt["campaign_profile"] == prereg.UPDATE_CANARY_PROFILE
+    assert parameters["seed"] == 2026073101
+    assert argv[argv.index("--seed") + 1] == "2026073101"
+    assert (
+        fresh["training"]["dataset"]["sha256"]
+        != default["training"]["dataset"]["sha256"]
+    )
+
+    attacked = copy.deepcopy(fresh)
+    attacked["training"]["parameters"]["seed"] += 1
+    material = dict(attacked)
+    material.pop("contract_sha256")
+    attacked["contract_sha256"] = prereg._document_sha(material)
+    with pytest.raises(prereg.PreregistrationError, match="training_contract_mismatch"):
+        prereg.validate_contract(attacked, verify_model=False)
+
+
+@pytest.mark.parametrize("seed", [-1, 2**63, True])
+def test_update_canary_rejects_invalid_training_seed(seed):
+    with pytest.raises(prereg.PreregistrationError, match="training_seed_invalid"):
+        prereg.build_contract(
+            campaign_id="resident-32b-recurrent-grpo-cp420s29-update-canary",
+            campaign_profile=prereg.UPDATE_CANARY_PROFILE,
+            committed_at="2026-07-31T13:30:00-07:00",
+            training_seed=seed,
+            model_identity=BASE_IDENTITY,
+            behavior_identity=BEHAVIOR_IDENTITY,
+        )
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
