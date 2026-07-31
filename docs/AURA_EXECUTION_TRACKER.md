@@ -32551,3 +32551,37 @@ initial-policy and answer-channel probes, fresh signer services, launch bundle,
 and detached update canary remain the immediate admission sequence. This is
 total checkpoint 737. The 737-920 completion envelope is approximately
 80.1%-100.0%, with a 90.1% midpoint.
+
+### 2026-07-30 - CP420S21 generated-evidence/source-integrity collision
+
+CP420S21 passed its resident initial-policy probe and complete answer-channel
+preflight, provisioned four process-isolated external signer services, and
+launched under the signed production bundle. The detached supervisor, child
+process, sleep inhibitor, heartbeat, and step-zero checkpoint were all
+observable. The recurrent baseline completed 12/12 tasks at 4/12 correct and
+was durably checkpointed. Before the vanilla baseline or any optimizer update,
+the detached supervisor terminated the child because its frozen execution tree
+appeared to change.
+
+The mutation was generated evidence, not source code. Training creates
+immutable `.py` source snapshots below its untracked training-output directory.
+The generic detached runner excluded its own status directory but continued to
+classify every other untracked executable-suffix file as potential source.
+Once the first training snapshots appeared, the runner interpreted its own
+evidence as a post-freeze source addition and failed closed. CP420S21 remains a
+valid rejected canary with no optimizer update and no reasoning-gain claim; its
+partial baseline is not reused across a changed source contract.
+
+Detached launch plans now accept explicitly declared mutable output roots. An
+output root must be a strict child of the working tree. Tracked files and
+explicit command inputs remain impossible to exclude, and newly tracking any
+file beneath an exclusion still invalidates the manifest. The resident
+campaign launcher binds only its campaign-specific training-output directory,
+leaving the repository, contract, launcher, signer clients, and all unrelated
+untracked executable source frozen.
+
+The complete detached-supervisor and resident-preregistration gate passes
+75/75; bytecode compilation and diff integrity pass. A fresh CP420S22
+source-bound canary, probes, signers, bundle, and launch are required before
+full training admission. This is total checkpoint 738. The 738-920 completion
+envelope is approximately 80.2%-100.0%, with a 90.1% midpoint.

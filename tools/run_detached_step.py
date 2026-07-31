@@ -4789,6 +4789,12 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
     if not cwd.is_dir():
         parser.error("--cwd must resolve to a directory")
     run_dir = Path(args.run_dir).expanduser().resolve(strict=False)
+    output_roots: list[Path] = []
+    for value in args.execution_output_root:
+        output_root = Path(value).expanduser().resolve(strict=False)
+        if output_root == cwd or not output_root.is_relative_to(cwd):
+            parser.error("--execution-output-root must be a strict child of --cwd")
+        output_roots.append(output_root)
     receipt_path = run_dir / RECEIPT_FILE
     resume_verifier = _parse_optional_command_json(parser, args.resume_verifier_json)
     broker_policy_specs = _parse_broker_policy_json(parser, args.broker_policy_json)
@@ -4800,7 +4806,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         args.resume_contract,
         resume_verifier,
         broker_policy_specs,
-        (run_dir,),
+        (run_dir, *output_roots),
         args.containment_mode,
     )
     recovered_stale_child = False
@@ -5135,6 +5141,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "use the supervisor no-fork wrapper, or verify and execute one "
             "already deny-default sandboxed target without nesting"
+        ),
+    )
+    launch.add_argument(
+        "--execution-output-root",
+        action="append",
+        default=[],
+        help=(
+            "strict child of --cwd whose untracked generated outputs may change; "
+            "tracked source and explicit command inputs remain ineligible for exclusion"
         ),
     )
     launch.add_argument("--resume", action="store_true")

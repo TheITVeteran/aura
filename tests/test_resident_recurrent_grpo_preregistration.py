@@ -778,8 +778,10 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     assert isinstance(argv, list)
     verifier = json.loads(argv[argv.index("--resume-verifier-json") + 1])
     broker_policy = json.loads(argv[argv.index("--broker-policy-json") + 1])
-    command = argv[argv.index("--broker-policy-json") + 2 :]
+    output_root = argv[argv.index("--execution-output-root") + 1]
+    command = argv[argv.index(str(venv_python)) :]
     assert verifier[0] == str(venv_python)
+    assert output_root == str(tmp_path / contract["paths"]["training_output"])
     assert command[0] == str(venv_python)
     assert str(Path(venv_python).resolve()) not in verifier
     assert str(Path(venv_python).resolve()) not in command

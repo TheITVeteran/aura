@@ -2116,6 +2116,13 @@ def _launch_training(
             must_exist=False,
         )
     )
+    training_output = str(
+        _repo_path(
+            str(contract["paths"]["training_output"]),
+            role="training_output",
+            must_exist=False,
+        )
+    )
     verifier = json.dumps(
         [python, tool, "verify-resume", "--contract", contract_absolute],
         separators=(",", ":"),
@@ -2178,6 +2185,8 @@ def _launch_training(
         verifier,
         "--broker-policy-json",
         json.dumps(broker_policy, separators=(",", ":")),
+        "--execution-output-root",
+        training_output,
     ]
     if resume:
         argv.append("--resume")

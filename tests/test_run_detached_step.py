@@ -288,6 +288,7 @@ def _launch(
     resume_verifier: list[str] | None = None,
     broker_policy: list[dict] | None = None,
     cwd: Path | None = None,
+    execution_output_roots: list[Path] | None = None,
 ) -> dict:
     resume_args = ["--resume"] if resume else []
     if resume_contract == "target_checkpoint" and resume_verifier is None:
@@ -302,6 +303,11 @@ def _launch(
         if broker_policy is not None
         else []
     )
+    output_args = [
+        argument
+        for root in execution_output_roots or []
+        for argument in ("--execution-output-root", str(root))
+    ]
     result = subprocess.run(
         [
             sys.executable,
@@ -319,6 +325,7 @@ def _launch(
             resume_contract,
             *verifier_args,
             *broker_args,
+            *output_args,
             *resume_args,
             "--",
             *command,
@@ -1246,6 +1253,41 @@ def test_execution_manifest_rejects_excluding_tracked_source(tmp_path: Path) -> 
             "none",
             execution_exclusion_roots=(source_dir,),
         )
+
+
+def test_detached_launch_allows_declared_generated_source_output(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    script = repository / "target.py"
+    output_root = repository / "artifacts" / "training"
+    script.write_text(
+        (
+            "from pathlib import Path\n"
+            f"root = Path({str(output_root)!r})\n"
+            "root.mkdir(parents=True)\n"
+            "(root / 'source_snapshot.py').write_text(\"stable = True\\n\")\n"
+            "import time\n"
+            "time.sleep(1.5)\n"
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "target.py"], cwd=repository, check=True)
+
+    launch = _launch(
+        repository / "artifacts" / "detached",
+        [sys.executable, str(script)],
+        timeout_s=10.0,
+        cwd=repository,
+        execution_output_roots=[output_root],
+    )
+    receipt = _wait_for(Path(launch["receipt_path"]), timeout_s=10.0)
+
+    assert receipt["status"] == "passed"
+    plan = detached._read_json(Path(launch["run_dir"]) / detached.PLAN_FILE)
+    assert str(output_root) in plan["target_execution_manifest"]["excluded_roots"]
 
 
 def test_mutated_resume_verifier_is_rejected_before_replay(
