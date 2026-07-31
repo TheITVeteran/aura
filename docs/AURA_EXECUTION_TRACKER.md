@@ -16,7 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 753 binds the next
+- Current active implementation milestone: **Checkpoint 754 freezes CP420S28
+  from clean CP753 source with twelve targeted training tasks and three
+  disjoint holdouts. Resident policy and answer-channel preflights remain next;
+  optimizer training has not restarted and no gain claim exists.**
+- Previous implementation milestone: **Checkpoint 753 bound the next
   engineering canary to twelve fresh register-trace tasks across depths 2, 4,
   and 8, the only family with independently reproduced safe recurrent signal.
   A fresh source-bound contract remains the next gate; optimizer training has
@@ -33128,3 +33132,27 @@ resident model and behavior identities, and only then run fresh policy and
 answer-channel preflights. No reasoning-gain, frontier, promotion, or
 `WOW Signal` claim is made. This is total checkpoint 753. The 753-920
 completion envelope is approximately 81.8%-100.0%, with a 90.9% midpoint.
+
+### 2026-07-31 - CP420S28 targeted update-canary preregistration
+
+CP420S28 is frozen from clean pushed CP753 source. Its contract verifies the
+resident 32B checkpoint and behavior bundle, targeted twelve-task
+register-trace training corpus, three disjoint holdouts, exact recurrent graph,
+v2 optimizer/claim admission split, intervention objective, host and MLX
+runtime, dependency manifests, process-rotation and watchdog policy, and every
+executable source binding. The immutable contract SHA-256 is
+`7ec5e3912c7cf35ea7955e54ebd983740389795e0e2358acb9c7e1f0a202232f`.
+
+This contract remains an engineering-only, nonpromotable canary. It requires
+at least three independently receipted policy updates, distinct policy
+digests, complete checkpoint and evaluation schedules, external policy-state
+replay for every mutation, base-checkpoint immutability, and a closed signed
+campaign. It cannot establish reasoning gain, frontier performance, release
+eligibility, or a `WOW Signal`, including when it updates successfully.
+
+No resident model process has run under CP420S28 yet. The initial-policy probe,
+answer-channel preflight, fresh process-isolated signer services, signed launch
+bundle, PID-1 controller, detached supervisor, sleep inhibitor, moving
+heartbeat, step-zero checkpoint, and process-rotated training remain required.
+This is total checkpoint 754. The 754-920 completion envelope is approximately
+82.0%-100.0%, with a 91.0% midpoint.
