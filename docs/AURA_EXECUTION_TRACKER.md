@@ -32705,3 +32705,27 @@ stopped canary with no optimizer update and no reasoning-gain claim. A fresh
 source-bound canary is required before full training. This is total checkpoint
 742. The 742-920 completion envelope is approximately 80.7%-100.0%, with a
 90.3% midpoint.
+
+### 2026-07-31 - CP420S24 observable-terminal canary preregistration
+
+CP420S24 is freshly preregistered from clean commit `89d12bd35` after the
+observable-terminal repair. It retains the same bounded, non-promotable
+12-step dose, production recurrent graph, complete 320-token causal evidence,
+rank-eight adapter scope, verified trajectory objectives, disjoint 12/12
+depth-four curriculum, checkpoint-per-step persistence, exact resume, external
+signers, detached watchdog, and resource envelope as CP420S23.
+
+Its scoring and mutation semantics now differ in one deliberate way: the
+visible response and optimization token mask are independently reconstructed
+from sealed tokenizer evidence, while the complete fixed-budget parent/child
+traces remain available for causal replay and drift admission. The contract
+verifies against the resident model, behavior bundle, execution
+specification, curriculum, and complete repaired source inventory with SHA-256
+`58b40a6b93ae04770c0f710ab58141695a4bbbd8cec2df939bfa56656b84332a`.
+
+CP420S24 remains ineligible for reasoning-gain, frontier, promotion, or
+`WOW Signal` claims. Its resident policy probe, answer-channel preflight,
+fresh signer trust root, signed launch materialization, detached execution,
+and post-run update-canary verdict remain required before the full campaign
+may launch. This is total checkpoint 743. The 743-920 completion envelope is
+approximately 80.8%-100.0%, with a 90.4% midpoint.
