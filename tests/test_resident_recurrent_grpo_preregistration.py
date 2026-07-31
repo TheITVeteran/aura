@@ -748,10 +748,12 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
             "release_manifest": str(release),
             "timeout_millis": 30_000,
         }
-    (tmp_path / "bundle.json").write_text(
+    bundle_path = tmp_path / "bundle.json"
+    bundle_path.write_text(
         json.dumps({"bundle_sha256": "a" * 64, "signers": signers}),
         encoding="ascii",
     )
+    bundle_file_sha256 = hashlib.sha256(bundle_path.read_bytes()).hexdigest()
     captured: dict[str, object] = {}
 
     def fake_detached_main(argv):
@@ -767,7 +769,7 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
         prereg._launch_training(
             contract_path,
             resume=False,
-            expected_launch_bundle_sha256="a" * 64,
+            expected_launch_bundle_sha256=bundle_file_sha256,
         )
         == 0
     )
@@ -783,7 +785,7 @@ def test_launch_training_preserves_virtualenv_launcher_path(tmp_path, monkeypatc
     assert str(Path(venv_python).resolve()) not in command
     assert command[-2:] == [
         "--expected-launch-bundle-sha256",
-        "a" * 64,
+        bundle_file_sha256,
     ]
     assert len(broker_policy) == 2
     assert all("--request-file" in row["command"] for row in broker_policy)

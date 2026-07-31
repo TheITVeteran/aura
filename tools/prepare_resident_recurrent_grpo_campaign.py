@@ -2120,13 +2120,15 @@ def _launch_training(
         [python, tool, "verify-resume", "--contract", contract_absolute],
         separators=(",", ":"),
     )
-    bundle = _strict_json(
-        _repo_path(
-            str(contract["paths"]["verified_launch_bundle"]),
-            role="verified_launch_bundle",
-        )
+    bundle_path = _repo_path(
+        str(contract["paths"]["verified_launch_bundle"]),
+        role="verified_launch_bundle",
     )
-    if bundle.get("bundle_sha256") != _sha256_value:
+    bundle = _strict_json(bundle_path)
+    observed_bundle_file_sha256 = _sha256(
+        read_stable_bytes(bundle_path, max_bytes=512 * 1024 * 1024)
+    )
+    if observed_bundle_file_sha256 != _sha256_value:
         _fail("verified_launch_bundle_digest_invalid")
     from core.learning.verified_transition_production_factory import (
         detached_signer_broker_paths,

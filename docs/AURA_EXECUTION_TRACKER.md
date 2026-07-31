@@ -32504,3 +32504,33 @@ resident ownership. Resident initial-policy and answer-channel probes, external
 signer provisioning, signed launch materialization, and the detached canary
 remain next. This is total checkpoint 735. The 735-920 completion envelope is
 approximately 79.9%-100.0%, with a 89.9% midpoint.
+
+### 2026-07-30 - CP420S20 external launch-digest binding repair
+
+CP420S20 passed its resident initial-policy probe and the complete
+answer-channel preflight: all 6/6 responses were structurally valid and all
+6/6 were correct. Four process-isolated signer services were provisioned and
+the production launch bundle materialized. The launch gate then refused before
+creating a training process or performing an optimizer update.
+
+The refusal exposed a launch-controller defect rather than scientific
+evidence. A production bundle carries an internal canonical-body self-hash and
+an external hash of the complete immutable file. The controller compared the
+operator-supplied external file digest to the internal self-hash, guaranteeing
+rejection when both integrity layers were correctly present. The downstream
+provider already validates each layer independently.
+
+The detached launcher now hashes the actual launch-bundle bytes through the
+stable read gateway and compares that value to the externally supplied digest.
+It retains the bundle's internal self-hash for the downstream structural
+validator. The regression fixture deliberately gives the bundle distinct
+internal and external hashes and proves the file digest is propagated unchanged
+to the contained training executable.
+
+The full preregistration, materialization, production runner, signer, bundle,
+watchdog, and detached-launch gate passes 53/53; bytecode compilation, lint, and
+diff integrity pass. CP420S20 remains immutable and retired with no optimizer
+update or gain claim because its frozen launcher source is now superseded. A
+fresh CP420S21 canary contract, probes, signers, bundle, and launch are required.
+This is total checkpoint 736. The 736-920 completion envelope is approximately
+80.0%-100.0%, with a 90.0% midpoint.
