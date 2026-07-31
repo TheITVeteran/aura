@@ -19,6 +19,8 @@ from core.learning.verified_token_trace import (
     TokenizerTraceAdapter,
     build_verified_token_trace,
     canonical_behavior_logprob,
+    observable_completion_from_trace,
+    validate_observable_completion,
     validate_verified_token_trace,
 )
 from core.learning.verified_transition_episode import (
@@ -26,9 +28,7 @@ from core.learning.verified_transition_episode import (
     canonical_json_bytes,
 )
 
-RECURRENT_TRANSITION_EVIDENCE_SCHEMA = (
-    "aura.verified_transition.recurrent_evidence.v1"
-)
+RECURRENT_TRANSITION_EVIDENCE_SCHEMA = "aura.verified_transition.recurrent_evidence.v2"
 _DOCUMENT_KEYS = frozenset(
     {
         "schema",
@@ -47,6 +47,8 @@ _DOCUMENT_KEYS = frozenset(
         "child_token_trace",
         "parent_response_sha256",
         "child_response_sha256",
+        "parent_observable_completion",
+        "child_observable_completion",
         "parent_score",
         "child_score",
         "created_at_unix_ns",
@@ -168,6 +170,42 @@ def _trace_responses(
     if not isinstance(parent_response, str) or not isinstance(child_response, str):
         _fail("recurrent_evidence_response_invalid")
     return parent, child, parent_response, child_response
+
+
+def _observable_completion(trace: Mapping[str, Any]) -> dict[str, Any]:
+    generation = trace["generation"]
+    return observable_completion_from_trace(
+        token_ids=generation["token_ids"],
+        streaming_deltas=generation["streaming_deltas"],
+        tokenizer_bundle=trace["tokenizer_bundle"],
+    )
+
+
+def optimization_token_counts_from_evidence(
+    transition_evidence: Sequence[Any],
+) -> tuple[int, ...]:
+    """Return only externally replayed child-prefix lengths for an objective."""
+
+    counts: list[int] = []
+    for evidence in transition_evidence:
+        document = getattr(evidence, "document", None)
+        if not isinstance(document, Mapping):
+            _fail("recurrent_evidence_observable_completion_missing")
+        observable = document.get("child_observable_completion")
+        if not isinstance(observable, Mapping):
+            _fail("recurrent_evidence_observable_completion_missing")
+        count = observable.get("optimization_token_count")
+        full_count = observable.get("full_token_count")
+        if (
+            type(count) is not int
+            or type(full_count) is not int
+            or not 1 <= count <= full_count
+        ):
+            _fail("recurrent_evidence_observable_completion_invalid")
+        counts.append(count)
+    if not counts:
+        _fail("recurrent_evidence_observable_completion_missing")
+    return tuple(counts)
 
 
 def _score(
@@ -305,14 +343,16 @@ def build_verified_recurrent_transition_evidence(
         raise VerifiedRecurrentTransitionEvidenceError(
             "recurrent_evidence_token_trace_invalid"
         ) from exc
-    if child_response != supplied_completion:
-        _fail("recurrent_evidence_completion_mismatch")
     parent_trace, child_trace, parent_response, child_response = _trace_responses(
         parent_trace,
         child_trace,
         adapter=tokenizer_trace_adapter,
         expected_tokenizer_bundle_sha256=tokenizer_bundle_sha256,
     )
+    parent_observable = _observable_completion(parent_trace)
+    child_observable = _observable_completion(child_trace)
+    if child_observable["response_text"] != supplied_completion:
+        _fail("recurrent_evidence_completion_mismatch")
     body = {
         "schema": RECURRENT_TRANSITION_EVIDENCE_SCHEMA,
         "episode_id": pair["episode_id"],
@@ -340,8 +380,18 @@ def build_verified_recurrent_transition_evidence(
         "child_response_sha256": hashlib.sha256(
             child_response.encode("utf-8")
         ).hexdigest(),
-        "parent_score": _score(task, parent_response, independent_scorer),
-        "child_score": _score(task, child_response, independent_scorer),
+        "parent_observable_completion": parent_observable,
+        "child_observable_completion": child_observable,
+        "parent_score": _score(
+            task,
+            parent_observable["response_text"],
+            independent_scorer,
+        ),
+        "child_score": _score(
+            task,
+            child_observable["response_text"],
+            independent_scorer,
+        ),
         "created_at_unix_ns": created_at_unix_ns,
     }
     document = {**body, "receipt_sha256": _digest(body)}
@@ -417,6 +467,23 @@ def validate_verified_recurrent_transition_evidence(
         adapter=tokenizer_trace_adapter,
         expected_tokenizer_bundle_sha256=tokenizer_bundle_sha256,
     )
+    try:
+        parent_observable = validate_observable_completion(
+            normalized.get("parent_observable_completion"),
+            token_ids=parent_trace["generation"]["token_ids"],
+            streaming_deltas=parent_trace["generation"]["streaming_deltas"],
+            tokenizer_bundle=parent_trace["tokenizer_bundle"],
+        )
+        child_observable = validate_observable_completion(
+            normalized.get("child_observable_completion"),
+            token_ids=child_trace["generation"]["token_ids"],
+            streaming_deltas=child_trace["generation"]["streaming_deltas"],
+            tokenizer_bundle=child_trace["tokenizer_bundle"],
+        )
+    except ValueError as exc:
+        raise VerifiedRecurrentTransitionEvidenceError(
+            "recurrent_evidence_observable_completion_invalid"
+        ) from exc
     if (
         pair != sample.get("causal_transition_pair")
         or pair["episode_id"] != normalized.get("episode_id")
@@ -441,9 +508,9 @@ def validate_verified_recurrent_transition_evidence(
         or normalized.get("child_response_sha256")
         != hashlib.sha256(child_response.encode("utf-8")).hexdigest()
         or normalized.get("parent_score")
-        != _score(task, parent_response, independent_scorer)
+        != _score(task, parent_observable["response_text"], independent_scorer)
         or normalized.get("child_score")
-        != _score(task, child_response, independent_scorer)
+        != _score(task, child_observable["response_text"], independent_scorer)
         or not isinstance(normalized.get("parent_score"), Mapping)
         or set(normalized["parent_score"]) != _SCORE_KEYS
         or not isinstance(normalized.get("child_score"), Mapping)
@@ -464,5 +531,6 @@ __all__ = [
     "VerifiedRecurrentTransitionEvidence",
     "VerifiedRecurrentTransitionEvidenceError",
     "build_verified_recurrent_transition_evidence",
+    "optimization_token_counts_from_evidence",
     "validate_verified_recurrent_transition_evidence",
 ]

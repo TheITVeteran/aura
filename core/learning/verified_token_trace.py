@@ -22,10 +22,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import Any, Never, Protocol, runtime_checkable
 
+from core.brain.llm.latent_cortex.answer_contract import contract_answer_state
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 
 TOKENIZER_BUNDLE_SCHEMA = "aura.verified_tokenizer_bundle.v1"
 VERIFIED_TOKEN_TRACE_SCHEMA = "aura.verified_token_trace.v1"
+OBSERVABLE_COMPLETION_SCHEMA = "aura.observable_completion.v1"
 
 _MAX_TOKEN_ID = (1 << 63) - 1
 _MAX_TOKEN_COUNT = 1_000_000
@@ -125,6 +127,116 @@ def _require_text(value: Any, *, role: str) -> str:
     except UnicodeEncodeError:
         _fail(f"{role}_utf8_invalid")
     return value
+
+
+def observable_completion_from_trace(
+    *,
+    token_ids: Sequence[int],
+    streaming_deltas: Sequence[str],
+    tokenizer_bundle: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Derive the first response a production decoder could expose.
+
+    Causal transition proofs retain a fixed token budget so parent and child
+    traces remain matched. Training must not grade or optimize text generated
+    after the answer contract or EOS has already terminated the visible
+    response. The boundary is therefore reconstructed from committed token
+    IDs, prefix-stable streaming deltas, and the bound tokenizer's EOS ID.
+    """
+
+    tokens = _require_token_ids(
+        token_ids,
+        role="observable_completion_token_ids",
+        allow_empty=False,
+    )
+    if (
+        not isinstance(streaming_deltas, Sequence)
+        or isinstance(streaming_deltas, (str, bytes))
+        or len(streaming_deltas) != len(tokens)
+    ):
+        _fail("observable_completion_stream_invalid")
+    deltas = [
+        _require_text(delta, role="observable_completion_delta")
+        for delta in streaming_deltas
+    ]
+    bundle = validate_tokenizer_bundle_identity(tokenizer_bundle)
+    eos_token_id = bundle["special_token_map"].get("eos_token_id")
+    if eos_token_id is not None and type(eos_token_id) is not int:
+        _fail("observable_completion_eos_invalid")
+
+    response_parts: list[str] = []
+    token_count = len(tokens)
+    termination = "fixed_token_budget"
+    terminal_token_id: int | None = None
+    for index, (token_id, delta) in enumerate(zip(tokens, deltas, strict=True)):
+        response_parts.append(delta)
+        state = contract_answer_state("".join(response_parts))
+        if state.get("valid") is True:
+            token_count = index + 1
+            termination = "contract_complete"
+            break
+        if eos_token_id is not None and token_id == eos_token_id:
+            token_count = index + 1
+            termination = "eos_token"
+            terminal_token_id = eos_token_id
+            break
+
+    response_text = "".join(deltas[:token_count])
+    body = {
+        "schema": OBSERVABLE_COMPLETION_SCHEMA,
+        "full_token_count": len(tokens),
+        "optimization_token_count": token_count,
+        "termination": termination,
+        "terminal_token_id": terminal_token_id,
+        "response_text": response_text,
+        "response_utf8_sha256": _sha256_bytes(response_text.encode("utf-8")),
+    }
+    return {**body, "receipt_sha256": _sha256_json(body)}
+
+
+def observable_completion_from_adapter(
+    adapter: TokenizerTraceAdapter,
+    token_ids: Sequence[int],
+) -> dict[str, Any]:
+    """Replay and seal the observable prefix through one bound tokenizer."""
+
+    tokens = _require_token_ids(
+        token_ids,
+        role="observable_completion_token_ids",
+        allow_empty=False,
+    )
+    deltas = _call_adapter(
+        adapter.stream_decode_deltas,
+        tokens,
+        role="observable_completion_stream_decode",
+    )
+    return observable_completion_from_trace(
+        token_ids=tokens,
+        streaming_deltas=deltas,
+        tokenizer_bundle=_adapter_bundle(adapter),
+    )
+
+
+def validate_observable_completion(
+    value: Any,
+    *,
+    token_ids: Sequence[int],
+    streaming_deltas: Sequence[str],
+    tokenizer_bundle: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Reject a caller-selected boundary by recomputing the complete receipt."""
+
+    expected = observable_completion_from_trace(
+        token_ids=token_ids,
+        streaming_deltas=streaming_deltas,
+        tokenizer_bundle=tokenizer_bundle,
+    )
+    if not isinstance(value, Mapping):
+        _fail("observable_completion_invalid")
+    observed = _canonical_clone(value, role="observable_completion")
+    if observed != expected:
+        _fail("observable_completion_mismatch")
+    return expected
 
 
 def _require_token_ids(
@@ -804,6 +916,7 @@ def validate_verified_token_trace(
 
 __all__ = [
     "HuggingFaceTokenizerTraceAdapter",
+    "OBSERVABLE_COMPLETION_SCHEMA",
     "TOKENIZER_BUNDLE_SCHEMA",
     "TokenizerTraceAdapter",
     "VERIFIED_TOKEN_TRACE_SCHEMA",
@@ -812,9 +925,12 @@ __all__ = [
     "build_tokenizer_bundle_identity",
     "build_verified_token_trace",
     "canonical_behavior_logprob",
+    "observable_completion_from_adapter",
+    "observable_completion_from_trace",
     "tokenizer_adapter_source_sha256",
     "tokenizer_file_bindings",
     "tokenizer_file_bindings_from_bytes",
+    "validate_observable_completion",
     "validate_tokenizer_bundle_identity",
     "validate_verified_token_trace",
     "validate_verified_token_trace_structure",

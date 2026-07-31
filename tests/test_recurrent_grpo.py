@@ -21,6 +21,9 @@ from mlx.utils import tree_flatten  # noqa: E402
 from mlx_lm.models.qwen2 import Model, ModelArgs  # noqa: E402
 
 import core.learning.recurrent_grpo as recurrent_grpo_runtime  # noqa: E402
+from core.brain.llm.latent_cortex.campaign_journal import (  # noqa: E402
+    canonical_json_bytes,
+)
 from core.brain.llm.latent_cortex.execution_spec import (  # noqa: E402
     RLCExecutionSpec,
 )
@@ -587,6 +590,9 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
     assert replayed.document["child_token_trace"]["generation"]["response_text"].startswith(
         "江山 "
     )
+    assert replayed.document["child_observable_completion"][
+        "optimization_token_count"
+    ] == len(sample.tokens)
     stored_sample = json.loads(replayed.document["sample_receipt_json"])
     assert stored_sample["tokens"] == list(pair.child.tokens)
     reward = build_verified_transition_reward_batch(
@@ -618,6 +624,26 @@ def test_causal_pair_becomes_independently_replayable_transition_evidence(
         validate_verified_recurrent_transition_evidence(
             store,
             attacked,
+            task=Task(),
+            independent_scorer=score,
+            tokenizer_trace_adapter=adapter,
+            expected_tokenizer_bundle_sha256=bundle["bundle_sha256"],
+            campaign_trust_policy=policy,
+        )
+    boundary_attack = copy.deepcopy(replayed.document)
+    boundary_attack["child_observable_completion"]["optimization_token_count"] = 1
+    boundary_unsigned = dict(boundary_attack)
+    boundary_unsigned.pop("receipt_sha256")
+    boundary_attack["receipt_sha256"] = hashlib.sha256(
+        canonical_json_bytes(boundary_unsigned)
+    ).hexdigest()
+    with pytest.raises(
+        VerifiedRecurrentTransitionEvidenceError,
+        match="observable_completion_invalid",
+    ):
+        validate_verified_recurrent_transition_evidence(
+            store,
+            boundary_attack,
             task=Task(),
             independent_scorer=score,
             tokenizer_trace_adapter=adapter,
@@ -932,8 +958,24 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
         max_clipped_token_fraction=1.0,
         max_old_policy_approx_kl=1.0,
     )
+    tokenizer_bundle = build_tokenizer_bundle_identity(
+        tokenizer_class="test.SignedCausalTokenizer",
+        tokenizer_files=tokenizer_file_bindings_from_bytes(
+            {
+                "tokenizer.json": b'{"kind":"numeric"}',
+                "tokenizer_config.json": b'{"separator":" "}',
+            }
+        ),
+        chat_template=None,
+        special_token_map={},
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="9" * 64,
+    )
 
     class Tokenizer:
+        bundle_identity = tokenizer_bundle
+
         @staticmethod
         def apply_chat_template(_messages, **_kwargs):
             return "rendered"
@@ -947,6 +989,17 @@ def test_trainer_executes_exact_pre_admitted_causal_group_without_retries():
             return " ".join(str(token) for token in tokens)
 
         decode_output = decode
+
+        @classmethod
+        def stream_decode_deltas(cls, tokens):
+            rendered = [
+                cls.decode_output(tokens[: index + 1])
+                for index in range(len(tokens))
+            ]
+            return [
+                value if index == 0 else value[len(rendered[index - 1]) :]
+                for index, value in enumerate(rendered)
+            ]
 
     class Task:
         task_id = "signed-causal-task"
@@ -1838,3 +1891,80 @@ def test_exact_adjoint_group_matches_monolithic_recurrent_grpo_gradient():
     for key in monolithic_flat:
         difference = float(mx.max(mx.abs(monolithic_flat[key] - streamed_flat[key])))
         assert difference < 2e-4, key
+
+
+def test_exact_adjoint_masks_post_terminal_tokens_from_policy_objective(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _prepared(seed=983)
+    _set_adapter_delta(model, 0.02)
+    prompt = [5, 9, 17]
+    spec = _spec(
+        depth=2,
+        branch_roles=("constructive_solution", "critical_audit"),
+    )
+    sampling = RecurrentSamplingConfig(
+        max_tokens=2,
+        max_abs_logprob_drift=2.0,
+        max_mean_abs_logprob_drift=2.0,
+        max_clipped_token_fraction=1.0,
+        max_old_policy_approx_kl=1.0,
+    )
+    samples = [
+        recurrent_policy_sample_from_causal_pair(
+            sample_final_recurrent_transition_pair(
+                model,
+                prompt,
+                spec=spec,
+                branch_index=branch,
+                seed=seed,
+                sampling=sampling,
+                episode_id=f"terminal-mask-{branch}-{seed}",
+            ),
+            sampling=sampling,
+        )
+        for branch, seed in ((0, 89), (1, 97))
+    ]
+    captured: dict[str, object] = {}
+    sentinel = object()
+
+    def fake_objective(
+        _model,
+        _prompt,
+        completion_tokens,
+        branch_indices,
+        rewards,
+        **kwargs,
+    ):
+        captured["completion_tokens"] = completion_tokens
+        captured["branch_indices"] = branch_indices
+        captured["rewards"] = rewards
+        captured["behavior_logprobs"] = kwargs["behavior_logprobs"]
+        return sentinel
+
+    monkeypatch.setattr(
+        recurrent_grpo_runtime,
+        "exact_adjoint_verifier_group_value_and_grad",
+        fake_objective,
+    )
+    result = exact_adjoint_sampled_group_value_and_grad(
+        model,
+        prompt,
+        samples,
+        (1.0, 0.0),
+        spec=spec,
+        config=RecurrentGRPOConfig(
+            max_initial_clip_fraction=1.0,
+            max_initial_old_policy_approx_kl=1.0,
+        ),
+        optimization_token_counts=(1, 2),
+    )
+    assert result is sentinel
+    assert captured["completion_tokens"] == [
+        samples[0].tokens[:1],
+        samples[1].tokens,
+    ]
+    assert captured["behavior_logprobs"] == [
+        samples[0].behavior_logprobs[:1],
+        samples[1].behavior_logprobs,
+    ]

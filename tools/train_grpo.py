@@ -86,6 +86,9 @@ from core.learning.verifiable_tasks import (  # noqa: E402
     disjoint_split,
     scaling_report,
 )
+from core.learning.verified_token_trace import (  # noqa: E402
+    observable_completion_from_adapter,
+)
 from core.learning.verified_transition_measurement_chain import (  # noqa: E402
     VerifiedTransitionMeasurementChainStore,
 )
@@ -1650,7 +1653,11 @@ def sample_recurrent_group(
                 raise RuntimeError("causal recurrent sample differs from signed group plan")
             validate_recurrent_policy_sample_receipt(sample.receipt())
             samples.append(sample)
-            completions.append(token_trace_adapter.decode_output(sample.tokens))
+            observable = observable_completion_from_adapter(
+                token_trace_adapter,
+                sample.tokens,
+            )
+            completions.append(observable["response_text"])
         return prompt_tokens, samples, completions
     samples = []
     completions: list[str] = []

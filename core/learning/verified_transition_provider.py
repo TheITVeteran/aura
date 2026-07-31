@@ -48,6 +48,7 @@ from core.learning.verified_recurrent_transition_repository import (
 )
 from core.learning.verified_token_trace import (
     TokenizerTraceAdapter,
+    observable_completion_from_adapter,
     validate_tokenizer_bundle_identity,
 )
 from core.learning.verified_transition_episode import (
@@ -989,13 +990,17 @@ class ProductionVerifiedTransitionGroupProvider:
         observed_seeds: list[int] = []
         for sample, completion in zip(samples, completions, strict=True):
             observed_seeds.append(getattr(sample, "seed", None))
+            observable = observable_completion_from_adapter(
+                self._tokenizer_trace_adapter,
+                sample.tokens,
+            )
             if (
                 getattr(sample, "policy_sha256", None) != policy_sha256
                 or getattr(sample, "execution_spec_sha256", None)
                 != commitment["recurrent_execution_spec_sha256"]
                 or getattr(sample, "prompt_tokens_sha256", None)
                 != commitment["prompt_tokens_sha256"]
-                or self._tokenizer_trace_adapter.decode_output(sample.tokens) != completion
+                or observable["response_text"] != completion
             ):
                 _fail("provider_runtime_sample_commitment_mismatch")
         if observed_seeds != commitment["sample_seeds"]:

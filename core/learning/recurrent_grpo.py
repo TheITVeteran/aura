@@ -2869,18 +2869,34 @@ def exact_adjoint_sampled_group_value_and_grad(
     spec: RLCExecutionSpec,
     bridge_tokens: Sequence[int] = (),
     config: RecurrentGRPOConfig | None = None,
+    optimization_token_counts: Sequence[int] | None = None,
 ) -> ExactAdjointRecurrentGRPOResult:
     """Validate immutable sample provenance before one recurrent update."""
 
     resolved = config or RecurrentGRPOConfig()
     if len(samples) < 2 or len(samples) != len(rewards):
         raise ValueError("samples and rewards must align with at least two entries")
+    token_counts = (
+        tuple(len(sample.tokens) for sample in samples)
+        if optimization_token_counts is None
+        else tuple(optimization_token_counts)
+    )
+    if (
+        len(token_counts) != len(samples)
+        or any(
+            type(count) is not int or not 1 <= count <= len(sample.tokens)
+            for sample, count in zip(samples, token_counts, strict=True)
+        )
+    ):
+        raise ValueError("optimization token counts must align with sampled traces")
     prompt_sha256 = _tokens_sha256(prompt_tokens)
     expected_policy = recurrent_policy_sha256(model, spec)
     old_policy_approx_kl = 0.0
     clip_fraction = 0.0
     group_scale = 1.0 / len(samples)
-    for index, sample in enumerate(samples):
+    for index, (sample, optimization_token_count) in enumerate(
+        zip(samples, token_counts, strict=True)
+    ):
         if not isinstance(sample, RecurrentPolicySample):
             raise TypeError(f"sample {index} is not a RecurrentPolicySample")
         validate_recurrent_policy_sample_receipt(sample.receipt())
@@ -2933,14 +2949,11 @@ def exact_adjoint_sampled_group_value_and_grad(
             raise ValueError(f"sample {index} drift receipt differs")
         if maximum_index != sample.max_abs_logprob_drift_token_index:
             raise ValueError(f"sample {index} maximum-drift index differs")
-        old_policy_approx_kl += (
-            group_scale * sum((ratio - 1.0) - math.log(ratio) for ratio in ratios) / len(ratios)
-        )
-        sample_clip_fraction = sum(
+        full_sample_clip_fraction = sum(
             abs(ratio - 1.0) > float(resolved.clip_epsilon) for ratio in ratios
         ) / len(ratios)
         if not math.isclose(
-            sample_clip_fraction,
+            full_sample_clip_fraction,
             float(sample.clipped_token_fraction),
             rel_tol=0.0,
             abs_tol=1e-9,
@@ -2949,12 +2962,22 @@ def exact_adjoint_sampled_group_value_and_grad(
         if (
             maximum > float(sample.sampling_config.max_abs_logprob_drift)
             or mean > float(sample.sampling_config.max_mean_abs_logprob_drift)
-            or sample_clip_fraction > float(sample.sampling_config.max_clipped_token_fraction)
+            or full_sample_clip_fraction
+            > float(sample.sampling_config.max_clipped_token_fraction)
             or float(sample.old_policy_approx_kl)
             > float(sample.sampling_config.max_old_policy_approx_kl)
         ):
             raise ValueError(f"sample {index} admission receipt is inconsistent")
-        clip_fraction += group_scale * sample_clip_fraction
+        observable_ratios = ratios[:optimization_token_count]
+        observable_old_kl = sum(
+            (ratio - 1.0) - math.log(ratio) for ratio in observable_ratios
+        ) / len(observable_ratios)
+        old_policy_approx_kl += group_scale * observable_old_kl
+        observable_clip_fraction = sum(
+            abs(ratio - 1.0) > float(resolved.clip_epsilon)
+            for ratio in observable_ratios
+        ) / len(observable_ratios)
+        clip_fraction += group_scale * observable_clip_fraction
     if clip_fraction > float(resolved.max_initial_clip_fraction):
         raise RecurrentGroupClipAdmissionError(
             clip_fraction=clip_fraction,
@@ -2970,11 +2993,17 @@ def exact_adjoint_sampled_group_value_and_grad(
     return exact_adjoint_verifier_group_value_and_grad(
         model,
         prompt_tokens,
-        [sample.tokens for sample in samples],
+        [
+            sample.tokens[:token_count]
+            for sample, token_count in zip(samples, token_counts, strict=True)
+        ],
         [sample.branch_index for sample in samples],
         rewards,
         spec=spec,
-        behavior_logprobs=[sample.behavior_logprobs for sample in samples],
+        behavior_logprobs=[
+            sample.behavior_logprobs[:token_count]
+            for sample, token_count in zip(samples, token_counts, strict=True)
+        ],
         bridge_tokens=bridge_tokens,
         config=resolved,
     )
@@ -2993,6 +3022,7 @@ def _with_verified_trajectory_group_objective(
     bridge_tokens: Sequence[int],
     trajectory_group_config: VerifiedTrajectoryGroupConfig,
     advantage_clip: float,
+    optimization_token_counts: Sequence[int] | None = None,
 ) -> ExactAdjointRecurrentGRPOResult:
     """Add quality-weighted trajectory gradients after verified admission."""
 
@@ -3008,6 +3038,19 @@ def _with_verified_trajectory_group_objective(
         )
     if len(samples) != len(rewards) or len(samples) != base.completion_count:
         raise ValueError("verified trajectory samples and rewards must align")
+    token_counts = (
+        tuple(len(sample.tokens) for sample in samples)
+        if optimization_token_counts is None
+        else tuple(optimization_token_counts)
+    )
+    if (
+        len(token_counts) != len(samples)
+        or any(
+            type(count) is not int or not 1 <= count <= len(sample.tokens)
+            for sample, count in zip(samples, token_counts, strict=True)
+        )
+    ):
+        raise ValueError("verified trajectory optimization boundaries are invalid")
     if any(not isinstance(sample, RecurrentPolicySample) for sample in samples):
         raise TypeError("verified trajectory samples must be RecurrentPolicySample")
     trajectory = trajectory_group_config.trajectory_config
@@ -3107,24 +3150,27 @@ def _with_verified_trajectory_group_objective(
             if intervention_enabled
             else None
         )
+        completion_tokens = sample.tokens[
+            : token_counts[completion_index]
+        ]
         exact = exact_adjoint_composite_live_path_value_and_grad(
             model,
             prompt_tokens,
-            sample.tokens,
+            completion_tokens,
             spec=spec,
             trajectory_config=scaled_trajectory,
             intervention_config=scaled_intervention,
             policy_sha256=policy_sha256,
             bridge_tokens=bridge_tokens,
             branch_index=sample.branch_index,
-            token_loss_weights=(0.0,) * len(sample.tokens),
+            token_loss_weights=(0.0,) * len(completion_tokens),
         )
         add_gradients(exact.gradients)
         trajectory_value += float(exact.value)
         quality_receipts.append(
             {
                 "completion_index": completion_index,
-                "completion_tokens_sha256": _tokens_sha256(sample.tokens),
+                "completion_tokens_sha256": _tokens_sha256(completion_tokens),
                 "advantage_weight": weight,
                 "objective_receipt": exact.receipt(),
             }
@@ -3147,6 +3193,7 @@ def _with_verified_trajectory_group_objective(
         key=lambda index: (normalized_rewards[index], -index),
     )
     anchor = samples[anchor_index]
+    anchor_tokens = anchor.tokens[: token_counts[anchor_index]]
     structural_receipt: dict[str, Any] | None = None
     if structural_enabled:
         structural_config = (
@@ -3168,7 +3215,7 @@ def _with_verified_trajectory_group_objective(
         exact = exact_adjoint_composite_live_path_value_and_grad(
             model,
             prompt_tokens,
-            anchor.tokens,
+            anchor_tokens,
             spec=spec,
             trajectory_config=structural_config,
             policy_sha256=policy_sha256,
@@ -3176,13 +3223,13 @@ def _with_verified_trajectory_group_objective(
             branch_index=None,
             diversity_weight=trajectory_group_config.diversity_weight,
             diversity_target_cos=trajectory_group_config.diversity_target_cos,
-            token_loss_weights=(0.0,) * len(anchor.tokens),
+            token_loss_weights=(0.0,) * len(anchor_tokens),
         )
         add_gradients(exact.gradients)
         trajectory_value += float(exact.value)
         structural_receipt = {
             "anchor_completion_index": anchor_index,
-            "anchor_completion_tokens_sha256": _tokens_sha256(anchor.tokens),
+            "anchor_completion_tokens_sha256": _tokens_sha256(anchor_tokens),
             "objective_receipt": exact.receipt(),
         }
         del exact
@@ -3278,6 +3325,9 @@ def exact_adjoint_verified_transition_group_value_and_grad(
     scalar reward therefore has no path into this proof-grade objective.
     """
 
+    from core.learning.verified_recurrent_transition_evidence import (
+        optimization_token_counts_from_evidence,
+    )
     from core.learning.verified_transition_group_admission import (
         validate_verified_transition_group_admission,
     )
@@ -3301,6 +3351,17 @@ def exact_adjoint_verified_transition_group_value_and_grad(
         samples,
         prompt_tokens,
     )
+    optimization_token_counts = (
+        optimization_token_counts_from_evidence(transition_evidence)
+        if all(
+            isinstance(sample, RecurrentPolicySample)
+            and sample.sample_kind == "causal_final_transition"
+            for sample in samples
+        )
+        else tuple(len(sample.tokens) for sample in samples)
+    )
+    if len(optimization_token_counts) != len(samples):
+        raise ValueError("verified transition optimization boundaries differ")
     if trajectory_group_config is not None and not isinstance(
         trajectory_group_config,
         VerifiedTrajectoryGroupConfig,
@@ -3329,6 +3390,7 @@ def exact_adjoint_verified_transition_group_value_and_grad(
         spec=spec,
         bridge_tokens=bridge_tokens,
         config=resolved_config,
+        optimization_token_counts=optimization_token_counts,
     )
     if trajectory_group_config is None:
         return result
@@ -3344,6 +3406,7 @@ def exact_adjoint_verified_transition_group_value_and_grad(
         bridge_tokens=bridge_tokens,
         trajectory_group_config=trajectory_group_config,
         advantage_clip=resolved_config.advantage_clip,
+        optimization_token_counts=optimization_token_counts,
     )
 
 

@@ -32661,3 +32661,47 @@ inventory with contract SHA-256
 No CP420S23 resident probe or optimizer update has run yet. This is total
 checkpoint 741. The 741-920 completion envelope is approximately
 80.5%-100.0%, with a 90.3% midpoint.
+
+### 2026-07-31 - CP420S23 observable-terminal training repair
+
+CP420S23 passed its resident initial-policy and answer-channel preflights, then
+launched with four process-isolated signers, a PID-1 detached supervisor and
+child, an attached sleep inhibitor, a moving heartbeat, and zero restarts. Its
+12-task recurrent baseline completed at 4/12 correct and became durable. The
+first five signed causal groups also became durable without a source-integrity,
+UTF-8, signer, containment, or liveness failure, but none was admitted for an
+optimizer update.
+
+The canary exposed a contradiction between two individually valid contracts.
+Causal parent/child evidence deliberately decodes exactly 320 tokens so both
+traces remain matched and independently replayable. The answer grader requires
+one terminal `FINAL_ANSWER` line. The resident model frequently completed that
+line early, emitted EOS, and then continued through unreachable fixed-budget
+tokens. The training path graded the complete 320-token research trace and
+would also have assigned scalar policy credit to the unreachable tail. A valid
+answer could therefore be reported as unparseable, while a future admitted
+update could reinforce text that serving would never expose.
+
+The canary was intentionally stopped after five durable rejected groups and
+before any optimizer mutation. Replaying its ten resident samples through the
+repaired boundary changes the answer-channel observation from 0/10 parseable
+to 8/10 parseable and 5/10 correct. This is a diagnosis, not a gain claim.
+
+Fixed-budget causal traces remain byte-for-byte complete. Each recurrent
+evidence record now also seals the earliest production-observable boundary,
+derived from committed token IDs, prefix-stable streaming deltas, the bound
+tokenizer EOS ID, and the first strictly valid answer contract. Provider and
+independent-verifier paths recompute that receipt and reject a caller-selected
+or tampered boundary. Grading uses only the observable response. Policy loss,
+PPO clipping/KL admission, and trajectory-composite objectives use only the
+evidence-derived token prefix; full-trace drift and runtime-integrity admission
+remain intact.
+
+The tokenizer, recurrent objective, provider, external replay, evidence,
+campaign, recovery, transaction, and production-factory gates pass 317/317.
+Bytecode compilation, lint, diff integrity, explicit boundary-tamper rejection,
+and direct post-terminal gradient exclusion pass. CP420S23 remains an immutable
+stopped canary with no optimizer update and no reasoning-gain claim. A fresh
+source-bound canary is required before full training. This is total checkpoint
+742. The 742-920 completion envelope is approximately 80.7%-100.0%, with a
+90.3% midpoint.

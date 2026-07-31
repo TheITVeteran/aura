@@ -15,8 +15,10 @@ from core.learning.verified_token_trace import (
     build_tokenizer_bundle_identity,
     build_verified_token_trace,
     canonical_behavior_logprob,
+    observable_completion_from_trace,
     tokenizer_adapter_source_sha256,
     tokenizer_file_bindings_from_bytes,
+    validate_observable_completion,
     validate_verified_token_trace,
     validate_verified_token_trace_structure,
 )
@@ -26,6 +28,82 @@ def test_behavior_logprob_canonicalization_is_stable_for_integral_values() -> No
     assert canonical_behavior_logprob(-1.0) == "-1"
     assert canonical_behavior_logprob(0.0) == "0"
     assert canonical_behavior_logprob("-1.2500") == "-1.25"
+
+
+def test_observable_completion_stops_at_first_valid_contract_before_eos() -> None:
+    bundle = _bundle()
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class=bundle["tokenizer_class"],
+        tokenizer_files=bundle["tokenizer_files"],
+        chat_template="{% for message in messages %}{{ message.content }}{% endfor %}",
+        special_token_map={"eos_token_id": 99},
+        encode_options=bundle["encode_options"],
+        decode_options=bundle["decode_options"],
+        implementation_source_sha256=bundle["implementation_source_sha256"],
+    )
+    observed = observable_completion_from_trace(
+        token_ids=[10, 11, 99, 12],
+        streaming_deltas=(
+            "reason\n",
+            'FINAL_ANSWER: {"value":1}',
+            "<|im_end|>",
+            " unreachable",
+        ),
+        tokenizer_bundle=bundle,
+    )
+    assert observed["optimization_token_count"] == 2
+    assert observed["termination"] == "contract_complete"
+    assert observed["response_text"].endswith('FINAL_ANSWER: {"value":1}')
+
+
+def test_observable_completion_eos_prevents_late_answer_cherry_pick() -> None:
+    bundle = build_tokenizer_bundle_identity(
+        tokenizer_class="test.EosTokenizer",
+        tokenizer_files=tokenizer_file_bindings_from_bytes(
+            {
+                "tokenizer.json": b"{}",
+                "tokenizer_config.json": b"{}",
+            }
+        ),
+        chat_template=None,
+        special_token_map={"eos_token_id": 99},
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="7" * 64,
+    )
+    observed = observable_completion_from_trace(
+        token_ids=[10, 99, 11],
+        streaming_deltas=(
+            "unfinished",
+            "<|im_end|>",
+            '\nFINAL_ANSWER: {"value":1}',
+        ),
+        tokenizer_bundle=bundle,
+    )
+    assert observed["optimization_token_count"] == 2
+    assert observed["termination"] == "eos_token"
+    assert "FINAL_ANSWER" not in observed["response_text"]
+
+
+def test_observable_completion_rejects_tampered_boundary() -> None:
+    bundle = _bundle()
+    observed = observable_completion_from_trace(
+        token_ids=[10, 11],
+        streaming_deltas=("reason", " only"),
+        tokenizer_bundle=bundle,
+    )
+    tampered = copy.deepcopy(observed)
+    tampered["optimization_token_count"] = 1
+    with pytest.raises(
+        VerifiedTokenTraceError,
+        match="observable_completion_mismatch",
+    ):
+        validate_observable_completion(
+            tampered,
+            token_ids=[10, 11],
+            streaming_deltas=("reason", " only"),
+            tokenizer_bundle=bundle,
+        )
 
 
 def _sha256(value: bytes) -> str:
