@@ -329,3 +329,77 @@ class TestTelemetryGaugesAreBounded:
 
         for name, (lo, hi, default) in TelemetryPayload._BOUNDS.items():
             assert lo <= default <= hi, name
+
+
+class TestAnnotationsAreNotChecks:
+    """CP126: "Direct AdapterError construction bypasses enum and numeric
+    validation."
+
+    A dataclass annotation is documentation. Callers built these with a bare
+    string kind, so __str__ raised AttributeError on self.kind.value — an
+    error object that crashes while being REPORTED is the worst possible
+    time to fail, because it destroys the context of the original failure it
+    was carrying.
+    """
+
+    def test_a_string_kind_is_coerced_to_the_enum(self):
+        from core.adapters.typed_result import AdapterError, AdapterErrorKind
+
+        error = AdapterError(kind="timeout", message="slow")
+        assert error.kind is AdapterErrorKind.TIMEOUT
+
+    def test_str_no_longer_raises_on_a_string_kind(self):
+        """The actual failure mode."""
+        from core.adapters.typed_result import AdapterError
+
+        assert str(AdapterError(kind="timeout", message="slow")) == "[timeout] slow"
+
+    def test_an_unrecognised_kind_becomes_unknown_not_an_exception(self):
+        from core.adapters.typed_result import AdapterError, AdapterErrorKind
+
+        error = AdapterError(kind="not_a_real_kind", message="x")
+        assert error.kind is AdapterErrorKind.UNKNOWN
+
+    @pytest.mark.parametrize(("value", "expected"), [(NAN, 0.0), (-5.0, 0.0), (99999.0, 3600.0)])
+    def test_retry_delay_is_bounded(self, value, expected):
+        """It feeds a sleep: NaN compares False against every bound, a
+        negative is an instant retry storm, an enormous one is a hang."""
+        from core.adapters.typed_result import AdapterError
+
+        assert AdapterError(kind="timeout", message="x", retry_after_s=value).retry_after_s == expected
+
+    def test_a_valid_delay_survives(self):
+        from core.adapters.typed_result import AdapterError
+
+        assert AdapterError(kind="timeout", message="x", retry_after_s=2.5).retry_after_s == 2.5
+
+
+class TestASubstitutedZeroIsDistinguishable:
+    """CP126: "Invalid numeric inputs collapse to zero and become
+    valid-looking."
+
+    Collapsing to zero is correct for the arithmetic — a receptor score has
+    to be a number — but a completely broken signal then scored identically
+    to a real signal with no activation, and the receptor chosen from it
+    carried no sign it was chosen on nothing.
+    """
+
+    @pytest.mark.parametrize("value", [NAN, INF, -INF, "x", None])
+    def test_unusable_input_is_reported_as_unusable(self, value):
+        from core.adaptation.spatial_receptor_code import clamp_with_validity
+
+        clamped, usable = clamp_with_validity(value)
+        assert clamped == 0.0
+        assert usable is False
+
+    def test_a_genuine_zero_is_reported_as_usable(self):
+        from core.adaptation.spatial_receptor_code import clamp_with_validity
+
+        assert clamp_with_validity(0.0) == (0.0, True)
+
+    def test_the_historical_shape_is_unchanged(self):
+        from core.adaptation.spatial_receptor_code import _clamp
+
+        assert _clamp(NAN) == 0.0
+        assert _clamp(0.7) == 0.7
+        assert _clamp(3.0) == 1.0
