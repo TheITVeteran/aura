@@ -33850,3 +33850,29 @@ A fresh S36 is required because both executable source and frozen source
 inventory changed. No reasoning-gain, frontier, promotion, release, or
 `WOW Signal` claim is made. This is total checkpoint 773. The 773-920
 completion envelope is approximately 84.0%-100.0%, with a 92.0% midpoint.
+
+### 2026-08-01 - CP774 complete-source S36 canary preregistration
+
+CP420S36 is frozen from clean pushed CP773 source `627be4a0d` with training
+seed `2026080105`. Its immutable semantic contract SHA-256 is
+`76e53e22d3e0cff4c35961eb516d50f4d2579b71c5eb1439bad6333c08c49303`;
+the serialized contract file SHA-256 is
+`0adb9a020c3a96c2a8f3c0ad041c87ef3ab203551a04cb9ef5f4e0826bf06b32`.
+The source inventory now independently binds both recurrence and answer-
+channel task generators, including answer-channel source SHA-256
+`7ddc640eb824bf523caef4a2e57c385f7b4feb2f827d8a07e46ec42208dbe61a`.
+
+Training, initial policy, answer channel, and causal preflight all carry LoRA
+initialization seed `3753745017`. The read-only probes bind frozen initial
+dataset digest
+`82b40a137f37d764a6e26a60f070b65f5a15edc9ec317a0a378ea45c92b5a5ce`
+and initial source-manifest digest
+`ef6fa75be2a98a2d2b4f637b3a2f0c0396d67aea45b4d8a6a17b392b17e25aec`.
+Reconstructing S28 through S36 found zero task-ID and zero prompt overlap
+between S36 and every earlier canary, plus zero S36 train/holdout overlap.
+
+No resident process ran in this checkpoint. S36 must pass all detached and
+independently reconstructed read-only gates before any trainer is eligible.
+No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is
+made. This is total checkpoint 774. The 774-920 completion envelope is
+approximately 84.1%-100.0%, with a 92.1% midpoint.
