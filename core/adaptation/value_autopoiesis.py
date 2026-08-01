@@ -18,20 +18,20 @@ Key design decisions:
 Wired into the DreamerV2 sleep cycle as step 5.8.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import json
 import logging
+import math
 import os
 import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.ValueAutopoiesis")
@@ -42,6 +42,21 @@ _STATE_PATH = _DATA_DIR / "autopoiesis_state.json"
 
 # Bounds
 _MAX_CYCLE_DELTA = 0.03       # Maximum change per dream cycle per value
+def _bounded(value: Any, low: float, high: float, field_name: str) -> float:
+    """Coerce a documented-range field, rejecting non-finite input.
+
+    Raises rather than silently substituting: evidence that cannot be
+    interpreted must not quietly become a value shift.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a number, got {value!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"{field_name} must be finite, got {value!r}")
+    return max(low, min(high, number))
+
+
 _DRIFT_ACCEPTANCE = 0.15      # Total drift from origin before identity check triggers
 _MIN_EVIDENCE = 3             # Minimum evidence count before adjusting a value
 _MAX_EVIDENCE_ENTRIES = working_history_retention_policy("AURA_VALUE_EVIDENCE_MAX").max_items
@@ -57,7 +72,34 @@ class OutcomeEvidence:
     context: str                # Brief description
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def __post_init__(self) -> None:
+        """Enforce the ranges this class documents.
+
+        These fields steer mutation of Aura's own VALUES, and the documented
+        bounds were never checked: a NaN or an out-of-range quality flowed
+        straight into the weighted averages that decide how her drives change.
+        NaN is the dangerous one — it compares False against every threshold and
+        then poisons every mean it enters, so an unusable signal silently became
+        an identity shift. Validation lives here rather than in record_evidence
+        so no construction path can bypass it.
+        """
+        self.drive_name = str(self.drive_name or "").strip()[:120]
+        if not self.drive_name:
+            raise ValueError("OutcomeEvidence requires a drive_name")
+        self.outcome_quality = _bounded(self.outcome_quality, -1.0, 1.0, "outcome_quality")
+        self.engagement_level = _bounded(self.engagement_level, 0.0, 1.0, "engagement_level")
+        self.free_energy = _bounded(self.free_energy, 0.0, 1.0, "free_energy")
+        # Context is free text from callers and is only ever logged or stored;
+        # bounding it keeps one enormous string out of the evidence ledger.
+        self.context = str(self.context or "")[:2000]
+        try:
+            self.timestamp = float(self.timestamp)
+        except (TypeError, ValueError):
+            self.timestamp = time.time()
+        if not math.isfinite(self.timestamp):
+            self.timestamp = time.time()
+
+    def to_dict(self) -> dict[str, Any]:
         return {
             "drive_name": self.drive_name,
             "outcome_quality": self.outcome_quality,
@@ -80,7 +122,7 @@ class ValueShift:
     cycle_id: int
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "value_name": self.value_name,
             "old_weight": round(self.old_weight, 4),
@@ -116,10 +158,10 @@ class ValueAutopoiesis:
     """
 
     def __init__(self) -> None:
-        self._evidence: List[OutcomeEvidence] = []
-        self._shift_history: List[ValueShift] = []
+        self._evidence: list[OutcomeEvidence] = []
+        self._shift_history: list[ValueShift] = []
         self._cycle_count: int = 0
-        self._origin_values: Dict[str, float] = {}  # Snapshot at first load
+        self._origin_values: dict[str, float] = {}  # Snapshot at first load
         self._started = False
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._load_state()
@@ -164,7 +206,7 @@ class ValueAutopoiesis:
 
     # ── Dream Cycle Evolution ───────────────────────────────────────────
 
-    async def evolve_cycle(self) -> List[ValueShift]:
+    async def evolve_cycle(self) -> list[ValueShift]:
         """Run one value evolution cycle (called during dream/sleep).
 
         When the DynamicValueGraph is available, evidence is forwarded
@@ -187,15 +229,22 @@ class ValueAutopoiesis:
             return []
 
         # ── Try DynamicValueGraph first (V2 pipeline) ────────────────
+        #
+        # Once this pipeline has touched shared state, falling back to the
+        # legacy one is NOT a recovery — it is a second, uncoordinated mutation
+        # of the same values from the same evidence, on top of whatever the
+        # graph already applied. The flag records the point of no return.
+        graph_engaged = False
         try:
             from core.adaptation.dynamic_value_graph import (
-                get_dynamic_value_graph,
                 EvidenceType,
                 ValueEvidence,
+                get_dynamic_value_graph,
             )
             graph = get_dynamic_value_graph()
 
             # Forward all evidence to the graph
+            graph_engaged = True
             for ev in self._evidence:
                 graph.record_evidence(ValueEvidence(
                     evidence_type=EvidenceType.OUTCOME_QUALITY,
@@ -249,6 +298,27 @@ class ValueAutopoiesis:
             return applied_shifts
 
         except (ImportError, AttributeError, RuntimeError) as _graph_exc:
+            if graph_engaged:
+                # The graph already received this evidence and may have applied
+                # part of an evolution. Running the legacy pipeline now would
+                # apply a SECOND change from the same evidence with no knowledge
+                # of the first. An incomplete cycle is recoverable; a
+                # double-applied identity mutation is not.
+                record_degradation(
+                    "value_autopoiesis",
+                    _graph_exc,
+                    severity="warning",
+                    action=(
+                        "abandoned the value-evolution cycle after the graph "
+                        "pipeline had already engaged; refused to double-apply "
+                        "via the legacy path"
+                    ),
+                )
+                logger.error(
+                    "Value evolution cycle %d aborted after partial graph "
+                    "application: %s", cycle_id, _graph_exc,
+                )
+                return []
             logger.debug(
                 "DynamicValueGraph unavailable, using legacy pipeline: %s",
                 _graph_exc,
@@ -308,7 +378,7 @@ class ValueAutopoiesis:
 
     # ── Evidence Aggregation ────────────────────────────────────────────
 
-    def _aggregate_evidence(self) -> Dict[str, Dict[str, float]]:
+    def _aggregate_evidence(self) -> dict[str, dict[str, float]]:
         """Aggregate evidence into per-drive quality scores.
 
         For each drive, compute:
@@ -320,7 +390,7 @@ class ValueAutopoiesis:
         """
         from collections import defaultdict
 
-        accum: Dict[str, List[OutcomeEvidence]] = defaultdict(list)
+        accum: dict[str, list[OutcomeEvidence]] = defaultdict(list)
         for ev in self._evidence:
             accum[ev.drive_name].append(ev)
 
@@ -348,10 +418,10 @@ class ValueAutopoiesis:
 
     def _compute_shifts(
         self,
-        drive_scores: Dict[str, Dict[str, float]],
-        current_values: Dict[str, float],
+        drive_scores: dict[str, dict[str, float]],
+        current_values: dict[str, float],
         cycle_id: int,
-    ) -> List[ValueShift]:
+    ) -> list[ValueShift]:
         """Compute proposed value shifts from aggregated evidence.
 
         Positive composite scores push values up; negative push down.
@@ -397,9 +467,9 @@ class ValueAutopoiesis:
 
     def _apply_drift_guardrails(
         self,
-        shifts: List[ValueShift],
-        current_values: Dict[str, float],
-    ) -> List[ValueShift]:
+        shifts: list[ValueShift],
+        current_values: dict[str, float],
+    ) -> list[ValueShift]:
         """Check that proposed shifts won't cause excessive identity drift.
 
         If total drift from origin exceeds DRIFT_ACCEPTANCE, reduce the
@@ -420,8 +490,23 @@ class ValueAutopoiesis:
             total_drift = abs(shift.new_weight - origin)
 
             if total_drift > _DRIFT_ACCEPTANCE:
+                current_drift = abs(
+                    current_values.get(shift.value_name, origin) - origin
+                )
+                # DIRECTION MATTERS. A value already outside the band has
+                # max_allowed <= 0, and the branch below then suppressed the
+                # shift unconditionally — including shifts that move the value
+                # back TOWARD origin. The guardrail was blocking its own repair
+                # and pinning drifted values at their drifted position, which is
+                # the opposite of what an identity guardrail is for. A shift
+                # that strictly reduces drift is always allowed through.
+                if total_drift < current_drift:
+                    shift.reason += " [DRIFT_REPAIR]"
+                    guarded.append(shift)
+                    continue
+
                 # Reduce the shift to stay within acceptance band
-                max_allowed = _DRIFT_ACCEPTANCE - abs(current_values.get(shift.value_name, origin) - origin)
+                max_allowed = _DRIFT_ACCEPTANCE - current_drift
                 if max_allowed <= 0:
                     logger.info(
                         "Drift guardrail: %s at maximum drift from origin (%.3f), "
@@ -445,7 +530,7 @@ class ValueAutopoiesis:
 
     # ── Identity Drift Check (Optional, Not Mandatory Repair) ───────────
 
-    def _check_identity_drift(self, current_values: Dict[str, float]) -> Optional[str]:
+    def _check_identity_drift(self, current_values: dict[str, float]) -> str | None:
         """Check current drift from origin values.
 
         Returns a human-readable drift report. This is OBSERVATIONAL only --
@@ -484,7 +569,7 @@ class ValueAutopoiesis:
             logger.error("Failed to apply shift %s: %s", shift.value_name, exc)
             return False
 
-    def _read_current_values(self) -> Dict[str, float]:
+    def _read_current_values(self) -> dict[str, float]:
         """Read current value weights from HeartstoneValues."""
         try:
             from core.affect.heartstone_values import get_heartstone_values
@@ -513,7 +598,7 @@ class ValueAutopoiesis:
             finally:
                 try:
                     Path(tmp_path).unlink(missing_ok=True)
-                except (OSError, IOError):
+                except OSError:
                     pass  # no-op: intentional
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             record_degradation('value_autopoiesis', exc)
@@ -550,7 +635,7 @@ class ValueAutopoiesis:
 
     # ── Events ──────────────────────────────────────────────────────────
 
-    def _publish_event(self, topic: str, data: Dict[str, Any]) -> None:
+    def _publish_event(self, topic: str, data: dict[str, Any]) -> None:
         """Publish event to the event bus."""
         try:
             from core.event_bus import get_event_bus
@@ -560,15 +645,15 @@ class ValueAutopoiesis:
 
     # ── Public API ──────────────────────────────────────────────────────
 
-    def get_recent_shifts(self, n: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_shifts(self, n: int = 20) -> list[dict[str, Any]]:
         """Return recent value shifts for observability."""
         return [s.to_dict() for s in self._shift_history[-n:]]
 
-    def get_drift_report(self) -> Optional[str]:
+    def get_drift_report(self) -> str | None:
         """Get current drift report."""
         return self._check_identity_drift(self._read_current_values())
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return current status."""
         return {
             "cycle_count": self._cycle_count,
@@ -582,7 +667,7 @@ class ValueAutopoiesis:
 
 # ── Singleton ───────────────────────────────────────────────────────────────
 
-_instance: Optional[ValueAutopoiesis] = None
+_instance: ValueAutopoiesis | None = None
 
 
 def get_value_autopoiesis() -> ValueAutopoiesis:
