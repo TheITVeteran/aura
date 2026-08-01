@@ -12,11 +12,38 @@ Every module is tested for:
 import json
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
 import numpy as np
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persisted_research_state(tmp_path, monkeypatch):
+    """Redirect every persisting module in this file to a temp directory.
+
+    These tests write learned state — Fisher matrices, meta-parameters — and
+    without this they land in the REAL ~/.aura/data, which violates test
+    hermeticity and lets one test contaminate the next. That was latent while
+    the governor's restore was broken (every instance started blank regardless);
+    once restore worked, and once writes became atomic and therefore visible to
+    the hermeticity guard, it became a hard failure. Isolating here fixes both
+    the leak and the cross-test contamination.
+    """
+    from core.adaptation import meta_learner as _ml
+    from core.adaptation import plasticity_governor as _pg
+
+    (tmp_path / "plasticity").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(_pg, "_DATA_DIR", tmp_path / "plasticity")
+    monkeypatch.setattr(_pg, "_FISHER_PATH", tmp_path / "plasticity" / "fisher_state.npz")
+
+    (tmp_path / "meta_learning").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(_ml, "_DATA_DIR", tmp_path / "meta_learning")
+    monkeypatch.setattr(_ml, "_STATE_PATH", tmp_path / "meta_learning" / "meta_state.npz")
+    if hasattr(_ml, "_LOG_PATH"):
+        monkeypatch.setattr(_ml, "_LOG_PATH", tmp_path / "meta_learning" / "steps.jsonl")
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -172,7 +199,6 @@ class TestPlasticityGovernor(unittest.TestCase):
         ~/.aura/data/plasticity file, and importance assertions would read a
         contaminated map.
         """
-        import tempfile
         from pathlib import Path
 
         from core.adaptation import plasticity_governor as _pg
@@ -191,8 +217,7 @@ class TestPlasticityGovernor(unittest.TestCase):
 
     def test_register_and_consolidate(self):
         """Register parameters and consolidate Fisher."""
-        from core.adaptation.plasticity_governor import (
-            PlasticityGovernor, PlasticityConfig)
+        from core.adaptation.plasticity_governor import PlasticityConfig, PlasticityGovernor
 
         gov = PlasticityGovernor(PlasticityConfig(ewc_lambda=10.0))
         params = np.random.default_rng(42).standard_normal(100)
@@ -211,8 +236,7 @@ class TestPlasticityGovernor(unittest.TestCase):
 
     def test_penalty_suppresses_updates(self):
         """EWC penalty reduces update magnitude near anchor."""
-        from core.adaptation.plasticity_governor import (
-            PlasticityGovernor, PlasticityConfig)
+        from core.adaptation.plasticity_governor import PlasticityConfig, PlasticityGovernor
 
         gov = PlasticityGovernor(PlasticityConfig(ewc_lambda=100.0))
         params = np.ones(50)
@@ -249,8 +273,7 @@ class TestPlasticityGovernor(unittest.TestCase):
 
     def test_online_ewc_running_average(self):
         """Multiple consolidations use running Fisher average."""
-        from core.adaptation.plasticity_governor import (
-            PlasticityGovernor, PlasticityConfig)
+        from core.adaptation.plasticity_governor import PlasticityConfig, PlasticityGovernor
 
         gov = PlasticityGovernor(PlasticityConfig(fisher_gamma=0.5))
         gov.register_parameters("test", np.zeros(10))
@@ -325,8 +348,7 @@ class TestMetaLearner(unittest.TestCase):
 
     def test_meta_step_improves_reward(self):
         """Multiple meta-steps improve mean reward."""
-        from core.adaptation.meta_learner import (
-            MetaLearner, MetaConfig, MetaTask)
+        from core.adaptation.meta_learner import MetaConfig, MetaLearner, MetaTask
 
         target = np.array([1.0, 2.0])
         def evaluate(params):
@@ -342,23 +364,31 @@ class TestMetaLearner(unittest.TestCase):
         ))
 
         rewards = []
-        for _ in range(5):
+        params_trace = []
+        for _ in range(8):
             steps = learner.meta_step()
+            self.assertTrue(steps, "each step should be accepted and recorded")
             rewards.append(steps[0].mean_reward)
+            params_trace.append(learner.get_meta_params("find_target").copy())
 
-        # The learner converges to near-optimum within the first step
-        # (baseline reward at zeros is -5.0; observed step rewards are
-        # ~-2e-4). Strict last>first monotonicity is noise at the
-        # optimum; the real contract is closing >99% of the gap and
-        # never regressing meaningfully from convergence.
+        # This previously asserted near-optimal convergence within the FIRST
+        # step, which is only possible if the learner starts somewhere other
+        # than its declared baseline. It did: the test inherited meta-parameters
+        # left in the real ~/.aura/data by an earlier run. With that leak fixed
+        # (see the module-level isolation fixture), the honest contract is the
+        # one the test name states — repeated steps improve mean reward and
+        # move the parameters toward the target.
         baseline = evaluate(np.zeros(2))
         self.assertLess(baseline, -4.9)
-        self.assertGreater(rewards[0], baseline * 0.01)
-        self.assertGreater(rewards[-1], baseline * 0.01)
+        self.assertGreater(rewards[-1], rewards[0], "reward must improve")
+        start_distance = float(np.linalg.norm(np.zeros(2) - target))
+        end_distance = float(np.linalg.norm(params_trace[-1] - target))
+        self.assertLess(end_distance, start_distance,
+                        "parameters must move toward the target")
 
     def test_meta_params_persist(self):
         """Meta parameters are updated after meta_step."""
-        from core.adaptation.meta_learner import MetaLearner, MetaConfig, MetaTask
+        from core.adaptation.meta_learner import MetaConfig, MetaLearner, MetaTask
 
         learner = MetaLearner(MetaConfig(
             n_perturbations=10, seed=42))
@@ -407,8 +437,7 @@ class TestLesionStudy(unittest.TestCase):
 
     def test_lesion_detects_critical_component(self):
         """Lesioning a critical component shows high impact."""
-        from core.architect.lesion_matrix import (
-            LesionStudy, LesionableComponent)
+        from core.architect.lesion_matrix import LesionableComponent, LesionStudy
 
         # Simulate a system where component A is critical
         state_a = np.array([1.0, 2.0, 3.0])
@@ -443,7 +472,7 @@ class TestLesionStudy(unittest.TestCase):
 
     def test_lesion_restores_state(self):
         """State is fully restored after lesion."""
-        from core.architect.lesion_matrix import LesionStudy, LesionableComponent
+        from core.architect.lesion_matrix import LesionableComponent, LesionStudy
 
         state = np.array([1.0, 2.0, 3.0])
         original = state.copy()
@@ -471,7 +500,7 @@ class TestLesionStudy(unittest.TestCase):
 
     def test_matrix_shape(self):
         """Matrix has correct shape (components x metrics)."""
-        from core.architect.lesion_matrix import LesionStudy, LesionableComponent
+        from core.architect.lesion_matrix import LesionableComponent, LesionStudy
 
         state = np.zeros(5)
         study = LesionStudy(n_probe_steps=2)
@@ -500,7 +529,7 @@ class TestHiddenEvalRunner(unittest.TestCase):
 
     def test_passing_scenario(self):
         """Scenario within range passes."""
-        from core.architect.hidden_eval import HiddenEvalRunner, EvalScenario
+        from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
 
         runner = HiddenEvalRunner()
         runner.register_scenario(EvalScenario(
@@ -519,7 +548,7 @@ class TestHiddenEvalRunner(unittest.TestCase):
 
     def test_failing_scenario(self):
         """Scenario outside range fails."""
-        from core.architect.hidden_eval import HiddenEvalRunner, EvalScenario
+        from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
 
         runner = HiddenEvalRunner()
         runner.register_scenario(EvalScenario(
@@ -537,7 +566,7 @@ class TestHiddenEvalRunner(unittest.TestCase):
 
     def test_tamper_detection(self):
         """Tampered scenario is detected."""
-        from core.architect.hidden_eval import HiddenEvalRunner, EvalScenario
+        from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
 
         scenario = EvalScenario(
             scenario_id="tamper_test",
@@ -558,7 +587,7 @@ class TestHiddenEvalRunner(unittest.TestCase):
 
     def test_drift_detection(self):
         """Drift is detected when health drops significantly."""
-        from core.architect.hidden_eval import HiddenEvalRunner, EvalScenario
+        from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
 
         runner = HiddenEvalRunner(drift_window=3, drift_threshold=0.3)
 
@@ -600,7 +629,7 @@ class TestHiddenEvalRunner(unittest.TestCase):
 
     def test_eval_result_serializable(self):
         """EvalSuiteResult.to_dict() is JSON-serializable."""
-        from core.architect.hidden_eval import HiddenEvalRunner, EvalScenario
+        from core.architect.hidden_eval import EvalScenario, HiddenEvalRunner
         runner = HiddenEvalRunner()
         runner.register_scenario(EvalScenario(
             scenario_id="serial_test",

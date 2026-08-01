@@ -60,6 +60,28 @@ from core.runtime.task_ownership import create_tracked_task
 logger = logging.getLogger("Aura.AutonomousResearchOrchestrator")
 
 
+def _quarantine_corrupt_progress() -> Path | None:
+    """Move an unreadable progress log aside so it is not overwritten.
+
+    Returns the quarantine path, or None if nothing could be moved. Never
+    raises: this runs on a failure path and must not turn a recoverable
+    corruption into a crash.
+    """
+    try:
+        from core.autonomy.content_progress_tracker import _default_progress_path
+
+        source = _default_progress_path()
+        if not source.exists():
+            return None
+        target = source.with_suffix(f"{source.suffix}.corrupt.{int(time.time())}")
+        source.replace(target)
+        logger.warning("Quarantined unreadable progress log to %s", target)
+        return target
+    except (OSError, ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.error("Could not quarantine the corrupt progress log: %s", exc)
+        return None
+
+
 def _default_sessions_dir() -> Path:
     override = os.environ.get("AURA_RESEARCH_SESSIONS_DIR")
     if override:
@@ -109,6 +131,13 @@ class EngagementResult:
     depth_score: float = 0.0
     depth_failures: list[str] = field(default_factory=list)
     persist_receipt: dict[str, Any] | None = None
+    #: Whether the memory commit was ACCEPTED. A rejected receipt used to be
+    #: recorded and then ignored, so a completely failed commit still read as
+    #: completed research.
+    persisted: bool = True
+    #: True when the depth gate failed and the model-generated facts and belief
+    #: updates were therefore withheld from semantic memory.
+    epistemic_content_withheld: bool = False
     inference_failures: int = 0
     error: str | None = None
     session_id: str = ""
@@ -125,6 +154,8 @@ class EngagementResult:
             "depth_score": round(self.depth_score, 3),
             "depth_failures": list(self.depth_failures),
             "persist_receipt": self.persist_receipt,
+            "persisted": self.persisted,
+            "epistemic_content_withheld": self.epistemic_content_withheld,
             "inference_failures": self.inference_failures,
             "error": self.error,
             "session_id": self.session_id,
@@ -146,6 +177,12 @@ class AutonomousResearchOrchestrator:
         max_consecutive_failures: int = DEFAULT_MAX_CONSECUTIVE_FAILURES,
         on_engagement_complete: Callable[[EngagementResult], None] | None = None,
     ) -> None:
+        # The class documents a one-engagement-at-a-time contract and had
+        # nothing enforcing it: concurrent run_once callers on one instance
+        # could pick the SAME item and then race the shared scheduler, progress
+        # log, cache, queue, and memory state. The lock is what makes the
+        # documented guarantee true.
+        self._engagement_lock = asyncio.Lock()
         self._scheduler = scheduler or CuriosityScheduler()
         self._router = router or MethodRouter()
         self._fetcher = fetcher or ContentFetcher()
@@ -164,11 +201,14 @@ class AutonomousResearchOrchestrator:
     # ── Public API ────────────────────────────────────────────────────────
 
     async def run_once(self) -> EngagementResult | None:
-        decision = self._scheduler.pick_next()
-        if decision is None:
-            logger.info("scheduler returned no candidate; nothing to do")
-            return None
-        return await self._engage(decision)
+        """Engage one item. Serialized: selection and engagement are one
+        critical section, so two callers cannot select the same item."""
+        async with self._engagement_lock:
+            decision = self._scheduler.pick_next()
+            if decision is None:
+                logger.info("scheduler returned no candidate; nothing to do")
+                return None
+            return await self._engage(decision)
 
     async def start_loop(self) -> None:
         if self._running:
@@ -347,23 +387,64 @@ class AutonomousResearchOrchestrator:
                 method_priority_level=int(decision.top_priority_level),
                 notes=f"depth_passed={depth.passed} score={depth.score:.2f}",
             )
+            # Facts and belief updates used to be committed regardless of
+            # depth.passed, so a shallow or FAILED engagement still wrote
+            # model-generated claims into semantic memory — poisoning it while
+            # only the progress outcome was labelled "shallow". The episodic
+            # record always sticks (it happened, and that is true regardless of
+            # quality); the epistemic content requires the engagement to have
+            # actually met the depth bar.
+            if depth.passed:
+                committed_facts = reflection.new_facts
+                committed_beliefs = reflection.belief_updates
+            else:
+                committed_facts = []
+                committed_beliefs = []
+                logger.warning(
+                    "Depth gate failed for %r: withholding %d fact(s) and %d "
+                    "belief update(s) from semantic memory; recording the "
+                    "episode only.",
+                    decision.item.title, len(reflection.new_facts),
+                    len(reflection.belief_updates),
+                )
             receipt: CommitReceipt = self._persister.commit_engagement(
                 item_title=decision.item.title,
                 episodic=episodic,
-                facts=reflection.new_facts,
-                belief_updates=reflection.belief_updates,
+                facts=committed_facts,
+                belief_updates=committed_beliefs,
             )
             result.persist_receipt = self._receipt_to_dict(receipt)
+            result.epistemic_content_withheld = not depth.passed
             self._save_session(session_path, {"phase": "persisted", "result": result.to_dict()})
 
             # 7. Update progress tracker with the verification answers + content-type metadata
             result.completed_at = time.time()
             self._update_progress(decision, reflection, depth, result)
 
-            outcome = "completed" if depth.passed else "shallow_engagement"
+            # A rejected persistence receipt used to be copied into the result
+            # and then ignored: progress, scheduler outcome, completion, and
+            # session phase all said "completed" even when the memory commit had
+            # entirely failed. Research that was never recorded is not research
+            # that happened.
+            persisted_ok = bool(getattr(receipt, "accepted", True))
+            if not persisted_ok:
+                outcome = "persist_failed"
+                logger.error(
+                    "Memory commit REJECTED for %r; recording the engagement as "
+                    "failed rather than completed.", decision.item.title,
+                )
+            elif depth.passed:
+                outcome = "completed"
+            else:
+                outcome = "shallow_engagement"
+            result.persisted = persisted_ok
             self._record_scheduler_attempt(decision, outcome=outcome, session_id=session_id)
 
-            self._save_session(session_path, {"phase": "complete", "result": result.to_dict()})
+            self._save_session(
+                session_path,
+                {"phase": "complete" if persisted_ok else "persist_failed",
+                 "result": result.to_dict()},
+            )
         except asyncio.CancelledError:
             result.error = "cancelled"
             raise
@@ -420,17 +501,29 @@ class AutonomousResearchOrchestrator:
         try:
             log = load_progress()
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+            # A failed LOAD used to produce a fresh empty ProgressLog, which the
+            # save below then wrote to the canonical path — so one unreadable
+            # byte silently replaced the entire durable research history with a
+            # single entry. Recoverable data was destroyed by the recovery path.
+            #
+            # The corrupt file is quarantined first, so the history still exists
+            # on disk and can be repaired, and the fresh log is only used to let
+            # THIS engagement finish.
+            quarantined = _quarantine_corrupt_progress()
             _record_research_degradation(
                 e,
                 severity="warning",
                 action=(
-                    "used a fresh in-memory progress log so the engagement could "
-                    "finish; the subsequent save will attempt to rebuild the durable index"
+                    "quarantined the unreadable progress log to "
+                    f"{quarantined or '<quarantine failed>'} and used a fresh "
+                    "in-memory log so the engagement could finish; prior history "
+                    "is preserved for repair rather than overwritten"
                 ),
                 extra={
                     "item_title": decision.item.title,
                     "session_id": result.session_id,
                     "phase": "progress_load",
+                    "quarantined_to": str(quarantined or ""),
                 },
             )
             log = ProgressLog()
