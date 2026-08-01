@@ -3,9 +3,11 @@ Strict Pydantic payloads for all internal state passing in the new Zenith archit
 """
 
 import time
-from typing import Any
+from typing import Any, ClassVar
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+from core.runtime.numeric_guards import bounded_float
 
 
 class WebsocketMessage(BaseModel):
@@ -15,19 +17,70 @@ class WebsocketMessage(BaseModel):
     type: str = Field(..., description="The type of the message (e.g. 'thought', 'telemetry')")
 
 class TelemetryPayload(WebsocketMessage):
+    """Telemetry as it reaches the UI.
+
+    CP126 (high): "Telemetry omits upper and finite bounds."
+
+    Every field carried ``ge=0.0`` and nothing else, so ``inf`` and ``nan``
+    validated cleanly — pydantic's ``ge`` uses the same comparison semantics
+    as everything else, and ``nan >= 0.0`` is False only for the lower bound
+    it never trips, while ``inf >= 0.0`` is simply True. Both then reached
+    the browser, where a NaN renders as "NaN" in a gauge and an unbounded
+    energy silently rescales every chart on the page.
+
+    These are percentages and normalised scores with known ranges, so the
+    ranges are stated and enforced — but by CLAMPING, not by rejecting.
+
+    Rejecting is the wrong failure mode here. This payload is built inside
+    the heartbeat and published to the websocket; a ValidationError there
+    does not protect the UI, it silently kills the telemetry stream and the
+    dashboard freezes on its last good frame while the runtime looks fine.
+    A gauge pinned at 100 is a visible, self-explaining wrong; a frozen
+    dashboard is an invisible one.
+    """
+
     type: str = "telemetry"
-    energy: float = Field(default=100.0, ge=0.0)
-    curiosity: float = Field(default=50.0, ge=0.0)
-    frustration: float = Field(default=0.0, ge=0.0)
-    confidence: float = Field(default=100.0, ge=0.0)
-    cpu_usage: float = Field(default=0.0, ge=0.0)
-    ram_usage: float = Field(default=0.0, ge=0.0)
-    
-    # Consciousness Fields (v6)
+    energy: float = 100.0
+    curiosity: float = 50.0
+    frustration: float = 0.0
+    confidence: float = 100.0
+    cpu_usage: float = 0.0
+    ram_usage: float = 0.0
+
+    # Consciousness Fields (v6) — normalised [0, 1] scores.
     gwt_winner: str = "--"
-    coherence: float = Field(default=0.0, ge=0.0)
-    vitality: float = Field(default=0.0, ge=0.0)
-    surprise: float = Field(default=0.0, ge=0.0)
+    coherence: float = 0.0
+    vitality: float = 0.0
+    surprise: float = 0.0
+
+    #: field -> (minimum, maximum, default when the value is unusable).
+    _BOUNDS: ClassVar[dict[str, tuple[float, float, float]]] = {
+        "energy": (0.0, 100.0, 100.0),
+        "curiosity": (0.0, 100.0, 50.0),
+        "frustration": (0.0, 100.0, 0.0),
+        "confidence": (0.0, 100.0, 100.0),
+        "cpu_usage": (0.0, 100.0, 0.0),
+        "ram_usage": (0.0, 100.0, 0.0),
+        "coherence": (0.0, 1.0, 0.0),
+        "vitality": (0.0, 1.0, 0.0),
+        "surprise": (0.0, 1.0, 0.0),
+    }
+
+    @field_validator(
+        "energy", "curiosity", "frustration", "confidence",
+        "cpu_usage", "ram_usage", "coherence", "vitality", "surprise",
+        mode="before",
+    )
+    @classmethod
+    def _bound_gauge(cls, value: Any, info: Any) -> float:
+        """Clamp to the field's range; non-finite input takes the default.
+
+        ``ge``/``le`` alone would not have closed this: pydantic compares,
+        and every comparison with NaN is False, so a NaN slips past a lower
+        bound it never trips. The value has to be rejected explicitly.
+        """
+        minimum, maximum, fallback = cls._BOUNDS[info.field_name]
+        return bounded_float(value, default=fallback, minimum=minimum, maximum=maximum)
     narrative: str = ""
     
     consciousness: dict[str, Any] = Field(default_factory=dict)
