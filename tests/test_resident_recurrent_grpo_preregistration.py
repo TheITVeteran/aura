@@ -1435,7 +1435,12 @@ def test_answer_channel_preflight_verifier_binds_initial_policy(
         "base_checkpoint": contract["model"]["base_checkpoint"],
         "model_behavior_bundle": contract["model"]["behavior_bundle"],
         "tokenizer_bundle": tokenizer,
-        "source_bindings": {"trainer": contract["sources"]["trainer"]},
+        "source_bindings": {
+            role: contract["sources"][
+                "answer_channel_tasks" if role == "tasks" else role
+            ]
+            for role in prereg.REQUIRED_SOURCE_ROLES
+        },
         "policy_sha256": policy,
         "initial_policy_probe_sha256": probe_sha,
         "warm_start_receipt": None,
@@ -1703,7 +1708,10 @@ def _causal_learnability_receipt(contract):
             decode_options={},
             implementation_source_sha256="a" * 64,
         ),
-        "source_bindings": {"trainer": contract["sources"]["trainer"]},
+        "source_bindings": {
+            role: contract["sources"][role]
+            for role in prereg.REQUIRED_SOURCE_ROLES
+        },
         "initial_policy_probe_sha256": "c" * 64,
         "warm_start_receipt": None,
         "policy_before_sha256": "b" * 64,

@@ -33818,3 +33818,35 @@ reconstruction in order. Training remains fail-closed behind every causal
 threshold. No reasoning-gain, frontier, promotion, release, or `WOW Signal`
 claim is made. This is total checkpoint 772. The 772-920 completion envelope
 is approximately 83.9%-100.0%, with a 92.0% midpoint.
+
+### 2026-08-01 - CP773 read-only task-source inventory closure
+
+S35's initial-policy probe passed under PID-1 supervision with zero restarts,
+sealing policy
+`b36cfb0e8024d2b6c6586f7c5e563b6cb2e3eacb70e5d08a813f715b06befd80`
+and probe receipt
+`2037f48153ca81ecc3adbbf7e012a1dc5fc8c5c27d27ba83dbf86009728cbe28`.
+The answer process independently reopened the exact custody chain and logged
+that same policy and receipt before sampling. It completed six tasks with five
+valid answer contracts and four correct answers, satisfying its operational
+threshold. The independent verifier then correctly rejected the receipt:
+S35's frozen campaign inventory did not contain
+`core/learning/answer_channel_curriculum.py`, so it could not prove the task
+generator represented by the answer receipt's `tasks` binding. No S35 answer
+receipt is accepted, and no causal process or training ran.
+
+Every new campaign now binds the answer-channel task generator under the
+distinct `answer_channel_tasks` role. Answer verification requires the receipt
+to contain the complete recurrent executable role set, maps only runtime role
+`tasks` to that frozen answer-specific role, and requires every other binding
+to equal the campaign inventory. Causal verification likewise requires the
+complete role set and keeps `tasks` bound to the recurrent training
+curriculum. A producer can no longer omit inconvenient implementation roles
+and still pass subset validation.
+
+The focused campaign, warm-start, adapter-identity, and launch-materialization
+matrix passes 114/114. Ruff, bytecode compilation, and diff integrity pass.
+A fresh S36 is required because both executable source and frozen source
+inventory changed. No reasoning-gain, frontier, promotion, release, or
+`WOW Signal` claim is made. This is total checkpoint 773. The 773-920
+completion envelope is approximately 84.0%-100.0%, with a 92.0% midpoint.

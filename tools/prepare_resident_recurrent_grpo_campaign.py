@@ -260,6 +260,7 @@ SOURCE_ROLES: Mapping[str, str] = {
     "grpo": "core/learning/grpo.py",
     "curriculum": "core/learning/adaptive_curriculum.py",
     "tasks": "core/learning/recurrence_curriculum.py",
+    "answer_channel_tasks": "core/learning/answer_channel_curriculum.py",
     "checkpoint": "core/learning/grpo_training_state.py",
     "artifact_schema": "core/learning/recurrent_grpo_artifact_schema.py",
     "recurrent_grpo": "core/learning/recurrent_grpo.py",
@@ -2527,8 +2528,13 @@ def validate_answer_channel_preflight(
         _fail("answer_channel_preflight_identity_mismatch")
     normalized["receipt_sha256"] = observed_sha256
     sources = normalized["source_bindings"]
-    if not isinstance(sources, Mapping) or not sources or any(
-        role not in contract["sources"] or binding != contract["sources"][role]
+    if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
+        _fail("answer_channel_preflight_source_mismatch")
+    if any(
+        binding
+        != contract["sources"][
+            "answer_channel_tasks" if role == "tasks" else role
+        ]
         for role, binding in sources.items()
     ):
         _fail("answer_channel_preflight_source_mismatch")
@@ -2894,7 +2900,7 @@ def validate_causal_learnability_preflight(
     ):
         _fail("causal_learnability_preflight_model_mismatch")
     sources = normalized["source_bindings"]
-    if not isinstance(sources, Mapping) or not sources:
+    if not isinstance(sources, Mapping) or set(sources) != REQUIRED_SOURCE_ROLES:
         _fail("causal_learnability_preflight_sources_invalid")
     contract_sources = contract["sources"]
     if any(
