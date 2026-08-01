@@ -36,6 +36,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -52,6 +53,10 @@ CACHE_DIR = Path.home() / ".aura/content_cache"
 CACHE_INDEX = CACHE_DIR / "index.json"
 DEFAULT_PER_ATTEMPT_BYTES = 50 * 1024 * 1024
 DEFAULT_TOTAL_CACHE_BYTES = 5 * 1024 * 1024 * 1024
+#: External content goes stale. 24h is long enough that a research session
+#: re-reading the same source does not refetch it, short enough that a
+#: changed or retracted page is noticed within a day.
+DEFAULT_CACHE_TTL_SECONDS = 24 * 3600.0
 HTTP_TIMEOUT_SECONDS = 30
 YTDLP_TIMEOUT_SECONDS = 600
 
@@ -142,11 +147,17 @@ class ContentFetcher:
         total_cache_bytes: int = DEFAULT_TOTAL_CACHE_BYTES,
         browser_executor: Any | None = None,
         whisper_transcriber: Any | None = None,
+        cache_ttl_seconds: float = DEFAULT_CACHE_TTL_SECONDS,
     ) -> None:
         self._cache_dir = cache_dir
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._per_attempt_bytes = per_attempt_bytes
         self._total_cache_bytes = total_cache_bytes
+        # How long a cached fetch of EXTERNAL content stays valid. There was no
+        # expiry at all: a page fetched once was served as a successful fetch
+        # forever, so Aura could reason about a source that had since changed or
+        # been retracted and never notice.
+        self._cache_ttl_seconds = max(60.0, float(cache_ttl_seconds))
         self._browser = browser_executor
         self._whisper = whisper_transcriber
         self._cache_index = self._cache_dir / "index.json"
@@ -789,11 +800,33 @@ class ContentFetcher:
             if total <= self._total_cache_bytes:
                 return
             entries.sort(key=lambda e: e[0])
+            evicted: list[str] = []
             for _mtime, path, size in entries:
                 if total <= self._total_cache_bytes * 0.8:
                     break
                 shutil.rmtree(path, ignore_errors=True)
+                evicted.append(str(path))
                 total -= size
+
+            # Eviction removed the DIRECTORIES and left their index records
+            # intact, so later reads returned success with a cache_path that no
+            # longer existed. The index is pruned in the same operation.
+            if evicted:
+                stale = [
+                    key for key, record in self._index.items()
+                    if any(
+                        str(record.get("cache_path") or "").startswith(prefix)
+                        for prefix in evicted
+                    )
+                ]
+                for key in stale:
+                    self._index.pop(key, None)
+                if stale:
+                    self._save_index()
+                    logger.info(
+                        "Cache eviction removed %d directory(ies) and %d index "
+                        "record(s).", len(evicted), len(stale),
+                    )
         except OSError as e:
             _record_fetch_degradation(
                 "content_fetcher_cache_budget",
@@ -814,7 +847,45 @@ class ContentFetcher:
         return h.hexdigest()[:32]
 
     def _get_cached(self, key: str) -> dict[str, Any] | None:
-        return self._index.get(key)
+        """Return a cache record only if it is fresh AND its files still exist.
+
+        This used to be a bare index lookup, so a record was served forever with
+        success=True: stored_at was written and never read, and there was no
+        TTL, ETag, or invalidation of any kind. External content that had since
+        changed — or been deleted from disk by budget eviction, which removes
+        cache DIRECTORIES without touching their index records — was returned as
+        a successful fetch, with a cache_path pointing at nothing and only the
+        truncated inline copy behind it.
+        """
+        record = self._index.get(key)
+        if record is None:
+            return None
+
+        stored_at = record.get("stored_at")
+        try:
+            age = time.time() - float(stored_at)
+        except (TypeError, ValueError):
+            age = None
+        if age is None or age < 0 or age > self._cache_ttl_seconds:
+            logger.debug("cache entry %s expired (age=%s); refetching.", key, age)
+            self._drop_cache_entry(key)
+            return None
+
+        # Eviction deletes directories but left the index claiming success.
+        cache_path = record.get("cache_path")
+        if cache_path and not Path(cache_path).exists():
+            logger.debug(
+                "cache entry %s references a path that no longer exists; refetching.",
+                key,
+            )
+            self._drop_cache_entry(key)
+            return None
+        return record
+
+    def _drop_cache_entry(self, key: str) -> None:
+        """Remove a stale or dangling index record."""
+        if self._index.pop(key, None) is not None:
+            self._save_index()
 
     def _cache_put(self, key: str, content: FetchedContent) -> None:
         self._index[key] = {
@@ -865,6 +936,39 @@ class ContentFetcher:
 # ── Subprocess helper ────────────────────────────────────────────────────
 
 
+async def _terminate_subprocess(proc: Any, cmd: list[str], *, reason: str) -> None:
+    """Kill and reap a child, and its process GROUP where the platform allows.
+
+    yt-dlp and ffmpeg spawn their own children, so killing only the direct
+    child can leave grandchildren running. Never raises: this runs on timeout
+    and cancellation paths that must complete regardless.
+    """
+    binary = cmd[0] if cmd else ""
+    try:
+        try:
+            # Terminate the whole group when the gateway gave us a session
+            # leader; fall back to the direct child otherwise.
+            pgid = os.getpgid(proc.pid) if hasattr(os, "getpgid") else None
+        except (ProcessLookupError, OSError, AttributeError):
+            pgid = None
+        if pgid is not None and pgid != os.getpgid(os.getpid()):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError, AttributeError):
+                proc.kill()
+        else:
+            proc.kill()
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except (TimeoutError, ProcessLookupError, OSError, AttributeError, RuntimeError) as e:
+        _record_fetch_degradation(
+            "content_fetcher_subprocess",
+            e,
+            action=f"subprocess {reason} cleanup incomplete; child may survive",
+            severity="warning",
+            extra={"binary": binary, "reason": reason},
+        )
+
+
 async def _run_subprocess(cmd: list[str], timeout_seconds: int) -> tuple[bool, str, str]:
     try:
         proc = await get_subprocess_gateway().spawn_async(
@@ -876,18 +980,16 @@ async def _run_subprocess(cmd: list[str], timeout_seconds: int) -> tuple[bool, s
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
         except TimeoutError:
-            try:
-                proc.kill()
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except (TimeoutError, ProcessLookupError, OSError) as e:
-                _record_fetch_degradation(
-                    "content_fetcher_subprocess",
-                    e,
-                    action="reported subprocess timeout after kill/reap cleanup failed",
-                    severity="warning",
-                    extra={"binary": cmd[0] if cmd else ""},
-                )
+            await _terminate_subprocess(proc, cmd, reason="timeout")
             return False, "", "timeout"
+        except asyncio.CancelledError:
+            # Cancellation used to propagate straight out of communicate() with
+            # the child still running — a yt-dlp download or ffmpeg transcode
+            # kept going after the task that owned it was gone, holding
+            # bandwidth, CPU and disk with nothing left to reap it. Cancellation
+            # is the most common shutdown path, so this leaked routinely.
+            await _terminate_subprocess(proc, cmd, reason="cancelled")
+            raise
         ok = proc.returncode == 0
         return (
             ok,
