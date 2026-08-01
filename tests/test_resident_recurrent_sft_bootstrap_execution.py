@@ -3,11 +3,13 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+import mlx.core as mx
 import pytest
 
 from core.learning.resident_recurrent_sft_bootstrap_authority import sha256_json
 from core.learning.resident_recurrent_sft_bootstrap_execution import (
     ResidentSFTBootstrapExecutionError,
+    adapter_topology_sha256,
     advance_sample_history,
     family_depth_balanced_order,
     initial_sample_history,
@@ -214,3 +216,21 @@ def test_sample_history_is_chained_and_position_sensitive() -> None:
         epoch=0,
         cursor=3,
     )
+
+
+def test_adapter_topology_digest_ignores_values_but_not_shape_or_name() -> None:
+    first = {
+        "layer.lora_a": mx.zeros((2, 3)),
+        "layer.lora_b": mx.ones((3, 4)),
+    }
+    changed_values = {
+        "layer.lora_a": mx.ones((2, 3)),
+        "layer.lora_b": mx.zeros((3, 4)),
+    }
+    changed_shape = {
+        "layer.lora_a": mx.ones((3, 2)),
+        "layer.lora_b": mx.zeros((3, 4)),
+    }
+
+    assert adapter_topology_sha256(first) == adapter_topology_sha256(changed_values)
+    assert adapter_topology_sha256(first) != adapter_topology_sha256(changed_shape)

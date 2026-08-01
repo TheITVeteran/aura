@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime
 
 import pytest
 
@@ -219,6 +220,20 @@ def test_resident_config_requires_deterministic_adapter_initialization() -> None
         match="lora_initialization_seed_invalid",
     ):
         ResidentSFTBootstrapConfig(seed=1, lora_initialization_seed=2**32)
+
+
+def test_authority_time_window_is_enforced_for_fresh_run_and_resume() -> None:
+    authority, _train, _validation, _sources = _authority()
+    during = datetime.fromisoformat("2026-08-02T01:00:00-07:00")
+    after = datetime.fromisoformat("2026-08-09T01:00:00-07:00")
+    before = datetime.fromisoformat("2026-07-31T01:00:00-07:00")
+
+    validate_authority(authority, now=during)
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="expired"):
+        validate_authority(authority, now=after)
+    validate_authority(authority, now=after, allow_expired_resume=True)
+    with pytest.raises(ResidentSFTBootstrapAuthorityError, match="not_yet_valid"):
+        validate_authority(authority, now=before)
 
 
 def test_observed_identity_drift_is_rejected_after_valid_authority() -> None:

@@ -34236,3 +34236,49 @@ resident trainer. No reasoning-gain, frontier, promotion, release,
 GRPO-admission, or `WOW Signal` claim is made. This is total checkpoint 784. The
 784-920 completion envelope is approximately 85.2%-100.0%, with a 92.6%
 midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP785 exact cached resident SFT trainer
+
+The resident bootstrap now has an authority-bound trainer over CP778/CP781's
+exact cached live-path objective. Every process reopens and validates canonical
+authority, dataset, execution-specification, trust-policy, source-closure,
+resident checkpoint, behavior, absent-personality, tokenizer artifact/runtime,
+and Python/MLX runtime identities. Fresh launch rejects expired or future-issued
+authority; only an already durable exact-identity resume may cross expiration.
+The trainer acquires the standalone model lane, applies the bound MLX memory
+envelope, loads the resident checkpoint, projects both splits through the live
+chat/token boundary, and attaches a seeded, scale-bound, dropout-free recurrent
+LoRA topology to the last configured layers of the recurrent window.
+
+Before the first update it publishes a durable step-zero generation containing
+baseline validation, adapter, complete AdamW state, order, and all protocol
+bindings. Each cached teacher-forced optimizer update must change the adapter
+fingerprint, advances the cumulative sample-history chain, optionally records
+same-policy validation, and publishes a complete immutable generation before
+another sample can run. Processes rotate after the authority's bounded
+invocation-step count. Resume reconstructs the identical seeded topology,
+loads and fingerprints the quarantined adapter, restores complete optimizer
+state, replays the exact epoch order and schedule receipt, and continues from
+the committed cursor. SIGINT/SIGTERM stop only after the latest completed step.
+
+Every epoch schedule has an idempotent durable receipt. Every invocation emits
+an identity-bound status and receipt with before/after full checkpoint hashes.
+The receipt may state that supervised bootstrapping reached its configured step
+count, but it always leaves causal gain, reasoning gain, frontier level,
+promotion, GRPO admission, and release false. Any base-checkpoint drift prevents
+receipt publication and makes later resume fail its preload identity gate.
+
+The authority, projection, state, trainer, recurrent adapter, and exact cached
+objective suites pass 99/99. A real four-layer Qwen2/MLX integration test runs
+the production cached objective and AdamW path across two separate trainer
+invocations: it publishes step zero, step one, reloads adapter and optimizer,
+publishes step two, and ends with exactly three complete generations and a
+non-promotion terminal receipt. Targeted mypy reports no issues across the five
+new source modules; Ruff, bytecode compilation, and diff integrity pass.
+
+No resident 32B update has run and no reasoning-gain evidence exists yet. The
+next bounded milestone is campaign preparation plus an independent detached
+controller, followed by the real source-bound two-step resident canary. No
+reasoning-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal`
+claim is made. This is total checkpoint 785. The 785-920 completion envelope is
+approximately 85.3%-100.0%, with a 92.7% midpoint. Long soaks remain deferred.

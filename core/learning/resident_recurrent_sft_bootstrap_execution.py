@@ -397,12 +397,42 @@ def initial_sample_history() -> str:
     return ZERO_SHA256
 
 
+def adapter_topology_sha256(tensors: Mapping[str, Any]) -> str:
+    """Bind trainable names, shapes, and dtypes without binding their values."""
+
+    if not isinstance(tensors, Mapping) or not tensors:
+        _fail("resident_sft_execution_adapter_topology_empty")
+    rows: list[dict[str, Any]] = []
+    for name in sorted(tensors):
+        tensor = tensors[name]
+        shape = getattr(tensor, "shape", None)
+        dtype = getattr(tensor, "dtype", None)
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(shape, (list, tuple))
+            or not shape
+            or any(type(dimension) is not int or dimension < 1 for dimension in shape)
+            or dtype is None
+        ):
+            _fail("resident_sft_execution_adapter_topology_invalid")
+        rows.append(
+            {
+                "name": name,
+                "shape": list(shape),
+                "dtype": str(dtype),
+            }
+        )
+    return sha256_json(rows)
+
+
 __all__ = [
     "ANSWER_INSTRUCTION",
     "PROJECTED_EXAMPLE_SCHEMA",
     "ResidentSFTBootstrapExecutionError",
     "SAMPLING_RECEIPT_SCHEMA",
     "advance_sample_history",
+    "adapter_topology_sha256",
     "family_depth_balanced_order",
     "initial_sample_history",
     "project_example",

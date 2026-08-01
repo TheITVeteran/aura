@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Never
+from typing import Any, Final, Never, cast
 
 from core.brain.llm.latent_cortex.campaign_journal import canonical_json_bytes
 from core.learning.resident_recurrent_sft_bootstrap_authority import (
@@ -483,7 +483,10 @@ def inspect_checkpoint(
             or float(created) <= 0.0
         ):
             _fail("resident_sft_state_complete_invalid")
-        state = validate_checkpoint_state(complete.get("state"))
+        raw_state = complete.get("state")
+        if not isinstance(raw_state, Mapping):
+            _fail("resident_sft_state_complete_state_invalid")
+        state = validate_checkpoint_state(raw_state)
         if state["checkpoint_sequence"] != pointer["checkpoint_sequence"]:
             _fail("resident_sft_state_sequence_mismatch")
         if any(state[role] != value for role, value in expected.items()):
@@ -598,7 +601,7 @@ def save_checkpoint(
             encoding="ascii",
             mode=0o600,
         )
-        return generation
+        return cast(Path, generation)
 
 
 def load_checkpoint(

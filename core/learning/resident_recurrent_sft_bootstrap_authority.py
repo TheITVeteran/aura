@@ -15,7 +15,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
 from typing import Any, Final, Never
 
@@ -44,6 +44,7 @@ REQUIRED_SOURCE_ROLES: Final = frozenset(
         "execution_spec",
         "recurrence_adapter",
         "adapter_identity",
+        "bootstrap_identity",
         "curriculum",
         "tokenizer_validator",
         "campaign_journal",
@@ -541,7 +542,13 @@ def _identity_mapping(value: Any, *, role: str, digest_field: str) -> dict[str, 
     return normalized
 
 
-def _validate_time_window(committed_at: Any, expires_at: Any) -> tuple[str, str]:
+def _validate_time_window(
+    committed_at: Any,
+    expires_at: Any,
+    *,
+    now: datetime | None = None,
+    allow_expired_resume: bool = False,
+) -> tuple[str, str]:
     if not isinstance(committed_at, str) or not isinstance(expires_at, str):
         _fail("resident_sft_authority_time_invalid")
     try:
@@ -553,6 +560,14 @@ def _validate_time_window(committed_at: Any, expires_at: Any) -> tuple[str, str]
         ) from exc
     if committed.tzinfo is None or expires.tzinfo is None or expires <= committed:
         _fail("resident_sft_authority_time_invalid")
+    if now is not None:
+        if now.tzinfo is None:
+            _fail("resident_sft_authority_now_invalid")
+        observed = now.astimezone(UTC)
+        if committed.astimezone(UTC) > observed + timedelta(minutes=5):
+            _fail("resident_sft_authority_not_yet_valid")
+        if expires.astimezone(UTC) <= observed and not allow_expired_resume:
+            _fail("resident_sft_authority_expired")
     return committed_at, expires_at
 
 
@@ -731,6 +746,8 @@ def validate_authority(
     observed_tokenizer_identity: Mapping[str, Any] | None = None,
     observed_execution_spec: Mapping[str, Any] | None = None,
     observed_sources: Mapping[str, Any] | None = None,
+    now: datetime | None = None,
+    allow_expired_resume: bool = False,
 ) -> dict[str, Any]:
     expected_keys = {
         "schema",
@@ -772,7 +789,12 @@ def validate_authority(
         )
     ):
         _fail("resident_sft_authority_policy_invalid")
-    _validate_time_window(record.get("committed_at"), record.get("expires_at"))
+    _validate_time_window(
+        record.get("committed_at"),
+        record.get("expires_at"),
+        now=now,
+        allow_expired_resume=allow_expired_resume,
+    )
     config = ResidentSFTBootstrapConfig.from_dict(record.get("trainer", {}))
     dataset = _validate_dataset(record.get("dataset"))
     artifacts = record.get("dataset_artifacts")
