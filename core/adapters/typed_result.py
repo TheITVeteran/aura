@@ -23,6 +23,7 @@ Usage:
                 return WorldResult.fail("adapter_failure", str(e))
 """
 from __future__ import annotations
+from core.runtime.numeric_guards import bounded_float
 import inspect
 
 import time
@@ -55,6 +56,37 @@ class AdapterError:
     retryable: bool = True
     retry_after_s: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Enforce what the annotations only describe.
+
+        CP126 (medium): "Direct AdapterError construction bypasses enum and
+        numeric validation."
+
+        A dataclass annotation is documentation, not a check. Callers built
+        these with a bare string kind, so ``__str__`` raised AttributeError
+        on ``self.kind.value`` — an error object that crashes while being
+        reported is the worst possible time to fail, because it destroys the
+        context of the original failure it was carrying.
+
+        retry_after_s feeds a sleep. A NaN there compares False against every
+        bound, and a negative or enormous value is either an instant retry
+        storm or a hang.
+        """
+        if not isinstance(self.kind, AdapterErrorKind):
+            try:
+                object.__setattr__(self, "kind", AdapterErrorKind(str(self.kind)))
+            except ValueError:
+                object.__setattr__(self, "kind", AdapterErrorKind.UNKNOWN)
+        object.__setattr__(self, "message", str(self.message))
+        object.__setattr__(self, "retryable", bool(self.retryable))
+        object.__setattr__(
+            self,
+            "retry_after_s",
+            bounded_float(self.retry_after_s, default=0.0, minimum=0.0, maximum=3600.0),
+        )
+        if not isinstance(self.metadata, dict):
+            object.__setattr__(self, "metadata", {})
 
     def __str__(self) -> str:
         return f"[{self.kind.value}] {self.message}"

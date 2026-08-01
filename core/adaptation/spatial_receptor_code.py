@@ -21,13 +21,37 @@ from typing import Any
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    """Clamp into [low, high]; unusable input becomes ``low``.
+
+    CP126 (medium): "Invalid numeric inputs collapse to zero and become
+    valid-looking." That is true and, for the arithmetic, correct — a
+    receptor score has to be a number. What was missing is any way to tell a
+    substituted zero from a measured one, so a completely broken signal
+    scored identically to a real signal with no activation, and the receptor
+    chosen from it carried no sign that it was chosen on nothing.
+
+    ``clamp_with_validity`` returns both, for callers that need the
+    difference. This wrapper keeps the historical shape.
+    """
+    return clamp_with_validity(value, low, high)[0]
+
+
+def clamp_with_validity(
+    value: float, low: float = 0.0, high: float = 1.0,
+) -> tuple[float, bool]:
+    """Return ``(clamped, was_usable)``.
+
+    ``was_usable`` is False when the input was non-numeric or non-finite —
+    the cases where the returned number is a stand-in rather than a
+    measurement.
+    """
     try:
-        value = float(value)
+        numeric = float(value)
     except (TypeError, ValueError):
-        return low
-    if math.isnan(value) or math.isinf(value):
-        return low
-    return max(low, min(high, value))
+        return low, False
+    if math.isnan(numeric) or math.isinf(numeric):
+        return low, False
+    return max(low, min(high, numeric)), True
 
 
 @dataclass(frozen=True)
