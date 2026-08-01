@@ -16,14 +16,14 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current active implementation milestone: **Checkpoint 759 makes the next
-  resident canary answer-complete before it can train: all twelve engineering
-  groups target the only observed learnable family/depth, use a 512-token
-  budget, and require fresh v3 causal evidence with at least 75% complete child
-  answer contracts. No resident process ran and no gain claim exists.**
-- Previous implementation milestone: **Checkpoint 758 preserved S29's complete
-  negative result and separated mixed-transition optimizer evidence from
-  claim-level regression controls while enforcing native process rotation.**
+- Current active implementation milestone: **Checkpoint 760 freezes S30 from
+  clean pushed CP759 source with twelve fresh depth-two training tasks and one
+  fresh holdout. Their task and prompt identities have zero overlap with S28,
+  S29, and each other. Resident preflights remain next; no policy update or
+  gain claim exists.**
+- Previous implementation milestone: **Checkpoint 759 made the next resident
+  canary answer-complete before it can train by targeting the observed
+  family/depth, using 512 tokens, and requiring current v3 causal evidence.**
 - Historical checkpoint narrative (retained for audit): **Checkpoint 189 was the current
   reviewed source candidate in the `main` worktree; checkpoints through CP188
   are pushed. CP188 proved tombstone-free per-graph resource containment on a
@@ -33357,3 +33357,35 @@ detached policy, answer-channel, and causal-learnability preflights. No
 reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 759. The 759-920 completion envelope is approximately
 82.5%-100.0%, with a 91.2% midpoint.
+
+### 2026-07-31 - CP420S30 answer-complete canary preregistration
+
+CP420S30 is frozen from clean pushed CP759 source with training seed
+`2026073102`. Its immutable semantic contract SHA-256 is
+`8d1db625520ffa97448a3254b583e44317f0486b2c2a8876a2286180c97a4044`;
+the serialized contract file SHA-256 is
+`a65fc849e2f321d831aecbcf51bdafad368cfe3ad9f0d839970cdac83be6ca56`.
+Independent contract validation verifies the resident 32B checkpoint and
+behavior bundle, exact CP759 executable source bindings, 512-token answer
+budget, depth-two recurrent graph, current v3 mixed-transition optimizer rule,
+answer-completeness gate, process rotation, checkpoint cadence, watchdog
+policy, and nonpromotable claim boundary.
+
+The S30 split contains twelve `register_trace` depth-two training tasks and one
+depth-two holdout. Reconstructing S28, S29, and S30 from their immutable seeds
+found zero S28/S30 task-ID overlap, zero S28/S30 prompt overlap, zero S29/S30
+task-ID overlap, zero S29/S30 prompt overlap, and zero S30 train/holdout ID
+overlap. No previously observed answer or transition is reused as S30 training
+evidence.
+
+No resident model process ran in this checkpoint. The next required sequence
+is the initial-policy probe, exact-budget answer-channel preflight, fresh v3
+causal-learnability preflight, and independent verification of the resulting
+receipts. Training remains blocked unless the causal receipt proves at least
+75% complete child answer contracts, two optimizer-reachable cells, and two
+wrong-to-right transitions. Fresh signer custody, launch materialization, PID-1
+controller ownership, sleep inhibition, moving heartbeat, durable step-zero
+state, and the independent watchdog remain mandatory after those gates. No
+reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
+This is total checkpoint 760. The 760-920 completion envelope is approximately
+82.6%-100.0%, with a 91.3% midpoint.
