@@ -275,3 +275,57 @@ class TestCorruptQualityIsNotAJudgement:
             identity_markers_present=True, topics_in_play=2, resolved_topics=2,
         )
         assert monitor._successful_turns == 1
+
+
+class TestTelemetryGaugesAreBounded:
+    """CP126: "Telemetry omits upper and finite bounds."
+
+    Every gauge carried ge=0.0 and nothing else, so inf and NaN validated
+    cleanly and reached the browser — a NaN renders as "NaN" in a gauge and
+    an unbounded energy silently rescales every chart on the page.
+
+    The enforcement CLAMPS rather than rejects, and that choice matters: the
+    payload is built inside the heartbeat and published to the websocket, so
+    a ValidationError there does not protect the UI, it kills the telemetry
+    stream and freezes the dashboard on its last good frame while the
+    runtime looks healthy.
+    """
+
+    def _payload(self, **kwargs):
+        from core.schemas import TelemetryPayload
+
+        return TelemetryPayload(**kwargs)
+
+    @pytest.mark.parametrize("value", [NAN, INF, -INF])
+    def test_non_finite_gauges_take_the_default(self, value):
+        assert self._payload(energy=value).energy == 100.0
+
+    def test_an_over_range_gauge_clamps_to_the_maximum(self):
+        assert self._payload(energy=500.0).energy == 100.0
+
+    def test_an_under_range_gauge_clamps_to_the_minimum(self):
+        assert self._payload(energy=-20.0).energy == 0.0
+
+    def test_normalised_scores_use_their_own_range(self):
+        assert self._payload(coherence=3.0).coherence == 1.0
+
+    def test_a_healthy_value_is_untouched(self):
+        payload = self._payload(energy=80.0, coherence=0.9)
+        assert payload.energy == 80.0
+        assert payload.coherence == 0.9
+
+    def test_fully_corrupt_telemetry_never_raises(self):
+        """The whole point: the stream must survive bad numbers."""
+        payload = self._payload(
+            energy=NAN, curiosity=INF, coherence=NAN, vitality=-5, cpu_usage=INF,
+        )
+        assert all(
+            math.isfinite(getattr(payload, name))
+            for name in ("energy", "curiosity", "coherence", "vitality", "cpu_usage")
+        )
+
+    def test_every_bounded_field_has_a_declared_range(self):
+        from core.schemas import TelemetryPayload
+
+        for name, (lo, hi, default) in TelemetryPayload._BOUNDS.items():
+            assert lo <= default <= hi, name
