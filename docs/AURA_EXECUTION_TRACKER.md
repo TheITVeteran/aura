@@ -34123,3 +34123,39 @@ fresh heldout causal lesion/restoration evidence. No reasoning-gain, frontier,
 promotion, release, or `WOW Signal` claim is made. This is total checkpoint
 781. The 781-920 completion envelope is approximately 84.9%-100.0%, with a
 92.4% midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP782 resident recurrent SFT bootstrap authority
+
+Resident cached-path supervised bootstrapping now has a dedicated fail-closed
+authority instead of broadening the small-checkpoint structured-SFT research
+policy. The authority binds the complete resident checkpoint and behavior
+identity, personality and tokenizer identities, exact cached execution
+specification, canonical disjoint train and validation datasets, dataset bytes,
+trainer configuration, runtime identity, trust policy, source-role inventory,
+and artifact root under one content-addressed authority digest. The base
+checkpoint is immutable; only the named recurrent adapter class may change.
+
+The trainer contract fixes AdamW, a deterministic family/depth-balanced sampler,
+the exact cached supervised live-path objective, bounded sequence length and
+resource fraction, one-step durable checkpoint cadence, validation cadence,
+branch selection, and a maximum number of steps per invocation. It rejects
+training/evaluation prompt or task overlap, non-training-only task families,
+malformed final-answer contracts, absent or altered source roles, artifact-byte
+drift, observed model/behavior/personality/tokenizer/spec drift, and coherent
+digest recomputation that attempts to weaken the claim boundary or checkpoint
+policy.
+
+The authority states that a completed bootstrap remains non-promotable and
+cannot authorize GRPO. Fresh heldout lesion/restoration evidence, broad
+regression results, an independently verifiable campaign receipt, and an
+explicit later admission decision remain mandatory. The authority and existing
+small-model research suites pass 32/32, including adversarial digest, source,
+artifact, model, claim-boundary, and resident-scale isolation tests; Ruff,
+bytecode compilation, and diff integrity pass.
+
+No resident training has started, no parameter has changed, and no
+reasoning-gain, frontier, promotion, release, GRPO-admission, or `WOW Signal`
+claim is made. The next bounded milestone is the authority-bound durable resume
+state and exact cached trainer. This is total checkpoint 782. The 782-920
+completion envelope is approximately 85.0%-100.0%, with a 92.5% midpoint.
+Long soaks remain deferred.
