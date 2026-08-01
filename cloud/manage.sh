@@ -16,7 +16,19 @@ VM_IP="${1:?Usage: ./cloud/manage.sh <VM_IP> <command>}"
 CMD="${2:-status}"
 SSH_USER="ubuntu"
 SSH_KEY="${HOME}/.ssh/aura-oracle.key"
-SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=no"
+
+# Same class as cloud/deploy.sh (CP126 critical, "Deployment disables SSH
+# host verification"). StrictHostKeyChecking=no accepts ANY host key, and
+# this script runs sudo commands and reads logs — on a cloud provider IPs
+# are recycled, so the machine at a remembered address may not be yours.
+#
+# accept-new keeps first-connection ergonomics but still refuses when a host
+# key CHANGES, which is the case that matters.
+SSH_STRICT="${AURA_DEPLOY_SSH_STRICT:-accept-new}"
+SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=${SSH_STRICT}"
+if [[ -n "${AURA_DEPLOY_KNOWN_HOSTS:-}" ]]; then
+  SSH_OPTS="${SSH_OPTS} -o UserKnownHostsFile=${AURA_DEPLOY_KNOWN_HOSTS}"
+fi
 
 case "${CMD}" in
     status)

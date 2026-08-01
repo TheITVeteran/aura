@@ -17,8 +17,32 @@ VM_IP="${1:?Usage: ./cloud/deploy.sh <VM_IP> [--update]}"
 UPDATE_ONLY="${2:-}"
 SSH_USER="ubuntu"
 SSH_KEY="${HOME}/.ssh/aura-oracle.key"
-SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=no"
 REMOTE_DIR="/opt/aura"
+
+# ---------------------------------------------------------------------------
+# Host verification
+#
+# CP126 (critical): "Deployment disables SSH host verification."
+# StrictHostKeyChecking=no accepts ANY host key without complaint, so this
+# script would happily rsync the whole source tree, write the .env — which
+# carries live secrets — and run sudo commands on whatever machine answered
+# at that IP. On a cloud provider IPs are recycled constantly, so the
+# machine at a remembered address genuinely may not be yours.
+#
+# `accept-new` keeps the ergonomics that motivated the original setting: a
+# first deploy to a freshly provisioned VM still works without a manual
+# known_hosts dance. What it does NOT do is stay silent when a host key
+# CHANGES — which is the case that matters, because that is either a
+# reprovision you should confirm or someone else holding the address.
+#
+# Set AURA_DEPLOY_SSH_STRICT=yes for a fully pinned deploy, or
+# AURA_DEPLOY_KNOWN_HOSTS to use a checked-in host-key file.
+# ---------------------------------------------------------------------------
+SSH_STRICT="${AURA_DEPLOY_SSH_STRICT:-accept-new}"
+SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=${SSH_STRICT}"
+if [[ -n "${AURA_DEPLOY_KNOWN_HOSTS:-}" ]]; then
+  SSH_OPTS="${SSH_OPTS} -o UserKnownHostsFile=${AURA_DEPLOY_KNOWN_HOSTS}"
+fi
 
 echo "╔══════════════════════════════════╗"
 echo "║   DEPLOYING AURA → ${VM_IP}     "
