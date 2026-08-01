@@ -34017,3 +34017,45 @@ small-checkpoint research authority. No reasoning-gain, frontier, promotion,
 release, or `WOW Signal` claim is made. This is total checkpoint 778. The
 778-920 completion envelope is approximately 84.6%-100.0%, with a 92.3%
 midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP779 Reality Reach contract and no-go foundation
+
+The LAWC-08 MacBook Reality Reach report has been read structurally and
+visually reviewed across all 18 rendered pages. Its useful engineering object
+is now an explicit Aura initiative rather than an ungrounded claim: typed
+physical requests, declared causal channels, calibrated metrology, honest
+reachability and no-go results, blind controlled experiments, residual-model
+challenge, inverse control, and monotonic evidence promotion. The complete
+RR-01 through RR-10 implementation ledger in `docs/REALITY_REACH.md` retains
+the report's A1-A10 acoustic, optical, thermal, cross-channel, weakpoint,
+internal-law, translation, spacetime-honesty, and ambient-constant acceptance
+tests, plus production boot, Q&A, governance, security, and operational gates.
+
+RR-01 is implemented as shared infrastructure in `core/reality_reach`. A
+schema-bound `RealityIR` carries objective kind, observable, canonical unit,
+target, tolerance, domain, allowed sensors and actuators, constraints, proof
+requirements, horizon, and reality layer. Immutable channel declarations bind
+kind, observable, domain, physical coupling, reality layers, evidence ceiling,
+owner, resolution, sample rate, latency, reference identity, compliance tags,
+external metrology, and coupling validation. The thread-safe registry produces
+a deterministic inventory digest.
+
+The reachability engine resolves only explicitly compatible live declarations
+and returns a content-addressed reachable, partial, or unreachable certificate.
+It detects absent or mismatched channels, target range failures, sensor-floor
+limits, shared references, insufficient independent sensors, unmet constraints,
+insufficient evidence ceiling, missing external metrology, and unresolved
+ambient coupling. `reachable` means only that a compliant causal route exists;
+it cannot promote evidence or claim that an experiment ran. Direct and ambient
+claims cannot be inferred from internal channels, intent, simulation, transport
+success, or model text.
+
+Ten focused tests pass for canonical identity, input-sensitive digests,
+tamper rejection, missing channels, sensor floors, shared references,
+internal/direct separation, ambient metrology and coupling, channel
+constraints, evidence ceilings, and malformed control contracts. Ruff,
+bytecode compilation, and diff integrity pass. No live channel is wired yet,
+and no physical effect, weakpoint, ambient-law, reasoning-gain, frontier,
+promotion, release, or `WOW Signal` claim is made. This is total checkpoint
+779. The 779-920 completion envelope is approximately 84.7%-100.0%, with a
+92.3% midpoint. Long soaks remain deferred.
