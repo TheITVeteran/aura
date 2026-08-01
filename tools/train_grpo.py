@@ -1556,7 +1556,7 @@ def _load_initial_policy_probe_reference(
     model_behavior_bundle: Mapping[str, Any],
     tokenizer_bundle: Mapping[str, Any],
     adapter_initialization: Mapping[str, Any],
-    source_bindings: Mapping[str, Any],
+    source_bindings_sha256: str,
     warm_start_receipt: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """Reopen the initial policy custody before any read-only probe samples."""
@@ -1596,7 +1596,8 @@ def _load_initial_policy_probe_reference(
         or probe.get("model_behavior_bundle") != dict(model_behavior_bundle)
         or probe.get("tokenizer_bundle") != dict(tokenizer_bundle)
         or probe.get("adapter_initialization") != dict(adapter_initialization)
-        or probe.get("source_bindings") != dict(source_bindings)
+        or sha256_bytes(canonical_json_bytes(probe.get("source_bindings")))
+        != source_bindings_sha256
         or probe.get("warm_start_receipt")
         != (dict(warm_start_receipt) if warm_start_receipt is not None else None)
     ):
@@ -2469,6 +2470,10 @@ def main(
         help="frozen training-dataset digest expected in the initial policy probe",
     )
     parser.add_argument(
+        "--initial-policy-source-bindings-sha256",
+        help="digest of the frozen initial-policy executable source manifest",
+    )
+    parser.add_argument(
         "--read-only-answer-channel-preflight",
         action="store_true",
         help=(
@@ -2589,12 +2594,20 @@ def main(
         not args.initial_policy_probe_reference
         or not args.initial_policy_campaign_id
         or not args.initial_policy_dataset_sha256
+        or not args.initial_policy_source_bindings_sha256
+        or re.fullmatch(r"[0-9a-f]{64}", args.initial_policy_dataset_sha256)
+        is None
+        or re.fullmatch(
+            r"[0-9a-f]{64}", args.initial_policy_source_bindings_sha256
+        )
+        is None
     ):
         parser.error("read-only recurrent probes require initial policy custody")
     if not read_only_probe and (
         args.initial_policy_probe_reference
         or args.initial_policy_campaign_id
         or args.initial_policy_dataset_sha256
+        or args.initial_policy_source_bindings_sha256
     ):
         parser.error("initial policy custody applies only to read-only probes")
     if verified_group_provider_factory is not None and (
@@ -2951,7 +2964,9 @@ def main(
                 model_behavior_bundle=behavior_identity,
                 tokenizer_bundle=token_trace_adapter.bundle_identity,
                 adapter_initialization=adapter_initialization,
-                source_bindings=sources,
+                source_bindings_sha256=str(
+                    args.initial_policy_source_bindings_sha256
+                ),
                 warm_start_receipt=warm_start_receipt,
             )
             current_policy_sha256 = recurrent_policy_sha256(model, execution_spec)

@@ -1342,6 +1342,9 @@ def test_answer_channel_preflight_command_is_bounded_and_source_separated():
     assert argv[argv.index("--initial-policy-dataset-sha256") + 1] == contract[
         "training"
     ]["dataset"]["sha256"]
+    assert argv[argv.index("--initial-policy-source-bindings-sha256") + 1] == (
+        prereg._initial_policy_source_bindings_sha256(contract)
+    )
     assert argv[argv.index("--initial-policy-probe-reference") + 1].endswith(
         "/policy-probe/initial_policy_probe.json"
     )
@@ -1519,6 +1522,9 @@ def test_causal_learnability_preflight_matches_training_object_and_budget():
     assert argv[argv.index("--initial-policy-dataset-sha256") + 1] == contract[
         "training"
     ]["dataset"]["sha256"]
+    assert argv[argv.index("--initial-policy-source-bindings-sha256") + 1] == (
+        prereg._initial_policy_source_bindings_sha256(contract)
+    )
     assert argv[argv.index("--initial-policy-probe-reference") + 1].endswith(
         "/policy-probe/initial_policy_probe.json"
     )

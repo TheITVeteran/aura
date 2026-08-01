@@ -33754,3 +33754,41 @@ exact initial-policy custody chain. No reasoning-gain, frontier, promotion,
 release, or `WOW Signal` claim is made. This is total checkpoint 770. The
 770-920 completion envelope is approximately 83.7%-100.0%, with a 91.8%
 midpoint.
+
+### 2026-08-01 - CP771 initial-source manifest custody repair
+
+S34's detached initial-policy probe completed under PID-1 supervision with
+zero restarts. It applied 32 copied and 16 deterministic warm-start factors and
+sealed policy digest
+`4403427d7d0de3bfb5cb419520de3c6462523795baf08ba6bd06617cd46bc46c`
+in initial-probe receipt
+`2e98fba95e07c135418bb0727479595ed0faade1d4ba49232cdd7cbb248d8ced`.
+Independent verification reopened its private adapter and optimizer snapshots
+and reproduced the policy, probe, warm-start, dataset, tokenizer, and model
+identities.
+
+The answer process then failed closed before its first observation. The new
+custody check compared the initial probe's complete source-binding object to
+the answer process's source-binding object. Every executable implementation
+binding matched, but the `curriculum` role correctly differed: the frozen
+initial policy uses `recurrence_curriculum`, while the answer probe deliberately
+uses the disjoint `answer_channel_curriculum`. This was an overconstrained
+identity comparison, not model or policy divergence. S34 produced no accepted
+answer receipt, causal receipt, signer, training process, or optimizer update
+and is retired as engineering evidence.
+
+Read-only probes now carry a frozen SHA-256 of the initial probe's exact
+required source manifest. `train_grpo` validates that digest against the signed
+initial receipt while separately sealing the read-only process's own current
+source bindings in its output receipt. It also validates the frozen initial
+training-dataset digest. This preserves both identities without pretending two
+different task corpora are the same source. S34's real private snapshots replay
+under the repaired check with source-manifest digest
+`cf73d1c224471ddc9365d54b6310d068793927bc6bddbf485cd13a3a09bf49b9`.
+
+The focused campaign, warm-start, adapter-identity, and launch-materialization
+matrix passes 114/114. Ruff, bytecode compilation, live snapshot replay, and
+diff integrity pass. A fresh S35 contract is required because executable
+source changed. No reasoning-gain, frontier, promotion, release, or
+`WOW Signal` claim is made. This is total checkpoint 771. The 771-920
+completion envelope is approximately 83.8%-100.0%, with a 91.9% midpoint.

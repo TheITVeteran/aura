@@ -77,6 +77,9 @@ from core.brain.llm.latent_cortex.recurrence_adapter_identity_v2 import (  # noq
     full_weight_checkpoint_identity,
     model_behavior_bundle_identity,
 )
+from core.brain.llm.latent_cortex.recurrent_grpo_adapter_identity import (  # noqa: E402
+    REQUIRED_SOURCE_ROLES,
+)
 from core.learning.grpo_training_state import canonical_json_bytes  # noqa: E402
 from core.learning.recurrence_curriculum import (  # noqa: E402
     RECURRENCE_TRAINING_FAMILIES,
@@ -2362,6 +2365,8 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
         str(contract["campaign_id"]),
         "--initial-policy-dataset-sha256",
         str(contract["training"]["dataset"]["sha256"]),
+        "--initial-policy-source-bindings-sha256",
+        _initial_policy_source_bindings_sha256(contract),
         "--calibrate",
         "--cot",
         *_warm_start_argv(contract),
@@ -2464,6 +2469,14 @@ def _load_initial_policy_probe_for_contract(
     ):
         _fail("initial_policy_probe_snapshot_mismatch")
     return probe
+
+
+def _initial_policy_source_bindings_sha256(contract: Mapping[str, Any]) -> str:
+    bindings = {
+        role: contract["sources"][role]
+        for role in sorted(REQUIRED_SOURCE_ROLES)
+    }
+    return _sha256(canonical_json_bytes(bindings))
 
 
 def validate_answer_channel_preflight(
@@ -2673,6 +2686,8 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         str(contract["campaign_id"]),
         "--initial-policy-dataset-sha256",
         str(contract["training"]["dataset"]["sha256"]),
+        "--initial-policy-source-bindings-sha256",
+        _initial_policy_source_bindings_sha256(contract),
         "--cot",
         *_warm_start_argv(contract),
         "--read-only-causal-learnability-preflight",
