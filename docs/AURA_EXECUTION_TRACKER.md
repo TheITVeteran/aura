@@ -33920,3 +33920,28 @@ executable policy code changed. No reasoning-gain, frontier, promotion,
 release, or `WOW Signal` claim is made. This is total checkpoint 775. The
 775-920 completion envelope is approximately 84.2%-100.0%, with a 92.1%
 midpoint.
+
+### 2026-08-01 - CP776 cached-policy S37 canary preregistration
+
+CP420S37 is frozen from clean pushed CP775 source `9892b1181` with training
+seed `2026080106`. Its immutable semantic contract SHA-256 is
+`38bc609cb8788f55958f35711e8ca0f2fd66b094c0b4d25b73a2bc96c9302dcf`;
+the serialized contract file SHA-256 is
+`4af4ddea69868ee2e515d2f3736bdac7ca6c71f63ea610e2e1afa33f5af43192`.
+Independent verification binds the unified cached sampler, PPO scorer, and
+gradient implementation in addition to the complete prior model, task,
+source, warm-start, execution, resource, watchdog, and claim commitments.
+
+All four model processes carry LoRA initialization seed `1564321144`. The
+read-only probes bind frozen initial dataset digest
+`f0101a1776b01672b8e1e716706eb0aeb718098311c6a5eec90ae4b1c51320c7`
+and initial source-manifest digest
+`c75128e12f25c98dc01ce46f3ecbe245145a8bb0831389d2eb2e92d0abe841cf`.
+Reconstructing S28 through S37 found zero task-ID and zero prompt overlap
+between S37 and every prior canary, plus zero S37 train/holdout overlap.
+
+No resident process ran in this checkpoint. S37 must prove the full detached
+initial, answer, and causal sequence under the new cached policy before any
+update canary may launch. No reasoning-gain, frontier, promotion, release, or
+`WOW Signal` claim is made. This is total checkpoint 776. The 776-920
+completion envelope is approximately 84.3%-100.0%, with a 92.2% midpoint.
