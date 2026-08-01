@@ -728,7 +728,7 @@ def test_full_profile_refuses_manual_controller_entrypoint() -> None:
         controller._verify_execution_supervision(config, launchd_supervised=False)
 
 
-def test_full_profile_accepts_exact_launchd_caffeinate_parent(
+def test_full_profile_accepts_launchd_owned_controller_with_exact_caffeinate_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config()
@@ -743,14 +743,32 @@ def test_full_profile_accepts_exact_launchd_caffeinate_parent(
         "_launchd_job",
         lambda _label: {"target": "gui/501/test", "job_pid": 4242},
     )
-    monkeypatch.setattr(controller.os, "getppid", lambda: 4242)
+    monkeypatch.setattr(controller.os, "getpid", lambda: 4242)
+    monkeypatch.setattr(controller.os, "getppid", lambda: 1)
+    monkeypatch.setattr(controller.sys, "executable", "/venv/bin/python")
+    monkeypatch.setattr(
+        controller.sys,
+        "argv",
+        [
+            str(controller.Path(controller.__file__).resolve()),
+            "run",
+            "--config",
+            "/repo/controller-config.json",
+            "--launchd-supervised",
+        ],
+    )
+    expected = (
+        "/usr/bin/caffeinate -i /venv/bin/python "
+        f"{controller.Path(controller.__file__).resolve()} run --config "
+        "/repo/controller-config.json --launchd-supervised\n"
+    )
     monkeypatch.setattr(
         controller.subprocess,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
             args=[],
             returncode=0,
-            stdout="/usr/bin/caffeinate -i /usr/bin/python3 controller.py\n",
+            stdout=f"4243 4242 {expected}",
             stderr="",
         ),
     )
@@ -759,9 +777,11 @@ def test_full_profile_accepts_exact_launchd_caffeinate_parent(
 
     assert supervision["mode"] == "launchd_caffeinate"
     assert supervision["launchd_pid"] == 4242
+    assert supervision["controller_pid"] == 4242
+    assert supervision["caffeinate_pid"] == 4243
 
 
-def test_full_profile_rejects_launchd_pid_that_is_not_controller_parent(
+def test_full_profile_rejects_launchd_pid_that_is_not_controller(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config()
@@ -771,11 +791,40 @@ def test_full_profile_rejects_launchd_pid_that_is_not_controller_parent(
         "_launchd_job",
         lambda _label: {"target": "gui/501/test", "job_pid": 4242},
     )
-    monkeypatch.setattr(controller.os, "getppid", lambda: 4343)
+    monkeypatch.setattr(controller.os, "getpid", lambda: 4343)
 
     with pytest.raises(
         controller.ResidentSFTCampaignControllerError,
         match="launchd_parent_mismatch",
+    ):
+        controller._verify_execution_supervision(config, launchd_supervised=True)
+
+
+def test_full_profile_rejects_missing_exact_caffeinate_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    config["profile"] = "full"
+    monkeypatch.setattr(
+        controller,
+        "_launchd_job",
+        lambda _label: {"target": "gui/501/test", "job_pid": 4242},
+    )
+    monkeypatch.setattr(controller.os, "getpid", lambda: 4242)
+    monkeypatch.setattr(
+        controller.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="4243 4242 /usr/bin/caffeinate -t 60\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(
+        controller.ResidentSFTCampaignControllerError,
+        match="caffeinate_parent_missing",
     ):
         controller._verify_execution_supervision(config, launchd_supervised=True)
 

@@ -34526,3 +34526,30 @@ reasoning gain, frontier level, GRPO admission, promotion, and release remain
 false. The next step is the independently supervised full 96-step campaign,
 followed by its preregistered held-out/equal-compute causal proof gates. No
 `WOW Signal` claim is made.
+
+### 2026-08-01 - CP792 macOS launchd/caffeinate lineage correction
+
+The first CP791 full-campaign launch exited before trainer creation because the
+controller's supervision verifier modeled the wrong macOS process topology. On
+this host, `caffeinate -i <utility>` preserves the launchd-owned PID for the
+utility and creates a child `caffeinate` assertion process. The old verifier
+instead required the launchd job PID to be the controller's parent, an
+impossible relationship in the observed topology. The failure was explicit
+(`resident_sft_controller_launchd_parent_mismatch`), no detached attempt or
+trainer process started, and no model weights were loaded or changed.
+
+Full campaigns now require the current controller PID to equal the live
+launchd job PID and independently enumerate the process table to find exactly
+one direct child whose argument vector exactly equals
+`/usr/bin/caffeinate -i <bound interpreter> <controller argv>`. A wrong launchd
+PID, absent assertion process, changed `caffeinate` mode, or altered command
+continues to fail closed. A direct host reproduction confirmed this topology;
+the complete controller suite passes 26/26, focused Ruff and compilation pass,
+and strict targeted MyPy reports no issues. The failed CP791 artifacts remain
+quarantined as launch-failure evidence. The next step is a fresh full campaign
+prepared from exact published CP792 source, followed by verified launchd PID,
+sleep-inhibitor child, detached supervisor/trainer lineage, moving heartbeat,
+and first durable checkpoint evidence. No bootstrap-complete, reasoning-gain,
+frontier, promotion, release, GRPO-admission, physical-effect, or `WOW Signal`
+claim is made. This is total checkpoint 792 of the current 920-checkpoint
+completion envelope, approximately 86.1% by count. Long soaks remain deferred.

@@ -15,6 +15,7 @@ import json
 import math
 import os
 import plistlib
+import shlex
 import stat
 import subprocess
 import sys
@@ -371,18 +372,39 @@ def _verify_execution_supervision(
     if not launchd_supervised:
         _fail("resident_sft_controller_full_requires_launchd_entrypoint")
     job = _launchd_job(str(config["launch"]["label"]))
-    parent_pid = os.getppid()
-    if parent_pid != job["job_pid"]:
+    controller_pid = os.getpid()
+    if controller_pid != job["job_pid"]:
         _fail("resident_sft_controller_launchd_parent_mismatch")
-    parent = subprocess.run(
-        ["/bin/ps", "-p", str(parent_pid), "-o", "command="],
+
+    processes = subprocess.run(
+        ["/bin/ps", "-axo", "pid=,ppid=,command="],
         capture_output=True,
         text=True,
         timeout=30.0,
         check=False,
     )
-    command = parent.stdout.strip()
-    if parent.returncode != 0 or not command.startswith("/usr/bin/caffeinate -i "):
+    expected = (
+        "/usr/bin/caffeinate",
+        "-i",
+        sys.executable,
+        str(Path(__file__).resolve(strict=True)),
+        *sys.argv[1:],
+    )
+    inhibitor_pids: list[int] = []
+    if processes.returncode == 0:
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(maxsplit=2)
+            if len(fields) != 3:
+                continue
+            try:
+                pid = int(fields[0])
+                parent_pid = int(fields[1])
+                argv = tuple(shlex.split(fields[2]))
+            except (ValueError, TypeError):
+                continue
+            if parent_pid == controller_pid and argv == expected:
+                inhibitor_pids.append(pid)
+    if len(inhibitor_pids) != 1:
         _fail("resident_sft_controller_caffeinate_parent_missing")
     return {
         "mode": "launchd_caffeinate",
@@ -390,8 +412,9 @@ def _verify_execution_supervision(
         "caffeinate": True,
         "launchd_target": job["target"],
         "launchd_pid": job["job_pid"],
-        "controller_pid": os.getpid(),
-        "controller_parent_pid": parent_pid,
+        "controller_pid": controller_pid,
+        "controller_parent_pid": os.getppid(),
+        "caffeinate_pid": inhibitor_pids[0],
     }
 
 
