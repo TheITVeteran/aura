@@ -302,7 +302,10 @@ class ChannelDeclaration:
     resolution: float = 0.0
     sample_rate_hz: float = 0.0
     max_latency_s: float = 0.0
+    stale_after_s: float = 30.0
     reference_id: str = ""
+    calibration_id: str = ""
+    calibration_valid_until_ns: int | None = None
     compliance_tags: tuple[str, ...] = ()
     external_metrology: bool = False
     coupling_validated: bool = False
@@ -329,18 +332,35 @@ class ChannelDeclaration:
         resolution = _finite(self.resolution, name="resolution")
         sample_rate_hz = _finite(self.sample_rate_hz, name="sample_rate_hz")
         max_latency_s = _finite(self.max_latency_s, name="max_latency_s")
+        stale_after_s = _finite(self.stale_after_s, name="stale_after_s")
         if min(resolution, sample_rate_hz, max_latency_s) < 0.0:
             raise ValueError("channel metrology fields must be non-negative")
+        if stale_after_s <= 0.0:
+            raise ValueError("stale_after_s must be positive")
         if self.kind == ChannelKind.SENSOR:
             _validate_identifier(self.reference_id, name="reference_id")
             if sample_rate_hz <= 0.0:
                 raise ValueError("sensor sample_rate_hz must be positive")
         elif self.reference_id:
             _validate_identifier(self.reference_id, name="reference_id")
+        if self.calibration_id:
+            _validate_identifier(self.calibration_id, name="calibration_id")
+        if self.external_metrology and not self.calibration_id:
+            raise ValueError("external metrology requires a calibration identifier")
+        if self.calibration_valid_until_ns is not None:
+            if (
+                isinstance(self.calibration_valid_until_ns, bool)
+                or not isinstance(self.calibration_valid_until_ns, int)
+                or self.calibration_valid_until_ns <= 0
+            ):
+                raise ValueError("calibration_valid_until_ns must be a positive integer")
+            if not self.calibration_id:
+                raise ValueError("calibration expiry requires a calibration identifier")
         _validate_unique_identifiers(self.compliance_tags, name="compliance_tags")
         object.__setattr__(self, "resolution", resolution)
         object.__setattr__(self, "sample_rate_hz", sample_rate_hz)
         object.__setattr__(self, "max_latency_s", max_latency_s)
+        object.__setattr__(self, "stale_after_s", stale_after_s)
 
     def supports(self, contract: RealityIR) -> bool:
         return (
@@ -364,7 +384,10 @@ class ChannelDeclaration:
             "resolution": self.resolution,
             "sample_rate_hz": self.sample_rate_hz,
             "max_latency_s": self.max_latency_s,
+            "stale_after_s": self.stale_after_s,
             "reference_id": self.reference_id,
+            "calibration_id": self.calibration_id,
+            "calibration_valid_until_ns": self.calibration_valid_until_ns,
             "compliance_tags": list(self.compliance_tags),
             "external_metrology": self.external_metrology,
             "coupling_validated": self.coupling_validated,

@@ -97,6 +97,7 @@ def _sensor(
         sample_rate_hz=10.0,
         max_latency_s=0.1,
         reference_id=reference_id,
+        calibration_id="nist.photometer.2026",
         external_metrology=external,
         coupling_validated=True,
     )

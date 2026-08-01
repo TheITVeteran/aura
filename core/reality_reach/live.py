@@ -1,0 +1,511 @@
+"""Live channel inventory and provenance-aware observation service."""
+
+from __future__ import annotations
+
+import math
+import threading
+import time
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from typing import Any, Protocol, runtime_checkable
+
+from core.reality_reach.contracts import (
+    ChannelDeclaration,
+    ChannelKind,
+    CouplingClass,
+    EvidenceLevel,
+    NumericDomain,
+    ReachabilityCertificate,
+    RealityIR,
+    RealityLayer,
+)
+from core.reality_reach.reachability import ChannelRegistry, ReachabilityEngine
+from core.runtime.audit_chain import canonical_json, sha256_hex
+from core.runtime.resource_observation import ObservationSource, get_resource_observer
+from core.runtime.service_registry import register_runtime_service
+
+
+class ReadingStatus(StrEnum):
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
+    STALE = "stale"
+    PERMISSION_DENIED = "permission_denied"
+    DEGRADED = "degraded"
+    SIMULATED = "simulated"
+    UNCALIBRATED = "uncalibrated"
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelReading:
+    channel_id: str
+    value: float | None
+    unit: str
+    captured_at_ns: int
+    status: ReadingStatus
+    source: str
+    scenario_id: str = ""
+    uncertainty: float | None = None
+    error: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.channel_id, str) or not self.channel_id:
+            raise ValueError("channel_id must be non-empty")
+        if not isinstance(self.unit, str) or not self.unit:
+            raise ValueError("unit must be non-empty")
+        if isinstance(self.captured_at_ns, bool) or self.captured_at_ns <= 0:
+            raise ValueError("captured_at_ns must be positive")
+        if not isinstance(self.status, ReadingStatus):
+            raise TypeError("status must be a ReadingStatus")
+        if not isinstance(self.source, str) or not self.source:
+            raise ValueError("source must be non-empty")
+        if self.value is not None:
+            if isinstance(self.value, bool) or not math.isfinite(float(self.value)):
+                raise ValueError("value must be finite when present")
+            object.__setattr__(self, "value", float(self.value))
+        if self.uncertainty is not None:
+            uncertainty = float(self.uncertainty)
+            if not math.isfinite(uncertainty) or uncertainty < 0.0:
+                raise ValueError("uncertainty must be finite and non-negative")
+            object.__setattr__(self, "uncertainty", uncertainty)
+        if self.status in {ReadingStatus.AVAILABLE, ReadingStatus.SIMULATED}:
+            if self.value is None:
+                raise ValueError("available readings require a value")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "channel_id": self.channel_id,
+            "value": self.value,
+            "unit": self.unit,
+            "captured_at_ns": self.captured_at_ns,
+            "status": self.status.value,
+            "source": self.source,
+            "scenario_id": self.scenario_id,
+            "uncertainty": self.uncertainty,
+            "error": self.error,
+        }
+
+    @property
+    def sha256(self) -> str:
+        return sha256_hex(canonical_json(self.to_dict()))
+
+
+@runtime_checkable
+class LiveChannelAdapter(Protocol):
+    @property
+    def adapter_id(self) -> str: ...
+
+    def declarations(self) -> tuple[ChannelDeclaration, ...]: ...
+
+    def read(self) -> tuple[ChannelReading, ...]: ...
+
+
+class HostResourceAdapter:
+    """Adapts Aura's attributable resource observer into measurable channels."""
+
+    adapter_id = "host.resource_observer"
+
+    def __init__(self, observer: Any | None = None) -> None:
+        self._observer = observer or get_resource_observer()
+        self._declarations = self._build_declarations()
+
+    @staticmethod
+    def _build_declarations() -> tuple[ChannelDeclaration, ...]:
+        common = {
+            "kind": ChannelKind.SENSOR,
+            "coupling": CouplingClass.SOFTWARE,
+            "reality_layers": (RealityLayer.INTERNAL, RealityLayer.EFFECTIVE),
+            "evidence_level": EvidenceLevel.P1,
+            "owner": "core.runtime.resource_observation",
+            "sample_rate_hz": 1.0,
+            "max_latency_s": 2.0,
+            "stale_after_s": 10.0,
+            "coupling_validated": True,
+        }
+        return (
+            ChannelDeclaration(
+                channel_id="host.compute.cpu_percent",
+                observable="cpu_usage_percent",
+                unit="percent",
+                domain=NumericDomain(0.0, 100.0),
+                resolution=0.1,
+                reference_id="host.kernel.cpu",
+                **common,
+            ),
+            ChannelDeclaration(
+                channel_id="host.memory.used_percent",
+                observable="memory_usage_percent",
+                unit="percent",
+                domain=NumericDomain(0.0, 100.0),
+                resolution=0.1,
+                reference_id="host.kernel.memory",
+                **common,
+            ),
+            ChannelDeclaration(
+                channel_id="host.disk.root_used_percent",
+                observable="disk_usage_percent",
+                unit="percent",
+                domain=NumericDomain(0.0, 100.0),
+                resolution=0.1,
+                reference_id="host.kernel.filesystem",
+                **common,
+            ),
+            ChannelDeclaration(
+                channel_id="host.thermal.pressure_level",
+                observable="thermal_pressure_level",
+                unit="level",
+                domain=NumericDomain(0.0, 3.0),
+                resolution=1.0,
+                reference_id="host.kernel.thermal",
+                **common,
+            ),
+            ChannelDeclaration(
+                channel_id="host.power.battery_percent",
+                observable="battery_charge_percent",
+                unit="percent",
+                domain=NumericDomain(0.0, 100.0),
+                resolution=1.0,
+                reference_id="host.power.battery",
+                **common,
+            ),
+        )
+
+    def declarations(self) -> tuple[ChannelDeclaration, ...]:
+        return self._declarations
+
+    def read(self) -> tuple[ChannelReading, ...]:
+        snapshot = self._observer.snapshot(path="/", include_processes=False)
+        return (
+            self._from_observation(
+                self._declarations[0],
+                snapshot.compute,
+                snapshot.compute.cpu_percent,
+            ),
+            self._from_observation(
+                self._declarations[1],
+                snapshot.memory,
+                snapshot.memory.percent,
+            ),
+            self._from_observation(
+                self._declarations[2],
+                snapshot.disk,
+                snapshot.disk.percent,
+            ),
+            self._from_observation(
+                self._declarations[3],
+                snapshot.thermal,
+                snapshot.thermal.level,
+            ),
+            self._from_observation(
+                self._declarations[4],
+                snapshot.power,
+                snapshot.power.battery_percent,
+            ),
+        )
+
+    @staticmethod
+    def _from_observation(
+        declaration: ChannelDeclaration,
+        observation: Any,
+        value: float,
+    ) -> ChannelReading:
+        provenance = observation.provenance
+        available = bool(getattr(observation, "available", True))
+        if not available:
+            status = ReadingStatus.UNAVAILABLE
+            reading_value = None
+        elif provenance.source == ObservationSource.SIMULATED:
+            status = ReadingStatus.SIMULATED
+            reading_value = value
+        elif provenance.source in {ObservationSource.HOST, ObservationSource.LIVE_PRESSURE}:
+            status = ReadingStatus.AVAILABLE
+            reading_value = value
+        else:
+            status = ReadingStatus.UNAVAILABLE
+            reading_value = None
+        return ChannelReading(
+            channel_id=declaration.channel_id,
+            value=reading_value,
+            unit=declaration.unit,
+            captured_at_ns=max(1, int(float(provenance.captured_at) * 1_000_000_000)),
+            status=status,
+            source=provenance.source.value,
+            scenario_id=str(provenance.scenario_id or ""),
+            uncertainty=declaration.resolution,
+            error=str(getattr(observation, "error", "") or ""),
+        )
+
+
+class RealityReachService:
+    """Owns live declarations, readings, and feasibility certificates."""
+
+    def __init__(
+        self,
+        adapters: Iterable[LiveChannelAdapter] = (),
+        *,
+        clock_ns: Any = time.time_ns,
+    ) -> None:
+        self._lock = threading.RLock()
+        self._clock_ns = clock_ns
+        self._registry = ChannelRegistry()
+        self._adapters: dict[str, LiveChannelAdapter] = {}
+        self._adapter_channels: dict[str, tuple[str, ...]] = {}
+        self._readings: dict[str, ChannelReading] = {}
+        self._refresh_generation = 0
+        self._last_refresh_ns = 0
+        for adapter in adapters:
+            self.register_adapter(adapter)
+
+    def register_adapter(self, adapter: LiveChannelAdapter) -> None:
+        if not isinstance(adapter, LiveChannelAdapter):
+            raise TypeError("adapter must satisfy LiveChannelAdapter")
+        adapter_id = str(adapter.adapter_id or "")
+        if not adapter_id:
+            raise ValueError("adapter_id must be non-empty")
+        declarations = tuple(adapter.declarations())
+        if not declarations:
+            raise ValueError("adapter must declare at least one channel")
+        with self._lock:
+            if adapter_id in self._adapters:
+                raise ValueError(f"adapter already registered: {adapter_id}")
+            registered: list[str] = []
+            try:
+                for declaration in declarations:
+                    self._registry.register(declaration)
+                    registered.append(declaration.channel_id)
+            except Exception:
+                for channel_id in registered:
+                    self._registry.unregister(channel_id)
+                raise
+            self._adapters[adapter_id] = adapter
+            self._adapter_channels[adapter_id] = tuple(registered)
+
+    def refresh(self) -> dict[str, ChannelReading]:
+        now_ns = int(self._clock_ns())
+        with self._lock:
+            adapters = tuple(self._adapters.items())
+        for adapter_id, adapter in adapters:
+            expected = self._adapter_channels[adapter_id]
+            try:
+                returned = tuple(adapter.read())
+                by_channel = self._validate_adapter_readings(
+                    adapter_id,
+                    expected,
+                    returned,
+                    now_ns=now_ns,
+                )
+            except (AttributeError, LookupError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                by_channel = {
+                    channel_id: self._unavailable_reading(
+                        channel_id,
+                        captured_at_ns=now_ns,
+                        error=f"{type(exc).__name__}:{exc}",
+                    )
+                    for channel_id in expected
+                }
+            with self._lock:
+                self._readings.update(by_channel)
+        with self._lock:
+            self._refresh_generation += 1
+            self._last_refresh_ns = now_ns
+        return self.readings(now_ns=now_ns)
+
+    def readings(self, *, now_ns: int | None = None) -> dict[str, ChannelReading]:
+        current_ns = int(self._clock_ns() if now_ns is None else now_ns)
+        with self._lock:
+            items = tuple(self._readings.items())
+        return {
+            channel_id: self._with_freshness(reading, now_ns=current_ns)
+            for channel_id, reading in items
+        }
+
+    def reading(
+        self,
+        channel_id: str,
+        *,
+        now_ns: int | None = None,
+    ) -> ChannelReading | None:
+        with self._lock:
+            reading = self._readings.get(channel_id)
+        if reading is None:
+            return None
+        current_ns = int(self._clock_ns() if now_ns is None else now_ns)
+        return self._with_freshness(reading, now_ns=current_ns)
+
+    def analyze(self, contract: RealityIR, *, refresh: bool = True) -> ReachabilityCertificate:
+        if refresh:
+            self.refresh()
+        readings = self.readings()
+        effective = ChannelRegistry()
+        for declaration in self._registry.snapshot():
+            reading = readings.get(declaration.channel_id)
+            enabled = bool(
+                reading is not None
+                and (
+                    reading.status == ReadingStatus.AVAILABLE
+                    or (
+                        reading.status == ReadingStatus.SIMULATED
+                        and contract.reality_layer == RealityLayer.INTERNAL
+                    )
+                )
+            )
+            effective.register(replace(declaration, enabled=enabled))
+        return ReachabilityEngine().analyze(contract, effective)
+
+    def status(self) -> dict[str, Any]:
+        readings = self.readings()
+        counts: dict[str, int] = {}
+        for reading in readings.values():
+            counts[reading.status.value] = counts.get(reading.status.value, 0) + 1
+        with self._lock:
+            return {
+                "ready": self.is_ready(),
+                "alive": True,
+                "adapter_count": len(self._adapters),
+                "channel_count": len(self._registry.snapshot()),
+                "registry_sha256": self._registry.sha256,
+                "refresh_generation": self._refresh_generation,
+                "last_refresh_ns": self._last_refresh_ns,
+                "reading_status_counts": counts,
+            }
+
+    def is_alive(self) -> bool:
+        return True
+
+    def is_ready(self) -> bool:
+        return bool(self._registry.snapshot())
+
+    def _validate_adapter_readings(
+        self,
+        adapter_id: str,
+        expected: tuple[str, ...],
+        returned: tuple[ChannelReading, ...],
+        *,
+        now_ns: int,
+    ) -> dict[str, ChannelReading]:
+        by_channel: dict[str, ChannelReading] = {}
+        expected_set = set(expected)
+        for reading in returned:
+            if not isinstance(reading, ChannelReading):
+                raise TypeError(f"adapter {adapter_id} returned a non-reading")
+            if reading.channel_id not in expected_set:
+                raise ValueError(
+                    f"adapter {adapter_id} returned undeclared channel {reading.channel_id}"
+                )
+            if reading.channel_id in by_channel:
+                raise ValueError(
+                    f"adapter {adapter_id} returned duplicate channel {reading.channel_id}"
+                )
+            declaration = self._registry.get(reading.channel_id)
+            if declaration is None or declaration.unit != reading.unit:
+                raise ValueError(f"adapter {adapter_id} returned a unit-mismatched reading")
+            normalized = reading
+            if reading.captured_at_ns > now_ns + int(declaration.max_latency_s * 1e9):
+                normalized = replace(
+                    reading,
+                    status=ReadingStatus.DEGRADED,
+                    error="reading_timestamp_is_in_the_future",
+                )
+            elif reading.value is not None and not declaration.domain.contains(reading.value):
+                normalized = replace(
+                    reading,
+                    status=ReadingStatus.DEGRADED,
+                    error="reading_outside_declared_domain",
+                )
+            elif (
+                declaration.calibration_valid_until_ns is not None
+                and now_ns > declaration.calibration_valid_until_ns
+            ):
+                normalized = replace(
+                    reading,
+                    status=ReadingStatus.UNCALIBRATED,
+                    error="channel_calibration_expired",
+                )
+            by_channel[reading.channel_id] = normalized
+        for channel_id in expected:
+            if channel_id not in by_channel:
+                by_channel[channel_id] = self._unavailable_reading(
+                    channel_id,
+                    captured_at_ns=now_ns,
+                    error=f"adapter_missing_reading:{adapter_id}",
+                )
+        return by_channel
+
+    def _unavailable_reading(
+        self,
+        channel_id: str,
+        *,
+        captured_at_ns: int,
+        error: str,
+    ) -> ChannelReading:
+        declaration = self._registry.get(channel_id)
+        if declaration is None:
+            raise KeyError(channel_id)
+        return ChannelReading(
+            channel_id=channel_id,
+            value=None,
+            unit=declaration.unit,
+            captured_at_ns=max(1, captured_at_ns),
+            status=ReadingStatus.UNAVAILABLE,
+            source=ObservationSource.UNAVAILABLE.value,
+            error=error,
+        )
+
+    def _with_freshness(
+        self,
+        reading: ChannelReading,
+        *,
+        now_ns: int,
+    ) -> ChannelReading:
+        declaration = self._registry.get(reading.channel_id)
+        if declaration is None or reading.status not in {
+            ReadingStatus.AVAILABLE,
+            ReadingStatus.SIMULATED,
+        }:
+            return reading
+        age_ns = max(0, now_ns - reading.captured_at_ns)
+        if age_ns <= int(declaration.stale_after_s * 1e9):
+            return reading
+        return replace(
+            reading,
+            status=ReadingStatus.STALE,
+            error=f"reading_stale:age_ns={age_ns}",
+        )
+
+
+_SERVICE: RealityReachService | None = None
+_SERVICE_LOCK = threading.Lock()
+
+
+def get_reality_reach_service() -> RealityReachService:
+    global _SERVICE
+    if _SERVICE is None:
+        with _SERVICE_LOCK:
+            if _SERVICE is None:
+                _SERVICE = RealityReachService((HostResourceAdapter(),))
+    return _SERVICE
+
+
+def register_reality_reach_service() -> RealityReachService:
+    service = get_reality_reach_service()
+    register_runtime_service(
+        "reality_reach",
+        service,
+        required=False,
+        owner="core/reality_reach/live.py",
+        registered_by="register_reality_reach_service",
+        required_for="physical reachability and experiment evidence",
+        failure_policy="degrade_with_receipt",
+    )
+    return service
+
+
+__all__ = [
+    "ChannelReading",
+    "HostResourceAdapter",
+    "LiveChannelAdapter",
+    "ReadingStatus",
+    "RealityReachService",
+    "get_reality_reach_service",
+    "register_reality_reach_service",
+]

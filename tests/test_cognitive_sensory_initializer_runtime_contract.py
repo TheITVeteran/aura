@@ -34,6 +34,10 @@ class Service:
     async def initialize(self):
         self.initialized = True
 
+    def refresh(self):
+        self.refreshed = True
+        return {}
+
     def setup_hooks(self, orchestrator):
         self.hooked = orchestrator
 
@@ -82,6 +86,11 @@ def _install_success_modules(monkeypatch, *, will_engine_cls=Service):
     _install_module(monkeypatch, "core.brain.personality_engine", PersonalityEngine=Service)
     _install_module(monkeypatch, "core.managers.drive_controller", DriveController=DriveControllerService)
     _install_module(monkeypatch, "core.senses.voice_engine", get_voice_engine=lambda: Service())
+    _install_module(
+        monkeypatch,
+        "core.reality_reach.live",
+        get_reality_reach_service=lambda: Service(),
+    )
     _install_module(monkeypatch, "core.brain.multimodal_orchestrator", MultimodalOrchestrator=Service)
     _install_module(monkeypatch, "core.brain.composer_node", ComposerNode=Service)
     _install_module(monkeypatch, "core.guardians.memory_guard", MemoryGuard=Service)
@@ -130,11 +139,14 @@ async def test_cognitive_sensory_initializer_returns_complete_boot_report(monkey
     assert report["degraded"] == {}
     assert report["learned_services"] == {"registered": len(LEARNED_SERVICE_MODULES), "expected": len(LEARNED_SERVICE_MODULES)}
     assert "identity_personality" in report["completed"]
+    assert "reality_reach" in report["completed"]
     assert "cellular_substrate" in report["completed"]
     assert registered["self_model"] is orchestrator.self_model
     assert registered["drive_engine"] is orchestrator.affect.drive_controller
     assert registered["drive_engine"] is orchestrator.drive_controller
     assert registered["drive_engine"].is_alive() is True
+    assert registered["reality_reach"] is orchestrator.reality_reach
+    assert registered["reality_reach"].refreshed is True
     assert registered["cellular_substrate"] is orchestrator.cellular_substrate
 
 

@@ -98,6 +98,11 @@ language alone.
 
 ### RR-02 Live channel convergence
 
+- [x] Define a canonical live reading envelope with value, unit, monotonic-age
+  evaluation, provenance, scenario identity, uncertainty, status, and digest.
+- [x] Add an attributable host-resource adapter for CPU, memory, root disk,
+  thermal pressure, and battery state without treating unavailable fallback
+  numbers or simulated observations as live evidence.
 - [ ] Inventory every current sensor and actuator and identify owners, units,
   ranges, calibration, sampling rates, latency, references, and permissions.
 - [ ] Merge the two current sensor registries behind one compatibility-preserving
@@ -105,9 +110,9 @@ language alone.
 - [ ] Add adapters for microphone, camera, display, audio, compute/thermal,
   battery/power, timing/performance, network/radio telemetry, and supported
   mechanical/chassis observations.
-- [ ] Distinguish unavailable, stale, permission-denied, degraded, simulated,
+- [x] Distinguish unavailable, stale, permission-denied, degraded, simulated,
   and calibrated channels without discarding healthy observations.
-- [ ] Continuously bind live channel state to the registry snapshot used by each
+- [x] Continuously bind live channel state to the registry snapshot used by each
   certificate; invalidate stale plans when the inventory changes.
 - [ ] Add calibration identity, uncertainty, clock/reference lineage, sensor
   saturation, dropout, aliasing, and unit-conversion tests.
@@ -202,6 +207,9 @@ language alone.
 
 ### RR-09 Boot, health, and operations
 
+- [x] Register the initial Reality Reach service during cognitive/sensory boot,
+  refresh its host inventory off the event loop, and expose readiness, liveness,
+  inventory digest, refresh generation, and per-status channel counts.
 - [ ] Register one Reality Reach service at boot with lazy hardware acquisition,
   bounded initialization, readiness, health, shutdown, and recovery contracts.
 - [ ] Keep conversation ready when optional instruments are unavailable while

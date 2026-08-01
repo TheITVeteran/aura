@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import inspect
 import logging
@@ -186,6 +187,31 @@ async def init_cognitive_sensory_layer(orchestrator: Any) -> dict[str, Any]:
         "voice_engine",
         "Skipped voice engine registration; chat continues without voice I/O",
         _voice_engine,
+        severity="warning",
+    )
+
+    async def _reality_reach() -> None:
+        from core.reality_reach.live import get_reality_reach_service
+
+        service = get_reality_reach_service()
+        await asyncio.to_thread(service.refresh)
+        orchestrator.reality_reach = service
+        ServiceContainer.register_instance(
+            "reality_reach",
+            service,
+            required=False,
+            owner="core/reality_reach/live.py",
+            registered_by="init_cognitive_sensory_layer",
+            required_for="physical reachability and experiment evidence",
+            failure_policy="degrade_with_receipt",
+        )
+        report["registered"]["reality_reach"] = service.__class__.__name__
+
+    await _run_phase(
+        orchestrator,
+        "reality_reach",
+        "Registered no physical reachability service; physical experiments remain unavailable",
+        _reality_reach,
         severity="warning",
     )
 

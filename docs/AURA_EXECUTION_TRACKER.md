@@ -34059,3 +34059,40 @@ and no physical effect, weakpoint, ambient-law, reasoning-gain, frontier,
 promotion, release, or `WOW Signal` claim is made. This is total checkpoint
 779. The 779-920 completion envelope is approximately 84.7%-100.0%, with a
 92.3% midpoint. Long soaks remain deferred.
+
+### 2026-08-01 - CP780 live Reality Reach inventory and boot service
+
+Reality Reach now has a provenance-aware live-state service rather than using
+declared channels as proof of current availability. Each reading binds channel,
+value, unit, capture time, status, source, scenario, uncertainty, error, and a
+canonical digest. The service distinguishes available, unavailable, stale,
+permission-denied, degraded, simulated, and uncalibrated states. It rejects
+undeclared or duplicate adapter outputs, unit mismatch, future timestamps,
+out-of-domain readings, expired calibration, and missing readings. Adapter
+registration rolls back atomically on channel collision.
+
+The initial host-resource adapter reuses Aura's attributable resource observer
+and declares five honest effective-layer sensors: CPU use, memory use, root-disk
+use, thermal pressure level, and battery charge. A simulated observer remains
+explicitly simulated and can satisfy only an internal-layer request; unavailable
+resource fallbacks have no value and cannot enter the effective inventory. Live
+analysis rebuilds an enabled registry from current reading state, so stale,
+degraded, unavailable, simulated, or expired-calibration channels produce a
+no-channel result instead of certifying a physical route.
+
+The cognitive/sensory initializer refreshes this optional service in a worker
+thread, registers it with `degrade_with_receipt` lifecycle metadata, and exposes
+readiness, liveness, inventory digest, refresh generation, and channel status
+counts without blocking the event loop or conversation readiness. A bounded
+real-host probe reported one adapter, five channels, five available readings,
+and registry digest
+`sha256:8fe2e11ca312446a273cd774c9dcca2436cc8191e4196e9ef2998bcfc7d487d7`.
+
+The foundation and boot suites pass 20/20; Ruff, bytecode compilation, live
+host probe, degradation audit, and diff integrity pass. The camera, microphone,
+display, audio, compute actuation, external metrology, and duplicate legacy
+sensor-registry convergence remain open RR-02 work. No physical effect,
+weakpoint, ambient-law, reasoning-gain, frontier, promotion, release, or
+`WOW Signal` claim is made. This is total checkpoint 780. The 780-920
+completion envelope is approximately 84.8%-100.0%, with a 92.4% midpoint.
+Long soaks remain deferred.
