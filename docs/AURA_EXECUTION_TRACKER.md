@@ -33681,3 +33681,45 @@ before result interpretation. GRPO remains blocked behind all causal thresholds.
 No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is made.
 This is total checkpoint 768. The 768-920 completion envelope is approximately
 83.5%-100.0%, with a 91.7% midpoint.
+
+### 2026-08-01 - CP769 initial-policy evidence custody across read-only probes
+
+S33's detached initial-policy process completed with zero restarts and produced
+policy digest
+`0a7edcec2dad0849b9fb915e3bec07252f067df29644744e6e297358877c660d`.
+The independent answer-channel process applied the same warm transfer and
+produced that exact digest, then returned six valid and six correct answer
+contracts out of six. This proves the explicit LoRA initialization seed repair
+at runtime. Review nevertheless found that the answer receipt v1 did not bind
+its policy digest or initial-policy receipt, while causal receipt v4 bound a
+policy digest but not the immutable initial adapter, optimizer, and warm-start
+custody chain. The S33 causal process was therefore not started. Its answer
+result remains positive engineering evidence, not admissible causal evidence.
+
+Every read-only recurrent probe must now receive the frozen campaign's initial
+policy probe and campaign identity. Before sampling, `train_grpo` resolves a
+private owner-only regular file with one hard link, validates the signed probe,
+independently reopens its exact adapter and optimizer snapshots, reconstructs
+the base checkpoint, behavior bundle, tokenizer, adapter initialization, and
+warm-start identity, and requires the process's current policy digest to equal
+the initial digest. Any path substitution, permissive mode, hard link,
+snapshot mutation, campaign mismatch, transfer mismatch, or policy drift fails
+before an observation is generated.
+
+Answer-channel receipt v2 now records the policy, initial-probe receipt, and
+full warm-start receipt. Campaign code independently reconstructs the held-out
+dataset and summary, validates the tokenizer and executable-source subset, and
+requires all three policy identities to agree. Causal receipt v5 adds the same
+custody chain; both the detached runner and standalone verifier reopen the
+actual initial probe, and the training gate refuses any historical or
+unreferenced receipt. Historical v2-v4 causal artifacts remain replayable but
+cannot authorize training.
+
+The focused preregistration, warm-start, adapter-identity, and launch-
+materialization matrix passes 114/114. Ruff, bytecode compilation, live S33
+snapshot reopening, and diff integrity pass. No causal probe, signer, trainer,
+checkpoint, or optimizer mutation ran in this checkpoint. A fresh S34 contract
+is required because executable source changed. No reasoning-gain, frontier,
+promotion, release, or `WOW Signal` claim is made. This is total checkpoint
+769. The 769-920 completion envelope is approximately 83.6%-100.0%, with a
+91.8% midpoint.

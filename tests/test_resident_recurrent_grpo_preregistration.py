@@ -1336,6 +1336,15 @@ def test_answer_channel_preflight_command_is_bounded_and_source_separated():
     assert argv[argv.index("--calibrate-minutes") + 1] == "10.0"
     assert "--trajectory-credit" not in argv
     assert "recurrence_curriculum" not in argv
+    assert argv[argv.index("--initial-policy-campaign-id") + 1] == contract[
+        "campaign_id"
+    ]
+    assert argv[argv.index("--initial-policy-dataset-sha256") + 1] == contract[
+        "training"
+    ]["dataset"]["sha256"]
+    assert argv[argv.index("--initial-policy-probe-reference") + 1].endswith(
+        "/policy-probe/initial_policy_probe.json"
+    )
     assert "--read-only-answer-channel-preflight" in argv
 
 
@@ -1362,6 +1371,124 @@ def test_answer_channel_preflight_invokes_trainer_without_launching_detached(
     assert "--read-only-answer-channel-preflight" in argv
 
 
+def test_answer_channel_preflight_verifier_binds_initial_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract()
+    params = contract["training"]["parameters"]
+    train, holdout, _ = prereg._build_task_split(
+        task_source="answer_channel_curriculum",
+        domains=["json_copy", "typed_boolean", "key_selection"],
+        depths=[1, 2],
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=int(params["seed"]) + 311,
+    )
+    dataset = prereg._dataset_payload(
+        train,
+        holdout,
+        seed=int(params["seed"]) + 311,
+    )
+    tokenizer_files = [
+        {"path": "tokenizer.json", "sha256": "9" * 64, "size_bytes": 1}
+    ]
+    contract["model"]["behavior_bundle"] = {
+        "bundle_sha256": "8" * 64,
+        "file_count": 1,
+        "files": tokenizer_files,
+    }
+    tokenizer = build_tokenizer_bundle_identity(
+        tokenizer_class="tests.FakeTokenizer",
+        tokenizer_files=tokenizer_files,
+        chat_template=None,
+        special_token_map={
+            "bos_token_id": None,
+            "eos_token_id": 2,
+            "pad_token_id": 0,
+            "unk_token_id": None,
+        },
+        encode_options={},
+        decode_options={},
+        implementation_source_sha256="a" * 64,
+    )
+    policy = "b" * 64
+    probe_sha = "c" * 64
+    monkeypatch.setattr(
+        prereg,
+        "_load_initial_policy_probe_for_contract",
+        lambda _contract: {
+            "receipt_sha256": probe_sha,
+            "initial_policy_sha256": policy,
+            "warm_start_receipt": None,
+        },
+    )
+    episodes = [{"contract": {"valid": True}, "correct": True} for _ in holdout]
+    report = {"episode_receipts": episodes}
+    body = {
+        "schema": prereg.ANSWER_CHANNEL_PREFLIGHT_SCHEMA,
+        "campaign_id": f"{contract['campaign_id']}-answer-channel-preflight",
+        "dataset_sha256": prereg._sha256(prereg.canonical_json_bytes(dataset)),
+        "execution_spec_sha256": contract["execution_spec"]["semantic_sha256"],
+        "base_checkpoint": contract["model"]["base_checkpoint"],
+        "model_behavior_bundle": contract["model"]["behavior_bundle"],
+        "tokenizer_bundle": tokenizer,
+        "source_bindings": {"trainer": contract["sources"]["trainer"]},
+        "policy_sha256": policy,
+        "initial_policy_probe_sha256": probe_sha,
+        "warm_start_receipt": None,
+        "task_count": len(episodes),
+        "valid_contract_count": len(episodes),
+        "correct_count": len(episodes),
+        "valid_contract_fraction": 1.0,
+        "report": report,
+        "created_at_unix_ns": 1,
+        "verdict": "answer_channel_operational",
+    }
+    receipt = {**body, "receipt_sha256": prereg._document_sha(body)}
+
+    assert prereg.validate_answer_channel_preflight(contract, receipt) == receipt
+    tampered = copy.deepcopy(receipt)
+    tampered["policy_sha256"] = "d" * 64
+    unsigned = dict(tampered)
+    unsigned.pop("receipt_sha256")
+    tampered["receipt_sha256"] = prereg._document_sha(unsigned)
+    with pytest.raises(prereg.PreregistrationError, match="policy_mismatch"):
+        prereg.validate_answer_channel_preflight(contract, tampered)
+
+
+def test_initial_policy_reference_wraps_probe_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract()
+    contract["paths"]["artifact_root"] = "artifacts/campaign"
+    probe_path = (
+        tmp_path
+        / contract["paths"]["artifact_root"]
+        / "policy-probe"
+        / "initial_policy_probe.json"
+    )
+    probe_path.parent.mkdir(parents=True)
+    probe_path.write_bytes(prereg.canonical_json_bytes({}))
+    probe_path.chmod(0o600)
+    monkeypatch.setattr(prereg, "REPO_ROOT", tmp_path)
+
+    def reject_probe(_document):
+        raise prereg.InitialRecurrentPolicyProbeError("invalid")
+
+    monkeypatch.setattr(
+        prereg,
+        "validate_initial_recurrent_policy_probe",
+        reject_probe,
+    )
+
+    with pytest.raises(
+        prereg.PreregistrationError,
+        match="initial_policy_probe_reference_invalid",
+    ):
+        prereg._load_initial_policy_probe_for_contract(contract)
+
+
 def test_causal_learnability_preflight_matches_training_object_and_budget():
     contract = _contract()
 
@@ -1386,6 +1513,15 @@ def test_causal_learnability_preflight_matches_training_object_and_budget():
         contract["training"]["parameters"]["max_tokens"]
     )
     assert "--calibrate" not in argv
+    assert argv[argv.index("--initial-policy-campaign-id") + 1] == contract[
+        "campaign_id"
+    ]
+    assert argv[argv.index("--initial-policy-dataset-sha256") + 1] == contract[
+        "training"
+    ]["dataset"]["sha256"]
+    assert argv[argv.index("--initial-policy-probe-reference") + 1].endswith(
+        "/policy-probe/initial_policy_probe.json"
+    )
     assert "--read-only-causal-learnability-preflight" in argv
 
 
@@ -1562,6 +1698,8 @@ def _causal_learnability_receipt(contract):
             implementation_source_sha256="a" * 64,
         ),
         "source_bindings": {"trainer": contract["sources"]["trainer"]},
+        "initial_policy_probe_sha256": "c" * 64,
+        "warm_start_receipt": None,
         "policy_before_sha256": "b" * 64,
         "policy_after_sha256": "b" * 64,
         "policy_unchanged": True,
@@ -1612,6 +1750,8 @@ def test_causal_learnability_preflight_v2_remains_replayable_but_not_trainable(
     contract["paths"]["artifact_root"] = "campaign"
     receipt = _causal_learnability_receipt(contract)
     receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V2
+    receipt.pop("initial_policy_probe_sha256")
+    receipt.pop("warm_start_receipt")
     receipt.pop("sampling_max_tokens")
     for key in (
         "parent_contract_complete_samples",
@@ -1659,6 +1799,8 @@ def test_causal_learnability_preflight_v3_remains_replayable_but_not_trainable(
     contract["paths"]["artifact_root"] = "campaign"
     receipt = _causal_learnability_receipt(contract)
     receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V3
+    receipt.pop("initial_policy_probe_sha256")
+    receipt.pop("warm_start_receipt")
     receipt.pop("sampling_max_tokens")
     for cell in receipt["cells"]:
         for sample in cell["samples"]:
@@ -1689,6 +1831,19 @@ def test_causal_learnability_preflight_v3_remains_replayable_but_not_trainable(
     monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
     with pytest.raises(prereg.PreregistrationError, match="underpowered"):
         prereg.require_causal_learnability_training_gate(contract)
+
+
+def test_causal_learnability_preflight_v4_remains_replayable() -> None:
+    contract = _contract()
+    receipt = _causal_learnability_receipt(contract)
+    receipt["schema"] = prereg.CAUSAL_LEARNABILITY_SCHEMA_V4
+    receipt.pop("initial_policy_probe_sha256")
+    receipt.pop("warm_start_receipt")
+    unsigned = dict(receipt)
+    unsigned.pop("receipt_sha256")
+    receipt["receipt_sha256"] = prereg._document_sha(unsigned)
+
+    assert prereg.validate_causal_learnability_preflight(contract, receipt) == receipt
 
 
 def test_causal_learnability_preflight_verifier_rejects_resealed_count_drift():
@@ -1841,6 +1996,15 @@ def test_causal_learnability_training_gate_requires_two_trainable_cells(
         return real_repo_path(relative, role=role, must_exist=must_exist)
 
     monkeypatch.setattr(prereg, "_repo_path", _test_repo_path)
+    monkeypatch.setattr(
+        prereg,
+        "_load_initial_policy_probe_for_contract",
+        lambda _contract: {
+            "receipt_sha256": "c" * 64,
+            "initial_policy_sha256": "b" * 64,
+            "warm_start_receipt": None,
+        },
+    )
 
     assert prereg.require_causal_learnability_training_gate(contract) == receipt
 

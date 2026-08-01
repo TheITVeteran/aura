@@ -17,6 +17,7 @@ import json
 import math
 import os
 import platform
+import stat
 import sys
 import time
 from collections.abc import Mapping, Sequence
@@ -87,14 +88,22 @@ from core.learning.recurrent_grpo_artifact_schema import (  # noqa: E402
     recurrent_training_adequacy_policy,
 )
 from core.learning.recurrent_policy_warm_start import (  # noqa: E402
+    RecurrentPolicyWarmStartError,
     audit_recurrent_warm_start_topology,
     build_recurrent_policy_tensor_metadata,
     load_recurrent_warm_start_contract,
+    validate_recurrent_warm_start_receipt,
 )
 from core.learning.verified_token_trace import (  # noqa: E402
     OBSERVABLE_COMPLETION_SCHEMA,
     observable_completion_receipt_sha256,
     validate_tokenizer_bundle_identity,
+)
+from core.learning.verified_transition_policy_probe import (  # noqa: E402
+    InitialRecurrentPolicyProbeError,
+    inspect_initial_adapter_snapshot,
+    inspect_initial_optimizer_snapshot,
+    validate_initial_recurrent_policy_probe,
 )
 from core.runtime.atomic_writer import (  # noqa: E402
     atomic_write_bytes,
@@ -112,7 +121,9 @@ UPDATE_CANARY_PROFILE = "update_canary"
 CAMPAIGN_PROFILES = frozenset({FULL_TRAINING_PROFILE, UPDATE_CANARY_PROFILE})
 CAUSAL_LEARNABILITY_SCHEMA_V2 = "aura.recurrent_causal_learnability_preflight.v2"
 CAUSAL_LEARNABILITY_SCHEMA_V3 = "aura.recurrent_causal_learnability_preflight.v3"
-CAUSAL_LEARNABILITY_SCHEMA = "aura.recurrent_causal_learnability_preflight.v4"
+CAUSAL_LEARNABILITY_SCHEMA_V4 = "aura.recurrent_causal_learnability_preflight.v4"
+CAUSAL_LEARNABILITY_SCHEMA = "aura.recurrent_causal_learnability_preflight.v5"
+ANSWER_CHANNEL_PREFLIGHT_SCHEMA = "aura.recurrent_answer_channel_preflight.v2"
 CAUSAL_LEARNABILITY_MIN_CHILD_CONTRACT_FRACTION = 0.75
 DEFAULT_CAMPAIGN_ID = "resident-32b-recurrent-grpo-cp259"
 CAMPAIGN_ID = DEFAULT_CAMPAIGN_ID
@@ -2277,6 +2288,10 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
     # cut otherwise usable reasoning off before the answer contract. Run this
     # gate at the exact preregistered campaign budget.
     max_tokens = int(params["max_tokens"])
+    initial_probe = str(
+        PurePosixPath(str(contract["paths"]["initial_policy_probe"]))
+        / "initial_policy_probe.json"
+    )
     return [
         "tools/train_grpo.py",
         "--model",
@@ -2341,6 +2356,12 @@ def _answer_channel_preflight_argv(contract: Mapping[str, Any]) -> list[str]:
         str(params["memory_fraction"]),
         "--seed",
         str(int(params["seed"]) + 311),
+        "--initial-policy-probe-reference",
+        initial_probe,
+        "--initial-policy-campaign-id",
+        str(contract["campaign_id"]),
+        "--initial-policy-dataset-sha256",
+        str(contract["training"]["dataset"]["sha256"]),
         "--calibrate",
         "--cot",
         *_warm_start_argv(contract),
@@ -2356,9 +2377,205 @@ def _run_answer_channel_preflight(contract: Mapping[str, Any]) -> int:
     previous = list(sys.argv)
     try:
         sys.argv = [argv[0], *argv[1:]]
-        return int(train_grpo.main())
+        result = int(train_grpo.main())
     finally:
         sys.argv = previous
+    if result == 0:
+        root = _repo_path(
+            str(contract["paths"]["artifact_root"]),
+            role="artifact_root",
+            must_exist=False,
+        )
+        validate_answer_channel_preflight(
+            contract,
+            _strict_json(
+                root
+                / "answer-channel-preflight"
+                / "answer_channel_preflight.json"
+            ),
+        )
+    return result
+
+
+def _load_initial_policy_probe_for_contract(
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    root = _repo_path(
+        str(contract["paths"]["artifact_root"]),
+        role="artifact_root",
+        must_exist=False,
+    )
+    path = root / "policy-probe" / "initial_policy_probe.json"
+    try:
+        metadata = path.stat()
+    except OSError as exc:
+        raise PreregistrationError("initial_policy_probe_reference_missing") from exc
+    if (
+        path.is_symlink()
+        or path.resolve() != path.absolute()
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+        or metadata.st_nlink != 1
+    ):
+        _fail("initial_policy_probe_reference_missing")
+    try:
+        probe = validate_initial_recurrent_policy_probe(_strict_json(path))
+    except (InitialRecurrentPolicyProbeError, TypeError, ValueError) as exc:
+        raise PreregistrationError("initial_policy_probe_reference_invalid") from exc
+    params = contract["training"]["parameters"]
+    expected_adapter = {
+        "seed": int(params["lora_initialization_seed"]),
+        "rank": int(params["lora_rank"]),
+        "layers": int(params["lora_layers"]),
+        "targets": str(params["lora_targets"]).split(","),
+    }
+    if (
+        probe["campaign_id"] != contract["campaign_id"]
+        or probe["dataset_sha256"] != contract["training"]["dataset"]["sha256"]
+        or probe["execution_spec_sha256"]
+        != contract["execution_spec"]["semantic_sha256"]
+        or probe["base_checkpoint"] != contract["model"]["base_checkpoint"]
+        or probe["model_behavior_bundle"] != contract["model"]["behavior_bundle"]
+        or probe["adapter_initialization"] != expected_adapter
+        or any(
+            role not in contract["sources"]
+            or binding != contract["sources"][role]
+            for role, binding in probe["source_bindings"].items()
+        )
+    ):
+        _fail("initial_policy_probe_reference_identity_mismatch")
+    try:
+        tokenizer = validate_tokenizer_bundle_identity(probe["tokenizer_bundle"])
+        adapter = inspect_initial_adapter_snapshot(
+            path.parent / probe["initial_adapter_artifact"]["path"],
+            execution_spec_sha256=contract["execution_spec"]["semantic_sha256"],
+        )
+        optimizer = inspect_initial_optimizer_snapshot(
+            path.parent / probe["initial_optimizer_artifact"]["path"]
+        )
+    except (InitialRecurrentPolicyProbeError, TypeError, ValueError) as exc:
+        raise PreregistrationError("initial_policy_probe_snapshot_invalid") from exc
+    if (
+        tokenizer["tokenizer_files"] != contract["model"]["behavior_bundle"]["files"]
+        or adapter != probe["initial_adapter_artifact"]
+        or optimizer != probe["initial_optimizer_artifact"]
+        or adapter["policy_sha256"] != probe["initial_policy_sha256"]
+    ):
+        _fail("initial_policy_probe_snapshot_mismatch")
+    return probe
+
+
+def validate_answer_channel_preflight(
+    contract: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Independently bind answer-channel evidence to the initial policy."""
+
+    required = {
+        "schema",
+        "campaign_id",
+        "dataset_sha256",
+        "execution_spec_sha256",
+        "base_checkpoint",
+        "model_behavior_bundle",
+        "tokenizer_bundle",
+        "source_bindings",
+        "policy_sha256",
+        "initial_policy_probe_sha256",
+        "warm_start_receipt",
+        "task_count",
+        "valid_contract_count",
+        "correct_count",
+        "valid_contract_fraction",
+        "report",
+        "created_at_unix_ns",
+        "verdict",
+        "receipt_sha256",
+    }
+    if not isinstance(receipt, Mapping) or set(receipt) != required:
+        _fail("answer_channel_preflight_schema_invalid")
+    normalized = dict(receipt)
+    observed_sha256 = normalized.pop("receipt_sha256")
+    if (
+        normalized.get("schema") != ANSWER_CHANNEL_PREFLIGHT_SCHEMA
+        or observed_sha256 != _document_sha(normalized)
+        or normalized.get("campaign_id")
+        != f"{contract['campaign_id']}-answer-channel-preflight"
+        or normalized.get("execution_spec_sha256")
+        != contract["execution_spec"]["semantic_sha256"]
+        or normalized.get("base_checkpoint")
+        != contract["model"]["base_checkpoint"]
+        or normalized.get("model_behavior_bundle")
+        != contract["model"]["behavior_bundle"]
+        or type(normalized.get("created_at_unix_ns")) is not int
+        or normalized["created_at_unix_ns"] <= 0
+    ):
+        _fail("answer_channel_preflight_identity_mismatch")
+    normalized["receipt_sha256"] = observed_sha256
+    sources = normalized["source_bindings"]
+    if not isinstance(sources, Mapping) or not sources or any(
+        role not in contract["sources"] or binding != contract["sources"][role]
+        for role, binding in sources.items()
+    ):
+        _fail("answer_channel_preflight_source_mismatch")
+    try:
+        tokenizer = validate_tokenizer_bundle_identity(normalized["tokenizer_bundle"])
+    except (TypeError, ValueError) as exc:
+        raise PreregistrationError("answer_channel_preflight_tokenizer_invalid") from exc
+    if tokenizer["tokenizer_files"] != contract["model"]["behavior_bundle"]["files"]:
+        _fail("answer_channel_preflight_tokenizer_mismatch")
+    params = contract["training"]["parameters"]
+    train, holdout, _ = _build_task_split(
+        task_source="answer_channel_curriculum",
+        domains=["json_copy", "typed_boolean", "key_selection"],
+        depths=[1, 2],
+        train_per_cell=2,
+        holdout_per_cell=1,
+        seed=int(params["seed"]) + 311,
+    )
+    dataset = _dataset_payload(train, holdout, seed=int(params["seed"]) + 311)
+    if normalized["dataset_sha256"] != _sha256(canonical_json_bytes(dataset)):
+        _fail("answer_channel_preflight_dataset_mismatch")
+    probe = _load_initial_policy_probe_for_contract(contract)
+    warm = normalized["warm_start_receipt"]
+    expected_warm = probe.get("warm_start_receipt")
+    if warm is not None:
+        try:
+            warm = validate_recurrent_warm_start_receipt(warm)
+        except (RecurrentPolicyWarmStartError, TypeError, ValueError) as exc:
+            raise PreregistrationError("answer_channel_preflight_warm_start_invalid") from exc
+    if (
+        normalized["initial_policy_probe_sha256"] != probe["receipt_sha256"]
+        or normalized["policy_sha256"] != probe["initial_policy_sha256"]
+        or warm != expected_warm
+        or (warm is not None and warm["policy_after_sha256"] != normalized["policy_sha256"])
+    ):
+        _fail("answer_channel_preflight_policy_mismatch")
+    report = normalized["report"]
+    episodes = report.get("episode_receipts") if isinstance(report, Mapping) else None
+    if not isinstance(episodes, list) or len(episodes) != len(holdout):
+        _fail("answer_channel_preflight_report_invalid")
+    valid = sum(
+        isinstance(item, Mapping)
+        and isinstance(item.get("contract"), Mapping)
+        and item["contract"].get("valid") is True
+        for item in episodes
+    )
+    correct = sum(
+        isinstance(item, Mapping) and item.get("correct") is True for item in episodes
+    )
+    fraction = round(valid / len(episodes), 6)
+    verdict = "answer_channel_operational" if fraction >= 0.5 else "answer_channel_blocked"
+    if (
+        normalized["task_count"] != len(episodes)
+        or normalized["valid_contract_count"] != valid
+        or normalized["correct_count"] != correct
+        or normalized["valid_contract_fraction"] != fraction
+        or normalized["verdict"] != verdict
+    ):
+        _fail("answer_channel_preflight_summary_mismatch")
+    return normalized
 
 
 def _causal_learnability_probe_parameters(
@@ -2382,6 +2599,10 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
     output = str(root / "causal-learnability-preflight")
     params = contract["training"]["parameters"]
     probe = _causal_learnability_probe_parameters(contract)
+    initial_probe = str(
+        PurePosixPath(str(contract["paths"]["initial_policy_probe"]))
+        / "initial_policy_probe.json"
+    )
     return [
         "tools/train_grpo.py",
         "--model",
@@ -2446,6 +2667,12 @@ def _causal_learnability_preflight_argv(contract: Mapping[str, Any]) -> list[str
         str(params["memory_fraction"]),
         "--seed",
         str(probe["seed"]),
+        "--initial-policy-probe-reference",
+        initial_probe,
+        "--initial-policy-campaign-id",
+        str(contract["campaign_id"]),
+        "--initial-policy-dataset-sha256",
+        str(contract["training"]["dataset"]["sha256"]),
         "--cot",
         *_warm_start_argv(contract),
         "--read-only-causal-learnability-preflight",
@@ -2460,9 +2687,25 @@ def _run_causal_learnability_preflight(contract: Mapping[str, Any]) -> int:
     previous = list(sys.argv)
     try:
         sys.argv = [argv[0], *argv[1:]]
-        return int(train_grpo.main())
+        result = int(train_grpo.main())
     finally:
         sys.argv = previous
+    if result == 0:
+        root = _repo_path(
+            str(contract["paths"]["artifact_root"]),
+            role="artifact_root",
+            must_exist=False,
+        )
+        receipt = validate_causal_learnability_preflight(
+            contract,
+            _strict_json(
+                root
+                / "causal-learnability-preflight"
+                / "causal_learnability_preflight.json"
+            ),
+        )
+        _require_causal_policy_reference(contract, receipt)
+    return result
 
 
 def _validate_causal_preflight_observable(
@@ -2536,6 +2779,7 @@ def validate_causal_learnability_preflight(
     if schema not in {
         CAUSAL_LEARNABILITY_SCHEMA_V2,
         CAUSAL_LEARNABILITY_SCHEMA_V3,
+        CAUSAL_LEARNABILITY_SCHEMA_V4,
         CAUSAL_LEARNABILITY_SCHEMA,
     }:
         _fail("causal_learnability_preflight_schema_invalid")
@@ -2566,7 +2810,7 @@ def validate_causal_learnability_preflight(
         "verdict",
         "receipt_sha256",
     }
-    if schema == CAUSAL_LEARNABILITY_SCHEMA:
+    if schema in {CAUSAL_LEARNABILITY_SCHEMA_V4, CAUSAL_LEARNABILITY_SCHEMA}:
         required.update(
             {
                 "parent_contract_complete_samples",
@@ -2575,6 +2819,13 @@ def validate_causal_learnability_preflight(
                 "sampling_max_tokens",
             }
         )
+        if schema == CAUSAL_LEARNABILITY_SCHEMA:
+            required.update(
+                {
+                    "initial_policy_probe_sha256",
+                    "warm_start_receipt",
+                }
+            )
     elif schema == CAUSAL_LEARNABILITY_SCHEMA_V3:
         required.update(
             {
@@ -2594,6 +2845,7 @@ def validate_causal_learnability_preflight(
         normalized["schema"] not in {
             CAUSAL_LEARNABILITY_SCHEMA_V2,
             CAUSAL_LEARNABILITY_SCHEMA_V3,
+            CAUSAL_LEARNABILITY_SCHEMA_V4,
             CAUSAL_LEARNABILITY_SCHEMA,
         }
         or normalized["campaign_id"]
@@ -2643,11 +2895,46 @@ def validate_causal_learnability_preflight(
         ) from exc
     if tokenizer["tokenizer_files"] != contract["model"]["behavior_bundle"]["files"]:
         _fail("causal_learnability_preflight_tokenizer_mismatch")
+    if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+        warm = normalized["warm_start_receipt"]
+        if warm is not None:
+            try:
+                warm = validate_recurrent_warm_start_receipt(warm)
+            except (RecurrentPolicyWarmStartError, TypeError, ValueError) as exc:
+                raise PreregistrationError(
+                    "causal_learnability_preflight_warm_start_invalid"
+                ) from exc
+        expected_contract = contract.get("warm_start")
+        if (
+            not isinstance(normalized["initial_policy_probe_sha256"], str)
+            or len(normalized["initial_policy_probe_sha256"]) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in normalized["initial_policy_probe_sha256"]
+            )
+            or (expected_contract is None and warm is not None)
+            or (
+                isinstance(expected_contract, Mapping)
+                and (
+                    warm is None
+                    or warm["contract_sha256"]
+                    != expected_contract["contract_sha256"]
+                )
+            )
+            or (
+                warm is not None
+                and warm["policy_after_sha256"]
+                != normalized["policy_before_sha256"]
+            )
+        ):
+            _fail("causal_learnability_preflight_policy_reference_mismatch")
+        normalized["warm_start_receipt"] = warm
 
     params = contract["training"]["parameters"]
     expected_sampling_max_tokens = int(params["max_tokens"])
     if (
-        normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA
+        normalized["schema"]
+        in {CAUSAL_LEARNABILITY_SCHEMA_V4, CAUSAL_LEARNABILITY_SCHEMA}
         and normalized["sampling_max_tokens"] != expected_sampling_max_tokens
     ):
         _fail("causal_learnability_preflight_sampling_budget_mismatch")
@@ -2737,10 +3024,14 @@ def validate_causal_learnability_preflight(
             }
             if normalized["schema"] in {
                 CAUSAL_LEARNABILITY_SCHEMA_V3,
+                CAUSAL_LEARNABILITY_SCHEMA_V4,
                 CAUSAL_LEARNABILITY_SCHEMA,
             }:
                 sample_required.update({"parent_termination", "child_termination"})
-            if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+            if normalized["schema"] in {
+                CAUSAL_LEARNABILITY_SCHEMA_V4,
+                CAUSAL_LEARNABILITY_SCHEMA,
+            }:
                 sample_required.update(
                     {
                         "sampling_max_tokens",
@@ -2766,7 +3057,10 @@ def validate_causal_learnability_preflight(
                 or sample.get("transition_kind") not in transition_kinds
             ):
                 _fail("causal_learnability_preflight_sample_invalid")
-            if normalized["schema"] == CAUSAL_LEARNABILITY_SCHEMA:
+            if normalized["schema"] in {
+                CAUSAL_LEARNABILITY_SCHEMA_V4,
+                CAUSAL_LEARNABILITY_SCHEMA,
+            }:
                 if (
                     sample.get("sampling_max_tokens") != expected_sampling_max_tokens
                     or sample.get("parent_termination") not in {
@@ -2907,6 +3201,7 @@ def validate_causal_learnability_preflight(
         _fail("causal_learnability_preflight_summary_mismatch")
     if normalized["schema"] in {
         CAUSAL_LEARNABILITY_SCHEMA_V3,
+        CAUSAL_LEARNABILITY_SCHEMA_V4,
         CAUSAL_LEARNABILITY_SCHEMA,
     }:
         child_fraction = round(
@@ -2946,7 +3241,23 @@ def require_causal_learnability_training_gate(
         or receipt["transition_counts"]["wrong_to_right"] < 2
     ):
         _fail("causal_learnability_training_gate_underpowered")
+    _require_causal_policy_reference(contract, receipt)
     return receipt
+
+
+def _require_causal_policy_reference(
+    contract: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> None:
+    if receipt.get("schema") != CAUSAL_LEARNABILITY_SCHEMA:
+        _fail("causal_learnability_policy_reference_schema_invalid")
+    probe = _load_initial_policy_probe_for_contract(contract)
+    if (
+        receipt.get("initial_policy_probe_sha256") != probe["receipt_sha256"]
+        or receipt.get("policy_before_sha256") != probe["initial_policy_sha256"]
+        or receipt.get("warm_start_receipt") != probe.get("warm_start_receipt")
+    ):
+        _fail("causal_learnability_policy_reference_mismatch")
 
 
 def _launch_causal_learnability_preflight(contract_path: Path) -> int:
@@ -3289,6 +3600,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     contract,
                     _strict_json(Path(args.receipt)),
                 )
+                _require_causal_policy_reference(contract, receipt)
                 print(json.dumps(receipt, indent=2, sort_keys=True))
                 return 0
             if args.action == "launch-training":

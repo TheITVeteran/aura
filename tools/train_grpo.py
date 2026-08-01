@@ -38,9 +38,11 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import re
 import signal
+import stat
 import sys
 import time
 from collections import Counter
@@ -137,8 +139,9 @@ TASK_SOURCES = ("verifiable", "recurrence_curriculum", "answer_channel_curriculu
 _ADAPTER_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _PHASE_PROGRESS_SCHEMA = "aura.grpo.phase_progress.v1"
 _PHASE_PROGRESS_MAX_BYTES = 16 * 1024 * 1024
+_ANSWER_CHANNEL_PREFLIGHT_SCHEMA = "aura.recurrent_answer_channel_preflight.v2"
 _CAUSAL_LEARNABILITY_PREFLIGHT_SCHEMA = (
-    "aura.recurrent_causal_learnability_preflight.v4"
+    "aura.recurrent_causal_learnability_preflight.v5"
 )
 
 
@@ -1543,6 +1546,77 @@ def _load_verified_trajectory_group_config(
     return VerifiedTrajectoryGroupConfig.from_dict(payload)
 
 
+def _load_initial_policy_probe_reference(
+    path: str,
+    *,
+    campaign_id: str,
+    dataset_sha256: str,
+    execution_spec_sha256: str,
+    base_checkpoint: Mapping[str, Any],
+    model_behavior_bundle: Mapping[str, Any],
+    tokenizer_bundle: Mapping[str, Any],
+    adapter_initialization: Mapping[str, Any],
+    source_bindings: Mapping[str, Any],
+    warm_start_receipt: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Reopen the initial policy custody before any read-only probe samples."""
+
+    lexical = Path(path).expanduser().absolute()
+    if lexical.is_symlink():
+        raise GRPOCheckpointError("initial policy probe reference symlink is forbidden")
+    try:
+        resolved = lexical.resolve(strict=True)
+        metadata = resolved.stat()
+        raw = read_stable_bytes(resolved, max_bytes=16 << 20)
+        document = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise GRPOCheckpointError("initial policy probe reference is unreadable") from exc
+    if (
+        resolved != lexical
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+        or metadata.st_nlink != 1
+        or not isinstance(document, Mapping)
+        or canonical_json_bytes(document) != raw
+    ):
+        raise GRPOCheckpointError("initial policy probe reference is noncanonical")
+    from core.learning.verified_transition_policy_probe import (
+        inspect_initial_adapter_snapshot,
+        inspect_initial_optimizer_snapshot,
+        validate_initial_recurrent_policy_probe,
+    )
+
+    probe = validate_initial_recurrent_policy_probe(document)
+    if (
+        probe.get("campaign_id") != campaign_id
+        or probe.get("dataset_sha256") != dataset_sha256
+        or probe.get("execution_spec_sha256") != execution_spec_sha256
+        or probe.get("base_checkpoint") != dict(base_checkpoint)
+        or probe.get("model_behavior_bundle") != dict(model_behavior_bundle)
+        or probe.get("tokenizer_bundle") != dict(tokenizer_bundle)
+        or probe.get("adapter_initialization") != dict(adapter_initialization)
+        or probe.get("source_bindings") != dict(source_bindings)
+        or probe.get("warm_start_receipt")
+        != (dict(warm_start_receipt) if warm_start_receipt is not None else None)
+    ):
+        raise GRPOCheckpointError("initial policy probe reference identity differs")
+    adapter = inspect_initial_adapter_snapshot(
+        resolved.parent / probe["initial_adapter_artifact"]["path"],
+        execution_spec_sha256=execution_spec_sha256,
+    )
+    optimizer = inspect_initial_optimizer_snapshot(
+        resolved.parent / probe["initial_optimizer_artifact"]["path"]
+    )
+    if (
+        adapter != probe["initial_adapter_artifact"]
+        or optimizer != probe["initial_optimizer_artifact"]
+        or adapter["policy_sha256"] != probe["initial_policy_sha256"]
+    ):
+        raise GRPOCheckpointError("initial policy probe snapshot identity differs")
+    return probe
+
+
 def _rendered_task_prompt(tokenizer, task) -> tuple[str, list[int]]:
     from core.learning.recurrent_training_prompt import (
         render_recurrent_training_prompt,
@@ -2380,6 +2454,21 @@ def main(
         ),
     )
     parser.add_argument(
+        "--initial-policy-probe-reference",
+        help=(
+            "canonical initial_policy_probe.json that every read-only probe "
+            "must reopen and match before sampling"
+        ),
+    )
+    parser.add_argument(
+        "--initial-policy-campaign-id",
+        help="campaign identity expected inside --initial-policy-probe-reference",
+    )
+    parser.add_argument(
+        "--initial-policy-dataset-sha256",
+        help="frozen training-dataset digest expected in the initial policy probe",
+    )
+    parser.add_argument(
         "--read-only-answer-channel-preflight",
         action="store_true",
         help=(
@@ -2492,6 +2581,22 @@ def main(
     )
     if recurrent_probe_modes > 1:
         parser.error("select exactly one recurrent probe mode")
+    read_only_probe = bool(
+        args.read_only_answer_channel_preflight
+        or args.read_only_causal_learnability_preflight
+    )
+    if read_only_probe and (
+        not args.initial_policy_probe_reference
+        or not args.initial_policy_campaign_id
+        or not args.initial_policy_dataset_sha256
+    ):
+        parser.error("read-only recurrent probes require initial policy custody")
+    if not read_only_probe and (
+        args.initial_policy_probe_reference
+        or args.initial_policy_campaign_id
+        or args.initial_policy_dataset_sha256
+    ):
+        parser.error("initial policy custody applies only to read-only probes")
     if verified_group_provider_factory is not None and (
         args.initial_policy_probe
         or args.read_only_answer_channel_preflight
@@ -2795,6 +2900,12 @@ def main(
         if not attached:
             raise RuntimeError("no projections adapted; check --lora-targets")
         print(f"[wiring] {attached} projections adapted", flush=True)
+        adapter_initialization = {
+            "seed": lora_initialization_seed,
+            "rank": args.lora_rank,
+            "layers": args.lora_layers,
+            "targets": list(targets),
+        }
 
         warm_start_receipt = None
         if warm_start_contract is not None:
@@ -2824,6 +2935,37 @@ def main(
                 f"copied={warm_start_receipt['copied_tensor_count']} "
                 f"initialized={warm_start_receipt['initialized_tensor_count']} "
                 f"policy={warm_start_receipt['policy_after_sha256']}",
+                flush=True,
+            )
+
+        initial_policy_reference = None
+        if args.initial_policy_probe_reference:
+            assert execution_spec is not None
+            assert token_trace_adapter is not None
+            initial_policy_reference = _load_initial_policy_probe_reference(
+                args.initial_policy_probe_reference,
+                campaign_id=str(args.initial_policy_campaign_id),
+                dataset_sha256=str(args.initial_policy_dataset_sha256),
+                execution_spec_sha256=execution_spec.sha256,
+                base_checkpoint=base_identity,
+                model_behavior_bundle=behavior_identity,
+                tokenizer_bundle=token_trace_adapter.bundle_identity,
+                adapter_initialization=adapter_initialization,
+                source_bindings=sources,
+                warm_start_receipt=warm_start_receipt,
+            )
+            current_policy_sha256 = recurrent_policy_sha256(model, execution_spec)
+            if (
+                current_policy_sha256
+                != initial_policy_reference["initial_policy_sha256"]
+            ):
+                raise GRPOCheckpointError(
+                    "read-only probe policy differs from initial policy custody"
+                )
+            print(
+                "[policy-custody] "
+                f"policy={initial_policy_reference['initial_policy_sha256']} "
+                f"receipt={initial_policy_reference['receipt_sha256']}",
                 flush=True,
             )
 
@@ -2870,12 +3012,7 @@ def main(
                 "base_checkpoint": base_identity,
                 "model_behavior_bundle": behavior_identity,
                 "tokenizer_bundle": token_trace_adapter.bundle_identity,
-                "adapter_initialization": {
-                    "seed": _stable_seed(args.seed, "lora-init", args.adapter_id),
-                    "rank": args.lora_rank,
-                    "layers": args.lora_layers,
-                    "targets": list(targets),
-                },
+                "adapter_initialization": adapter_initialization,
                 "source_bindings": sources,
                 "initial_adapter_artifact": initial_adapter_artifact,
                 "optimizer_initialization": (recurrent_policy_optimizer_config(args.learning_rate)),
@@ -2930,6 +3067,7 @@ def main(
 
         if args.read_only_answer_channel_preflight:
             assert execution_spec is not None
+            assert initial_policy_reference is not None
             report = evaluate_recurrent_heldout(
                 model,
                 tokenizer,
@@ -2958,7 +3096,7 @@ def main(
             )
             valid_fraction = valid_contracts / len(episode_receipts)
             body = {
-                "schema": "aura.recurrent_answer_channel_preflight.v1",
+                "schema": _ANSWER_CHANNEL_PREFLIGHT_SCHEMA,
                 "campaign_id": args.adapter_id,
                 "dataset_sha256": dataset_sha256,
                 "execution_spec_sha256": execution_spec.sha256,
@@ -2966,6 +3104,11 @@ def main(
                 "model_behavior_bundle": behavior_identity,
                 "tokenizer_bundle": token_trace_adapter.bundle_identity,
                 "source_bindings": sources,
+                "policy_sha256": current_policy_sha256,
+                "initial_policy_probe_sha256": initial_policy_reference[
+                    "receipt_sha256"
+                ],
+                "warm_start_receipt": warm_start_receipt,
                 "task_count": len(episode_receipts),
                 "valid_contract_count": valid_contracts,
                 "correct_count": correct,
@@ -3004,6 +3147,7 @@ def main(
 
             assert execution_spec is not None
             assert token_trace_adapter is not None
+            assert initial_policy_reference is not None
             policy_before = recurrent_policy_sha256(model, execution_spec)
             rows: list[dict[str, Any]] = []
             for task_index, task in enumerate(train_tasks):
@@ -3134,6 +3278,10 @@ def main(
                 "model_behavior_bundle": behavior_identity,
                 "tokenizer_bundle": token_trace_adapter.bundle_identity,
                 "source_bindings": sources,
+                "initial_policy_probe_sha256": initial_policy_reference[
+                    "receipt_sha256"
+                ],
+                "warm_start_receipt": warm_start_receipt,
                 "policy_before_sha256": policy_before,
                 "policy_after_sha256": policy_after,
                 "policy_unchanged": True,
