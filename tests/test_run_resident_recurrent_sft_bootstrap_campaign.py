@@ -144,6 +144,29 @@ def test_attempt_record_requires_checkpoint_and_step_progress() -> None:
     assert same["required_end_reached"] is False
 
 
+def test_protected_source_changes_include_dynamic_and_declared_closure() -> None:
+    changed = [
+        "README.md",
+        "core/brain/frontier_evidence_v5.py",
+        "tools/train_resident_recurrent_sft_bootstrap.py",
+    ]
+
+    assert controller._protected_source_changes(
+        changed,
+        frozenset({"core/brain/frontier_evidence_v5.py"}),
+    ) == (
+        "core/brain/frontier_evidence_v5.py",
+        "tools/train_resident_recurrent_sft_bootstrap.py",
+    )
+
+
+def test_live_trainer_import_closure_captures_transitive_source() -> None:
+    closure = controller._trainer_import_closure()
+
+    assert "tools/train_resident_recurrent_sft_bootstrap.py" in closure
+    assert "core/brain/llm/latent_cortex/execution_spec.py" in closure
+    assert "core/brain/frontier_evidence_v5.py" in closure
+
 def test_launch_command_caps_partial_resume_to_exact_cell_remainder(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

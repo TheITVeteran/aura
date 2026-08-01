@@ -61,6 +61,7 @@ from core.runtime.secure_path_custody import (  # noqa: E402
 from tools import run_detached_step as detached  # noqa: E402
 from tools.prepare_resident_recurrent_sft_bootstrap_campaign import (  # noqa: E402
     CONTROLLER_CONFIG_SCHEMA,
+    SOURCE_PATHS,
 )
 from tools.resident_recurrent_sft_bootstrap_identity import (  # noqa: E402
     resident_bootstrap_runtime_identity,
@@ -199,6 +200,66 @@ def _verify_binding(binding: Any, *, role: str) -> tuple[Path, bytes]:
     return path, payload
 
 
+def _trainer_import_closure() -> frozenset[str]:
+    python = str(Path(os.path.abspath(sys.executable)))
+    probe = """
+import json
+import sys
+from pathlib import Path
+import tools.train_resident_recurrent_sft_bootstrap
+root = Path.cwd().resolve()
+paths = set()
+for module in tuple(sys.modules.values()):
+    value = getattr(module, '__file__', None)
+    if not isinstance(value, str):
+        continue
+    try:
+        path = Path(value).resolve(strict=True)
+        relative = path.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        continue
+    if path.is_file():
+        paths.add(relative)
+print(json.dumps(sorted(paths), separators=(',', ':')))
+"""
+    result = subprocess.run(
+        [python, "-c", probe],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120.0,
+        check=False,
+    )
+    if result.returncode != 0:
+        _fail("resident_sft_controller_import_closure_unavailable")
+    lines = [line for line in result.stdout.splitlines() if line.startswith("[")]
+    try:
+        paths = json.loads(lines[-1])
+    except (IndexError, json.JSONDecodeError, TypeError):
+        _fail("resident_sft_controller_import_closure_invalid")
+    if (
+        not isinstance(paths, list)
+        or not paths
+        or any(
+            not isinstance(path, str)
+            or not path
+            or PurePosixPath(path).is_absolute()
+            or ".." in PurePosixPath(path).parts
+            for path in paths
+        )
+    ):
+        _fail("resident_sft_controller_import_closure_invalid")
+    return frozenset(paths)
+
+
+def _protected_source_changes(
+    changed_paths: Sequence[str],
+    import_closure: frozenset[str],
+) -> tuple[str, ...]:
+    protected = import_closure | frozenset(SOURCE_PATHS.values())
+    return tuple(sorted(path for path in changed_paths if path in protected))
+
+
 def _verify_source_lineage(expected: Mapping[str, Any]) -> dict[str, str]:
     def run(*args: str) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
@@ -216,16 +277,29 @@ def _verify_source_lineage(expected: Mapping[str, Any]) -> dict[str, str]:
     branch = run("branch", "--show-current").stdout.strip()
     head = run("rev-parse", "HEAD").stdout.strip()
     upstream = run("rev-parse", "origin/main").stdout.strip()
-    dirty = run("diff", "--name-only", "HEAD", "--").stdout.strip()
+    frozen = expected.get("commit")
     if (
         branch != "main"
-        or head != upstream
-        or head != expected["commit"]
-        or upstream != expected["origin_main"]
-        or dirty
+        or not isinstance(frozen, str)
+        or len(frozen) != 40
+        or run("merge-base", "--is-ancestor", frozen, head).returncode != 0
+        or run("merge-base", "--is-ancestor", frozen, upstream).returncode != 0
     ):
         _fail("resident_sft_controller_source_lineage_drift")
-    return {"branch": branch, "commit": head, "origin_main": upstream}
+    committed_changes = run("diff", "--name-only", f"{frozen}..{head}", "--").stdout.splitlines()
+    dirty_changes = run("diff", "--name-only", "HEAD", "--").stdout.splitlines()
+    protected_changes = _protected_source_changes(
+        [*committed_changes, *dirty_changes],
+        _trainer_import_closure(),
+    )
+    if protected_changes:
+        _fail("resident_sft_controller_source_closure_drift")
+    return {
+        "branch": branch,
+        "frozen_commit": frozen,
+        "observed_head": head,
+        "observed_origin_main": upstream,
+    }
 
 
 def _verify_authority_artifacts(authority: Mapping[str, Any]) -> None:

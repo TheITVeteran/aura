@@ -34460,6 +34460,31 @@ step is a fresh CP788 two-step canary from clean published `main`. No reasoning-
 gain, frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is
 made.
 
+### 2026-08-01 - CP790 immutable imported-source closure across moving main
+
+The first CP789 invocation completed a real resident-32B optimizer step and
+durably published checkpoint sequence 2 at step 1. The detached receipt returned
+zero; the controller rehashed the unchanged base model, independently reopened
+the checkpoint and invocation receipt, and committed journal cell 1. Before
+cell 2, unrelated agents advanced local and remote `main`, and the old lineage
+rule rejected any branch-tip movement even though the campaign had already
+frozen an immutable source commit and the changed files were outside training.
+
+Continuation now requires the frozen commit to remain an ancestor of both
+local and remote `main`. Before every controller entry, Aura imports the exact
+trainer in a fresh bound-interpreter subprocess, enumerates every local module
+actually loaded (including package initializers and transitive sources such as
+`frontier_evidence_v5.py`), and intersects that dynamic closure plus all declared
+source roles with committed and working-tree changes since the frozen commit.
+Any execution-affecting change fails closed; unrelated descendant commits may
+continue without invalidating a multi-hour campaign. Authority artifacts and
+every declared source remain independently byte-verified. Tests cover declared
+and transitive closure detection and prove the live import probe includes the
+trainer, execution spec, and prior cryptography-bearing frontier path. The
+CP789 step-1 checkpoint remains quarantined evidence; a fresh CP790 canary must
+reproduce both steps under this continuation contract. No reasoning-gain,
+frontier, promotion, release, GRPO-admission, or `WOW Signal` claim is made.
+
 ### 2026-08-01 - CP789 trainer-side strict execution-spec parsing
 
 The CP788 canary proved the lexical venv interpreter and full trainer imports,
