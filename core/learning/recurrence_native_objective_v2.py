@@ -10,9 +10,10 @@ reproduces the live causal layout in a differentiable no-cache view:
 5. persist each final branch through prelude/window/coda at slot positions;
 6. score teacher-forced answer tokens after the persisted slots.
 
-The no-cache view is mathematically equivalent to prompt KV reuse because the
-attention mask is causal and the scoped adapter is zero on prompt/answer
-positions. Tiny-Qwen parity tests compare it directly with the live cache path.
+The no-cache view remains useful for structural objectives. Policy-gradient
+probabilities use the differentiable KV-cached path below: resident quantized
+kernels are shape-dependent, so mathematical graph equivalence does not imply
+numerically interchangeable behavior probabilities at 32B scale.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import inspect
 import json
 import math
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,6 +37,7 @@ from core.brain.llm.latent_cortex.loop_core import (
 )
 from core.brain.llm.latent_cortex.recurrence_adapter import (
     current_recurrence_adapter_scope,
+    recurrence_adapter_disabled,
     recurrence_adapter_scope,
 )
 from core.brain.llm.latent_cortex.types import WorkspaceConfig
@@ -1719,6 +1721,121 @@ def live_path_forward(
     )
 
 
+def cached_live_path_token_logprobs(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    answer_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    bridge_tokens: Sequence[int] = (),
+    adapters_on: bool = True,
+) -> Any:
+    """Score fixed tokens through the resident KV-cached recurrent policy.
+
+    Quantized matrix kernels can produce materially different logits for a
+    batched no-cache forward and token-at-a-time KV decoding. PPO behavior
+    probabilities must therefore be recomputed by the exact backend that
+    generated them. This path remains differentiable through the recurrent
+    states, persisted slot window, cache prefill, and lexical decode.
+    """
+
+    import mlx.core as mx
+    from mlx_lm.models.base import create_attention_mask
+    from mlx_lm.models.cache import KVCache
+
+    from core.brain.llm.latent_cortex.recurrence import WindowRunner
+    from core.brain.llm.latent_cortex.types import ComputeBudget
+
+    answer = tuple(answer_tokens)
+    bridge = tuple(bridge_tokens)
+    if not answer or any(type(token) is not int or token < 0 for token in answer):
+        raise ValueError("answer_tokens must contain non-negative integers")
+    if any(type(token) is not int or token < 0 for token in bridge):
+        raise ValueError("bridge_tokens must contain non-negative integers")
+    if spec.decode_bridge_policy == "none" and bridge:
+        raise ValueError("bridge tokens supplied while decode bridge is disabled")
+    if spec.decode_bridge_policy != "none" and not bridge:
+        raise ValueError("execution spec requires decode bridge tokens")
+
+    boundary = nullcontext() if adapters_on else recurrence_adapter_disabled()
+    with boundary:
+        (
+            prompt_embeddings,
+            seeds,
+            prompts_at_window,
+            initial_states,
+            anchors,
+            prelude_end,
+            coda_start,
+        ) = _prepare_recurrent_prefix(model, prompt_tokens, spec=spec)
+        if type(branch_index) is not int or not 0 <= branch_index < len(seeds):
+            raise ValueError("branch_index is outside the live-path branch set")
+        states = list(initial_states)
+        for step in range(spec.recurrent_steps):
+            states = _checkpointed_recurrent_transition(
+                model,
+                prompts_at_window,
+                states,
+                anchors,
+                spec,
+                step,
+                prelude_end,
+                coda_start,
+            )
+
+        layers = tuple(model.model.layers)
+        cache = [KVCache() for _ in layers]
+        hidden = prompt_embeddings
+        mask = create_attention_mask(hidden, cache)
+        for index, layer in enumerate(layers):
+            hidden = layer(hidden, mask, cache[index])
+
+        tail = (*bridge, *answer)
+        budget = ComputeBudget(
+            max_layer_apps=max(
+                1,
+                (len(prompt_tokens) + 2 * int(seeds[branch_index].shape[1]) + len(tail))
+                * len(layers),
+            ),
+            wall_clock_s=600.0,
+        )
+        runner = WindowRunner(model.model, budget)
+        runner.run(seeds[branch_index], cache, 0, prelude_end, persist=True)
+        persisted = runner.run(
+            states[branch_index],
+            cache,
+            prelude_end,
+            coda_start,
+            persist=True,
+        )
+        output = runner.run(
+            persisted,
+            cache,
+            coda_start,
+            len(layers),
+            persist=True,
+        )
+        logits = _logits(model, output)[0, -1]
+        answer_logprobs: list[Any] = []
+        for position, token in enumerate(tail):
+            logprob = logits[token].astype(mx.float32) - mx.logsumexp(
+                logits.astype(mx.float32)
+            )
+            if position >= len(bridge):
+                answer_logprobs.append(logprob)
+            if position + 1 == len(tail):
+                continue
+            hidden = model.model.embed_tokens(mx.array([[token]]))
+            mask = create_attention_mask(hidden, cache)
+            for index, layer in enumerate(layers):
+                hidden = layer(hidden, mask, cache[index])
+            logits = _logits(model, hidden)[0, -1]
+    if len(answer_logprobs) != len(answer):
+        raise RuntimeError("cached answer log-probabilities do not align")
+    return mx.stack(answer_logprobs)
+
+
 def live_path_branch_answer_ce_trail(
     model: Any,
     prompt_tokens: Sequence[int],
@@ -2586,6 +2703,7 @@ __all__ = [
     "RECURRENCE_NATIVE_SCHEMA_V2",
     "RECURRENT_TRANSITION_STATE_SCHEMA",
     "branch_mean_answer_loss",
+    "cached_live_path_token_logprobs",
     "depth_curriculum_loss_v2",
     "detached_monotonicity_penalty",
     "exact_adjoint_composite_live_path_value_and_grad",

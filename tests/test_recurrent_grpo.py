@@ -464,6 +464,12 @@ def test_causal_pair_decodes_one_frozen_edge_under_matched_randomness():
     assert pair.parent.state_sha256 == pair.transition.parent_branch_sha256s[1]
     assert pair.child.state_sha256 == pair.transition.child_branch_sha256s[1]
     assert pair.child_behavior_admitted is True
+    assert pair.max_abs_child_logprob_drift == pytest.approx(0.0, abs=1e-7)
+    assert pair.mean_abs_child_logprob_drift == pytest.approx(0.0, abs=1e-7)
+    assert sample.max_abs_logprob_drift == pytest.approx(0.0, abs=1e-7)
+    assert sample.mean_abs_logprob_drift == pytest.approx(0.0, abs=1e-7)
+    assert sample.clipped_token_fraction == 0.0
+    assert sample.old_policy_approx_kl == pytest.approx(0.0, abs=1e-12)
     assert receipt["fixed_token_budget"] == 3
     assert receipt["episode_id"] == "causal-edge-test-117"
     assert receipt["runtime_integrity"]["verdict"]["engine_measurements_complete"] is True

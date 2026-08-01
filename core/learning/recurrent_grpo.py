@@ -4,9 +4,9 @@ This module is the missing objective bridge between verifier rewards and the
 Recursive Latent Cortex. It does not generate or grade tasks. It consumes exact
 completion tokens, the branch that produced each completion, frozen old-policy
 log-probabilities captured at sampling time, and programmatic rewards. Current
-policy probabilities are recomputed by ``live_path_forward`` so their gradient
-passes through latent slots, recurrent window layers, branch exchange, and the
-persisted answer path.
+policy probabilities are recomputed by the differentiable resident KV-cached
+path so their gradient passes through latent slots, recurrent window layers,
+branch exchange, and the persisted answer path.
 
 The adapter-disabled reference still executes the same RLC graph. This keeps KL
 anchoring from comparing a recurrent policy to an architecturally different
@@ -19,14 +19,10 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from typing import Any
 
 from core.brain.llm.latent_cortex.execution_spec import RLCExecutionSpec
-from core.brain.llm.latent_cortex.recurrence_adapter import (
-    recurrence_adapter_disabled,
-)
 from core.learning.grpo import group_advantages
 from core.learning.recurrence_native_objective_v2 import (
     EXACT_ADJOINT_TRAJECTORY_RECEIPT_SCHEMA,
@@ -35,8 +31,8 @@ from core.learning.recurrence_native_objective_v2 import (
     ExactAdjointTrajectoryConfig,
     LivePathForward,
     PreparedFinalRecurrentTransition,
+    cached_live_path_token_logprobs,
     exact_adjoint_composite_live_path_value_and_grad,
-    live_path_forward,
     prepare_final_recurrent_transition,
     validate_exact_adjoint_live_path_receipt,
     validate_final_recurrent_transition_receipt,
@@ -2621,17 +2617,54 @@ def recurrent_completion_token_logprobs(
     bridge_tokens: Sequence[int] = (),
     adapters_on: bool = True,
 ) -> Any:
-    """Score exact completion tokens through the true recurrent hidden path."""
-    boundary = nullcontext() if adapters_on else recurrence_adapter_disabled()
-    with boundary:
-        forward = live_path_forward(
-            model,
+    """Score exact completion tokens through the resident cached policy."""
+
+    return cached_live_path_token_logprobs(
+        model,
+        prompt_tokens,
+        completion_tokens,
+        spec=spec,
+        branch_index=branch_index,
+        bridge_tokens=bridge_tokens,
+        adapters_on=adapters_on,
+    )
+
+
+def _cached_weighted_completion_value_and_grad(
+    model: Any,
+    prompt_tokens: Sequence[int],
+    completion_tokens: Sequence[int],
+    *,
+    spec: RLCExecutionSpec,
+    branch_index: int,
+    bridge_tokens: Sequence[int],
+    token_loss_weights: Sequence[float],
+) -> tuple[Any, Any]:
+    """Differentiate one weighted completion through its cached live path."""
+
+    import mlx.core as mx
+    import mlx.nn as nn
+
+    weights = tuple(float(value) for value in token_loss_weights)
+    if len(weights) != len(completion_tokens) or any(
+        not math.isfinite(value) for value in weights
+    ):
+        raise ValueError("token loss weights must be finite and token-aligned")
+    weight_tensor = mx.array(weights, dtype=mx.float32)
+
+    def objective(current_model: Any) -> Any:
+        logprobs = recurrent_completion_token_logprobs(
+            current_model,
             prompt_tokens,
             completion_tokens,
             spec=spec,
+            branch_index=branch_index,
             bridge_tokens=bridge_tokens,
+            adapters_on=True,
         )
-    return branch_token_logprobs(forward, completion_tokens, branch_index=branch_index)
+        return -mx.mean(logprobs * weight_tensor)
+
+    return nn.value_and_grad(model, objective)(model)
 
 
 def clipped_recurrent_grpo_objective(
@@ -2762,10 +2795,6 @@ def exact_adjoint_verifier_group_value_and_grad(
     import mlx.core as mx
     from mlx.utils import tree_flatten, tree_map
 
-    from core.learning.recurrence_native_objective_v2 import (
-        exact_adjoint_live_path_value_and_grad,
-    )
-
     resolved = config or RecurrentGRPOConfig()
     count = len(completion_tokens)
     if count < 2:
@@ -2870,14 +2899,14 @@ def exact_adjoint_verifier_group_value_and_grad(
         coefficients = policy_coefficients + float(resolved.kl_coefficient) * (mx.exp(delta) - 1.0)
         mx.eval(coefficients)
         weights = [group_scale * float(value) for value in coefficients]
-        value, gradients, _base_value, _cosines = exact_adjoint_live_path_value_and_grad(
+        value, gradients = _cached_weighted_completion_value_and_grad(
             model,
             prompt_tokens,
             tokens,
             spec=spec,
+            branch_index=branch_index,
             bridge_tokens=bridge_tokens,
             token_loss_weights=weights,
-            branch_index=branch_index,
         )
         surrogate_value += float(value)
         accumulated = (

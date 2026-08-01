@@ -33876,3 +33876,47 @@ independently reconstructed read-only gates before any trainer is eligible.
 No reasoning-gain, frontier, promotion, release, or `WOW Signal` claim is
 made. This is total checkpoint 774. The 774-920 completion envelope is
 approximately 84.1%-100.0%, with a 92.1% midpoint.
+
+### 2026-08-01 - CP775 resident cached-policy gradient parity
+
+S36 passed its detached initial-policy gate with policy
+`b7591f38eb18401500f22bb1a6ea91d1c1ae2478ecbc17c0ca039a91d31c35a3`
+and probe receipt
+`a67e66b7c3d1a0a510c5ac780e523895706044131793ad12305aca8f6fa28e0f`.
+Its answer receipt v2 passed independent reconstruction with six of six valid
+contracts, five of six correct answers, and receipt SHA-256
+`5621016f45c419b4a8f7b2f49acb482e728d396272b72e4f9c5ae4a4f2667842`.
+The causal process then failed before publishing a receipt because its first
+sample violated PPO behavior admission: maximum log-probability drift exceeded
+14, mean drift exceeded 0.77, and more than half of tokens were clipped. No
+causal evidence or training was accepted from S36.
+
+A source-bound resident diagnostic identified the mechanism. The frozen-child
+and full no-cache scorers agreed with each other, but both diverged from the
+actual KV-cached 4-bit policy. On the repeated failed branch, the no-cache
+comparison reached maximum drift `17.844411849975586`, mean drift
+`0.9134231898933649`, clipped-token fraction `0.48046875`, and approximate
+old-policy KL `0.9960508423976313`. The former tiny-model assumption that
+causally equivalent batched and cached graphs are numerically interchangeable
+is false for shape-dependent resident quantized kernels.
+
+Policy sampling, PPO admission, same-RLC reference scoring, and streamed
+policy-gradient evaluation now use one differentiable KV-cached recurrent
+backend. It computes recurrence and branch exchange with gradients active,
+persists the selected state into fresh caches, scores fixed lexical tokens one
+at a time, and bounds graph residency to one completion during gradient
+accumulation. The structural no-cache graph remains available for structural
+objectives but can no longer supply resident behavior probabilities. The
+streamed gradient is tested against a monolithic cached autograd result.
+
+Repeating the exact failed resident branch at the full 512-token budget now
+produces zero maximum drift, zero mean drift, zero clipped-token fraction,
+zero old-policy KL, and successful parent/child admission under the unchanged
+safety thresholds. The recurrent-GRPO suite passes 27/27; the adjacent
+objective, trainer, runner, preregistration, identity, and materialization
+matrix passes 143/143, for 170 passing focused tests. Ruff, bytecode
+compilation, and diff integrity pass. A fresh S37 is required because
+executable policy code changed. No reasoning-gain, frontier, promotion,
+release, or `WOW Signal` claim is made. This is total checkpoint 775. The
+775-920 completion envelope is approximately 84.2%-100.0%, with a 92.1%
+midpoint.
